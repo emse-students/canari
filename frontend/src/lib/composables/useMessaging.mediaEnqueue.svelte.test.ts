@@ -584,3 +584,95 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     expect(messaging.replyFor(CONVO)).toBeNull();
   });
 });
+
+/**
+ * A CONVERSATION THAT LEFT THE MAP IS NOT AN ORPHAN TO BUFFER A SEND FOR (re-review of #2874). The
+ * orphan buffer replays through `addMessageToChat`: a send buffered there with its outbox entry was
+ * written - and SENT - a second time at the replay, and the buffer outlived a sign-out.
+ */
+describe('a send whose conversation left the map, and the orphan buffer', () => {
+  const ownEntry = (id: string): OutboxEntry =>
+    ({
+      id,
+      conversationId: CONVO,
+      sentAt: 1,
+      kind: 'text',
+      content: 'x',
+      status: 'pending',
+      attempts: 0,
+      createdAt: 1,
+    }) as unknown as OutboxEntry;
+
+  it('a conversation gone during the file read: the file is dropped and said, its caption not sent', async () => {
+    const messaging = await freshMessaging();
+    const pair = vi.fn();
+    const ctx = withStorage(makeContext(), pair);
+    let read!: (b: ArrayBuffer) => void;
+    const sending = messaging.handleSendChat(ctx, 'caption', {
+      files: [entryOf(() => new Promise<ArrayBuffer>((r) => (read = r)))],
+    });
+    await vi.waitFor(() => expect(read).toBeTypeOf('function'));
+    ctx.conversations.delete(CONVO);
+    read(new ArrayBuffer(3));
+    await sending;
+
+    expect(pair).not.toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(logLines(ctx).some((l) => l.includes('left the conversation list since the tap'))).toBe(
+      true
+    );
+    expect(logLines(ctx).some((l) => l.includes('caption not sent: the conversation left'))).toBe(
+      true
+    );
+  });
+
+  it('an own send buffered as an orphan is replayed WITHOUT its outbox entry', async () => {
+    const messaging = await freshMessaging();
+    const pair = vi.fn();
+    const ctx = withStorage(makeContext(), pair);
+    const conversation = ctx.conversations.get(CONVO)!;
+    ctx.conversations.delete(CONVO);
+    const onPairWritten = vi.fn();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await messaging.addMessageToChat('me', 'x', CONVO, ctx, {
+      messageId: 'own-1',
+      outboxEntry: ownEntry('own-1'),
+      onPairWritten,
+    });
+    ctx.conversations.set(CONVO, conversation);
+    messaging.drainOrphanMessages(CONVO, ctx);
+    await flushMacrotask();
+
+    // The replay keeps the message, as a plain row; the queue alone owns the send.
+    expect(pair).not.toHaveBeenCalled();
+    expect(onPairWritten).not.toHaveBeenCalled();
+    expect(ctx.storage!.saveMessage).toHaveBeenCalledTimes(1);
+    expect(ctx.conversations.get(CONVO)!.messages.map((x) => x.id)).toEqual(['own-1']);
+    expect(errors.mock.calls.some(([l]) => String(l).includes('WITHOUT its outbox entry'))).toBe(
+      true
+    );
+    errors.mockRestore();
+    warns.mockRestore();
+  });
+
+  it('a sign-out forgets the orphan buffer: nothing is replayed under the next account', async () => {
+    const messaging = await freshMessaging();
+    const ctx = withStorage(makeContext(), vi.fn());
+    const conversation = ctx.conversations.get(CONVO)!;
+    ctx.conversations.delete(CONVO);
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await messaging.addMessageToChat('peer', 'hello', CONVO, ctx, { messageId: 'in-1' });
+    signOut.count++;
+    messaging.forgetAccount(vi.fn());
+    ctx.conversations.set(CONVO, conversation);
+    messaging.drainOrphanMessages(CONVO, ctx);
+    await flushMacrotask();
+
+    expect(ctx.storage!.saveMessage).not.toHaveBeenCalled();
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
+    warns.mockRestore();
+  });
+});

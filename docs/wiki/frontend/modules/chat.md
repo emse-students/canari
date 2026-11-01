@@ -1402,16 +1402,33 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
   sealed at the current epoch), then per entry `isGroupHealthy` (a re-admission is HELD, its bubble
   showing `repairing`, and resumed by its Welcome), the deleted-group read and `isGroupActive` (an
   evicted group retires it) - all before the upload is paid, so a file for a group that cannot take it
-  costs no transfer. **And again before the seal** (`outbox media seal`): the flush's barrier is an
-  upload back, and a lane woken by the upload's end does not pass it again (L1). The CEK is still
+  costs no transfer. **And again for an uploaded file, BEFORE the gates** (`outbox media seal`): the
+  flush's barrier is an upload back, and a lane woken by the upload's end does not pass it again (L1).
+  Its place is the fix, not a re-check: taken after the gates, a Remove it drained (a real eviction,
+  or the Remove half of a re-admission) was invisible to them and the send learnt it by FAILING - the
+  file retired as `evicted-late`, a false "the Remove commit never reached it", a permanent removal
+  notice before the Welcome. Taken first, the gates read the drained state and nothing is awaited
+  between them and `sendMessage`. A re-admission's Remove has its group state DROPPED by
+  `retireIfEvicted` (the `reAddInFlight` branch) before the barrier returns, so `isGroupHealthy`
+  reads false and the file is HELD for the Welcome; a real eviction leaves the state held and
+  `isGroupActive` false, so it retires as `evicted` (evidence `membership-check`) (re-review of #2874).
+  The CEK is still
   generated on the device, by the upload the flush starts (`encryptAndUpload`); the entry holds the
   plaintext under the device key until then.
 - **A file the group will never take says why in its bubble.** Retired for `group-deleted`, or for
   `evicted`/`evicted-late`/`removed`, its bytes go with the row and the bubble read "refused by the
   server", the file's failure and not this one. `failPermanently` now records an `UnsentReason`
   (`uploadProgress.svelte.ts`) and the bubble says `upload_unsent_group_deleted` or
-  `upload_unsent_not_a_member` in the place of `upload_failed_label` (M4). In memory, like the upload
-  views: after a reload the failed bubble falls back to the generic line.
+  `upload_unsent_not_a_member` in the place of `upload_failed_label` (M4). **Durable**: the reason is
+  written on the stored message row (`StoredMessage.unsentReason`, inside the encrypted payload)
+  before the entry is deleted, and the bubble of an own attachment absent from the queue reads it
+  (`storedUnsentReasonOf`) before it draws the orphan's "never completed"; a follower tab is told
+  live (`outbox_entry_retired`). Re-review of #2874.
+- **A send never rides the orphan buffer.** A conversation that left the map since the tap (deleted,
+  left) drops the file with a log line before its write, and its caption is not sent; and
+  `addMessageToChat`'s orphan buffer strips `outboxEntry`/`onPairWritten` from what it keeps, so a
+  replay (`drainOrphanMessages`) never writes - and so never sends - an entry a second time. The
+  buffer is cleared by `forgetAccount`, so nothing replays under the next account.
 - **An uploaded file retired unsent stays on the server.** There is no client route that deletes an
   ordinary chat upload (`DELETE /media/:id` is server-to-server; the user route covers only the
   sender's own chat reel), so `failPermanently` names its `mediaId` at `console.warn` and in the
@@ -1422,8 +1439,10 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
   sent AFTER it may still be accepted first while the upload runs (WP-OFF-9, below).
 - Pinned by `useMessaging.mediaEnqueue.svelte.test.ts` (no barrier, tap-then-kill durability, order,
   the refusals, the sign-out and the caption), `sqlitePairWrite.test.ts` (the torn SQLite pair) and
-  `outbox.test.ts` ("a file queued at the tap": kill and resume, both barriers, the held, evicted and
-  deleted group and their reasons, the orphaned upload, failure then retry).
+  `outbox.test.ts` ("a file queued at the tap": kill and resume, both barriers, a Remove drained by
+  the seal barrier, the held, evicted and deleted group and their persisted reasons, the follower,
+  the orphaned upload, failure then retry), `MessageBubble.orphan.svelte.test.ts` (the reason after a
+  reload) and `messagePayload.test.ts` (its round trip).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 

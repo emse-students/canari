@@ -20,6 +20,7 @@ const tabOutboxMock = vi.hoisted(() => ({
   publishOutboxEntrySent: vi.fn(),
   publishOutboxEntryCancelled: vi.fn(),
   publishOutboxEntryFailed: vi.fn(),
+  publishOutboxEntryRetired: vi.fn(),
   // The handler is named in the signature rather than dropped: a flush trigger arrives through
   // this subscription, so the R-D8 trigger table has to read it back out of `mock.calls`.
   subscribeTabOutboxEvents: vi.fn((_handler: (event: TabOutboxEvent) => void) => () => {}),
@@ -164,6 +165,11 @@ function makeStorage(seed: OutboxEntry[] = []) {
     // The stored message rows - only what a test seeds; the flusher reads them to keep their proofs.
     _messages: rows,
     getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    // Like the real stores: a patch of a row that is absent writes nothing.
+    updateMessage: vi.fn(async (id: string, patch: Partial<StoredMessage>) => {
+      const row = rows.get(id);
+      if (row) rows.set(id, { ...row, ...patch });
+    }),
     saveOutboxEntry: vi.fn(async (e: OutboxEntry) => {
       map.set(e.id, structuredClone(e));
     }),
@@ -5578,6 +5584,54 @@ describe('outbox - a file queued at the tap', () => {
     expect(unsentReasonOf('d1')).toBe('group-deleted');
   });
 
+  it('the reason is written on the STORED row before the entry goes, and told to the followers', async () => {
+    const storage = makeStorage([tapEntry('p1')]);
+    storage._messages.set('p1', {
+      id: 'p1',
+      conversationId: 'g1',
+      senderId: 'u',
+      content: 'x',
+      timestamp: 100,
+    });
+    const order: string[] = [];
+    storage.updateMessage.mockImplementation(async (id: string, patch: Partial<StoredMessage>) => {
+      order.push('row');
+      storage._messages.set(id, { ...storage._messages.get(id)!, ...patch });
+    });
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      order.push('entry');
+      storage._map.delete(id);
+    });
+    tabOutboxMock.publishOutboxEntryRetired.mockClear();
+    const mlsService = makeMls({ active: async () => false });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['p1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(storage._messages.get('p1')!.unsentReason).toBe('not-a-member');
+    expect(order).toEqual(['row', 'entry']);
+    expect(tabOutboxMock.publishOutboxEntryRetired).toHaveBeenCalledWith('p1', 'not-a-member');
+    // What the bubble reads after a reload: the in-memory reason is gone, the row still says it.
+    clearAllUploads();
+    expect(unsentReasonOf('p1')).toBeUndefined();
+    await expect(outbox.storedUnsentReason('p1')).resolves.toBe('not-a-member');
+  });
+
+  it('a follower tab is told the reason live, and draws the failed bubble with it', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['f9'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_retired', messageId: 'f9', reason: 'group-deleted' });
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(unsentReasonOf('f9')).toBe('group-deleted');
+    outbox.dispose();
+    isTabLeaderMock.mockReturnValue(true);
+  });
+
   it('a file retired AFTER its upload names the object it leaves on the server', async () => {
     const uploaded = tapEntry('u1');
     uploaded.media = {
@@ -5631,6 +5685,74 @@ describe('outbox - a file queued at the tap', () => {
     await flushing;
     await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
     expect(order.indexOf('outbox media seal')).toBeLessThan(order.indexOf('seal and send'));
+  });
+
+  /** An entry whose upload already ended: the next pass owes the seal barrier, then the gates. */
+  function uploadedEntry(id: string): OutboxEntry {
+    const e = tapEntry(id);
+    e.media = { ...e.media!, uploadedRef: { mediaId: `mid-${id}`, key: 'aa', iv: 'bb' } };
+    return e;
+  }
+
+  /** Whether any line logged says the eviction was learnt by failing (the send-path backstop). */
+  function learntByFailing(log: ReturnType<typeof vi.fn>): boolean {
+    return log.mock.calls.some(([l]) => /evicted-late|never reached it|by FAILING/.test(String(l)));
+  }
+
+  it('the seal barrier comes BEFORE the gates: a Remove it drains is read by the membership gate', async () => {
+    const storage = makeStorage([uploadedEntry('v1')]);
+    // The Remove naming this device is applied by the drain the barrier waits for.
+    let removed = false;
+    const mlsService = makeMls({ active: async () => !removed });
+    mlsService.waitForMessageQueueIdle = vi.fn(async (caller: string) => {
+      if (caller === 'outbox media seal') removed = true;
+    });
+    const log = vi.fn();
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['v1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, log }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    // Retired by the gate, from a fact already applied - never learnt by a refused send.
+    expect(unsentReasonOf('v1')).toBe('not-a-member');
+    expect(learntByFailing(log)).toBe(false);
+    warned.mockRestore();
+  });
+
+  it('the seal barrier comes BEFORE the gates: the Remove half of a re-admission HOLDS the file', async () => {
+    const storage = makeStorage([uploadedEntry('w1')]);
+    // `retireIfEvicted` drops the group state for this device's own re-admission: unhealthy after.
+    let dropped = false;
+    const mlsService = makeMls({ active: async () => !dropped });
+    mlsService.waitForMessageQueueIdle = vi.fn(async (caller: string) => {
+      if (caller === 'outbox media seal') dropped = true;
+    });
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['w1'], 'pending')],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        log,
+        requestReAdd,
+        isGroupHealthy: () => !dropped,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    // Held, not retired: the file waits for the Welcome, its upload kept.
+    expect(storage._map.get('w1')!.media!.uploadedRef!.mediaId).toBe('mid-w1');
+    expect(unsentReasonOf('w1')).toBeUndefined();
+    expect(learntByFailing(log)).toBe(false);
   });
 
   it('a text written before the file goes out before it', async () => {

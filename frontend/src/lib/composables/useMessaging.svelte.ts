@@ -299,6 +299,12 @@ export function useMessaging() {
     resetJoinRequests();
     // And what this device said about the history it withheld: the next account's asks are new.
     resetAnswerDecisionsSaid();
+    // And the messages held for a conversation not loaded yet: replayed under the next account,
+    // they would be written into ITS store (review of #2874).
+    const orphans = orphanBuffer.size;
+    orphanBuffer.clear();
+    if (orphans > 0)
+      log(`[COMPOSER] signed out: orphan messages of ${orphans} conversation(s) forgotten`);
   }
 
   /**
@@ -840,6 +846,39 @@ export function useMessaging() {
     return text;
   }
 
+  /**
+   * Keeps a message whose conversation is not in the map yet, for `drainOrphanMessages` to replay.
+   *
+   * NEVER WITH ITS OUTBOX ENTRY (review of #2874). The replay goes back through `addMessageToChat`,
+   * and an entry carried along would be written - and so SENT - a second time by
+   * `saveMessageWithOutboxEntry`, long after the queue had already sent it from its own row. The
+   * buffer keeps the message; the queue alone owns the send. `onPairWritten` goes with the entry:
+   * the pair it reports was not written here, and a late call would tell the caller it had been.
+   */
+  function bufferOrphan(
+    normalized: string,
+    senderId: string,
+    content: string,
+    contactName: string,
+    options: AddMessageToChatOptions & { skipDbSave?: boolean }
+  ): void {
+    const { outboxEntry, onPairWritten: _reportOnlyAPairWritten, ...kept } = options;
+    if (outboxEntry) {
+      console.error(
+        `[ADD_MSG] ${outboxEntry.id.slice(0, 8)}… own send into "${normalized}", absent from the map: buffered WITHOUT its outbox entry - the queue sends it from its own row`
+      );
+    }
+    const buffer = orphanBuffer.get(normalized) ?? [];
+    if (buffer.length >= MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
+      console.warn(
+        `[ADD_MSG] orphan buffer of "${normalized}" full (${MAX_ORPHAN_MESSAGES_PER_CONVERSATION}) - message not kept`
+      );
+      return;
+    }
+    buffer.push({ senderId, content, contactName, options: kept });
+    orphanBuffer.set(normalized, buffer);
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -867,11 +906,7 @@ export function useMessaging() {
         console.warn(
           `[ADD_MSG] conversation "${normalized}" introuvable (bulk) — bufferisation orpheline`
         );
-        const buffer = orphanBuffer.get(normalized) ?? [];
-        if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
-          buffer.push({ senderId, content, contactName, options });
-          orphanBuffer.set(normalized, buffer);
-        }
+        bufferOrphan(normalized, senderId, content, contactName, options);
         return;
       }
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
@@ -925,11 +960,7 @@ export function useMessaging() {
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
       console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
-      const buffer = orphanBuffer.get(normalized) ?? [];
-      if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
-        buffer.push({ senderId, content, contactName, options });
-        orphanBuffer.set(normalized, buffer);
-      }
+      bufferOrphan(normalized, senderId, content, contactName, options);
       return;
     }
 
@@ -1477,6 +1508,8 @@ export function useMessaging() {
     let sessionEndedDuringSend = false;
     /** A file of this send was refused and given back to the staging (the catch below). */
     let mediaRestaged = false;
+    /** The conversation left the map between the tap and a file's write - see the media loop. */
+    let conversationGoneDuringSend = false;
 
     // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
     // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
@@ -1703,6 +1736,16 @@ export function useMessaging() {
                 sessionEndedDuringSend = true;
                 break;
               }
+              // AND THE CONVERSATION, with no await from here to the write: one that left the map
+              // since the tap (deleted, left) would send this placeholder into the orphan buffer,
+              // which is not where a send belongs (review of #2874). Dropped, and said.
+              if (!ctx.conversations.get(sentFrom)) {
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: ${sentFrom.slice(0, 8)}… left the conversation list since the tap - ${fileEntries.length - index} file(s) not sent`
+                );
+                conversationGoneDuringSend = true;
+                break;
+              }
               try {
                 await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
                   messageId,
@@ -1831,6 +1874,10 @@ export function useMessaging() {
 
     if (sessionEndedDuringSend) {
       ctx.log('[SEND] caption not sent: the session ended during the media send');
+      return;
+    }
+    if (conversationGoneDuringSend) {
+      ctx.log('[SEND] caption not sent: the conversation left the list during the media send');
       return;
     }
     // THE CAPTION BELONGS TO THE FIRST FILE, and a refused first file given back to the staging

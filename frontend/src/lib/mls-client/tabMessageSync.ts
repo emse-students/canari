@@ -1,4 +1,5 @@
 import type { ChatMessage } from '$lib/types';
+import type { UnsentReason } from '$lib/db/types';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
 
 const TAB_MESSAGES_CHANNEL = 'canari-tab-messages';
@@ -81,13 +82,15 @@ export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
   | { type: 'outbox_entry_sent'; messageId: string; content?: string; receivedAt?: number }
   | { type: 'outbox_entry_cancelled'; messageId: string }
-  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number };
+  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number }
+  | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason };
 
 const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_flush_request',
   'outbox_entry_sent',
   'outbox_entry_cancelled',
   'outbox_entry_failed',
+  'outbox_entry_retired',
 ]);
 
 let messageChannel: BroadcastChannel | null = null;
@@ -200,6 +203,20 @@ export function publishOutboxEntryFailed(messageId: string, serverErrors: number
     type: 'outbox_entry_failed',
     messageId,
     serverErrors,
+  } satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a queued attachment was retired UNSENT for the group's sake (deleted, or this
+ * device no longer a member). A follower draws the failed bubble with that reason; it never flushes,
+ * so it would otherwise keep the queued spinner until its next reload.
+ */
+export function publishOutboxEntryRetired(messageId: string, reason: UnsentReason): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_entry_retired',
+    messageId,
+    reason,
   } satisfies TabOutboxEvent);
 }
 
