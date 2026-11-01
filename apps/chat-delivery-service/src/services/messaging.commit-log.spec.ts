@@ -463,6 +463,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { conflictPaths: ['deviceId', 'groupId'] }
       );
       expect(redis.sadd).toHaveBeenCalledWith('group:members:group-1', 'user-2:device-new');
+      // An external join is its own admission: the commit's base is the joiner's floor.
+      expect(txMembershipRepo.update).toHaveBeenCalledWith(
+        { userId: 'user-2', deviceId: 'device-new', groupId: 'group-1' },
+        { admittedByBaseEpoch: 1 }
+      );
       // Nothing replayed: the joiner landed at the current epoch and cannot decrypt anything sent
       // before its commit - those messages come back via the history bundle.
       expect(redis.xrange).not.toHaveBeenCalled();
@@ -2595,6 +2600,12 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1', status: 'pending' },
         { admittedAtEpoch: 6, kickedAt: null }
       );
+      // ITS ADMISSION, the floor of the commit times it is answered (`commitFloorOf`): this commit's
+      // base, written whatever the row's status - a re-add after a kick moves it forward.
+      expect(txMembershipRepo.update).toHaveBeenCalledWith(
+        { userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1' },
+        { admittedByBaseEpoch: 5 }
+      );
     });
 
     it("lifts the invitation-link ask of every person it admits, in the advance's transaction", async () => {
@@ -2765,28 +2776,26 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
    * older than the one that admitted the requester.
    */
   describe('getCommitAcceptedAt (the commit that admitted a device, by its log row)', () => {
-    const manager = groupRepo.manager as unknown as Record<string, jest.Mock>;
-    const ARRIVAL = new Date('2026-11-01T08:00:00.000Z');
     let errorSpy: jest.SpyInstance;
+    let warnSpy: jest.SpyInstance;
+    /** The requesting device's seat: admitted by the commit built on base 4 unless told otherwise. */
+    const seat = (admittedByBaseEpoch: number | null = 4, status = 'active') =>
+      deviceGroupRepo.findOne.mockResolvedValue({ id: 'row-1', status, admittedByBaseEpoch });
     beforeEach(() => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 9 });
       groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
-      // The requester's open stretch began at ARRIVAL.
-      manager.findOne = jest
-        .fn()
-        .mockResolvedValue({ id: 'stretch-1', joinedAt: ARRIVAL, admittedAt: null });
+      seat();
       errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     });
-    afterEach(() => errorSpy.mockRestore());
+    afterEach(() => {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
 
-    /**
-     * The log: commits at bases 2..8, base 4 the one that admitted the requester. The floor is
-     * compared in the database (`commitFloorOf`), so its answer is the `query` stub's; what it
-     * selects at the boundary is the PostgreSQL spec's (`commit-time.integration.spec.ts`).
-     */
-    const log = (missing: number[] = [], floor: number | null = 4) => {
-      commitLogRepo.query.mockResolvedValue([{ floor }]);
-      return commitLogRepo.findOne.mockImplementation(
+    /** The log: commits at bases 2..8. */
+    const log = (missing: number[] = []) =>
+      commitLogRepo.findOne.mockImplementation(
         async ({
           where,
           order,
@@ -2800,123 +2809,128 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           return { baseEpoch: b, createdAt: new Date(Date.UTC(2026, 10, 1, b)) };
         }
       );
-    };
+    const at = (b: number) => ({ acceptedAt: new Date(Date.UTC(2026, 10, 1, b)).toISOString() });
 
     it('forbids a non-member', async () => {
       groupMemberRepo.findOne.mockResolvedValue(null);
+      deviceGroupRepo.findOne.mockResolvedValue(null);
       log();
-      await expect(service.getCommitAcceptedAt('group-1', 6, 'stranger')).rejects.toBeInstanceOf(
-        ForbiddenException
-      );
+      await expect(
+        service.getCommitAcceptedAt('group-1', 6, 'stranger', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('answers the log row createdAt for the commit built on baseEpoch', async () => {
       log();
       await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')).resolves.toEqual(
-        { acceptedAt: new Date(Date.UTC(2026, 10, 1, 6)).toISOString() }
+        at(6)
       );
     });
 
-    it('answers the commit that admitted the requester, and refuses every older one', async () => {
+    it('answers the commit that admitted the requesting device, and refuses every older one', async () => {
       log();
-      await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1')).resolves.toEqual({
-        acceptedAt: new Date(Date.UTC(2026, 10, 1, 4)).toISOString(),
-      });
+      await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1', 'dev-1')).resolves.toEqual(
+        at(4)
+      );
       for (const before of [0, 2, 3]) {
         await expect(
-          service.getCommitAcceptedAt('group-1', before, 'member-1')
+          service.getCommitAcceptedAt('group-1', before, 'member-1', 'dev-1')
         ).rejects.toBeInstanceOf(ForbiddenException);
       }
-    });
-
-    it('a key-distribution seat is floored by the requesting device row', async () => {
-      groupRepo.findOne.mockResolvedValue({
-        id: 'group-1',
-        activeEpoch: 9,
-        distributionChannelId: 'chan-1',
-      });
-      deviceGroupRepo.findOne.mockResolvedValue({
-        id: 'row-1',
-        createdAt: ARRIVAL,
-        status: 'active',
-      });
-      log();
-      await expect(
-        service.getCommitAcceptedAt('group-1', 3, 'member-1', 'dev-1')
-      ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'group-1', userId: 'member-1', deviceId: 'dev-1' },
-      });
-      // Anchored on THAT row, by id, never on a stretch.
-      expect(commitLogRepo.query).toHaveBeenCalledWith(
-        expect.stringContaining('dm_device_group_memberships'),
-        ['group-1', 'row-1']
+      // Read off THAT device's seat, never a stretch nor a clock comparison.
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { groupId: 'group-1', userId: 'member-1', deviceId: 'dev-1' },
+        })
       );
-      expect(manager.findOne).not.toHaveBeenCalled();
-    });
-
-    /**
-     * FAILS CLOSED (review of #2890, MED-3): without an arrival there is no floor, and "no floor"
-     * would hand a community newcomer every retained commit time.
-     */
-    it('a key group asked with no device header is a 400, and reads no commit', async () => {
-      groupRepo.findOne.mockResolvedValue({
-        id: 'group-1',
-        activeEpoch: 9,
-        distributionChannelId: 'chan-1',
-      });
-      deviceGroupRepo.findOne.mockResolvedValue({
-        id: 'row-1',
-        createdAt: ARRIVAL,
-        status: 'active',
-      });
-      log();
-      commitLogRepo.findOne.mockClear();
-      commitLogRepo.query.mockClear();
-      await expect(service.getCommitAcceptedAt('group-1', 3, 'member-1')).rejects.toBeInstanceOf(
-        BadRequestException
-      );
-      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
       expect(commitLogRepo.query).not.toHaveBeenCalled();
     });
 
-    it('a member with no stretch and no device row is a 403, said at ERROR', async () => {
-      manager.findOne = jest.fn().mockResolvedValue(null);
+    it('a key-distribution seat is floored the same way, by the requesting device', async () => {
+      groupRepo.findOne.mockResolvedValue({
+        id: 'group-1',
+        activeEpoch: 9,
+        distributionChannelId: 'chan-1',
+      });
+      seat(5);
+      log();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 4, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.getCommitAcceptedAt('group-1', 5, 'member-1', 'dev-1')).resolves.toEqual(
+        at(5)
+      );
+    });
+
+    /**
+     * FAILS CLOSED (review of #2890, MED-3): without an admission there is no floor, and "no floor"
+     * would hand a newcomer every retained commit time.
+     */
+    it('a request with no device header is a 400, for either kind of group, and reads no commit', async () => {
+      log();
+      commitLogRepo.findOne.mockClear();
+      for (const group of [
+        { id: 'group-1', activeEpoch: 9 },
+        { id: 'group-1', activeEpoch: 9, distributionChannelId: 'chan-1' },
+      ]) {
+        groupRepo.findOne.mockResolvedValue(group);
+        await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1')).rejects.toBeInstanceOf(
+          BadRequestException
+        );
+      }
+      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('a member whose device holds no seat is a 403, said at ERROR', async () => {
+      // The membership read passes on the roster; the floor read finds no seat.
       deviceGroupRepo.findOne.mockResolvedValue(null);
       log();
       commitLogRepo.findOne.mockClear();
-      commitLogRepo.query.mockClear();
       await expect(
         service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(commitLogRepo.findOne).not.toHaveBeenCalled();
-      expect(commitLogRepo.query).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('no arrival'));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('holds no seat'));
+    });
+
+    it('a seat no commit admitted is refused: at WARN while pending, at ERROR when active', async () => {
+      log();
+      commitLogRepo.findOne.mockClear();
+      seat(null, 'pending');
+      await expect(
+        service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('status=pending'));
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      seat(null, 'active');
+      await expect(
+        service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('an ACTIVE seat'));
+      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
     });
 
     it('answers null without an ERROR when the row was pruned or the commit is not made yet', async () => {
-      // Arrival before every retained commit: no floor.
-      commitLogRepo.query.mockResolvedValue([{ floor: null }]);
+      // Admitted before every retained commit.
+      seat(0);
       commitLogRepo.findOne.mockImplementation(async ({ order }: { order?: unknown }) =>
         order ? { baseEpoch: 5 } : null
       );
-      await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1')).resolves.toEqual({
-        acceptedAt: null,
-        reason: 'pruned',
-      });
-      await expect(service.getCommitAcceptedAt('group-1', 9, 'member-1')).resolves.toEqual({
-        acceptedAt: null,
-        reason: 'not-yet',
-      });
+      await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1', 'dev-1')).resolves.toEqual(
+        { acceptedAt: null, reason: 'pruned' }
+      );
+      await expect(service.getCommitAcceptedAt('group-1', 9, 'member-1', 'dev-1')).resolves.toEqual(
+        { acceptedAt: null, reason: 'not-yet' }
+      );
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
     it('a HOLE inside the retained range answers null and is logged at ERROR', async () => {
       log([6]);
-      await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1')).resolves.toEqual({
-        acceptedAt: null,
-        reason: 'hole',
-      });
+      await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')).resolves.toEqual(
+        { acceptedAt: null, reason: 'hole' }
+      );
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HOLE in the commit log'));
     });
   });

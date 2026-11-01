@@ -2758,6 +2758,12 @@ export class MessagingService {
               );
             }
             committerSeat = unwritten === null;
+            // AN EXTERNAL JOIN IS ITS OWN ADMISSION: its leaf enters with this advance, so this
+            // commit is the floor of the commit times the device is answered (`commitFloorOf`). A
+            // pending member's commit adds no leaf - its Add recorded the admission already.
+            if (committerSeat && frame.external) {
+              await this.recordAdmission(m, committer, deviceId, groupId, baseEpoch, traceId);
+            }
           }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
@@ -2787,6 +2793,10 @@ export class MessagingService {
                 { userId: a.userId, deviceId: a.deviceId, groupId, status: 'pending' as const },
                 { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
               );
+            // NOT guarded on `pending`: whatever the row's status says, this accepted commit is the
+            // one that put the device's leaf in the tree, so it is the device's admission - a re-add
+            // after a kick moves the floor forward past the commits made while it was out.
+            await this.recordAdmission(m, a.userId, a.deviceId, groupId, baseEpoch, traceId);
           }
           // THE WELCOME LANDS WITH THE ADVANCE OR NEITHER DOES (`ValidateCommitBody.welcome`). Its
           // seat is guaranteed as `sendWelcome` guarantees it - inserted, never overwriting a row -
@@ -2808,6 +2818,15 @@ export class MessagingService {
                 })
                 .orIgnore()
                 .execute();
+              // The Welcome this commit carries admits its target with this advance, declared or not.
+              await this.recordAdmission(
+                m,
+                target.userId,
+                target.deviceId,
+                groupId,
+                baseEpoch,
+                traceId
+              );
             }
             const repo = m.getRepository(QueuedMessage);
             queuedWelcome = await repo.save(
@@ -3249,16 +3268,10 @@ export class MessagingService {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
     // A MEMBER IS NOT HANDED THE PAST (user, 2026-10-21): the time of a commit made before they
-    // arrived is the group's history, so the floor is the commit that ADMITTED them - the last one
-    // accepted at or before their arrival - and anything older is refused. `admittedAtEpoch` cannot
-    // say it: it is cleared the moment the device is activated, so an active member holds none.
-    const floor = await this.commitFloorOf(
-      groupId,
-      requesterUserId,
-      requesterDeviceId,
-      isKeyDistribution
-    );
-    if (floor !== null && baseEpoch < floor) {
+    // arrived is the group's history, so the floor is the commit that ADMITTED the requesting
+    // device - recorded by the commit gate on its seat - and anything older is refused.
+    const floor = await this.commitFloorOf(groupId, requesterUserId, requesterDeviceId);
+    if (baseEpoch < floor) {
       this.logger.warn(
         `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - before the commit that admitted them (base ${floor})`
       );
@@ -3279,83 +3292,63 @@ export class MessagingService {
   }
 
   /**
-   * The base epoch of the last commit accepted at or before `userId`'s arrival in `groupId` - read
-   * as the commit that admitted them - or `null` when no retained commit precedes it (everything the
-   * log holds is theirs to see).
+   * The base epoch of the commit that ADMITTED the requesting device into `groupId` - the oldest
+   * commit whose acceptance time it may be handed. Read off its seat
+   * (`DeviceGroupMembership.admittedByBaseEpoch`), which the commit gate writes with the advance on
+   * every admission: a member's Add, the Welcome it carries, an external join, the group's creation
+   * (`0`). Both kinds of group are floored per DEVICE, the unit an admission is made of.
    *
-   * Arrival is the open membership stretch's (`admittedAt ?? joinedAt`). A key-distribution group,
-   * whose seats are per device and keep no stretch, is anchored on the REQUESTING DEVICE's row
-   * `createdAt` - so a row deleted and recreated (a re-seat) moves the floor forward, and the commits
-   * before it are refused: a line about them is settled undated, never leaked.
+   * WHY NOT A CLOCK (review of #2890, LOW-D; owner, 2026-11-02). The floor was "the last commit
+   * accepted at or before the arrival", and every arrival record could be written before the
+   * admission: a group conversation's stretch `joinedAt` is written by the enrolment, before the Add,
+   * so the floor landed one commit early; a key-group device kicked and re-added keeps its row and its
+   * `createdAt`, so it was answered the commits made while it was out. Only acceptance times leaked,
+   * never content. The gate knows the admitting commit exactly - it is the one it accepts - so no
+   * timestamp is compared any more, and a re-add moves the floor past the commits it was out for.
    *
-   * WHAT IT DOES NOT HOLD, KNOWINGLY (review of #2890, LOW-D; owed in
-   * docs/wiki/backlog.d/p2-the-commit-time-floor-is-anchored-on-a-record-written-before-the-admission.md):
-   * the arrival can PREDATE the admission. A group conversation's `joinedAt` is written by the
-   * enrolment, before the Add commit, so the floor routinely lands one commit early; a device kicked
-   * and re-added keeps its first row (`orIgnore`), so it is floored at its first admission and
-   * answered the commit times from while it was out. Only acceptance times leak, never content; the
-   * fix is an admission recorded by the commit gate, not another clock comparison.
-   *
-   * FAILS CLOSED (review of #2890, MED-3): with no arrival there is no floor, and "no floor" would
-   * hand the whole retained log to a newcomer. A key group asked with no device header is a 400 (the
-   * seat is per device, so the question is malformed without one); a member with no stretch and no
-   * device row is a 403, said at ERROR - `memberOfGroupKind` admitted them from a row this read
-   * cannot find, which is a fault, not a newcomer.
-   *
-   * COST, AND WHY NO INDEX: the admitting-commit read orders the group's rows at or before arrival by
-   * `baseEpoch DESC` through the `(groupId, baseEpoch)` key, so it may walk the retained window of
-   * one group - bounded by the commit-log retention (about a year), never the table. It runs once per
-   * (group, base epoch) per session: the client caches every answer (`cachedCommitInstants`), so the
-   * read is a few per merged commit at most, and an index on `createdAt` would buy nothing measured.
+   * FAILS CLOSED (review of #2890, MED-3): without an admission there is no floor, and "no floor"
+   * would hand the whole retained log to a newcomer.
+   * - No `x-canari-device`: a 400 - the floor is per device, so the question is malformed without one.
+   * - A member whose device holds no seat: a 403 at ERROR - `memberOfGroupKind` admitted them from a
+   *   row this read cannot find, which is a fault, not a newcomer.
+   * - A seat no commit admitted (`admittedByBaseEpoch` null): a 403. At WARN while the seat is
+   *   `pending` (enrolled, or kicked and not yet re-added - it holds nothing to ask about); at ERROR
+   *   when it is `active`, because an active seat was admitted by something and the writer that
+   *   should have recorded it did not. Rows from before the column were backfilled by migration 044
+   *   (refuse rather than leak), so that line names a path, never the population.
    */
   private async commitFloorOf(
     groupId: string,
     userId: string,
-    deviceId: string | undefined,
-    isKeyDistribution: boolean
-  ): Promise<number | null> {
+    deviceId: string | undefined
+  ): Promise<number> {
     const who = `group=${groupId} user=${userId.slice(0, 8)}`;
-    // The arrival is named by its ROW and compared IN THE DATABASE: read into a JS `Date` it loses
-    // the microseconds `now()` carries, and the commit that admitted a device - written in the same
-    // transaction as its row, so at the same `now()` - then compared AFTER it, lowering the floor one
-    // commit and handing out the one before (found by the PostgreSQL spec, review of #2890 LOW-2).
-    let arrival: { table: string; column: string; id: string } | null = null;
-    if (!isKeyDistribution) {
-      const open = await this.groupRepo.manager.findOne(GroupMembershipInterval, {
-        where: { groupId, userId, leftAt: IsNull() },
-      });
-      if (open) {
-        arrival = {
-          table: 'dm_group_membership_intervals',
-          column: 'COALESCE(a."admittedAt", a."joinedAt")',
-          id: open.id,
-        };
-      }
-    } else if (!deviceId) {
-      this.logger.warn(`[COMMIT_AT] refused ${who} - a key group asked with no device header`);
-      throw new BadRequestException('x-canari-device is required for a key-distribution group');
+    if (!deviceId) {
+      this.logger.warn(`[COMMIT_AT] refused ${who} - asked with no device header`);
+      throw new BadRequestException('x-canari-device is required to read a commit time');
     }
-    if (!arrival && deviceId) {
-      const device = await this.deviceGroupRepo.findOne({
-        where: { groupId, userId, deviceId },
-      });
-      if (device) {
-        arrival = { table: 'dm_device_group_memberships', column: 'a."createdAt"', id: device.id };
-      }
-    }
-    if (!arrival) {
+    const seat = await this.deviceGroupRepo.findOne({
+      where: { groupId, userId, deviceId },
+      select: { id: true, status: true, admittedByBaseEpoch: true },
+    });
+    if (!seat) {
       this.logger.error(
-        `[COMMIT_AT] refused ${who} keyDistribution=${isKeyDistribution} device=${deviceId ? 'given' : 'none'} - a member with no arrival (no open stretch, no device row): no floor, so nothing is answered`
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} - a member whose device holds no seat: no admission, so nothing is answered`
       );
-      throw new ForbiddenException(`No arrival of the requester in ${groupId}`);
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
     }
-    // `table` and `column` are the two literals above, never input.
-    const [row]: { floor: number | null }[] = await this.commitLogRepo.query(
-      `SELECT MAX(c."baseEpoch") AS floor FROM mls_commit_log c, ${arrival.table} a
-        WHERE a.id = $2 AND c."groupId" = $1 AND c."createdAt" <= ${arrival.column}`,
-      [groupId, arrival.id]
-    );
-    return row?.floor ?? null;
+    if (seat.admittedByBaseEpoch === null || seat.admittedByBaseEpoch === undefined) {
+      const line =
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} status=${seat.status} - ` +
+        `no commit recorded this seat's admission, so nothing is answered`;
+      if (seat.status === 'active') {
+        this.logger.error(`${line} (an ACTIVE seat: the path that admitted it did not record it)`);
+      } else {
+        this.logger.warn(line);
+      }
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
+    }
+    return seat.admittedByBaseEpoch;
   }
 
   /**
@@ -5331,9 +5324,16 @@ export class MessagingService {
       tag = 'MEMBERSHIP_ACTIVE',
       authority,
       claim,
+      admittedByBaseEpoch,
     }: {
       tag?: string;
       authority: ActivationAuthority;
+      /**
+       * The admission this seat holds when no commit recorded one - the group's creation (`0`) or
+       * the epoch a key group's publisher holds the group at - written only on a seat that has none
+       * ({@link recordAdmission}, `keepRecorded`), so it never lowers the floor an accepted commit set.
+       */
+      admittedByBaseEpoch?: number;
       /**
        * The claim this seat is written against ({@link claimSeat}), taken by the caller BEFORE the
        * check that decided the activation. REQUIRED of the two authorities whose check is made
@@ -5382,7 +5382,7 @@ export class MessagingService {
     // package ({@link writeClaimedSeat}): created while its account is erased, it gets no seat.
     if (authority === 'group_creator') {
       const refused = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
-        this.writeClaimedSeat(m, userId, deviceId, groupId, tag)
+        this.writeClaimedSeat(m, userId, deviceId, groupId, tag, admittedByBaseEpoch)
       );
       if (refused !== null) return { ok: false, reason: refused };
       await this.routeActiveSeat(userId, deviceId, groupId, tag);
@@ -5406,7 +5406,14 @@ export class MessagingService {
         );
         return { ok: false, reason: 'departed' } as const;
       }
-      const refused = await this.writeClaimedSeat(m, userId, deviceId, groupId, tag);
+      const refused = await this.writeClaimedSeat(
+        m,
+        userId,
+        deviceId,
+        groupId,
+        tag,
+        admittedByBaseEpoch
+      );
       return refused === null ? ({ ok: true } as const) : ({ ok: false, reason: refused } as const);
     });
     if (outcome.ok) await this.routeActiveSeat(userId, deviceId, groupId, tag);
@@ -5423,6 +5430,9 @@ export class MessagingService {
    * The revocation denylist is read here too (WP-GHOST-1): a commit writes its committer's seat
    * through this alone, with no {@link deviceAddressability} before it.
    *
+   * `admittedByBaseEpoch`, when given, is recorded on the seat only if no admission is recorded yet
+   * (see {@link activateDeviceMembership}).
+   *
    * @returns null when the seat was written; otherwise why not (logged).
    */
   private async writeClaimedSeat(
@@ -5430,7 +5440,8 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     groupId: string,
-    tag: string
+    tag: string,
+    admittedByBaseEpoch?: number
   ): Promise<null | 'revoked' | 'no_key_package'> {
     const revoked = await m.getRepository(RevokedDevice).findOne({
       where: activeRevocationWhere({ userId, deviceId }),
@@ -5455,7 +5466,47 @@ export class MessagingService {
       groupId,
       tag
     );
+    if (admittedByBaseEpoch !== undefined) {
+      await this.recordAdmission(m, userId, deviceId, groupId, admittedByBaseEpoch, tag, {
+        keepRecorded: true,
+      });
+    }
     return null;
+  }
+
+  /**
+   * Records `baseEpoch` as the commit that ADMITTED the device's seat
+   * (`DeviceGroupMembership.admittedByBaseEpoch`), the floor of the commit times it is answered
+   * ({@link commitFloorOf}), in the transaction `m` that admits it.
+   *
+   * Written by the commit gate on EVERY admission - an Add's `admits` and the Welcome it carries, an
+   * external join - and overwrites what was there: a re-add after a kick is a new admission, and the
+   * commits made while the device was out are not its to date. `keepRecorded` writes only a seat
+   * that has none: the creation and a key group's publisher, which no commit admitted, must never
+   * lower a floor an accepted commit set.
+   */
+  private async recordAdmission(
+    m: EntityManager,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    baseEpoch: number,
+    tag: string,
+    { keepRecorded = false }: { keepRecorded?: boolean } = {}
+  ): Promise<void> {
+    const result = await m.getRepository(DeviceGroupMembership).update(
+      {
+        userId,
+        deviceId,
+        groupId,
+        ...(keepRecorded ? { admittedByBaseEpoch: IsNull() } : {}),
+      },
+      { admittedByBaseEpoch: baseEpoch }
+    );
+    this.logger.debug(
+      `[${tag}] admission group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+        `baseEpoch=${baseEpoch} keepRecorded=${keepRecorded} written=${result.affected ?? '?'}`
+    );
   }
 
   /**

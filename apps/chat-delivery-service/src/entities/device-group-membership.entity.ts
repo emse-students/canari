@@ -158,6 +158,30 @@ export class DeviceGroupMembership {
   admittedAtEpoch: number | null;
 
   /**
+   * The base epoch of the commit that last ADMITTED this device - the floor of what
+   * `GET mls/commits/:groupId/accepted-at` answers it (`commitFloorOf`): the time of that commit and
+   * of every later one, never of an older one. A member is not handed the group's past (user,
+   * 2026-10-21), and the acceptance time of a commit made before they came in is that past.
+   *
+   * WHY A COLUMN AND NOT A CLOCK (owner, 2026-11-02). The floor was read as "the last commit accepted
+   * at or before the arrival", and every arrival record could predate the admission: a group
+   * conversation's stretch `joinedAt` is written by the enrolment BEFORE the Add, so the floor landed
+   * one commit early; a key-group device kicked and re-added keeps its row and its `createdAt`, so it
+   * was answered the commits made while it was out. The commit gate KNOWS the admission - it is the
+   * commit it is accepting - so it writes it here, with the advance, on EVERY admission: a member's
+   * Add (`admits`, and the target of the Welcome it carries), an external join (the committer's own
+   * commit), and the group's creation (0: nothing precedes the creator). Unlike
+   * {@link admittedAtEpoch} it is never cleared by a transition: an active member keeps its floor.
+   *
+   * NULL MEANS NO COMMIT ADMITTED THIS SEAT, and the floor FAILS CLOSED on it: nothing is answered.
+   * A seat enrolled `pending` and not yet admitted holds none, and a kicked seat waits for the Add
+   * that answers its kick. Rows from before migration 044 were backfilled by it, conservatively
+   * (refuse rather than leak): see that migration.
+   */
+  @Column({ type: 'integer', nullable: true, default: null })
+  admittedByBaseEpoch: number | null;
+
+  /**
    * When a commit admitted this device into the group - the evidence `withheldWindows` reads a
    * person's ARRIVAL from (their earliest row), so a newcomer is withheld everything before it.
    *

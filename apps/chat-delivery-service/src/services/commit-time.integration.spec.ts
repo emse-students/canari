@@ -1,16 +1,18 @@
 /**
- * THE ARRIVAL FLOOR OF `GET mls/commits/:groupId/accepted-at`, AGAINST A REAL POSTGRESQL.
+ * THE ADMISSION FLOOR OF `GET mls/commits/:groupId/accepted-at`, AGAINST A REAL POSTGRESQL.
  *
- * A member is handed the time of the commit that admitted them and of every later one, never of a
- * commit older than their arrival (`commitFloorOf`). The unit spec stubs the `createdAt` comparison,
- * so it cannot say what the database answers at the one boundary that matters - two rows written in
- * the SAME transaction share `now()` - nor which stretch a re-joined member is floored by. These
- * cases do (review of #2890, LOW-2):
+ * A device is handed the time of the commit that admitted it and of every later one, never of an
+ * older one (`commitFloorOf`). The floor is the base epoch the commit gate records on the seat
+ * (`admittedByBaseEpoch`, written by the gate's own writer here), no longer a clock comparison - the
+ * arrival records it replaced could be written BEFORE the admission (owner, 2026-11-02). These cases
+ * hold it against the database, and against the shapes the clock got wrong:
  *
- * - a key-distribution device row and the commit that admitted it, written in one transaction: the
- *   admitting commit is answered, the one before it refused;
- * - a member who left and came back: a commit of the earlier stretch is refused;
- * - the arrival is the OPEN stretch's `admittedAt ?? joinedAt`, never a closed one's.
+ * - a key-group device admitted in the transaction of its commit: that commit answered, the one
+ *   before refused; a publisher's admission never lowers it;
+ * - a group admission whose enrolment was written before the Add: the Add answered, the commit
+ *   before it refused (the old floor landed on it);
+ * - a device kicked and re-added, its row kept: the commits made while it was out refused;
+ * - the rows from before the column, backfilled by migration 044: refuse rather than leak.
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads;
  * CI's `test-chat-delivery-integration` sets it and refuses a skip. Locally:
@@ -24,7 +26,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client } from 'pg';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import type Redis from 'ioredis';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -48,6 +50,7 @@ const dir = join(__dirname, '..', 'migrations');
 const MIGRATION_036 = readFileSync(join(dir, '036_seat_evictions.sql'), 'utf8');
 const MIGRATION_038 = readFileSync(join(dir, '038_group_member_awaiting_admission.sql'), 'utf8');
 const MIGRATION_039 = readFileSync(join(dir, '039_departure_seat_generation.sql'), 'utf8');
+const MIGRATION_044 = readFileSync(join(dir, '044_device_admission_base_epoch.sql'), 'utf8');
 
 /** A key-distribution group (a community's), whose seats are per device and keep no stretch. */
 const KEY_GROUP = '00000000-0000-4000-8000-0000000000c1';
@@ -79,13 +82,38 @@ maybe('the accepted-at arrival floor (PostgreSQL)', () => {
       [groupId, base, createdAt]
     );
   /** A stretch of membership of ME in GROUP. */
-  const stretch = (joinedAt: Date, leftAt: Date | null, admittedAt: Date | null = null) =>
+  const stretch = (joinedAt: Date, leftAt: Date | null) =>
     q(
-      `INSERT INTO dm_group_membership_intervals ("groupId", "userId", "joinedAt", "leftAt", "admittedAt") VALUES ($1, $2, $3, $4, $5)`,
-      [GROUP, ME.userId, joinedAt, leftAt, admittedAt]
+      `INSERT INTO dm_group_membership_intervals ("groupId", "userId", "joinedAt", "leftAt") VALUES ($1, $2, $3, $4)`,
+      [GROUP, ME.userId, joinedAt, leftAt]
     );
   const ask = (groupId: string, base: number, deviceId: string | null = ME.deviceId) =>
     outcome(service.getCommitAcceptedAt(groupId, base, ME.userId, deviceId ?? undefined));
+  /** ME's seat in `groupId`. */
+  const seatRow = (groupId: string, status: 'pending' | 'active', m?: EntityManager) =>
+    (m ?? ds.manager).query(
+      `INSERT INTO dm_device_group_memberships ("groupId", "userId", "deviceId", status) VALUES ($1, $2, $3, $4)`,
+      [groupId, ME.userId, ME.deviceId, status]
+    );
+  /** The commit gate's record of ME's admission by the commit built on `base` - its own writer. */
+  const admit = (
+    m: EntityManager,
+    groupId: string,
+    base: number,
+    options: { keepRecorded?: boolean } = {}
+  ) =>
+    (
+      service as unknown as {
+        recordAdmission: (...a: unknown[]) => Promise<void>;
+      }
+    ).recordAdmission(m, ME.userId, ME.deviceId, groupId, base, 'IT', options);
+  const floorOf = async (groupId: string) =>
+    (
+      (await q(
+        `SELECT "admittedByBaseEpoch" AS floor FROM dm_device_group_memberships WHERE "groupId" = $1 AND "deviceId" = $2`,
+        [groupId, ME.deviceId]
+      )) as { floor: number | null }[]
+    )[0]?.floor;
 
   beforeAll(async () => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
@@ -149,6 +177,7 @@ maybe('the accepted-at arrival floor (PostgreSQL)', () => {
     await q(`DELETE FROM dm_device_group_memberships`);
     await q(`DELETE FROM dm_group_members`);
     await q(`DELETE FROM dm_group_membership_intervals`);
+    await q(`DELETE FROM dm_groups WHERE id NOT IN ($1, $2)`, [KEY_GROUP, GROUP]);
   });
 
   afterAll(async () => {
@@ -159,67 +188,126 @@ maybe('the accepted-at arrival floor (PostgreSQL)', () => {
     await admin.end();
   });
 
-  it('a key-group device row written in the SAME transaction as its admitting commit is handed that commit, and nothing older', async () => {
+  it('a key-group device is handed the commit that admitted it, and nothing older', async () => {
     await commitAt(KEY_GROUP, 3, at(1));
-    // The commit gate's transaction: the admitting commit's log row and the device row it admits,
-    // both stamped by the one `now()` of that transaction.
+    // The commit gate's transaction: the admitting commit's log row, the seat it admits, and the
+    // admission recorded on it - by the gate's own writer.
     await ds.transaction(async (m) => {
       await m.query(
         `INSERT INTO mls_commit_log ("groupId", "baseEpoch", commit) VALUES ($1, 4, 'c')`,
         [KEY_GROUP]
       );
-      await m.query(
-        `INSERT INTO dm_device_group_memberships ("groupId", "userId", "deviceId", status) VALUES ($1, $2, $3, 'active')`,
-        [KEY_GROUP, ME.userId, ME.deviceId]
-      );
+      await seatRow(KEY_GROUP, 'active', m);
+      await admit(m, KEY_GROUP, 4);
     });
-    await q(
-      `INSERT INTO mls_commit_log ("groupId", "baseEpoch", commit, "createdAt") VALUES ($1, 5, 'c', now() + interval '1 minute')`,
-      [KEY_GROUP]
-    );
+    await commitAt(KEY_GROUP, 5, at(23));
 
     expect(typeof (await ask(KEY_GROUP, 4))).toBe('string');
-    expect(typeof (await ask(KEY_GROUP, 5))).toBe('string');
+    expect(await ask(KEY_GROUP, 5)).toBe(at(23).toISOString());
     expect(await ask(KEY_GROUP, 3)).toBe(403);
-    // FAILS CLOSED: a key group asked without the device that would anchor the floor.
+    // FAILS CLOSED: asked without the device that holds the admission.
     expect(await ask(KEY_GROUP, 5, null)).toBe(400);
+
+    // A publisher's or a creator's admission never LOWERS the one a commit recorded.
+    await ds.transaction((m) => admit(m, KEY_GROUP, 0, { keepRecorded: true }));
+    expect(await floorOf(KEY_GROUP)).toBe(4);
   });
 
-  it('a member who left and came back is refused the commits of the earlier stretch', async () => {
+  it('a group admission answers the Add and refuses the commit before it, though the enrolment was written first', async () => {
     await q(`INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`, [
       GROUP,
       ME.userId,
     ]);
-    await stretch(at(1), at(3));
-    await stretch(at(6), null);
-    await commitAt(GROUP, 2, at(2)); // inside the first stretch
-    await commitAt(GROUP, 4, at(4)); // while they were out
-    await commitAt(GROUP, 5, at(5)); // the commit that admitted them back
-    await commitAt(GROUP, 6, at(7));
-
-    expect(await ask(GROUP, 2)).toBe(403);
-    expect(await ask(GROUP, 4)).toBe(403);
-    expect(await ask(GROUP, 5)).toBe(at(5).toISOString());
-    expect(await ask(GROUP, 6)).toBe(at(7).toISOString());
-  });
-
-  it("arrival is the OPEN stretch's admittedAt, ahead of its joinedAt and of any closed stretch", async () => {
-    await q(`INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`, [
+    await commitAt(GROUP, 2, at(1));
+    // The enrolment writes the stretch and the pending seat BEFORE the Add that admits them - the
+    // arrival the old floor read, which then landed on commit 2.
+    await stretch(at(2), null);
+    await seatRow(GROUP, 'pending');
+    await commitAt(GROUP, 3, at(3)); // the Add
+    await ds.transaction((m) => admit(m, GROUP, 3));
+    await q(`UPDATE dm_device_group_memberships SET status = 'active' WHERE "groupId" = $1`, [
       GROUP,
-      ME.userId,
     ]);
-    // A closed stretch reaching back to hour 0 must not lower the floor.
-    await stretch(at(0), at(1));
-    // Admitted by a commit at hour 3, enrolled at hour 6.
-    await stretch(at(6), null, at(3));
-    await commitAt(GROUP, 1, at(0));
-    await commitAt(GROUP, 2, at(2));
-    await commitAt(GROUP, 3, at(3)); // the commit that admitted them
     await commitAt(GROUP, 4, at(5));
 
-    expect(await ask(GROUP, 1)).toBe(403);
     expect(await ask(GROUP, 2)).toBe(403);
     expect(await ask(GROUP, 3)).toBe(at(3).toISOString());
     expect(await ask(GROUP, 4)).toBe(at(5).toISOString());
+  });
+
+  it('a device kicked and re-added is refused the commits made while it was out', async () => {
+    await seatRow(KEY_GROUP, 'active');
+    await commitAt(KEY_GROUP, 2, at(1));
+    await ds.transaction((m) => admit(m, KEY_GROUP, 2)); // its first admission
+    await commitAt(KEY_GROUP, 3, at(2));
+    // The kick: its leaf removed by commit 4, its seat demoted and stamped - the row is KEPT.
+    await commitAt(KEY_GROUP, 4, at(3));
+    await q(
+      `UPDATE dm_device_group_memberships SET status = 'pending', "kickedAt" = $2 WHERE "groupId" = $1`,
+      [KEY_GROUP, at(3)]
+    );
+    await commitAt(KEY_GROUP, 5, at(4)); // while it was out
+    await commitAt(KEY_GROUP, 6, at(5)); // the re-add
+    await ds.transaction((m) => admit(m, KEY_GROUP, 6));
+    await q(
+      `UPDATE dm_device_group_memberships SET status = 'active', "kickedAt" = NULL WHERE "groupId" = $1`,
+      [KEY_GROUP]
+    );
+    await commitAt(KEY_GROUP, 7, at(6));
+
+    for (const before of [2, 3, 4, 5]) expect(await ask(KEY_GROUP, before)).toBe(403);
+    expect(await ask(KEY_GROUP, 6)).toBe(at(5).toISOString());
+    expect(await ask(KEY_GROUP, 7)).toBe(at(6).toISOString());
+  });
+
+  /**
+   * ROWS FROM BEFORE THE COLUMN, backfilled by migration 044 - refuse rather than leak. An active seat
+   * is floored at its group's epoch, a seat a commit admitted and that has not activated yet at the
+   * epoch it holds, and any other pending seat is left with no admission.
+   */
+  it('migration 044 floors every pre-column seat at what it can prove, never lower', async () => {
+    const OTHER = '00000000-0000-4000-8000-0000000000c3';
+    await q(`INSERT INTO dm_groups (id, "isGroup", "activeEpoch") VALUES ($1, true, 4)`, [OTHER]);
+    await q(`ALTER TABLE dm_device_group_memberships DROP COLUMN "admittedByBaseEpoch"`);
+    const row = (
+      groupId: string,
+      deviceId: string,
+      status: string,
+      admittedAtEpoch: number | null
+    ) =>
+      q(
+        `INSERT INTO dm_device_group_memberships ("groupId", "userId", "deviceId", status, "admittedAtEpoch") VALUES ($1, $2, $3, $4, $5)`,
+        [groupId, ME.userId, deviceId, status, admittedAtEpoch]
+      );
+    await row(KEY_GROUP, ME.deviceId, 'active', null);
+    await row(OTHER, ME.deviceId, 'active', null);
+    await row(GROUP, ME.deviceId, 'pending', 7); // admitted by the commit on base 6, not activated
+    await row(KEY_GROUP, 'dev-kicked', 'pending', null); // kicked, or never admitted
+
+    await q(MIGRATION_044);
+    // Idempotent: a second run changes nothing.
+    await q(MIGRATION_044);
+
+    const floors = Object.fromEntries(
+      (
+        (await q(
+          `SELECT "groupId", "deviceId", "admittedByBaseEpoch" AS floor FROM dm_device_group_memberships`
+        )) as { groupId: string; deviceId: string; floor: number | null }[]
+      ).map((r) => [`${r.groupId.slice(-2)}:${r.deviceId}`, r.floor])
+    );
+    expect(floors).toEqual({
+      [`c1:${ME.deviceId}`]: 9,
+      [`c3:${ME.deviceId}`]: 4,
+      [`c2:${ME.deviceId}`]: 6,
+      'c1:dev-kicked': null,
+    });
+
+    for (const base of [3, 7, 8]) await commitAt(KEY_GROUP, base, at(base));
+    await commitAt(KEY_GROUP, 9, at(12));
+    // Every commit accepted before the deploy is refused; the first one after it is answered.
+    for (const before of [3, 7, 8]) expect(await ask(KEY_GROUP, before)).toBe(403);
+    expect(await ask(KEY_GROUP, 9)).toBe(at(12).toISOString());
+    // A seat no commit admitted is answered nothing.
+    expect(await ask(KEY_GROUP, 9, 'dev-kicked')).toBe(403);
   });
 });

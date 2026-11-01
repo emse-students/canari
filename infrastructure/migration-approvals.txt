@@ -14,3 +14,7 @@
 # accepted, reviewed, a backup just before). An edit to the file after its approval changes the
 # checksum, and the migration is held again.
 # Mechanism: docs/wiki/cicd.md ("A migration the owner must approve is held").
+
+# 044: the commit-time floor read from the admission the commit gate records, and the backfill of every
+# existing seat - approved by the owner on 2026-11-02 ("Oui, dans la file").
+apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql a5a73ee30f6e5c8b8c659cf018eee909e104698cd5db83910757ac7316fef976

@@ -228,7 +228,9 @@ export class GroupsController {
           safeCreatorId,
           safeCreatorDeviceId,
           groupId,
-          { tag: 'CREATE_GROUP', authority: 'group_creator' }
+          // The creator is in from the group's first epoch: no commit precedes it, so every commit
+          // time is theirs (`DeviceGroupMembership.admittedByBaseEpoch`).
+          { tag: 'CREATE_GROUP', authority: 'group_creator', admittedByBaseEpoch: 0 }
         );
       } catch (e) {
         await this.discardUnenrolledGroup(
