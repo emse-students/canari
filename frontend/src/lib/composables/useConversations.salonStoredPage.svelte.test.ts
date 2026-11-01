@@ -78,6 +78,9 @@ function makeStorage(page: StoredMessage[] | (() => Promise<StoredMessage[]>)) {
       calls.push('read');
       return typeof page === 'function' ? page() : page;
     }),
+    saveConversation: vi.fn(async () => {
+      calls.push('conversation');
+    }),
     deleteMessagesForConversation: vi.fn(async () => {
       calls.push('delete');
     }),
@@ -144,11 +147,27 @@ describe("a salon's stored page", () => {
 
     await convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
 
-    expect(storage.calls).toEqual(['read', 'delete', 'save']);
+    expect(storage.calls).toEqual(['read', 'conversation', 'delete', 'save']);
     expect(storage.saveMessages).toHaveBeenCalledWith(
       [expect.objectContaining({ id: 'c', conversationId: SALON, timestamp: 3_000 })],
       'k'
     );
+  });
+
+  // 2026-10-30, iPhone 12: `messages.conversation_id` is a foreign key onto `conversations`, and the
+  // listing builds a salon's row in memory only, so the first page of a salon met for the first time
+  // failed to store. Control: the `saveConversation` call removed -> the order below fails.
+  it('writes the salon row before its page, so the foreign key holds', async () => {
+    const storage = makeStorage([]);
+    listMessages.mockResolvedValue([{ id: 'c', at: 3_000 }]);
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+
+    await convs.loadHistoryForConversation(SALON, SALON, ctx);
+
+    expect(storage.saveConversation).toHaveBeenCalledWith(expect.objectContaining({ id: SALON }));
+    expect(storage.calls.indexOf('conversation')).toBeLessThan(storage.calls.indexOf('save'));
   });
 
   it('survives a failed server page: nothing deleted, the copy stays on screen', async () => {
@@ -207,7 +226,7 @@ describe("a salon's stored page", () => {
     await convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
 
     expect(convs.conversations.get(SALON)?.messages).toEqual([]);
-    expect(storage.calls).toEqual(['read', 'delete']);
+    expect(storage.calls).toEqual(['read', 'conversation', 'delete']);
   });
 
   it('keeps a message that arrived live after the stored page was drawn', async () => {

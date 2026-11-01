@@ -13,7 +13,7 @@ import { appendLog } from '$lib/utils/sessionLog';
  *
  * Every action is set in its own `try`: an engine that does not know an action THROWS on
  * `setActionHandler`, and one unknown action must not cost the others. Each refusal is logged once
- * per call, because "the system has no hang-up for this call" is exactly what a device reading needs.
+ * per page life, because "the system has no hang-up for this call" is exactly what a device reading needs.
  */
 
 /** What the call surface hands the OS. */
@@ -33,18 +33,25 @@ export interface MediaSessionHost {
 }
 
 /**
- * The refusals already said for the call in progress, by key. The surface re-applies the session on
- * every change it shows (the mute, a picture appearing), and a refusal is a fact about the ENGINE:
- * one line per call says it, the next ones would be noise (313 identical lines in 46 s of a ring,
- * 2026-10-31). Emptied by {@link clearCallMediaSession}, which runs once when the call surface goes.
+ * The refusals already said, by key, FOR THE LIFE OF THE PAGE. A refusal is a fact about the ENGINE
+ * (WebKit has no `hangup` action, Chromium has), and the Media Session API offers no way to ask for
+ * support up front - `setActionHandler` throwing IS the probe - so it is said once: the surface
+ * re-applies the session on every change it shows (313 identical lines in 46 s of a ring,
+ * 2026-10-31), and each later call of the same page would only repeat it (once per call on the
+ * iPhone 12, 2026-10-30).
  */
-const saidThisCall = new Set<string>();
+const saidThisEngine = new Set<string>();
 
-/** Logs `line` once per call under `key`. */
-function sayOncePerCall(key: string, line: string): void {
-  if (saidThisCall.has(key)) return;
-  saidThisCall.add(key);
+/** Logs `line` once per page life under `key`. */
+function sayOncePerEngine(key: string, line: string): void {
+  if (saidThisEngine.has(key)) return;
+  saidThisEngine.add(key);
   appendLog(line);
+}
+
+/** Test seam: forgets what was said, as a fresh page load would. */
+export function resetCallMediaSessionForTest(): void {
+  saidThisEngine.clear();
 }
 
 /** Publishes the call to the OS media session. Returns whether the engine has one at all. */
@@ -54,7 +61,7 @@ export function applyCallMediaSession(
 ): boolean {
   const session = host.mediaSession;
   if (!session) {
-    sayOncePerCall(
+    sayOncePerEngine(
       'no-api',
       '[Call] no Media Session API on this engine - the OS shows no call controls'
     );
@@ -76,7 +83,7 @@ export function applyCallMediaSession(
     try {
       session.setActionHandler(action as MediaSessionAction, handler);
     } catch (e) {
-      sayOncePerCall(
+      sayOncePerEngine(
         `action:${action}`,
         `[Call] Media Session action '${action}' unsupported here: ${String(e)}`
       );
@@ -94,15 +101,13 @@ export function applyCallMediaSession(
 
 /** Takes the call off the OS media session (the call ended or the surface unmounted). */
 export function clearCallMediaSession(host: MediaSessionHost): void {
-  // The next call says its own refusals again.
-  saidThisCall.clear();
   const session = host.mediaSession;
   if (!session) return;
   for (const action of ['hangup', 'togglemicrophone'] as CallAction[]) {
     try {
       session.setActionHandler(action as MediaSessionAction, null);
     } catch {
-      // Unsupported on this engine: applyCallMediaSession already logged it for this call.
+      // Unsupported on this engine: applyCallMediaSession already said so.
     }
   }
   try {
