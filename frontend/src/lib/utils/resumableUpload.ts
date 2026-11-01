@@ -22,6 +22,7 @@
  * Every request body is one part, {@link REEL_UPLOAD_PART_BYTES} (1 MiB): under the host WAF's 10 MiB
  * drop and the 8 MiB budget, and the most a cut on a weak link can cost.
  */
+import type { ReleaseAnswer } from '$lib/utils/chat/uploadReleaseMarks';
 import {
   SEGMENTED_MEDIA_ENCODING,
   SEGMENTED_MEDIA_HEADER_BYTES,
@@ -173,22 +174,30 @@ export async function sealBlobRange(
 
 /**
  * Gives an open session (its staged parts, its slot among the owner's open sessions, its budget)
- * back to the server: `DELETE /session/:id`. Best effort and logged either way - the server's sweep
- * (24 h) is what holds when it cannot be reached. Never throws.
+ * back to the server: `DELETE /session/:id`. Never throws, and SAYS WHETHER THE SERVER ANSWERED:
+ * `answered` for a 2xx, or media-service's own 403/404/409 (not this owner's, already gone,
+ * completed - nothing a retry would change); `unanswered` for a transport failure, an edge page, a
+ * 5xx or a refused token, which the durable release mark (`uploadReleaseMarks.ts`) retries.
  */
 export async function releaseUploadSession(
   port: ResumableUploadPort,
   uploadId: string,
   why: string,
   log: (line: string) => void
-): Promise<void> {
+): Promise<ReleaseAnswer> {
   try {
     const res = await port.request('DELETE', `/${uploadId}`, null);
-    log(`[UPLOAD-RESUME] session ${uploadId} released (${why}): HTTP ${res.status}`);
-  } catch (e) {
+    if (res.ok || sessionAnswered(res, 403, 404, 409)) {
+      log(`[UPLOAD-RESUME] session ${uploadId} released (${why}): HTTP ${res.status}`);
+      return 'answered';
+    }
     log(
-      `[UPLOAD-RESUME] session ${uploadId} NOT released (${why}), the server's sweep holds it: ${String(e)}`
+      `[UPLOAD-RESUME] session ${uploadId} NOT released (${why}): HTTP ${res.status}, still owed`
     );
+    return 'unanswered';
+  } catch (e) {
+    log(`[UPLOAD-RESUME] session ${uploadId} NOT released (${why}), still owed: ${String(e)}`);
+    return 'unanswered';
   }
 }
 

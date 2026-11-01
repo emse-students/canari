@@ -242,7 +242,9 @@ function life(w: World, opts: LifeOptions = {}) {
     uploadMedia,
     prepareMedia,
     releaseUpload: (uploadId, why) =>
-      live(() => releaseUploadSession(port, uploadId, why, () => undefined)),
+      live(async () => {
+        await releaseUploadSession(port, uploadId, why, () => undefined);
+      }),
     addMessageToChat: async (_sender, content) => {
       notices.push(content);
     },
