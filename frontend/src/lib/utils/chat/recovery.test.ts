@@ -1414,6 +1414,21 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     await expect(requestReAdd('g1', deps)).resolves.toBeUndefined();
     expect(lines.join(' | ')).toContain('did not reach the server');
   });
+
+  it('says a REFUSED request is refused - never "elected", never a dead end proven by nobody online', async () => {
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, refused: 'not_a_member' });
+
+    await requestReAdd('g1', deps);
+
+    expect(lines.join(' | ')).toContain('was REFUSED (not_a_member)');
+    expect(provenDeadEnds()).toEqual([]);
+  });
 });
 
 /**
@@ -1530,6 +1545,34 @@ describe('requestReAdd - a dead end the server already proved', () => {
     advanceClockPastThrottle();
     await requestReAdd('g1', deps);
     expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the record when the re-ask is REFUSED - a refusal elected nobody', async () => {
+    // Until 2026-11-01 a refusal arrived as "no answer" and read `noPeerOnline: false`, which this
+    // seam takes as "the server elected one": it discharged the proof and logged a member reachable
+    // again on the strength of a 403.
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, refused: 'not_a_member' });
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    const out = lines.join(' | ');
+    expect(out).toContain('re-ask was REFUSED (not_a_member)');
+    expect(out).not.toContain('a member is reachable again');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
   });
 
   it('keeps the record when the re-ask never reached the server', async () => {

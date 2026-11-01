@@ -661,6 +661,19 @@ export async function reconcileGroup(
     return false;
   }
 
+  if (outcome?.refused) {
+    // THE SERVER REFUSED THE ASK ON MEMBERSHIP - an answer, and no election. Read as "elected" (as a
+    // non-2xx was until 2026-11-01) it sent a state-key probe that nobody had been asked to wait
+    // for; read as "nobody online" it would wait for a peer edge that cannot change a refusal. So
+    // nothing is sent and nothing is deferred: what decides this conversation's membership is the
+    // groups list and the recovery ladder, not this exchange.
+    asked.delete(groupId);
+    log(
+      `[HISTORY_RECONCILE] the service refused the history ask for ${short}… (${outcome.refused}) - no member elected, no probe sent`
+    );
+    return false;
+  }
+
   if (outcome?.noPeerOnline) {
     asked.delete(groupId);
     if (outcome.excludedOnline > 0) {

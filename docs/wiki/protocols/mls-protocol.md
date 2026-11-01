@@ -151,7 +151,7 @@ kick gets. The current device has no delete button at all.
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
 | POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
-| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal; any roster seat, a waiting one included, never a key-distribution group ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
 | POST | `/api/mls/history-request` | Ask one RANDOM online member to resend the history bundle (after a fresh join); `no_peer_online` if none. Admitted member only ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
 | POST | `/api/mls/add-lock` | Acquire distributed add-lock |
 | DELETE | `/api/mls/add-lock` | Release add-lock |

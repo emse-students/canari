@@ -72,6 +72,8 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  assertCallerHoldsSeat,
+  callerSeatStanding,
   refuseNotAMember,
   dateArrivalAtAdmission,
   exclusionWindows,
@@ -3999,17 +4001,7 @@ export class MessagingService {
   async assertCallerReactsIn(groupId: string, userId: string): Promise<void> {
     const salon = salonIdOf(groupId);
     if (salon === null) {
-      // An id that is neither a salon nor a uuid names no conversation: the unknown group's 403,
-      // never the 500 a uuid column answers a string it refuses (22P02).
-      if (!isGroupUuid(groupId)) {
-        throw refuseNotAMember(
-          this.logger,
-          'NOTIFY_REACTION',
-          groupId,
-          userId,
-          ' groupFound=false'
-        );
-      }
+      // Any other id - a uuid or not - is the shared gate's: it refuses a non-uuid before any query.
       await this.assertCallerActsOnGroup('NOTIFY_REACTION', groupId, userId);
       return;
     }
@@ -5788,6 +5780,16 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'WELCOME_REQ');
+    // ANY SEAT MAY ASK - an admitted member's new device, and above all a seat awaiting a member's
+    // admission, whose ask this route IS - and nobody else: a caller with no seat learned which
+    // member devices were online and had its ask stored and replayed (re-review of #2358).
+    const standing = await assertCallerHoldsSeat(
+      { groups: this.groupRepo, seats: this.groupMemberRepo },
+      this.logger,
+      'WELCOME_REQ',
+      groupId,
+      canonicalUserId(requesterUserId)
+    );
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
@@ -5801,8 +5803,7 @@ export class MessagingService {
     // AN ASK OF A SEAT AWAITING A MEMBER is relayed exactly as before, and said only at its 1st,
     // 10th, 100th... repeat for this device ({@link awaitingAskRepeats}): every line below is the
     // same sentence on every cadence of a wait that may last the 14 days of the ask.
-    const awaitingAsk =
-      (await this.rosterSeat(groupId, requesterUserId))?.awaitingAdmission === true;
+    const awaitingAsk = standing === 'awaiting';
     const nth = awaitingAsk ? this.awaitingAskRepeats.hit(`ask|${groupId}|${senderKey}`) : 1;
     const say = (line: string) => {
       if (nth !== null) this.logger.log(line);
@@ -5856,10 +5857,23 @@ export class MessagingService {
         const pendingSetKey = `pending_welcome:${groupId}`;
         const stored: string[] = await this.redis.smembers(pendingSetKey);
         let drained = 0;
+        let unseated = 0;
         for (const storedKey of stored) {
           if (storedKey === senderKey) continue; // already forwarded above
           const [storedUserId, storedDeviceId] = storedKey.split(':');
           if (!storedUserId || !storedDeviceId) continue;
+          // RE-ASKED AT THE DRAIN, NOT TRUSTED FROM THE STORE: an entry may predate the gate above,
+          // or its person may have lost the seat since it was stored. Only a seat is replayed.
+          if (
+            (await callerSeatStanding(
+              this.groupMemberRepo,
+              groupId,
+              canonicalUserId(storedUserId)
+            )) === null
+          ) {
+            unseated++;
+            continue;
+          }
           await this.redis.publish(
             'chat:messages',
             JSON.stringify({
@@ -5885,6 +5899,12 @@ export class MessagingService {
           await this.redis.del(pendingSetKey);
           say(
             `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`
+          );
+        }
+        if (unseated > 0) {
+          // Always said, never folded into the repeat count: each is a stored ask this drain dropped.
+          this.logger.warn(
+            `[WELCOME_REQ][${traceId}] DROPPED ${unseated} stored welcome_request(s) for group=${groupId} - their requester holds no seat in it any more`
           );
         }
 

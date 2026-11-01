@@ -1,15 +1,16 @@
 /// <reference types="jest" />
 
 /**
- * THE THREE RELAY ROUTES ASK THE GROUP, NOT ONLY THE LOGIN (re-review of #2358).
+ * THE RELAY ROUTES ASK THE GROUP, NOT ONLY THE LOGIN (re-review of #2358).
  *
- * `mls/history-request` and `mls/base-refresh-request` make a member's device answer a requester,
- * and `mls/notify-reaction` pushes to a message's author - each on its caller's word alone, until
- * this spec: anyone authenticated could reach them for a group they were not in. Each route now goes
- * through the membership gate every route keyed by a group id shares (`assertCallerActsOnGroup`), and
- * a salon reaction through social-service's reader question. Per route: a member passes, a caller
- * with no seat is the 403 `NOT_A_MEMBER` and nothing leaves, a seat awaiting a member's admission is
- * the 409 its client waits on.
+ * `mls/history-request`, `mls/base-refresh-request` and `mls/welcome-request` make a member's device
+ * answer a requester, and `mls/notify-reaction` pushes to a message's author - each on its caller's
+ * word alone, until this spec: anyone authenticated could reach them for a group they were not in.
+ * History and base refresh go through the gate every route keyed by a group id shares
+ * (`assertCallerActsOnGroup`): a member passes, no seat is the 403 `NOT_A_MEMBER` and nothing leaves,
+ * a seat awaiting admission is the 409. The welcome request relays ANY seat, a waiting one above all
+ * (`assertCallerHoldsSeat`), never a key group, and re-asks its stored asks at the drain. A salon
+ * reaction asks social-service's reader question.
  */
 import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -52,6 +53,13 @@ describe('the relay routes refuse a caller with no seat in the group they name',
 
   /** Who holds a seat in GROUP, and whether it awaits a member's admission. */
   let seats: Map<string, { awaitingAdmission: boolean }>;
+  /** The `dm_groups` rows, by id - GROUP a conversation unless a test makes it a key group. */
+  let groups: Map<string, Record<string, unknown>>;
+  /** What `pending_welcome:<GROUP>` holds: welcome requests stored while no member was online. */
+  let storedAsks: string[];
+  let warn: jest.SpyInstance;
+  /** `dm_groups.findOne` - an id that is not a uuid must be refused before it is ever called. */
+  let groupFindOne: jest.Mock;
   const fetchMock = jest.fn();
 
   const redis = {
@@ -59,6 +67,7 @@ describe('the relay routes refuse a caller with no seat in the group they name',
     exists: jest.fn(),
     sadd: jest.fn().mockResolvedValue(1),
     publish: jest.fn().mockResolvedValue(1),
+    del: jest.fn().mockResolvedValue(1),
   };
 
   const emptyRepo = () => ({
@@ -78,15 +87,20 @@ describe('the relay routes refuse a caller with no seat in the group they name',
       [MEMBER, { awaitingAdmission: false }],
       [AUTHOR, { awaitingAdmission: false }],
     ]);
+    groups = new Map([[GROUP, { id: GROUP }]]);
+    storedAsks = [];
     // The requester's own device and the author's: the election never picks the requester.
-    redis.smembers.mockResolvedValue([`${MEMBER}:${MEMBER}-dev`, `${AUTHOR}:da`]);
+    redis.smembers.mockImplementation(async (key: string) =>
+      key.startsWith('pending_welcome:') ? storedAsks : [`${MEMBER}:${MEMBER}-dev`, `${AUTHOR}:da`]
+    );
     redis.exists.mockResolvedValue(1);
 
+    groupFindOne = jest.fn(
+      async ({ where }: { where: { id: string } }) => groups.get(where.id) ?? null
+    );
     const groupRepo = {
       ...emptyRepo(),
-      findOne: jest.fn(async ({ where }: { where: { id: string } }) =>
-        where.id === GROUP ? { id: GROUP } : null
-      ),
+      findOne: groupFindOne,
     };
     const memberRepo = {
       ...emptyRepo(),
@@ -117,7 +131,7 @@ describe('the relay routes refuse a caller with no seat in the group they name',
     controller = new MessagingController(service);
     push = jest.spyOn(service, 'sendPushToUser').mockResolvedValue({ sent: 1, failed: 0 });
     const logger = (service as unknown as { logger: Record<string, (m: string) => void> }).logger;
-    jest.spyOn(logger, 'warn').mockImplementation(() => {});
+    warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
     jest.spyOn(logger, 'log').mockImplementation(() => {});
   });
 
@@ -156,6 +170,16 @@ describe('the relay routes refuse a caller with no seat in the group they name',
       ).resolves.toEqual({ status: 409, name: 'awaiting_admission' });
       expect(redis.publish).not.toHaveBeenCalled();
     });
+
+    it('refuses an id that is not a uuid with the 403, asking no table (never the 500 of 22P02)', async () => {
+      await expect(
+        refusalOf(
+          controller.notifyHistoryRequest(MEMBER, { ...ask(MEMBER), groupId: 'not-a-group' })
+        )
+      ).resolves.toEqual({ status: 403, name: 'NOT_A_MEMBER' });
+      expect(groupFindOne).not.toHaveBeenCalled();
+      expect(redis.publish).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST mls/base-refresh-request', () => {
@@ -180,6 +204,80 @@ describe('the relay routes refuse a caller with no seat in the group they name',
         refusalOf(controller.notifyBaseRefreshRequest(STRANGER, ask(STRANGER)))
       ).resolves.toEqual({ status: 409, name: 'awaiting_admission' });
       expect(redis.publish).not.toHaveBeenCalled();
+    });
+
+    it('refuses an id that is not a uuid with the 403, asking no table', async () => {
+      await expect(
+        refusalOf(
+          controller.notifyBaseRefreshRequest(MEMBER, { ...ask(MEMBER), groupId: 'not-a-group' })
+        )
+      ).resolves.toEqual({ status: 403, name: 'NOT_A_MEMBER' });
+      expect(groupFindOne).not.toHaveBeenCalled();
+      expect(redis.publish).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST mls/welcome-request - any seat may ask, a waiting one above all', () => {
+    /** Who the relayed frames named as requester, in publish order. */
+    const relayedRequesters = () =>
+      redis.publish.mock.calls.map(
+        (c) => (JSON.parse(c[1] as string) as { senderId: string }).senderId
+      );
+
+    it('refuses a caller with no seat, and neither elects nor stores anything', async () => {
+      await expect(
+        refusalOf(controller.notifyWelcomeRequest(STRANGER, ask(STRANGER)))
+      ).resolves.toEqual({ status: 403, name: 'NOT_A_MEMBER' });
+      expect(redis.smembers).not.toHaveBeenCalled();
+      expect(redis.exists).not.toHaveBeenCalled();
+      expect(redis.publish).not.toHaveBeenCalled();
+    });
+
+    it("relays a seat awaiting a member's admission - the ask this route exists for", async () => {
+      seats.set(STRANGER, { awaitingAdmission: true });
+
+      await expect(controller.notifyWelcomeRequest(STRANGER, ask(STRANGER))).resolves.toEqual({
+        status: 'forwarded',
+        target: expect.any(String),
+      });
+      expect(relayedRequesters()).toEqual([STRANGER]);
+    });
+
+    it("relays an admitted member's new device", async () => {
+      const res = await controller.notifyWelcomeRequest(MEMBER, {
+        ...ask(MEMBER),
+        requesterDeviceId: 'new-phone',
+      });
+
+      expect(res.status).toBe('forwarded');
+      expect(relayedRequesters()).toEqual([MEMBER]);
+    });
+
+    it('refuses a key-distribution group with the same 403, even to a row on its roster', async () => {
+      groups.set(GROUP, { id: GROUP, distributionWorkspaceId: 'ws-1' });
+
+      await expect(
+        refusalOf(controller.notifyWelcomeRequest(MEMBER, ask(MEMBER)))
+      ).resolves.toEqual({ status: 403, name: 'NOT_A_MEMBER' });
+      expect(redis.publish).not.toHaveBeenCalled();
+    });
+
+    it('refuses an id that is not a uuid, asking no table', async () => {
+      await expect(
+        refusalOf(controller.notifyWelcomeRequest(MEMBER, { ...ask(MEMBER), groupId: 'nope' }))
+      ).resolves.toEqual({ status: 403, name: 'NOT_A_MEMBER' });
+      expect(groupFindOne).not.toHaveBeenCalled();
+    });
+
+    it('re-asks every stored ask at the drain: one with no seat any more is dropped, and said', async () => {
+      // Stored while no member was online - before the gate existed, or by someone removed since.
+      seats.set('waiting', { awaitingAdmission: true });
+      storedAsks = ['waiting:w-dev', `${STRANGER}:s-dev`];
+
+      await controller.notifyWelcomeRequest(MEMBER, { ...ask(MEMBER), requesterDeviceId: 'new' });
+
+      expect(relayedRequesters()).toEqual([MEMBER, 'waiting']);
+      expect(warn.mock.calls.flat().join(' ')).toContain('DROPPED 1 stored welcome_request');
     });
   });
 
@@ -254,6 +352,11 @@ describe('the relay routes refuse a caller with no seat in the group they name',
 
         await expect(call).rejects.toBeInstanceOf(ServiceUnavailableException);
         await expect(call).rejects.not.toBeInstanceOf(ForbiddenException);
+        // Named for ITS question, never for the key-group entitlement's.
+        await expect(refusalOf(call)).resolves.toEqual({
+          status: 503,
+          name: 'salon_reader_unavailable',
+        });
         expect(push).not.toHaveBeenCalled();
       });
     });

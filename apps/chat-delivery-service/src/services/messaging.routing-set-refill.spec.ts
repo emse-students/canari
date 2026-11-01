@@ -67,7 +67,7 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
     find: jest.fn().mockResolvedValue([]),
     // The requester's conversation exists and they are seated in it (`seatedRoster` below): the
     // history and base-refresh doors relay only for an admitted member.
-    findOne: jest.fn().mockResolvedValue({ id: 'g1' }),
+    findOne: jest.fn().mockResolvedValue({ id: '00000000-0000-4000-8000-00000000c0a4' }),
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
@@ -96,7 +96,11 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
     findOne: jest.fn().mockResolvedValue({ id: 'seat', awaitingAdmission: false }),
   });
 
-  const body = { groupId: 'g1', requesterUserId: 'reqU', requesterDeviceId: 'reqD' };
+  const body = {
+    groupId: '00000000-0000-4000-8000-00000000c0a4',
+    requesterUserId: 'reqU',
+    requesterDeviceId: 'reqD',
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -133,8 +137,18 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
     redis.smembers.mockResolvedValue([]);
     redis.exists.mockResolvedValue(1);
     deviceGroupRepo.find.mockResolvedValue([
-      { userId: 'ua', deviceId: 'da', groupId: 'g1', status: 'active' },
-      { userId: 'reqU', deviceId: 'reqD', groupId: 'g1', status: 'active' },
+      {
+        userId: 'ua',
+        deviceId: 'da',
+        groupId: '00000000-0000-4000-8000-00000000c0a4',
+        status: 'active',
+      },
+      {
+        userId: 'reqU',
+        deviceId: 'reqD',
+        groupId: '00000000-0000-4000-8000-00000000c0a4',
+        status: 'active',
+      },
     ]);
   };
 
@@ -164,27 +178,49 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
         await door.call();
 
         expect(deviceGroupRepo.find).toHaveBeenCalledWith({
-          where: { groupId: 'g1', status: 'active' },
+          where: { groupId: '00000000-0000-4000-8000-00000000c0a4', status: 'active' },
         });
-        expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'ua:da', 'reqU:reqD');
+        expect(redis.sadd).toHaveBeenCalledWith(
+          'group:members:00000000-0000-4000-8000-00000000c0a4',
+          'ua:da',
+          'reqU:reqD'
+        );
       });
 
       it('routes no device evicted between the read and the refill, re-reading under the seat lock', async () => {
         cacheEmptyRowsPresent();
         deviceGroupRepo.find
           .mockResolvedValueOnce([
-            { userId: 'ua', deviceId: 'da', groupId: 'g1', status: 'active' },
-            { userId: 'reqU', deviceId: 'reqD', groupId: 'g1', status: 'active' },
+            {
+              userId: 'ua',
+              deviceId: 'da',
+              groupId: '00000000-0000-4000-8000-00000000c0a4',
+              status: 'active',
+            },
+            {
+              userId: 'reqU',
+              deviceId: 'reqD',
+              groupId: '00000000-0000-4000-8000-00000000c0a4',
+              status: 'active',
+            },
           ])
           // The eviction of `ua:da` committed before the seat lock was taken.
           .mockResolvedValueOnce([
-            { userId: 'reqU', deviceId: 'reqD', groupId: 'g1', status: 'active' },
+            {
+              userId: 'reqU',
+              deviceId: 'reqD',
+              groupId: '00000000-0000-4000-8000-00000000c0a4',
+              status: 'active',
+            },
           ]);
 
         await door.call();
 
-        expect(seatLocks).toEqual(['seat:g1']);
-        expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'reqU:reqD');
+        expect(seatLocks).toEqual(['seat:00000000-0000-4000-8000-00000000c0a4']);
+        expect(redis.sadd).toHaveBeenCalledWith(
+          'group:members:00000000-0000-4000-8000-00000000c0a4',
+          'reqU:reqD'
+        );
         expect(redis.sadd.mock.calls.flat()).not.toContain('ua:da');
       });
 
@@ -206,7 +242,7 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
         expect(line).toBeDefined();
         // Under its caller's own tag, so the log says WHICH door paid for the miss.
         expect(line).toContain(door.tag);
-        expect(line).toContain('g1');
+        expect(line).toContain('00000000-0000-4000-8000-00000000c0a4');
       });
 
       it('says nothing and asks the database nothing when the cache is warm', async () => {
