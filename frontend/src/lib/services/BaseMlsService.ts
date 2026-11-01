@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import { DeliveryRefusal } from '$lib/mls-client/mlsDeliveryHttp';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import type {
   IMlsService,
@@ -2995,6 +2996,7 @@ export abstract class BaseMlsService implements IMlsService {
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    if (answer instanceof DeliveryRefusal) return { status: 'refused', reason: answer.reason };
     if (answer?.status === 'forwarded' && typeof answer.target === 'string') {
       return { status: 'forwarded', target: answer.target };
     }
@@ -3036,6 +3038,8 @@ export abstract class BaseMlsService implements IMlsService {
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    // A refusal is an ANSWER and no election: it carries neither a target nor a "nobody".
+    if (answer instanceof DeliveryRefusal) return { noPeerOnline: false, refused: answer.reason };
     return {
       noPeerOnline: answer?.status === 'no_peer_online',
       target: typeof answer?.target === 'string' ? answer.target : undefined,
@@ -3064,6 +3068,9 @@ export abstract class BaseMlsService implements IMlsService {
       requesterDeviceId: this.deviceId,
       ...(opts.exclude?.length ? { exclude: opts.exclude } : {}),
     });
+    if (answer instanceof DeliveryRefusal) {
+      return { noPeerOnline: false, excludedOnline: 0, refused: answer.reason };
+    }
     const excludedOnline = Number(answer?.excludedOnline);
     return {
       noPeerOnline: answer?.status === 'no_peer_online',

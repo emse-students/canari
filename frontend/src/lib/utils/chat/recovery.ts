@@ -4,6 +4,7 @@ import type {
   IMlsService,
   UserGroupRow,
   DeviceMembershipRow,
+  BaseRefreshOutcome,
   WelcomeRequestAnswer,
 } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
@@ -195,6 +196,15 @@ async function reAskTheElection(groupId: string, deps: RecoveryDeps): Promise<vo
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... re-ask of the base-refresh election did not reach the ` +
         `server: ${String(e).slice(0, 120)} - the dead end stands, nothing was learnt`
+    );
+    return;
+  }
+  if (asked.refused) {
+    // A REFUSAL IS NOT AN ELECTION: nobody was asked to republish, so the record stands, and the
+    // line says what the server said rather than "a member is reachable again".
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... the base-refresh re-ask was REFUSED (${asked.refused}) - ` +
+        `no member was elected, the dead end stands`
     );
     return;
   }
@@ -901,16 +911,18 @@ export async function requestReAdd(
       `[READD] ${groupId.slice(0, 8)}... the published base is at epoch ${outcome.baseEpoch} and the group ` +
         `is at ${outcome.serverEpoch} - asking a member to REPUBLISH it, not to re-add us`
     );
-    const asked = await deps.mlsService.sendBaseRefreshRequest(groupId).catch((e) => {
-      deps.log(
-        `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
-          `${String(e).slice(0, 120)}`
-      );
-      // A request that never arrived proves NOTHING about who is reachable, and reading silence as
-      // "nobody" would stop a repair on a dropped packet. The next pass asks again.
-      return { noPeerOnline: false };
-    });
-    if (!asked.noPeerOnline) return;
+    const asked = await deps.mlsService
+      .sendBaseRefreshRequest(groupId)
+      .catch((e): BaseRefreshOutcome => {
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
+            `${String(e).slice(0, 120)}`
+        );
+        // A request that never arrived proves NOTHING about who is reachable, and reading silence as
+        // "nobody" would stop a repair on a dropped packet. The next pass asks again.
+        return { noPeerOnline: false };
+      });
+    if (!asked.refused && !asked.noPeerOnline) return;
     // THE PAIR THE VERDICT WAS TAKEN AGAINST IS THE JOIN'S OWN, not the one read at the top of this
     // pass: `externalJoin` is the call the gate actually refused, and the two numbers it reports are
     // the ones that refused it. Reading the older pair would record a proof against a state nothing
@@ -919,6 +931,22 @@ export async function requestReAdd(
       baseEpoch: outcome.baseEpoch,
       activeEpoch: outcome.serverEpoch,
     });
+    if (asked.refused) {
+      // REFUSED, NOT ELECTED: nobody will republish, and nothing this device does changes that while
+      // the pair stands - a seat is given back or admitted by a COMMIT, which moves `activeEpoch`. So
+      // it is recorded the way "no member online" is: the next passes skip the three known answers
+      // and re-ask only the election ({@link reAskTheElection}, one call, which keeps the record on
+      // a second refusal), instead of repeating the whole four-call pass every minute.
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... the base-refresh request was REFUSED (${asked.refused}) - ` +
+          `no member was asked to republish` +
+          (provenAt === undefined
+            ? ''
+            : `; recorded against ${provenAt}, waiting for either epoch to move`)
+      );
+      if (provenAt !== undefined) noRepairerAt.set(groupId, provenAt);
+      return;
+    }
     if (provenAt === undefined) return;
     noRepairerAt.set(groupId, provenAt);
     deps.log(
@@ -1223,11 +1251,13 @@ async function askAMemberToReAddUs(
   // member holds. Neither answer is a durable ask - a forwarded one lives on one member's screen, a
   // stored one is drained to a member's screen at its next connection - so the cadence asks again.
   deps.log(
-    !answer
-      ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
-      : answer.status === 'stored'
-        ? `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
-        : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+    answer?.status === 'refused'
+      ? `[READD] welcome_request for ${short}... REFUSED (${answer.reason}) - nothing was put to any member`
+      : !answer
+        ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
+        : answer.status === 'stored'
+          ? `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
+          : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
 }
 

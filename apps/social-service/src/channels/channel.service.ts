@@ -2251,6 +2251,17 @@ export class ChannelService implements OnApplicationBootstrap {
     return false;
   }
 
+  /**
+   * Whether `userId` may read the salon `channelId` - {@link isChannelReader} for an id, with no
+   * such salon read as `false`. Asked by chat-delivery before it relays a salon reaction's push to
+   * the message's author (`mls/notify-reaction`): a salon's roster lives here, not there.
+   */
+  async isReaderOfChannel(channelId: string, userId: string): Promise<boolean> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) return false;
+    return this.isChannelReader(channel, userId.trim().toLowerCase());
+  }
+
   async isDistributionGroupEntitled(
     kind: 'workspace' | 'channel',
     scopeId: string,

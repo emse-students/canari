@@ -25,10 +25,12 @@ import {
   ValidateCommitBody,
 } from '../services/messaging.service';
 import {
+  canonicalUserId,
   sanitizeDevicePairLogValue,
   sanitizeEpoch,
   sanitizeLeafLogValue,
   sanitizeLogValue,
+  sanitizeQueryValue,
 } from '../utils/sanitize';
 
 /**
@@ -534,6 +536,11 @@ export class MessagingController {
    *
    * Guard: no notification if the reactor is the message author (cross-device own-action - the
    * user already knows what they did).
+   *
+   * ONLY A MEMBER OF THE CONVERSATION MAY RING ITS AUTHOR (re-review of #2358): the caller must be
+   * an admitted member of the group, or a reader of the salon (`channel_<id>`), checked before
+   * anything is pushed - {@link MessagingService.assertCallerReactsIn}. A stranger, a removed member
+   * or an unknown id is the 403 `NOT_A_MEMBER`, a seat awaiting admission the 409.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/notify-reaction')
@@ -550,6 +557,8 @@ export class MessagingController {
     }
   ): Promise<{ sent: number; failed: number }> {
     if (!callerId) throw new BadRequestException('x-user-id header required');
+    const groupId = sanitizeQueryValue(body?.groupId, 'groupId');
+    await this.messagingService.assertCallerReactsIn(groupId, canonicalUserId(callerId));
 
     // Never notify if actor == message author (cross-device own-reaction)
     if (!body.targetSenderId || callerId === body.targetSenderId) {
@@ -558,7 +567,6 @@ export class MessagingController {
 
     const emoji = String(body.emoji ?? '').slice(0, 20);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
-    const groupId = String(body.groupId ?? '');
 
     // Legacy body only - carries the emoji and the actor, never the message. Clients that
     // understand `reaction` compose their own from `strings.xml` / `Localizable.strings`.

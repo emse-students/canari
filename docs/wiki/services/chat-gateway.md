@@ -202,13 +202,22 @@ Published by `chat-delivery-service` when a message is queued for a specific dev
 
 If the target device is not connected, the message stays in the DB queue in `chat-delivery-service` and is fetched via `fetchPendingMessages` on reconnect — it is not lost.
 
-### Welcome forward (`welcome_request` / `reinvite_request`)
+### Inbound frames: `typing` is seat-checked, `welcome_request` is retired (2026-11-01)
 
-When a client sends a `welcome_request` frame, the gateway:
+`ws_dispatch.rs` acts on two inbound frame types, `disconnect` and `typing`.
 
-1. Reads group members from Redis `group:members:{groupId}`.
-2. For each target device found in `connected_users` -> sends via mpsc sender.
-3. If the target device is offline -> stores the frame in Redis `pending_welcomes:{userId}` (LPUSH). Drained at next connection (step 5 of the lifecycle above).
+- **`typing`** reaches every other online device in Redis `group:members:{groupId}`, and only when
+  a device of the SENDER is in that set: a signal from an account with no seat there is dropped and
+  logged `[TYPING] ... holds no seat ... REFUSED` at the 1st, 10th, 100th... occurrence per sender
+  and group (`log_repeat.rs`, the gateway's copy of chat-delivery's `RepeatCounter`), since a client
+  sends one per keystroke.
+- **`welcome_request` is RETIRED** (`RETIRED_FRAMES`): it relayed a re-add request to one online
+  member with no seat check. Every client asks over HTTP (`POST mls/welcome-request`, where
+  chat-delivery checks the seat first -
+  [chat-delivery](chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)); the frame is now
+  ignored, answered with nothing, and logged `[WS] retired frame ... IGNORED` at the same powers of
+  ten. A request stored by chat-delivery still reaches a member through the connection-time drain
+  (step 5 of the lifecycle above).
 
 ### `chat:channel_events`
 

@@ -1651,6 +1651,13 @@ export function useConversations() {
       ctx.log(`[HISTORY_RANGE] could not reach the service: ${String(e).slice(0, 120)}`);
       return 'no-peer';
     }
+    if (outcome?.refused) {
+      // Refused on membership: nobody was elected, so no range request is sent to nobody.
+      ctx.log(
+        `[HISTORY_RANGE] the service refused the ask for ${convo.id.slice(0, 8)}… (${outcome.refused})`
+      );
+      return 'unavailable';
+    }
     if (outcome?.noPeerOnline) return 'no-peer';
 
     const sent = await sendHistoryRangeRequest(
