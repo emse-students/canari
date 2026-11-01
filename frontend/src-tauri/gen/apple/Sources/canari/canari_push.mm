@@ -11,6 +11,8 @@
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import <WebKit/WebKit.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
 #import <FirebaseMessaging/FirebaseMessaging.h>
@@ -161,6 +163,14 @@ static NSString *const kCanariBgCleanupTaskId = @"fr.emse.canari.cleanup";
 // analogue of Android's OutboxRetryWorker). Requires network connectivity.
 static NSString *const kCanariBgOutboxRetryTaskId = @"fr.emse.canari.outboxRetry";
 static const int kPendingSyncNotifId = 9998;
+// The "your reply was not sent" notice of a quick reply (`CanariShowQuickReplyNotSent`), on its own
+// thread, which is presented even in front (`CanariOwnLocalPresentation`): nothing else says it.
+static const int kQuickReplyNotSentNotifId = 9997;
+static NSString *const kCanariThreadQuickReply = @"canari_quick_reply";
+// The account a message notification was decrypted for, stamped into its `userInfo` by both posters
+// (`CanariShowLocalNotification`, the extension's `applyMessageContent`): a quick reply typed on it
+// is sent as THAT account (review of #2843, M3).
+static NSString *const kCanariRecipientKey = @"recipientId";
 static const NSTimeInterval kAvatarCacheMaxAgeSec = 24 * 60 * 60;
 
 // Notification quick actions (WP-XP-1): inline reply / mark as read from the notification.
@@ -1389,6 +1399,9 @@ static void CanariUpdateAppBadge(void) {
 static NSString *const kCanariSoundMessage = @"canari_gazouillis_message.wav";
 static NSString *const kCanariSoundMention = @"canari_gazouillis_mention.wav";
 static NSString *const kCanariSoundReaction = @"canari_gazouillis_reaction.wav";
+// Canari's incoming-call ring for CallKit (`CXProviderConfiguration.ringtoneSound`), rendered from
+// `soundPalette.RING_PHRASE` into `gen/apple/CallSounds/`, bundled in the app only.
+static NSString *const kCanariRingtoneSound = @"canari_ring_callkit.wav";
 
 /// `sentAt` is the SENDER's instant for the message this notification is about, in ms, and it is
 /// stamped into `userInfo` so the quick actions can acknowledge the conversation without looking
@@ -1445,6 +1458,14 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
     userInfo[@"groupId"] = groupId;
     if (sentAt > 0) {
       userInfo[@"sentAt"] = @(sentAt);
+    }
+    // The account this process decrypted the message for, which a quick reply is sent as.
+    NSString *recipient = CanariLoadPushContext().userId;
+    if (recipient.length > 0) {
+      userInfo[kCanariRecipientKey] = recipient;
+    } else {
+      NSLog(@"[CanariPush] ERROR a message notification with no push context names no recipient - "
+            @"a quick reply on it is refused, visibly");
     }
     content.categoryIdentifier = kCanariMessageCategoryId;
   }
@@ -2300,28 +2321,24 @@ static void CanariSendCallDecline(NSString *groupId, NSString *callId) {
  * actually delivered (drain returns 0 remaining) - a queued-but-undelivered reply must keep the
  * notification so the user can retry from the app. Android twin: handleReply in
  * CanariNotificationActionReceiver.kt.
+ *
+ * `ctx` is the push context of the account the notification was addressed to - the caller checked
+ * it (`CanariHandleQuickReplyAction`). NO when the reply could not even be queued, which the caller
+ * tells the user.
  */
-static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long long notifiedAt) {
-  if (groupId.length == 0 || text.length == 0) {
-    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text missing");
-    return;
-  }
-  CanariPushContext *ctx = CanariLoadPushContext();
-  if (ctx == nil) {
-    NSLog(@"[CanariPush] handleQuickReplyAction: push_context.json absent -> abort");
-    return;
-  }
+static BOOL CanariSendQuickReplyNatively(CanariPushContext *ctx, NSString *groupId, NSString *text,
+                                         long long notifiedAt) {
   NSString *messageId = [[NSUUID UUID] UUIDString];
   long long sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   char *protoPtr = canari_native_build_text_message_proto(messageId.UTF8String, sentAt, text.UTF8String);
   if (protoPtr == nil) {
     NSLog(@"[CanariPush] handleQuickReplyAction: nativeBuildTextMessageProto failed");
-    return;
+    return NO;
   }
   NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
   canari_free_string(protoPtr);
   if (protoB64.length == 0) {
-    return;
+    return NO;
   }
 
   CanariOutboxEntry *entry = [[CanariOutboxEntry alloc] init];
@@ -2358,6 +2375,323 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long
     NSLog(@"[CanariPush] handleQuickReplyAction: reply still queued (remaining=%d) - notification left as-is, entry NOT persisted",
           remaining);
   }
+  return YES;
+}
+
+static void CanariTellPage(NSString *event, NSString *what);
+static void CanariShowPendingSyncNotification(void);
+static void CanariShowQuickReplyNotSent(void);
+
+/// The quick replies handed to the page: one line each, SEALED under the install's cache key
+/// (`canari_native_seal_quick_reply_line`), whose plaintext is
+/// `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}` - never what the user typed
+/// in the clear, and `accountId` the account the NOTIFICATION was addressed to (review of #2843, A2
+/// and M3). Taken by `read_and_clear_pending_quick_replies`; a deleted account's lines are removed by
+/// `delete_user_quick_replies`, and only those.
+static NSString *const kPendingQuickRepliesFileName = @"pending_quick_replies.ndjson";
+
+// --- A quick reply handed to the page holds the process until the page SETTLES it ----------------
+//
+// THE PAGE MAY BE SUSPENDED. `canari_ios_page_holds_mls()` is true from the manager's load to the
+// session's end, so it is true for an app in the background too - and there the native encrypt
+// stays forbidden for the same reason (a write under a warm manager is persisted over), so the
+// decision cannot move to "the app is active". What changes is the WAIT: the notification response
+// used to be completed at once, the process re-suspended, and the reply sat unsent and unannounced
+// until the next opening (review of #2843, A1). So the response and a background task are HELD
+// until the page says how its outbox SETTLED the reply - sent, failed, or still pending - never
+// merely that it queued it (H1): `acknowledge_quick_reply` -> `CanariPageSettledQuickReply`.
+// The background task's expiration handler is iOS's own end of that time, not a clock of ours: it
+// is read as "still pending" and accuses the page that did not answer.
+
+/// What became of a quick reply. The codes are `QuickReplyOutcome` in `commands/push.rs`.
+typedef NS_ENUM(int32_t, CanariQuickReplyOutcome) {
+  CanariQuickReplySent = 0,
+  CanariQuickReplyFailed = 1,
+  CanariQuickReplyPending = 2,
+  CanariQuickReplyReturned = 3,
+  CanariQuickReplyLost = 4,
+};
+
+static NSString *CanariQuickReplyOutcomeName(int32_t outcome) {
+  switch (outcome) {
+    case CanariQuickReplySent: return @"sent";
+    case CanariQuickReplyFailed: return @"FAILED (a failed row in the page)";
+    case CanariQuickReplyPending: return @"still pending";
+    case CanariQuickReplyReturned: return @"not queued (put back)";
+    case CanariQuickReplyLost: return @"LOST";
+    default: return [NSString stringWithFormat:@"unknown outcome %d", outcome];
+  }
+}
+
+@interface CanariQuickReplyHold : NSObject
+@property(nonatomic, assign) UIBackgroundTaskIdentifier task;
+@property(nonatomic, copy) void (^completion)(void);
+@end
+@implementation CanariQuickReplyHold
+@end
+
+/// The holds by `replyId`. A hold is released exactly once: whoever removes it from here first.
+static NSMutableDictionary<NSString *, CanariQuickReplyHold *> *g_quickReplyHolds = nil;
+
+/// Takes the task id out of `hold` and ends it - ON THE MAIN THREAD ONLY. Every end goes through
+/// here, so the id is taken exactly once and always on the thread the expiration handler runs on:
+/// the handler, calling this synchronously, either takes the id itself and ends it before it
+/// returns, or finds it already ended by an earlier block on the same thread. No end of this task is
+/// ever left queued behind a handler that returned (round-4 review of #2843, L1).
+static void CanariEndQuickReplyTaskOnMain(CanariQuickReplyHold *hold) {
+  UIBackgroundTaskIdentifier task = hold.task;
+  hold.task = UIBackgroundTaskInvalid;
+  if (task != UIBackgroundTaskInvalid) {
+    [[UIApplication sharedApplication] endBackgroundTask:task];
+  }
+}
+
+/// Ends the background task of `hold` once: at once on the main thread, else by a block on the main
+/// queue that takes the id THERE - never an id taken off main and ended later, which the expiration
+/// handler would have seen as already gone and returned without ending.
+static void CanariEndQuickReplyTask(CanariQuickReplyHold *hold) {
+  if ([NSThread isMainThread]) {
+    CanariEndQuickReplyTaskOnMain(hold);
+  } else {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      CanariEndQuickReplyTaskOnMain(hold);
+    });
+  }
+}
+
+/// Tells the user what the settled `outcome` leaves them to know, ONCE, on one surface:
+/// - sent: nothing.
+/// - lost: the "not sent" notice, ALWAYS - in front too, since nothing else says it (the page toasts
+///   only a line it could not name, `quickReplyDrain`).
+/// - failed, pending, put back: in front the page shows it (the failed row, the pending bubble, the
+///   "waiting" toast); in the background, the "not sent" notice for a failure and the pending-sync
+///   notice otherwise, with the outbox retry task scheduled for a pending one - what the native path
+///   does with a reply it could not deliver.
+static void CanariTellQuickReplyOutcome(int32_t outcome) {
+  switch (outcome) {
+    case CanariQuickReplySent:
+      return;
+    case CanariQuickReplyLost:
+      CanariShowQuickReplyNotSent();
+      return;
+    case CanariQuickReplyFailed:
+      if (!canari_ios_is_in_foreground()) {
+        CanariShowQuickReplyNotSent();
+      }
+      return;
+    case CanariQuickReplyPending:
+      CanariMaybeNotifyPendingSync(1);
+      return;
+    case CanariQuickReplyReturned:
+      if (!canari_ios_is_in_foreground()) {
+        CanariShowPendingSyncNotification();
+      }
+      return;
+    default:
+      NSLog(@"[CanariPush] ERROR quick reply outcome %d is unknown - the user is told it is not sent",
+            outcome);
+      CanariShowQuickReplyNotSent();
+      return;
+  }
+}
+
+/// Releases the hold of `replyId` with its settled `outcome`: tells the user what is not sent,
+/// completes the notification response and ends the background task. A LOST reply is told even when
+/// no hold is here (an earlier process handed it over), since nobody else would tell it.
+static void CanariReleaseQuickReplyHold(NSString *replyId, int32_t outcome, NSString *why) {
+  CanariQuickReplyHold *hold = nil;
+  @synchronized(g_quickReplyHolds) {
+    hold = g_quickReplyHolds[replyId];
+    [g_quickReplyHolds removeObjectForKey:replyId];
+  }
+  NSString *what = CanariQuickReplyOutcomeName(outcome);
+  if (hold == nil) {
+    // Expected after a relaunch: the page took a reply an earlier process handed over.
+    NSLog(@"[CanariPush] quick reply %@ %@: %@ - no hold for it in this process", replyId, why, what);
+    if (outcome == CanariQuickReplyLost) {
+      CanariTellQuickReplyOutcome(outcome);
+    }
+    return;
+  }
+  NSLog(@"[CanariPush] quick reply %@ %@: %@ - the notification response is completed", replyId, why,
+        what);
+  CanariTellQuickReplyOutcome(outcome);
+  hold.completion();
+  CanariEndQuickReplyTask(hold);
+}
+
+/// The listener `acknowledge_quick_reply` calls (registered in `CanariPushSetup`), with the outcome
+/// the page's outbox settled the reply to.
+static void CanariPageSettledQuickReply(const char *replyId, int32_t outcome) {
+  if (replyId == NULL) {
+    NSLog(@"[CanariPush] ERROR a quick reply settlement named no reply");
+    return;
+  }
+  CanariReleaseQuickReplyHold([NSString stringWithUTF8String:replyId], outcome, @"settled by the page");
+}
+
+/// Starts holding `completion` and the process for `replyId`, BEFORE the line is written: a take
+/// racing the write (a drain the page runs for its own reasons) then finds the hold already there.
+///
+/// ON THE MAIN THREAD, in one block: the background task is begun, its id stored in the hold, and
+/// the hold published, before the main thread can run anything else - so the expiration handler
+/// (which iOS runs on the main thread) always finds its own task id, and ends it before it returns
+/// (review of #2843, L1).
+static void CanariHoldQuickReply(NSString *replyId, void (^completion)(void)) {
+  CanariQuickReplyHold *hold = [[CanariQuickReplyHold alloc] init];
+  hold.completion = completion;
+  hold.task = UIBackgroundTaskInvalid;
+  void (^begin)(void) = ^{
+    UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication]
+        beginBackgroundTaskWithName:@"canari-quick-reply"
+                  expirationHandler:^{
+                    NSLog(@"[CanariPush] ERROR quick reply %@: iOS ended the background time before "
+                          @"the page settled it - read as still pending",
+                          replyId);
+                    CanariReleaseQuickReplyHold(replyId, CanariQuickReplyPending, @"expired");
+                    // On main, synchronously: if a settlement off main released the hold first, its
+                    // end is still queued, and the id is taken and ended HERE, before returning.
+                    CanariEndQuickReplyTaskOnMain(hold);
+                  }];
+    // Main thread: the handler above cannot run before this assignment.
+    hold.task = task;
+    @synchronized(g_quickReplyHolds) {
+      g_quickReplyHolds[replyId] = hold;
+    }
+  };
+  if ([NSThread isMainThread]) {
+    begin();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), begin);
+  }
+}
+
+/// The sealed line of one reply addressed to `accountId`, or nil (said) - no cache key.
+static NSString *CanariSealQuickReply(NSString *replyId, NSString *accountId, NSString *groupId,
+                                      NSString *text, long long notifiedAt) {
+  long long repliedAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  NSError *err = nil;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:@{
+    @"replyId" : replyId,
+    @"accountId" : accountId,
+    @"groupId" : groupId,
+    @"text" : text,
+    @"notifiedAt" : @(notifiedAt),
+    @"repliedAt" : @(repliedAt)
+  }
+                                                 options:0
+                                                   error:&err];
+  if (json == nil) {
+    NSLog(@"[CanariPush] ERROR the quick reply could not be serialised (%@)", CanariErrorReason(err));
+    return nil;
+  }
+  NSString *plain = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+  char *sealedPtr = canari_native_seal_quick_reply_line(CanariRetrieveNativeCacheKey().UTF8String,
+                                                        plain.UTF8String);
+  if (sealedPtr == NULL) {
+    NSLog(@"[CanariPush] ERROR no cache key - the quick reply is NOT written in the clear");
+    return nil;
+  }
+  NSString *sealed = [NSString stringWithUTF8String:sealedPtr];
+  canari_free_string(sealedPtr);
+  return sealed;
+}
+
+/// Appends one sealed line. O_APPEND: one write of one line, which the page's own put-back cannot
+/// interleave with.
+static BOOL CanariAppendQuickReplyLine(NSString *sealed) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariPush] ERROR: no data directory - the quick reply cannot be handed to the page");
+    return NO;
+  }
+  NSMutableData *line = [[sealed dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+  [line appendBytes:"\n" length:1];
+  NSString *path = [dir stringByAppendingPathComponent:kPendingQuickRepliesFileName];
+  int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0600);
+  if (fd < 0) {
+    NSLog(@"[CanariPush] ERROR the quick reply file could not be opened (errno %d)", errno);
+    return NO;
+  }
+  ssize_t written = write(fd, line.bytes, line.length);
+  close(fd);
+  if (written != (ssize_t)line.length) {
+    NSLog(@"[CanariPush] ERROR the quick reply was not written whole (errno %d)", errno);
+    return NO;
+  }
+  return YES;
+}
+
+/**
+ * Hands a quick reply to the PAGE, which holds the MLS state and sends it through its own composer
+ * path (`$lib/mobile/quickReplyDrain`), and holds `completion` until the page settles it.
+ * APPENDED, never rewritten: two replies before a take are two lines, and a line the page could not
+ * send is appended back by the page. Then the page is told (`canari:quick-reply`), on the main queue.
+ * The line names `recipientId`, the notification's own account - so no `push_context.json` is needed
+ * here, and a session whose context was never written still gets its reply sent (review of #2843, L2).
+ *
+ * WHY: with a manager loaded, the native encrypt is refused by the foreground guard, and the entry
+ * this file used to leave in `outbox_pending.ndjson` was erased by the page's next
+ * `store_outbox_mirror` - a reply typed in Notification Center over an open app was lost (review of
+ * #2843, F7). No second path when this fails: the native encrypt would be refused for the same
+ * manager, so a failure is LOST and the user is told it is not sent - in front too.
+ */
+static void CanariHandQuickReplyToPage(NSString *recipientId, NSString *groupId, NSString *text,
+                                       long long notifiedAt, void (^completion)(void)) {
+  NSString *replyId = [[NSUUID UUID] UUIDString];
+  NSString *sealed = CanariSealQuickReply(replyId, recipientId, groupId, text, notifiedAt);
+  CanariHoldQuickReply(replyId, completion);
+  if (sealed == nil || !CanariAppendQuickReplyLine(sealed)) {
+    NSLog(@"[CanariPush] ERROR the quick reply is LOST - it could not be handed to the page");
+    CanariReleaseQuickReplyHold(replyId, CanariQuickReplyLost, @"not handed to the page");
+    return;
+  }
+  NSLog(@"[CanariPush] handleQuickReplyAction: the page holds the MLS state - reply %@ handed to it "
+        @"(group=%@), the response held until it is settled",
+        replyId, groupId);
+  CanariTellPage(@"canari:quick-reply", @"quick reply");
+}
+
+/// A notification reply: handed to the page when it holds the MLS state, sent natively otherwise.
+/// `completion` (the notification response's) is called exactly once, by whichever path owns it.
+///
+/// `recipientId` is the account the notification was addressed to (`kCanariRecipientKey`). A reply
+/// is sent as that account or not at all: none named (a notification posted before the stamp, or
+/// with no context), or another account's push context on the native path (the user switched since),
+/// and the reply is refused and the user TOLD it is not sent (review of #2843, M3 and L2).
+static void CanariHandleQuickReplyAction(NSString *recipientId, NSString *groupId, NSString *text,
+                                         long long notifiedAt, void (^completion)(void)) {
+  if (groupId.length == 0 || text.length == 0) {
+    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text missing");
+    completion();
+    return;
+  }
+  if (recipientId.length == 0) {
+    NSLog(@"[CanariPush] ERROR the replied notification names no recipient - the reply is NOT sent, "
+          @"and the user is told");
+    CanariShowQuickReplyNotSent();
+    completion();
+    return;
+  }
+  // DECIDED ON THE FACT, before any encrypt: a page holding a manager owns the state, and a native
+  // encrypt would only be refused (never learn by failing what a fact could tell).
+  if (canari_ios_page_holds_mls()) {
+    CanariHandQuickReplyToPage(recipientId, groupId, text, notifiedAt, completion);
+    return;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil || ![ctx.userId isEqualToString:recipientId]) {
+    NSLog(@"[CanariPush] ERROR the reply's account has no push context here (%@) - NOT sent, and the "
+          @"user is told",
+          ctx == nil ? @"push_context.json absent" : @"another account's context");
+    CanariShowQuickReplyNotSent();
+    completion();
+    return;
+  }
+  if (!CanariSendQuickReplyNatively(ctx, groupId, text, notifiedAt)) {
+    CanariShowQuickReplyNotSent();
+  }
+  completion();
 }
 
 /**
@@ -2388,6 +2722,16 @@ static void CanariShowPendingSyncNotification(void) {
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
                               kPendingSyncNotifId, nil, nil, NO, nil, 0, nil);
   NSLog(@"[CanariPush] showPendingSyncNotification");
+}
+
+/// Tells the user a quick reply was NOT sent and will not be by itself - on its own thread
+/// (`kCanariThreadQuickReply`), which is presented in front too, and opening the chats, where they
+/// can write it again.
+static void CanariShowQuickReplyNotSent(void) {
+  NSString *body = CanariLocalized(@"notif.quickreply.notsent");
+  CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", kCanariThreadQuickReply,
+                              kQuickReplyNotSentNotifId, nil, nil, NO, nil, 0, nil);
+  NSLog(@"[CanariPush] showQuickReplyNotSent");
 }
 
 static void CanariMaybeNotifyPendingSync(int remaining) {
@@ -2645,66 +2989,200 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
   return tmpPath;
 }
 
-// The `names` map of `display_names.json` in the app's data directory, or nil when it cannot be
-// used: absent, unreadable, or written for another account than `me` (one file per install, and two
-// accounts may sign in on one phone). Written by `store_display_names` (Rust).
-static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
-  NSString *dir = CanariTauriDataDir();
-  if (me.length == 0 || dir == nil) {
+// One read of `display_names.json` in the app's data directory for `me`: the `names` map, or nil
+// with WHY in `*unusable` - `no-account`, `no-name-file`, `unreadable`, `other-account`, `no-names`
+// (the codes of Android's `readDisplayNames`). Says nothing: each caller logs the answer at the level
+// its own question deserves. Written by `store_display_names` (Rust); one file per install, and two
+// accounts may sign in on one phone, hence the owner check.
+static NSDictionary *_Nullable CanariReadDisplayNames(NSString *_Nullable me,
+                                                      NSString *_Nullable *_Nonnull unusable) {
+  *unusable = nil;
+  if (me.length == 0) {
+    *unusable = @"no-account";
     return nil;
   }
-  NSData *data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"display_names.json"]];
+  NSString *dir = CanariTauriDataDir();
+  NSData *data = dir == nil ? nil
+                            : [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:
+                                                                      @"display_names.json"]];
   if (data == nil) {
-    NSLog(@"[CanariPush] [MENTION_NAME] no display_names.json - every other mention is 'someone'");
+    *unusable = @"no-name-file";
     return nil;
   }
   id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
   if (![root isKindOfClass:[NSDictionary class]]) {
-    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json unreadable");
+    *unusable = @"unreadable";
     return nil;
   }
   id owner = ((NSDictionary *)root)[@"userId"];
   if (![owner isKindOfClass:[NSString class]] || ![[owner lowercaseString] isEqualToString:me]) {
-    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json belongs to another account - not used");
+    *unusable = @"other-account";
     return nil;
   }
   id names = ((NSDictionary *)root)[@"names"];
-  return [names isKindOfClass:[NSDictionary class]] ? names : nil;
+  if (![names isKindOfClass:[NSDictionary class]]) {
+    *unusable = @"no-names";
+    return nil;
+  }
+  return names;
 }
 
-// The phone's names for ONE banner: `display_names.json` is read on the first call only, so the
-// author line and the tokens of one banner cost one file read, and a banner needing neither none.
-typedef NSDictionary *_Nullable (^CanariMentionNameBook)(void);
-static CanariMentionNameBook CanariMakeMentionNameBook(NSString *_Nullable myUserId) {
-  NSString *me = myUserId.lowercaseString;
-  __block NSDictionary *names = nil;
-  __block BOOL read = NO;
-  return ^NSDictionary *_Nullable {
-    if (!read) {
-      names = CanariLoadMentionNames(me);
-      read = YES;
-    }
-    return names;
-  };
+// Why a read of `display_names.json` names nobody, under `[MENTION_NAME]` - the mention renderers'
+// line. Nothing when the file names.
+static void CanariLogMentionNamesUnusable(NSString *_Nullable unusable) {
+  if ([unusable isEqualToString:@"no-name-file"]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] no display_names.json - every other mention is 'someone'");
+  } else if ([unusable isEqualToString:@"unreadable"]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json unreadable");
+  } else if ([unusable isEqualToString:@"other-account"]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json belongs to another account - not used");
+  } else if ([unusable isEqualToString:@"no-names"]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json names nobody (no-names)");
+  }
 }
+
+// The `names` map of `display_names.json`, or nil when it cannot be used - see
+// `CanariReadDisplayNames`, whose reason is logged here for the mention renderers.
+static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
+  NSString *unusable = nil;
+  NSDictionary *names = CanariReadDisplayNames(me, &unusable);
+  CanariLogMentionNamesUnusable(unusable);
+  return names;
+}
+
+// THE PHONE'S NAMES FOR ONE BANNER: `display_names.json` is read on the first `-names` only, so the
+// speaker, the author line and the tokens of one banner cost ONE file read, and a banner needing
+// none of them none. The read keeps its reason (`unusable`). `onFirstRead`, when set, says it: the
+// caller sets it only for a reader whose own line does not already carry the reason, so a read is
+// never said twice. Swift twin: the NSE's `DisplayNamesReader`.
+@interface CanariNameBook : NSObject
+- (instancetype)initWithUserId:(NSString *_Nullable)myUserId;
+- (NSDictionary *_Nullable)names;
+@property(nonatomic, readonly) BOOL hasRead;
+@property(nonatomic, copy, readonly, nullable) NSString *unusable;
+@property(nonatomic, copy, nullable) void (^onFirstRead)(NSString *_Nullable unusable);
+@end
+
+@implementation CanariNameBook {
+  NSString *_me;
+  NSDictionary *_names;
+}
+- (instancetype)initWithUserId:(NSString *_Nullable)myUserId {
+  if ((self = [super init])) {
+    _me = [myUserId.lowercaseString copy];
+  }
+  return self;
+}
+- (NSDictionary *_Nullable)names {
+  if (!_hasRead) {
+    NSString *unusable = nil;
+    _names = CanariReadDisplayNames(_me, &unusable);
+    _unusable = [unusable copy];
+    _hasRead = YES;
+    if (self.onFirstRead != nil) {
+      self.onFirstRead(_unusable);
+    }
+  }
+  return _names;
+}
+@end
+
+// Whether an unnamed salon speaker's reason is a FAULT (said with "WARN"): an unreadable name file,
+// a file of this account naming nobody, an opened push naming nobody, no push context. The rest are
+// states a banner ordinarily meets. Twins: the NSE's `salonAuthorAccuses`, Android's
+// `ChannelBannerAuthor.accuses`.
+static BOOL CanariSalonAuthorAccuses(NSString *_Nullable reason) {
+  return [@[ @"unreadable", @"no-names", @"no-sender-id", @"no-account" ] containsObject:reason ?: @""];
+}
+
+// Why `display_names.json` names nobody, for a salon banner whose speaker rule did not read it - the
+// tokens were its first reader. Same levels as the speaker's line; nothing when the file names.
+static void CanariLogSalonNamesUnusable(NSString *_Nullable unusable, NSString *channelId) {
+  if (unusable == nil) {
+    return;
+  }
+  NSLog(@"[CanariPush] [SALON_AUTHOR] %@display_names.json names nobody reason=%@ channel=%@",
+        CanariSalonAuthorAccuses(unusable) ? @"WARN " : @"", unusable, channelId);
+}
+
+// "Someone", capitalised: the word opens the sentence (or stands alone) where it is used.
+static NSString *CanariSomeoneCapitalised(void) {
+  NSString *someone = CanariLocalized(@"notif.mention.someone");
+  return someone.length > 0 ? [[[someone substringToIndex:1] uppercaseString]
+                                  stringByAppendingString:[someone substringFromIndex:1]]
+                            : someone;
+}
+
+// WHO A SALON BANNER NAMES AS ITS SPEAKER (2026-11-01). Twins: Android `ChannelBannerAuthor` and the
+// NSE's `channelBannerAuthor` - the same three answers and the same reason codes.
+//  - Unproven (`showsMessage` NO): nothing was opened. nil, and the "?" disc.
+//  - Named: the author a v2 open PROVED (`authorProven`), named from the phone's own copy, never from
+//    the push. Their name is returned and `*initialsName` is it.
+//  - Unnamed: opened, but the author cannot be named - a v1 session, which proves no author (the
+//    push's `senderId` is the server's claim), or a proven author the phone has no name for.
+//    "Someone", the "?" disc, and no face. ONE line, "WARN" only for a fault.
+// `*initialsName` is non-empty exactly for a named speaker, which is how the caller knows to draw
+// a face. `names` is the banner's one read of the names, shared with the author line and the tokens.
+static NSString *_Nullable CanariSalonSpeaker(BOOL showsMessage, BOOL authorProven,
+                                              NSString *senderId, CanariNameBook *names,
+                                              NSString *channelId,
+                                              NSString *_Nonnull *_Nonnull initialsName) {
+  *initialsName = @"";
+  if (!showsMessage) {
+    return nil;
+  }
+  NSString *idLower =
+      [senderId stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+          .lowercaseString;
+  NSString *reason = nil;
+  NSString *name = nil;
+  if (idLower.length == 0) {
+    reason = @"no-sender-id";
+  } else if (!authorProven) {
+    reason = @"v1-session";
+  } else {
+    NSDictionary *book = [names names];
+    if (book == nil) {
+      reason = names.unusable ?: @"no-names";
+    } else {
+      id stored = book[idLower];
+      NSString *trimmed = [stored isKindOfClass:[NSString class]]
+                              ? [(NSString *)stored stringByTrimmingCharactersInSet:
+                                                        [NSCharacterSet whitespaceCharacterSet]]
+                              : nil;
+      if (trimmed.length > 0) {
+        name = trimmed;
+      } else {
+        reason = @"not-in-name-book";
+      }
+    }
+  }
+  if (name != nil) {
+    *initialsName = name;
+    return name;
+  }
+  NSLog(@"[CanariPush] [SALON_AUTHOR] %@author UNNAMED reason=%@ author=%@ channel=%@ -> "
+        @"'someone' and a '?' disc",
+        CanariSalonAuthorAccuses(reason) ? @"WARN " : @"", reason,
+        idLower.length > 8 ? [idLower substringToIndex:8] : idLower, channelId);
+  return CanariSomeoneCapitalised();
+}
+
+// The renderers' view of a banner's `CanariNameBook`: its names, read on the first call only.
+typedef NSDictionary *_Nullable (^CanariMentionNameBook)(void);
 
 // "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME, 2026-10-18):
 // the AUTHOR, named from the phone's own copy of names under the same owner rule as the tokens, and
 // "Someone" when the phone has never named them. Never from the push, which carries only
-// `senderId`. Salon only: an MLS banner already names its sender. Twins: the NSE's and Android's
-// `mentionAuthorLine`.
+// `senderId`. Salon only: an MLS banner already names its sender. Twin: the NSE's
+// `mentionAuthorLine` (Android has none since 2026-11-01: the speaker's Person names the author).
 static NSString *CanariMentionAuthorLine(NSString *senderId, CanariMentionNameBook nameBook) {
   NSString *idLower = senderId.lowercaseString;
   id name = idLower.length > 0 ? nameBook()[idLower] : nil;
   BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
   NSLog(@"[CanariPush] [MENTION_NAME] author named=%d", known);
   // The placeholder opens the sentence in both languages, so the word is capitalised there.
-  NSString *someone = CanariLocalized(@"notif.mention.someone");
-  NSString *who = known ? (NSString *)name
-                        : (someone.length > 0
-                               ? [[[someone substringToIndex:1] uppercaseString]
-                                     stringByAppendingString:[someone substringFromIndex:1]]
-                               : someone);
+  NSString *who = known ? (NSString *)name : CanariSomeoneCapitalised();
   return [NSString stringWithFormat:CanariLocalized(@"notif.social.mention.title"), who];
 }
 
@@ -2766,13 +3244,18 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // Two paths, one question, each answered from where the answer actually is.
 //
 // `initialsName` is whose letter is drawn when no avatar can be fetched, and it is a PARAMETER
-// because only the caller knows: a DM draws the sender, a salon draws the SALON (Android does the
-// same), and the title this function composes is no help - for a salon it is
-// `<Communaute> - #<salon>`, whose first character would be the community's, or a `#`.
+// because only the caller knows: a DM draws the sender, a salon draws its NAMED speaker and "?" for
+// anybody else, never the salon (`CanariSalonSpeaker`), and the
+// title this function composes is no help - for a salon it is `<Communaute> - #<salon>`, whose
+// first character would be the community's, or a `#`.
 //
 // `namesMentionAuthor` is YES on the SALON path only: its title is the salon, so a mention of this
 // reader names its author in the subtitle (`CanariMentionAuthorLine`, WP-MENTION-NAME). An MLS
 // banner passes NO - its push already names the sender in the title or the subtitle.
+//
+// `salonNames` is the salon's `CanariNameBook`, the one its speaker read, so the author line and the
+// tokens read the file at most once more - never twice - and its reason is said once. nil on the MLS
+// path, which opens its own book and says the reason under `[MENTION_NAME]`.
 //
 // `scansBodyForMention` is YES on the MLS path only. The salon caller has already DECIDED the
 // mention (`mentionedByServer` is its answer, and NO on a blind banner, which nothing proved), and a
@@ -2782,7 +3265,8 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
                                           BOOL mentionedByServer, NSString *_Nullable initialsName,
-                                          BOOL namesMentionAuthor, BOOL scansBodyForMention) {
+                                          BOOL namesMentionAuthor, BOOL scansBodyForMention,
+                                          CanariNameBook *_Nullable salonNames) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2821,7 +3305,16 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
   NSString *subtitle = isGroup ? senderName : nil;
   // The phone's names, read at most once for this banner: the author line and the tokens share it.
-  CanariMentionNameBook nameBook = CanariMakeMentionNameBook(ctx != nil ? ctx.userId : nil);
+  CanariNameBook *book = salonNames;
+  if (book == nil) {
+    book = [[CanariNameBook alloc] initWithUserId:ctx != nil ? ctx.userId : nil];
+    book.onFirstRead = ^(NSString *_Nullable unusable) {
+      CanariLogMentionNamesUnusable(unusable);
+    };
+  }
+  CanariMentionNameBook nameBook = ^NSDictionary *_Nullable {
+    return [book names];
+  };
   if (namesMentionAuthor && mentionsMe) {
     subtitle = CanariMentionAuthorLine(senderId, nameBook);
   }
@@ -3225,6 +3718,17 @@ static void CanariEnsureCallProvider(void) {
   config.maximumCallGroups = 1;
   config.maximumCallsPerCallGroup = 1;
   config.supportedHandleTypes = [NSSet setWithObject:@(CXHandleTypeGeneric)];
+  // Canari's own ring (owner, 2026-11-01): 25 s of the 5 s loop, rendered from
+  // `soundPalette.RING_PHRASE` by tools/notification-sounds/render.mjs into gen/apple/CallSounds/
+  // and bundled in the app's Resources (iosNotificationSounds.test.ts). CallKit repeats it. A name
+  // the bundle lacks makes CallKit ring the system tone without a word, so the absence is logged.
+  if ([[NSBundle mainBundle] pathForResource:@"canari_ring_callkit" ofType:@"wav"] != nil) {
+    config.ringtoneSound = kCanariRingtoneSound;
+    NSLog(@"[CanariCallKit] ringtone set to %@ (the Canari ring)", kCanariRingtoneSound);
+  } else {
+    NSLog(@"[CanariCallKit] ERROR %@ is not in the bundle - CallKit rings the system tone",
+          kCanariRingtoneSound);
+  }
   g_callProvider = [[CXProvider alloc] initWithConfiguration:config];
   g_callProviderDelegate = [[CanariCallProviderDelegate alloc] init];
   [g_callProvider setDelegate:g_callProviderDelegate queue:nil];
@@ -3641,7 +4145,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName, NO, YES);
+                                    senderName, NO, YES, nil);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -3724,6 +4228,9 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSString *body = nil;
+    // Whether the open PROVED the author (`authorProven`: a v2 session's minter and signature
+    // checked). A v1 row opens for whoever the push names, so its author is never named.
+    BOOL authorProven = NO;
     BOOL seedHeld = (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0) &&
                     CanariGraineSeedHeld(channelId, sessionId);
     if (seedHeld) {
@@ -3759,6 +4266,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
             text = [text substringToIndex:200];
           }
           body = text.length > 0 ? text : nil;
+          id proven = ((NSDictionary *)json)[@"authorProven"];
+          // ONLY THE JSON LITERAL `true`: a JSON `1` is an NSNumber whose `boolValue` is YES too,
+          // so the CFBoolean type is the test - as in the NSE (`isJSONTrue`) and on Android.
+          authorProven = body != nil && [proven isKindOfClass:[NSNumber class]] &&
+                         CFGetTypeID((__bridge CFTypeRef)proven) == CFBooleanGetTypeID() &&
+                         [proven boolValue];
         } else {
           id reason = [json isKindOfClass:[NSDictionary class]] ? ((NSDictionary *)json)[@"reason"]
                                                                   : nil;
@@ -3792,20 +4305,44 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
     NSString *displayName = workspaceName.length > 0
                                 ? [NSString stringWithFormat:@"%@ - #%@", workspaceName, channelName]
                                 : [NSString stringWithFormat:@"#%@", channelName];
+    // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
+    // `CanariSalonSpeaker`. Until 2026-11-01 the salon stood in as the "sender": no author named,
+    // and the SALON's letter drawn as a face (the defect the owner read on Android `v1.6.0`).
+    NSString *initialsName = @"";
+    CanariNameBook *names = [[CanariNameBook alloc] initWithUserId:CanariLoadPushContext().userId];
+    NSString *speaker = CanariSalonSpeaker(showsMessage, authorProven, shownSenderId, names,
+                                           channelId, &initialsName);
+    // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line
+    // already carries the reason; when it did not (a v1 row, a push naming nobody, a blind banner),
+    // the author line or the tokens are the first reader, and they say it - never twice.
+    if (!names.hasRead) {
+      names.onFirstRead = ^(NSString *_Nullable unusable) {
+        CanariLogSalonNamesUnusable(unusable, channelId);
+      };
+    }
+    // A FACE, AND A NAME IN THE MENTION LINE, ONLY FOR A NAMED SPEAKER: a photo beside "Someone"
+    // would name them by the back door, and a v1 author is only the server's claim.
+    NSString *speakerId = initialsName.length > 0 ? shownSenderId : @"";
     dispatch_async(dispatch_get_main_queue(), ^{
-      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId
-      // when the open proved it. No media thumbnail for channels (WP-XP-3 is MLS DM/group only) ->
-      // pass nil. The initials fall back to the SALON, not to the composed title: Android twin uses
-      // channelName for exactly the same reason.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, shownSenderId, nil,
-                                    shownMentionsMe, channelName, YES, NO);
+      // An opened line has a speaker and the salon is the group: the subtitle names them, as an MLS
+      // group does. A blind banner keeps the salon as its title alone. No media thumbnail for
+      // channels (WP-XP-3 is MLS DM/group only) -> pass nil.
+      CanariShowMessageNotification(speaker ?: displayName, speaker != nil ? displayName : @"", body,
+                                    conversationId, speakerId, nil, shownMentionsMe,
+                                    initialsName, YES, NO, names);
     });
   });
 }
 
+/// The threads of the two local notifications `CanariHandleFcmData` posts even in the foreground
+/// (`showsWhileForeground`). `CanariOwnLocalPresentation` presents exactly these while in front, so
+/// the poster and the presentation read ONE pair of names.
+static NSString *const kCanariThreadSocial = @"canari_social";
+static NSString *const kCanariThreadForms = @"canari_forms";
+
 /**
  * Handles an ALERT frame's data while the app process runs: `willPresentNotification` (foreground)
- * and a tap. A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
+ * only - a tap is not an arrival (`didReceiveNotificationResponse`). A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
  * `isWelcome` and `process_queue` branches below, which only a silent frame carries, are reached by
  * nothing on iOS today (docs/wiki/backlog.md). The `welcome_request_pending` branch was the same and
  * was deleted on 2026-10-22: it merged its add into `mls.bin` before the server answered, which
@@ -3934,7 +4471,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
     } else if (formId.length > 0) {
       deepLink = [NSString stringWithFormat:@"fr.emse.canari://form/%@", formId];
     }
-    NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
+    NSString *thread =
+        [msgType isEqualToString:@"form_reminder"] ? kCanariThreadForms : kCanariThreadSocial;
     CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, 0, nil);
     return;
   }
@@ -4448,6 +4986,272 @@ static void CanariInstallApnsTokenHook(void) {
 }
 #endif
 
+// --- ONE notification-center delegate -------------------------------------------------------------
+//
+// `UNUserNotificationCenter.delegate` is ONE weak slot, and the last writer wins it silently.
+// `tauri-plugin-notification`'s `NotificationManager.init()` writes `center.delegate = self` when
+// Tauri registers the plugin, which is inside `ffi::start_app()` - AFTER `CanariPushSetup` ran from
+// `canari_ios_bootstrap()`. So the plugin owned the slot on every launch, and its `didReceive` drops
+// every remote push (`trigger is UNPushNotificationTrigger` -> `completionHandler()` and nothing
+// else): a tap on a push banner from a backgrounded app resumed the previous page, and from a killed
+// app opened the feed, while `CanariNotificationDelegate`'s tap handler never ran (iPhone 12,
+// 1.5.4-alpha.1: no `[CanariPush] notification tap` line, and iOS logging the plugin's
+// `willPresent` answer, 7 = badge|sound|alert).
+//
+// So the slot is TAKEN BACK, with public API only, at `UIApplicationDidFinishLaunching` - after
+// every plugin registered (they register inside `ffi::start_app()`, before `UIApplicationMain`) and
+// before iOS delivers a cold start's response. Whatever held it is kept (weakly) as the FORWARD
+// TARGET for the notifications IT posted (`CanariNotificationPosterPlugin`), so the page's own taps
+// still reach its `onAction`. A writer LATER than that is accused at every activation
+// (`CanariCheckNotificationDelegate`).
+
+/// Who posted a notification, and therefore who answers for it. Classified from the REQUEST, where
+/// the poster wrote it, never from the text.
+typedef NS_ENUM(NSInteger, CanariNotificationPoster) {
+  /// A remote push (APNs via FCM), the extension's rewrite included: Canari's.
+  CanariNotificationPosterPush,
+  /// The Share Extension's local "choose the conversation" banner: Canari's.
+  CanariNotificationPosterShare,
+  /// A local notification `canari_push.mm` posted itself (`canari-<n>` or a UUID), or a decimal
+  /// one this process did NOT post (see below): Canari's - presented, never handed to the plugin.
+  CanariNotificationPosterCanari,
+  /// `tauri-plugin-notification`'s, posted from the page IN THIS PROCESS: a decimal identifier (the
+  /// plugin always writes `"\(notification.id)"`, no Canari poster ever does) that this process
+  /// added (`CanariPluginPostedThisProcess`). Its callbacks are the plugin's to answer.
+  CanariNotificationPosterPlugin,
+};
+
+/// Whether `identifier` is the plugin's shape: an optional `-` then decimal digits only.
+static BOOL CanariIsPluginNotificationIdentifier(NSString *identifier) {
+  static NSRegularExpression *re;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    re = [NSRegularExpression regularExpressionWithPattern:@"^-?[0-9]{1,10}$" options:0 error:nil];
+  });
+  return identifier != nil &&
+         [re numberOfMatchesInString:identifier options:0 range:NSMakeRange(0, identifier.length)] == 1;
+}
+
+// --- The plugin's memory, mirrored --------------------------------------------------------------
+//
+// The plugin answers a notification from what it saved IN MEMORY when it posted it, and
+// FORCE-UNWRAPS that entry (`notificationsMap[request.identifier]!`, `toActiveNotification`, in both
+// `willPresent` and `didReceive`). A decimal-id notification posted by an EARLIER process - posted,
+// app killed, then tapped - is in no map, and handing it over traps the app. So this process keeps
+// the membership itself: every identifier added through
+// `-[UNUserNotificationCenter addNotificationRequest:withCompletionHandler:]` in this process is
+// recorded before the add goes through, unchanged. A pass-through: it adds nothing to the request
+// and never refuses one.
+
+static NSMutableSet<NSString *> *g_postedThisProcess = nil;
+static void (*CanariOrigAddNotificationRequest)(id, SEL, UNNotificationRequest *,
+                                                void (^)(NSError *)) = NULL;
+
+static void CanariRecordingAddNotificationRequest(id self, SEL _cmd, UNNotificationRequest *request,
+                                                  void (^completion)(NSError *)) {
+  NSString *identifier = request.identifier;
+  if (identifier != nil) {
+    @synchronized(g_postedThisProcess) {
+      [g_postedThisProcess addObject:identifier];
+    }
+  }
+  CanariOrigAddNotificationRequest(self, _cmd, request, completion);
+}
+
+/// The method replacement itself - a pass-through of `addNotificationRequest:withCompletionHandler:`.
+/// Run only through `CanariRecordNotificationsPostedThisProcess`.
+static void CanariInstallNotificationRecorder(void) {
+  g_postedThisProcess = [NSMutableSet set];
+  Class cls = [UNUserNotificationCenter class];
+  SEL sel = @selector(addNotificationRequest:withCompletionHandler:);
+  Method m = class_getInstanceMethod(cls, sel);
+  if (m == NULL) {
+    // Every decimal-id notification then reads as another process's: presented and routed by
+    // Canari, never handed to the plugin - no trap, but the page's own taps lose `onAction`.
+    NSLog(@"[CanariPush] ERROR: -[UNUserNotificationCenter addNotificationRequest:withCompletionHandler:] "
+          @"not found - no page notification is handed to the plugin");
+    return;
+  }
+  CanariOrigAddNotificationRequest =
+      (void (*)(id, SEL, UNNotificationRequest *, void (^)(NSError *)))method_getImplementation(m);
+  class_replaceMethod(cls, sel, (IMP)CanariRecordingAddNotificationRequest, method_getTypeEncoding(m));
+}
+
+/// Installs the recorder, ONCE per process (`dispatch_once`): called from `CanariPushSetup`, in
+/// `main()`, before any plugin exists. A second install would read the recorder itself as the
+/// "original" and call itself for ever (review of #2843, A4).
+static void CanariRecordNotificationsPostedThisProcess(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    CanariInstallNotificationRecorder();
+  });
+}
+
+static BOOL CanariPluginPostedThisProcess(NSString *identifier) {
+  if (identifier == nil || g_postedThisProcess == nil) {
+    return NO;
+  }
+  @synchronized(g_postedThisProcess) {
+    return [g_postedThisProcess containsObject:identifier];
+  }
+}
+
+static BOOL CanariIsShareNotification(NSDictionary *userInfo);
+
+static CanariNotificationPoster CanariNotificationPosterOf(UNNotificationRequest *request) {
+  if ([request.trigger isKindOfClass:[UNPushNotificationTrigger class]]) {
+    return CanariNotificationPosterPush;
+  }
+  if (CanariIsShareNotification(request.content.userInfo)) {
+    return CanariNotificationPosterShare;
+  }
+  if (CanariIsPluginNotificationIdentifier(request.identifier)) {
+    if (CanariPluginPostedThisProcess(request.identifier)) {
+      return CanariNotificationPosterPlugin;
+    }
+    NSLog(@"[CanariPush] a page notification this process did not post (an earlier process's) - "
+          @"answered by Canari, never handed to the plugin, which holds no record of it");
+  }
+  return CanariNotificationPosterCanari;
+}
+
+@class CanariNotificationDelegate;
+static CanariNotificationDelegate *g_notifDelegate = nil;
+/// What held the delegate slot when Canari took it back - the plugin's `NotificationManager`. Weak,
+/// as the slot itself is: the plugin owns its manager.
+static __weak id<UNUserNotificationCenterDelegate> g_forwardNotifDelegate = nil;
+
+/// Takes the delegate slot back for Canari, keeping whatever held it as the forward target. Called
+/// from the `UIApplicationDidFinishLaunching` observer: every plugin registered inside
+/// `ffi::start_app()` before `UIApplicationMain`, and iOS delivers a cold start's response after it.
+static void CanariTakeNotificationDelegate(void) {
+  UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+  id<UNUserNotificationCenterDelegate> holder = center.delegate;
+  if (holder == (id)g_notifDelegate && holder != nil) {
+    NSLog(@"[CanariPush] notification delegate: Canari's held it through launch");
+    return;
+  }
+  if (holder != nil) {
+    g_forwardNotifDelegate = holder;
+  }
+  center.delegate = (id<UNUserNotificationCenterDelegate>)g_notifDelegate;
+  NSLog(@"[CanariPush] notification delegate taken back from %@ - its own notifications are "
+        @"forwarded to it",
+        holder == nil ? @"nil" : NSStringFromClass([holder class]));
+}
+
+/// ACCUSES a delegate slot Canari does not hold at `didBecomeActive` - a writer later than the
+/// launch take-back. An event, never a poll. Silent when the slot is Canari's.
+static void CanariCheckNotificationDelegate(NSString *moment) {
+  id<UNUserNotificationCenterDelegate> current = [UNUserNotificationCenter currentNotificationCenter].delegate;
+  if (current == (id)g_notifDelegate && current != nil) {
+    return;
+  }
+  NSLog(@"[CanariPush] ERROR at %@: the notification delegate is %@, not Canari's - push taps go to "
+        @"it and are LOST",
+        moment, current == nil ? @"nil" : NSStringFromClass([current class]));
+}
+
+// --- What Canari's own local notifications show while the app is in front ------------------------
+//
+// THE POSTER DECIDES, never the transport that brought the frame. "In front" here is
+// `canari_ios_is_in_foreground()`, which is ACTIVE only: it turns false at `willResignActive`.
+//
+// Shown while ACTIVE: the threads whose content the page does not show - a `social` or
+// `form_reminder` notification `CanariHandleFcmData` posts in front (its `showsWhileForeground`),
+// and the "reply not sent" notice of a quick reply (`CanariShowQuickReplyNotSent`), which nothing
+// else would say. Not shown while ACTIVE: a message notification, whose conversation the page
+// already shows. (The pending-sync notice never reaches here while ACTIVE: its poster refuses the
+// `canari_messages` thread in front.)
+//
+// `willPresent` is also asked while the app is INACTIVE - Notification Center pulled down, a system
+// alert up, the launch window - and there the page is not what the user sees, so a message a
+// background frame decrypted, answered None, was swallowed (review of #2843, A5). Inactive, every
+// one is presented, exactly as the push branch presents a push.
+
+/// The presentation of a notification `canari_push.mm` posted itself.
+static UNNotificationPresentationOptions CanariOwnLocalPresentation(UNNotificationRequest *request) {
+  UNNotificationPresentationOptions shown = UNNotificationPresentationOptionBanner |
+                                            UNNotificationPresentationOptionSound |
+                                            UNNotificationPresentationOptionList;
+  NSString *thread = request.content.threadIdentifier ?: @"";
+  if ([thread isEqualToString:kCanariThreadSocial] || [thread isEqualToString:kCanariThreadForms] ||
+      [thread isEqualToString:kCanariThreadQuickReply]) {
+    return shown;
+  }
+  return canari_ios_is_in_foreground() ? UNNotificationPresentationOptionNone : shown;
+}
+
+// --- A tap waits in a file until the page takes it ---------------------------------------------------
+//
+// A tap on a killed app is delivered BEFORE the WebView exists, and on a backgrounded app before the
+// page has resumed. `openURL` on our own scheme handed it to the scene's URL path, whose arrival
+// relative to the page's listeners is not decided by anything here. The tap is instead written to
+// `pending_notification_tap.json` (THE DURABLE STATE), and the page TAKES it - read and deleted in
+// one command, `read_and_clear_pending_notification_tap` - at its mount and whenever this side says
+// one waits (`canari:notification-tap`). The order makes it deterministic: the file is written
+// BEFORE the event is dispatched, and the page registers its listener BEFORE its mount drain, so
+// either the listener hears the event or the drain finds the file (`notificationTapDrain.ts`).
+
+static NSString *const kPendingNotificationTapFileName = @"pending_notification_tap.json";
+
+
+/// Dispatches `event` to a live page, ON THE MAIN QUEUE (WebKit's), and says which of the two
+/// happened. A page not loaded yet takes what waits at its mount; `what` names it in the log.
+static void CanariTellPage(NSString *event, NSString *what) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    WKWebView *webView = CanariFindWebView();
+    if (webView == nil) {
+      NSLog(@"[CanariPush] %@ waits before the WebView: the page takes it at mount", what);
+      return;
+    }
+    NSString *js =
+        [NSString stringWithFormat:@"window.dispatchEvent(new CustomEvent('%@'));", event];
+    [webView evaluateJavaScript:js
+              completionHandler:^(__unused id result, NSError *error) {
+                if (error != nil) {
+                  NSLog(@"[CanariPush] ERROR the page was not told of the %@ (%@): it takes it at "
+                        @"its next mount",
+                        what, CanariErrorReason(error));
+                  return;
+                }
+                NSLog(@"[CanariPush] %@ waits - the page was told", what);
+              }];
+  });
+}
+
+/// Tells a live page that a tap waits (`canari:notification-tap`).
+static void CanariTellPageOfNotificationTap(void) {
+  CanariTellPage(@"canari:notification-tap", @"notification tap");
+}
+
+/// Writes the tap's link (`{"deepLink","tappedAt"}`) for the page, then tells it. A newer tap
+/// replaces an untaken older one: the user's last tap is where they asked to go.
+static void CanariQueueNotificationTap(NSString *deepLink) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariPush] ERROR: no data directory - the notification tap is LOST");
+    return;
+  }
+  [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                            withIntermediateDirectories:YES
+                                             attributes:nil
+                                                  error:nil];
+  long long tappedAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  NSError *err = nil;
+  NSData *body = [NSJSONSerialization dataWithJSONObject:@{@"deepLink" : deepLink, @"tappedAt" : @(tappedAt)}
+                                                 options:0
+                                                   error:&err];
+  NSString *path = [dir stringByAppendingPathComponent:kPendingNotificationTapFileName];
+  if (body == nil || ![body writeToFile:path options:NSDataWritingAtomic error:&err]) {
+    NSLog(@"[CanariPush] ERROR the notification tap was not written (%@) - it is LOST",
+          CanariErrorReason(err));
+    return;
+  }
+  NSLog(@"[CanariPush] notification tap queued for the page: %@", CanariDescribeDeepLink(deepLink));
+  CanariTellPageOfNotificationTap();
+}
+
 @interface CanariNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
 
@@ -4467,32 +5271,87 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler {
-  (void)center;
-  if (CanariIsShareNotification(notification.request.content.userInfo)) {
-    // The app is on screen: the share-ready signal has already imported the share and told the page.
-    NSLog(@"[CanariShare] share banner while in the foreground - not shown, the page already has it");
-    completionHandler(UNNotificationPresentationOptionNone);
-    return;
+  UNNotificationRequest *request = notification.request;
+  // THE POSTER DECIDES, and only a REMOTE PUSH is an arrival. A notification Canari posted itself
+  // was handed to `CanariHandleFcmData` here too, which re-posted it (the type-less userInfo falls to
+  // a "new message"), which came back here: a loop of sounds while the app was inactive (review of
+  // #2843, F1).
+  switch (CanariNotificationPosterOf(request)) {
+    case CanariNotificationPosterPlugin: {
+      // The page's own notification: the plugin answers (and tells the page) as it did when it held
+      // the slot.
+      id<UNUserNotificationCenterDelegate> plugin = g_forwardNotifDelegate;
+      if ([plugin respondsToSelector:_cmd]) {
+        [plugin userNotificationCenter:center
+               willPresentNotification:notification
+                 withCompletionHandler:completionHandler];
+        return;
+      }
+      NSLog(@"[CanariPush] ERROR: a page notification is presented and no plugin delegate held the "
+            @"slot at launch - shown as a banner by Canari");
+      completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+      return;
+    }
+    case CanariNotificationPosterShare:
+      // The app is on screen: the share-ready signal has already imported the share and told the page.
+      NSLog(@"[CanariShare] share banner while in the foreground - not shown, the page already has it");
+      completionHandler(UNNotificationPresentationOptionNone);
+      return;
+    case CanariNotificationPosterCanari:
+      // Posted by this file, ALREADY the product of an arrival: presented, never handled again.
+      completionHandler(CanariOwnLocalPresentation(request));
+      return;
+    case CanariNotificationPosterPush:
+      break;
   }
-  CanariPushProcessRemoteNotificationUserInfo(notification.request.content.userInfo);
+  // A REMOTE PUSH, AND EXACTLY ONE SURFACE FOR IT.
+  // - Active: the arrival is handled (`CanariHandleFcmData` skips what the page shows, re-posts what
+  //   shows in front - a `social` or `form_reminder`, presented above - and rings CallKit for a ring
+  //   the page cannot), and the push itself is NOT presented, so nothing shows twice.
+  // - Inactive (Notification Center pulled down, the launch window): the banner the extension drew
+  //   IS the notification. Handling it here too decrypted it in-process and posted it again, and a
+  //   `call_ring` rang CallKit beside its own banner.
   if (canari_ios_is_in_foreground()) {
+    CanariPushProcessRemoteNotificationUserInfo(request.content.userInfo);
     completionHandler(UNNotificationPresentationOptionNone);
   } else {
-    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound |
+                      UNNotificationPresentationOptionList);
   }
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
     didReceiveNotificationResponse:(UNNotificationResponse *)response
              withCompletionHandler:(void (^)(void))completionHandler {
-  (void)center;
+  if (CanariNotificationPosterOf(response.notification.request) == CanariNotificationPosterPlugin) {
+    // The page's own notification, posted by THIS process (`CanariPluginPostedThisProcess`): the
+    // plugin emits `actionPerformed`, which the page's `onAction` routes (`useNotifications.svelte.ts`).
+    // One posted by an earlier process is not classified here and takes Canari's path below.
+    id<UNUserNotificationCenterDelegate> plugin = g_forwardNotifDelegate;
+    if ([plugin respondsToSelector:_cmd]) {
+      NSLog(@"[CanariPush] notification tap on a page notification - handed to the plugin");
+      [plugin userNotificationCenter:center
+          didReceiveNotificationResponse:response
+                   withCompletionHandler:completionHandler];
+      return;
+    }
+    NSLog(@"[CanariPush] ERROR: a tap on a page notification and no plugin delegate held the slot "
+          @"at launch - the app opens where it was");
+    completionHandler();
+    return;
+  }
   NSDictionary *userInfo = response.notification.request.content.userInfo;
   if (CanariIsShareNotification(userInfo)) {
     NSLog(@"[CanariShare] share banner tapped - the share is imported on activation");
     completionHandler();
     return;
   }
-  CanariPushProcessRemoteNotificationUserInfo(userInfo);
+  // A TAP IS NOT AN ARRIVAL: the payload is NOT handed to `CanariHandleFcmData` here - and so not to
+  // `[FIRMessaging appDidReceiveMessage:]` either, which means FCM records no open. The message was
+  // delivered when the banner was drawn; re-handling it from a tap on a backgrounded or killed app
+  // (where `canari_ios_is_in_foreground()` is still false) decrypted it in this process and posted
+  // it a second time. That call stood here while the plugin held the delegate slot, so it never ran
+  // on a phone; it is removed in the change that makes this method reachable.
 
   // Notification quick actions (WP-XP-1): reply / mark as read fire even from a killed app - the
   // OS briefly relaunches the process to deliver this callback. Both reuse the background
@@ -4505,11 +5364,17 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
       text = ((UNTextInputNotificationResponse *)response).userText ?: @"";
     }
     long long notifiedAt = CanariNotifiedSentAt(userInfo);
+    // The account the notification was addressed to, never whoever is signed in now (M3).
+    NSString *recipientId = [userInfo[kCanariRecipientKey] isKindOfClass:[NSString class]]
+                                ? userInfo[kCanariRecipientKey]
+                                : @"";
+    // The handler is passed on, never called here: a reply handed to the page holds it until the
+    // page settles the reply (`CanariHoldQuickReply`).
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      CanariHandleQuickReplyAction(groupId, [text stringByTrimmingCharactersInSet:
-                                                        [NSCharacterSet whitespaceAndNewlineCharacterSet]],
-                                   notifiedAt);
-      completionHandler();
+      CanariHandleQuickReplyAction(recipientId, groupId,
+                                   [text stringByTrimmingCharactersInSet:
+                                             [NSCharacterSet whitespaceAndNewlineCharacterSet]],
+                                   notifiedAt, completionHandler);
     });
     return;
   }
@@ -4534,32 +5399,27 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
   NSLog(@"[CanariPush] notification tap type=%@ deepLink=%@", userInfo[@"type"] ?: @"?",
         deepLink.length > 0 ? CanariDescribeDeepLink(deepLink)
                             : @"ABSENT - the payload names no target");
+  // The page takes the link from durable state (`CanariQueueNotificationTap`), never from an
+  // `openURL` on our own scheme: a cold start's tap arrives before the WebView exists.
   if (deepLink.length > 0) {
-    NSURL *url = [NSURL URLWithString:deepLink];
-    if (url != nil) {
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [[UIApplication sharedApplication] openURL:url
-                                           options:@{}
-                                 completionHandler:^(BOOL success) {
-                                   // The system's answer to the self-open: NO means it declined.
-                                   NSLog(@"[CanariPush] notification tap: openURL completed success=%d", success);
-                                 }];
-      });
-    } else {
-      NSLog(@"[CanariPush] notification tap: deepLink is not a URL: %@",
-            CanariDescribeDeepLink(deepLink));
-    }
+    CanariQueueNotificationTap(deepLink);
   }
   completionHandler();
 }
 @end
 
-static CanariNotificationDelegate *g_notifDelegate = nil;
-
 void CanariPushSetup(void) {
   g_mlsStateLock = [[NSLock alloc] init];
   g_cacheLock = [[NSLock alloc] init];
+  // Before any plugin exists: every identifier this process posts is recorded from here on.
+  CanariRecordNotificationsPostedThisProcess();
+  if (g_quickReplyHolds == nil) {
+    g_quickReplyHolds = [NSMutableDictionary dictionary];
+  }
+  canari_ios_set_quick_reply_ack_listener(CanariPageSettledQuickReply);
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
+  // Set now for what arrives before launch completes; taken back at DidFinishLaunching from whatever
+  // registered meanwhile (`CanariTakeNotificationDelegate`).
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
   CanariRefreshNotificationCategories();
   // Incoming-call ring (WP-XP-5): PushKit VoIP registry + CallKit provider + handover hook.
@@ -4583,6 +5443,8 @@ void CanariPushSetup(void) {
                 if (added) {
                   CanariReassignAppDelegate();
                 }
+                // Every plugin has registered by now, and a cold start's tap is delivered next.
+                CanariTakeNotificationDelegate();
               }];
   [[NSNotificationCenter defaultCenter]
       addObserverForName:UIApplicationDidBecomeActiveNotification
@@ -4590,6 +5452,7 @@ void CanariPushSetup(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(__unused NSNotification *note) {
                 CanariLogAppDelegateIdentity();
+                CanariCheckNotificationDelegate(@"activation");
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -4713,6 +5576,13 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
 + (BOOL)endForSignOut {
   NSLog(@"[CanariPush] sign-out: erasing the push secret and deleting the FCM token");
   CanariPushSecretErase();
+  // EVERY delivered notification goes, not a chosen few: this install holds one push registration at
+  // a time, so all of them were addressed to the account signing out. Left, they showed its messages
+  // to the next account, and a quick reply typed on one would be the old account's words (review of
+  // #2843, M3 - the reply is also bound to the notification's own `recipientId`).
+  [[UNUserNotificationCenter currentNotificationCenter] removeAllDeliveredNotifications];
+  CanariSetBadgeCount(0);
+  NSLog(@"[CanariPush] sign-out: the delivered notifications removed");
   return [self completeOwedDeletion];
 }
 

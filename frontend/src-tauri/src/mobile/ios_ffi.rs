@@ -346,10 +346,12 @@ pub unsafe extern "C" fn canari_native_seal_cache_line(
 }
 
 /// Claims the `ownDeviceAdded` keys of a decrypt answer in the device-notice ledger under
-/// `data_dir` (the App Group directory, which the app's own claim uses too) and returns the keys
-/// nobody announced before as a JSON array - free with `canari_free_string`. NULL arguments claim
-/// nothing and answer `[]`. FFI mirror of the Android JNI `nativeClaimDeviceNotices`, and the same
-/// implementation behind it (`mobile::device_notice`).
+/// `data_dir` (the App Group directory, which the app's own claim uses too) and answers
+/// `{"claimed": [keys nobody announced before], "held": n}` - `held` counting the keys of an
+/// account the app has not pre-claimed since the update - free with `canari_free_string`. NULL
+/// arguments claim nothing and answer an empty claim. FFI mirror of the Android JNI
+/// `nativeClaimDeviceNotices`, and the same gated implementation behind it
+/// (`mobile::device_notice::engine_claim_device_notices`).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_claim_device_notices(
     data_dir: *const c_char,
@@ -357,13 +359,14 @@ pub unsafe extern "C" fn canari_native_claim_device_notices(
 ) -> *mut c_char {
     if data_dir.is_null() || keys_json.is_null() {
         log::error!("[DEVICE_NOTICE] ffi: null argument - nothing claimed");
-        return json_to_c_string(serde_json::json!([]));
+        return json_to_c_string(serde_json::json!({ "claimed": [], "held": 0 }));
     }
-    let claimed = super::device_notice::claim_device_notices_json(
+    let claim = super::device_notice::engine_claim_device_notices_json(
         &path_from_c_str(data_dir),
         &str_from_c_str(keys_json),
     );
-    let value = serde_json::from_str(&claimed).unwrap_or_else(|_| serde_json::json!([]));
+    let value = serde_json::from_str(&claim)
+        .unwrap_or_else(|_| serde_json::json!({ "claimed": [], "held": 0 }));
     json_to_c_string(value)
 }
 
@@ -606,6 +609,54 @@ pub extern "C" fn canari_ios_on_resume() {
 #[no_mangle]
 pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
     crate::page_ring::page_rings_in_app()
+}
+
+/// Whether the page holds a loaded MLS manager in this process - the fact that makes it the one that
+/// sends. A notification quick reply is then handed to the page (`pending_quick_replies.ndjson`)
+/// instead of being encrypted natively, which the foreground guard would refuse and the page's next
+/// outbox mirror would erase.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_holds_mls() -> bool {
+    crate::concurrency::live_manager_in_process()
+}
+
+/// Seals one `pending_quick_replies.ndjson` line (`native_cache`, purpose `QuickReply`) and returns
+/// it as a heap C string to free with `canari_free_string`, or NULL when there is no usable key - in
+/// which case the caller writes NOTHING. Never a reply in the clear.
+///
+/// # Safety
+/// Both arguments must be null or valid null-terminated C strings for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_seal_quick_reply_line(
+    cache_key_b64: *const c_char,
+    line: *const c_char,
+) -> *mut c_char {
+    if cache_key_b64.is_null() || line.is_null() {
+        log::error!("[QUICK_REPLY] ffi: null argument");
+        return std::ptr::null_mut();
+    }
+    let Some(key) = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64)) else {
+        return std::ptr::null_mut();
+    };
+    let sealed = crate::native_cache::seal_line(
+        &key,
+        crate::native_cache::Purpose::QuickReply,
+        &str_from_c_str(line),
+    );
+    match std::ffi::CString::new(sealed) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Registers the native listener told what became of a quick reply the page was handed - its
+/// `QuickReplyOutcome` code (`commands::push::acknowledge_quick_reply`). Registered by
+/// `CanariPushSetup` rather than linked, since this crate is linked into the notification extension.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_quick_reply_ack_listener(
+    listener: Option<crate::commands::push::QuickReplyAckListener>,
+) {
+    crate::commands::push::set_quick_reply_ack_listener(listener);
 }
 
 /// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -

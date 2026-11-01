@@ -2,7 +2,7 @@ import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
 import { RefusalCode, refusalBody } from './refusal-codes';
 import { In, IsNull, Not, type EntityManager, type Repository } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
-import { GroupMember } from '../entities/group-member.entity';
+import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
@@ -541,6 +541,20 @@ export async function callerSeatStandings(
 export const ADMITTED_SEAT = { awaitingAdmission: false } as const;
 
 /**
+ * Whether a person's seat still awaits a member's admission: its roster flag is set AND none of
+ * their devices is `active` in the group. An active device is in the tree - a Welcome admitted it -
+ * so the person is a member whatever the flag says. THE ONE PREDICATE: the commit gate
+ * (`seatAwaitsAdmission`) and the groups list (`getUserGroups`) both ask it, so a device with no
+ * row is never told "awaiting" while another device of the same person is active (review of #2894).
+ *
+ * @param flagged the roster row's `awaitingAdmission`.
+ * @param activeDevices how many of the person's device rows in the group are `active`.
+ */
+export function seatStillAwaits(flagged: boolean, activeDevices: number): boolean {
+  return flagged && activeDevices === 0;
+}
+
+/**
  * The refusal of a seat still awaiting a member's admission: a 409 `awaiting_admission`, NEVER the
  * 403 of no seat at all - a client reads a 403 on a membership question as "I am not a member" and
  * retires the conversation (`NotAGroupMemberError`), while this person is a pending member who waits.
@@ -703,7 +717,8 @@ const notAMemberRepeats = new RepeatCounter();
  * member of it. Authentication (`HeaderAuthGuard`, or a PushSecret bound to a user and device) says
  * WHO is asking; this says whether that person may touch THIS group.
  *
- * - no seat - never a member, removed, departed, or the group is absent or tombstoned - is the 403
+ * - no seat - never a member, removed, departed, the group absent or tombstoned, or an id that is
+ *   not a uuid (refused before any query) - is the 403
  *   `NOT_A_MEMBER`, the SAME answer for an unknown and a known group, so the route is no oracle of
  *   which ids exist. A tombstoned group is read as absent HERE, by its `deletedAt`, never trusted to
  *   have lost every seat: a seat a purge left behind is not a member of a conversation that ended.
@@ -724,6 +739,11 @@ export async function assertCallerActsOnGroup(
   groupId: string,
   callerUserId: string
 ): Promise<GroupKindRow> {
+  // An id that cannot name a group IS an unknown group: the same 403, asked of no table - a uuid
+  // column answers a string it refuses with a 500 (22P02), and that 500 named no one's fault.
+  if (!isGroupUuid(groupId)) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  }
   const group = await repos.groups.findOne({
     where: { id: groupId, deletedAt: IsNull() },
     select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
@@ -731,13 +751,70 @@ export async function assertCallerActsOnGroup(
   const standing = group ? await standingOnGroupOfKind(repos, group, groupId, callerUserId) : null;
   if (group && standing === 'admitted') return group;
   if (standing === 'awaiting') throw refuseAwaitingSeat(log, route, groupId, callerUserId);
+  throw refuseNotAMember(log, route, groupId, callerUserId, ` groupFound=${group !== null}`);
+}
+
+/**
+ * THE GATE OF A ROUTE A SEAT AWAITING ADMISSION LEGITIMATELY CALLS - `mls/welcome-request`, whose
+ * main caller is exactly that seat asking a member to let it in. So, unlike
+ * {@link assertCallerActsOnGroup}, ANY seat passes, admitted or awaiting; what is refused is the
+ * caller with none:
+ *
+ * - an id that is not a uuid, an absent or tombstoned group, or no roster row: the 403
+ *   `NOT_A_MEMBER` ({@link refuseNotAMember}) - the same for an unknown and a known id;
+ * - a key-distribution group, with the same 403: its roster is social-service's and it is never
+ *   entered by a Welcome a member is asked for, so no row here can vouch for the caller.
+ *
+ * @returns the caller's standing, so the route can say what kind of ask it relays without a second
+ *          read of the seat.
+ */
+export async function assertCallerHoldsSeat(
+  repos: Pick<GroupStandingRepos, 'groups' | 'seats'>,
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string
+): Promise<SeatStanding> {
+  if (!isGroupUuid(groupId)) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  }
+  const group = await repos.groups.findOne({
+    where: { id: groupId, deletedAt: IsNull() },
+    select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+  });
+  if (!group) throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  if (isKeyDistributionGroup(group)) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' keyDistribution=true');
+  }
+  const standing = await callerSeatStanding(repos.seats, groupId, callerUserId);
+  if (standing === null) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=true');
+  }
+  return standing;
+}
+
+/**
+ * The refusal of a caller who holds no seat in the group a route names: the 403 `NOT_A_MEMBER`, with
+ * its WARN line at the 1st, 10th, 100th... refusal of one caller on one route of one group. THE ONE
+ * SHAPE of that refusal - {@link assertCallerActsOnGroup}'s, and a salon's whose roster is
+ * social-service's (`MessagingService.assertCallerReactsIn`) - so a client reads one answer.
+ *
+ * @param detail appended to the line as is: start it with a space.
+ */
+export function refuseNotAMember(
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string,
+  detail = ''
+): ForbiddenException {
   const nth = notAMemberRepeats.hit(`${route}|${groupId}|${callerUserId}`);
   if (nth !== null) {
     log.warn(
-      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)} groupFound=${group !== null} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
+      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)}${detail} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
     );
   }
-  throw new ForbiddenException(
+  return new ForbiddenException(
     refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
   );
 }

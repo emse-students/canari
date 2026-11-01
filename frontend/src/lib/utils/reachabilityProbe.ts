@@ -11,24 +11,29 @@
  * `GET /api/version` is the existing unauthenticated, always-cheap route, so a probe needs no token
  * (an expired one must not be able to keep the device "offline") and costs the server nothing.
  *
- * ANY HTTP ANSWER IS "REACHABLE" - a 502 is a server that is there and unhappy, exactly as in
- * `trackedFetch`. The probe returns `false` only for the absence of an answer.
+ * ANY ANSWER OF OUR API IS "REACHABLE" - a JSON 502 is a server that is there and unhappy, exactly
+ * as in `trackedFetch`. Something that is not the API (a captive portal's `511`, a WAF's HTML `403`,
+ * an edge's 5xx page) is no answer from the server: {@link assertAnsweredByApi}, the one proof the
+ * writes use, throws `NotFromApiError` and the probe returns `false`, so the store keeps probing
+ * instead of ending on the edge's say-so. `/api/version` answers JSON (`VersionController`).
  */
 
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { assertAnsweredByApi } from '$lib/utils/apiJson';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 
-/** One probe. Resolves true when the server answered (whatever it said), false when nothing did. */
+/** One probe. Resolves true when our API answered (whatever it said), false when it did not. */
 export async function probeReachability(): Promise<boolean> {
   try {
-    await trackedFetch(
+    const res = await trackedFetch(
       fetch,
       `${coreUrl()}/api/version`,
       { method: 'GET', cache: 'no-store' },
       { requestClass: 'probe' }
     );
+    assertAnsweredByApi(res, 'GET /api/version');
     return true;
   } catch (e) {
     console.warn(`[CONNECTIVITY] reachability probe got no answer: ${String(e)}`);

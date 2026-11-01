@@ -14,6 +14,215 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-01
+
+### Fixed - the admission card names the person, the list shows an ask, the joiner is told, and members get one push
+
+The card of a new person's ask shows their real name (linked to their profile), the conversation row shows a count of pending asks, the person who asked sees what they wait for and is told once if the request was not accepted or expired, a member who loses a simultaneous tap is told another member answered instead of "try again", and the admitted members get one push per ask (migration 043). See [mls-protocol](docs/wiki/protocols/mls-protocol.md).
+
+### Fixed - the disarmed admission rule leaves nothing behind on a dev device
+
+`forget_group` now forgets a group's admission classification. A `closed` classification and the
+freeze list a dev build stored are both removed at startup. Each legitimate self-entry path is
+pinned by its own test ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
+### Fixed - a conversation no longer freezes on an entry no member made
+
+The admission refusal of #2815 is disarmed before any release carried it: such a commit is merged and reported as before, no conversation is frozen and no message is dropped; the rule and what its fix-forward owes are on [mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
+
+### Changed - the bookings week draws one block per booking, free stretch and selection
+
+A booking, a free range, a not-bookable range and the range being dragged are each ONE rounded block (the booker's photo where their name is already shown, name, hours) instead of a stack of per-slot cells; every free step stays its own invisible hit area, so tap, drag and keyboard work as before ([bookings-chantier](docs/wiki/bookings-chantier.md)).
+
+### Fixed - call log noise on the iPhone, a salon page that could not be stored, and an unreadable sound-gate line
+
+The earpiece is the default output of a call and is no longer looked up as a device that WebKit never lists. **A routing change, unverified on hardware:** on iOS the earpiece now asks `setSinkId('')` when the engine has it, where before speaker -> earpiece left the voice on the loudspeaker; requests for one element are ordered so a fast on/off ends on the last ask. The voice's priming play is no longer logged when the stream's arrival aborts it, a hang-up no longer logs a signalling error, a Media Session refusal is said once per page, and a salon's first page writes its conversation row before its messages (foreign key). The sound gate's take and release lines now enter the in-app log (`Log.i`), the release line carrying the count of tones silenced during the call. See [calls](docs/wiki/frontend/modules/calls.md).
+
+### Added - noise suppression (RNNoise) on the call microphone, behind an in-call switch that starts OFF
+
+The captured microphone goes through RNNoise in an AudioWorklet after the browser's echo canceller, and the call screen switches it on for the call - OFF by default (owner, 2026-11-01) until a real call on the bench phones sounds good with it; a pipeline that cannot load is logged at WARN and counted in `[CALL_REPORT] ns_fallbacks=`, and the call goes on with the raw track. The audio rig, broken since the per-direction keys, measures it again - and its clean-speech row FAILS the thresholds ([calls](docs/wiki/frontend/modules/calls.md#noise-suppression-rnnoise---decided-2026-10-31-built-its-clean-speech-row-fails)).
+
+### Fixed - a ringing call no longer reads as "checking encryption", and an answer connects sooner
+
+The ring shows its status alone; the callee's setup runs its independent steps side by side without awaiting the "answered" notice; the caller gathers ICE candidates during the ring; `[CALL_REPORT]` splits `setup_ms` into `ring_ms` and `connect_ms`; and the Media Session and reachability probe noise is gone ([calls](docs/wiki/frontend/modules/calls.md#it-stays-a-long-time-on-encryption-before-the-call-owner-android-153-2026-10-31)).
+
+### Added - the caller hears a canary ringback, and the app's other sounds go quiet during a call
+
+The caller now hears a soft canary phrase, looping, from the invite until the other side answers or the ring ends; from the ring (out or in) to the end of a call, message trills, audible media and notification sounds are silenced, while messages still arrive and show. The reel review now follows "one media at a time" and pauses when the app leaves the screen, like every other media ([calls](docs/wiki/frontend/modules/calls.md#the-callers-ringback-2026-10-31)).
+
+### Fixed - the shop, the partnerships and the booking spaces follow the campus; the Cercle top-up may be reserved to cotisants
+
+/shop and the partnerships list only the associations visible to the reader, and a card of another campus answers 404 by its id; a personal booking space opens to its owner's campus, an association's to its audience; buying by the association page's link stays open; the directory is re-read after an audience or BDE change and when the reader's own campus or cursus changes; `/admin/cercle` gains a "Réservé aux cotisants" box, refused at save without a cotisation mode, as is a members-only partnership card; an archived association sells nothing ([profiles-and-access](docs/wiki/profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31), [cotisations](docs/wiki/cotisations.md#outbound-canari---cercle-balance_topup-webhook)).
+
+### Added - a person seen in a conversation opens their profile
+
+The sender's avatar and name on a message, the avatar of each row in a group's or a salon's members list, and the avatar and name in a direct conversation's header are links to that person's profile; a deleted account gets none. On the phone's glass header the centre pill of a direct conversation opens the profile and the settings stay in the "..." menu; groups and salons are unchanged ([chat](docs/wiki/frontend/modules/chat.md#a-person-in-a-conversation-opens-their-profile-2026-11-01)).
+
+### Changed - a chat reel is prepared at the chat profile and capped at 60 s
+
+Behind the OFF writer switch: the chat camera's ring and gallery check use the server's chat cap, and the outbox prepares a queued take at the `chat` profile under that cap ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)).
+
+### Fixed - a chat reel cancelled offline no longer holds its upload session for a day
+
+The release of a resumable upload session is now owed in durable state and retried at the next start or reconnect, and an account erasure ends the owner's open sessions on the server ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)).
+
+### Fixed - a phone no longer walks every member for history older than the group itself
+
+A member whose memory reaches below the group's creation no longer reports a coverage shortfall, and the asker no longer walks on one. The SQLite row now keeps the group's start ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-shortfall-that-predates-the-group-is-not-a-shortfall-2026-10-26)).
+
+### Fixed - Dependabot security updates for `@nestjs/*` arrive as one pull request per service
+
+The `nestjs` group only covered version updates, so a security advisory opened three single pull requests per service that conflicted with each other once the first merged. A `nestjs-security` group (`applies-to: security-updates`) now carries them together ([cicd](docs/wiki/cicd.md#security-updates-are-a-second-switch-and-neither-dependabotyml-nor-this-page-showed-it)).
+
+### Fixed - `isGenericRole` formats the same under oxfmt 0.74 and 0.75
+
+The chained call was laid out differently by the two versions, so the Dependabot group bump to 0.75 failed `format:check` on one file. Two short statements are stable under both.
+
+### Changed - the dev seed reads as French and holds more to show
+
+Accented text, 18 people (8 new), 10 associations (4 new), 4 categories and 10 calendar events in all three moderation states (3 pending, 1 rejected with a reason), so the user tutorials can be shot on dev ([dev-environment](docs/wiki/infrastructure/dev-environment.md)). Applying it needs the owner's `dev-reset`.
+
+### Changed - the feed tab "Tout" is now "Mon espace", and an (i) button explains each tab
+
+The tab row gets an information button that says what Associations, Suivis and Mon espace show and who sees what. See [posts](docs/wiki/frontend/modules/posts.md#feed-tabs).
+
+### Changed - the feed's selected tab slides, and CanaReels grows out of its button
+
+The yellow pill of "Associations / Suivis / Tout" is one element moved by a transform, and the reel viewer expands from the clapper button (View Transitions API, with a transform-only CSS fallback; none under reduced motion). Both use the motion scale ([design-reference](docs/wiki/frontend/design-reference.md#motion-three-durations-one-easing-one-reduced-motion-rule-2026-10-23)).
+
+### Fixed - no KeyPackage read while a new device's first publication runs
+
+`externalJoin` on a device minted in this boot no longer asks the server for a package its first round has not yet published (a certain 404); it reads when that round settles. A returning device still reads at once ([backlog](docs/wiki/backlog.md)).
+
+### Added - an accepted follower reads a person's posts and lives across spaces (WP-F5)
+
+A personal post or live now reaches the author's ACCEPTED followers whatever their campus or formation, in Suivis and search (never Tout), never for an anonymous post, never through a read grant, and not across a block; removing a follower ends it at once, an unblock no longer brings a severed follow back, and the three follow lists page by cursor to their end ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
+
+### Changed - every floating surface wears the one glass material, with an opaque fallback
+
+The feed bar's `.glass-chrome` is now the material of the post, community and ecosystem menus, both emoji pickers and the communities sidebar's sticky header; one `--glass-chrome-blur` token turns the blur off, and the surface opaque, where `backdrop-filter` is missing or `prefers-reduced-transparency` is set ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - the incoming-call screen, in Canari's look
+
+The ring now shows the caller's photo large in a yellow ring with a soft breathing halo, the name, "Appel audio" or "Appel vidéo" with its glyph, and round Decline and Answer buttons (a camera for a video call) over Canari's night gradient - in the app and on Android's locked-phone call screen, which used to be two flat red and green rectangles ([calls](docs/wiki/frontend/modules/calls.md#the-incoming-call-screen-in-canaris-look-owner-2026-11-01)).
+
+### Fixed - an invitation says what it did, once, and names whoever it left out
+
+A request with no answer before the Add's commit left is now "try again once back online", not "failed"; an invitee the Add could not check or found deviceless is named while the others are added; and one outcome is one log line instead of three ([mls-protocol](docs/wiki/protocols/mls-protocol.md#an-invitation-whose-kept-commit-did-not-land-is-re-planned-or-the-member-is-told-2026-10-25)).
+
+### Fixed - iPhone notification outcome log: no false `killed` after a clock change, no lost or torn line
+
+A run's marker is now stamped with the boot session rather than the boot time, which moves when the clock is stepped; a run's line left beside a busy log is written under its own name before the marker goes; and a short append is cut back so no torn line remains ([mobile](docs/wiki/frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)).
+
+### Fixed - iPhone notification outcome log: a run that ends during the app's read is no longer counted `killed`
+
+A dead run's marker becomes a `killed` line only when the app's own removal took it, runs are named by `(pid, at, n)` so two in one millisecond stay two, and a refused append logs its true cause ([mobile](docs/wiki/frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)).
+
+### Fixed - iPhone notifications: the extension runs on every supported iOS, says what it did, and a tap opens the conversation without it
+
+The Notification Service Extension required iOS 18.2 while the app installs from 16.0, so an older iPhone never ran it and showed the server's generic "Nouveau message". It now targets 16.0, writes one outcome line per notification (decrypted, fell back with its cause, timed out, killed) that the app carries into its log as `[NSE_OUTCOME]`, and a tap on a message or salon notification opens its conversation from the clear `groupId`/`channelId` when the extension did not run. Every chat link is now built from a checked id, and a payload's own link opens only on this app's scheme ([mobile](docs/wiki/frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)).
+
+### Fixed - iOS: a tap on a push banner opens its conversation from a backgrounded or killed app
+
+On every launch the notification plugin took over the iOS notification delegate and dropped every push tap. Canari now takes the delegate back at launch. A tap waits for the page in durable state and is routed once the router is mounted. A reply typed in a notification over an open or backgrounded app is now handed to the page, sealed and tied to the account the notification was addressed to. The process waits until the page's queue has sent it, failed it or left it pending, and a reply that is not sent is always said. A sign-out clears the delivered notifications ([mobile](docs/wiki/frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)).
+
+### Fixed - a link to a page this build lacks leads somewhere again
+
+Under SvelteKit 3 `goto` rejects a path no route matches, so a form's Back, a sign-in's return and a saved form's exit did nothing (or said the sign-in failed); destinations built by code are now typed against the route table and the rest are matched first and loaded as a document when no route has them ([architecture](docs/wiki/frontend/architecture.md#a-path-no-route-matches---apppath-for-code-gotoapppath-for-the-rest)).
+
+### Added - a campaign list or an institution manages its forms, documents, partnerships and publications
+
+Lists and institutions gain those sections (and a list's role editor offers only the rights that lead somewhere); neither sells anything, and the server now refuses a product, a payout account or a form price for them ([associations](docs/wiki/frontend/modules/associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31)).
+
+### Changed - a live has no longest duration, and keeps only its newest segments while it runs
+
+The 60-minute cap, its auto-stop, the sheet line and the byte budget derived from it are gone; a live ends by its broadcaster, by 60 s without a segment, or by staff, and the server deletes the segments behind the newest 20 as it goes, so storage per live is bounded whatever its length. Every lives route answers a build below `1.5.4` (or one naming no build, via the new `X-Canari-Client-Version` header) with the switched-off 404, so an old client never meets the new answers. Lives stay off in production until `1.5.4` carries this ([lives](docs/wiki/services/lives.md#what-one-broadcaster-may-store)).
+
+### Added - broadcast your screen instead of the camera, on a desktop browser
+
+The live sheet offers "Caméra" or "Écran" on desktop browsers (phones keep the camera); the microphone is kept and the share's own audio is mixed in when the browser offers it, and stopping the share from the browser ends the live ([live](docs/wiki/frontend/modules/live.md#broadcasting-the-screen-on-a-desktop-browser-2026-10-31-owner)).
+
+### Changed - the live screens, redesigned in the manner of Instagram Live; a live has its own link
+
+Chat floats over the video without a box and follows only from the bottom; "Terminer" is a small confirmed X at the top right beside Share and a chat toggle; the per-line eye-off became a tap menu (Report, Hide); "En direct" closes the composer and ending the live returns to the feed. Share opens `/lives/<id>`, which the "X est en live" push opens too and which skips devices below `1.5.4` ([live](docs/wiki/frontend/modules/live.md)).
+
+### Fixed - the live sheet says WHY a browser cannot broadcast, and the camera switch needs two cameras
+
+Firefox records WebM, not the MP4 a live needs: the sheet now says so in plain words and points at Chrome, Edge or the app; the switch-camera button of the live sheet and CanaReels is hidden only on a device measured to have exactly one camera (an unknown count keeps it) ([live](docs/wiki/frontend/modules/live.md#why-a-desktop-browser-cannot-broadcast-and-firefox-2026-10-31)).
+
+### Added - Lydia enrolment lot 3: Tresorier and Vendeur cashiers, removing a cashier, changing the Responsable's number
+
+Payout managers list an association's Lydia cashiers and remove one, every Lydia read-back failing closed and every removal verified by Lydia's own re-read; adding a Tresorier or a Vendeur, and changing the Responsable's number (the Responsable or a global admin only), ship switched off until one removal is observed in production. Erasure asks Lydia to remove the account's numbers first. Migration 119 ([payments](docs/wiki/frontend/modules/payments.md#the-cashiers-enrolment-lot-3)).
+
+### Changed - the Lydia chantier records the lot statuses and two Businesses waiting on the owner
+
+Le Cercle is left untouched until a clean re-enrolment, and Les Rootz is re-enrolled with the owner later ([backlog](docs/wiki/backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)).
+
+### Fixed - one staged file tapped Send on several times went out several times
+
+A media send in a DM or group now takes the staged files before it waits for the membership check
+(18 s on a stalled link), so a second tap finds nothing to send; 13 taps had sent 13 copies of one
+video. The follow-up, queuing the file at the tap, is
+[chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01).
+
+### Fixed - a refused attachment send gives the caption and the file back, in place, and says so where it was made
+
+A DM/group attachment refused before it is queued now answers `false`, so the caption cleared at
+the tap returns to its draft (a send that threw does too). The file returns to its place in the
+staging. A voice note or chat-reel take, which is not re-staged, is reported rather than dropped
+in silence. The banner shows only if the member is still in the conversation the send was made in.
+A missing MLS service no longer loses the claimed files. Follow-up to #2821
+([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
+
+### Added - a member reposts a post to their own followers, with the author's consent
+
+"Republier pour mes abonnés" in a post's or a reel's share sheet; a personal post only with its author's consent ("Autoriser mes abonnés à republier mes posts", on by default, and a per-post override), an entity post without it, never an anonymous one, never across a block. Migration 121 ([WP-F6 as built](docs/wiki/profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)).
+
+### Changed - the member roster editor says things once, in plain words
+
+One role field, no yellow pill or "ADMIN" label; what a member can manage reads "Simple membre", "Peut gérer 3 sur 7" or "Peut tout gérer" ([associations](docs/wiki/frontend/modules/associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31)).
+
+### Fixed - renaming a card or a product already reserved to cotisants is no longer refused
+
+The members-only rule is asked only on a transition into it, not on every save that repeats the box the editors always send, so an association that cleared its cotisation mode can still rename or withdraw what it had ticked; the purchase decision keeps its transaction in every spec ([cotisations](docs/wiki/cotisations.md)).
+
+### Fixed - a conversation restored over a group the device is out of waits on the server, and a group becoming ready is announced only into its own session
+
+A kill could leave a conversation `active` over the state of a Remove that was the first half of a re-admission, and the next send retired it; the restore now drops that state and lets the server's answer decide. A Welcome or a join landing after a sign-out could resume the next session's outbox ([chat](docs/wiki/frontend/modules/chat.md#a-group-becoming-ready-resumes-what-was-held-for-it-and-a-re-admission-holds-2026-10-31)).
+
+### Fixed - a loading CanaReel shows its first frame instead of a yellow play button, and the next reel preloads behind the one being watched
+
+A new reel carries a ThumbHash of its first frame from the publisher, a reel this device has decoded shows its sharp first frame, and the play button now answers only a refused autoplay; the next reel's preload waits until the current one is whole and playing ([reels](docs/wiki/frontend/modules/reels.md#a-loading-reel-shows-its-first-frame-never-a-play-glyph-owner-2026-10-31)).
+
+### Changed - a conversation is ordered, timed and read by the server's clock, not the author's
+
+A DM or group message now sorts, shows its time and counts as read by when the server accepted it, as
+a salon already did; a message delivered late appears where it arrived - after a reload too, since
+local history is paged on the same key - counts as unread and notifies. Older read marks and clients
+are honoured beside the new ones; the Android notification actions mark on the server's clock too.
+Messages stored before the change are re-keyed behind the first page, never before it, and a time
+relayed by a peer's history bundle is bounded by the server's own
+([chat](docs/wiki/frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31),
+[legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Fixed - the slow-connection indicator is legible
+
+It was a 28 px translucent round badge over the header avatar that read as a smudge; a slow link is now an amber ring around the avatar itself (phone and desktop headers, both themes), with the full explanation on its hover title and in a screen-reader live region ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - a failed MLS state load is classified by type, never by its message
+
+`initialiser_mls` and the WASM client constructor now reject with `{ code, message }`, typed at the boundary; the web's v2 opener throws the type itself, and `classifyStateLoadFailure` no longer matches any text ([mls-protocol](docs/wiki/protocols/mls-protocol.md#failing-to-load-a-saved-state)).
+
+A hardening of the recovery contract, with no behaviour change observed in production (the one caller already passes `noFreshStart` whenever a state exists): an untyped failure or a keystore refusal never rotates the device identity, whatever the caller passes. A cancelled biometric sheet and an old-PIN refusal no longer warn natively.
+
+### Fixed - an unexplained failure to open the local data no longer tells the user to reset
+
+When the saved state failed to load for a cause nothing typed (an IPC fault, a disk read, a panic), the login said the data was damaged and only a reset restored access. It now says to close and reopen the app or retry, and that nothing is lost; the damaged-state sentence stays for the causes that prove damage. See [mls-protocol](docs/wiki/protocols/mls-protocol.md).
+
+### Fixed - no Welcome to a person the key group refused
+
+A commit answer refusing an admit for `not_entitled`, `departure_in_progress` or `unresolved_identity` now owes and sends no Welcome, as `no_key_package` already did, instead of learning it from a `403 WELCOME_TARGET_NOT_MEMBER` ([mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
 ## [1.5.3] - 2026-10-31
 
 ### Changed - the identity provider's PostgreSQL 16 volume is retired
@@ -3358,7 +3567,7 @@ The outbox asked whether the group still existed before every send (a reply reac
 
 ### Session state of 2026-10-12, and three release rules
 
-The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-12.md)).
+The queue and backlog now name what `v1.2.5` does not carry, the user's decisions of the day and the open pull requests; three release rules were added ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
 
 ### Fixed - the typing bubble stands clear of the composer instead of sitting on its edge
 
@@ -4286,7 +4495,7 @@ The DSI replaced the CAS callback with the new host, so `auth.canari-emse.fr` an
 
 ### Changed - every navigation goes through `resolve()`, and the lint rule that enforces it is on
 
-The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled ([backlog](docs/wiki/backlog.d/closed-without-a-fix-not-planned-2026-10-24.md)).
+The ~100 `goto()` and `href` calls now carry the base path, so the app survives being served under a prefix; `svelte/no-navigation-without-resolve` is no longer disabled.
 
 ### Fixed - a `returnTo` carries no base path, and a bad `?redirect=` falls back instead of throwing
 
@@ -7492,7 +7701,6 @@ quatre qu'il declare encore. Une exclusion qui survit a sa raison est du silence
 La branche existait pour une regle de proxy vite `/channels` censee contourner nginx en local. Cette
 route n'a jamais existe : `setGlobalPrefix('api')` fait que le service ne sert que `/api/channels/...`,
 et aucune ligne du frontend ne demande le chemin nu. Regle et branche supprimees ensemble.
-[backlog](docs/wiki/backlog.d/closed-without-a-fix-not-planned-2026-10-24.md).
 
 ### Fixed - le formulaire d'edition d'un post parlait francais en dur, donc jamais anglais
 

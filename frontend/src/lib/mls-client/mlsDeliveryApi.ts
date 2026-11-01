@@ -1,4 +1,8 @@
-import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
+import {
+  assertOkMlsDeliveryResponse,
+  deliveryKeepalivePost,
+  type DeliveryRefusal,
+} from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
@@ -1097,13 +1101,14 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, or
-   * `null` when it sent none (transport failure, non-2xx, non-JSON) - see `deliveryKeepalivePost`.
+   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, a
+   * {@link DeliveryRefusal} when it refused the caller on membership, or `null` when it sent neither
+   * (transport failure, any other non-2xx, non-JSON) - see `deliveryKeepalivePost`.
    */
   async deliveryPost(
     path: string,
     body: Record<string, unknown>
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown> | DeliveryRefusal | null> {
     return deliveryKeepalivePost(
       this.historyUrl,
       path,
@@ -1525,7 +1530,12 @@ export class MlsDeliveryApi {
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId }),
       });
-      if (res.ok) return;
+      if (res.ok) {
+        // `{ status: 'added' }`: a portal's `200` enrolled nobody. Still swallowed below, as every
+        // outcome but the typed refusals is (legacy-compatibility.md), but logged as what it is.
+        assertAnsweredByApi(res, `POST /api/mls/groups/members (group ${groupId.slice(0, 8)})`);
+        return;
+      }
       const refusal = await refusalFromResponse(res, 'registerMember refused');
       if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
       if (refusal.code === REVIEW_COHORT_BOUNDARY_CODE) throw new ReviewCohortBoundaryError(userId);
@@ -2421,7 +2431,10 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Renames a group on the server. Throws on non-2xx. */
+  /**
+   * Renames a group on the server. Throws on non-2xx, and `NotFromApiError` on a 2xx that is not the
+   * API's (`{ status: 'renamed' }`): a portal's `200` renamed nothing.
+   */
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'PATCH',
@@ -2429,9 +2442,13 @@ export class MlsDeliveryApi {
       body: JSON.stringify({ name }),
     });
     if (!res.ok) throw await refusalFromResponse(res, 'Rename failed');
+    assertAnsweredByApi(res, `PATCH /api/mls/groups (group ${groupId.slice(0, 8)})`);
   }
 
-  /** Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx. */
+  /**
+   * Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx, and
+   * `NotFromApiError` on a 2xx that is not the API's (`{ status: 'updated', imageMediaId }`).
+   */
   async setGroupImage(groupId: string, mediaId: string | null): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/image`, {
       method: 'PATCH',
@@ -2439,6 +2456,7 @@ export class MlsDeliveryApi {
       body: JSON.stringify({ mediaId }),
     });
     if (!res.ok) throw await refusalFromResponse(res, 'setGroupImage failed');
+    assertAnsweredByApi(res, `PATCH /api/mls/groups/image (group ${groupId.slice(0, 8)})`);
   }
 
   /**

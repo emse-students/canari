@@ -281,6 +281,20 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       status,
       admittedAtEpoch,
     });
+    /**
+     * The device rows the server holds, answered as the two reads ask them: this device's rows
+     * (`deviceId`), and the person's ACTIVE rows in the awaiting groups (`status`).
+     */
+    type Row = { userId: string; deviceId: string; groupId: string; status: string };
+    const holds = (...rows: Row[]) =>
+      deviceGroupRepo.find.mockImplementation(
+        async ({ where }: { where: { deviceId?: string; status?: string } }) =>
+          rows.filter(
+            (r) =>
+              (where.deviceId === undefined || r.deviceId === where.deviceId) &&
+              (where.status === undefined || r.status === where.status)
+          )
+      );
 
     beforeEach(() => {
       groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
@@ -295,7 +309,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     });
 
     it('carries an unhonoured seat: pending, no Welcome queued, no add in flight', async () => {
-      deviceGroupRepo.find.mockResolvedValue([seat('pending')]);
+      holds(seat('pending'));
       queuedRepo.find.mockResolvedValue([]);
       redis.mget.mockResolvedValue([null]);
 
@@ -314,7 +328,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       groupMemberRepo.find.mockResolvedValue([
         { groupId: 'g-ordinary', userId: 'u1', awaitingAdmission: true },
       ]);
-      deviceGroupRepo.find.mockResolvedValue([seat('pending')]);
+      holds(seat('pending'));
       queuedRepo.find.mockResolvedValue([]);
       redis.mget.mockResolvedValue([null]);
 
@@ -324,7 +338,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     });
 
     it('carries a queued Welcome, a held add lock and an admitting commit as owed facts', async () => {
-      deviceGroupRepo.find.mockResolvedValue([seat('pending', 8)]);
+      holds(seat('pending', 8));
       queuedRepo.find.mockResolvedValue([{ groupId: 'g-ordinary' }]);
       redis.mget.mockResolvedValue(['u2:dev-9']);
 
@@ -340,7 +354,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     });
 
     it('asks nothing about Welcomes or locks for an active seat', async () => {
-      deviceGroupRepo.find.mockResolvedValue([seat('active')]);
+      holds(seat('active'));
 
       const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
 
@@ -350,11 +364,88 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     });
 
     it('is null for a group the device holds no row for', async () => {
-      deviceGroupRepo.find.mockResolvedValue([]);
+      holds();
 
       const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
 
       expect(row.deviceMembership).toBeNull();
+      expect(row.awaitingAdmission).toBe(false);
+    });
+
+    /**
+     * THE ASK IS THE PERSON'S (review of #2442). A joiner's second device holds no device row in the
+     * group yet, so `deviceMembership` is null - and the row read as an ordinary `pending`
+     * conversation rather than one waiting for a member.
+     */
+    describe("the account's seat (awaitingAdmission on the row)", () => {
+      let log: jest.SpyInstance;
+      beforeEach(() => {
+        groupMemberRepo.find.mockResolvedValue([
+          { groupId: 'g-ordinary', userId: 'u1', awaitingAdmission: true },
+        ]);
+        log = jest.spyOn(controller['logger'], 'log').mockImplementation(() => undefined);
+      });
+      const noRowLines = () =>
+        log.mock.calls.filter(([line]) => String(line).includes('awaitingNoDeviceRow='));
+
+      it('is said for the first device, whose own row is pending', async () => {
+        holds(seat('pending'));
+        queuedRepo.find.mockResolvedValue([]);
+        redis.mget.mockResolvedValue([null]);
+
+        const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+
+        expect(row.awaitingAdmission).toBe(true);
+        expect(noRowLines()).toHaveLength(0);
+      });
+
+      it("is said for a device that holds no row there (a joiner's second device), and logged at 1, 10, 100...", async () => {
+        holds(seat('pending'));
+        queuedRepo.find.mockResolvedValue([]);
+        redis.mget.mockResolvedValue([null]);
+
+        const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+
+        expect(row.deviceMembership).toBeNull();
+        expect(row.awaitingAdmission).toBe(true);
+        expect(noRowLines()).toEqual([[expect.stringContaining('user=u1 awaitingNoDeviceRow=1')]]);
+        for (let i = 2; i <= 10; i++) {
+          await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+        }
+        expect(noRowLines()).toHaveLength(2);
+        expect(noRowLines()[1][0]).toContain('repeat=10');
+      });
+
+      it('is said with no device header too', async () => {
+        holds();
+
+        const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+
+        expect(row.awaitingAdmission).toBe(true);
+      });
+
+      it('is never said while ANY device of the person is active there - the gate predicate', async () => {
+        holds({ ...seat('active'), deviceId: 'dev-1' });
+
+        const [other] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+        expect(other.awaitingAdmission).toBe(false);
+        expect(noRowLines()).toHaveLength(0);
+
+        const [self] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+        expect(self.awaitingAdmission).toBe(false);
+      });
+
+      it('reads the active devices of the awaiting groups only', async () => {
+        holds();
+
+        await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+
+        expect(deviceGroupRepo.find).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ userId: 'u1', status: 'active' }),
+          })
+        );
+      });
     });
   });
 });

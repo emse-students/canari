@@ -51,6 +51,7 @@ import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
 import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
 import { flushDmReadMarks } from './salonReadMarkQueue';
+import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
 import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
 
 /**
@@ -60,6 +61,11 @@ import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
 export interface SendMessageDeps {
   userId: string;
   conversation: Conversation;
+  /**
+   * Shows (and, unless told otherwise, stores) a message. Calls `onPairWritten` when the message
+   * and its `outboxEntry` reached disk in one write; a failed pair write THROWS
+   * `MessagePairWriteError`; with no storage, neither.
+   */
   addMessageToChat: (
     senderId: string,
     content: string,
@@ -73,6 +79,8 @@ export interface SendMessageDeps {
       skipDbSave?: boolean;
       /** Written in the same transaction as the message - see `AddMessageToChatOptions`. */
       outboxEntry?: OutboxEntry;
+      /** The pair reached disk - see `AddMessageToChatOptions`. */
+      onPairWritten?: () => void;
       /** A salon echo, shown before the server has a row - see `AddMessageToChatOptions`. */
       salonEcho?: boolean;
     }
@@ -505,15 +513,21 @@ async function queueSalonSend(
   salonSends.set(messageId, send);
   // Before the POST leaves: a kill from here on sends it again at the next start.
   recordUnsentSalonText(deps.userId, entry);
-  if (mayHaveLanded && !salonRepeatIsSafe()) {
-    deps.log(
-      `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
-    );
-    deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
-    awaitRepeatProof(messageId);
-    return { echoed: true, refusal: null };
+  // From here the message is in the ledger: a throw is about a message that EXISTS, typed so no
+  // caller sends it again.
+  try {
+    if (mayHaveLanded && !salonRepeatIsSafe()) {
+      deps.log(
+        `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
+      );
+      deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
+      awaitRepeatProof(messageId);
+      return { echoed: true, refusal: null };
+    }
+    return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
+  } catch (e) {
+    throw new MessageWrittenError(messageId, e);
   }
-  return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
 }
 
 /** The tail of the resumes in flight - see `resumeUnsentSalonSends`. */
@@ -625,7 +639,7 @@ export async function sendChatMessage(
   contactName: string,
   replyingTo: ChatMessage | null,
   deps: SendMessageDeps
-): Promise<{ success: boolean; error?: string; echoed?: boolean }> {
+): Promise<{ success: boolean; error?: string; echoed?: boolean; messageId?: string }> {
   const { userId, conversation, addMessageToChat } = deps;
 
   deps.log(
@@ -703,10 +717,11 @@ export async function sendChatMessage(
   // the click and reproduced it on 2026-09-05: the console showed `sendChatMessage` with no
   // `[OUTBOX] Queued` after it, the peer had nothing, the sender had the message.
   //
-  // `alreadyDurable` below is exact rather than optimistic: `addMessageToChat` writes the pair
-  // whenever it has a storage layer, and the outbox's own `enqueue` returns early on exactly the
-  // same condition - one `storage`, so the two cannot disagree. With no storage neither wrote
-  // before this change either.
+  // `alreadyDurable` below is exact rather than optimistic: it is what `addMessageToChat` REPORTS
+  // it wrote (`onPairWritten`), never inferred. With no storage it wrote nothing and says so; a pair
+  // write that failed is thrown typed (`MessagePairWriteError`), and the outbox then writes its own
+  // row - the message still leaves (review of #2843, M1: it used to be swallowed, and the row was
+  // marked durable when nothing was on disk).
   const entry: OutboxEntry = {
     id: messageId,
     conversationId: conversation.id,
@@ -727,17 +742,34 @@ export async function sendChatMessage(
     createdAt: sentAt,
   };
   const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
-  await addMessageToChat(userId, envelope, contactName, {
-    messageId,
-    status: 'pending',
-    timestamp: new Date(sentAt),
-    outboxEntry: entry,
-    ...(replyToData ? { replyTo: replyToData } : {}),
-  });
-  // The durable half is already done; this is the mirror and the flush.
-  await enqueueOutboxMessage(entry, { alreadyDurable: true });
+  let pairWritten = false;
+  try {
+    await addMessageToChat(userId, envelope, contactName, {
+      messageId,
+      status: 'pending',
+      timestamp: new Date(sentAt),
+      outboxEntry: entry,
+      onPairWritten: () => {
+        pairWritten = true;
+      },
+      ...(replyToData ? { replyTo: replyToData } : {}),
+    });
+  } catch (e) {
+    if (!(e instanceof MessagePairWriteError)) throw e;
+    // The entry reached disk alone (SQLite writes it first): the queue owns it already.
+    pairWritten = e.entryWritten;
+    deps.log(
+      e.entryWritten
+        ? `[SEND] ${messageId.slice(0, 8)}… its entry was written WITHOUT its echo - the queue sends it: ${String(e.cause)}`
+        : `[SEND] ${messageId.slice(0, 8)}… its echo and entry were NOT written together - the outbox writes its own row: ${String(e.cause)}`
+    );
+  }
+  // Written beside the echo: only the mirror and the flush are owed. Otherwise the outbox writes the
+  // row. Either way it classifies its own failures at the throw: `MessageWrittenError` once the row
+  // is on disk, `OutboxEnqueueError` before.
+  await enqueueOutboxMessage(entry, pairWritten ? { alreadyDurable: true } : undefined);
   deps.log(`[SEND] ${messageId.slice(0, 8)}… queued (pending)`);
-  return { success: true };
+  return { success: true, messageId };
 }
 
 /** Minimal dependencies shared by reaction, edit, delete, and read-receipt helpers. */

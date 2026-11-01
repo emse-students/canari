@@ -73,6 +73,7 @@ Hourly and daily cron jobs:
 - Purge orphaned Redis keys and device entries.
 - Purge soft-deleted groups and push tokens.
 - Purge stale pending invitations and revocations.
+- Count orphan devices (queued rows, no session, no push token), read-only, daily - see [chat-delivery](../../docs/wiki/services/chat-delivery.md#orphan-devices-the-gcs-blind-spot-counted-daily-cleaned-by-hand).
 
 ## Databases
 

@@ -18,7 +18,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
  * and nothing is written; a seat still awaiting admission gets the 409 its client waits on.
  */
 
-const GROUP = 'g-1';
+const GROUP = '00000000-0000-4000-8000-00000000c0a3';
 const MEMBER = 'u-member';
 const STRANGER = 'u-stranger';
 const WAITING = 'u-waiting';

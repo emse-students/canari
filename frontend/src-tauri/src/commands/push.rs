@@ -1341,6 +1341,584 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
     )
 }
 
+/// The one-shot file the iOS notification delegate writes on a tap (`canari_push.mm`,
+/// `CanariQueueNotificationTap`). The NAME is the whole contract between the two sides
+/// (`iosNotificationDelegate.test.ts` reads it in both).
+pub(crate) const PENDING_NOTIFICATION_TAP_FILE: &str = "pending_notification_tap.json";
+
+/// Takes `{app_data_dir}/pending_notification_tap.json` - `{"deepLink","tappedAt"}`, the link a
+/// push banner's tap opens - read and deleted in one call, so a tap is acted on exactly once. Null
+/// when none waits (always on Android, whose tap is an intent).
+///
+/// A FILE, BECAUSE A COLD START'S TAP ARRIVES BEFORE THE PAGE: iOS delivers the response to the
+/// notification delegate before the WebView exists, so the native side keeps it in durable state
+/// and the page takes it at its mount, or when told one waits (`canari:notification-tap`,
+/// `$lib/mobile/notificationTapDrain`).
+#[tauri::command]
+pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> Option<String> {
+    crate::commands::handoff::read_and_clear_app_data_file(
+        &app,
+        PENDING_NOTIFICATION_TAP_FILE,
+        "NOTIF_TAP",
+    )
+}
+
+/// The quick replies the iOS notification delegate hands to the page while it holds the MLS state
+/// (`canari_push.mm`, `CanariHandQuickReplyToPage`). The NAME is the contract
+/// (`iosNotificationDelegate.test.ts` reads it on both sides).
+///
+/// ONE SEALED LINE PER REPLY (`native_cache`, [`Purpose::QuickReply`]), whose plaintext is
+/// `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}`: what the user typed is never
+/// on disk in the clear, and each line names the ACCOUNT the notification was addressed to, so a
+/// reply one account left is never sent by the next.
+///
+/// WHEN A LINE GOES: when it is taken (sent, or handed back by the page); when another account
+/// takes the file (dropped, and the native side is told it is lost); and when ITS account is
+/// DELETED - only its lines, never the file, since the file can hold another account's
+/// ([`remove_quick_replies_of`], `delete_user_quick_replies`). A sign-out leaves them, like the
+/// outbox: they are still that account's, and its next sign-in sends them.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) const PENDING_QUICK_REPLIES_FILE: &str = "pending_quick_replies.ndjson";
+
+/// What became of a quick reply, as the page acknowledges it and the native side is told it
+/// (`canari_push.mm`, `CanariQuickReplyOutcome`, same codes).
+#[cfg(any(target_os = "ios", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuickReplyOutcome {
+    /// Delivered.
+    Sent = 0,
+    /// Out of the queue unsent: a failed row the page shows, with its retry.
+    Failed = 1,
+    /// Queued, not sent yet - it waits for a retry.
+    Pending = 2,
+    /// Not queued: put back in the file for a later take.
+    Returned = 3,
+    /// Not sent and never will be: unreadable, typed under another account, or not put back.
+    Lost = 4,
+}
+
+#[cfg(any(target_os = "ios", test))]
+impl QuickReplyOutcome {
+    /// The page's word for it (`QuickReplyOutcome` in `$lib/mobile/quickReplyDrain`).
+    pub(crate) fn parse(word: &str) -> Option<Self> {
+        match word {
+            "sent" => Some(Self::Sent),
+            "failed" => Some(Self::Failed),
+            "pending" => Some(Self::Pending),
+            "returned" => Some(Self::Returned),
+            "lost" => Some(Self::Lost),
+            _ => None,
+        }
+    }
+}
+
+/// Opens one sealed line: its plaintext and the account it names, or `None` when it cannot be read
+/// (a foreign key, a plaintext line - no build ever wrote this file in the clear - or no account).
+#[cfg(any(target_os = "ios", test))]
+fn open_quick_reply(key: &CacheKey, line: &str) -> Option<(String, serde_json::Value)> {
+    let Ok(Opened::Sealed(plain)) = open_line(key, Purpose::QuickReply, line) else {
+        return None;
+    };
+    let value = serde_json::from_str::<serde_json::Value>(&plain).ok()?;
+    let owner = value.get("accountId")?.as_str()?;
+    if owner.is_empty() {
+        return None;
+    }
+    Some((plain, value))
+}
+
+/// Claims `{dir}/pending_quick_replies.ndjson` and returns the plaintext of each reply addressed to
+/// `account_id`; empty when none wait.
+///
+/// A line typed under another account is DROPPED, never handed back - sending it would post one
+/// account's words as another's, and putting it back would hand it to every later take for ever
+/// (review of #2843, A2) - and the native side is TOLD it is lost, so the user hears of it rather
+/// than waiting out a background time (M3). A line this install's key does not open, or one naming
+/// no account, is dropped too. Each kind is counted and said once per take, which is once per line,
+/// since a dropped line is gone.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn take_quick_replies_in(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    account_id: &str,
+) -> Vec<String> {
+    let Some(content) =
+        crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
+    else {
+        return vec![];
+    };
+    let mut replies = Vec::new();
+    let mut other_account = 0usize;
+    let mut unreadable = 0usize;
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let Some((plain, value)) = open_quick_reply(key, line) else {
+            unreadable += 1;
+            continue;
+        };
+        if value.get("accountId").and_then(|a| a.as_str()) == Some(account_id) {
+            replies.push(plain);
+            continue;
+        }
+        other_account += 1;
+        match value.get("replyId").and_then(|r| r.as_str()) {
+            Some(reply_id) if !reply_id.is_empty() => {
+                tell_quick_reply_settled(reply_id, QuickReplyOutcome::Lost);
+            }
+            _ => log::error!("[QUICK_REPLY] another account's reply names no id - nobody told"),
+        }
+    }
+    if other_account > 0 {
+        log::warn!(
+            "[QUICK_REPLY] {other_account} reply(ies) addressed to ANOTHER account dropped - never \
+             sent by this one, the native side told"
+        );
+    }
+    if unreadable > 0 {
+        log::error!(
+            "[QUICK_REPLY] {unreadable} line(s) unsealed, unopenable or naming no account dropped"
+        );
+    }
+    log::info!("[QUICK_REPLY] {} reply(ies) taken", replies.len());
+    replies
+}
+
+/// Appends `lines` (the plaintext a take returned) back to `{dir}/pending_quick_replies.ndjson`,
+/// each SEALED again, ONE `O_APPEND` write per line, so a line the native side appends meanwhile is
+/// never overwritten or interleaved.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn append_quick_replies_in(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    lines: &[String],
+) -> std::io::Result<()> {
+    let sealed: Vec<String> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| crate::native_cache::seal_line(key, Purpose::QuickReply, l))
+        .collect();
+    append_sealed_quick_replies(dir, &sealed)
+}
+
+/// Appends lines that are ALREADY sealed, one `O_APPEND` write each.
+#[cfg(any(target_os = "ios", test))]
+fn append_sealed_quick_replies(dir: &std::path::Path, sealed: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    if sealed.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(PENDING_QUICK_REPLIES_FILE))?;
+    for line in sealed {
+        file.write_all(format!("{line}\n").as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Removes the lines addressed to `account_id` (a DELETED account) and keeps every other line as it
+/// was - another account's, and one whose owner cannot be read (an unknown owner is never a licence
+/// to delete). The file is claimed by a rename first, so a reply the native side appends meanwhile
+/// lands in the next file and is kept; the kept lines are appended to it, still sealed.
+///
+/// Returns how many lines were removed.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn remove_quick_replies_of(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    account_id: &str,
+) -> std::io::Result<usize> {
+    let Some(content) =
+        crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
+    else {
+        return Ok(0);
+    };
+    let mut kept = Vec::new();
+    let mut removed = 0usize;
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let owner = open_quick_reply(key, line)
+            .and_then(|(_, v)| v.get("accountId")?.as_str().map(str::to_string));
+        if owner.as_deref() == Some(account_id) {
+            removed += 1;
+        } else {
+            kept.push(line.to_string());
+        }
+    }
+    if let Err(e) = append_sealed_quick_replies(dir, &kept) {
+        log::error!(
+            "[QUICK_REPLY] {} other account line(s) taken for the deletion and NOT written back: {e}",
+            kept.len()
+        );
+        return Err(e);
+    }
+    log::info!(
+        "[QUICK_REPLY] deleted account: {removed} reply line(s) removed, {} kept",
+        kept.len()
+    );
+    Ok(removed)
+}
+
+/// Runs `f` with the app data directory and the install's cache key, off the main thread (the key
+/// is a keystore plugin read). `None` when either cannot be had - each logged where it fails, and
+/// the file is then NOT claimed: it waits for a take that can read it.
+#[cfg(target_os = "ios")]
+async fn with_quick_reply_key<T: Send + 'static>(
+    app: tauri::AppHandle,
+    f: impl FnOnce(&std::path::Path, &CacheKey) -> T + Send + 'static,
+) -> Option<T> {
+    let ran = tauri::async_runtime::spawn_blocking(move || {
+        let dir = match app.path().app_data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::error!("[QUICK_REPLY] app_data_dir() failed: {e}");
+                return None;
+            }
+        };
+        // Logged by `app_cache_key` (on the transition).
+        let key = crate::native_cache::app_cache_key(&app).ok()?;
+        Some(f(&dir, &key))
+    })
+    .await;
+    ran.unwrap_or_else(|e| {
+        log::error!("[QUICK_REPLY] the blocking task failed: {e}");
+        None
+    })
+}
+
+/// Takes the quick replies addressed to `account_id` that wait for the page - each line acted on
+/// once: the page sends it, or hands it back through [`return_pending_quick_replies`] when it cannot
+/// yet. Always empty off iOS, where nothing writes the file.
+#[tauri::command]
+pub(crate) async fn read_and_clear_pending_quick_replies(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Vec<String> {
+    #[cfg(target_os = "ios")]
+    {
+        with_quick_reply_key(app, move |dir, key| {
+            take_quick_replies_in(dir, key, &account_id)
+        })
+        .await
+        .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, account_id);
+        vec![]
+    }
+}
+
+/// Puts back the quick replies the page took and could not send, sealed again, so none is lost:
+/// the next take hands them over again.
+#[tauri::command]
+pub(crate) async fn return_pending_quick_replies(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        let count = lines.len();
+        let written = with_quick_reply_key(app, move |dir, key| {
+            append_quick_replies_in(dir, key, &lines).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|| Err("no data directory or no cache key".to_string()));
+        match &written {
+            Ok(()) => log::info!("[QUICK_REPLY] {count} reply(ies) put back for a later take"),
+            Err(e) => log::error!("[QUICK_REPLY] {count} reply(ies) NOT put back: {e}"),
+        }
+        written
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, lines);
+        Err("quick replies exist on iOS only".to_string())
+    }
+}
+
+/// Removes the waiting quick replies of a DELETED account (WP-DEL-LOCAL) - only its lines
+/// ([`remove_quick_replies_of`]). Async, apart from `delete_user_push_files`, because the lines are
+/// sealed and the key is a keystore read that must not run on the main thread. `Ok(0)` off iOS.
+#[tauri::command]
+pub(crate) async fn delete_user_quick_replies(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<usize, String> {
+    #[cfg(target_os = "ios")]
+    {
+        // Nothing waits: nothing to remove, and no key needed to know it - so an install whose
+        // cache key cannot be read does not keep the deletion owed for a file that is not there.
+        let dir = app.path().app_data_dir().map_err(|e| {
+            log::error!("[QUICK_REPLY] app_data_dir() failed: {e}");
+            e.to_string()
+        })?;
+        if !dir.join(PENDING_QUICK_REPLIES_FILE).exists() {
+            log::info!("[QUICK_REPLY] deleted account: no reply waits");
+            return Ok(0);
+        }
+        with_quick_reply_key(app, move |dir, key| {
+            remove_quick_replies_of(dir, key, &user_id).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|| Err("no data directory or no cache key - nothing removed".to_string()))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, user_id);
+        Ok(0)
+    }
+}
+
+/// The native listener told what became of a quick reply it holds (`canari_push.mm`,
+/// `CanariPageSettledQuickReply`), with a [`QuickReplyOutcome`] code. The native side holds the
+/// notification response and a background task until then (review of #2843, A1 and H1).
+///
+/// REGISTERED, NEVER LINKED: this crate is linked into the notification extension too, where
+/// `canari_push.mm` is not (`page_ring.rs`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) type QuickReplyAckListener =
+    extern "C" fn(reply_id: *const std::os::raw::c_char, outcome: i32);
+
+#[cfg(any(target_os = "ios", test))]
+static QUICK_REPLY_ACK_LISTENER: std::sync::Mutex<Option<QuickReplyAckListener>> =
+    std::sync::Mutex::new(None);
+
+/// Registers (or, with `None`, removes) the native listener of [`QuickReplyAckListener`].
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn set_quick_reply_ack_listener(listener: Option<QuickReplyAckListener>) {
+    *QUICK_REPLY_ACK_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = listener;
+    log::debug!(
+        "[QUICK_REPLY] acknowledgement listener {}",
+        if listener.is_some() {
+            "registered"
+        } else {
+            "removed"
+        }
+    );
+}
+
+/// Tells the native listener what became of `reply_id`, outside the lock. False when nobody could
+/// be told.
+#[cfg(any(target_os = "ios", test))]
+fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool {
+    let listener = *QUICK_REPLY_ACK_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(listener) = listener else {
+        log::error!(
+            "[QUICK_REPLY] reply {reply_id} settled ({outcome:?}) and no native listener is \
+             registered - its notification response is held until iOS ends the background time"
+        );
+        return false;
+    };
+    match std::ffi::CString::new(reply_id) {
+        Ok(c) => {
+            listener(c.as_ptr(), outcome as i32);
+            true
+        }
+        Err(e) => {
+            log::error!("[QUICK_REPLY] reply id {reply_id:?} has a NUL byte, not told: {e}");
+            false
+        }
+    }
+}
+
+/// The page says what became of quick reply `reply_id` - `outcome` is a [`QuickReplyOutcome`] word,
+/// how the queue SETTLED it, never merely "queued" (H1): the native side then ends the background
+/// task it held for it, completes the notification response, and tells the user what is not sent
+/// (`$lib/mobile/quickReplyDrain`).
+#[tauri::command]
+pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Result<(), String> {
+    log::info!("[QUICK_REPLY] the page settles reply {reply_id}: {outcome}");
+    #[cfg(target_os = "ios")]
+    {
+        let Some(parsed) = QuickReplyOutcome::parse(&outcome) else {
+            log::error!("[QUICK_REPLY] reply {reply_id}: unknown outcome {outcome:?} - not told");
+            return Err(format!("unknown outcome {outcome:?}"));
+        };
+        tell_quick_reply_settled(&reply_id, parsed);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod quick_reply_tests {
+    use super::*;
+
+    const KEY: CacheKey = [7u8; 32];
+
+    /// The listener is one process-wide slot: the tests that set it run one at a time.
+    static LISTENER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TOLD: std::sync::Mutex<Vec<(String, i32)>> = std::sync::Mutex::new(Vec::new());
+
+    extern "C" fn record(reply_id: *const std::os::raw::c_char, outcome: i32) {
+        let id = unsafe { std::ffi::CStr::from_ptr(reply_id) }
+            .to_string_lossy()
+            .into_owned();
+        TOLD.lock().unwrap().push((id, outcome));
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("quick-reply-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn reply(account: &str, group: &str) -> String {
+        format!(
+            "{{\"replyId\":\"r-{group}\",\"accountId\":\"{account}\",\"groupId\":\"{group}\",\"text\":\"t\"}}"
+        )
+    }
+
+    fn append_raw(dir: &std::path::Path, line: &str) {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(PENDING_QUICK_REPLIES_FILE))
+            .unwrap();
+        writeln!(f, "{line}").unwrap();
+    }
+
+    #[test]
+    fn nothing_waits_reads_as_empty() {
+        assert!(take_quick_replies_in(&temp_dir("empty"), &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn each_line_is_taken_once_and_was_sealed_on_disk() {
+        let dir = temp_dir("once");
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "a"), reply("me", "b")]).unwrap();
+        let on_disk = std::fs::read_to_string(dir.join(PENDING_QUICK_REPLIES_FILE)).unwrap();
+        assert!(
+            !on_disk.contains("groupId"),
+            "what the user typed is never on disk in the clear"
+        );
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "a"), reply("me", "b")]
+        );
+        assert!(take_quick_replies_in(&dir, &KEY, "me").is_empty());
+    }
+
+    #[test]
+    fn a_reply_put_back_is_taken_again_beside_a_newer_one() {
+        let dir = temp_dir("back");
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "old")]).unwrap();
+        // The native side appends a newer reply after the put-back: both survive, in order.
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "new"), "  ".to_string()]).unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "old"), reply("me", "new")]
+        );
+    }
+
+    #[test]
+    fn another_accounts_reply_is_dropped_and_told_lost() {
+        let _serial = LISTENER_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        TOLD.lock().unwrap().clear();
+        set_quick_reply_ack_listener(Some(record));
+        let dir = temp_dir("account");
+        append_quick_replies_in(&dir, &KEY, &[reply("a", "g1"), reply("b", "g2")]).unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "b"),
+            vec![reply("b", "g2")]
+        );
+        set_quick_reply_ack_listener(None);
+        // The native side holding r-g1 hears it is lost, at once, not at the expiry.
+        assert_eq!(
+            *TOLD.lock().unwrap(),
+            vec![("r-g1".to_string(), QuickReplyOutcome::Lost as i32)]
+        );
+        // Gone, not waiting for account A: the next take of A finds nothing either.
+        assert!(take_quick_replies_in(&dir, &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn plaintext_foreign_key_and_ownerless_lines_are_dropped() {
+        let dir = temp_dir("unreadable");
+        append_quick_replies_in(&dir, &[9u8; 32], &[reply("me", "other-key")]).unwrap();
+        append_quick_replies_in(&dir, &KEY, &["{\"groupId\":\"no-owner\"}".to_string()]).unwrap();
+        append_raw(&dir, &reply("me", "plain"));
+        assert!(take_quick_replies_in(&dir, &KEY, "me").is_empty());
+    }
+
+    #[test]
+    fn a_deleted_account_loses_only_its_own_lines() {
+        let dir = temp_dir("delete");
+        append_quick_replies_in(
+            &dir,
+            &KEY,
+            &[
+                reply("gone", "g1"),
+                reply("kept", "g2"),
+                reply("gone", "g3"),
+            ],
+        )
+        .unwrap();
+        // A line this key cannot open names no readable owner: never a licence to delete it.
+        append_quick_replies_in(&dir, &[9u8; 32], &[reply("gone", "foreign")]).unwrap();
+        assert_eq!(remove_quick_replies_of(&dir, &KEY, "gone").unwrap(), 2);
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "kept"),
+            vec![reply("kept", "g2")],
+            "the other account's reply survives the deletion"
+        );
+        assert_eq!(remove_quick_replies_of(&dir, &KEY, "gone").unwrap(), 0);
+    }
+
+    #[test]
+    fn a_deletion_with_nothing_waiting_touches_nothing() {
+        let dir = temp_dir("delete-empty");
+        assert_eq!(remove_quick_replies_of(&dir, &KEY, "gone").unwrap(), 0);
+        assert!(!dir.join(PENDING_QUICK_REPLIES_FILE).exists());
+    }
+
+    #[test]
+    fn the_quick_reply_file_is_not_deleted_whole_with_an_account() {
+        assert!(!ACCOUNT_PUSH_FILES.contains(&PENDING_QUICK_REPLIES_FILE));
+    }
+
+    #[test]
+    fn every_page_outcome_word_parses_to_its_native_code() {
+        for (word, code) in [
+            ("sent", 0),
+            ("failed", 1),
+            ("pending", 2),
+            ("returned", 3),
+            ("lost", 4),
+        ] {
+            assert_eq!(QuickReplyOutcome::parse(word).map(|o| o as i32), Some(code));
+        }
+        assert_eq!(QuickReplyOutcome::parse("queued"), None);
+    }
+
+    #[test]
+    fn a_settlement_reaches_the_native_listener_with_its_code() {
+        let _serial = LISTENER_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        TOLD.lock().unwrap().clear();
+        set_quick_reply_ack_listener(None);
+        assert!(
+            !tell_quick_reply_settled("r0", QuickReplyOutcome::Sent),
+            "no listener yet"
+        );
+        set_quick_reply_ack_listener(Some(record));
+        assert!(tell_quick_reply_settled("r1", QuickReplyOutcome::Sent));
+        assert!(tell_quick_reply_settled("r2", QuickReplyOutcome::Pending));
+        set_quick_reply_ack_listener(None);
+        assert!(!tell_quick_reply_settled("r3", QuickReplyOutcome::Failed));
+        assert_eq!(
+            *TOLD.lock().unwrap(),
+            vec![("r1".to_string(), 0), ("r2".to_string(), 2)]
+        );
+    }
+}
+
 /// Writes the session context to `{app_data_dir}/push_context.json` so the native background
 /// handlers (Android `CanariFirebaseMessagingService`, iOS NSE) can decrypt push notifications.
 /// `push_token` is a long-lived Bearer token (empty on desktop) the native side uses to fetch
@@ -1592,45 +2170,91 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// The per-install files that hold ONE account's data in the clear and die with that account when it
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
 /// (`take_fcm_cache`; what a take moved aside, `FCM_CACHE_TAKEN_PREFIX*`, goes with them), the read
-/// marks and sent ids the background side handed over, and the device-notice ledger (one marker per
-/// announced device, named by `userId:deviceId`). Not `mls.bin`, `graine_seeds.json` or the push
-/// secret - kept by this command on purpose.
-const ACCOUNT_PUSH_FILES: [&str; 5] = [
+/// marks and sent ids the background side handed over. Not `mls.bin`, `graine_seeds.json` or the
+/// push secret - kept by this command on purpose. Not the quick replies waiting for the page either:
+/// that file can hold ANOTHER account's lines, so only this account's are removed
+/// (`remove_quick_replies_of`, `delete_user_quick_replies`). Not the device-notice ledger either:
+/// it is shared by every account on the install, so only this account's markers go
+/// ([`remove_device_notices_of`]).
+const ACCOUNT_PUSH_FILES: [&str; 4] = [
     "outbox_pending.ndjson",
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
-    DEVICE_NOTICES_DIR,
 ];
 
 /// The directory of the device-notice ledger (`mobile::device_notice`), in the app data directory on
 /// Android and in the App Group container on iOS - where the app and its background engine both
-/// reach it.
+/// reach it. One sub-directory per account ([`device_notices_account_dir`]).
 pub(crate) const DEVICE_NOTICES_DIR: &str = "device_notices";
+
+/// The ONE encoder of a device-notice file name: `text`'s SHA-256 in hex, 64 characters whatever
+/// its length - no `:` or `|` reaches a path, and no name exceeds the 255-byte limit of the
+/// filesystems the ledger lives on (ext4/f2fs on Android, APFS on iOS).
+pub(crate) fn device_notice_file_name(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The name builds before 1.6.1 gave a device-notice marker, in the ledger's root: `text`'s bytes in
+/// hex (read, migrated and deleted, never written - `legacy-compatibility.md`).
+pub(crate) fn device_notice_legacy_name(text: &str) -> String {
+    text.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `user_id`'s directory in the device-notice ledger under `data_dir`: named by the user id as the
+/// keys spell it (lowercase, `canonical_identity`), through [`device_notice_file_name`].
+pub(crate) fn device_notices_account_dir(
+    data_dir: &std::path::Path,
+    user_id: &str,
+) -> std::path::PathBuf {
+    data_dir
+        .join(DEVICE_NOTICES_DIR)
+        .join(device_notice_file_name(&user_id.to_ascii_lowercase()))
+}
+
+/// Removes `user_id`'s device-notice markers from the ledger under `dir`: its own directory, and
+/// the legacy root markers whose key names it (`<hex(userId:)>...`). Another account's are kept.
+fn remove_device_notices_of(
+    dir: &std::path::Path,
+    user_id: &str,
+    removed: &mut usize,
+    failures: &mut usize,
+) {
+    crate::commands::storage::remove_entry(
+        &device_notices_account_dir(dir, user_id),
+        removed,
+        failures,
+    );
+    let prefix = device_notice_legacy_name(&format!("{}:", user_id.to_ascii_lowercase()));
+    let Ok(entries) = std::fs::read_dir(dir.join(DEVICE_NOTICES_DIR)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            crate::commands::storage::remove_entry(&entry.path(), removed, failures);
+        }
+    }
+}
 
 /// Claims, in the device-notice ledger the background engines share, the keys of the "a new device
 /// was added to your account" alerts the app has just shown - so a push that later replays the same
 /// commit raises no local notification for them - and returns the keys nobody had announced yet.
 ///
 /// Phones only: the ledger exists because a background engine may see the commit first, and only
-/// a phone has one. The app calls it from `nativeDeviceNotices.ts` on Android and iOS alone.
+/// a phone has one. The app calls it from `deviceNoticeWiring.ts` on Android and iOS alone.
 #[tauri::command]
 pub(crate) fn claim_device_notices(
     app: tauri::AppHandle,
     keys: Vec<String>,
 ) -> Result<Vec<String>, String> {
     log::debug!("[DEVICE_NOTICE] app claims {} key(s)", keys.len());
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let _ = &app;
-        let dir = crate::app_group::app_group_dir()?;
-        Ok(crate::mobile::device_notice::claim_device_notices(
-            &dir, &keys,
-        ))
-    }
-    #[cfg(target_os = "android")]
-    {
-        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let dir = device_notices_data_dir(&app)?;
         Ok(crate::mobile::device_notice::claim_device_notices(
             &dir, &keys,
         ))
@@ -1638,7 +2262,56 @@ pub(crate) fn claim_device_notices(
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = (app, keys);
-        Err("the device-notice ledger exists on a phone only".to_string())
+        Err(NO_DEVICE_NOTICE_LEDGER.to_string())
+    }
+}
+
+/// The app's pre-claim of `user_id`'s older devices at registration (`preclaimOldOwnDevices`):
+/// records `keys`, then the account's pre-claim marker, without which the background engines
+/// announce nothing for it (`mobile::device_notice::preclaim_device_notices`). `complete` is false
+/// when a listed device's key ages went unanswered: its keys may be old, so the marker is withheld.
+/// Answers whether the marker is in place. Phones only, as [`claim_device_notices`].
+#[tauri::command]
+pub(crate) fn preclaim_device_notices(
+    app: tauri::AppHandle,
+    user_id: String,
+    keys: Vec<String>,
+    complete: bool,
+) -> Result<bool, String> {
+    log::debug!(
+        "[DEVICE_NOTICE] app pre-claims {} key(s), complete={complete}",
+        keys.len()
+    );
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let dir = device_notices_data_dir(&app)?;
+        Ok(crate::mobile::device_notice::preclaim_device_notices(
+            &dir, &user_id, &keys, complete,
+        ))
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, user_id, keys, complete);
+        Err(NO_DEVICE_NOTICE_LEDGER.to_string())
+    }
+}
+
+/// The refusal off a phone, where no background engine shares a device-notice ledger.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const NO_DEVICE_NOTICE_LEDGER: &str = "the device-notice ledger exists on a phone only";
+
+/// The directory that holds the device-notice ledger: the App Group container on iOS, the app data
+/// directory on Android.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn device_notices_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        crate::app_group::app_group_dir()
+    }
+    #[cfg(target_os = "android")]
+    {
+        app.path().app_data_dir().map_err(|e| e.to_string())
     }
 }
 
@@ -1799,11 +2472,13 @@ fn remove_user_push_files_proved(
     for (_, name) in taken_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
+    remove_device_notices_of(data_dir, user_id, &mut removed, &mut failures);
     if let Some(dir) = extension_dir {
         let before = removed;
         for name in extension_account_files() {
             crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
         }
+        remove_device_notices_of(dir, user_id, &mut removed, &mut failures);
         log::info!(
             "[DEL-LOCAL] push files: {} removed from the extension's container",
             removed - before
@@ -2353,7 +3028,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 7);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -2403,9 +3078,15 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(&group).unwrap();
         std::fs::write(group.join(PUSH_CONTEXT_FILE), context).unwrap();
         std::fs::write(group.join(super::FCM_CACHE_FILE), b"{}\n").unwrap();
-        // The device-notice ledger the extension claims in: markers name `userId:deviceId`.
-        std::fs::create_dir_all(group.join(super::DEVICE_NOTICES_DIR)).unwrap();
-        std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join("6123"), b"").unwrap();
+        // The device-notice ledger the extension claims in, shared by the accounts on the install:
+        // a directory per account, and a legacy root marker (`hex(userId:...)`) of each.
+        for user in ["a", "b"] {
+            let account = super::device_notices_account_dir(&group, user);
+            std::fs::create_dir_all(&account).unwrap();
+            std::fs::write(account.join("preclaimed"), b"").unwrap();
+            let legacy = super::device_notice_legacy_name(&format!("{user}:d|ff"));
+            std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join(legacy), b"").unwrap();
+        }
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             std::fs::write(group.join(kept), b"x").unwrap();
         }
@@ -2423,7 +3104,16 @@ mod delete_user_push_files_tests {
         assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 9);
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
         assert!(!group.join(super::FCM_CACHE_FILE).exists());
-        assert!(!group.join(super::DEVICE_NOTICES_DIR).exists());
+        // Only the deleted account's device notices go; the other account's stay.
+        let ledger = group.join(super::DEVICE_NOTICES_DIR);
+        assert!(!super::device_notices_account_dir(&group, "a").exists());
+        assert!(!ledger
+            .join(super::device_notice_legacy_name("a:d|ff"))
+            .exists());
+        assert!(super::device_notices_account_dir(&group, "b").exists());
+        assert!(ledger
+            .join(super::device_notice_legacy_name("b:d|ff"))
+            .exists());
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             assert!(group.join(kept).exists(), "{kept}");
         }
@@ -2477,7 +3167,7 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
             .unwrap();
         let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
-        assert!(err.contains("6 push file(s) removed"), "{err}");
+        assert!(err.contains("5 push file(s) removed"), "{err}");
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -2496,7 +3186,7 @@ mod delete_user_push_files_tests {
         merge_display_names(&group, "a", &names, &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
-            6
+            5
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());

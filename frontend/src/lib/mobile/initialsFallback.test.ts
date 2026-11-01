@@ -85,13 +85,28 @@ describe('the initials disc, across the three notification implementations', () 
     expect(objc.match(/CanariInitialsImagePath\(/g)).toHaveLength(3); // 2 calls + the definition
   });
 
-  it('draws the SALON, not the speaker, on a channel notification', () => {
-    // The subtle one. A salon notification is titled `<Communaute> - #<salon>`, so a fallback that
-    // took the title's first character would draw the community - or a bare `#` when the community
-    // could not be named. Both platforms pass the salon explicitly instead.
-    expect(kotlin).toContain('generateInitialsBitmap(channelName)');
-    expect(swift).toContain('attachInitials(content: content, name: channelName)');
-    expect(objc).toContain('shownMentionsMe, channelName, YES, NO);');
+  it('draws the SPEAKER on a salon banner, never the title or the salon (Android, 2026-11-01)', () => {
+    // A salon notification is titled `<Communaute> - #<salon>`, so a fallback that took the title's
+    // first character would draw the community - or a bare `#`. Android drew the SALON's letter
+    // until the owner read a "G" for `#général` on `v1.6.0`: it now draws the named speaker's
+    // initials and "?" for anybody else (`ChannelBannerAuthor`, tested in `android-tests`).
+    expect(kotlin).toContain('generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))');
+    expect(kotlin).not.toContain('generateInitialsBitmap(channelName)');
+  });
+
+  it('draws the SPEAKER on a salon banner, never the title or the salon (iOS, 2026-11-01)', () => {
+    // A salon notification is titled `<Communaute> - #<salon>`, so a fallback that took the title's
+    // first character would draw the community - or a bare `#`. Both Apple composers drew the
+    // SALON's letter until 2026-11-01 (the owner read a "G" for `#général` on Android `v1.6.0`, the
+    // same shape): they now draw the named speaker's initials and "?" for anybody else - an unnamed
+    // author, a v1 author, a blind banner. Android twin: `ChannelBannerAuthor`.
+    expect(swift).toContain(
+      'attachInitials(content: content, name: Self.salonInitialsSource(author))'
+    );
+    expect(swift).not.toContain('attachInitials(content: content, name: channelName)');
+    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO, names\);/);
+    expect(objc).toContain('NSString *initialsName = @"";');
+    expect(objc).not.toContain('shownMentionsMe, channelName, YES, NO);');
   });
 
   it('writes to a temp file, never to the avatar cache', () => {

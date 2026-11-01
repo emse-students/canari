@@ -6,9 +6,11 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -95,6 +97,9 @@ class MainActivity : TauriActivity() {
             }
         super.onCreate(savedInstanceState)
         applyKeyboardInsets()
+        // While the in-app ring plays the screen stays on: a screen that timed out mid-ring would
+        // read, at `onStop`, as the power button - which silences the call (CallRingPlayer).
+        CallRingPlayer.screenHold = ringScreenHold
         // Before any capture, and once per process: no page is alive yet, so nothing is staging.
         IncomingShare.sweepOrphansOnce(this)
         // A relaunch after a configuration change, or from the recents list, re-delivers the intent
@@ -443,7 +448,21 @@ class MainActivity : TauriActivity() {
 
     override fun onStop() {
         super.onStop()
+        // The in-app ring is the on-screen app's. Off screen the call rings on as the native CallStyle
+        // ring, and the page starts the player again when it is back (`utils/callRing.ts`) - unless
+        // the SCREEN went off: the power button silences a ring, as it does the system's own, and
+        // the call stays answerable on the page. The screen is held on while it rings, so only the
+        // user turns it off.
+        val screenOff = !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        CallRingPlayer.leftScreen(screenOff)
         CookieManager.getInstance().flush()
+    }
+
+    /** Keeps this window on while the in-app ring plays ([CallRingPlayer.screenHold]). */
+    private val ringScreenHold: (Boolean) -> Unit = { on ->
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Log.i("MainActivity", "screen held on for the ring: $on")
     }
 
     /**
@@ -473,6 +492,7 @@ class MainActivity : TauriActivity() {
      */
     override fun onDestroy() {
         super.onDestroy()
+        if (CallRingPlayer.screenHold === ringScreenHold) CallRingPlayer.screenHold = null
         val webView = liveWebView ?: run {
             Log.d("MainActivity", "onDestroy: no WebView was ever created, nothing to destroy")
             return

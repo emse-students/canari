@@ -45,7 +45,9 @@ const OTHER = 'g2';
  * about the mailbox, and one that is opens the gate itself.
  */
 function service(
-  outcome: { noPeerOnline?: boolean; target?: string; excludedOnline?: number } | Error = {},
+  outcome:
+    | { noPeerOnline?: boolean; target?: string; excludedOnline?: number; refused?: string }
+    | Error = {},
   waitForMessageQueueIdle = vi.fn().mockResolvedValue(undefined),
   distributionGroups: readonly string[] = []
 ) {
@@ -190,6 +192,21 @@ describe('reconcileGroup', () => {
     expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
     expect(probe).not.toHaveBeenCalled();
     expect(deferredGroups()).toEqual([GROUP]);
+  });
+
+  it('sends NO probe and defers NOTHING when the server refused the ask on membership', async () => {
+    // A refusal elected nobody. Read as an election (a non-2xx was "no answer", `noPeerOnline:
+    // false`, until 2026-11-01) it sent a probe nobody waits for; read as "nobody online" it would
+    // wait for a peer edge that cannot change a refusal.
+    const lines: string[] = [];
+    const mls = service({ noPeerOnline: false, excludedOnline: 0, refused: 'not_a_member' });
+
+    expect(await reconcileGroup(mls, GROUP, (m: string) => lines.push(m))).toBe(false);
+    expect(probe).not.toHaveBeenCalled();
+    expect(deferredGroups()).toEqual([]);
+    expect(lines.join(' | ')).toContain('refused the history ask');
+    // And nothing is coalesced: the next edge is free to ask.
+    expect(await reconcileGroup(service(), GROUP, log)).toBe(true);
   });
 
   it('records NOTHING when the election never left the device', async () => {

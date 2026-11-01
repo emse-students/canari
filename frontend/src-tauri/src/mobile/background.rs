@@ -170,7 +170,9 @@ pub struct GrainePush<'a> {
 }
 
 /// Opens a salon push against the seed mirror, and returns the metadata JSON of
-/// [`decrypt_channel_message`] or a `refused` with its reason.
+/// [`decrypt_channel_message`] or a `refused` with its reason. An opened answer carries
+/// `authorProven`: `true` under a v2 session (minter and signature checked), `false` under v1, whose
+/// rows carry no author proof - the one fact a banner needs before it names the push's `senderId`.
 ///
 /// ONE IMPLEMENTATION FOR BOTH PLATFORMS (channel-encryption section 21.5): Android's
 /// `nativeOpenGrainePush` and the iOS `canari_native_open_graine_push` hand it the push's fields and
@@ -285,8 +287,11 @@ pub fn open_graine_push(
         }
         Err(_) => return refused("graine-open-failed"),
     };
-    let info = extract_full_message_info(&plaintext, language);
+    let mut info = extract_full_message_info(&plaintext, language);
     if info["ok"].as_bool().unwrap_or(false) {
+        // THE OPEN PROVED THE AUTHOR: the minter check and the signature above both passed, so a
+        // banner may NAME the push's `senderId` (`ChannelBannerAuthor`, `channelBannerAuthor`).
+        info["authorProven"] = serde_json::Value::Bool(true);
         info
     } else {
         log::debug!(
@@ -316,7 +321,15 @@ fn open_graine_push_v1(
             return refused("graine-open-failed");
         }
     };
+    // A v1 row opens WHOEVER the push names, so the answer says the author is NOT proven: a banner
+    // shows the text and names nobody (`ChannelBannerAuthor`) - the server's `senderId` is a claim.
     decrypt_channel_message(&key, nonce, ciphertext, language)
+        .map(|mut info| {
+            if info["ok"].as_bool().unwrap_or(false) {
+                info["authorProven"] = serde_json::Value::Bool(false);
+            }
+            info
+        })
         .unwrap_or_else(|| refused("graine-open-failed"))
 }
 

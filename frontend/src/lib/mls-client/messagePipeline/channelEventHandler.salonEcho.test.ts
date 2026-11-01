@@ -15,7 +15,7 @@ vi.mock('$lib/stores/pinStore.svelte', () => ({ applyPin: vi.fn() }));
 vi.mock('$lib/stores/pollStore.svelte', () => ({ setPollMeta: vi.fn() }));
 vi.mock('$lib/stores/reactionStore.svelte', () => ({ applyChannelReactionFrame: vi.fn() }));
 vi.mock('$lib/utils/graine/channelSeal', () => ({
-  openChannelMessage: vi.fn(async () => new Uint8Array()),
+  openChannelMessageProving: vi.fn(async () => ({ bytes: new Uint8Array(), authorProven: true })),
 }));
 vi.mock('$lib/utils/chat/channelCrypto', () => ({ reportUnreadableChannelMessage: vi.fn() }));
 vi.mock('$lib/proto/codec', () => ({ decodeAppMessage: vi.fn(() => ({ messageId: 'local-1' })) }));

@@ -1,3 +1,4 @@
+import { resolveAnchor, type VisibleAnchor } from './visibleRow';
 import type { ChatMessage, ReadWatermarks } from '$lib/types';
 import { messageTime, stampedTime } from './messageOrder';
 
@@ -353,6 +354,38 @@ export function countUnreadForUser(
     (total, msg) => total + (isUnreadForUser(msg, watermark, serverWatermark) ? 1 : 0),
     0
   );
+}
+
+/**
+ * HOW MANY UNREAD MESSAGES LIE BELOW THE READER'S VIEWPORT - what the floating "scroll to bottom"
+ * button may call new messages.
+ *
+ * The button used to carry {@link countUnreadForUser} over the WHOLE conversation: an unread row
+ * anywhere - above the viewport, in view, or merely not yet covered by a mark that moves only while
+ * the window is focused - put a "1" on an arrow that points at the bottom, and a reader scrolled up
+ * on a thread with nothing new below saw a count of something they could not find (owner, 2026-11-01).
+ * The question the arrow asks is positional, so the answer is: the unread rows AFTER the last row the
+ * reader can see. A reaction, an edit or a pin is not a row and never reaches this function.
+ *
+ * @param msgs The thread in DISPLAY order (`messageGroups` rows), never the store's order.
+ * @param anchor The last row at least partly in view above the composer; `null` when the position
+ *        is not measured yet, which counts nothing - a count with no position would be the old lie.
+ *        A row that has since gone resolves to the nearest surviving one (`resolveAnchor`).
+ */
+export function countUnreadBelow(
+  msgs: ReadonlyArray<
+    Pick<ChatMessage, 'id' | 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>
+  >,
+  anchor: VisibleAnchor | null,
+  watermark: number,
+  serverWatermark = 0
+): number {
+  const { index } = resolveAnchor(
+    msgs.map((msg) => msg.id),
+    anchor
+  );
+  if (index < 0) return 0;
+  return countUnreadForUser(msgs.slice(index + 1), watermark, serverWatermark);
 }
 
 /**

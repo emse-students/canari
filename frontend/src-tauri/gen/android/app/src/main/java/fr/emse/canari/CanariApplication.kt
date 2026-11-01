@@ -8,9 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
+import app.tauri.gallery.ConversationShortcuts
+import fr.emse.canari.call.IncomingRing
 import java.io.File
 
 /**
@@ -71,6 +72,23 @@ class CanariApplication : Application() {
             NativeCacheKey.ensure(this)
         } catch (e: Exception) {
             Log.e(TAG, "NativeCacheKey.ensure: exception: ${e.message}", e)
+        }
+        // A SALON TAKES NO CONVERSATION SHORTCUT SINCE 2026-11-01 (`showMessageNotification`), and the
+        // ones the socket trigger published before it would hold the shared dynamic budget until the
+        // next sign-out. ONCE PER INSTALL: the done flag is durable state, written only after a
+        // removal that did not fail, so a failed one is tried again at the next start.
+        val migrations = getSharedPreferences(MIGRATIONS_PREFS, Context.MODE_PRIVATE)
+        if (!migrations.getBoolean(SALON_SHORTCUTS_RETIRED, false)) {
+            try {
+                // The count is logged by the recorder itself, when there was anything to remove.
+                val removed = ConversationShortcuts.removeRecordedWithPrefix(this, "${ConversationShortcuts.ID_PREFIX}channel_")
+                if (removed != null) {
+                    migrations.edit().putBoolean(SALON_SHORTCUTS_RETIRED, true).apply()
+                    Log.d(TAG, "salon conversation shortcuts: retired ($removed) - not asked again")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "salon conversation shortcuts: not retired: ${e.message}", e)
+            }
         }
     }
 
@@ -191,6 +209,12 @@ class CanariApplication : Application() {
     companion object {
         private const val TAG = "CanariApp"
 
+        /** One-time steps this install has done, each a durable flag - see `initStorageBackedState`. */
+        private const val MIGRATIONS_PREFS = "canari_one_time_steps"
+
+        /** The salon conversation shortcuts of builds before 2026-11-01 were removed (or none were held). */
+        private const val SALON_SHORTCUTS_RETIRED = "salon_shortcuts_retired"
+
         /**
          * The id of the channel `tauri-plugin-notification` creates when it loads
          * (`DEFAULT_NOTIFICATION_CHANNEL_ID` in its `TauriNotificationManager.kt`, 2.4.0), named
@@ -240,7 +264,84 @@ class CanariApplication : Application() {
          * second, dead "Messages" entry. Deleting is idempotent and cheap, and the user's per-channel
          * choices on the old ids are NOT carried - the sound is the thing that changed.
          */
-        private val SUPERSEDED_CHANNELS = listOf("canari_messages", "canari_mentions", "canari_reactions")
+        private val SUPERSEDED_CHANNELS =
+            listOf("canari_messages", "canari_mentions", "canari_reactions") + IncomingRing.SUPERSEDED_CHANNEL_IDS
+
+        /**
+         * What the user had set on the superseded `canari_calls`, read before it is deleted. [silent]
+         * is a channel whose sound the user set to None: it stays silent - the new ring is not a
+         * reason to make a sound the user turned off.
+         */
+        private class OldCallsChannel(
+            val importance: Int,
+            val vibrates: Boolean,
+            val silent: Boolean,
+            val lockscreenVisibility: Int,
+            val showBadge: Boolean,
+        )
+
+        /** SharedPreferences holding the one-time "re-grant Do Not Disturb" ask ([isDndRegrantOwed]). */
+        private const val CALLS_CHANNEL_PREFS = "canari_calls_channel"
+        private const val KEY_DND_REGRANT_OWED = "dnd_regrant_owed"
+
+        /**
+         * Reads and LOGS the superseded calls channel before it is deleted: its importance, whether
+         * the user granted it "override Do Not Disturb" and whether it vibrates. The importance and
+         * the vibration are carried to `canari_calls_v2`; the DND bypass CANNOT be - only the user
+         * grants it - so a granted one records an ask the page shows until it is answered
+         * ([isDndRegrantOwed], [dndRegrantAnswered]).
+         * Null when there is no old channel (a fresh install, or the move is done).
+         */
+        private fun supersededCallsChannel(context: Context, manager: NotificationManager): OldCallsChannel? {
+            for (id in IncomingRing.SUPERSEDED_CHANNEL_IDS) {
+                val old = manager.getNotificationChannel(id) ?: continue
+                val bypass = old.canBypassDnd()
+                val silent = old.sound == null
+                Log.i(TAG, "supersededCallsChannel: $id importance=${old.importance} canBypassDnd=$bypass shouldVibrate=${old.shouldVibrate()} silent=$silent lockscreenVisibility=${old.lockscreenVisibility} showBadge=${old.canShowBadge()} - carried to ${IncomingRing.CHANNEL_ID} (bypass owed to the user)")
+                if (bypass) {
+                    context.getSharedPreferences(CALLS_CHANNEL_PREFS, Context.MODE_PRIVATE)
+                        .edit().putBoolean(KEY_DND_REGRANT_OWED, true).apply()
+                }
+                return OldCallsChannel(old.importance, old.shouldVibrate(), silent, old.lockscreenVisibility, old.canShowBadge())
+            }
+            return null
+        }
+
+        /** Whether the Do Not Disturb ask was shown in this process ([IncomingRing.dndAsk]). */
+        private val dndAskedThisLaunch = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /**
+         * Whether the page asks the user, now, to grant the new calls channel "override Do Not
+         * Disturb" again ([IncomingRing.dndAsk]). Only the user's answer clears the debt
+         * ([dndRegrantAnswered]) - or the channel already having it, granted by hand; an unanswered
+         * ask comes back at the next launch, never on every page load.
+         */
+        internal fun isDndRegrantOwed(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(CALLS_CHANNEL_PREFS, Context.MODE_PRIVATE)
+            val owed = prefs.getBoolean(KEY_DND_REGRANT_OWED, false)
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val granted = manager.getNotificationChannel(IncomingRing.CHANNEL_ID)?.canBypassDnd() == true
+            return when (IncomingRing.dndAsk(owed, granted, dndAskedThisLaunch.get())) {
+                IncomingRing.DndAsk.NONE -> false
+                IncomingRing.DndAsk.CLEAR -> {
+                    prefs.edit().remove(KEY_DND_REGRANT_OWED).apply()
+                    Log.i(TAG, "isDndRegrantOwed: ${IncomingRing.CHANNEL_ID} already overrides Do Not Disturb - the ask is dropped")
+                    false
+                }
+                IncomingRing.DndAsk.ASK -> {
+                    dndAskedThisLaunch.set(true)
+                    Log.i(TAG, "isDndRegrantOwed: the user is still owed the calls channel Do Not Disturb ask - asked once this launch")
+                    true
+                }
+            }
+        }
+
+        /** The user answered the ask - opened the settings, or closed it: it is not asked again. */
+        internal fun dndRegrantAnswered(context: Context, how: String) {
+            context.getSharedPreferences(CALLS_CHANNEL_PREFS, Context.MODE_PRIVATE)
+                .edit().remove(KEY_DND_REGRANT_OWED).apply()
+            Log.i(TAG, "dndRegrantAnswered: the Do Not Disturb ask is answered ($how)")
+        }
 
         private fun deleteSupersededChannels(manager: NotificationManager) {
             for (id in SUPERSEDED_CHANNELS) {
@@ -261,8 +362,10 @@ class CanariApplication : Application() {
          *  - canari_messages_v2 : DMs and group messages (IMPORTANCE_HIGH, vibration, palette-A "message" trill)
          *  - canari_social   : reactions/comments on posts (IMPORTANCE_DEFAULT, silent)
          *  - canari_forms    : form reminders (IMPORTANCE_DEFAULT, silent)
-         *  - canari_calls    : incoming call rings (WP-XP-5: IMPORTANCE_HIGH, RINGTONE sound,
-         *                      bypass-DND requested - the user can confirm it in channel settings)
+         *  - canari_calls_v2 : incoming call rings (WP-XP-5: IMPORTANCE_HIGH, RINGTONE usage,
+         *                      bypass-DND requested - the user can confirm it in channel settings;
+         *                      Canari's own ring `res/raw/canari_ring.wav` since 2026-11-01, which
+         *                      the user may still change there)
          *  - canari_mentions_v2 : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
          *                      bypass-DND requested)
          *
@@ -277,6 +380,8 @@ class CanariApplication : Application() {
          */
         internal fun ensureChannels(context: Context, manager: NotificationManager) {
             val res = appLocaleContext(context)
+            // Read BEFORE the delete: what the user set on the old calls channel is carried to v2.
+            val oldCalls = supersededCallsChannel(context, manager)
             deleteSupersededChannels(manager)
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
                 val audioAttrs = AudioAttributes.Builder()
@@ -322,9 +427,12 @@ class CanariApplication : Application() {
                 )
             }
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_CALLS) == null) {
-                // Ringtone-class audio so an incoming call sounds like a call, not a message.
-                // setBypassDnd is a REQUEST: the system honors it only if the user grants the
-                // channel "override Do Not Disturb" (surfaced in the channel settings).
+                // Ringtone-class audio so an incoming call sounds like a call, not a message, and
+                // Canari's own ring (`IncomingRing`, owner 2026-11-01), with the importance and the
+                // vibration the user left on the old `canari_calls` (`supersededCallsChannel`).
+                // setBypassDnd is a REQUEST: the system honors it only if the user grants the channel
+                // "override Do Not Disturb" (surfaced in the channel settings) - which is why a grant
+                // the old channel had is owed again, and the app asks for it once.
                 val ringAttrs = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
@@ -333,12 +441,18 @@ class CanariApplication : Application() {
                     NotificationChannel(
                         CanariFirebaseMessagingService.CHANNEL_CALLS,
                         res.getString(R.string.notif_channel_calls_name),
-                        NotificationManager.IMPORTANCE_HIGH
+                        IncomingRing.inheritedImportance(oldCalls?.importance)
                     ).apply {
                         description = res.getString(R.string.notif_channel_calls_desc)
-                        enableVibration(true)
-                        vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
-                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), ringAttrs)
+                        enableVibration(oldCalls?.vibrates ?: true)
+                        vibrationPattern = IncomingRing.VIBRATION_PATTERN
+                        // A sound the user set to None stays None; otherwise Canari's ring.
+                        if (oldCalls?.silent == true) setSound(null, null)
+                        else setSound(gazouillisUri(context, R.raw.canari_ring), ringAttrs)
+                        oldCalls?.let {
+                            lockscreenVisibility = it.lockscreenVisibility
+                            setShowBadge(it.showBadge)
+                        }
                         setBypassDnd(true)
                     }
                 )

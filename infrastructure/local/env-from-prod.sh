@@ -74,15 +74,17 @@ log "snapshot: $(printf '%s\n' "$PROD_NAMES" | wc -l | tr -d ' ') variables"
 
 # ── The five lists ───────────────────────────────────────────────────────────
 # Kept exactly as production has them: no local equivalent, or the key that reads the data.
+# LIVE_ENABLED is the live routes' deploy lock, `true` on both estates since 2026-10-30; what closes
+# lives is the runtime `platform_config.lives_mode`, which the dump carries, so local matches both.
 KEEP="APNS_VOIP_KEY_ID APNS_VOIP_KEY_P8 APNS_VOIP_SANDBOX APNS_VOIP_TEAM_ID APNS_VOIP_TOPIC
-AUTHENTIK_BASE_URL CALL_E2E_ENCRYPTION CERCLE_API_KEY CHANNELS_ENCRYPTION_SECRET
+AUTHENTIK_BASE_URL CALL_E2E_ENCRYPTION CERCLE_API_KEY CHANNELS_ENCRYPTION_SECRET QUEUED_PAYLOAD_SHARED_WRITES
 CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_CALLS_API_TOKEN CLOUDFLARE_TURN_ANALYTICS_TOKEN CLOUDFLARE_TURN_KEY_ID
 CLOUDFLARE_TURN_MONTHLY_BUDGET_GB
 CLOUDFLARE_TURN_TTL_SECONDS EXTERNAL_API_KEY
 FIREBASE_SERVICE_ACCOUNT_JSON GOOGLE_SAFE_BROWSING_API_KEY KLIPY_API_KEY
 MEDIA_MAX_SIZE_MB MIGALLERY_API_KEY MIGALLERY_API_URL SERVICE_ACCOUNT_USER_ID
 SKY_API_KEY SKY_API_URL TURN_CREDENTIAL TURN_URL
-TURN_USERNAME"
+TURN_USERNAME LIVE_ENABLED"
 
 # WRITTEN EMPTY, and this list exists because "no local equivalent" is not the only question.
 #
@@ -97,7 +99,19 @@ TURN_USERNAME"
 # PRODUCTION pair, and Lydia moves real money with it. A laptop holding a production dump would hold
 # a key that charges a real payer the moment `LYDIA_ENV` named the real Lydia. Local gets
 # `LYDIA_ENV=homologation` (LOCAL, below) and no token, so a Lydia call answers "not configured".
-BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN"
+#
+# LYDIA_RECONCILE_ENABLED for the same reason: the sweep asks Lydia about payments on its own, and a
+# local stack must never reconcile against the real Lydia, whatever production's switch says. Empty
+# reads as OFF (`LYDIA_RECONCILE_ENABLED === 'true'` and nothing else turns it on).
+#
+# ANDROID_APP_LINK_SHA256 on its merits: it is not secret (assetlinks.json publishes it), but it is
+# useless and misleading here. An Android restore credential is bound to the estate's RP ID, the host
+# of FRONTEND_URL, which is localhost locally, so a production fingerprint would make core-service
+# report restore AVAILABLE on a stack no phone can restore against. Empty, restore reports itself
+# unavailable (503, fails closed) - and the frontend half, VITE_ANDROID_APP_LINK_SHA256, is already
+# written empty below for the same reason, so the two halves agree.
+BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
+LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump

@@ -151,8 +151,8 @@ kick gets. The current device has no delete button at all.
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
 | POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
-| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
-| POST | `/api/mls/history-request` | Ask one RANDOM online member to resend the history bundle (after a fresh join); `no_peer_online` if none |
+| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal; any roster seat, a waiting one included, never a key-distribution group ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
+| POST | `/api/mls/history-request` | Ask one RANDOM online member to resend the history bundle (after a fresh join); `no_peer_online` if none. Admitted member only ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
 | POST | `/api/mls/add-lock` | Acquire distributed add-lock |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
 
@@ -1113,13 +1113,33 @@ that consumes them next.
   is closed learns of the device at the next message push or when the app opens). Each push-decrypt
   answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
   one marker file per key (`create_new`, atomic across the app and the extension), in the app data
-  directory on Android and the App Group on iOS. The app claims the keys it showed
+  directory on Android and the App Group on iOS. **A marker is named by the SHA-256 of its key, in
+  hex (64 characters), since 1.6.1.** From 1.4.1-alpha.2 to 1.6.0 it was named by the whole key in
+  hex: a production key (`userId:deviceId|fingerprint`, ~160 bytes) gave a ~320-byte name, over the
+  255-byte limit, so every claim failed with `File name too long (os error 36)`, logged at ERROR
+  five times a start on the Mi 9T, and NO background engine ever posted the alert. A marker an older
+  build did write (a key of at most 127 bytes) is still read as "already announced"
+  ([legacy-compatibility](../legacy-compatibility.md)). A marker that cannot be written is an ERROR
+  naming its path, and its key is NOT announced, since nothing would then stop a second post. The
+  app claims the keys it showed
   (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
   foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
   the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
   The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
   other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
-  never posted. The ledger is swept with the account's push files on deletion.
+  never posted. **That pre-claim is a precondition the engines check, not one they assume (1.6.1):**
+  `preclaim_device_notices` records the old keys and THEN writes the account's `preclaimed` marker
+  (never pruned) - but only when the pass read the key ages of EVERY listed device (`complete`): one
+  unanswered device may be old, so its pass records the keys it knows and withholds the marker. The
+  engines' door (`engine_claim_device_notices_json`, behind the JNI and C-FFI) posts and claims
+  nothing for an account without the marker, and answers `{"claimed": [...], "held": n}` so the
+  Android and iOS log lines say which reason left nothing to post (this crate's log reaches no
+  logger in a killed app). A store update runs the new build in the engines BEFORE the app's next
+  launch, and every pre-claim of 1.4.1-alpha.2 to 1.6.0 had failed, so without the gate a heal commit
+  pushed before the first open would post a false "new device" for an old laptop. **The ledger holds
+  one directory per account** (`device_notices/<sha256(userId)>/`: a marker per key, and
+  `preclaimed`); legacy markers sit in its root. An account's deletion removes its own directory and
+  its own legacy markers (`remove_device_notices_of`), never another account's on the install.
 - **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
   nobody, and announces nothing. Its events exist only in the STAGED post-add state
   (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
@@ -1131,8 +1151,12 @@ that consumes them next.
 processes the commit itself and so shows the in-app alert only, with no local notification; and a
 device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
 The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
-can still post for such a device when a heal brings it back; the app does not announce it. A
-contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+can still post for such a device when a heal brings it back; the app does not announce it. **After
+an update, until the app's first registration on it has pre-claimed the account, the engines post
+nothing at all: an account that never opens the app after the update gets NO background "new device"
+alert, even for a real attacker's device, until that first open.** The in-app alert still comes
+then, once the app drains the commit - a late notification, never a false one. A pass with an
+unanswered device extends that window to the next complete one. A contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
 the history began carry that date, not their device's enrolment.
 
 ### Who admits a new person (2026-10-23)
@@ -1213,7 +1237,16 @@ winner's outcome without a refresh.
 
 **The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
 conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,
-for this device's seat, `deviceMembership.awaitingAdmission`; discovery stores it on the row
+for the ACCOUNT's seat, `awaitingAdmission` on each row - said whether or not this device holds a
+device row there, never while ANY device of the person is `active` in the group - the commit gate's
+own predicate, `seatStillAwaits` (`utils/group-membership.ts`), read for the flagged groups only. The
+per-device `deviceMembership.awaitingAdmission` stays: an older client reads it, and a client facing
+an older server falls back to it with a WARN ([legacy-compatibility](../legacy-compatibility.md)). The ask is the person's, not the
+device's (review of #2442): a joiner's second device, which holds no device row yet, read its row as
+an ordinary `pending` conversation and its recovery fell through to an external join the base refused
+with a 409; it now reads "waiting for a member" like the first device, and `requestReAdd` reads the
+same flag off the list (`[READD] ... the account's seat awaits a member's admission`) and asks a member
+instead. Discovery stores it on the row
 (`Conversation.awaitingAdmission`, IndexedDB and SQLite schema v15, `syncAdmissionFlags`), and a
 `pending` row that carries it (`isNeverAdmitted`, `admissionState.ts`) reads "En attente qu'un membre
 vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming such a row - declined,
@@ -1406,8 +1439,8 @@ and the server holds the person outside until a member answers:
 - **"Holds a leaf" is not "is a member" (review of #2358, P2-2).** A removal deletes the roster row
   BEFORE the member's Remove commit lands; if that commit never lands, the removed person keeps a
   leaf. Following a link later, they are re-added automatically: `automaticAdmission` reads their
-  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Open in
-  [backlog](../backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358).
+  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Closed by ADM-3:
+  the commit is the one writer ([below](#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 - **"Only through a member's decision" holds from a client floor**, not from this build:
   a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
   the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with

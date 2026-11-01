@@ -8,7 +8,11 @@ import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
-import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
+import {
+  appMessageSentAtMs,
+  appMsgToEnvelope,
+  normalizeMessageId,
+} from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   requestReAdd,
@@ -58,7 +62,10 @@ import {
   retractEvictionNotice,
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
-import { restoredConversationRow } from '$lib/utils/chat/conversations';
+import {
+  findDirectConversationByPeer,
+  restoredConversationRow,
+} from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
@@ -786,6 +793,7 @@ async function handleWelcome({
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
                       messageId: normalizeMessageId(appMsg.messageId),
+                      sentAt: appMessageSentAtMs(appMsg.sentAt),
                       deliveryMeta: msg.deliveryMeta,
                       ...(authorship ? { authorship } : {}),
                     });
@@ -1308,6 +1316,7 @@ async function handleKnownGroup({
         convoKey,
         senderNorm: sender,
         messageId: normalizeMessageId(msg.messageId),
+        sentAt: appMessageSentAtMs(msg.sentAt),
         deliveryMeta,
         ...(authorship ? { authorship } : {}),
       });
@@ -1570,10 +1579,7 @@ async function upsertConversation(
   let matchedExisting = false;
 
   if (isDirect) {
-    const existingDirect = Array.from(conversations.entries()).find(([, c]) => {
-      if ((c.conversationType ?? 'group') !== 'direct') return false;
-      return (c.directPeerId ?? c.contactName).toLowerCase() === directPeerId;
-    });
+    const existingDirect = findDirectConversationByPeer(conversations, directPeerId);
     if (existingDirect) {
       newConvoKey = existingDirect[0];
       matchedExisting = true;

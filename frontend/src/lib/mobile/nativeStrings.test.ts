@@ -439,19 +439,20 @@ describe('Mention tokens in a native banner', () => {
     expect(kotlin).toMatch(/optString\("userId"\)\.equals\(me, ignoreCase = true\)/);
     expect(swift).toMatch(/names = loadMentionNames\(myUserId: myUserId\?\.lowercased\(\)\)/);
     expect(swift).toMatch(/\(root\["userId"\] as\? String\)\?\.lowercased\(\) == me/);
-    expect(objc).toMatch(/names = CanariLoadMentionNames\(me\)/);
+    expect(objc).toMatch(/_names = CanariReadDisplayNames\(_me, &unusable\);/);
+    expect(objc).toMatch(
+      /book\.onFirstRead = \^\(NSString \*_Nullable unusable\) \{\s*CanariLogMentionNamesUnusable\(unusable\);/
+    );
     expect(objc).toMatch(/\[\[owner lowercaseString\] isEqualToString:me\]/);
   });
 
   it('names the AUTHOR of a salon mention of this reader, from the same copy (WP-MENTION-NAME)', () => {
-    // A salon banner's title is the salon, so its author is named on a mention of the reader only:
-    // a line above the body on Android, the subtitle on iOS. One book per banner feeds both the
-    // author and the tokens. An MLS banner is untouched - its push already names the sender.
-    expect(kotlin).toMatch(
-      /val shownBody = if \(mentionsMe\) "\$\{mentionAuthorLine\(senderId, nameBook, res\)\}\\n\$body" else body/
-    );
-    expect(kotlin).toMatch(/renderMentions\(text, myUserId, res, nameBook\)/);
-    expect(kotlin).toMatch(/getString\(R\.string\.notif_social_mention_title, who\)/);
+    // On iOS a salon mention of the reader names its author in the subtitle. On Android, since
+    // 2026-11-01, the salon line names its SPEAKER itself (`ChannelBannerAuthor`), so the "<name>
+    // mentioned you" line went - the body says "@vous" under the name. One book per banner feeds the
+    // speaker and the tokens. An MLS banner is untouched - its push already names the sender.
+    expect(kotlin).not.toMatch(/mentionAuthorLine\(/);
+    expect(kotlin).toMatch(/renderMentions\(body, myUserId, res, nameBook\)/);
     expect(swift).toMatch(/if mentionsMe \{\s*content\.subtitle = Self\.mentionAuthorLine\(/);
     expect(swift).toMatch(
       /localizedFormat\("notif\.social\.mention\.title", who, locale: locale\)/
@@ -459,8 +460,35 @@ describe('Mention tokens in a native banner', () => {
     expect(objc).toMatch(
       /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook\);/
     );
-    expect(objc).toMatch(/shownMentionsMe, channelName, YES, NO\);/);
-    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES\);/);
+    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO, names\);/);
+    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES, nil\);/);
+  });
+
+  it("reads a salon banner's names ONCE and says why they are missing ONCE (iOS, 2026-11-01)", () => {
+    // The speaker, the author line and the tokens share one read: the ObjC handler hands the book its
+    // speaker read to the builder, and the NSE decides the speaker before it renders the tokens. The
+    // reason is said by whichever reader reads first - the speaker's UNNAMED line, or, when the
+    // speaker did not read, the `display_names.json names nobody` line - never both.
+    expect(objc).toMatch(
+      /CanariSalonSpeaker\(showsMessage, authorProven, shownSenderId, names,\s*channelId, &initialsName\);/
+    );
+    expect(objc).toMatch(/NSDictionary \*book = \[names names\];/);
+    expect(objc).toMatch(
+      /if \(!names\.hasRead\) \{\s*names\.onFirstRead = \^\(NSString \*_Nullable unusable\) \{\s*CanariLogSalonNamesUnusable\(unusable, channelId\);/
+    );
+    expect(objc).not.toMatch(/CanariReadDisplayNames\(myUserId/);
+    expect(swift).toMatch(/var namesReasonSaid = namesRead\.hasRead/);
+    expect(swift).toMatch(/Self\.logSalonNamesUnusable\(read\.unusable, channelId: channelId\)/);
+    // The speaker is decided before the tokens are rendered, or `hasRead` would answer for them.
+    expect(swift.indexOf('book: namesRead.read)')).toBeGreaterThan(-1);
+    expect(swift.indexOf('book: namesRead.read)')).toBeLessThan(
+      swift.indexOf('var namesReasonSaid = namesRead.hasRead')
+    );
+    // `no-names` - a file of this account naming nobody - is a fault on all three composers.
+    expect(swift).toContain(
+      '["unreadable", "no-names", "no-sender-id", "no-account"].contains(reason)'
+    );
+    expect(objc).toContain('@[ @"unreadable", @"no-names", @"no-sender-id", @"no-account" ]');
   });
 
   it('names the two words in all four iOS tables and both Android ones', () => {

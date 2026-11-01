@@ -104,8 +104,16 @@ never drifts from `deriveCotisationTag`. `ProductsService.update` drops `granted
 `tagExpiresAt` for a membership product the same way, and `resolveGrantTag` derives NOTHING for a
 membership product whose association has no `cotisationMode`: a stored tag string is never granted as
 typed, so every tag a membership purchase issues is a derived tier tag. **What is recorded then:**
-with cotisations disabled, the checkout opening and the cash sale of such a product are refused
-`409 COTISATION_DISABLED` before any payment is requested or recorded; a payment that lands anyway
+with cotisations disabled the checkout opening and the cash sale of such a product are refused
+`409 COTISATION_DISABLED`, and a legacy product storing no `grantedTagName` is refused
+`409 MEMBERSHIP_PRODUCT_UNGRANTABLE` (logged at ERROR: a manager must re-provision it; the client words
+both with one buyer sentence), before any payment is requested or recorded. ONE check decides,
+`cotisationGrantRefusal` in `product-checkout.ts`; the shop listing flags `cotisationDisabled` from it
+too (no buy button the checkout refuses), and a paid form that grants a cotisation asks it as well: its
+submit is refused `COTISATION_DISABLED` and `FormsService.get` answers `cotisationDisabled`. A grant
+meeting a disabled mode at settlement is decided UNDER the buyer's tier lock - `grantCotisantIfARise`
+answers the typed `{ refused: 'COTISATION_NOT_ENABLED' }`, final, recorded `paid_not_granted`, never
+retried (an unlocked pre-read would race the switch). An association that does not exist reads as no mode. a payment that lands anyway
 (an attempt opened before the switch) is recorded `paid_not_granted` with an ERROR line, like any
 paid tier not granted, so the hourly report and the purchases tab see it. Creating a membership product
 requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived
@@ -154,8 +162,8 @@ text. From this editor only `MEMBER_PRICE_TAG_NOT_A_TIER` can still arrive (the 
 tier): a derived key is never year-shaped and the edit form sends no key, so `TIER_KEY_YEAR_SHAPED`
 answers only a client that still types one.
 
-What this removed: the "changing the identifier transfers the cotisants" field - recorded in
-[backlog](backlog.md#p3---no-screen-turns-the-base-tier-into-a-named-one-2026-10-26).
+What this removed: the "changing the identifier transfers the cotisants" field. No screen turns the
+base tier into a named one.
 
 ### A new tier's key is derived from its label (server, 2026-10-26)
 
@@ -557,7 +565,7 @@ other.
 | Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
 | Tier delete (`delete` of a `membership` product: the holder count, then the delete) | association EXCLUSIVE only |
 
-**The retag is ONE transaction under the exclusive lock**: it re-reads the product, checks the key,
+**The retag is ONE transaction under the exclusive lock** (it also moves every form that grants the OLD key to the new one, in the same commit - owner, 2026-11-01): it re-reads the product, checks the key,
 saves the renamed tier, re-points the sibling `memberPriceTag` links it reads INSIDE, and renames
 every holder's tag. A per-buyer path that derived the OLD tag before the rename and wrote it after
 would leave a tag the rename never saw; the shared lock makes it wait for the rename's commit. The

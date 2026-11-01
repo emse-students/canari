@@ -54,7 +54,11 @@ describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', ()
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
-  const body = { groupId: 'g1', requesterUserId: 'reqU', requesterDeviceId: 'reqD' };
+  const body = {
+    groupId: '00000000-0000-4000-8000-00000000c0a5',
+    requesterUserId: 'reqU',
+    requesterDeviceId: 'reqD',
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -66,7 +70,14 @@ describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', ()
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        // The conversation exists: the welcome request relays any seat in it (`assertCallerHoldsSeat`).
+        {
+          provide: getRepositoryToken(Group),
+          useValue: {
+            ...emptyRepo(),
+            findOne: jest.fn().mockResolvedValue({ id: '00000000-0000-4000-8000-00000000c0a5' }),
+          },
+        },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },
@@ -109,7 +120,7 @@ describe('MessagingService - notifyWelcomeRequest wakes no phone for an ask', ()
     await service.notifyWelcomeRequest('reqU', body);
 
     expect(wake).toHaveBeenCalledWith(
-      'g1',
+      body.groupId,
       ['ua:da', 'reqU:reqD'],
       'reqU:reqD',
       expect.any(String)

@@ -1181,6 +1181,55 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     errors.mockRestore();
   });
 
+  it("a joiner's second device, holding no row, asks a member when the account's seat awaits one (review of #2442)", async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getDeviceMemberships: vi.fn().mockResolvedValue([]),
+        getUserGroups: vi.fn().mockResolvedValue([
+          {
+            groupId: 'g1',
+            name: '',
+            isGroup: true,
+            deviceMembership: null,
+            awaitingAdmission: true,
+          },
+        ]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining("the account's seat awaits a member's admission")
+    );
+  });
+
+  it("a seat the list says is NOT awaiting keeps a further device's own door (#2832's self-join unchanged)", async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getDeviceMemberships: vi.fn().mockResolvedValue([]),
+        getUserGroups: vi.fn().mockResolvedValue([
+          {
+            groupId: 'g1',
+            name: '',
+            isGroup: true,
+            deviceMembership: null,
+            awaitingAdmission: false,
+          },
+        ]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
+  });
+
   it('a seated account with no row for this device keeps its own door (the control)', async () => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
@@ -1414,6 +1463,23 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     await expect(requestReAdd('g1', deps)).resolves.toBeUndefined();
     expect(lines.join(' | ')).toContain('did not reach the server');
   });
+
+  it('says a REFUSED request is refused - never "elected" - and records it against the pair', async () => {
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, refused: 'not_a_member' });
+
+    await requestReAdd('g1', deps);
+
+    const out = lines.join(' | ');
+    expect(out).toContain('was REFUSED (not_a_member)');
+    expect(out).toContain('recorded against 283/284');
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
+  });
 });
 
 /**
@@ -1530,6 +1596,62 @@ describe('requestReAdd - a dead end the server already proved', () => {
     advanceClockPastThrottle();
     await requestReAdd('g1', deps);
     expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+  });
+
+  it('a REFUSED request does not repeat the whole pass - only the election is re-asked', async () => {
+    // Until the refusal was recorded, every watchdog pass ran the memberships, the row, the join and
+    // the ask again, to be refused again: nothing durable said it had already been asked.
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, refused: 'not_a_member' });
+
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.getDeviceMemberships).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(3);
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
+
+    // A commit (re-admission) moves the pair, and the whole pass runs again.
+    deps.mlsService.getGroupMeta = metaAt(283, 285);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the record when the re-ask is REFUSED - a refusal elected nobody', async () => {
+    // Until 2026-11-01 a refusal arrived as "no answer" and read `noPeerOnline: false`, which this
+    // seam takes as "the server elected one": it discharged the proof and logged a member reachable
+    // again on the strength of a 403.
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, refused: 'not_a_member' });
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    const out = lines.join(' | ');
+    expect(out).toContain('re-ask was REFUSED (not_a_member)');
+    expect(out).not.toContain('a member is reachable again');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
   });
 
   it('keeps the record when the re-ask never reached the server', async () => {

@@ -41,10 +41,11 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
     expect(kotlin).toContain('if (isGroup || namesEachSender) style.isGroupConversation = true');
   });
 
-  it('is asked for by the two MESSAGE triggers and by nothing else', () => {
-    // The push and the WebSocket frame. A reaction (a sentence about the actor) and a salon (whose
-    // "sender" IS its title) keep the old shape, or the title would be printed twice.
-    expect(kotlin.match(/namesEachSender = true/g)).toHaveLength(2);
+  it('is asked for by the two MESSAGE triggers and the salon push, and by nothing else', () => {
+    // The MLS push, the WebSocket frame (DMs, groups and salons), and since 2026-11-01 the salon
+    // push, whose line names its speaker under the salon's title (`ChannelBannerAuthor`). A reaction
+    // (a sentence about the actor) keeps the old shape, or the actor would be printed twice.
+    expect(kotlin.match(/namesEachSender = true/g)).toHaveLength(3);
     expect(kotlin).toContain('namesEachSender: Boolean = false');
   });
 });
@@ -90,7 +91,10 @@ describe('the avatar cache remembers "no picture", and only that', () => {
 
 describe('a conversation notification shows one identity (user, 2026-10-05)', () => {
   it('hands a group-shaped post to the platform as a conversation, through a shortcut', () => {
-    expect(kotlin).toContain('if (!isReactionNotif && (isGroup || namesEachSender))');
+    // Never for a salon (2026-11-01): the shortcut cap is shared with the DMs and the share sheet.
+    expect(kotlin).toContain(
+      'if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender))'
+    );
     // Through the recorder, so the sign-out can erase it (sharing lot S5).
     expect(kotlin).toContain('ConversationShortcuts.push(context, info)');
     expect(kotlin).toContain('.setLongLived(true)');
@@ -98,6 +102,48 @@ describe('a conversation notification shows one identity (user, 2026-10-05)', ()
   });
 
   it('keeps the plain large icon only where the shortcut-less shape is kept', () => {
-    expect(kotlin).toContain('else setLargeIcon(largeIcon)');
+    expect(kotlin).toMatch(/\} else \{\s*setLargeIcon\(largeIcon\)\s*\}/);
+  });
+
+  it('never lends a face from a line it did not add (review of #2881, HIGH-1)', () => {
+    // The second trigger of one message adds no line; its own icon then describes nothing shown,
+    // so the large icon is the face of the line the shade shows last.
+    expect(kotlin).toMatch(
+      /\} else if \(alreadyPosted\) \{[\s\S]{0,500}val shownFace = style\.messages\s*\.lastOrNull \{ it\.person != null && it\.person\?\.name != selfPerson\.name \}\s*\?\.person\?\.icon\?\.toIcon\(/
+    );
+    // The reader's own inline reply is attributed to the style's user (`selfPerson`, or no Person):
+    // its face is never the conversation's (review of #2888, LOW-2).
+    expect(kotlin).toContain('previous.user');
+  });
+
+  it('retires the salon shortcuts once, and never on an unreadable record (review of #2888, LOW-3)', () => {
+    // An unreadable record is not "nothing recorded": the removal answers null, and the done flag
+    // is written only for a non-null answer, so the next start tries again.
+    const shortcuts = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/plugins/tauri-plugin-gallery/android/src/main/java/ConversationShortcuts.kt'
+      ),
+      'utf8'
+    );
+    const record = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/plugins/tauri-plugin-gallery/android/src/main/java/ShortcutRecord.kt'
+      ),
+      'utf8'
+    );
+    const application = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariApplication.kt'
+      ),
+      'utf8'
+    );
+    expect(shortcuts).toContain('val ids = record.readOrNull(context) ?: return null');
+    expect(record).toMatch(/is unreadable: \$\{e\.message\}"\)\s*null\s*\}/);
+    expect(application).toMatch(
+      /if \(removed != null\) \{\s*migrations\.edit\(\)\.putBoolean\(SALON_SHORTCUTS_RETIRED, true\)\.apply\(\)/
+    );
   });
 });

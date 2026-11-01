@@ -215,6 +215,19 @@ describe('requestOlderFromPeers', () => {
     expect(sendHistoryRangeRequest).not.toHaveBeenCalled();
   });
 
+  it('reports unavailable when the service REFUSED the ask, without sending the frame', async () => {
+    // A refusal elected nobody: before it was typed it arrived as "no answer", read
+    // `noPeerOnline: false` - "a member was elected" - and a range frame went out to nobody.
+    const convs = withConversation(conversation([NOW]));
+    const { ctx } = makeCtx({ election: { noPeerOnline: false, refused: 'not_a_member' } });
+
+    expect(await convs.requestOlderFromPeers(DM, ctx)).toBe('unavailable');
+    expect(sendHistoryRangeRequest).not.toHaveBeenCalled();
+    expect((ctx as { log: ReturnType<typeof vi.fn> }).log).toHaveBeenCalledWith(
+      expect.stringContaining('refused the ask')
+    );
+  });
+
   it('reports no-peer when the election never left the device', async () => {
     // A transport failure is not an answer about the peers - but from the reader's side the two are
     // the same outcome: nobody is going to send anything, and the spinner must not run for ever.

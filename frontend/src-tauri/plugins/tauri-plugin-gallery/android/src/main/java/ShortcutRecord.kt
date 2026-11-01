@@ -15,14 +15,20 @@ internal class ShortcutRecord(private val prefsName: String, private val tag: St
     private val key = "ids"
 
     /** The recorded ids, oldest first; empty when nothing is recorded or the record is unreadable (said). */
-    fun read(context: Context): List<String> {
+    fun read(context: Context): List<String> = readOrNull(context) ?: emptyList()
+
+    /**
+     * The recorded ids, oldest first: empty when nothing is recorded, and NULL when the record is
+     * unreadable (said) - for a caller that must not take "unreadable" for "nothing to do".
+     */
+    fun readOrNull(context: Context): List<String>? {
         val raw = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
         return try {
             val array = JSONArray(raw)
             List(array.length()) { array.getString(it) }
         } catch (e: Exception) {
             Log.e(tag, "the shortcut record $prefsName is unreadable: ${e.message}")
-            emptyList()
+            null
         }
     }
 

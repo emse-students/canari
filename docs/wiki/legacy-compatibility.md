@@ -108,6 +108,7 @@ REST: those rows need a count, then a migration.
 | Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
+| The account-seat `awaitingAdmission` on the groups list read off `deviceMembership.awaitingAdmission` when a row lacks it (`syncAdmissionFlags`, `admissionState.ts`; #2894) | production's chat-delivery serves the top-level field (one read of `GET mls/users/:userId/groups` on production showing it) | not a client version question: a deploy-order WINDOW, a store build ahead of production | none | the `??` arm and its WARN line | remove once production serves the field; until then each pass that takes it logs `[DISCOVERY] [WARN] ... read off this device's seat` |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
 | `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
@@ -596,6 +597,26 @@ until the app updates.
 estates, with both stores serving it. No floor client writes plaintext then, and every install
 that ran the new build once has had its files sealed. After that the `Plaintext` arms become a
 refusal (`SealError`), and the three migration functions go. A client floor, not a server version.
+
+### No date yet - a device-notice marker named by the key in hex, written by a build before 1.6.1
+
+**Site:** `announced_by_an_older_build` and `legacy_marker_name` in
+`frontend/src-tauri/src/mobile/device_notice.rs`, and the legacy half of `remove_device_notices_of`
+(with `device_notice_legacy_name`) in `frontend/src-tauri/src/commands/push.rs`.
+**Shim (2026-11-01):** the device-notice ledger names a marker by the SHA-256 of its key since 1.6.1;
+before, by the whole key in hex, which the filesystem refused for any key over 127 bytes
+([mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)).
+So an old marker exists only for a SHORT key: **the shim applies only to accounts with a short user
+id** (a key of at most 127 bytes, so a user id of roughly 40 characters or fewer); every other
+account never had a marker written. The claim reads such a marker as "already announced", so the
+upgrade posts nothing twice, and on that hit MIGRATES it: the digest marker is created
+(`create_new`) in the account's directory. It is never written under the old name; an account's
+deletion removes its own legacy markers from the ledger's root.
+**Removal condition:** `minClientVersion` at or above 1.6.1, on both estates, with both stores
+serving it, AND every installed build has run since and migrated its legacy markers. The
+registration pre-claim does NOT settle it: it skips devices idle for 30 days (absent from the device
+list) and keys still "new" by `isNewToItsOwner`, so a legacy marker can outlive it; only the
+migration on a hit retires one. Data at rest, so the floor alone does not retire this.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 

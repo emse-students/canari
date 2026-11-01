@@ -63,12 +63,13 @@ import {
   assertCallerActsOnGroup,
   callerSeatStanding,
   refuseAwaitingSeat,
+  seatStillAwaits,
   withheldWindows,
   withholdsArrivalSpan,
   type AwaitingSeatWithdrawal,
   type ExclusionWindow,
 } from '../utils/group-membership';
-import { cutUserId } from '../utils/log-repeat';
+import { RepeatCounter, cutUserId } from '../utils/log-repeat';
 import { announceJoinAskSettled } from '../utils/join-ask-announce';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
@@ -123,6 +124,11 @@ export interface UserMemberRow {
 @Controller()
 export class MembersController {
   private readonly logger = new Logger(MembersController.name);
+  /**
+   * The `awaitingNoDeviceRow` line, said at the 1st, 10th, 100th... list read per (user, device):
+   * a waiting device reads the list on every connection for up to the 14 days of its ask.
+   */
+  private readonly awaitingNoRowRepeats = new RepeatCounter();
 
   constructor(
     @InjectRepository(GroupMember)
@@ -368,12 +374,41 @@ export class MembersController {
     // `X-Canari-Device` (self-asserted, only ever used to read ITS OWN rows of the caller's own
     // user), and without it - an older client - the field is `null` for every row, which a client
     // reads as "the server did not say", never as "nothing owed".
+    const awaitingGroups = new Set(
+      memberships.filter((m) => m.awaitingAdmission === true).map((m) => m.groupId)
+    );
     const deviceMembershipOf = await this.readDeviceMemberships(
       safeUserId,
       headerDeviceId,
       activeGroups.map((g) => g.id),
-      new Set(memberships.filter((m) => m.awaitingAdmission === true).map((m) => m.groupId))
+      awaitingGroups
     );
+    // THE PERSON'S ACTIVE DEVICES IN EACH AWAITING GROUP, read for the flagged groups only: the
+    // seat awaits only while none of them is active ({@link seatStillAwaits}, the gate's predicate).
+    const awaitingIds = activeGroups.filter((g) => awaitingGroups.has(g.id)).map((g) => g.id);
+    const activeDevicesOf = new Map<string, number>();
+    if (awaitingIds.length > 0) {
+      const activeRows = await this.deviceGroupRepo.find({
+        select: { groupId: true },
+        where: { userId: safeUserId, groupId: In(awaitingIds), status: 'active' as const },
+      });
+      for (const r of activeRows) {
+        activeDevicesOf.set(r.groupId, (activeDevicesOf.get(r.groupId) ?? 0) + 1);
+      }
+    }
+    const seatAwaits = (groupId: string) =>
+      seatStillAwaits(awaitingGroups.has(groupId), activeDevicesOf.get(groupId) ?? 0);
+    const awaitingWithoutDeviceRow = awaitingIds.filter(
+      (id) => seatAwaits(id) && !deviceMembershipOf.has(id)
+    ).length;
+    if (headerDeviceId && awaitingWithoutDeviceRow > 0) {
+      const nth = this.awaitingNoRowRepeats.hit(`${safeUserId}|${headerDeviceId}`);
+      if (nth !== null) {
+        this.logger.log(
+          `[USER_GROUPS] user=${safeUserId} awaitingNoDeviceRow=${awaitingWithoutDeviceRow} (the account's seat awaits a member, this device holds no row there - said as awaiting; repeat=${nth}, said at 1, 10, 100...)`
+        );
+      }
+    }
     // THE INSTANT THE GROUP CAME INTO EXISTENCE, because a client cannot derive it and keeps
     // asking other members for a past that never existed.
     //
@@ -398,6 +433,13 @@ export class MembersController {
       activeEpoch: g.activeEpoch,
       baseEpoch: baseOf.get(g.id) ?? null,
       deviceMembership: deviceMembershipOf.get(g.id) ?? null,
+      // THE ASK IS THE PERSON'S, NOT THE DEVICE'S (review of #2442; owner, 2026-10-31: "la barriere
+      // est une barriere utilisateur, pas appareil"). The roster row is the user's seat, so it is
+      // said on every row whether or not this device holds a device row there: a joiner's second
+      // device, which has none yet, is waiting for the same member's Add as the first and must not
+      // read as an ordinary `pending` conversation. Never while ANY device of the person is active
+      // there - the gate's own predicate ({@link seatStillAwaits}).
+      awaitingAdmission: seatAwaits(g.id),
     }));
   }
 

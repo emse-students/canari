@@ -20,15 +20,7 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { BookerSpace, ResourceSlots, SlotUnit } from './api';
 import { bookingWindowRefusal, type WindowRefusal } from './bookingWindow';
-import {
-  addDays,
-  datesBetween,
-  dayCount,
-  isoWeekMonday,
-  localDate,
-  localTime,
-  offsetMs,
-} from './zonedTime';
+import { addDays, datesBetween, dayCount, localDate, localTime, offsetMs } from './zonedTime';
 
 export type { WindowRefusal } from './bookingWindow';
 
@@ -102,6 +94,16 @@ function wallTimeLabel(instantMs: number, zone: string): string {
  * different ranges never read the same.
  */
 export function formatTimeRange(startMs: number, endMs: number, zone: string): string {
+  const { start, end } = formatTimeRangeParts(startMs, endMs, zone);
+  return `${start} - ${end}`;
+}
+
+/** The two ends of `formatTimeRange`, for a block too narrow to hold them on one line. */
+export function formatTimeRangeParts(
+  startMs: number,
+  endMs: number,
+  zone: string
+): { start: string; end: string } {
   const startDay = localDate(startMs, zone);
   const endDay = localDate(endMs, zone);
   const endTime = wallTimeLabel(endMs, zone);
@@ -110,7 +112,7 @@ export function formatTimeRange(startMs: number, endMs: number, zone: string): s
   if (days === 1 && endTime === '00:00') end = '24:00';
   else if (days === 1) end = `${endTime} ${m.bookings_time_next_day()}`;
   else if (days > 1) end = `${formatShortDay(endDay)} ${endTime}`;
-  return `${wallTimeLabel(startMs, zone)} - ${end}`;
+  return { start: wallTimeLabel(startMs, zone), end };
 }
 
 /** "lundi 2 novembre, 10:00 - 11:30" in the space's zone, the day being the start's. */
@@ -163,15 +165,18 @@ export function isPastUnit(unit: { endMs: number }, nowMs: number): boolean {
 /** Days of one week on the booker's page. */
 export const WEEK_DAYS = 7;
 
-/** The seven dates of the ISO week (Monday first) holding `anchor`. */
-export function weekDates(anchor: string): string[] {
-  const monday = isoWeekMonday(anchor);
-  return datesBetween(monday, addDays(monday, WEEK_DAYS - 1));
+/**
+ * THE ROLLING WEEK (owner, 2026-11-01): the seven dates STARTING on `start` - today at first, then
+ * wherever a step of seven days moved to. It is no longer the ISO week; that survives only where a
+ * quota counts one (server side).
+ */
+export function weekDates(start: string): string[] {
+  return datesBetween(start, addDays(start, WEEK_DAYS - 1));
 }
 
-/** The read that holds the week of `anchor`, with the day before it (see `slotsReadRange`). */
-export function weekReadRange(anchor: string): { from: string; to: string } {
-  return slotsReadRange(isoWeekMonday(anchor), WEEK_DAYS);
+/** The read that holds the rolling week from `start`, with the day before it (see `slotsReadRange`). */
+export function weekReadRange(start: string): { from: string; to: string } {
+  return slotsReadRange(start, WEEK_DAYS);
 }
 
 /** "26 octobre - 1 novembre 2026", the week of `dates` in the reader's language. */
@@ -222,10 +227,17 @@ export interface DayColumn {
 
 export interface WeekLayout {
   days: DayColumn[];
-  /** The shared axis, in minutes from midnight, whole hours. Both 0 when nothing is offered. */
+  /**
+   * The shared axis, in minutes from midnight, whole hours: THE WHOLE DAY (0 to 1440, further only
+   * when a unit runs past midnight or the day is a 25-hour one), whatever the week holds. It is NOT
+   * trimmed to what is booked or offered: the booker is never told the space's availability rules,
+   * so "never bookable" cannot be computed here, and an axis derived from the week's units would
+   * change shape from one week to the next and jump when someone books. Both 0 when nothing is
+   * offered. Where the view opens is `firstUsefulMin`'s business, a scroll position, not a shape.
+   */
   startMin: number;
   endMin: number;
-  /** The height of one hour, in rem: tall enough that the shortest unit holds a line of text. */
+  /** The height of one hour, in rem: always `HOUR_REM`. */
   remPerHour: number;
 }
 
@@ -235,10 +247,12 @@ function wallMinutes(instantMs: number, zone: string): number {
   return h * 60 + min;
 }
 
-const MIN_HOUR_REM = 4;
-const MAX_HOUR_REM = 12;
-/** The least height (rem) a unit may be drawn at, so its label reads. */
-const MIN_UNIT_REM = 1.75;
+/**
+ * THE ONE HOUR HEIGHT (rem), the same for every space, every week and every booking: a regularly
+ * proportioned grid that never stretches or rescales with what a week holds (owner, 2026-11-01).
+ * A 30-minute unit is then 1.5rem, the height of one line of text (`blockDensity`'s `line`).
+ */
+export const HOUR_REM = 3;
 
 /**
  * Where one day's units sit. A unit sits at its start's WALL minute and is as tall as it LASTS, so a
@@ -308,14 +322,38 @@ export function weekLayout(
     };
   });
   const all = days.flatMap((d) => d.placed);
-  if (all.length === 0) return { days, startMin: 0, endMin: 0, remPerHour: MIN_HOUR_REM };
-  const shortest = Math.min(...all.map((p) => p.heightMin));
+  if (all.length === 0) return { days, startMin: 0, endMin: 0, remPerHour: HOUR_REM };
   return {
     days,
-    startMin: Math.floor(Math.min(...all.map((p) => p.topMin)) / 60) * 60,
-    endMin: Math.ceil(Math.max(...all.map((p) => p.topMin + p.heightMin)) / 60) * 60,
-    remPerHour: Math.min(MAX_HOUR_REM, Math.max(MIN_HOUR_REM, (MIN_UNIT_REM * 60) / shortest)),
+    startMin: 0,
+    endMin: Math.max(
+      1440,
+      Math.ceil(Math.max(...all.map((p) => p.topMin + p.heightMin)) / 60) * 60
+    ),
+    remPerHour: HOUR_REM,
   };
+}
+
+/**
+ * Where the grid OPENS, as a minute from midnight: the hour of the earliest free unit that can be
+ * acted on among the days shown, else of the earliest unit of any kind, else 08:00. For a booker
+ * "acted on" is what the booking window takes now; for the organiser (`blockMode`) every free unit
+ * can be blocked, the window does not apply. A scroll position only - the axis itself never moves.
+ */
+export function firstUsefulMin(
+  layout: Pick<WeekLayout, 'days'>,
+  space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
+  nowMs: number,
+  blockMode = false
+): number {
+  const placed = layout.days.flatMap((d) => d.placed);
+  const useful = placed.filter(
+    (p) =>
+      p.unit.state === 'free' && (blockMode || windowRefusal(space, p.unit.startMs, nowMs) === null)
+  );
+  const pool = useful.length > 0 ? useful : placed;
+  if (pool.length === 0) return 8 * 60;
+  return Math.floor(Math.min(...pool.map((p) => p.topMin)) / 60) * 60;
 }
 
 /** How many units of `units` a booker may take now, on the device's clock: the selector's count. */
@@ -416,4 +454,40 @@ export function gridUnitLimit(
 /** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */
 export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>): number {
   return space.slotMode === 'slots' ? 1 : Math.max(1, space.maxSteps ?? 1);
+}
+
+/**
+ * What a unit says in a cell or a row: the holder (or "Ma réservation"), the block's reason, "Libre"
+ * for a free unit a booking may start on now, and "Non réservable" for one it may not. ONE reading
+ * for the grid and the phone's planning.
+ */
+export function unitText(unit: SlotUnit, bookable: boolean): string {
+  if (unit.state === 'booked') {
+    return unit.booking.mine
+      ? m.bookings_cell_mine()
+      : (unit.booking.holderName ?? m.bookings_cell_booked());
+  }
+  if (unit.state === 'blocked') return unit.blockReason || m.bookings_cell_blocked();
+  return bookable ? m.bookings_cell_free() : m.bookings_cell_closed();
+}
+
+/**
+ * Whether a range may START on `unit` now: the booking window takes its start and the server has not
+ * refused it, or a later start, as `started` or `notice` (`lastRefusedStart`). The organiser's block
+ * mode is not bound by the booking window, but the server refuses a block starting in the past or
+ * about to (`history-frozen`), so a block may START only on a unit that has not begun yet. ONE rule
+ * for the grid, the phone's planning rows and the range form.
+ */
+export function isOfferedStart(
+  space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
+  unit: { startMs: number },
+  nowMs: number,
+  lastRefusedStart: number | null,
+  blockMode: boolean
+): boolean {
+  if (blockMode) return unit.startMs > nowMs;
+  return (
+    windowRefusal(space, unit.startMs, nowMs) === null &&
+    (lastRefusedStart === null || unit.startMs > lastRefusedStart)
+  );
 }

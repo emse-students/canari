@@ -1,3 +1,4 @@
+import type { DeliveryRefusalReason } from './mlsDeliveryHttp';
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
@@ -63,6 +64,8 @@ export type { IncomingDeliveryMeta };
 export type WelcomeRequestAnswer =
   | { status: 'forwarded'; target: string }
   | { status: 'stored' }
+  /** The server REFUSED the ask on membership (`DeliveryRefusal`): no seat, so nothing was put. */
+  | { status: 'refused'; reason: DeliveryRefusalReason }
   | null;
 
 /**
@@ -646,6 +649,14 @@ export type UserGroupRow = {
     /** The seat waits for a member's admission (see {@link DeviceMembershipRow}); absent from an older server. */
     awaitingAdmission?: boolean;
   } | null;
+  /**
+   * The ACCOUNT's seat awaits a member's admission (an invitation link's ask no member has answered),
+   * said whether or not this device holds a device row in the group, and never while any device of
+   * the person is `active` there (the commit gate's predicate). The ask is the person's, not the device's: a joiner's second device,
+   * which holds no row yet, waits for the same member's Add as the first. Absent from an older
+   * server, which reads as "the server did not say".
+   */
+  awaitingAdmission?: boolean;
 };
 
 /** Metadata from `GET /api/mls/groups/:id` for recovery checks (`deletedAt` = tombstone). */
@@ -714,6 +725,11 @@ export type HistoryRequestOutcome = {
    * facts, separated by evidence rather than by prose. Zero when the server said nothing.
    */
   excludedOnline: number;
+  /**
+   * Set when the server REFUSED the request on membership - an answer, and NOT an election: nobody
+   * was elected and nobody was found absent, so neither `noPeerOnline` nor `target` says anything.
+   */
+  refused?: DeliveryRefusalReason;
 };
 
 /**
@@ -737,6 +753,11 @@ export type BaseRefreshOutcome = {
   noPeerOnline: boolean;
   /** The member key (`userId:deviceId`) the server elected, when it elected one. */
   target?: string;
+  /**
+   * Set when the server REFUSED the request on membership: nobody was elected, so a caller must
+   * never read it as "a member is reachable" - see {@link HistoryRequestOutcome.refused}.
+   */
+  refused?: DeliveryRefusalReason;
 };
 
 /**

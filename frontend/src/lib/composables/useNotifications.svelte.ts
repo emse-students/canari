@@ -8,6 +8,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
+import { startCallRing, stopCallRing } from '$lib/utils/callRing';
 import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
@@ -63,13 +64,14 @@ import {
 export const NOTIFICATION_ICON = 'ic_notification';
 
 /**
- * THE `_v2` CHANNELS CARRY THE PALETTE-A SOUNDS (2026-10-09). A channel's sound is IMMUTABLE once
- * Android has created it, so changing the sound meant new ids; `CanariApplication` deletes the old
- * `canari_messages` / `canari_mentions` / `canari_reactions` at startup. The ids are the same
- * strings in Kotlin, the manifest and here, pinned by `notificationChannels.test.ts`.
+ * THE `_v2` CHANNELS CARRY THE PALETTE-A SOUNDS (2026-10-09), AND THE CALLS CHANNEL CANARI'S RING
+ * (2026-11-01). A channel's sound is IMMUTABLE once Android has created it, so changing the sound
+ * meant new ids; `CanariApplication` deletes the old `canari_messages` / `canari_mentions` /
+ * `canari_reactions` / `canari_calls` at startup. The ids are the same strings in Kotlin, the
+ * manifest and here, pinned by `notificationChannels.test.ts`.
  */
 export const CHANNEL_MESSAGES = 'canari_messages_v2';
-export const CHANNEL_CALLS = 'canari_calls';
+export const CHANNEL_CALLS = 'canari_calls_v2';
 /**
  * The channel a message that NAMES the reader is filed on - `CanariApplication.ensureChannels`.
  *
@@ -94,43 +96,6 @@ function stableNotifId(conversationId: string): number {
     hash = (Math.imul(31, hash) + conversationId.charCodeAt(i)) | 0;
   }
   return Math.abs(hash) || 1;
-}
-
-/** The shape of one synthesised voice; every time is in seconds after the voice's start. */
-interface SweepShape {
-  type: OscillatorType;
-  /** Frequency at the start, in Hz. */
-  from: number;
-  /** Frequency reached at `glideEnd` (equal to `from` for a steady pitch). */
-  to: number;
-  glideEnd: number;
-  /** Gain at the top of the attack. */
-  peak: number;
-  attackEnd: number;
-  decayEnd: number;
-  stopAt: number;
-}
-
-/**
- * Schedules one voice - an exponential pitch glide under an attack/decay envelope - and returns its
- * oscillator, already started and stopped, so `toneOutput` can release the output on its `ended`.
- */
-function sweepVoice(ctx: AudioContext, startAt: number, shape: SweepShape): OscillatorNode {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = shape.type;
-  osc.frequency.setValueAtTime(shape.from, startAt);
-  if (shape.to !== shape.from) {
-    osc.frequency.exponentialRampToValueAtTime(shape.to, startAt + shape.glideEnd);
-  }
-  gain.gain.setValueAtTime(0.0001, startAt);
-  gain.gain.exponentialRampToValueAtTime(shape.peak, startAt + shape.attackEnd);
-  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + shape.decayEnd);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(startAt);
-  osc.stop(startAt + shape.stopAt);
-  return osc;
 }
 
 export function useNotifications() {
@@ -242,7 +207,6 @@ export function useNotifications() {
    * than a boolean is what keeps a later granted -> denied transition audible.
    */
   let announcedBrowserPermission: string | null = null;
-  let incomingCallRingTimer: ReturnType<typeof setInterval> | null = null;
   /** Active incoming-call OS notification, kept so it can be dismissed on answer/hangup. */
   let incomingCallNotification: Notification | null = null;
   /** Tauri notification id of the active incoming-call notification, for cancellation. */
@@ -283,70 +247,26 @@ export function useNotifications() {
     playNotificationTone(mentionsMe ? 'mention' : 'message');
   }
 
-  /** Plays one cycle of a classic dual-tone ring (best-effort; respects soundsEnabled). */
-  function playIncomingCallRingBurst() {
-    if (typeof window === 'undefined') return;
-    if (!settings.soundsEnabled) return;
-
-    // `call`: the call's own ring is exempt from the gate that silences the app while a call rings.
-    playTone(
-      'incoming-call ring',
-      (ctx, startAt) =>
-        [
-          [440, 0],
-          [480, 0.25],
-        ].map(([freq, offset]) =>
-          sweepVoice(ctx, startAt + offset, {
-            type: 'sine',
-            from: freq,
-            to: freq,
-            glideEnd: 0,
-            peak: 0.12,
-            attackEnd: 0.03,
-            decayEnd: 0.22,
-            stopAt: 0.24,
-          })
-        ),
-      'call'
-    );
-  }
-
-  /** Starts repeating the incoming-call ring until {@link stopIncomingCallRingtone}. */
-  function startIncomingCallRingtone() {
-    if (typeof window === 'undefined') return;
-    stopIncomingCallRingtone();
-    playIncomingCallRingBurst();
-    incomingCallRingTimer = setInterval(playIncomingCallRingBurst, 2_400);
-    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-      try {
-        navigator.vibrate([400, 200, 400, 200, 400]);
-      } catch {
-        /* ignore */
-      }
-    }
+  /**
+   * Rings the incoming call - Canari's own ring, looped until {@link stopIncomingCallRingtone}
+   * (`utils/callRing.ts`: natively on Android, on the tone output elsewhere). The conversation, the
+   * caller and the video flag are what Android's native ring posts if the app leaves the screen.
+   */
+  function startIncomingCallRingtone(call: {
+    callId: string;
+    groupId: string;
+    callerId: string;
+    hasVideo: boolean;
+  }) {
+    startCallRing({ ...call, appSounds: settings.soundsEnabled });
   }
 
   /**
-   * Stops the incoming-call ring and cancels pending vibration.
-   *
-   * A NO-OP when nothing is ringing, and the guard is the whole point. Its caller is an `$effect`
-   * that runs on every call-state evaluation, so it fires at startup with no call in sight - and
-   * `navigator.vibrate(0)` is still a vibrate call, which Chrome refuses without a prior user
-   * gesture and reports as a console ERROR. That put two unexplained error lines in every single
-   * cold start, on a campaign whose rule is that a run is only clean when every line is accounted
-   * for. Cancelling a vibration nobody started is not defensive, it is noise.
+   * Stops the incoming-call ring. A NO-OP when nothing rings: its caller is an `$effect` that runs on
+   * every call-state evaluation, at startup with no call in sight.
    */
-  function stopIncomingCallRingtone() {
-    if (incomingCallRingTimer === null) return;
-    clearInterval(incomingCallRingTimer);
-    incomingCallRingTimer = null;
-    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-      try {
-        navigator.vibrate(0);
-      } catch {
-        /* ignore */
-      }
-    }
+  function stopIncomingCallRingtone(reason: string) {
+    stopCallRing(reason);
   }
 
   /**
@@ -481,8 +401,8 @@ export function useNotifications() {
       notifNav.navigate(groupId);
       try {
         window.focus();
-      } catch {
-        /* ignore */
+      } catch (e) {
+        appendLog(`[NOTIF] incoming-call tap: the window could not take the focus (${String(e)})`);
       }
     };
 
@@ -497,8 +417,10 @@ export function useNotifications() {
           incomingCallNotifId = notifId;
           return;
         }
-      } catch {
-        /* fallback */
+      } catch (e) {
+        // The native notification of a ringing call was refused: the web Notification below is
+        // what is left, and reaching it is a defect of the native path, said at error level.
+        console.error(`[NOTIF] the native incoming-call notification of ${groupId} failed:`, e);
       }
     }
 
@@ -524,8 +446,10 @@ export function useNotifications() {
         n.onclose = () => {
           if (incomingCallNotification === n) incomingCallNotification = null;
         };
-      } catch {
-        /* ignore */
+      } catch (e) {
+        // A browser that refuses the constructor (Chrome on Android wants a service worker): the
+        // ring still shows in the page, but the OS says nothing - said, never swallowed.
+        console.warn(`[NOTIF] the incoming-call notification of ${groupId} was refused:`, e);
       }
     }
   }

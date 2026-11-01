@@ -5,6 +5,7 @@
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
+  import { markRouterReady } from '$lib/navigation/routerReady';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
@@ -17,7 +18,12 @@
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
-  import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import {
+    askCallChannelDndIfOwed,
+    DND_REGRANT_TOAST_MS,
+    releaseCallServiceOfPreviousPage,
+  } from '$lib/mobile/androidCallService';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
   import {
     clearEdgeExclusionsForNewDocument,
@@ -142,11 +148,15 @@
   });
 
   onMount(() => {
+    // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
+    markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
-    if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
+    if (isAndroidTauriRuntime()) {
+      releaseCallServiceOfPreviousPage(window);
+    }
     // Its iOS twin: the proximity sensor a reloaded page may have left armed.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     themeStore.init();
@@ -220,6 +230,17 @@
   $effect(() => {
     setTabUnread(
       globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
+    );
+  });
+
+  // ── The calls channel's Do Not Disturb ask (Android, Canari's ring, 2026-11-01) ──────
+  // Once the user is IN - logged in and past the PIN - never on the login screen, once per page load.
+  let dndAskDone = false;
+  $effect(() => {
+    if (dndAskDone || !isAndroidTauriRuntime() || !globalSession.isLoggedIn) return;
+    dndAskDone = true;
+    askCallChannelDndIfOwed(window, (message, action, onClose) =>
+      showToast(message, 'warning', DND_REGRANT_TOAST_MS, action, onClose)
     );
   });
 

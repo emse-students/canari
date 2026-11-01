@@ -31,9 +31,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
+import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
@@ -145,8 +147,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Normal-priority channel: form reminders (silent). */
         const val CHANNEL_FORMS    = "canari_forms"
 
-        /** Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request). */
-        const val CHANNEL_CALLS    = "canari_calls"
+        /**
+         * Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request), with
+         * Canari's own ring since 2026-11-01 - a new id, because a channel's sound is immutable. The
+         * id lives in the pure [fr.emse.canari.call.IncomingRing], where its JVM test holds it.
+         */
+        const val CHANNEL_CALLS    = fr.emse.canari.call.IncomingRing.CHANNEL_ID
 
         /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
         const val CHANNEL_MENTIONS = "canari_mentions_v2"
@@ -220,11 +226,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Distinct ID range for ring notifications (stable per callId, far above the counters). */
         private const val CALL_NOTIF_ID_BASE = 700_000
 
-        /**
-         * callIds currently ringing, from the server's `call_ring` push - the only ring source. A
-         * ring delivered twice (FCM may redeliver) rings once.
-         */
-        private val activeCallRings = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+        // The calls whose native ring is up live in `CallRingPlayer.rings` ([RingSequencer]), the one
+        // state the native ring and the in-app player share: a ring delivered twice (FCM may
+        // redeliver) rings once, and a call the app rings, or one that ended, is never posted.
 
         // Starts at 10_000 to avoid overlapping the stable IDs (1000-9998) or the summary (9999).
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(10_000)
@@ -401,11 +405,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again -
-                // and so does each ring's call screen, which must never outlive its ring.
-                for (ringing in activeCallRings.toList()) {
+                // and so does each ring's call screen, which must never outlive its ring. Under the
+                // rings' lock, so a post cannot land between the snapshot above and this clear.
+                CallRingPlayer.rings.clearNative { ringing ->
+                    manager.cancel(callNotifId(ringing))
                     IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
                 }
-                activeCallRings.clear()
                 CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
@@ -1057,30 +1062,67 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
 
         /**
-         * The `names` map of `display_names.json`, or null when it cannot be used: absent, unreadable,
-         * or written for another account than [me] (the file is one per install, two accounts may
-         * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
-         * with every name the WebView resolved for this account. [label] says which banner asked.
+         * What one read of `display_names.json` answered: the `names` map, or why there is none.
+         *
+         * @property names  the map, null whenever [unusable] is set.
+         * @property unusable null when the file names this account; otherwise the token
+         *   [ChannelBannerAuthor.NameBook.Unusable] carries: `no-account`, `no-name-file`,
+         *   `other-account`, `no-names`, `unreadable`.
+         * @property detail the exception message of an `unreadable` file, for its log line.
          */
-        internal fun loadDisplayNames(context: Context, me: String?, label: String): JSONObject? {
-            if (me == null) return null
+        internal class DisplayNamesRead(val names: JSONObject?, val unusable: String?, val detail: String? = null)
+
+        /**
+         * Reads `display_names.json` for [me] once, keeping the REASON when it cannot be used - absent,
+         * unreadable, or written for another account (the file is one per install, two accounts may
+         * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
+         * with every name the WebView resolved for this account. Says nothing: each caller logs the
+         * answer at the level its own question deserves ([loadDisplayNames], the salon author).
+         */
+        internal fun readDisplayNames(context: Context, me: String?): DisplayNamesRead {
+            if (me == null) return DisplayNamesRead(null, "no-account")
             val file = File(MlsContextLoader.tauriDataDir(context), "display_names.json")
-            if (!file.exists()) {
-                Log.d(TAG, "$label no display_names.json yet - nobody is named")
-                return null
-            }
+            if (!file.exists()) return DisplayNamesRead(null, "no-name-file")
             return try {
                 val root = JSONObject(file.readText())
                 if (!root.optString("userId").equals(me, ignoreCase = true)) {
-                    Log.d(TAG, "$label display_names.json belongs to another account - not used")
-                    null
+                    DisplayNamesRead(null, "other-account")
                 } else {
-                    root.optJSONObject("names")
+                    root.optJSONObject("names")?.let { DisplayNamesRead(it, null) }
+                        ?: DisplayNamesRead(null, "no-names")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "$label display_names.json unreadable: ${e.message}")
-                null
+                DisplayNamesRead(null, "unreadable", e.message)
             }
+        }
+
+        /** [read] as the pure salon-author rule takes it. */
+        internal fun nameBookOf(read: DisplayNamesRead): ChannelBannerAuthor.NameBook =
+            read.names?.let { names -> ChannelBannerAuthor.NameBook.Held { id -> names.optString(id).takeIf { it.isNotBlank() } } }
+                ?: ChannelBannerAuthor.NameBook.Unusable(read.unusable ?: "no-names")
+
+        /**
+         * The `names` map of `display_names.json`, or null when it cannot be used - see
+         * [readDisplayNames]. [label] says which banner asked; the reason is logged under it.
+         */
+        internal fun loadDisplayNames(context: Context, me: String?, label: String): JSONObject? =
+            logDisplayNamesRead(readDisplayNames(context, me), label).names
+
+        /**
+         * Logs why a read of `display_names.json` names nobody, under [label]; returns [read]. An
+         * unreadable file is a WARN: a writer produced it. The rest are states a banner meets.
+         */
+        internal fun logDisplayNamesRead(read: DisplayNamesRead, label: String): DisplayNamesRead {
+            when (read.unusable) {
+                null, "no-account" -> Unit
+                "no-name-file" -> Log.d(TAG, "$label no display_names.json yet - nobody is named")
+                "other-account" -> Log.d(TAG, "$label display_names.json belongs to another account - not used")
+                "unreadable" -> Log.w(TAG, "$label display_names.json unreadable: ${read.detail}")
+                // This account's file with no map in it: a writer produced it, like an unreadable one.
+                "no-names" -> Log.w(TAG, "$label display_names.json names nobody (no-names)")
+                else -> Log.d(TAG, "$label display_names.json names nobody (${read.unusable})")
+            }
+            return read
         }
 
         /**
@@ -1099,14 +1141,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /** Whether [callId] still rings on this device - the call screen asks before it shows. */
-        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && activeCallRings.contains(callId)
+        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && CallRingPlayer.rings.nativeRinging(callId)
 
         /**
          * Whether a call holds the phone's sound - the ongoing-call service holds one, or a call rings
          * natively ([CallSoundHold]). Every notification posted while it is true is posted silent.
          */
         internal fun callHoldsSound(): Boolean =
-            CallSoundHold.held(CallForegroundService.running, activeCallRings.size)
+            CallSoundHold.held(CallForegroundService.running, CallRingPlayer.rings.nativeCount(), CallRingPlayer.ringingCallId != null)
 
         /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
@@ -1115,7 +1157,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * that opens [IncomingCallActivity] (shown at once on a locked or idle device when the OS
          * grants USE_FULL_SCREEN_INTENT), names the caller from this phone's copy, draws the photo
          * once it is read, and self-expires after [CALL_RING_TIMEOUT_MS]. Called by the server's
-         * `call_ring` push only; deduped per callId (FCM may redeliver).
+         * `call_ring` push, and by [CallRingPlayer] when the app leaves the screen while it rings -
+         * always OFF the main thread (the photo is a Keystore read and a fetch).
+         *
+         * THE CLAIM AND THE POST ARE ONE CRITICAL SECTION ([RingSequencer.claimNative]): a call the
+         * app rings, one already posted, or one answered, ended or silenced is refused and logged;
+         * and an in-app start cannot fall between the claim and `notify`, which is how a late post
+         * used to leave two rings of one call.
+         *
+         * [silent]: the call was SILENCED by the power button while the app rang it
+         * ([RingSequencer.leftScreen]). The notice is posted with no sound, no vibration and no
+         * full-screen screen - only so a locked phone can still answer or decline it, as the system
+         * dialler leaves a silenced call.
          */
         internal fun showIncomingCallNotification(
             context: Context,
@@ -1123,6 +1176,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             callId: String,
             callerId: String,
             hasVideo: Boolean,
+            silent: Boolean = false,
         ) {
             // The switch is checked here, at the one ring: a system call UI for a call the webview
             // would refuse to join is worse than no ring at all.
@@ -1137,41 +1191,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (MainActivity.isInForeground) {
                 Log.i(TAG, "showIncomingCallNotification: app in front with no socket (PIN gate) -> the native ring is the only one call=$callId")
             }
-            if (!activeCallRings.add(callId)) {
-                Log.d(TAG, "showIncomingCallNotification: already ringing call=$callId -> dedupe")
-                return
-            }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             CanariApplication.ensureChannels(context, manager)
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
-
-            // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
-            // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
-            // pending accept from the facts recorded here. The webview joins on those facts once
-            // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
-            // answer from the ring joins on the ring's facts").
-            val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
-            val answerIntent = Intent(context, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                setData(Uri.parse("fr.emse.canari://chat/$groupId"))
-                CallRingAnswer.putAnswer(this, callId, answerNonce)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            val answerPending = PendingIntent.getActivity(
-                context, notifId, answerIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
-                action = ACTION_CALL_DECLINE
-                putExtra(EXTRA_GROUP_ID, groupId)
-                putExtra(EXTRA_CALL_ID, callId)
-            }
-            val declinePending = PendingIntent.getBroadcast(
-                context, notifId + 1, declineIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
             val name = knownCallerName(context, callerId)
             val title = name ?: res.getString(R.string.notif_call_unknown_caller)
             val body = res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call)
@@ -1179,31 +1202,63 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // is fetched, here and on the call screen, only for a caller the phone has named.
             val photoOf = if (name != null) callerId else ""
 
-            // THE FULL SCREEN IS A CALL SCREEN, NEVER THE ANSWER. It used to be [answerPending]: on a
-            // locked phone Android launches the full-screen intent BY ITSELF, which would have
-            // answered every call nobody touched. [IncomingCallActivity] shows over the lock screen
-            // and answers only on the user's tap.
-            val fullScreenPending = PendingIntent.getActivity(
-                context, notifId + 2,
-                IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+            // Refused (and said so by the sequencer): a call the app rings, one already up, or one
+            // that may not ring again.
+            val (answerP, declineP, fullScreenP) = CallRingPlayer.rings.claimNative(callId, silent) {
+                // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
+                // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
+                // pending accept from the facts recorded here. The webview joins on those facts once
+                // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
+                // answer from the ring joins on the ring's facts").
+                val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
+                val answerIntent = Intent(context, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    setData(Uri.parse("fr.emse.canari://chat/$groupId"))
+                    CallRingAnswer.putAnswer(this, callId, answerNonce)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                val answerPending = PendingIntent.getActivity(
+                    context, notifId, answerIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                    action = ACTION_CALL_DECLINE
+                    putExtra(EXTRA_GROUP_ID, groupId)
+                    putExtra(EXTRA_CALL_ID, callId)
+                }
+                val declinePending = PendingIntent.getBroadcast(
+                    context, notifId + 1, declineIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
 
-            // ANDROID 14+ GRANTS THE FULL SCREEN ONLY TO A CALLING APP THE PLAY CONSOLE DECLARED.
-            // Without the grant the same notification rings as a heads-up - Android's own behaviour,
-            // not a path of ours - and the log says which one this phone got, so a reading of a
-            // locked phone that did not light up names its cause.
-            if (android.os.Build.VERSION.SDK_INT >= 34) {
-                val fsi = manager.canUseFullScreenIntent()
-                if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
-                else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
-            }
+                // THE FULL SCREEN IS A CALL SCREEN, NEVER THE ANSWER. It used to be [answerPending]: on a
+                // locked phone Android launches the full-screen intent BY ITSELF, which would have
+                // answered every call nobody touched. [IncomingCallActivity] shows over the lock screen
+                // and answers only on the user's tap.
+                val fullScreenPending = PendingIntent.getActivity(
+                    context, notifId + 2,
+                    IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
 
-            val notif = buildIncomingCallNotification(
-                context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
-            )
-            manager.notify(notifId, notif)
-            Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
+                // ANDROID 14+ GRANTS THE FULL SCREEN ONLY TO A CALLING APP THE PLAY CONSOLE DECLARED.
+                // Without the grant the same notification rings as a heads-up - Android's own behaviour,
+                // not a path of ours - and the log says which one this phone got, so a reading of a
+                // locked phone that did not light up names its cause.
+                if (!silent && android.os.Build.VERSION.SDK_INT >= 34) {
+                    val fsi = manager.canUseFullScreenIntent()
+                    if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
+                    else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
+                }
+
+                val notif = buildIncomingCallNotification(
+                    context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
+                    silent = silent,
+                )
+                manager.notify(notifId, notif)
+                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo silent=$silent")
+                Triple(answerPending, declinePending, fullScreenPending)
+            } ?: return
 
             // The ring's end is armed BEFORE the photo is fetched: a fetch on a slow radio must
             // never delay it. Belt-and-braces with setTimeoutAfter (API 26+); it also drops the
@@ -1223,16 +1278,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val avatar = context.fetchAvatar(photoOf)
                 if (avatar == null) {
                     Log.d(TAG, "showIncomingCallNotification: no caller photo - the ring keeps the name alone")
-                } else if (!activeCallRings.contains(callId)) {
-                    Log.d(TAG, "showIncomingCallNotification: caller photo arrived after the ring ended - dropped")
                 } else {
-                    manager.notify(
-                        notifId,
-                        buildIncomingCallNotification(
-                            context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar, res,
-                        ),
-                    )
-                    Log.d(TAG, "showIncomingCallNotification: caller photo drawn on the ring")
+                    // Re-posted only while the ring is still up, under the same lock as its end: a
+                    // photo must never bring back a ring that was taken down meanwhile.
+                    val drawn = CallRingPlayer.rings.whileNativeRinging(callId) {
+                        manager.notify(
+                            notifId,
+                            buildIncomingCallNotification(
+                                context, title, body, hasVideo, answerP, declineP, fullScreenP, avatar, res, silent,
+                            ),
+                        )
+                    }
+                    if (drawn) {
+                        Log.d(TAG, "showIncomingCallNotification: caller photo drawn on the ring")
+                    } else {
+                        Log.d(TAG, "showIncomingCallNotification: caller photo arrived after the ring ended - dropped")
+                    }
                 }
             }
         }
@@ -1241,6 +1302,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * The ring notification itself: CallStyle on API 31+ (the system call screen with Answer and
          * Decline), a classic high-priority notification with the same actions below. [avatar] is
          * the CallStyle person's icon and the large icon, null until fetched.
+         *
+         * [silent] (a call the power button silenced): no sound, no vibration, no loop, and NO
+         * full-screen intent - so not CallStyle either, which Android refuses without one (or a
+         * foreground service): the classic layout's Answer and Decline, on the lock screen.
          */
         private fun buildIncomingCallNotification(
             context: Context,
@@ -1252,6 +1317,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             fullScreen: PendingIntent,
             avatar: Bitmap?,
             res: Context,
+            silent: Boolean = false,
         ): android.app.Notification {
             val person = Person.Builder().setName(title).setImportant(true)
                 .apply { avatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
@@ -1266,9 +1332,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setTimeoutAfter(CALL_RING_TIMEOUT_MS)
-                .setFullScreenIntent(fullScreen, true)
                 .setContentIntent(fullScreen)
-            if (android.os.Build.VERSION.SDK_INT >= 31) {
+            if (silent) builder.setSilent(true) else builder.setFullScreenIntent(fullScreen, true)
+            if (!silent && android.os.Build.VERSION.SDK_INT >= 31) {
                 builder.setStyle(
                     NotificationCompat.CallStyle.forIncomingCall(person, declinePending, answerPending)
                         .setIsVideo(hasVideo)
@@ -1295,21 +1361,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             builder.setOnlyAlertOnce(true)
             val notif = builder.build()
             // Loop the ringtone until the ring is answered, declined, cancelled or times out.
-            notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
+            if (!silent) notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
             return notif
         }
 
-        /** Stops an active ring (answered elsewhere, caller hung up, timeout, or user declined). */
-        internal fun cancelIncomingCallNotification(context: Context, callId: String) {
+        /**
+         * The call ENDED for this phone (the caller hung up, answered elsewhere, the timeout, a
+         * decline, the page left the incoming state): it may not ring again ([RingClosed.ENDED]),
+         * its in-app ring stops and its native ring goes, in one critical section of
+         * [CallRingPlayer.rings].
+         */
+        internal fun cancelIncomingCallNotification(context: Context, callId: String, reason: String = "the ring of this call ended") {
             if (callId.isEmpty()) return
             // The answer record dies with the ring, whether or not this process still shows it.
             CallRingAnswer.forget(context, callId)
-            if (!activeCallRings.remove(callId)) return
+            CallRingPlayer.rings.close(callId, RingClosed.ENDED, reason)
+        }
+
+        /**
+         * Takes the native ring of [callId] down - its notification and its call screen - WITHOUT
+         * ending the call: the app now rings it ([RingSequencer.startInApp]), or it ended
+         * ([RingSequencer.close]). Called under the rings' lock only.
+         */
+        internal fun takeDownRingNotification(context: Context, callId: String) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(callNotifId(callId))
             // The full-screen call screen goes with its ring, whoever ended it.
             IncomingCallActivity.finishFor(callId, "the ring stopped")
-            Log.d(TAG, "cancelIncomingCallNotification: ring stopped call=$callId")
+            Log.d(TAG, "takeDownRingNotification: native ring taken down call=$callId")
         }
 
         /**
@@ -1978,6 +2057,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param covers how many inbound messages this ONE banner stands for (a catch-up flush
          *   raises a single banner for N). [GenericBannerLedger] answers up to that many refused
          *   pushes with it.
+         * @param authorProven whether the WebView's open PROVED the author - a salon row under a
+         *   Graine v2 session (`openChannelMessageProving`). Read for a salon only, through the same
+         *   rule the push applies to its own open ([ChannelBannerAuthor.of]).
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -1990,16 +2072,43 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             sentAt: Long,
             serverAt: Long,
             covers: Int,
+            authorProven: Boolean,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven")
             WS_NOTIF_LANE.execute {
                 try {
-                    val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
+                    // ONE ANSWER PER MESSAGE, WHICHEVER TRIGGER ARRIVES FIRST. A salon frame takes the
+                    // push's rule ([ChannelBannerAuthor.of]) with the same three inputs: the message
+                    // is shown, the open's proof (the WebView's v2 open, the push's native one), and
+                    // the author the server named - and the same name file. So both triggers name
+                    // the same speaker, or nobody, with the same Person key and the same face rule.
+                    val salonAuthor = if (groupId.startsWith("channel_")) {
+                        val me = MlsContextLoader.loadPushContext(context)?.userId?.lowercase()
+                        ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId) {
+                            nameBookOf(readDisplayNames(context, me))
+                        }
+                    } else null
+                    salonAuthor?.let { logUnnamedSalonAuthor(it, groupId.removePrefix("channel_")) }
+                    // THE TITLE IS NOT THE PUSH'S. The push titles a salon `<Communaute> - #<salon>`
+                    // ([buildChannelPushTitle], from its payload's workspace name); the WebView's salon
+                    // row carries no community name, so this trigger titles it with the salon alone
+                    // (`notificationGroupName`). The line, its speaker and its face are one answer;
+                    // the title is the last trigger's wording.
+                    val salonLine = salonAuthor?.let {
+                        ChannelBannerAuthor.line(
+                            it, groupName,
+                            appLocaleContext(context).getString(R.string.notif_mention_someone).replaceFirstChar { c -> c.titlecase() },
+                        )
+                    }
+                    // A FACE ONLY FOR A NAMED SPEAKER, as on the push: beside "Someone" it would name
+                    // them by the back door.
+                    val drawsFace = salonAuthor == null || ChannelBannerAuthor.drawsFace(salonAuthor)
+                    val avatar = if (drawsFace && senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
                     synchronized(GENERIC_BANNERS_LOCK) {
                         // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
                         val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
@@ -2007,10 +2116,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${groupId.take(8)} covers=$covers)")
                         }
                         context.showMessageNotification(
-                            senderName = senderName,
-                            groupName = groupName,
+                            senderName = salonLine?.personName ?: senderName,
+                            groupName = salonLine?.conversationTitle ?: groupName,
+                            senderKey = salonLine?.personKey,
                             body = body,
-                            largeIcon = avatar ?: generateInitialsBitmap(senderName),
+                            largeIcon = avatar ?: generateInitialsBitmap(
+                                salonAuthor?.let { ChannelBannerAuthor.initialsSource(it) } ?: senderName
+                            ),
                             groupId = groupId,
                             channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
                             sentAt = sentAt,
@@ -2120,6 +2232,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
             }
+
+        /**
+         * The ONE line an unnamed salon speaker gets, from either trigger (the push and the socket
+         * frame), WARN for a fault and DEBUG for an ordinary state ([ChannelBannerAuthor.accuses]);
+         * nothing for a named or blind one.
+         */
+        internal fun logUnnamedSalonAuthor(author: ChannelBannerAuthor.Author, channelId: String) {
+            if (author !is ChannelBannerAuthor.Author.Unnamed) return
+            val line = "[SALON_AUTHOR] author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc"
+            if (ChannelBannerAuthor.accuses(author.reason)) Log.w(TAG, line) else Log.d(TAG, line)
+        }
 
         /**
          * The other party's photo for the call surfaces outside this class - the ongoing-call
@@ -2263,9 +2386,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } finally {
                     conn.disconnect()
                 }
+            } catch (e: java.io.IOException) {
+                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either. Said
+                // at WARN: the picture is lost for this notification, and a run of these is a radio
+                // or a server worth reading about.
+                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}: ${e.message}) -> initials, not remembered")
+                null
             } catch (e: Exception) {
-                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either.
-                Log.d(TAG, "$label: ${e.message} -> initials fallback, not remembered")
+                // Not the network: a defect in how this was called - a fetch on the main thread
+                // (`NetworkOnMainThreadException`, the review of #2877), a bad URL. It ACCUSES.
+                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}")
                 null
             }
         }
@@ -2396,8 +2526,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * Android's one-to-one shape, which names nobody above the other person's text (their
              * name is the title) and names US above our own reply: the user read that asymmetry as
              * a defect (2026-10-01). FALSE - the old shape, unchanged - for a reaction, whose line is
-             * a sentence about the actor and not a message by them, and for a salon, whose "sender"
-             * is the salon's own title: naming either above its line would print the title twice.
+             * a sentence about the actor and not a message by them, and for a BLIND salon banner,
+             * whose "sender" is the salon's own title: naming either above its line would print the
+             * title twice. A salon banner that proved its author passes the salon as [groupName]
+             * and the author as [senderName] instead, which is the group shape (2026-11-01).
              */
             namesEachSender: Boolean = false,
             /**
@@ -2407,6 +2539,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * TRUE everywhere a real text is handed in; the salon push says FALSE for a blind banner.
              */
             showsMessage: Boolean = true,
+            /**
+             * The sender Person's key, so two speakers that share a NAME never merge into one
+             * ("Quelqu'un" for two unnamed salon authors, or for a blind line). Null keeps Android's
+             * merge by name, which a DM or an MLS group has always had.
+             */
+            senderKey: String? = null,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
@@ -2451,6 +2589,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val senderPerson = Person.Builder()
                 .setName(senderName.ifEmpty { res.getString(R.string.app_name) })
                 .setIcon(IconCompat.createWithBitmap(largeIcon))
+                .apply { senderKey?.let { setKey(it) } }
                 .build()
             // Our own Person carries our avatar too: Android attributes the inline reply to it while
             // the reply is in flight, so leaving it iconless is a blank face on the only message in
@@ -2569,7 +2708,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
 
-            val conversationShortcutId = if (!isReactionNotif && (isGroup || namesEachSender)) {
+            // NO SHORTCUT FOR A SALON. Dynamic shortcuts share one platform cap with the DMs and the
+            // direct-share targets, and a busy salon posting one per message would evict them; the
+            // share sheet offers conversations, not salons (`sharing.md`). A salon keeps its large
+            // icon instead - the speaker's face or initials.
+            val conversationShortcutId = if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender)) {
                 publishConversationShortcut(
                     this, groupId, if (isGroup) groupName else senderName, largeIcon, senderPerson, tapIntent
                 )
@@ -2591,8 +2734,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // is the header circle, with the app's small icon as the corner badge. Without one the
                 // header circle was the app's bird while the sender's face sat beside the line, two
                 // round pictures one above the other (user, 2026-10-05). The large icon is therefore
-                // set only where the old, shortcut-less shape is kept (reaction, salon).
-                .apply { if (conversationShortcutId != null) setShortcutId(conversationShortcutId) else setLargeIcon(largeIcon) }
+                // set only where the old, shortcut-less shape is kept (reaction, blind salon banner).
+                .apply {
+                    if (conversationShortcutId != null) {
+                        setShortcutId(conversationShortcutId)
+                    } else if (alreadyPosted) {
+                        // NEVER A BORROWED FACE. This call's line was NOT added - the other trigger
+                        // posted the same message first - so its icon describes nothing shown. The
+                        // face is the one of the last line SOMEBODY ELSE wrote: the reader's own
+                        // inline reply (the style's user, or a line with no Person) is never the
+                        // conversation's face.
+                        val shownFace = style.messages
+                            .lastOrNull { it.person != null && it.person?.name != selfPerson.name }
+                            ?.person?.icon?.toIcon(this@showMessageNotification)
+                        if (shownFace != null) {
+                            setLargeIcon(shownFace)
+                        } else {
+                            // No line by somebody else carries a face (an unnamed speaker's is drawn as
+                            // initials into the icon, so this is a line with no icon): no large icon.
+                            Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
+                        }
+                    } else {
+                        setLargeIcon(largeIcon)
+                    }
+                }
                 // The second trigger for a message already in the shade re-posts the same content,
                 // so it must not sound or vibrate a second time - which is the whole of what the
                 // user saw as "the same notification twice".
@@ -4340,7 +4505,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * [answer] is a native answer (a push decrypt, an accepted background Add); its `ownDeviceAdded`
      * array holds the keys Rust found to be this account's owner alerts (`mobile/device_notice.rs`).
      * They are claimed in the ledger the app shares (`nativeClaimDeviceNotices`), so a push replaying
-     * the same commit, or the app having already shown it, announces nothing. In the FOREGROUND
+     * the same commit, or the app having already shown it, announces nothing; nor does a key of an
+     * account the app has not pre-claimed since the update (counted `held` in the answer). In the FOREGROUND
      * nothing is claimed or posted: the app takes the same event and shows its in-app alert, which is
      * the only alert a user looking at the app gets.
      */
@@ -4351,8 +4517,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "$where: ${keys.length()} device(s) added to this account - foreground, the app alerts")
             return
         }
-        val claimed = try {
-            JSONArray(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
+        val claim = try {
+            JSONObject(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.message}")
             return
@@ -4360,8 +4526,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}")
             return
         }
+        val claimed = claim.optJSONArray("claimed") ?: JSONArray()
+        val held = claim.optInt("held", 0)
+        if (held > 0) {
+            Log.i(TAG, "$where: $held new-device key(s) held - the app has not pre-claimed this account since the update, its own pass decides")
+        }
         if (claimed.length() == 0) {
-            Log.d(TAG, "$where: device(s) added to this account were already announced")
+            if (held == 0) Log.d(TAG, "$where: device(s) added to this account were already announced")
             return
         }
         Log.i(TAG, "$where: ${claimed.length()} new device(s) on this account - local notification")
@@ -5756,11 +5927,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // language Rust words its own sentences in (empty when none was mirrored: the base locale).
         val pushCtx  = MlsContextLoader.loadPushContext(this)
         val myUserId = pushCtx?.userId
-        // The phone's names, read at most once for this banner: the author line and the tokens share it.
-        val nameBook = lazy { loadMentionNames(myUserId?.lowercase()) }
+        // The phone's names, read at most once for this banner: the speaker and the tokens share it.
+        // The read keeps its reason, said ONCE by whichever reader reads it first - see below.
+        val namesRead = lazy { readDisplayNames(this, myUserId?.lowercase()) }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
+        // Whether the open PROVED the author (`authorProven`: a v2 session's minter and signature
+        // checked). A v1 row opens for whoever the push names, so its author is never named.
+        var authorProven = false
         val body: String = if (seedHeld && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
@@ -5779,7 +5954,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val text = json.optString("text").takeIf { it.isNotEmpty() }
                     if (text != null) {
                         showsMessage = true
-                        renderMentions(text, myUserId, res, nameBook).take(200)
+                        authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))
+                        // Rendered BELOW, once the speaker has read (or not) the names: the reader that
+                        // reads the file first is the one that says why it names nobody.
+                        text
                     } else {
                         buildChannelFallbackText(res, channelName)
                     }
@@ -5827,27 +6005,62 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {
             Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=$channelId")
         }
-        // A salon banner names no author (its "sender" is the salon's title), so a mention of this
-        // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
-        val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
-        val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
-        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
+        // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
+        // `ChannelBannerAuthor`. Until 2026-11-01 the salon's title stood in as the "sender", so the
+        // banner named nobody and drew the SALON's letter as a face (owner, `v1.6.0`).
+        val author = ChannelBannerAuthor.of(showsMessage, authorProven, attribution.authorId) {
+            nameBookOf(namesRead.value)
+        }
+        logUnnamedSalonAuthor(author, channelId)
+        // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line
+        // above already carries the reason; when it did not (a v1 row, a push naming nobody), the
+        // tokens are the first reader, and a broken or foreign file is said here - never twice.
+        val speakerReadNames = namesRead.isInitialized()
+        val nameBook = lazy {
+            namesRead.value.also { read ->
+                if (!speakerReadNames) logSalonNamesUnusable(read, channelId)
+            }.names
+        }
+        // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking it raw put a
+        // hex blob in the banner - see `renderMentions`. Truncated AFTER, so a token near the
+        // 200-character edge cannot be cut in half. A generic line has no tokens to render.
+        val shown = if (showsMessage) renderMentions(body, myUserId, res, nameBook).take(200) else body
+        val someone = res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
         val title = buildChannelPushTitle(workspaceName, channelName)
-        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe")
+        val line = ChannelBannerAuthor.line(author, title, someone)
+        // A FACE ONLY FOR A NAMED SPEAKER: a photo beside "Someone" would name them by the back door.
+        val avatarBitmap = attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))
+        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${shown.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
         return showMessageNotification(
-            // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
-            // conversation title and the Person's name is what the banner shows. A salon has no
-            // human sender to name anyway - the server sends only `senderId`, for the avatar.
-            senderName = title,
-            groupName  = "",
-            body       = shownBody,
+            // ALWAYS THE GROUP SHAPE: the salon is the conversation and every line has a speaker with
+            // its own key, so a notification mixing named, unnamed and blind lines keeps each line's
+            // name - see `ChannelBannerAuthor.line`. The speaker is above the line, so a mention of
+            // this reader needs no "<name> mentioned you" prefix: the body says "@vous" itself.
+            senderName = line.personName,
+            groupName  = line.conversationTitle,
+            senderKey  = line.personKey,
+            body       = shown,
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
             sentAt     = createdAt,
             supersedes = supersedes,
             showsMessage = showsMessage,
+            // The group shape even for a speaker whose name happens to equal the salon's title, which
+            // `isGroup` alone (`groupName != senderName`) would read as a one-to-one thread.
+            namesEachSender = true,
         )
+    }
+
+    /**
+     * Why `display_names.json` names nobody, for a salon banner whose speaker rule did not read it -
+     * the tokens were its first reader. Same levels as `logUnnamedSalonAuthor`; nothing when it names.
+     */
+    private fun logSalonNamesUnusable(read: DisplayNamesRead, channelId: String) {
+        val reason = read.unusable ?: return
+        val line = "[SALON_AUTHOR] display_names.json names nobody reason=$reason channel=$channelId"
+        if (ChannelBannerAuthor.accuses(reason)) Log.w(TAG, line) else Log.d(TAG, line)
     }
 
     /**
@@ -6054,8 +6267,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param text the decrypted message body, possibly carrying tokens
      * @param myUserId this device's user id, or null when the push context could not be read
      * @param res the (locale-aware) context the strings are read from
-     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with
-     *   [mentionAuthorLine], so naming the author and the tokens costs one file read
+     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with its
+     *   speaker ([ChannelBannerAuthor]), so naming the speaker and the tokens costs one file read
      */
     private fun renderMentions(
         text: String,
@@ -6081,25 +6294,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }.replace(Regex("[ \t]{2,}"), " ")
         if (named + unknown > 0) Log.d(TAG, "[MENTION_NAME] named=$named unknown=$unknown")
         return rendered
-    }
-
-    /**
-     * "Alice vous a mentionné" for a salon banner that mentions this reader (WP-MENTION-NAME,
-     * 2026-10-18): the AUTHOR, named from the phone's own copy of names - the same
-     * `display_names.json`, under the same owner rule, as the tokens - and "Quelqu'un" when the phone
-     * has never named them. Never from the push: a salon push carries only `senderId`, and the
-     * decision is that no name rides it.
-     *
-     * Salon only. An MLS (DM or group) banner already names its sender in the title or the line.
-     */
-    private fun mentionAuthorLine(senderId: String, nameBook: Lazy<JSONObject?>, res: Context): String {
-        val name = senderId.lowercase().takeIf { it.isNotEmpty() }
-            ?.let { nameBook.value?.optString(it) }
-            ?.takeIf { it.isNotBlank() }
-        Log.d(TAG, "[MENTION_NAME] author named=${name != null}")
-        // The placeholder opens the sentence in both languages, so the word is capitalised there.
-        val who = name ?: res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
-        return res.getString(R.string.notif_social_mention_title, who)
     }
 
     /**
