@@ -92,6 +92,15 @@ export async function renderVisibleNotice(
 }
 
 /**
+ * The dating options of a derived row (a notice, a call record): the instant it is stamped with and,
+ * when known, the server's acceptance that orders it (`messageTime`).
+ */
+export interface EventTime {
+  timestamp: Date;
+  serverTimestamp?: number;
+}
+
+/**
  * WHEN A NOTICE DRAWN FROM A RECEIVED FRAME HAPPENED: the dating options of its row, or `null` when
  * nothing durable dates it.
  *
@@ -115,7 +124,7 @@ export async function renderVisibleNotice(
 export function receivedNoticeTime(
   sentAtMs: number | undefined,
   serverAtMs: number | undefined
-): Pick<AddMessageToChatOptions, 'timestamp' | 'serverTimestamp'> | null {
+): EventTime | null {
   const valid = (ms: number | undefined): ms is number =>
     typeof ms === 'number' && Number.isFinite(ms) && ms > 0;
   const server = valid(serverAtMs) ? serverAtMs : undefined;
@@ -156,7 +165,7 @@ export async function sendVisibleNotice(
   const frame = mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await renderVisibleNotice(event, payload, own.actor);
-  await mlsService.sendMessage(groupId, encodeAppMessage(frame));
+  const sent = await mlsService.sendMessage(groupId, encodeAppMessage(frame));
   if (noOwnRow) return;
   if (text === null) {
     console.warn(
@@ -164,11 +173,21 @@ export async function sendVisibleNotice(
     );
     return;
   }
+  // THE ACTING DEVICE'S COPY GETS THE SERVER TIME every member's copy carries, exactly as an own
+  // text row gets it from its send (`patchServerTimestamp` in the outbox): MLS never hands this
+  // device its frame back, so the send's answer is the only place it can come from. Without it the
+  // row was ordered by `sentAt` on this device and by the server's acceptance everywhere else.
+  if (sent.receivedAt === null) {
+    console.error(
+      `[NOTICE] ${event} sent in ${groupId.slice(0, 8)}… but the server answered no receive time - this device's own row ${frame.messageId.slice(0, 8)} is ordered by its sentAt alone, unlike every member's copy`
+    );
+  }
   try {
     await own.addMessageToChat(SYSTEM_SENDER_ID, text, own.contactName, {
       isSystem: true,
       messageId: frame.messageId,
       timestamp: new Date(frame.sentAt),
+      ...(sent.receivedAt !== null ? { serverTimestamp: sent.receivedAt } : {}),
       // Never deferred into a drain's buffer: nothing will ever write this row again.
       soleWriter: true,
     });

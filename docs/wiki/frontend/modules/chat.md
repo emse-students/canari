@@ -1792,8 +1792,10 @@ live path dropped it.** `mkVisibleSystem` mints `sentAt` beside `messageId`, and
 when the server accepted the frame (`queuedCreatedAt`) - yet every notice branch of
 `handleSystemEvent` wrote `{ isSystem: true, messageId }` and nothing else, so `addMessageToChat`
 (`resolveMessageTimestamp`) dated the row `new Date()`: THIS device's clock at the moment its drain
-reached the frame. The acting device (`sendVisibleNotice`, `frame.sentAt`) and the archive replay
-(the history row's server time) were both right; only the live receiver was not.
+reached the frame. The live receiver was the visible defect, but not the only one: the acting device
+(`sendVisibleNotice`) wrote `frame.sentAt` with NO `serverTimestamp`, so its copy was ordered by a
+different key than every member's, and the archive replay wrote no `serverTimestamp` either and fell
+back to `new Date()` on an unreadable history time.
 
 **What that cost (owner, v1.6.0, iPhone, 2026-11-01).** A group created on the PC with two members,
 a conversation in it, and the phone opening the group for the FIRST time: its queue drained the
@@ -1812,11 +1814,27 @@ context. **With neither time the row is NOT drawn**, refused at ERROR (`[NOTICE]
 every delivery route of this build carries the server time, so reaching it means a route lost it, and
 the local clock is never a stand-in for when an event happened.
 
-**Not in scope, and still dated by the local clock:** the notices this device derives from its OWN
-learning rather than from a frame - device notices (`deviceNotices.svelte.ts`), the eviction notice
-(`recordEviction`), call records (`callSystemMessages.ts`). A row already written with the wrong date
-by an older build keeps it. Pinned by `systemMessageHandler.noticeTime.test.ts`, which drains a group
-six hours late and asserts the notice stays above the conversation, in either processing order.
+**Every copy of a frame's notice now carries the same order key.** The acting device's own row takes
+`serverTimestamp` from its send's answer (`SentFrame.receivedAt`), exactly as an own text row gets it
+through `patchServerTimestamp`; an answer with no receive time is reported at ERROR. The archive
+replay (`historySystemEvents.ts`) dates through the same `receivedNoticeTime(sentAt, <history row
+time>)` and is REFUSED at ERROR (`[HISTORY_REPLAY] REFUSED`) when neither time is readable.
+
+**The rows this device DERIVES rather than receives are dated by the event they derive from - each
+with a named authority, and refused at ERROR when it has none. Never the local clock.**
+
+| Row | Authority | No authority |
+| --- | --- | --- |
+| Device line, uninvited-entry line (`deviceNotices.svelte.ts`) | The commit log row (`mls_commit_log.createdAt`) of the commit that admitted the device: `baseEpoch = event.epoch - 1`, read through `GET /api/mls/commits/:groupId/accepted-at` (members only). Chosen over the commit frame's own `queuedCreatedAt` because it is ONE answer on every device and survives a restart, where the delivery time exists only for a device that drained the commit live (a Welcome-joined device never did) | No row (pruned, or never logged): `[DEVICE_NOTICE] line REFUSED`, settled - a retry could only refuse again. The server unreachable: the line stays OWED to the next delivery |
+| Eviction notice (`recordEviction`) | The Remove commit's delivery time (`remove-commit` evidence), or the removal announcement's (`system-event`) | Every other evidence (`inbound-frame`, `membership-check`, `outbound-refusal`, `server-refusal`) learns of the removal without its commit, and an evicted device cannot read the members-only commit log: the notice is REFUSED (`removal notice REFUSED`), the eviction itself and its banner unchanged |
+| Call record (`callSystemMessages.ts`) | A received signal: its frame, `receivedNoticeTime(sentAt, queuedCreatedAt)`. This device's own act (`CallService`): the ONE instant the act is stamped with, shared with the frame's `sentAt`, plus the send's `receivedAt` for the invite | A received signal with neither time: `[CallRecord] ... REFUSED`, no row |
+
+A row already written with the wrong date by an older build keeps it. Pinned by
+`systemMessageHandler.noticeTime.test.ts` (a group drained six hours late keeps its notice above the
+conversation, in either processing order), `setupMessageHandler.noticeTime.test.ts` (both entry
+points of the pipeline, live and Welcome-buffered, and a call signal), `visibleNotices.test.ts` (the
+own row and the replay), `deviceNotices.svelte.test.ts`, `recordEviction.onePolicy.test.ts` (dated
+per evidence) and `callSystemMessages.outcome.test.ts`.
 
 ### A mutation event is authorised on RECEIPT, by the MLS sender
 

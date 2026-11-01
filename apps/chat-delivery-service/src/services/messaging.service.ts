@@ -3212,6 +3212,44 @@ export class MessagingService {
   }
 
   /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch` - the commit log row's
+   * `createdAt`, written once by the commit gate and the same answer for every device - or `null`
+   * when the log holds no such row (pruned below the retained floor, or never recorded).
+   *
+   * WHY IT EXISTS. A device learns of a commit when it MERGES it, which may be hours later (a phone
+   * opened after a day), and a line it derives from that commit - "X added a device", "a device
+   * entered by itself" - is about the commit, not about the merge. This row is the one durable,
+   * shared statement of when the commit happened. Membership-gated exactly as the replay is
+   * (`memberOfGroupKind`): the instant of a commit is ordering metadata of the group.
+   */
+  async getCommitAcceptedAt(
+    groupId: string,
+    baseEpoch: number,
+    requesterUserId: string
+  ): Promise<{ acceptedAt: string | null }> {
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
+    const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
+      group,
+      groupId,
+      requesterUserId
+    );
+    if (!isMember) {
+      this.logger.warn(
+        `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} keyDistribution=${isKeyDistribution}`
+      );
+      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
+    }
+    const row = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
+    if (!row) {
+      this.logger.log(
+        `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - no commit log row (pruned or never recorded)`
+      );
+      return { acceptedAt: null };
+    }
+    return { acceptedAt: row.createdAt.toISOString() };
+  }
+
+  /**
    * Stores the latest GroupInfo for `groupId` (Phase 4 external-join base). Membership-gated. The
    * committer refreshes it after every accepted commit (a new group's first member-add is itself a
    * commit), so an authorized member lacking MLS state can self-join. STRICTLY monotonic: a write

@@ -1831,6 +1831,30 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * When the server accepted the commit built on `baseEpoch` (`GET /api/mls/commits/:groupId/
+   * accepted-at`), in Unix ms, or `null` when the commit log holds no such row. Throws on a non-2xx
+   * (a refusal or an outage is no answer about the commit) and on an unparseable instant.
+   */
+  async fetchCommitAcceptedAt(groupId: string, baseEpoch: number): Promise<number | null> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/commits/${encodeURIComponent(groupId)}/accepted-at?baseEpoch=${baseEpoch}`,
+      { headers: await this.auth() }
+    );
+    if (!res.ok) {
+      throw await refusalFromResponse(res, 'Commit accepted-at HTTP error');
+    }
+    const body = (await res.json()) as { acceptedAt?: string | null };
+    if (body.acceptedAt === null || body.acceptedAt === undefined) return null;
+    const ms = Date.parse(body.acceptedAt);
+    if (!Number.isFinite(ms) || ms <= 0) {
+      throw new Error(
+        `commit accepted-at: unparseable instant ${String(body.acceptedAt).slice(0, 40)}`
+      );
+    }
+    return ms;
+  }
+
+  /**
    * Rung-1 replay: fetches the ordered, CONTIGUOUS commits the local client missed
    * (`baseEpoch >= sinceEpoch`) so it can apply them and catch up instead of dropping state
    * (`GET /api/mls/commits/:groupId`). `activeEpoch` is the epoch to reach after replay.

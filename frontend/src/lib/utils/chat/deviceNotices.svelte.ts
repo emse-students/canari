@@ -105,6 +105,13 @@ export interface DeviceNoticeContext {
    */
   removalEpochs: (groupId: string, userId: string) => Promise<number[]>;
   /**
+   * When the server accepted the commit of `groupId` built on `baseEpoch` (`IMlsService.
+   * commitAcceptedAt`, the commit log's `createdAt`), `null` when the log holds none; throws when the
+   * server could not be asked. A line is dated by the commit that admitted the device, never by
+   * when this device merged it.
+   */
+  commitAcceptedAt: (groupId: string, baseEpoch: number) => Promise<number | null>;
+  /**
    * The groups this device holds MLS state for (`IMlsService.getLocalGroups`) - the authority on
    * where a contact line is owed, whether or not its conversation row is loaded yet.
    */
@@ -697,6 +704,39 @@ function leafStillIn(
   };
 }
 
+/**
+ * WHEN THE EVENT'S COMMIT HAPPENED: the dating options of a line derived from it, or `null` - logged
+ * at ERROR - when the commit log holds no row for it. Throws when the server could not be asked, and
+ * the caller keeps the line owed: an outage is no answer about the commit.
+ *
+ * THE COMMIT, NEVER THE MERGE. A device learns of an admission when it merges the commit, which may
+ * be days later (a phone opened after a week), and a line dated by that merge sat below everything
+ * said since. `event.epoch` is the epoch the commit CREATED (or the joined tree's, which the Add commit
+ * that a Welcome carries created), so the commit is the log's row at `event.epoch - 1`. That row is the
+ * one authority: written once by the commit gate, the same answer on every device, kept across
+ * restarts - where the commit frame's own delivery time exists only for a device that drained it live.
+ */
+async function eventCommitTime(
+  event: DeviceEvent,
+  ctx: DeviceNoticeContext
+): Promise<{ timestamp: Date; serverTimestamp: number } | null> {
+  const baseEpoch = event.epoch - 1;
+  if (!Number.isInteger(baseEpoch) || baseEpoch < 0) {
+    console.error(
+      `[DEVICE_NOTICE] line REFUSED in ${event.groupId.slice(0, 8)}...: epoch ${event.epoch} names no commit - no durable instant dates it, and this device's clock is not one`
+    );
+    return null;
+  }
+  const at = await ctx.commitAcceptedAt(event.groupId, baseEpoch);
+  if (at === null) {
+    console.error(
+      `[DEVICE_NOTICE] line REFUSED in ${event.groupId.slice(0, 8)}...: the commit log holds no commit at base epoch ${baseEpoch} (pruned or never recorded) - no durable instant dates it, and this device's clock is not one`
+    );
+    return null;
+  }
+  return { timestamp: new Date(at), serverTimestamp: at };
+}
+
 /** The message id of an uninvited-entry line: one per conversation, device and key. */
 function uninvitedLineId(groupId: string, key: string): string {
   return `uninvited-entry:${groupId}:${key}`;
@@ -813,6 +853,9 @@ async function writeUninvitedLine(
   const key = deviceEventKey(event) ?? event.identity;
   const messageId = uninvitedLineId(event.groupId, key);
   if (convo.messages.some((msg) => msg.id === messageId)) return;
+  // Throws when the server could not be asked: the entry stays owed (`noteUninvitedEntries`).
+  const at = await eventCommitTime(event, ctx);
+  if (!at) return;
   const userId = userIdOfLeaf(event.identity);
   const getName = await ctx.resolveDisplayNames([userId]);
   const user = getName(userId);
@@ -822,7 +865,7 @@ async function writeUninvitedLine(
       ? m.chat_system_unvouched_device_entry({ user })
       : m.chat_system_uninvited_entry({ user }),
     event.groupId,
-    { isSystem: true, messageId }
+    { isSystem: true, messageId, ...at }
   );
   console.warn(
     `[DEVICE_NOTICE] uninvited-entry line (${kind}) written in ${event.groupId.slice(0, 8)}...`
@@ -845,6 +888,10 @@ async function writeContactLines(
   const userId = userIdOfLeaf(event.identity);
   const held = new Set(ctx.localGroups());
   let getName: ((id: string) => string) | null = null;
+  // Asked once, at the first conversation that takes the line: `undefined` not asked yet, `null`
+  // refused (no commit log row - nothing written anywhere, nothing owed), `'unasked'` the server
+  // could not be asked (every line stays owed to the next delivery).
+  let at: { timestamp: Date; serverTimestamp: number } | null | 'unasked' | undefined;
   let written = 0;
   let owed = false;
   const holdsContact = async (groupId: string): Promise<boolean | 'unreadable'> => {
@@ -879,12 +926,29 @@ async function writeContactLines(
       continue;
     }
     if (!holds) continue;
+    if (at === undefined) {
+      try {
+        at = await eventCommitTime(event, ctx);
+      } catch (e) {
+        console.warn(
+          `[DEVICE_NOTICE] the commit's time could not be asked, the line stays owed: ${String(e)}`
+        );
+        at = 'unasked';
+      }
+    }
+    if (at === 'unasked') {
+      owed = true;
+      continue;
+    }
+    // Refused for good (logged in `eventCommitTime`): retrying could only refuse again, so the line
+    // is settled rather than owed.
+    if (at === null) return false;
     getName ??= await ctx.resolveDisplayNames([userId]);
     await ctx.addMessageToChat(
       'system',
       m.chat_system_device_added({ user: getName(userId) }),
       groupId,
-      { isSystem: true, messageId }
+      { isSystem: true, messageId, ...at }
     );
     written++;
     console.log(`[DEVICE_NOTICE] contact line written in ${groupId.slice(0, 8)}...`);

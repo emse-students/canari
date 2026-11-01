@@ -527,10 +527,19 @@ const fakeMls = {
   exportSecret: vi.fn(async (_g: string, _l: string, context: Uint8Array) =>
     new Uint8Array(32).fill(context[context.length - 1])
   ),
+  // Accepted, with the server's receive time a real send answers - the call record's order key.
   sendMessage: vi.fn(async () => {
     order.push('mls');
+    return {
+      sealed: new Uint8Array(),
+      authorProof: new Uint8Array(),
+      receivedAt: 1_700_000_000_040,
+    };
   }),
 } as unknown as IMlsService;
+
+/** The instant this device ended a call, as it hands it to the record writer (`endCall`). */
+const ENDED_AT = expect.objectContaining({ timestamp: expect.any(Date) });
 
 /**
  * Lets every pending promise and microtask of the service settle - TWO tasks: the fake worker
@@ -2301,7 +2310,13 @@ describe('when a busy answer is, and is not, given', () => {
 
     expect(get(service.callState)).toBe('incoming');
     expect(service.currentCallId).toBe('room-0');
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'cancelled', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'cancelled',
+      undefined
+    );
     expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
   });
 
@@ -2342,7 +2357,7 @@ describe('a call whose callee reached the room is ANSWERED (B15)', () => {
 
     expect(['ended', 'idle']).toContain(get(service.callState));
     expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
-    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
   });
 
   it('the callee MLS hangup first: the same fact, written by the signal path alone', async () => {
@@ -2362,7 +2377,7 @@ describe('a call whose callee reached the room is ANSWERED (B15)', () => {
     const { chat, service } = await asked();
     service.endCall();
 
-    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason ?? 0).toBe(canari.CallEndReason.CALL_END_REASON_UNSPECIFIED);
   });
@@ -2371,7 +2386,7 @@ describe('a call whose callee reached the room is ANSWERED (B15)', () => {
     const { chat, service } = await asked();
     failCall(service, 'ice failed');
 
-    expect(chat.onCallEnded.mock.calls[0][2]).toBeUndefined();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
     expect(sentCallFrames().some((c) => c?.hangup)).toBe(true);
   });
 });
@@ -2386,7 +2401,13 @@ describe('a call that fails after its invite left (B15)', () => {
 
     (service as unknown as { failCall: (r: string) => void }).failCall('signalling closed');
 
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'not-answered', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'not-answered',
+      undefined
+    );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
   });
@@ -2414,7 +2435,7 @@ describe('a busy answer, caller side (B16)', () => {
     expect(['ended', 'idle']).toContain(get(service.callState));
     expect(showToast).toHaveBeenCalledWith(m.call_busy(), 'info');
     expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'busy', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', ENDED_AT, 'busy', undefined);
     // The hangup stops the callee's other devices ringing, and says why.
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_BUSY);
@@ -2458,7 +2479,13 @@ describe('the typed end reason of an unanswered call (B15)', () => {
 
     service.endCall();
 
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'cancelled', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'cancelled',
+      undefined
+    );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_CANCELLED);
   });
@@ -2481,6 +2508,7 @@ describe('the typed end reason of an unanswered call (B15)', () => {
     expect(chat.onCallEnded).toHaveBeenCalledWith(
       'group-1',
       'room-1',
+      ENDED_AT,
       'declined',
       'peer@example.org'
     );
@@ -2543,7 +2571,13 @@ describe('the ring window, both sides', () => {
     expect(['ended', 'idle']).toContain(get(service.callState));
     // The typed reason, sent on the hangup and handed to the ONE record writer.
     expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', 'not-answered', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'not-answered',
+      undefined
+    );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
   });
@@ -2714,7 +2748,7 @@ describe('the ring opens the server window', () => {
     // The server opens the window before it fans out: a refused ring rang nobody.
     expect(order).not.toContain('mls');
     // Nobody was rung: the end carries no outcome, so no record is written.
-    expect(chat.onCallEnded.mock.calls.every((c) => c[2] === undefined)).toBe(true);
+    expect(chat.onCallEnded.mock.calls.every((c) => c[3] === undefined)).toBe(true);
   });
 
   it('does not invite, arm or publish presence for a call hung up while the ring was in flight', async () => {
@@ -3041,7 +3075,7 @@ describe('no missed call for a call that never rang', () => {
 
     await expect(service.startCall('group-1', false)).rejects.toThrow();
 
-    expect(chat.onCallEnded.mock.calls.every((c) => c[2] === undefined)).toBe(true);
+    expect(chat.onCallEnded.mock.calls.every((c) => c[3] === undefined)).toBe(true);
     expect(FakeSocket.instances).toHaveLength(0);
   });
 });

@@ -442,12 +442,12 @@ export function mkChannelInviteSentEnvelope(
   };
 }
 
-/** Build a system envelope for a call that just started. */
+/** Build a system envelope for a call that just started, at `startedAt` - the instant its invite frame dates (never this device's clock). */
 export function mkCallStartedEnvelope(
   starterName: string,
   callId: string,
   starterId: string,
-  startedAt: number = Date.now()
+  startedAt: number
 ): SystemEnvelope {
   return {
     kind: 'system',

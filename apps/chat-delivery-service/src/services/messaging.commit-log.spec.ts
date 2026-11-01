@@ -2758,4 +2758,47 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(fanOut).toHaveBeenCalledWith(expect.anything(), undefined, []);
     });
   });
+
+  /**
+   * THE INSTANT A DEVICE NOTICE IS DATED BY (`deviceNotices.svelte.ts`): the commit log's
+   * `createdAt` of the commit that admitted the device, read by members only.
+   */
+  describe('getCommitAcceptedAt (the commit that admitted a device, by its log row)', () => {
+    it('forbids a non-member', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      groupMemberRepo.findOne.mockResolvedValue(null);
+      await expect(service.getCommitAcceptedAt('group-1', 4, 'stranger')).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+      expect(commitLogRepo.findOne).not.toHaveBeenCalledWith({
+        where: { groupId: 'group-1', baseEpoch: 4 },
+      });
+    });
+
+    it('answers the log row createdAt for the commit built on baseEpoch', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      commitLogRepo.findOne.mockResolvedValue({
+        baseEpoch: 4,
+        createdAt: new Date('2026-11-01T09:00:00.000Z'),
+      });
+
+      const res = await service.getCommitAcceptedAt('group-1', 4, 'member-1');
+
+      expect(res).toEqual({ acceptedAt: '2026-11-01T09:00:00.000Z' });
+      expect(commitLogRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', baseEpoch: 4 },
+      });
+    });
+
+    it('answers null when the log holds no row (pruned or never recorded)', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      commitLogRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1')).resolves.toEqual({
+        acceptedAt: null,
+      });
+    });
+  });
 });

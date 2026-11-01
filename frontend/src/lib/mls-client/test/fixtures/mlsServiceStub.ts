@@ -34,7 +34,10 @@ export function createMlsServiceStub(
       skipped: [],
     }),
     processWelcome: vi.fn().mockResolvedValue('gid'),
-    sendMessage: vi.fn().mockResolvedValue({ sealed: new Uint8Array(), receivedAt: null }),
+    // Accepted, with the receive time the server answers every send (the own row's order key).
+    sendMessage: vi
+      .fn()
+      .mockResolvedValue({ sealed: new Uint8Array(), receivedAt: 1_700_000_000_040 }),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
     createDecryptSession: vi.fn().mockResolvedValue({
       decryptPage: vi.fn().mockResolvedValue([]),
@@ -61,6 +64,7 @@ export function createMlsServiceStub(
     // only shows up as `undefined.length` inside whichever case forgot to override it.
     fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
     fetchHistoryBatch: vi.fn().mockResolvedValue(new Map()),
+    commitAcceptedAt: vi.fn().mockResolvedValue(null),
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),

@@ -1189,6 +1189,14 @@ export interface IMlsService {
    * the intermediate commits were pruned, `gapAt` when an epoch inside the range was never recorded
    * at all - `commits` then carries only the applicable prefix.
    */
+  /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch` (Unix ms) - the commit
+   * log row's `createdAt`, the one durable and shared statement of when a commit happened - or `null`
+   * when the log holds no such row (pruned, or never recorded). Throws on a transport failure or a
+   * refusal: neither says anything about the commit. A line derived from a merged commit (a device
+   * notice) is dated by it, never by when this device merged the commit.
+   */
+  commitAcceptedAt(groupId: string, baseEpoch: number): Promise<number | null>;
   fetchCommitsSince(
     groupId: string,
     sinceEpoch: number

@@ -4155,6 +4155,11 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.fetchHistoryBatch(groups);
   }
 
+  /** {@link IMlsService.commitAcceptedAt}: the commit log's own instant, asked of the delivery service. */
+  async commitAcceptedAt(groupId: string, baseEpoch: number): Promise<number | null> {
+    return this.delivery.fetchCommitAcceptedAt(groupId, baseEpoch);
+  }
+
   async fetchCommitsSince(
     groupId: string,
     sinceEpoch: number

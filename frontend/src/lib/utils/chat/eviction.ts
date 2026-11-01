@@ -116,6 +116,16 @@ export interface RecordEvictionDeps {
   groupId: string;
   /** How this device found out - see {@link EvictionEvidence}. */
   evidence: EvictionEvidence;
+  /**
+   * WHEN THE REMOVAL HAPPENED, in server milliseconds, when the evidence carries it - and the date of
+   * the notice. A `remove-commit` carries the server's acceptance of the Remove commit (its delivery's
+   * `queuedCreatedAt`); a `system-event` the server's acceptance of its author's announcement, sent
+   * right after that commit. Every other evidence is learnt AFTER the removal (a later frame, a check,
+   * a refusal) and cannot say when it happened: the commit log that would is members-only, and this
+   * device is no longer one. Absent there, and the notice is then REFUSED rather than dated by when
+   * this device found out - the retired row's banner still tells the user.
+   */
+  removedAt?: number;
   log: (message: string) => void;
   saveConversation?: (key: string) => Promise<void>;
   /**
@@ -151,7 +161,8 @@ export interface RecordEvictionDeps {
  * says so. Returns whether THIS call performed the transition.
  */
 export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean> {
-  const { conversations, groupId, evidence, log, saveConversation, addMessageToChat } = deps;
+  const { conversations, groupId, evidence, removedAt, log, saveConversation, addMessageToChat } =
+    deps;
   const short = groupId.slice(0, 8);
   const { what, missed } = EVICTION_EVIDENCE[evidence];
 
@@ -171,12 +182,25 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
 
   const retired = await retireConversation({ conversations, key, groupId, saveConversation });
 
-  if (!alreadyNoticed) {
-    // Best-effort, and after the retire: the banner is the durable half and must not be held up by
-    // a message write. A swallowed branch logs.
-    await addMessageToChat?.('system', notice, key, { isSystem: true }).catch((e: unknown) =>
-      log(`[EVICT] ${short}… - removal notice not posted: ${String(e)}`)
-    );
+  if (!alreadyNoticed && addMessageToChat) {
+    if (typeof removedAt !== 'number' || !Number.isFinite(removedAt) || removedAt <= 0) {
+      // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local
+      // clock at this instant, and a device learning its removal days late (a check on selection, a
+      // refused send) drew "you were removed" below everything said after it. No durable time of the
+      // Remove commit is reachable from this evidence, so the line is refused; a later evidence that
+      // carries one (the Remove commit itself, replayed) still writes it.
+      console.error(
+        `[EVICT] ${short}… - removal notice REFUSED (${evidence}): this evidence carries no durable time of the Remove commit, and this device's clock is not one - the retired row's banner tells the user`
+      );
+    } else {
+      // Best-effort, and after the retire: the banner is the durable half and must not be held up
+      // by a message write. A swallowed branch logs.
+      await addMessageToChat('system', notice, key, {
+        isSystem: true,
+        timestamp: new Date(removedAt),
+        serverTimestamp: removedAt,
+      }).catch((e: unknown) => log(`[EVICT] ${short}… - removal notice not posted: ${String(e)}`));
+    }
   }
 
   if (missed) {

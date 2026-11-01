@@ -156,6 +156,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/send` | Send MLS message/commit; answers `receivedAt`, the instant every recipient's copy is dated by, which the sender stores as its own copy's `serverTimestamp` |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits since epoch N |
+| GET | `/api/mls/commits/:groupId/accepted-at?baseEpoch=N` | Members only: the commit log `createdAt` of the commit built on epoch N (`acceptedAt`, `null` when the log holds none) - the instant a device notice is dated by ([chat](../frontend/modules/chat.md#a-visible-notice-is-dated-by-its-frame-never-by-when-this-device-learnt-of-it)) |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome to device |

@@ -132,6 +132,25 @@ export class MessagingController {
   }
 
   /**
+   * When the server accepted the commit built on `baseEpoch` (`mls_commit_log.createdAt`), for a
+   * line a device derives from that commit - dated by the commit, never by when the device merged
+   * it. `{ acceptedAt: null }` when the log holds no such row. Membership-gated in the service.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/commits/:groupId/accepted-at')
+  async getCommitAcceptedAt(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Param('groupId') groupId: string,
+    @Query('baseEpoch') baseEpochRaw?: string
+  ) {
+    const baseEpoch = sanitizeEpoch(baseEpochRaw, 'baseEpoch');
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    return this.messagingService.getCommitAcceptedAt(groupId, baseEpoch, authUserId);
+  }
+
+  /**
    * External-join base (Phase 4): the latest GroupInfo for a group, so an authorized member lacking
    * MLS state can build an external commit to (re)join. Membership-gated in the service.
    */

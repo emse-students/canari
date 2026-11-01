@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
@@ -1985,13 +1986,20 @@ export async function loginImpl(
     };
     setCallSystemMessageContext(callSystemCtx);
     ctx.getCallService()?.setChatNotifier({
-      onCallStarted: (groupId: string, callId: string) =>
-        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
-      onCallEnded: (groupId: string, callId: string, outcome?: CallEndReason, starterId?: string) =>
+      onCallStarted: (groupId: string, callId: string, at: EventTime) =>
+        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId(), at),
+      onCallEnded: (
+        groupId: string,
+        callId: string,
+        at: EventTime,
+        outcome?: CallEndReason,
+        starterId?: string
+      ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
           groupId,
           callId,
+          at,
           outcome,
           starterId ?? ctx.getUserId()
         ),
@@ -2043,13 +2051,14 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg) => {
+      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
-          ctx.getUserId()
+          ctx.getUserId(),
+          at
         );
         void ctx
           .getCallService()

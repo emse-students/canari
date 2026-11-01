@@ -13,6 +13,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import type { SvelteMap } from 'svelte/reactivity';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
 
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
@@ -51,15 +52,25 @@ function isCallInvite(callMsg: ICallMsg): boolean {
   return callMsg.offerSdp === 'START';
 }
 
+/** `at` as Unix ms - the instant a call record is stamped with. */
+function eventMs(at: EventTime): number {
+  return at.timestamp.getTime();
+}
+
 /**
  * Inserts a system message when a call starts.
  * Idempotent per callId (dedupes local start + MLS invite echo).
+ *
+ * `at` is WHEN THE CALL STARTED, never when this device learnt of it: the invite frame's `sentAt` and
+ * the server's acceptance of it (`receivedNoticeTime`), or, on the caller's own device, the invite it
+ * just sent - the same frame, so the same instant every member's copy carries.
  */
 export async function recordCallStarted(
   ctx: CallSystemMessageContext | null,
   groupId: string,
   callId: string,
-  starterId: string
+  starterId: string,
+  at: EventTime
 ): Promise<void> {
   if (!ctx || !callId || endedCallIds.has(callId)) return;
 
@@ -74,10 +85,11 @@ export async function recordCallStarted(
   // record is written, and a "started" row now would sit beside it with the same id.
   if (endedCallIds.has(callId)) return;
   const starterName = getName(starterId.toLowerCase());
-  const envelope = mkCallStartedEnvelope(starterName, callId, starterId.toLowerCase());
+  const envelope = mkCallStartedEnvelope(starterName, callId, starterId.toLowerCase(), eventMs(at));
   await ctx.addMessageToChat('system', serializeEnvelope(envelope), groupId, {
     isSystem: true,
     messageId,
+    ...at,
     // Nothing echoes a call row (it is written locally from signals), so it must never wait in the
     // bulk-ingest buffer, where a later finalization could not find it and would write a second row.
     soleWriter: true,
@@ -101,6 +113,7 @@ export async function recordCallEnded(
   ctx: CallSystemMessageContext | null,
   groupId: string,
   callId: string,
+  at: EventTime,
   outcome?: CallEndReason,
   starterId?: string
 ): Promise<void> {
@@ -119,11 +132,11 @@ export async function recordCallEnded(
     if (!outcome || !starterId) return;
     const starter = starterId.toLowerCase();
     const getName = await resolveDisplayNames([starter]);
-    const now = Date.now();
+    const endedAt = eventMs(at);
     // The timeline may have gained this very row during the await: never write a second one -
     // finalize the one that arrived.
     if (ctx.conversations.get(groupId)?.messages.some((x) => x.id === messageId)) {
-      await finalizeCallRow(ctx, groupId, callId, outcome);
+      await finalizeCallRow(ctx, groupId, callId, endedAt, outcome);
       return;
     }
     appendLog(`[CallRecord] ${callId} written as ${outcome} (no started row on this device)`);
@@ -132,15 +145,15 @@ export async function recordCallEnded(
       serializeEnvelope({
         kind: 'system',
         text: buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), getName(starter)),
-        callEvent: { callId, starterId: starter, startedAt: now, endedAt: now, outcome },
+        callEvent: { callId, starterId: starter, startedAt: endedAt, endedAt, outcome },
       }),
       groupId,
-      { isSystem: true, messageId, soleWriter: true }
+      { isSystem: true, messageId, soleWriter: true, ...at }
     );
     return;
   }
 
-  await finalizeCallRow(ctx, groupId, callId, outcome);
+  await finalizeCallRow(ctx, groupId, callId, eventMs(at), outcome);
 }
 
 /**
@@ -151,6 +164,7 @@ async function finalizeCallRow(
   ctx: CallSystemMessageContext,
   groupId: string,
   callId: string,
+  endedAt: number,
   outcome: CallEndReason | undefined
 ): Promise<void> {
   const messageId = callMessageId(callId);
@@ -163,7 +177,6 @@ async function finalizeCallRow(
   // Already finalized (a missed invite is written final): a duplicate end leaves it as it is.
   if (env.callEvent.endedAt) return;
 
-  const endedAt = Date.now();
   const starter = env.callEvent.starterId;
   const getName = await resolveDisplayNames([starter]);
   const starterName = getName(starter);
@@ -209,9 +222,20 @@ export async function handleCallSignalForChat(
   senderId: string,
   groupId: string,
   callMsg: ICallMsg,
-  currentUserId: string
+  currentUserId: string,
+  at: EventTime | null
 ): Promise<void> {
   if (!ctx || !callMsg?.callId) return;
+  // A RECORD IS DATED BY ITS FRAME, never by when this device processed it: a phone draining an
+  // invite and its hangup hours late wrote "missed call" below everything said since. With neither
+  // the frame's `sentAt` nor the server's acceptance there is no instant to give it, and none is
+  // invented.
+  if (!at) {
+    console.error(
+      `[CallRecord] ${String(callMsg.callId).slice(0, 8)} signal in ${groupId.slice(0, 8)}… REFUSED: the frame carries no sentAt and its delivery no server time - no durable instant dates the record, and this device's clock is not one`
+    );
+    return;
+  }
 
   const senderNorm = senderId.toLowerCase();
   const userNorm = currentUserId.toLowerCase();
@@ -226,6 +250,7 @@ export async function handleCallSignalForChat(
       ctx,
       groupId,
       callMsg.callId,
+      at,
       outcome,
       missedHere ? senderNorm : undefined
     );
@@ -249,9 +274,9 @@ export async function handleCallSignalForChat(
     // The same predicate as `CallService` (the server's kill switch, awaited until answered): an
     // invite that will not ring is a MISSED call, never a "call started" line with no ring.
     if (!notificationPreferences.callsAllowed(groupId) || !(await callsAvailableAnswered())) {
-      await recordCallEnded(ctx, groupId, callMsg.callId, 'not-answered', senderNorm);
+      await recordCallEnded(ctx, groupId, callMsg.callId, at, 'not-answered', senderNorm);
       return;
     }
-    await recordCallStarted(ctx, groupId, callMsg.callId, senderId);
+    await recordCallStarted(ctx, groupId, callMsg.callId, senderId, at);
   }
 }

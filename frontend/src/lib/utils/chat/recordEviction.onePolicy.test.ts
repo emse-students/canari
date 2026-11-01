@@ -110,6 +110,8 @@ interface SiteRun {
   saved: string[];
   /** System messages posted into the thread, as `content` strings. */
   notices: string[];
+  /** The dating options each notice was written with, in the same order. */
+  dated?: { timestamp?: Date; serverTimestamp?: number }[];
   /** Everything written to the session log. */
   lines: string[];
 }
@@ -139,25 +141,30 @@ function recorders(conversations?: Map<string, Conversation>) {
   const saved: string[] = [];
   const notices: string[] = [];
   const lines: string[] = [];
+  const dated: { timestamp?: Date; serverTimestamp?: number }[] = [];
   return {
     saved,
     notices,
+    dated,
     lines,
     log: (msg: string) => void lines.push(msg),
     saveConversation: vi.fn(
       async (target: string | { id?: string }) =>
         void saved.push(typeof target === 'string' ? target : (target.id ?? ''))
     ),
-    addMessageToChat: vi.fn(async (_sender: string, content: string, key: string) => {
-      notices.push(content);
-      const row = conversations?.get(key);
-      if (row) {
-        conversations!.set(key, {
-          ...row,
-          messages: [...row.messages, { isSystem: true, content } as never],
-        });
+    addMessageToChat: vi.fn(
+      async (_sender: string, content: string, key: string, options?: unknown) => {
+        notices.push(content);
+        dated.push(options as { timestamp?: Date; serverTimestamp?: number });
+        const row = conversations?.get(key);
+        if (row) {
+          conversations!.set(key, {
+            ...row,
+            messages: [...row.messages, { isSystem: true, content } as never],
+          });
+        }
       }
-    }),
+    ),
   };
 }
 
@@ -205,7 +212,8 @@ function pipelineWorld(over: Record<string, unknown> = {}) {
     groupId: string,
     isChannel: boolean,
     meta: unknown,
-    isCommit: boolean
+    isCommit: boolean,
+    deliveryMeta?: { queuedCreatedAt?: number }
   ) => Promise<boolean>;
   return { r, conversations, onMessage };
 }
@@ -214,7 +222,13 @@ function pipelineResult(
   r: ReturnType<typeof recorders>,
   conversations: SvelteMap<string, Conversation>
 ): SiteRun {
-  return { row: conversations.get(GROUP), saved: r.saved, notices: r.notices, lines: r.lines };
+  return {
+    row: conversations.get(GROUP),
+    saved: r.saved,
+    notices: r.notices,
+    dated: r.dated,
+    lines: r.lines,
+  };
 }
 
 /** One text entry queued for `GROUP`, and the storage that holds it. */
@@ -313,13 +327,26 @@ async function runSelectionCheck(opts: {
  * MLS state, and from the delivery service refusing this device. They are the same site and
  * different evidence, which is exactly the distinction the fused function carries as data.
  */
+/** When the server accepted the Remove commit (or its announcement) - the notice's date. */
+const REMOVED_AT = 1_700_000_000_000;
+
+/**
+ * The evidences that carry WHEN the removal happened. Every other one is learnt after it (a later
+ * frame, a check, a refusal) and the commit log that would say is members-only - so its notice is
+ * refused rather than dated by when this device found out (the banner still tells the user).
+ */
+const DATED: readonly EvictionEvidence[] = ['remove-commit', 'system-event'];
+
 const sites: { name: string; evidence: EvictionEvidence; run: () => Promise<SiteRun> }[] = [
   {
     name: 'a Remove commit applied',
     evidence: 'remove-commit',
     run: async () => {
       const { r, conversations, onMessage } = pipelineWorld();
-      await onMessage('peer', new Uint8Array([9, 9]), GROUP, false, undefined, true);
+      // The Remove commit's delivery carries the server's acceptance of it: the removal's instant.
+      await onMessage('peer', new Uint8Array([9, 9]), GROUP, false, undefined, true, {
+        queuedCreatedAt: REMOVED_AT,
+      });
       return pipelineResult(r, conversations);
     },
   },
@@ -362,8 +389,16 @@ const sites: { name: string; evidence: EvictionEvidence; run: () => Promise<Site
         convo: conversations.get(GROUP),
         convoKey: GROUP,
         senderNorm: 'admin',
+        // The announcement's acceptance, sent right after the Remove commit.
+        deliveryMeta: { queuedCreatedAt: REMOVED_AT },
       } as never);
-      return { row: conversations.get(GROUP), saved: r.saved, notices: r.notices, lines: r.lines };
+      return {
+        row: conversations.get(GROUP),
+        saved: r.saved,
+        notices: r.notices,
+        dated: r.dated,
+        lines: r.lines,
+      };
     },
   },
   {
@@ -413,12 +448,25 @@ describe('every site records a learnt eviction the same way', () => {
         expect(out.saved).toContain(GROUP);
       });
 
-      it('tells the user once, in the thread', async () => {
-        const out = await site.run();
+      if (DATED.includes(site.evidence)) {
+        it('tells the user once, in the thread, dated by the removal', async () => {
+          const out = await site.run();
 
-        expect(out.notices).toHaveLength(1);
-        expect(out.notices[0]).toBeTruthy();
-      });
+          expect(out.notices).toHaveLength(1);
+          expect(out.notices[0]).toBeTruthy();
+          expect(out.dated?.[0]?.timestamp?.getTime()).toBe(REMOVED_AT);
+          expect(out.dated?.[0]?.serverTimestamp).toBe(REMOVED_AT);
+        });
+      } else {
+        it('refuses the notice, accusing, rather than date it by when this device found out', async () => {
+          const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+          const out = await site.run();
+
+          expect(out.notices).toHaveLength(0);
+          expect(error).toHaveBeenCalledWith(expect.stringContaining('removal notice REFUSED'));
+          error.mockRestore();
+        });
+      }
 
       it('names the evidence in one line', async () => {
         const out = await site.run();
@@ -465,6 +513,7 @@ describe('what the disposition itself promises', () => {
       conversations,
       groupId: GROUP,
       evidence: 'remove-commit',
+      removedAt: REMOVED_AT,
       saveConversation: r.saveConversation,
       addMessageToChat: r.addMessageToChat,
       log: r.log,
@@ -473,6 +522,7 @@ describe('what the disposition itself promises', () => {
       conversations,
       groupId: GROUP,
       evidence: 'system-event',
+      removedAt: REMOVED_AT + 30,
       saveConversation: r.saveConversation,
       addMessageToChat: r.addMessageToChat,
       log: r.log,
@@ -525,7 +575,8 @@ describe('what the disposition itself promises', () => {
     await recordEviction({
       conversations,
       groupId: GROUP,
-      evidence: 'membership-check',
+      evidence: 'remove-commit',
+      removedAt: REMOVED_AT,
       saveConversation: r.saveConversation,
       addMessageToChat: vi.fn(async () => {
         throw new Error('thread not loaded');

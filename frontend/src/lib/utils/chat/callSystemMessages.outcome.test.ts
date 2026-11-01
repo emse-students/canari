@@ -31,6 +31,9 @@ import { setLocale } from '$lib/paraglide/runtime';
 import { canari } from '$lib/proto/canari.js';
 import type { Conversation } from '$lib/types';
 
+/** When the call event happened, as its frame dates it (`receivedNoticeTime`). */
+const AT = { timestamp: new Date(1_700_000_000_000), serverTimestamp: 1_700_000_000_040 };
+
 const G = '0b9f3d7e-1111-4222-8333-444455556666';
 const R = canari.CallEndReason;
 
@@ -85,8 +88,8 @@ describe('the ONE call-record writer (B15)', () => {
     'the caller reads %s as its own sentence, never a duration',
     async (outcome, text) => {
       const { ctx, rows } = makeCtx();
-      await recordCallStarted(ctx, G, 'c1', 'me');
-      await recordCallEnded(ctx, G, 'c1', outcome, 'me');
+      await recordCallStarted(ctx, G, 'c1', 'me', AT);
+      await recordCallEnded(ctx, G, 'c1', AT, outcome, 'me');
       expect(rows()).toHaveLength(1);
       expect(rows()[0].text).toBe(text);
       expect(rows()[0].callEvent?.outcome).toBe(outcome);
@@ -97,38 +100,38 @@ describe('the ONE call-record writer (B15)', () => {
   it('the callee reads a missed call for everything but a ring it refused', async () => {
     for (const [i, outcome] of (['cancelled', 'not-answered', 'busy'] as const).entries()) {
       const { ctx, rows } = makeCtx();
-      await recordCallStarted(ctx, G, `m${i}`, 'caller');
-      await recordCallEnded(ctx, G, `m${i}`, outcome, 'caller');
+      await recordCallStarted(ctx, G, `m${i}`, 'caller', AT);
+      await recordCallEnded(ctx, G, `m${i}`, AT, outcome, 'caller');
       expect(rows()[0].text).toBe('Appel manqué de name-of-caller');
     }
     const { ctx, rows } = makeCtx();
-    await recordCallStarted(ctx, G, 'd1', 'caller');
-    await recordCallEnded(ctx, G, 'd1', 'declined', 'caller');
+    await recordCallStarted(ctx, G, 'd1', 'caller', AT);
+    await recordCallEnded(ctx, G, 'd1', AT, 'declined', 'caller');
     expect(rows()[0].text).toBe('Appel refusé');
   });
 
   it('an answered call keeps its duration', async () => {
     const { ctx, rows } = makeCtx();
-    await recordCallStarted(ctx, G, 'a1', 'caller');
-    await recordCallEnded(ctx, G, 'a1');
+    await recordCallStarted(ctx, G, 'a1', 'caller', AT);
+    await recordCallEnded(ctx, G, 'a1', AT);
     expect(rows()[0].text).toContain('a démarré un appel qui a duré');
   });
 
   it('is idempotent and final: a second end, or a late start, writes nothing more', async () => {
     const { ctx, rows } = makeCtx();
-    await recordCallStarted(ctx, G, 'i1', 'me');
-    await recordCallEnded(ctx, G, 'i1', 'not-answered', 'me');
-    await recordCallEnded(ctx, G, 'i1', 'busy', 'me');
-    await recordCallEnded(ctx, G, 'i1');
-    await recordCallStarted(ctx, G, 'i1', 'me');
+    await recordCallStarted(ctx, G, 'i1', 'me', AT);
+    await recordCallEnded(ctx, G, 'i1', AT, 'not-answered', 'me');
+    await recordCallEnded(ctx, G, 'i1', AT, 'busy', 'me');
+    await recordCallEnded(ctx, G, 'i1', AT);
+    await recordCallStarted(ctx, G, 'i1', 'me', AT);
     expect(rows()).toHaveLength(1);
     expect(rows()[0].text).toBe('Appel sans réponse');
   });
 
   it('a busy answer racing the "started" row leaves ONE final row', async () => {
     const { ctx, rows } = makeCtx();
-    const started = recordCallStarted(ctx, G, 'r1', 'me');
-    await recordCallEnded(ctx, G, 'r1', 'busy', 'me');
+    const started = recordCallStarted(ctx, G, 'r1', 'me', AT);
+    await recordCallEnded(ctx, G, 'r1', AT, 'busy', 'me');
     await started;
     expect(rows()).toHaveLength(1);
     expect(rows()[0].text).toBe('Contact occupé');
@@ -136,8 +139,8 @@ describe('the ONE call-record writer (B15)', () => {
 
   it('keeps a message that arrived while the end waited for the display name', async () => {
     const { ctx, conversations } = makeCtx();
-    await recordCallStarted(ctx, G, 's1', 'me');
-    const ending = recordCallEnded(ctx, G, 's1', 'not-answered', 'me');
+    await recordCallStarted(ctx, G, 's1', 'me', AT);
+    const ending = recordCallEnded(ctx, G, 's1', AT, 'not-answered', 'me');
     const convo = conversations.get(G)!;
     conversations.set(G, {
       ...convo,
@@ -152,7 +155,7 @@ describe('the ONE call-record writer (B15)', () => {
 
   it('finalizes the row that appeared while an end with no row waited', async () => {
     const { ctx, conversations } = makeCtx();
-    const ending = recordCallEnded(ctx, G, 'f1', 'busy', 'me');
+    const ending = recordCallEnded(ctx, G, 'f1', AT, 'busy', 'me');
     const convo = conversations.get(G)!;
     conversations.set(G, {
       ...convo,
@@ -172,8 +175,8 @@ describe('the ONE call-record writer (B15)', () => {
 
   it('writes its rows as the sole writer, so a bulk ingest never buffers them', async () => {
     const { ctx, addMessageToChat } = makeCtx();
-    await recordCallStarted(ctx, G, 'w1', 'caller');
-    await recordCallEnded(ctx, G, 'w2', 'busy', 'caller');
+    await recordCallStarted(ctx, G, 'w1', 'caller', AT);
+    await recordCallEnded(ctx, G, 'w2', AT, 'busy', 'caller');
     const options = addMessageToChat.mock.calls.map((c) => c[3]);
     expect(options).toHaveLength(2);
     expect(options.every((o) => o?.soleWriter === true)).toBe(true);
@@ -181,7 +184,7 @@ describe('the ONE call-record writer (B15)', () => {
 
   it('writes no row for a call that rang nobody (no outcome, no row)', async () => {
     const { ctx, rows } = makeCtx();
-    await recordCallEnded(ctx, G, 'n1', undefined, 'me');
+    await recordCallEnded(ctx, G, 'n1', AT, undefined, 'me');
     expect(rows()).toHaveLength(0);
   });
 });
@@ -196,47 +199,106 @@ describe('the signal path of the record', () => {
 
   it('a busy callee device, which never rang, still owes its owner a missed call', async () => {
     const { ctx, rows } = makeCtx();
-    await handleCallSignalForChat(ctx, 'caller', G, hangup(R.CALL_END_REASON_BUSY), 'me');
+    await handleCallSignalForChat(ctx, 'caller', G, hangup(R.CALL_END_REASON_BUSY), 'me', AT);
     expect(rows()).toHaveLength(1);
     expect(rows()[0].text).toBe('Appel manqué de name-of-caller');
   });
 
   it('writes no missed call for a ring this account refused elsewhere, or its own hangup', async () => {
     const a = makeCtx();
-    await handleCallSignalForChat(a.ctx, 'me', G, hangup(R.CALL_END_REASON_DECLINED), 'me');
+    await handleCallSignalForChat(a.ctx, 'me', G, hangup(R.CALL_END_REASON_DECLINED), 'me', AT);
     setCallSystemMessageContext(null);
     const b = makeCtx();
-    await handleCallSignalForChat(b.ctx, 'me', G, hangup(R.CALL_END_REASON_CANCELLED), 'me');
+    await handleCallSignalForChat(b.ctx, 'me', G, hangup(R.CALL_END_REASON_CANCELLED), 'me', AT);
     expect(a.rows()).toHaveLength(0);
     expect(b.rows()).toHaveLength(0);
   });
 
   it('an ordinary hangup with no row writes nothing', async () => {
     const { ctx, rows } = makeCtx();
-    await handleCallSignalForChat(ctx, 'caller', G, hangup(), 'me');
+    await handleCallSignalForChat(ctx, 'caller', G, hangup(), 'me', AT);
     expect(rows()).toHaveLength(0);
   });
 
   it('a rung invite then a CANCELLED hangup reads missed, not "lasted less than a minute"', async () => {
     const { ctx, rows } = makeCtx();
-    await handleCallSignalForChat(ctx, 'caller', G, { callId: 'h1', offerSdp: 'START' }, 'me');
-    await handleCallSignalForChat(ctx, 'caller', G, hangup(R.CALL_END_REASON_CANCELLED), 'me');
+    await handleCallSignalForChat(ctx, 'caller', G, { callId: 'h1', offerSdp: 'START' }, 'me', AT);
+    await handleCallSignalForChat(ctx, 'caller', G, hangup(R.CALL_END_REASON_CANCELLED), 'me', AT);
     expect(rows()).toHaveLength(1);
     expect(rows()[0].text).toBe('Appel manqué de name-of-caller');
   });
 
   it('the caller device records a DECLINED hangup it receives, once', async () => {
     const { ctx, rows } = makeCtx();
-    await recordCallStarted(ctx, G, 'h1', 'me');
-    await handleCallSignalForChat(ctx, 'callee', G, hangup(R.CALL_END_REASON_DECLINED), 'me');
-    await handleCallSignalForChat(ctx, 'callee', G, hangup(R.CALL_END_REASON_DECLINED), 'me');
+    await recordCallStarted(ctx, G, 'h1', 'me', AT);
+    await handleCallSignalForChat(ctx, 'callee', G, hangup(R.CALL_END_REASON_DECLINED), 'me', AT);
+    await handleCallSignalForChat(ctx, 'callee', G, hangup(R.CALL_END_REASON_DECLINED), 'me', AT);
     expect(rows()).toHaveLength(1);
     expect(rows()[0].text).toBe('Appel refusé');
   });
 
   it('a busy frame writes nothing here: the caller device writes its own record', async () => {
     const { ctx, rows } = makeCtx();
-    await handleCallSignalForChat(ctx, 'callee', G, { callId: 'h1', busy: true }, 'me');
+    await handleCallSignalForChat(ctx, 'callee', G, { callId: 'h1', busy: true }, 'me', AT);
     expect(rows()).toHaveLength(0);
+  });
+});
+
+describe('a call record is dated by its frame, never by when this device drained it', () => {
+  beforeEach(() => {
+    setLocale('fr', { reload: false });
+    setCallSystemMessageContext(null);
+  });
+
+  const dating = (o: unknown) => o as { timestamp?: Date; serverTimestamp?: number };
+
+  it('the started row carries the invite frame instant and its server time', async () => {
+    const { ctx, rows, addMessageToChat } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, { callId: 't1', offerSdp: 'START' }, 'me', AT);
+    const options = dating(addMessageToChat.mock.calls[0][3]);
+    expect(options.timestamp?.getTime()).toBe(AT.timestamp.getTime());
+    expect(options.serverTimestamp).toBe(AT.serverTimestamp);
+    expect(rows()[0].callEvent?.startedAt).toBe(AT.timestamp.getTime());
+  });
+
+  it('a missed call drained late, with no started row, is dated by the hangup frame', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    const late = { timestamp: new Date(1_700_000_600_000), serverTimestamp: 1_700_000_600_030 };
+    await handleCallSignalForChat(
+      ctx,
+      'caller',
+      G,
+      { callId: 't2', hangup: true, endReason: R.CALL_END_REASON_CANCELLED },
+      'me',
+      late
+    );
+    const options = dating(addMessageToChat.mock.calls[0][3]);
+    expect(options.timestamp?.getTime()).toBe(late.timestamp.getTime());
+    expect(options.serverTimestamp).toBe(late.serverTimestamp);
+  });
+
+  it('a duration is the distance between the two frames, not between two drains', async () => {
+    const { ctx, rows } = makeCtx();
+    await recordCallStarted(ctx, G, 't3', 'caller', AT);
+    const end = { timestamp: new Date(AT.timestamp.getTime() + 3 * 60_000) };
+    await recordCallEnded(ctx, G, 't3', end);
+    expect(rows()[0].callEvent?.endedAt).toBe(end.timestamp.getTime());
+    expect(rows()[0].text).toContain('3');
+  });
+
+  it('a signal with no instant at all is REFUSED with an error and writes nothing', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(
+      ctx,
+      'caller',
+      G,
+      { callId: 't4', offerSdp: 'START' },
+      'me',
+      null
+    );
+    expect(rows()).toHaveLength(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REFUSED'));
+    error.mockRestore();
   });
 });
