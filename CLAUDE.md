@@ -79,7 +79,7 @@ Portail-etu since 2026-09-04, minus the bump and the two stores.
    gh pr create                                             |
         |                                          release.yml, ONE run
         +--> CI ------------------+                         |
-        |     tests + security    |                  5 gates (no bypass)
+        |     tests + security    |                  6 gates (no bypass)
         |     -> `CI passed`      |                         |
         +--> arm-auto-merge ------+                    bump + push
               (IN PARALLEL)       |                         |
@@ -123,13 +123,13 @@ gh release create v0.16.2-alpha.1 --prerelease --generate-notes   # -> dev + tes
 gh release create v0.16.2 --generate-notes                        # -> production + both stores
 ```
 
-**The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
+**The six gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; `main` contains the commit (merging after the cut is free: every bump pushes
 `release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)) and a pre-release is the newest release (no tag has a higher store build); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
 rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY, AND ONLY WHILE NOTHING NEWER SHIPPED** - it re-reads the SAME tag, so once a later pre-release is out the rerun is REFUSED (it would move dev and the store build back) and the answer is a NEW tag at the current head; dev has served it
-(stables); the notes name it. *A skip flag is a fallback, and the fix belongs where the primary path
+(stables); the notes name it; no migration the owner must approve ships without his hand-merged approval ([held](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)). *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
 **Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,
@@ -234,5 +234,6 @@ audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergenc
 26. **P2 - Graine rotates on every key-group epoch: the three fixes merged (#2263, #2255, #2260), owed the rig rows, the production ratio and the writer switch** ([backlog](docs/wiki/backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21), [comparison](docs/wiki/protocols/dm-vs-community-encryption.md)).
 27. **P2 - a DM/group file is queued at the tap like a text, and the pre-send media barrier goes** ([backlog](docs/wiki/backlog.d/media-send-queued-at-the-tap.md)).
 28. **The owner's decisions of 2026-11-01 (what `1.5.5` carries)** ([decisions](docs/wiki/backlog.d/owner-decisions-of-2026-11-01-for-1-5-5.md)).
+29. **P2 - push payloads carry nothing for Google and Apple: a content-free wake-up push, recorded 2026-11-01, not built** ([backlog](docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)).
 
 **Closed without a fix, readings owed** - each a row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), not queue work: a returner's community past (`v0.18.26`), the member who could not publish, a first contact's notification, a salon seed after its message and the iOS silent frames (#2000), the first iOS feedback (scroll, emoji). #752's two P2s are closed ([backlog](docs/wiki/backlog.md)).

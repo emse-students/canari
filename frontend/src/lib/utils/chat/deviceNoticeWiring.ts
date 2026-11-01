@@ -206,7 +206,10 @@ export async function ownEnrolledAtOf(
  * PHONES: claims, in the ledger the background engines share, every key of this account's other
  * devices that is NOT new by the app's rule (`isNewToItsOwner`) - so a background engine, which has
  * no key ages, never posts "a new device was added" for an old device a heal brings back. Done at
- * registration; a device registered since is left to the background engine and to the app.
+ * registration; a device registered since is left to the background engine and to the app. Until
+ * it has succeeded once on this install, the engines announce nothing for the account (they run a
+ * new build before the app's first launch after an update), so an unanswered key age leaves it
+ * for the next registration rather than guessing.
  */
 async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId: string) {
   try {
@@ -214,12 +217,25 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
     if (enrolledAt === 'unanswered') return;
     const devices = await mls.fetchUserDevices(userId);
     const old: string[] = [];
+    // False once ANY listed device's key ages go unanswered: its keys may be old, and a marker
+    // written now would let an engine post them as new - so Rust withholds it.
+    let complete = true;
     for (const d of devices) {
       if (d.deviceId === deviceId) continue;
       const identity = canonicalIdentity(`${userId}:${d.deviceId}`);
-      if (identity === null) continue;
+      if (identity === null) {
+        // No engine can name such a device either (`notice_key` needs a canonical identity).
+        console.debug(`[DEVICE_NOTICE] pre-claim skips a malformed device identity: ${d.deviceId}`);
+        continue;
+      }
       const facts = await keyFactsOf(mls, userId, d.deviceId);
-      if (facts === 'unanswered') continue;
+      if (facts === 'unanswered') {
+        console.warn(
+          `[DEVICE_NOTICE] key ages of device ${d.deviceId} unanswered - the pre-claim marker waits for a complete pass`
+        );
+        complete = false;
+        continue;
+      }
       for (const fingerprint of facts.fingerprints) {
         const isNew = isNewToItsOwner(firstSightIn(facts, fingerprint), {
           learnedAt: Date.now(),
@@ -229,8 +245,27 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
         if (!isNew) old.push(`${identity}|${fingerprint}`);
       }
     }
-    if (old.length > 0) await claimNativeDeviceNotices(old);
-    console.log(`[DEVICE_NOTICE] ${old.length} key(s) of this account's older devices pre-claimed`);
+    // Even with nothing to record: the call also writes the account's pre-claim marker, without
+    // which the background engines announce nothing for it (`preclaim_device_notices`).
+    const { invoke } = await import('@tauri-apps/api/core');
+    const marked = await invoke<boolean>('preclaim_device_notices', {
+      userId,
+      keys: old,
+      complete,
+    });
+    if (marked) {
+      console.log(
+        `[DEVICE_NOTICE] ${old.length} key(s) of this account's older devices pre-claimed`
+      );
+    } else if (!complete) {
+      console.warn(
+        `[DEVICE_NOTICE] ${old.length} older key(s) recorded, a device unanswered - the background engines stay quiet for this account until a complete pass`
+      );
+    } else {
+      console.error(
+        `[DEVICE_NOTICE] ${old.length} older key(s) not all recorded - the background engines stay quiet for this account until the next registration`
+      );
+    }
   } catch (e) {
     console.error('[DEVICE_NOTICE] pre-claim of the older own devices failed:', e);
   }

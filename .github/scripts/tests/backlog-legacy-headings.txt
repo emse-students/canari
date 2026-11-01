@@ -1,5 +1,4 @@
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
-## Cotisation-disabled follow-ups (after the tier stack lands)
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 ### The decisions
