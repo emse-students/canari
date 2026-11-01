@@ -114,12 +114,10 @@
   let peerTitle = $derived(primary?.displayName || m.call_label());
   let peerUserId = $derived(primary?.userId ?? null);
   let isIncoming = $derived(call.callState === 'incoming');
-  // The ring says WHICH call rings: a video call is answered with the camera on.
-  let statusText = $derived(
-    isIncoming && callService.incomingHasVideo
-      ? m.call_incoming_video_label()
-      : callStatusText(call.kind, call.duration)
-  );
+  // The ring says WHICH call rings in its own subtitle (`ringHasVideo`), so the status is the rest.
+  let statusText = $derived(callStatusText(call.kind, call.duration));
+  /** A VIDEO call rings: the subtitle says so and Accept carries a camera, as it answers with one. */
+  let ringHasVideo = $derived(isIncoming && callService.incomingHasVideo);
   let isEnded = $derived(call.callState === 'ended');
   /** The encryption line: none while ringing, the check from `connecting`, the shield once proven. */
   let e2eLine = $derived(callE2eLine(call.kind, call.e2eProven));
@@ -582,9 +580,9 @@
       {disabled}
       class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 disabled:active:scale-100 {tone ===
       'danger'
-        ? 'bg-call-decline text-white hover:brightness-110'
+        ? 'bg-call-decline shadow-call-decline/40 text-white shadow-lg hover:brightness-110'
         : tone === 'accept'
-          ? 'bg-call-accept text-white hover:brightness-110'
+          ? 'bg-call-accept shadow-call-accept/40 text-white shadow-lg hover:brightness-110'
           : tone === 'on'
             ? 'text-cn-ink bg-white'
             : 'bg-white/15 text-white hover:bg-white/25'}"
@@ -621,20 +619,32 @@
     style="padding: var(--safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) var(--safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);"
     transition:fade={{ duration: 150 }}
   >
-    {#if !videoShowing && primary}
+    {#if !videoShowing}
       <!-- Messenger's and WhatsApp's backdrop: the other person's own photo, blown up, blurred and
-           dimmed behind the call. The SAME Avatar component (one cache, one fallback), never a
+           dimmed behind the call, over Canari's night gradient (ink to scrim) - the gradient alone
+           when nobody is named yet. The SAME Avatar component (one cache, one fallback), never a
            second fetch path; decorative, so hidden from assistive tech. A reader without a photo
-           gets the blurred initials tile, which is just a colour field. -->
+           gets the blurred initials tile, which is just a colour field. A ring adds the brand's
+           yellow glow behind the photo: the screen that asks is the warm one. -->
       <div
-        class="pointer-events-none absolute inset-0 overflow-hidden"
+        class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 overflow-hidden bg-linear-to-b"
         aria-hidden="true"
         data-testid="call-backdrop"
       >
-        <div class="absolute inset-0 scale-150 opacity-60 blur-3xl">
-          <Avatar userId={primary.userId} fill shape="soft" fallbackLabel={primary.displayName} />
-        </div>
-        <div class="bg-cn-scrim/55 absolute inset-0"></div>
+        {#if primary}
+          <div class="absolute inset-0 scale-150 opacity-60 blur-3xl">
+            <Avatar userId={primary.userId} fill shape="soft" fallbackLabel={primary.displayName} />
+          </div>
+        {/if}
+        <div
+          class="from-cn-ink/40 via-cn-scrim/55 to-cn-scrim/90 absolute inset-0 bg-linear-to-b"
+        ></div>
+        {#if isIncoming}
+          <div
+            class="bg-cn-yellow/15 absolute top-1/3 left-1/2 size-80 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
+            data-testid="call-ring-glow"
+          ></div>
+        {/if}
       </div>
     {/if}
     {#if remoteVideoStream}
@@ -756,13 +766,24 @@
         : 'justify-center'}"
     >
       {#if !videoShowing}
-        <div class="relative size-32 md:size-44">
+        <div class="relative {isIncoming ? 'size-36 md:size-48' : 'size-32 md:size-44'}">
           {#if isIncoming || call.kind === 'ringing'}
-            <!-- The ring: a halo that breathes while the call rings, on either side. -->
-            <div class="absolute inset-0 rounded-full bg-white/15 motion-safe:animate-ping"></div>
+            <!-- The ring: two soft yellow halos breathing out of the photo, half a beat apart, while
+                 the call rings on either side. `motion-safe` only: under reduced motion they stay
+                 behind the photo, unseen, and the accent ring alone says "ringing". -->
+            <div
+              class="bg-cn-yellow/30 motion-safe:animate-call-halo absolute inset-0 rounded-full"
+              data-testid="call-halo"
+            ></div>
+            <div
+              class="bg-cn-yellow/20 motion-safe:animate-call-halo-late absolute inset-0 rounded-full"
+            ></div>
           {/if}
           <div
-            class="relative h-full w-full overflow-hidden rounded-full shadow-xl ring-4 ring-white/10"
+            class="relative h-full w-full overflow-hidden rounded-full shadow-xl ring-4 {isIncoming
+              ? 'ring-cn-yellow/60'
+              : 'ring-white/10'}"
+            data-testid="call-avatar"
           >
             {#if primary}
               <Avatar
@@ -786,15 +807,30 @@
         {:else}
           <p class="font-bold {videoShowing ? 'text-lg' : 'text-3xl'}">{m.call_label()}</p>
         {/if}
-        <p
-          class="text-white/75 tabular-nums {videoShowing ? 'text-sm' : 'text-base'} {call.kind ===
-          'live'
-            ? ''
-            : 'animate-pulse'}"
-          data-testid="call-status"
-        >
-          {statusText}
-        </p>
+        {#if isIncoming}
+          <!-- WHICH call rings, as every phone says it: "Appel audio" or "Appel vidéo", with its glyph. -->
+          <p
+            class="mt-1 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-sm font-medium text-white/90 ring-1 ring-white/15"
+            data-testid="call-ring-kind"
+          >
+            {#if ringHasVideo}
+              <Video size={16} class="shrink-0" />
+              <span>{m.chat_video_call_label()}</span>
+            {:else}
+              <Phone size={16} class="shrink-0" />
+              <span>{m.call_audio_only_label()}</span>
+            {/if}
+          </p>
+        {:else}
+          <p
+            class="text-white/75 tabular-nums {videoShowing
+              ? 'text-sm'
+              : 'text-base'} {call.kind === 'live' ? '' : 'animate-pulse'}"
+            data-testid="call-status"
+          >
+            {statusText}
+          </p>
+        {/if}
         {#if micNotice}
           <p
             class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
@@ -833,7 +869,12 @@
       {#if isIncoming}
         <div class="flex w-full max-w-xs items-start justify-between">
           {#snippet declineIcon()}<PhoneOff size={28} />{/snippet}
-          {#snippet acceptIcon()}<Phone size={28} class="fill-current" />{/snippet}
+          {#snippet acceptIcon()}
+            {#if ringHasVideo}<Video size={28} class="fill-current" />{:else}<Phone
+                size={28}
+                class="fill-current"
+              />{/if}
+          {/snippet}
           {@render control(
             'call-decline',
             m.call_decline_incoming_label(),
