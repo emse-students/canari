@@ -999,6 +999,7 @@ export class IndexedDbStorage implements IStorage {
     }
 
     const results: StoredMessage[] = [];
+    let readPending = false;
     for (const row of page) {
       try {
         const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
@@ -1011,10 +1012,13 @@ export class IndexedDbStorage implements IStorage {
         );
         msg.pageKey = { orderAt: row.orderAt, id: row.id, provisional };
         results.push(msg);
+        if (row.orderPending === ORDER_PENDING) readPending = true;
       } catch {
         console.warn('Failed to decrypt message', row.id);
       }
     }
+    // A deferred row that decrypts now re-arms the conversation (`OrderKeyDerivations.readableAgain`).
+    if (readPending) this.orderKeyDerivations.readableAgain(conversationId, results, derive);
     return results.sort(compareStoredOrder);
   }
 

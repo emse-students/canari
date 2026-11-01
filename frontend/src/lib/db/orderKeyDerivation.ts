@@ -119,6 +119,17 @@ export async function deriveOrderKeysInChunks(
   return done;
 }
 
+/** Who is waiting for a run: a reader on screen, or nobody (a run started behind a page read). */
+export type OrderKeyRunPriority = 'waited' | 'background';
+
+/** A run queued on the lane and not started yet. */
+interface QueuedRun {
+  conversationId: string;
+  start: () => Promise<OrderKeyDerivation>;
+  resolve: (done: OrderKeyDerivation) => void;
+  reject: (e: unknown) => void;
+}
+
 /**
  * ONE derivation in flight per conversation, and ONE LANE for all of them: a run starts only when
  * the previous one - whatever its conversation - has settled, so a first boot opening many
@@ -127,32 +138,61 @@ export async function deriveOrderKeysInChunks(
  * decrypting the same rows twice. The entry is dropped when the run settles, so the next read that
  * still finds a pending row (a backup imported since) starts a new run.
  *
- * A RUN THAT DEFERRED A ROW ENDS THE WAITING for its conversation, this session: the row stays
- * flagged for the next session's run, and until then the conversation's pages are read as keyed
- * ({@link gaveUp}) - a load-older does not wait for, and re-read behind, a derivation that would
- * defer the same row again. `rearm` takes it back when new rows arrive to be keyed.
+ * A RUN SOMEONE WAITS FOR GOES FIRST (third review of #2824, 2). The lane holds two queues and
+ * starts the next run from the `waited` one while it holds any: a load-older that must wait for its
+ * conversation's keys (`run`) is not put behind every conversation the boot queued in the background
+ * (`startInBackground`), and a background run already queued for that conversation is MOVED to the
+ * waited queue rather than started twice. Still one run at a time, never preempted: a run in progress
+ * finishes its chunks, so termination and resume-after-kill (the flag is the progress) are those of
+ * {@link deriveOrderKeysInChunks}. A background run is delayed only by runs a reader is waiting for,
+ * which are as many as the reader's own gestures.
+ *
+ * A RUN THAT DEFERRED A ROW ENDS THE WAITING for its conversation: the row stays flagged, and until
+ * a fact says the failure has passed the conversation's pages are read as keyed ({@link gaveUp}) - a
+ * load-older does not wait for, and re-read behind, a derivation that would defer the same row
+ * again. Two facts take it back, never a clock: new rows to key arrive (`rearm`, a backup import), or
+ * a page read DECRYPTED a row still flagged ({@link readableAgain}) - the very work the run deferred
+ * succeeded, so the next run will key it. A row the run can never key does not decrypt in a page read
+ * either (both run `decryptData` then `fromMessagePayload`), so it cannot re-arm the conversation
+ * over and over; at worst the next session's run retries it.
  */
 export class OrderKeyDerivations {
   private readonly inFlight = new Map<string, Promise<OrderKeyDerivation>>();
-  /** The tail of the one lane every run is queued on. Never rejects. */
-  private lane: Promise<unknown> = Promise.resolve();
-  /** The conversations whose last run deferred a row, this session. */
+  /** Runs queued and not started, a reader waiting for each. Started before any background one. */
+  private readonly waited: QueuedRun[] = [];
+  /** Runs queued and not started that nobody waits for. */
+  private readonly background: QueuedRun[] = [];
+  /** Whether a run holds the lane. */
+  private busy = false;
+  /** The conversations whose last run deferred a row, until a fact says the failure has passed. */
   private readonly deferred = new Set<string>();
 
-  /** The run in flight for `conversationId`, or a new one queued on the lane with `start`. */
+  /**
+   * The run in flight for `conversationId`, or a new one queued on the lane with `start`.
+   * `priority` says whether a reader waits for it (`run` from a load-older, `orderKeysDerived`):
+   * such a run is started before every background one still queued, and a background run of the
+   * same conversation already queued is promoted rather than duplicated.
+   */
   run(
     conversationId: string,
-    start: () => Promise<OrderKeyDerivation>
+    start: () => Promise<OrderKeyDerivation>,
+    priority: OrderKeyRunPriority = 'waited'
   ): Promise<OrderKeyDerivation> {
     const running = this.inFlight.get(conversationId);
-    if (running) return running;
-    const run = this.lane
-      .then(start)
+    if (running) {
+      if (priority === 'waited') this.promote(conversationId);
+      return running;
+    }
+    let queued!: QueuedRun;
+    const settled = new Promise<OrderKeyDerivation>((resolve, reject) => {
+      queued = { conversationId, start, resolve, reject };
+    });
+    const run = settled
       .then((done) => {
         if (done.deferred > 0) {
           this.deferred.add(conversationId);
           console.warn(
-            `[STORE] order keys of ${conversationId.slice(0, 8)}: ${done.deferred} row(s) deferred - its pages are read as keyed until the next session retries them`
+            `[STORE] order keys of ${conversationId.slice(0, 8)}: ${done.deferred} row(s) deferred - its pages are read as keyed until a page read decrypts one of them or the next session retries them`
           );
         }
         return done;
@@ -160,12 +200,40 @@ export class OrderKeyDerivations {
       .finally(() => {
         if (this.inFlight.get(conversationId) === run) this.inFlight.delete(conversationId);
       });
-    this.lane = run.catch(() => undefined);
     this.inFlight.set(conversationId, run);
+    (priority === 'waited' ? this.waited : this.background).push(queued);
+    this.next();
     return run;
   }
 
-  /** Whether the last run of `conversationId` this session deferred a row - see the class doc. */
+  /** Moves a background run of `conversationId` still queued to the waited queue. */
+  private promote(conversationId: string): void {
+    const at = this.background.findIndex((q) => q.conversationId === conversationId);
+    if (at < 0) return;
+    const [queued] = this.background.splice(at, 1);
+    this.waited.push(queued);
+    appendLog(
+      `[STORE] order keys of ${conversationId.slice(0, 8)}: a reader waits for them - moved ahead of ${this.background.length} background run(s)`
+    );
+  }
+
+  /** Starts the next queued run when the lane is free: a waited one first. */
+  private next(): void {
+    if (this.busy) return;
+    const queued = this.waited.shift() ?? this.background.shift();
+    if (!queued) return;
+    this.busy = true;
+    // `start` may throw synchronously: the lane is released whatever it does.
+    Promise.resolve()
+      .then(queued.start)
+      .then(queued.resolve, queued.reject)
+      .finally(() => {
+        this.busy = false;
+        this.next();
+      });
+  }
+
+  /** Whether the last run of `conversationId` deferred a row and nothing re-armed it since. */
   gaveUp(conversationId: string): boolean {
     return this.deferred.has(conversationId);
   }
@@ -176,11 +244,32 @@ export class OrderKeyDerivations {
   }
 
   /**
+   * A page read of `conversationId` decrypted a row still flagged pending (`page` is what it hands
+   * back). When the conversation's last run had deferred rows, that failure has passed: the
+   * conversation is re-armed, a run starts behind the read, and the page's keys are marked
+   * provisional - so the next load-older waits for the keys instead of paging on `sentAt` for the
+   * rest of the session. Nothing happens otherwise (a pending row on a page is the ordinary
+   * provisional case, already derived behind the read).
+   */
+  readableAgain(
+    conversationId: string,
+    page: ReadonlyArray<{ pageKey?: { provisional: boolean } }>,
+    start: () => Promise<OrderKeyDerivation>
+  ): void {
+    if (!this.deferred.delete(conversationId)) return;
+    appendLog(
+      `[STORE] order keys of ${conversationId.slice(0, 8)}: a deferred row decrypted in a page read - derived again`
+    );
+    for (const row of page) if (row.pageKey) row.pageKey.provisional = true;
+    this.startInBackground(conversationId, start);
+  }
+
+  /**
    * Starts (or joins) a run in the BACKGROUND: the caller does not wait, and a store failure is
    * logged here - the pending rows stay pending and the next page read starts a new run.
    */
   startInBackground(conversationId: string, start: () => Promise<OrderKeyDerivation>): void {
-    this.run(conversationId, start).catch((e) => {
+    this.run(conversationId, start, 'background').catch((e) => {
       console.error(
         `[STORE] order-key derivation of ${conversationId.slice(0, 8)} stopped - the rows still pending are taken up by the next page read: ${String(e)}`
       );

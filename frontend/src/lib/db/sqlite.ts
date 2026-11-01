@@ -807,6 +807,7 @@ export class SqliteStorage implements IStorage {
     }
 
     const results: StoredMessage[] = [];
+    let readPending = false;
     for (const row of rows) {
       try {
         const iv = base64ToUint8(row.iv);
@@ -825,10 +826,13 @@ export class SqliteStorage implements IStorage {
         );
         msg.pageKey = { orderAt: rowTimestampMs(row.order_at), id: String(row.id), provisional };
         results.push(msg);
+        if (Number(row.order_pending) === 1) readPending = true;
       } catch {
         console.warn('Failed to decrypt SQLite row', row.id);
       }
     }
+    // A deferred row that decrypts now re-arms the conversation (`OrderKeyDerivations.readableAgain`).
+    if (readPending) this.orderKeyDerivations.readableAgain(conversationId, results, derive);
     return results.sort(compareStoredOrder);
   }
 

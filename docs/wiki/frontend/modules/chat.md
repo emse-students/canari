@@ -3322,7 +3322,11 @@ read the relayer's own unsigned `timestamp`; the bundle's server read marks and 
 clamped to the newest server time HELD in the conversation, and below the newest one the server
 stated to this account on this device (`serverMarkCeiling`, `serverClock.ts`): a live frame's
 `createdAt`, a send's `receivedAt`, a background send's line, a push cached by the native side, a
-frame the leader tab relays. That value is durable (`ACCOUNT_KEY.serverClock`), shared by the tabs of
+frame the leader tab relays, and the `timestamp` the server stamped on each row of a history-log
+replay (`newestServerRowTime`, `history.ts` - third review of #2824: a device that joined every group
+by external commit and restored everything from the replay received no live frame, so its mark could
+not move and a conversation read in that window showed its badge again after a restart; only the
+rows' own server stamps are read there, never what a frame's plaintext claims). That value is durable (`ACCOUNT_KEY.serverClock`), shared by the tabs of
 one origin, and while it is 0 - nothing stated yet, an offline first boot - the server mark does not
 move at all. No row, however it arrived, can lift the mark past what the server has said. DM marks owed in `localStorage` are kept per clock - the key
 written before the upgrade (`canari.dmReadMarks.*`) is now the STAMPED ledger and goes out as `{ at }`
@@ -3361,10 +3365,17 @@ read" (still `sentAt`-keyed, see below) or a mark from before the change can pro
   id order, each chunk WRITTEN before the next is read, one run per conversation; the flag is the
   durable progress, so a kill loses one chunk and the next run reads only what is still flagged. ONE
   lane for every conversation: a run starts when the previous one settled, so a first boot does not
-  decrypt in parallel with its own writes. A row this key can never read (`PayloadUnreadableError`,
+  decrypt in parallel with its own writes - and a run a READER waits for (a load-older below a
+  provisional boundary) starts before every background run still queued, a queued background run of
+  the same conversation being promoted rather than duplicated (third review of #2824); a run in
+  progress is never preempted. A row this key can never read (`PayloadUnreadableError`,
   thrown by `decryptData` for WebCrypto's `OperationError` and a non-JSON plaintext only) is keyed on
-  its `timestamp` for good; any other failure leaves it flagged for the next SESSION - a run that
-  deferred a row ends the waiting, and its conversation's pages read as keyed until then. Only the store's
+  its `timestamp` for good; any other failure leaves it flagged - a run that deferred a row ends the
+  waiting, and its conversation's pages read as keyed until a FACT says the failure passed: a backup
+  import (`rearm`), or a page read that decrypted a row still flagged (`readableAgain`), which re-arms
+  the conversation, starts a run behind itself and hands its page back provisional. A row the run can
+  never key does not decrypt in a page read either, so it cannot re-arm the conversation in a loop;
+  the next session's run retries it. Only the store's
   BOUNDARY was provisional - the screen sorts on the decrypted `messageTime` - so a page's `pageKey`
   says `provisional`, and a load-older below such a boundary waits for the derivation and re-reads
   what lies above it too: a row whose real key rose past the boundary is in neither page otherwise.

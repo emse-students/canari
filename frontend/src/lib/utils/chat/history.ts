@@ -28,6 +28,7 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
 import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
@@ -49,6 +50,29 @@ import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
+/**
+ * The newest time THE SERVER stamped on a page of its history log (`timestamp` is the `receivedAt`
+ * the delivery service wrote when it accepted the frame), or `undefined` for a page that states none.
+ *
+ * WHY THE REPLAY NOTES IT (third review of #2824, 1). A device that joined every group by external
+ * commit and restored everything from this replay receives no live frame until the next message, so
+ * `serverClock` knew nothing and the server read mark could not move (`serverMarkCeiling`): a
+ * conversation read in that window showed its badge again after a restart. These rows ARE the
+ * server's word, the same value that dates each replayed row - and ONLY they are read here: nothing
+ * a frame's plaintext carries (a relayed bundle row's `serverTimestamp`, a read mark's `at`) reaches
+ * the clock, so a replay can never raise it past what the server sent.
+ */
+export function newestServerRowTime(
+  rows: ReadonlyArray<{ timestamp?: unknown }>
+): number | undefined {
+  let newest: number | undefined;
+  for (const row of rows) {
+    const at = parseServerTimestampMs(row.timestamp);
+    if (at !== undefined && (newest === undefined || at > newest)) newest = at;
+  }
+  return newest;
+}
+
 function seenHistoryKey(userId: string, groupId: string): string {
   return ACCOUNT_KEY.seenCipher(userId, groupId);
 }
@@ -996,6 +1020,7 @@ export async function replayConversationHistory(params: {
         break;
       }
       fetchedAnyPage = true;
+      noteServerTime(userId, newestServerRowTime(history));
 
       const pageLastId = history[history.length - 1]?.id;
       // Reaching the head IS the end of the walk - no request is spent discovering an empty page.

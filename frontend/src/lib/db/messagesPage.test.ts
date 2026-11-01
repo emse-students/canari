@@ -63,19 +63,48 @@ const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
  */
 async function importRisingConversation(storage: {
   importEncryptedRow: IndexedDbStorage['importEncryptedRow'];
-}): Promise<void> {
+}): Promise<Set<string>> {
   const rows = Array.from({ length: 60 }, (_, i) =>
     message(`m-${String(i).padStart(2, '0')}`, 'conv', T0 + (i + 1) * 1000)
   );
   rows[5] = { ...rows[5], id: 'rises', serverTimestamp: T0 + 55_500 };
+  const oldestTen = new Set<string>();
   for (const msg of rows) {
+    const sealed = await encryptData(toMessagePayload(msg), KEY);
+    if (msg.timestamp <= T0 + 10_000) oldestTen.add(toBase64(sealed.iv));
     await storage.importEncryptedRow({
       id: msg.id,
       conversationId: 'conv',
       timestamp: msg.timestamp,
-      ...(await encryptData(toMessagePayload(msg), KEY)),
+      ...sealed,
     });
   }
+  return oldestTen;
+}
+
+/**
+ * The rows sealed under `ivs` (the ten oldest of {@link importRisingConversation}, `rises` among
+ * them) fail to decrypt for a reason that may pass, every time the engine is asked, until `pass()`:
+ * a derivation defers them and keys the fifty others.
+ */
+function deferRows(ivs: Set<string>) {
+  expect(ivs.size).toBe(10);
+  const subtle = crypto.subtle;
+  const real = subtle.decrypt.bind(subtle);
+  const decrypt = vi
+    .spyOn(subtle, 'decrypt')
+    .mockImplementation((algorithm, key, data) =>
+      ivs.has(toBase64(new Uint8Array((algorithm as AesGcmParams).iv as Uint8Array)))
+        ? Promise.reject(new TypeError('the engine went away'))
+        : real(algorithm, key, data)
+    );
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  return {
+    pass: () => {
+      decrypt.mockRestore();
+      warn.mockRestore();
+    },
+  };
 }
 
 /** A fresh, initialised store under a name no other case uses. */
@@ -604,25 +633,48 @@ describe('SqliteStorage.getMessagesPage', () => {
   it('a run that DEFERRED a row ends the waiting: pages read as keyed, load-older derives nothing again', async () => {
     const { storage, engine, selects } = await initialisedSqlite();
     engine.exec("INSERT INTO conversations (id, name) VALUES ('conv', 'Conversation')");
-    await importRisingConversation(storage);
-    // The engine fails for a reason that may pass, every time this run asks: every row deferred.
-    const decrypt = vi
-      .spyOn(crypto.subtle, 'decrypt')
-      .mockRejectedValue(new TypeError('the engine went away'));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failing = deferRows(await importRisingConversation(storage));
     expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
-      derived: 0,
+      derived: 50,
       unreadable: 0,
-      deferred: 60,
+      deferred: 10,
     });
-    decrypt.mockRestore();
-    warn.mockRestore();
 
     const page = await storage.getMessagesPage('conv', KEY, 50);
     expect(page.every((m) => m.pageKey?.provisional === false)).toBe(true);
     const before = selects.filter((s) => s.includes('ORDER BY id LIMIT')).length;
+    // The failure has not passed: the rows below still do not decrypt, and nothing derives again.
     await storage.getMessagesPage('conv', KEY, 50, { ...oldestPageKey(page)!, provisional: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(selects.filter((s) => s.includes('ORDER BY id LIMIT')).length).toBe(before);
+    failing.pass();
+  });
+
+  it('a deferred row that decrypts in a page read re-arms the conversation: no sentAt paging for the rest of the session (third review of #2824, 3)', async () => {
+    const { storage, engine, selects } = await initialisedSqlite();
+    engine.exec("INSERT INTO conversations (id, name) VALUES ('conv', 'Conversation')");
+    const failing = deferRows(await importRisingConversation(storage));
+    await storage.orderKeysDerived('conv', KEY);
+    const first = await storage.getMessagesPage('conv', KEY, 50);
+    expect(first.some((m) => m.id === 'rises')).toBe(false);
+    failing.pass();
+    const chunkReads = () => selects.filter((s) => s.includes('ORDER BY id LIMIT')).length;
+    const before = chunkReads();
+
+    // The failure passed: the load-older decrypts the ten rows still flagged pending.
+    const older = await storage.getMessagesPage('conv', KEY, 50, oldestPageKey(first));
+    expect(older).toHaveLength(10);
+    // Handed back provisional, so the NEXT load-older waits for the keys and re-reads above...
+    expect(older.every((m) => m.pageKey?.provisional === true)).toBe(true);
+    // ...which a run started behind this read derives.
+    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+      derived: 10,
+      unreadable: 0,
+      deferred: 0,
+    });
+    expect(chunkReads()).toBeGreaterThan(before);
+    const settled = await storage.getMessagesPage('conv', KEY, 50);
+    expect(settled.some((m) => m.id === 'rises')).toBe(true);
   });
 
   it('pages on the pair (orderAt, id): rows tied with the boundary are neither lost nor read twice', async () => {
@@ -749,6 +801,31 @@ describe('IndexedDbStorage - provisional keys, derived behind the page', () => {
     const older = await storage.getMessagesPage('conv', KEY, 50, boundary);
     expect(older.some((m) => m.id === 'rises')).toBe(true);
     expect(new Set([...first, ...older].map((m) => m.id)).size).toBe(60);
+    await storage.close();
+  });
+  it('a deferred row that decrypts in a page read re-arms the conversation (third review of #2824, 3)', async () => {
+    const storage = await openStore();
+    const failing = deferRows(await importRisingConversation(storage));
+    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+      derived: 50,
+      unreadable: 0,
+      deferred: 10,
+    });
+    const first = await storage.getMessagesPage('conv', KEY, 50);
+    expect(first.every((m) => m.pageKey?.provisional === false)).toBe(true);
+    failing.pass();
+
+    const older = await storage.getMessagesPage('conv', KEY, 50, oldestPageKey(first));
+    expect(older).toHaveLength(10);
+    expect(older.every((m) => m.pageKey?.provisional === true)).toBe(true);
+    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+      derived: 10,
+      unreadable: 0,
+      deferred: 0,
+    });
+    expect((await storage.getMessagesPage('conv', KEY, 50)).some((m) => m.id === 'rises')).toBe(
+      true
+    );
     await storage.close();
   });
 });
