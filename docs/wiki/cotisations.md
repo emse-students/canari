@@ -323,7 +323,7 @@ cotisation tier**. Not `answer`: a product has no questions, and the empty `Crit
 a product is validated against is what refuses one.
 
 **A grid REPLACES the fixed pricing outright.** While `priceMatrix` is set, `amountCents`,
-`amountCentsMember` and `memberPriceTag` decide nothing - `resolvePurchase` and `grantProductPurchase`
+`amountCentsMember` and `memberPriceTag` decide nothing - `decidePurchase` and `grantProductPurchase`
 branch on the matrix before they ever look at `amountCents`, and both editors hide the fields it
 replaces rather than leaving figures on screen that nothing charges. That is the whole reason there
 is no priority rule between the two mechanisms: only one of them is ever live.
@@ -367,7 +367,7 @@ alcohol tier (full price 30 EUR, 15 EUR for holders of the other tier). A rise t
 set is charged in FULL; setting it is the admin's job, and making that visible is the admin
 screen's. An automatic `target - held` was designed and dropped the same day: it would have
 duplicated or contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE
-function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike.
+function that picks the amount, called by the checkout (`decidePurchase`) and the listings alike.
 **The complement price freezes when the checkout opens**: the attempt row stores the amount asked,
 and settlement records the row's amount, never a re-read of the product - an admin who edits the
 preferential price while the buyer is paying changes the next checkout, not this one.
@@ -759,10 +759,13 @@ refusal is a 403 with the code `PRODUCT_COTISANTS_ONLY` (2026-10-31), which the 
 sentence (`paymentRefusal.ts`); a `requiredTags` refusal still carries no code. **So `membersOnly` is
 refused at SAVE when the association has no `cotisationMode`** (400
 `MEMBERS_ONLY_WITHOUT_COTISATION`, `assertMembersOnlyGateable`, 2026-11-01): the product would be on
-sale to nobody. Asked on create, and on an update only when it touches `membersOnly` or
-`requiredTags` (an old gated product can still be withdrawn); a product gated by `requiredTags` is not
-asked, since they take precedence. **A partnership card follows the same rule** (on create, and on an
-update that ticks the box) - ONE implementation, `members-only-gate.ts`. Both product editors
+sale to nobody. Asked on create, and on an update only on a TRANSITION into the gated state
+(`membersOnly` ticked and no `requiredTags`; clearing the tags of a ticked product is one), because
+every editor sends `membersOnly` on every save: a product already gated by a since-cleared mode can
+still be renamed, withdrawn - or put back on sale, where every buyer is refused. A product gated by
+`requiredTags` is not asked, since they take precedence. **A partnership card follows the same rule**
+(on create, and on an update that changes the box from unticked to ticked) - ONE implementation,
+`members-only-gate.ts`. Both product editors
 (`EditBoutiqueTab.svelte`, `/admin/cercle`) and the card editor (`PartnershipEditor.svelte`) word it
 from the code (`membersOnlySaveRefusalMessage`). The reverse order - a mode cleared while such rows
 exist - is NOT covered and is owed a decision
