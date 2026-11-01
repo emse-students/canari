@@ -67,6 +67,11 @@ export interface BookingView {
   /** The viewer is the holder or a participant still in. */
   mine: boolean;
   holderName?: string;
+  /**
+   * The holder's account id, so the screen can show their photo. Sent under EXACTLY the condition
+   * of `holderName` (one branch in `bookingView`): where the name is not shown, neither is this.
+   */
+  holderId?: string;
   participantNames?: string[];
   answers?: Record<string, unknown> | null;
   /**
@@ -142,6 +147,7 @@ export function bookingView(
   };
   if (relation !== 'other' || nameVisibility === 'names') {
     view.holderName = booking.holderName;
+    view.holderId = booking.holderId;
     view.participantNames = inBooking.map((p) => p.userName);
   }
   if (relation === 'manager') view.answers = booking.answers;
