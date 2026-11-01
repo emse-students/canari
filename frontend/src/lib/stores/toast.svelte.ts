@@ -22,6 +22,8 @@ export interface Toast {
   action?: ToastAction;
   /** `false` for a {@link showPinnedToast}: no close button, only its action ends it. */
   dismissible?: boolean;
+  /** Runs when the user closes it with its close button - never on the timeout. */
+  onClose?: () => void;
 }
 
 let _toasts = $state<Toast[]>([]);
@@ -42,10 +44,11 @@ export function showToast(
   message: string,
   type: Toast['type'] = 'error',
   durationMs = 4500,
-  action?: ToastAction
+  action?: ToastAction,
+  onClose?: () => void
 ): void {
   const id = _nextId++;
-  _toasts = [..._toasts, { id, message, type, action }];
+  _toasts = [..._toasts, { id, message, type, action, onClose }];
   setTimeout(() => dismissToast(id), durationMs);
 }
 

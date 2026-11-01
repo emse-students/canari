@@ -1917,7 +1917,7 @@ opened the app.
   (`CallRingAnswer`: the plain `fr.emse.canari://chat/<groupId>` link plus a per-ring nonce in the
   extras, [calls](../frontend/modules/calls.md#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30));
   decline = the `ACTION_CALL_DECLINE` broadcast, which also tells the caller.
-  `activeCallRings` dedupes the explicit `call_ring` against the MLS invite push
+  `RingSequencer.claimNative` dedupes the explicit `call_ring` against the MLS invite push
   (`call_invite` typed extraction is the fallback ring for pre-WP-XP-5 callers).
 - **iOS** (`canari_push.mm`): PushKit `PKPushRegistry` delivers the VoIP push;
   `CanariReportIncomingCall` **must** report a CallKit call immediately (Apple contract -
