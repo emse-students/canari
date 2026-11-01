@@ -182,7 +182,8 @@
             "/notifications/",
             "/calendar/",
             "/shop/",
-            "/bookings/"
+            "/bookings/",
+            "/lives/"
           ]
         },
         {
@@ -212,7 +213,8 @@
             "/notifications/",
             "/calendar/",
             "/shop/",
-            "/bookings/"
+            "/bookings/",
+            "/lives/"
           ]
         }
       ]

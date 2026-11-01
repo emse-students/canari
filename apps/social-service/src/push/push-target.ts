@@ -67,10 +67,9 @@ export function socialDeepLink(data: Record<string, string>): string {
   if (data.queueAssociationId) {
     return `fr.emse.canari://proposals/${encodeURIComponent(data.queueAssociationId)}`;
   }
-  // A live started (WP-L7): the live itself. The app's route for it is WP-L5's viewer, still owed -
-  // until then `appRouteForDeepLink` sends this host to the feed (`/posts`), where the LIVE card is
-  // to be. A build older than that route does not route it: it opens the app, and at most lands on
-  // the notifications list (the hook's unknown-host branch).
+  // A live started (WP-L7): the live itself - the app opens `/lives/<id>` (`appRouteForDeepLink`).
+  // A build below the lives floor has no such route, which is why the announcer asks chat-delivery
+  // to skip devices known to run one (`minAppVersion`).
   if (data.liveId) return `fr.emse.canari://live/${encodeURIComponent(data.liveId)}`;
   // A request to the AUTHOR to republish their personal post (D38b): their own requests page, where
   // the answer is given. A TYPED target, from a closed set - never a path the payload names.
