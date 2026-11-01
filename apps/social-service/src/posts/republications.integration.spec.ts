@@ -133,6 +133,9 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         "publishedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
+      CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
+        status varchar(16) NOT NULL DEFAULT 'pending');
+      CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
     `);
     await q(
       `INSERT INTO associations (id, name, slug, type) VALUES

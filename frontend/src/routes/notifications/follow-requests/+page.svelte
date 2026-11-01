@@ -17,7 +17,9 @@
   import FollowPersonRow from '$lib/components/follows/FollowPersonRow.svelte';
   import {
     acceptFollowRequest,
+    appendFollowPage,
     listFollowRequests,
+    nextFollowCursor,
     refuseFollowRequest,
     type FollowListEntry,
   } from '$lib/follows/api';
@@ -31,6 +33,9 @@
   let errorMessage = $state('');
   /** The request whose answer is in flight, so no button can be pressed twice. */
   let busy = $state<string | null>(null);
+  /** Where the next page starts; `null` once the last page is shown. */
+  let next = $state<string | null>(null);
+  let loadingMore = $state(false);
 
   onMount(load);
 
@@ -39,12 +44,31 @@
     errorMessage = '';
     try {
       requests = await listFollowRequests();
+      next = nextFollowCursor(requests);
       Log.d('FollowRequests', `loaded ${requests.length}`);
     } catch (e: unknown) {
       Log.d('FollowRequests', `load failed: ${String(e)}`);
       errorMessage = m.common_load_error();
     } finally {
       loading = false;
+    }
+  }
+
+  /** Appends the next page: an inbox of any length is answerable to its last request. */
+  async function loadMore() {
+    if (!next || loadingMore) return;
+    loadingMore = true;
+    errorMessage = '';
+    try {
+      const page = await listFollowRequests(next);
+      requests = appendFollowPage(requests, page);
+      next = nextFollowCursor(page);
+      Log.d('FollowRequests', `page loaded: ${page.length}`);
+    } catch (e: unknown) {
+      Log.d('FollowRequests', `next page failed: ${String(e)}`);
+      errorMessage = m.common_load_error();
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -129,5 +153,18 @@
         </FollowPersonRow>
       {/each}
     </ul>
+    {#if next}
+      <div class="mt-3 flex justify-center">
+        <button
+          type="button"
+          class="text-text-main rounded-xl bg-black/5 px-4 py-2 text-sm font-semibold transition-colors hover:bg-black/10 disabled:opacity-40 dark:bg-white/10 dark:hover:bg-white/20"
+          data-follow-requests-more
+          disabled={loadingMore}
+          onclick={loadMore}
+        >
+          {m.follow_list_more()}
+        </button>
+      </div>
+    {/if}
   {/if}
 </PageContainer>

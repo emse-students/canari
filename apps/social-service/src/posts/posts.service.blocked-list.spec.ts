@@ -57,11 +57,17 @@ describe('PostsService hides a blocked account, and only where the author was vi
    * `blocks` is what the `user_blocks` read returns - the branch has to come first, because that
    * query names no table the other branches match on.
    */
+  /**
+   * What only the reader's own block lookup (`blockedUserIdsFor`) says: since WP-F5 the visibility
+   * predicate of every feed query names `user_blocks` too (a follower's opening checks the block).
+   */
+  const BLOCK_READ = 'AS "otherId" FROM user_blocks';
+
   function makeQueryMock(blocks: string[] = [BLOCKED]) {
     const calls: string[] = [];
     const query = jest.fn((sql: string, _params?: unknown[]) => {
       calls.push(sql);
-      if (sql.includes('FROM user_blocks')) {
+      if (sql.includes(BLOCK_READ)) {
         return Promise.resolve(blocks.map((otherId) => ({ otherId })));
       }
       // The one-row visibility read (WP6b): every reader here is inside the post's audience.
@@ -93,9 +99,9 @@ describe('PostsService hides a blocked account, and only where the author was vi
     );
   }
 
-  /** The feed query, which is the one naming `FROM posts` rather than `FROM user_blocks`. */
+  /** The feed query, which is the one naming `FROM posts` rather than the block lookup. */
   const feedSql = (calls: string[]) =>
-    calls.find((sql) => sql.includes('FROM posts') && !sql.includes('FROM user_blocks')) ?? '';
+    calls.find((sql) => sql.includes('FROM posts') && !sql.includes(BLOCK_READ)) ?? '';
 
   it('reads the block list in BOTH directions, so it hides the blocker from the blocked too', async () => {
     const { query, calls } = makeQueryMock();
@@ -103,7 +109,7 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'viewer-1' });
 
-    const blocksQuery = calls.find((sql) => sql.includes('FROM user_blocks')) ?? '';
+    const blocksQuery = calls.find((sql) => sql.includes(BLOCK_READ)) ?? '';
     expect(blocksQuery).toMatch(/"blockerId" = \$1/);
     expect(blocksQuery).toMatch(/"blockedId" = \$1/);
     expect(blocksQuery).toMatch(/UNION/);
@@ -217,7 +223,7 @@ describe('PostsService hides a blocked account, and only where the author was vi
         (c: unknown[]) =>
           typeof c[0] === 'string' &&
           (c[0] as string).includes('FROM posts') &&
-          !(c[0] as string).includes('FROM user_blocks')
+          !(c[0] as string).includes(BLOCK_READ)
       );
       const [sql, params = []] = call;
       const placeholder = /<> ALL\(\$(\d+)::text\[\]\)/.exec(sql);

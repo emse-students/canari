@@ -1182,9 +1182,11 @@ export class PostsService {
    * Returns paginated posts for one of four feeds:
    * - "associations": what associations publish or republish, a carried post at its latest
    *   republication (`republished-feed-sql.ts`)
-   * - "all": every post, pinned first
+   * - "all": every post, pinned first - filtered by SPACES: an accepted follower's reach across
+   *   spaces (WP-F5) is not in it (decision 5)
    * - "followed": posts from associations and users the viewer follows, and what a followed
-   *   association republished, placed at that republication
+   *   association republished, placed at that republication - a followed person's post whatever
+   *   their space (WP-F5)
    * - "custom": personal posts filtered by promo year and/or formation
    *
    * Non-admin viewers with a promo year set cannot see posts published before
@@ -1276,6 +1278,11 @@ export class PostsService {
     const tail = [...(promoCutoff ? [promoCutoff] : []), ...blockedParams];
     const viewerParam = viewerUserId ?? null;
     const visibleAt = (index: number) => `AND ${postVisibleToViewerSql('posts', `$${index}`)}`;
+    // "Tout" and the promo/formation browse are feeds of SPACES (decision 5 of the follow requests,
+    // user 2026-10-25): what an accepted follower reads across spaces (WP-F5) appears in Suivis,
+    // never in these two - the predicate without its follower disjunct.
+    const spaceVisibleAt = (index: number) =>
+      `AND ${postVisibleToViewerSql('posts', `$${index}`, { followers: false })}`;
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -1312,7 +1319,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
-         ${visibleAt(3 + tail.length)}
+         ${spaceVisibleAt(3 + tail.length)}
        ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
@@ -1365,7 +1372,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
-         ${visibleAt(5 + tail.length)}
+         ${spaceVisibleAt(5 + tail.length)}
        ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam, ...tail, viewerParam]

@@ -30,7 +30,8 @@ function makeService(opts: {
   const query = jest.fn((sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
     if (sql.includes('AS visible')) return Promise.resolve([{ visible: opts.visible ?? true }]);
-    if (sql.includes('FROM user_blocks')) {
+    // The reader's own block lookup, by its alias: the predicate names `user_blocks` too (WP-F5).
+    if (sql.includes('AS "otherId" FROM user_blocks')) {
       return Promise.resolve((opts.blocks ?? []).map((otherId) => ({ otherId })));
     }
     if (sql.includes('SELECT promo FROM users'))
@@ -98,6 +99,26 @@ describe('every feed arm asks the predicate about the reader, at the placeholder
       await service.searchPosts('gala', 10, 0, { viewerUserId: VIEWER });
       expect(viewerAt(feedQuery(calls))).toBe(VIEWER);
     }
+  });
+
+  it.each([
+    ['all', false],
+    ['custom', false],
+    ['followed', true],
+    ['associations', true],
+  ] as const)(
+    'the %s feed counts an accepted follower across spaces: %s (WP-F5, decision 5 - Tout stays spaces)',
+    async (feed, opened) => {
+      const { service, calls } = makeService({});
+      await service.listPosts({ limit: 10, offset: 0, feed, viewerUserId: VIEWER });
+      expect(feedQuery(calls).sql.includes('FROM user_follows vis_follow')).toBe(opened);
+    }
+  );
+
+  it('search counts it too: it finds what the reader may open', async () => {
+    const { service, calls } = makeService({});
+    await service.searchPosts('gala', 10, 0, { viewerUserId: VIEWER });
+    expect(feedQuery(calls).sql).toContain('FROM user_follows vis_follow');
   });
 
   it('a read with no reader passes NULL, which matches nobody, rather than skipping the clause', async () => {

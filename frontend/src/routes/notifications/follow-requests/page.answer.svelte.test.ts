@@ -75,4 +75,19 @@ describe('/notifications/follow-requests', () => {
     expect(target.textContent).toContain(m.follow_requests_gone());
     expect(target.textContent).toContain(m.follow_requests_empty());
   });
+
+  it('pages past the first 100 requests with "Voir plus", until the last page', async () => {
+    const page = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...row('p' + (from + i)), cursor: 'c' + (from + i) }));
+    api.list.mockResolvedValueOnce(page(0, 100)).mockResolvedValueOnce(page(100, 30));
+    const target = await render();
+    expect(target.querySelectorAll('li')).toHaveLength(100);
+    (target.querySelector('[data-follow-requests-more]') as HTMLButtonElement).click();
+    await flushMacrotask();
+    flushSync();
+    expect(api.list).toHaveBeenLastCalledWith('c99');
+    expect(target.querySelectorAll('li')).toHaveLength(130);
+    // A short page is the last: the button goes.
+    expect(target.querySelector('[data-follow-requests-more]')).toBeNull();
+  });
 });
