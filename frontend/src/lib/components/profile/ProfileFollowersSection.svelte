@@ -12,9 +12,11 @@
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import FollowPersonRow from '$lib/components/follows/FollowPersonRow.svelte';
   import {
+    appendFollowPage,
     leaveFollow,
     listFollowers,
     listSentFollowRequests,
+    nextFollowCursor,
     removeFollower,
     type FollowListEntry,
   } from '$lib/follows/api';
@@ -29,6 +31,11 @@
   let error = $state('');
   /** The person whose removal or withdrawal is in flight. */
   let pendingId = $state<string | null>(null);
+  /** Where each list's next page starts; `null` once its last page is shown. */
+  let followersNext = $state<string | null>(null);
+  let sentNext = $state<string | null>(null);
+  /** Which list is loading its next page, so its button cannot be pressed twice. */
+  let loadingMore = $state<'followers' | 'sent' | null>(null);
 
   onMount(load);
 
@@ -37,12 +44,39 @@
     error = '';
     try {
       [followers, sent] = await Promise.all([listFollowers(), listSentFollowRequests()]);
+      followersNext = nextFollowCursor(followers);
+      sentNext = nextFollowCursor(sent);
       Log.d('ProfileFollowersSection', `followers=${followers.length} sent=${sent.length}`);
     } catch (e: unknown) {
       Log.d('ProfileFollowersSection.load failed', e);
       error = m.common_load_error();
     } finally {
       loading = false;
+    }
+  }
+
+  /** Appends the next page of one list - every follower must be reachable to be pruned (WP-F5). */
+  async function loadMore(list: 'followers' | 'sent') {
+    const after = list === 'followers' ? followersNext : sentNext;
+    if (!after || loadingMore) return;
+    loadingMore = list;
+    error = '';
+    try {
+      if (list === 'followers') {
+        const page = await listFollowers(after);
+        followers = appendFollowPage(followers, page);
+        followersNext = nextFollowCursor(page);
+      } else {
+        const page = await listSentFollowRequests(after);
+        sent = appendFollowPage(sent, page);
+        sentNext = nextFollowCursor(page);
+      }
+      Log.d('ProfileFollowersSection', `${list} page loaded`);
+    } catch (e: unknown) {
+      Log.d('ProfileFollowersSection.loadMore failed', e);
+      error = m.common_load_error();
+    } finally {
+      loadingMore = null;
     }
   }
 
@@ -112,6 +146,17 @@
         </FollowPersonRow>
       {/each}
     </ul>
+    {#if followersNext}
+      <button
+        type="button"
+        class={buttonClass}
+        data-followers-more
+        disabled={loadingMore !== null}
+        onclick={() => loadMore('followers')}
+      >
+        {m.follow_list_more()}
+      </button>
+    {/if}
   {/if}
 </ProfileCard>
 
@@ -135,5 +180,16 @@
         </FollowPersonRow>
       {/each}
     </ul>
+    {#if sentNext}
+      <button
+        type="button"
+        class={buttonClass}
+        data-sent-requests-more
+        disabled={loadingMore !== null}
+        onclick={() => loadMore('sent')}
+      >
+        {m.follow_list_more()}
+      </button>
+    {/if}
   {/if}
 </ProfileCard>

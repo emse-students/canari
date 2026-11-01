@@ -2,6 +2,9 @@ import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from '$lib/associations/api';
 import { formatAmount } from '$lib/forms/fillAnswers';
 
+/** The body `code` of a write that sells or collects money on a list or an institution. */
+export const ASSOCIATION_KIND_DOES_NOT_SELL = 'ASSOCIATION_KIND_DOES_NOT_SELL';
+
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 
@@ -17,6 +20,9 @@ export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PAYMENT_PROVIDER_REFUSED) {
     return m.shop_payment_refused({ reason: err.message });
+  }
+  if (err instanceof SocialApiError && err.code === ASSOCIATION_KIND_DOES_NOT_SELL) {
+    return m.asso_kind_does_not_sell();
   }
   if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
     return m.form_previous_payment_open();

@@ -271,7 +271,8 @@ const ctx = {
   callId: 'room-1',
   phase: 'tick' as const,
   durMs: 12_345.6,
-  setupMs: 812.4,
+  ringMs: 6_420.2,
+  connectMs: 812.4,
   engine: 'Chrome/155',
   ice: 'connected',
   e2e: workerReport(),
@@ -281,7 +282,7 @@ describe('buildCallReport', () => {
   it('writes every field of the plan line, and no rate on the first reading', () => {
     const { line, snapshot } = buildCallReport(liveReading(1_000, 4_000, 8_000), ctx, null);
     expect(line).toBe(
-      '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 setup_ms=812 engine=Chrome/155 ice=connected ' +
+      '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 ring_ms=6420 connect_ms=812 engine=Chrome/155 ice=connected ' +
         'pair=relay/udp->srflx/udp relayed=yes relay_proto=tls turn=turn.cloudflare.com:3478 ' +
         'out_kbps=- in_kbps=- loss_in_pct=1.0 jitter_ms=12 audio_level_out=0.500 audio_level_in=0.250 ' +
         'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=-'
@@ -340,8 +341,12 @@ describe('buildCallReport', () => {
   });
 
   it('says what it does not know rather than inventing it', () => {
-    const { line } = buildCallReport(report([]), { ...ctx, setupMs: null, e2e: null }, null);
-    expect(line).toContain('setup_ms=-');
+    const { line } = buildCallReport(
+      report([]),
+      { ...ctx, ringMs: null, connectMs: null, e2e: null },
+      null
+    );
+    expect(line).toContain('ring_ms=- connect_ms=-');
     expect(line).toContain('pair=none');
     expect(line).toContain('turn=-');
     expect(line).toContain('loss_in_pct=-');

@@ -353,6 +353,7 @@
                 <data android:pathPrefix="/calendar/" />
                 <data android:pathPrefix="/shop/" />
                 <data android:pathPrefix="/bookings/" />
+                <data android:pathPrefix="/lives/" />
                 
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->

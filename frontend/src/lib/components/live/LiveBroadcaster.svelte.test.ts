@@ -12,6 +12,8 @@ import LiveOverlay from './LiveOverlay.svelte';
 import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
+import { shareLiveLink } from '$lib/live/shareLive';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { fakeCamera, fakeDeps } from '$lib/live/liveBroadcast.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -28,6 +30,8 @@ import type { LiveChatBlock, LiveManifest } from '$lib/live/types';
 import { flushMacrotask } from '../../../test/flush';
 
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
+vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/live/shareLive', () => ({ shareLiveLink: vi.fn() }));
 // The chat panel names each line's author.
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: () => '',
@@ -412,10 +416,43 @@ describe('LiveOverlay', () => {
       messagesAfter: undefined,
       reactionsAfter: undefined,
     });
+    // Hiding a line is a tap on the line, then "Masquer" - not an icon always drawn on it.
+    expect(q('[data-live-chat-hide]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-line-toggle]')!.click();
+    flushSync();
     q<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-hide]')!.click();
     await settle();
     expect(liveApi.hideLiveMessage).toHaveBeenCalledWith(LIVE_ID, 'm-1');
     expect(q('[data-live-chat-line="m-1"]')).toBeNull();
+  });
+
+  it('on air the top-left names the signed-in broadcaster, with an avatar', async () => {
+    setCurrentUserId('b'.repeat(64));
+    screen();
+    await settle();
+    expect(q('[data-live-identity]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(q('[data-live-identity] [data-live-broadcaster]')?.textContent).toContain('Bob');
+    setCurrentUserId(null);
+  });
+
+  it('on air the top controls are the share, the chat toggle and a small End; the chat toggle hides the lines', async () => {
+    screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(q('[data-live-share]')).not.toBeNull();
+    q<HTMLButtonElement>('[data-live-share]')!.click();
+    expect(shareLiveLink).toHaveBeenCalledExactlyOnceWith(LIVE_ID);
+    expect(q('[data-live-end]')!.closest('[data-live-broadcaster-chat-box]')).toBeNull();
+    expect(q('[data-live-chat]')).not.toBeNull();
+    const toggle = q<HTMLButtonElement>('[data-live-chat-toggle]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    toggle.click();
+    await settle();
+    expect(q('[data-live-chat]')).toBeNull();
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('on air the broadcaster sees HOW MANY watch, from its chat poll - a number and no name', async () => {
@@ -429,6 +466,10 @@ describe('LiveOverlay', () => {
       expect(q('[data-live-viewer-count]')?.getAttribute('data-live-viewer-count')).toBe('4')
     );
     expect(q('[data-live-viewer-count]')?.textContent).toContain(m.live_viewer_count({ count: 4 }));
+    // The count sits in the same row as the LIVE badge and the clock (Instagram's corner).
+    const row = q('[data-live-badge]')!.parentElement!;
+    expect(row.contains(q('[data-live-viewer-count]'))).toBe(true);
+    expect(row.contains(q('[role="timer"]'))).toBe(true);
   });
 
   it('a failed chat poll takes the count off the screen rather than leaving a stale one', async () => {

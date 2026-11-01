@@ -1,7 +1,10 @@
 import { ForbiddenException } from '@nestjs/common';
 import { AssociationsController } from './associations.controller';
 import { parseDirectoryQuery } from './directory-query';
-import { REPUBLISHING_ASSOCIATION_TYPES } from '../posts/republication-sql';
+import {
+  PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
+  REPUBLISHING_ASSOCIATION_TYPES,
+} from '../posts/republication-sql';
 
 /**
  * WP6e (D20, D24): an INSTITUTION is created by a global admin ONLY. A BDE member holding
@@ -54,8 +57,17 @@ describe('institutions in the listings and the republishing allowlist', () => {
     expect(parseDirectoryQuery({ type: 'institution' }).type).toBe('institution');
   });
 
-  it('an institution republishes, a promo list does not', () => {
+  it('an institution and a campaign list republish; nothing else is on the allowlist', () => {
     expect(REPUBLISHING_ASSOCIATION_TYPES).toContain('institution');
-    expect(REPUBLISHING_ASSOCIATION_TYPES).not.toContain('list');
+    expect(REPUBLISHING_ASSOCIATION_TYPES).toContain('list');
+    expect([...REPUBLISHING_ASSOCIATION_TYPES].sort()).toEqual([
+      'association',
+      'institution',
+      'list',
+    ]);
+  });
+
+  it('a person is asked to republish for an association only, never a list', () => {
+    expect(PERSONAL_REPUBLISHING_ASSOCIATION_TYPES).toEqual(['association']);
   });
 });

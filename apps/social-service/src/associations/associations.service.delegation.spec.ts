@@ -9,7 +9,7 @@ import type { Association } from './entities/association.entity';
 function makeService(seed: Record<string, Partial<Association>>) {
   const db = new Map<string, Association>();
   for (const [id, v] of Object.entries(seed))
-    db.set(id, { id, name: id, slug: id, ...v } as Association);
+    db.set(id, { id, name: id, slug: id, type: 'association', ...v } as Association);
 
   const filterByParent = (parentId: string) =>
     [...db.values()].filter((a) => a.paymentParentAssociationId === parentId);
@@ -62,6 +62,79 @@ function makeService(seed: Record<string, Partial<Association>>) {
 }
 
 const ready = { lydiaOnboardingComplete: true, lydiaAccountId: 'vendor_x' };
+
+describe('AssociationsService payment delegation of a kind that sells nothing (owner, 2026-10-31)', () => {
+  it.each(['list', 'institution'] as const)(
+    'refuses a delegation request from a %s, typed',
+    async (type) => {
+      const { service, db } = makeService({ child: { type }, parent: { ...ready } });
+      await expect(service.requestPaymentDelegation('child', 'parent')).rejects.toMatchObject({
+        response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+      });
+      expect(db.get('child')!.paymentParentAssociationId).toBeUndefined();
+    }
+  );
+
+  it('refuses to approve a delegation for a child or a parent of such a kind', async () => {
+    const pending = {
+      paymentParentAssociationId: 'parent',
+      paymentDelegationStatus: 'pending' as const,
+    };
+    const a = makeService({ child: { ...pending, type: 'list' }, parent: { ...ready } });
+    await expect(a.service.approvePaymentDelegation('parent', 'child')).rejects.toMatchObject({
+      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+    });
+    const b = makeService({ child: { ...pending }, parent: { ...ready, type: 'institution' } });
+    await expect(b.service.approvePaymentDelegation('parent', 'child')).rejects.toMatchObject({
+      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+    });
+  });
+
+  it('refuses to enable a cotisation on a list, and still lets one be disabled', async () => {
+    const { service, db } = makeService({ campaign: { type: 'list' } });
+    // `findById` wants a UUID and a roster count; the kind is the only thing this case reads.
+    jest.spyOn(service, 'findById').mockResolvedValue(db.get('campaign') as never);
+    await expect(
+      service.update('campaign', { cotisationEnabled: true } as never)
+    ).rejects.toMatchObject({
+      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+    });
+    expect(db.get('campaign')!.cotisationEnabled).toBeUndefined();
+    // Disabling passes the kind guard: whatever it does next, it is not this refusal.
+    const outcome = await service
+      .update('campaign', { cotisationEnabled: false } as never)
+      .catch((e: unknown) => e);
+    expect(JSON.stringify(outcome)).not.toContain('ASSOCIATION_KIND_DOES_NOT_SELL');
+  });
+});
+
+describe('AssociationsService - the bitmask written for a member of a kind that sells nothing', () => {
+  const MEMBERS = 4; // MANAGE_MEMBERS
+  const FORMS = 16; // MANAGE_FORMS
+  const SHOP = 256; // MANAGE_PRODUCTS
+  const PAYOUT = 512; // MANAGE_PAYOUT_ACCOUNT
+
+  async function writeFor(type: 'list' | 'association') {
+    const { service } = makeService({ camp: { type } });
+    const update = jest.fn(() => Promise.resolve({ affected: 1 }));
+    Object.assign(service as object, {
+      memberRepo: {
+        findOne: jest.fn(() => Promise.resolve({ id: 'm1', permissions: MEMBERS })),
+        update,
+      },
+    });
+    await service.updateMemberRole('camp', 'user-1', undefined, MEMBERS | FORMS | SHOP | PAYOUT);
+    return (update.mock.calls[0] as unknown[])[1] as { permissions: number };
+  }
+
+  it('drops the shop and payout rights for a list, keeping the rest', async () => {
+    expect((await writeFor('list')).permissions).toBe(MEMBERS | FORMS);
+  });
+
+  it('keeps every right for an association', async () => {
+    expect((await writeFor('association')).permissions).toBe(MEMBERS | FORMS | SHOP | PAYOUT);
+  });
+});
 
 describe('AssociationsService payment delegation', () => {
   describe('requestPaymentDelegation', () => {

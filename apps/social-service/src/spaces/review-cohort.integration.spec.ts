@@ -116,6 +116,7 @@ maybe('the review cohort against PostgreSQL', () => {
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
+      CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -211,6 +212,31 @@ maybe('the review cohort against PostgreSQL', () => {
       if (rows[0].visible === true) seen.push(id);
     }
     expect(seen.sort()).toEqual([...live.seenBy].sort());
+  });
+
+  it('a follow ACROSS the cohort boundary opens nothing, either way: posts and lives (WP-F5, F6 of its review)', async () => {
+    // Both rows are accepted (114 ran over them): REVIEW_A follows MEMBER, MEMBER follows REVIEW_B.
+    const { rows } = await client.query(
+      `SELECT "followerUserId" AS f, "followedUserId" AS t FROM user_follows
+        WHERE status = 'accepted' ORDER BY 1, 2`
+    );
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { f: REVIEW_A, t: MEMBER },
+        { f: MEMBER, t: REVIEW_B },
+      ])
+    );
+    const sees = async (sql: string, id: string, viewer: string) =>
+      (await client.query(sql, [id, viewer])).rows[0].visible === true;
+    const post = `SELECT ${postVisibleToViewerSql('posts', '$2')} AS visible FROM posts WHERE posts.id = $1`;
+    const live = `SELECT ${liveVisibleToUserSql('lives', 'viewer')} AS visible
+                    FROM lives JOIN users viewer ON viewer.id = $2 WHERE lives.id = $1`;
+    // The review account does not read the member it follows...
+    expect(await sees(post, POSTS[2].id, REVIEW_A)).toBe(false);
+    expect(await sees(live, LIVES[1].id, REVIEW_A)).toBe(false);
+    // ...nor the member the review account they follow.
+    expect(await sees(post, POSTS[0].id, MEMBER)).toBe(false);
+    expect(await sees(live, LIVES[0].id, MEMBER)).toBe(false);
   });
 
   it("announces a review account's post to its followers in the cohort, never to a member", async () => {

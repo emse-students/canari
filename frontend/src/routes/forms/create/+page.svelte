@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
@@ -332,9 +333,10 @@
     bind:priceMatrix
     {tiers}
     {formations}
-    {items}
+    bind:items
     associationName={selectedAssociation?.name ?? ''}
     {associationCanBePaid}
+    associationSells={!selectedAssociation || kindHasSection(selectedAssociation.type, 'payments')}
   />
 
   <!-- 3. Questions -->

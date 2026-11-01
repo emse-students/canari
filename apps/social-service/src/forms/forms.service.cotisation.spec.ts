@@ -80,6 +80,7 @@ describe('FormsService - cotisation configuration and granting', () => {
     const associationsService: any = {
       isMember: jest.fn(() => Promise.resolve(true)),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
+      kindOf: jest.fn(() => Promise.resolve('association')),
       // MANAGE_MEMBERS by default, so the tests below are about the cotisation config itself;
       // the permission gate has its own block. `mayAct` is the one predicate every check asks -
       // it folds in the platform admin and the cross-association super-admin.

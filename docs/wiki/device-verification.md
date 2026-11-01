@@ -1712,8 +1712,8 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 
 **`[CALL_REPORT]` reaches a build with the first pre-release carrying the 2026-10-21 port of #2011**
 (check the release notes; no build before it has the line). From then on each device logs one line per call every 10 s and once at the end
-(`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
-e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
+(`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= ring_ms= connect_ms= engine= ice= pair= relayed= ...
+e2e=on enc_frames= dec_frames= dec_fail=`); record `connect_ms` (and `ring_ms` apart: a human; one `setup_ms` from the tap on a build before the split of 2026-10-31), `relayed`, `rtt_ms`, `loss_in_pct` and
 `dec_fail` per direction, which is the plan's exit criterion
 ([calls-revival-plan](frontend/modules/calls-revival-plan.md)).
 

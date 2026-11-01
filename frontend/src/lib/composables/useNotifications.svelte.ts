@@ -8,6 +8,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
+import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 import {
@@ -287,22 +288,26 @@ export function useNotifications() {
     if (typeof window === 'undefined') return;
     if (!settings.soundsEnabled) return;
 
-    playTone('incoming-call ring', (ctx, startAt) =>
-      [
-        [440, 0],
-        [480, 0.25],
-      ].map(([freq, offset]) =>
-        sweepVoice(ctx, startAt + offset, {
-          type: 'sine',
-          from: freq,
-          to: freq,
-          glideEnd: 0,
-          peak: 0.12,
-          attackEnd: 0.03,
-          decayEnd: 0.22,
-          stopAt: 0.24,
-        })
-      )
+    // `call`: the call's own ring is exempt from the gate that silences the app while a call rings.
+    playTone(
+      'incoming-call ring',
+      (ctx, startAt) =>
+        [
+          [440, 0],
+          [480, 0.25],
+        ].map(([freq, offset]) =>
+          sweepVoice(ctx, startAt + offset, {
+            type: 'sine',
+            from: freq,
+            to: freq,
+            glideEnd: 0,
+            peak: 0.12,
+            attackEnd: 0.03,
+            decayEnd: 0.22,
+            stopAt: 0.24,
+          })
+        ),
+      'call'
     );
   }
 
@@ -789,9 +794,14 @@ export function useNotifications() {
       announcedBrowserPermission = 'granted';
 
       try {
+        // A call holds the sound (`callSoundGate`): the banner is still raised, only without its
+        // sound - the message arrives, the call is not interrupted by it.
+        const silent = callHoldsAppSound();
+        if (silent) console.log(`[NOTIF] ${convKey} raised silent - a call holds the app's sound.`);
         const n = new Notification(title, {
           body,
           tag: `canari-${conversationId ?? 'message'}`,
+          silent,
         });
         n.onclick = () => {
           try {

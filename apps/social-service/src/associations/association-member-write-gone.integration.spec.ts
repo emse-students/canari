@@ -59,8 +59,10 @@ maybe('an association member write against PostgreSQL', () => {
     // Only the membership repository is read or written by the two calls under test; the feed-cache
     // sweep a removal makes is best-effort and logs its own failure against this empty Redis.
     const unused = {} as never;
+    // `updateMemberRole` also reads the association's KIND (a list takes no shop right).
+    const assoRepo = { findOne: async () => ({ id: 'a', type: 'association' }) } as never;
     service = new AssociationsService(
-      unused,
+      assoRepo,
       members,
       unused,
       unused,

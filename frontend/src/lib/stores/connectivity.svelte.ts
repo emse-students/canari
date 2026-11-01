@@ -20,6 +20,7 @@
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 
 /** Callback invoked when connectivity is regained (offline -> online). */
 export type ReconnectListener = () => void;
@@ -131,6 +132,17 @@ class ConnectivityStore {
 
   private probe: ReachabilityProbe | null = null;
   private probing = false;
+  /**
+   * A resume's probing stopped because the app left the screen, and is owed when it comes back.
+   * DURABLE STATE, not a timer: the return to the screen is the event that settles it.
+   */
+  private probeOwedOnScreen = false;
+  /**
+   * Whether probing pauses while the app is off screen: the native mobile runtimes only, where the
+   * OS pauses the app and starves its requests. A web or desktop tab in the background keeps its
+   * network, and its probes keep restoring a link it may need. Set by `installReachabilityProbe`.
+   */
+  private probePausesOffScreen = false;
   private listeners = new Set<ReconnectListener>();
   private listenersInstalled = false;
 
@@ -157,6 +169,14 @@ class ConnectivityStore {
       console.log('[CONNECTIVITY] browser reports offline');
       this.isOnline = false;
     });
+    // The probing a pause stopped resumes with the app, from its first attempt: what was learned
+    // before the pause says nothing about the link now.
+    onAppScreenChange((onScreen) => {
+      if (!onScreen || !this.probeOwedOnScreen) return;
+      this.probeOwedOnScreen = false;
+      if (this.serverReachable || !this.isOnline) return;
+      void this.probeUntilReachable(PROBE_DELAYS_AFTER_ONLINE_MS, 'app back on screen');
+    });
   }
 
   /**
@@ -182,6 +202,8 @@ class ConnectivityStore {
     if (this.serverReachable && this.isOnline) return;
     console.log('[CONNECTIVITY] server reachable again');
     const wasOffline = this.isOffline;
+    // A new count starts with the server back, whichever answer brought it back.
+    this.consecutiveStalls = 0;
     this.serverReachable = true;
     this.isOnline = true;
     if (wasOffline) this.emitReconnect();
@@ -210,22 +232,35 @@ class ConnectivityStore {
     this.probe = probe;
   }
 
+  /** Whether probing pauses off screen ({@link probePausesOffScreen}); the native mobile runtimes. */
+  setProbePausesOffScreen(pauses: boolean): void {
+    this.probePausesOffScreen = pauses;
+  }
+
   /**
    * Probes the server until it answers, over a bounded number of attempts (see
    * {@link PROBE_DELAYS_AFTER_ONLINE_MS}). SINGLE-FLIGHT: a second trigger while one runs joins it
    * rather than starting another, so a flapping link cannot multiply probes. The answer itself is
    * recorded by the probe's own `trackedFetch` - `notifyServerReachable` fires reconnect listeners
    * (the outbox flush) exactly as any successful request would, with no second path.
+   *
+   * ON A PHONE, NEVER WHILE THE APP IS OFF SCREEN. A paused app's requests are the OS's to starve,
+   * so a probe then measures the pause, not the link - and was seen probing on after the pause
+   * (Android 1.5.3, 2026-10-31). The loop stops at the next attempt and is owed to the return to
+   * the screen (`probeOwedOnScreen`), which starts it afresh. A web or desktop tab is not paused by
+   * its OS and keeps probing ({@link probePausesOffScreen}).
    */
   private async probeUntilReachable(delaysMs: readonly number[], reason: string): Promise<void> {
     if (!this.probe || this.probing) return;
     this.probing = true;
     try {
       for (let attempt = 0; attempt < delaysMs.length; attempt++) {
+        if (this.stopProbingOffScreen(reason)) return;
         const pause = delaysMs[attempt] * (0.75 + Math.random() * 0.5);
         if (pause > 0) await new Promise((resolve) => setTimeout(resolve, pause));
         // Someone else answered, or the link left again: nothing left to find out.
         if (this.serverReachable || !this.isOnline) return;
+        if (this.stopProbingOffScreen(reason)) return;
         const answered = await this.probe().catch(() => false);
         if (answered) {
           console.log(`[CONNECTIVITY] probe answered (${reason}, attempt ${attempt + 1})`);
@@ -238,6 +273,16 @@ class ConnectivityStore {
     } finally {
       this.probing = false;
     }
+  }
+
+  /** True (and the probing owed to the screen's return, said once) when the app is off screen. */
+  private stopProbingOffScreen(reason: string): boolean {
+    if (!this.probePausesOffScreen || isAppOnScreen()) return false;
+    this.probeOwedOnScreen = true;
+    console.log(
+      `[CONNECTIVITY] app off screen - probing after ${reason} stops until it is back on screen`
+    );
+    return true;
   }
 
   /**
@@ -302,11 +347,17 @@ class ConnectivityStore {
         if (!this.inFlight.has(id)) return;
         settle();
         if (error instanceof RequestDeadlineError) {
-          this.consecutiveStalls++;
-          console.warn(
-            `[CONNECTIVITY] ${error.message} (stall ${this.consecutiveStalls}/${STALLS_BEFORE_UNREACHABLE})`
-          );
-          if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) this.notifyServerUnreachable();
+          // The count leads to ONE verdict, and once that verdict holds a stall is not a step
+          // towards it: counting on read "3/2", "4/2" (2026-10-31). Said as what it is.
+          if (!this.serverReachable) {
+            console.warn(`[CONNECTIVITY] ${error.message} (server already unreachable)`);
+          } else {
+            this.consecutiveStalls++;
+            console.warn(
+              `[CONNECTIVITY] ${error.message} (stall ${this.consecutiveStalls}/${STALLS_BEFORE_UNREACHABLE})`
+            );
+            if (this.consecutiveStalls >= STALLS_BEFORE_UNREACHABLE) this.notifyServerUnreachable();
+          }
         } else if (isTransportFailure(error)) {
           this.notifyServerUnreachable();
         }
@@ -365,6 +416,8 @@ class ConnectivityStore {
     this.listeners.clear();
     this.probe = null;
     this.probing = false;
+    this.probeOwedOnScreen = false;
+    this.probePausesOffScreen = false;
     for (const timer of this.inFlight.values()) clearTimeout(timer);
     this.inFlight.clear();
     this.slow = false;

@@ -1020,7 +1020,7 @@ last, not invented.** Pass conditions are the cited rows' own words, shortened.
 - Both phones run the SAME pre-release (Settings > A propos shows `X.Y.Z-alpha.N`, `dev.canari-emse.fr`). **A store serves
   the highest build number**: Play may offer a stable above the alpha, and on TestFlight the alpha is picked by hand
   ([CALL-L1 precondition 1](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
-- Never paste a `media keys derived from MLS` line older than 2026-10-21 into this repo. Record `setup_ms`,
+- Never paste a `media keys derived from MLS` line older than 2026-10-21 into this repo. Record `connect_ms` and `ring_ms` (`setup_ms` before 2026-10-31),
   `relayed`, `rtt_ms`, `loss_in_pct` and `dec_fail` from `[CALL_REPORT]`, per direction, plus the build on each phone.
 - A verdict is `PASS` or `FAIL` with the log inline, never `PASS-DIRTY`.
 

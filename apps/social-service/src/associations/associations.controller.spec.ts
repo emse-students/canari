@@ -21,7 +21,12 @@ describe('AssociationsController cotisation config gating (D5)', () => {
       // real implementation in associations.service.may-act.spec.ts.
       mayAct: jest.fn(() => Promise.resolve(false)),
       update: jest.fn((_id: string, patch: unknown) =>
-        Promise.resolve({ id: 'asso1', cotisationEnabled: false, ...(patch as object) })
+        Promise.resolve({
+          id: 'asso1',
+          type: 'association',
+          cotisationEnabled: false,
+          ...(patch as object),
+        })
       ),
     };
     const productsService = {
@@ -88,6 +93,19 @@ describe('AssociationsController cotisation config gating (D5)', () => {
     });
     expect(service.update).toHaveBeenCalled();
     expect(productsService.provisionCotisationProduct).toHaveBeenCalled();
+  });
+
+  it('saves a list whose cotisation was stored enabled without provisioning a product, so no 403 follows the write', async () => {
+    const { controller, service, productsService } = makeController();
+    service.mayAct.mockResolvedValue(true);
+    service.update.mockImplementation((_id: string, patch: unknown) =>
+      Promise.resolve({ id: 'asso1', type: 'list', cotisationEnabled: true, ...(patch as object) })
+    );
+
+    await controller.update('asso1', 'user1', undefined, { cotisationMode: 'dated' });
+
+    expect(service.update).toHaveBeenCalled();
+    expect(productsService.provisionCotisationProduct).not.toHaveBeenCalled();
   });
 
   it('does not check MANAGE_PRODUCTS for updates that do not touch cotisation fields', async () => {

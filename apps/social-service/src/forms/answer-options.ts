@@ -34,8 +34,17 @@ export interface PricedItem extends ConditionalItem {
  */
 export function decidesPrice(item: PricedItem, gridQuestions: Set<string>): boolean {
   if (gridQuestions.has(item.id)) return true;
-  const isChoice = SINGLE_CHOICE_TYPES.has(item.type ?? '') || item.type === MULTIPLE_CHOICE_TYPE;
-  return isChoice && (item.options ?? []).some((o) => (o.priceModifier ?? 0) > 0);
+  return isChoiceQuestion(item) && (item.options ?? []).some((o) => (o.priceModifier ?? 0) > 0);
+}
+
+/**
+ * Whether a question's option SUPPLEMENTS apply: only a CHOICE question's. The DTO accepts `options`
+ * on any question type, so the type - not the presence of options - is the rule, and it is the ONE
+ * rule at save (`decidesPrice`, the kind guard's fingerprint) and at submit (`calculateModifiers`'
+ * caller): a text question carrying a priced option charges nothing, anywhere.
+ */
+export function isChoiceQuestion(item: { type?: string }): boolean {
+  return SINGLE_CHOICE_TYPES.has(item.type ?? '') || item.type === MULTIPLE_CHOICE_TYPE;
 }
 
 /** The subset of an item the duplicate-id check reads. */

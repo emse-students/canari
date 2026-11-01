@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import {
+  PROBE_DELAYS_AFTER_FAILURE_MS,
   PROBE_DELAYS_AFTER_ONLINE_MS,
   SLOW_ENTER_MS,
   SLOW_IN_FLIGHT_MS,
@@ -175,6 +176,27 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.isOffline).toBe(true);
   });
 
+  // Read on Android 1.5.3 (2026-10-31): "(stall 3/2)", "(stall 4/2)" - a count past its own limit.
+  it('never counts past its limit: a stall once unreachable is said as such, and the count restarts with the server', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    for (let i = 0; i < 5; i++) stall();
+    expect(connectivity.isOffline).toBe(true);
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.includes('(stall 1/2)'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('(stall 2/2)'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('(server already unreachable)'))).toHaveLength(3);
+    expect(lines.some((l) => /stall [3-9]\/2/.test(l))).toBe(false);
+    // Back by an answer that did not go through `trackRequest` (a socket): a fresh count of two.
+    connectivity.notifyServerReachable();
+    stall();
+    expect(connectivity.isOffline).toBe(false);
+    stall();
+    expect(connectivity.isOffline).toBe(true);
+    warn.mockRestore();
+  });
+
   it('a cancellation is neither a stall nor a transport failure', () => {
     for (let i = 0; i < 4; i++)
       connectivity.trackRequest().failed(new DOMException('aborted', 'AbortError'));
@@ -275,6 +297,71 @@ describe('prompt resume: the store asks the server instead of waiting to be told
     await vi.advanceTimersByTimeAsync(1_000);
     expect(probe).toHaveBeenCalledTimes(1);
     expect(connectivity.isOffline).toBe(false);
+  });
+
+  /** The Android activity's foreground flag and event (`utils/appForeground.ts`). */
+  const setForeground = (foreground: boolean) => {
+    (window as unknown as Record<string, unknown>).__canariForeground = foreground;
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
+  };
+
+  // Android 1.5.3 (2026-10-31): probes kept leaving after the app paused.
+  it('on a phone, never probes while the app is off screen, and probes afresh when it comes back', async () => {
+    try {
+      const probe = vi.fn(async () => false);
+      connectivity.setReachabilityProbe(probe);
+      connectivity.setProbePausesOffScreen(true);
+      setForeground(false);
+      connectivity.notifyServerUnreachable();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(probe).not.toHaveBeenCalled();
+
+      probe.mockImplementation(async () => {
+        connectivity.notifyServerReachable();
+        return true;
+      });
+      setForeground(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(connectivity.isOffline).toBe(false);
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__canariForeground;
+    }
+  });
+
+  // Review F10 of #2830: a web or desktop tab is not paused by its OS, so it keeps probing.
+  it('in a web or desktop tab, probes on while the tab is hidden', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      const probe = vi.fn(async () => false);
+      connectivity.setReachabilityProbe(probe);
+      connectivity.notifyServerUnreachable();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(probe).toHaveBeenCalledTimes(PROBE_DELAYS_AFTER_FAILURE_MS.length);
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it('on a phone, stops a resume already probing when the app leaves the screen', async () => {
+    try {
+      const probe = vi.fn(async () => false);
+      connectivity.setReachabilityProbe(probe);
+      connectivity.setProbePausesOffScreen(true);
+      connectivity.notifyServerUnreachable();
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(probe).toHaveBeenCalledTimes(1);
+      setForeground(false);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(probe).toHaveBeenCalledTimes(1);
+      // Back on screen with the server found meanwhile: nothing is owed any more.
+      connectivity.notifyServerReachable();
+      setForeground(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(probe).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__canariForeground;
+    }
   });
 
   it('does not probe into a link the browser itself reports dead', async () => {

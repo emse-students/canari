@@ -12,6 +12,7 @@ import LiveReactionsLayer from './LiveReactionsLayer.svelte';
 import type { LiveChatLine } from '$lib/live/liveChat';
 import { m } from '$lib/paraglide/messages';
 
+vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => (id.startsWith('b') ? 'Bob' : ''),
   resolveUserDisplayName: async () => 'Bob',
@@ -99,6 +100,12 @@ describe('LiveChatPanel', () => {
       lines: [line({}), line({ id: null, clientId: 'c-2', status: 'pending', seq: null })],
       canModerate: true,
     });
+    // The actions are behind a tap on the line (no always-visible eye-off): none before it.
+    expect(mod.target.querySelector('[data-live-chat-hide]')).toBeNull();
+    const toggles = mod.target.querySelectorAll<HTMLButtonElement>('[data-live-chat-line-toggle]');
+    expect(toggles).toHaveLength(1);
+    toggles[0].click();
+    flushSync();
     const buttons = mod.target.querySelectorAll<HTMLButtonElement>('[data-live-chat-hide]');
     expect(buttons).toHaveLength(1);
     buttons[0].click();
@@ -200,6 +207,10 @@ describe('LiveChatPanel report flag', () => {
       ],
       report,
     });
+    const toggles = target.querySelectorAll<HTMLButtonElement>('[data-live-chat-line-toggle]');
+    expect(toggles).toHaveLength(1);
+    toggles[0].click();
+    flushSync();
     const flags = target.querySelectorAll<HTMLButtonElement>('[data-live-chat-report]');
     expect(flags).toHaveLength(1);
     expect(flags[0].getAttribute('aria-label')).toBe(m.live_chat_report({ name: 'Bob' }));

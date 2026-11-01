@@ -74,7 +74,7 @@ async function open() {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const onPostCreated = vi.fn();
-  const app = mount(CreatePostForm, { target, props: { onPostCreated } });
+  const app = mount(CreatePostForm, { target, props: { onPostCreated, onGoLive: vi.fn() } });
   mounted.push(app);
   flushSync();
   await tick();

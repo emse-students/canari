@@ -122,7 +122,7 @@ open (sell the rest and skip the grant, split the payment from the grant) are no
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 BUILT as a draft (2026-10-31), WP-F6 planned below.** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -246,10 +246,8 @@ ordinary review.
   accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
   until the floor passes this stable.
   **Left open by the 2026-10-27 review, each owed before the item it names:**
-  - **Pagination of the three lists, a PRECONDITION OF WP-F5.** The inbox, "Mes abonnes" and the
-    sent requests each load the first 100 rows (`FOLLOW_PAGE_MAX`) and no more. Harmless while a
-    follower only means Suivis; once F5 makes a follower a READER across spaces, a person must be
-    able to see and prune every one of them, so F5 does not arm until the screens page.
+  - **Pagination of the three lists, a PRECONDITION OF WP-F5 - BUILT 2026-10-31 on the WP-F5 pull
+    request**: cursor paging, server and client ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
   - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
     the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
     through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
@@ -264,17 +262,19 @@ ordinary review.
     leaks - the reader filters are server-side - but the person asked can only answer from a new
     build. A decision for the user when the stable is cut, with the share of old clients measured
     from the version header then.
-  - **P3 - a row the block severing missed comes back when the block is lifted.** The severing is
-    a best-effort cross-service call: when it does not run, the request or follow stays in
-    `user_follows`, hidden by every reader while the block stands - and visible again, as it was,
-    the moment the block is lifted. The unblock reaches social-service only as a feed-cache drop,
-    which does not name the pair. The fix is an unblock call that names the pair and deletes what
-    is left between them; until then the stale row is a pending request the person may still
-    refuse, or a follow either side may end.
+  - **A row the block severing missed came back when the block was lifted - FIXED 2026-10-31 on
+    the WP-F5 pull request (F2 of its review)**: the unblock severs the pair before lifting the
+    block and is refused while it cannot ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
   - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
     one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
-  arming).** Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  arming). BUILT 2026-10-31, draft pull request, target `1.5.5`** (owner reconfirmed 2026-10-31):
+  [as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
+  the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
+  WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
+  cursor; the security review's F2-F6 are fixed on the same pull request; F1 is DECIDED (owner,
+  2026-11-01: *"Ouvrir à tous les abonnés"*): follows made before follow requests existed open
+  across spaces like answered ones. **Still owed before it arms**: the review's re-read. The plan as written: Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
   (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
   someone must not unmask what they posted anonymously), never through a read grant, and monotone
   for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else

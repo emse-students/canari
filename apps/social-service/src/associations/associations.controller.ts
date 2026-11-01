@@ -1,4 +1,5 @@
 import { Throttle } from '@nestjs/throttler';
+import { kindMaySell } from './selling-kinds';
 import {
   BadRequestException,
   Body,
@@ -800,7 +801,9 @@ export class AssociationsController {
     }
 
     const updated = await this.service.update(id, patch);
-    if (touchesCotisation && updated.cotisationEnabled) {
+    // A cotisation already enabled on a list or an institution (stored before the rule) stays as it
+    // is: its product is not (re)provisioned, so the save above is never followed by a refusal.
+    if (touchesCotisation && updated.cotisationEnabled && kindMaySell(updated.type)) {
       await this.productsService.provisionCotisationProduct(updated);
     }
     return toAssociationView(updated);

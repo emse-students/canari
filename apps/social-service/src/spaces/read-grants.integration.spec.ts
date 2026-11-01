@@ -169,7 +169,9 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
-      CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255));
+      CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
+        status varchar(16) NOT NULL DEFAULT 'pending');
+      CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
