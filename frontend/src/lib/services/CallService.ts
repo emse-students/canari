@@ -72,6 +72,14 @@ import {
 } from '$lib/utils/callVideo';
 import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
 import {
+  buildCallMicPipeline,
+  CALL_NOISE_SUPPRESSION_DEFAULT,
+  CallMicSwitch,
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
+import { callMicPipelineDeps } from '$lib/utils/callNoiseSuppressionAssets';
+import {
   describeE2eReport,
   e2eBypassedSides,
   framesFor,
@@ -406,6 +414,11 @@ export class CallService {
    */
   private signalQueue: Promise<void> = Promise.resolve();
   private localStream: MediaStream | null = null;
+  /**
+   * The microphone sender's track, raw or through RNNoise (`utils/callNoiseSuppression.ts`), and
+   * the user's per-call switch. One per call: built with the microphone, closed by `cleanup`.
+   */
+  private micSwitch: CallMicSwitch | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
   /**
@@ -565,6 +578,12 @@ export class CallService {
   public remoteStreams = writable<RemoteStreams>(new Map());
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
+  /**
+   * The microphone's noise suppression for THIS call: the user's switch (OFF at every call, owner
+   * 2026-11-01, `CALL_NOISE_SUPPRESSION_DEFAULT`) and what the sender carries - `unavailable` when
+   * the pipeline could not be built on this engine, and the call screen then offers no switch.
+   */
+  public noiseSuppression = writable<NoiseSuppressionView>(initialNoiseSuppressionView());
   /**
    * THIS device's operating system holds the microphone: the capture track is `muted`, which no
    * button here set (that is {@link isMuted}). The other party hears nothing meanwhile. Measured on
@@ -1490,6 +1509,10 @@ export class CallService {
     this.isVideoOff.set(true);
 
     this.stopWatchingMicrophone();
+    // Before the capture stops: its end-of-call cost line, then the pipeline and its context.
+    this.micSwitch?.close();
+    this.micSwitch = null;
+    this.noiseSuppression.set(initialNoiseSuppressionView());
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
@@ -2656,6 +2679,8 @@ export class CallService {
     this.pc.close();
     this.pc = null;
     this.pcAwaitingPeer = false;
+    // Its microphone sender died with it: the switch must not `replaceTrack` on a closed sender.
+    this.micSwitch?.detachSender();
   }
 
   /**
@@ -2826,13 +2851,18 @@ export class CallService {
         // in the worker since `setupEncryption`. Both ends add an audio track before negotiating,
         // and the polite side's answer reuses this transceiver, so the remote audio always lands on
         // a receiver that already decrypts.
-        const sender = pc.addTrack(track, this.localStream);
+        // The microphone goes out raw or through RNNoise (`CallMicSwitch`); the transform belongs
+        // to the SENDER, so a later `replaceTrack` between the two keeps it in the path.
+        const micSwitch = track.kind === 'audio' ? this.micSwitch : null;
+        const sender = pc.addTrack(micSwitch ? micSwitch.trackToSend() : track, this.localStream);
         this.attachSenderTransform(sender);
         // A track muted by the OS (or not producing yet) starts sending with no negotiation.
         track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         this.attachReceiverTransform(transceiver.receiver, track.kind);
+        // After both transforms, in this task: it only QUEUES a `replaceTrack` for later.
+        micSwitch?.attachSender(sender);
         if (track.kind === 'video') {
           if (!preferVp8(transceiver, appendLog)) {
             this.refuseCameraSender(pc, sender, track);
@@ -3090,6 +3120,8 @@ export class CallService {
       ringMs: this.ringMs,
       connectMs: this.connectMs,
       engine: currentEngine(),
+      ns: this.micSwitch?.reportState() ?? null,
+      nsFallbacks: this.micSwitch?.fallbackCount() ?? null,
     };
   }
 
@@ -3159,6 +3191,8 @@ export class CallService {
         this.armCallReport(pc);
         return;
       }
+      // Before the line is stamped, so its `ns=` already says a worklet caught not processing.
+      this.micSwitch?.checkProgress();
       const inFlight = {
         pc,
         snapshot: this.logCallReport(
@@ -3662,7 +3696,10 @@ export class CallService {
     this.isMuted.set(false);
     this.isVideoOff.set(true);
     const mic = this.localStream.getAudioTracks()[0];
-    if (mic) this.watchSystemMicrophone(mic);
+    if (mic) {
+      this.watchSystemMicrophone(mic);
+      this.startNoiseSuppression(mic);
+    }
     if (video) {
       // `cameraOn` stops a capture that resolves after its call (`sameCameraCall`).
       await this.cameraOn();
@@ -3755,6 +3792,45 @@ export class CallService {
     // Ephemeral too: signalling is only meaningful while the call is live, so replaying it out of
     // the shared log would ring a device about a call that ended.
     await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+  }
+
+  /**
+   * Starts this call's noise-suppression switch on the capture `mic` (owner decisions D-B,
+   * 2026-10-31, and OFF by default, 2026-11-01): the pipeline is built only once the switch is ON,
+   * and the call does NOT wait for it - the sender carries the raw track until the RNNoise
+   * pipeline proves it runs, then switches by `replaceTrack` (`CallMicSwitch`). A pipeline that
+   * cannot be built is logged at WARN with its cause and counted; the call goes on raw.
+   */
+  private startNoiseSuppression(mic: MediaStreamTrack): void {
+    this.micSwitch?.close();
+    const micSwitch = new CallMicSwitch(mic, CALL_NOISE_SUPPRESSION_DEFAULT, appendLog, (view) =>
+      this.noiseSuppression.set(view)
+    );
+    this.micSwitch = micSwitch;
+    this.ensureMicPipeline(micSwitch);
+  }
+
+  /** The switch's one build, from this call's capture, when (and only when) it is ON. */
+  private ensureMicPipeline(micSwitch: CallMicSwitch): void {
+    micSwitch.ensurePipeline((signal) =>
+      buildCallMicPipeline(micSwitch.raw, callMicPipelineDeps(appendLog), signal)
+    );
+  }
+
+  /**
+   * The call screen's noise-suppression switch, for THIS call: OFF sends the raw capture (music),
+   * ON the RNNoise output - on the same sender, no renegotiation, the E2E transform untouched.
+   */
+  public toggleNoiseSuppression(): void {
+    const micSwitch = this.micSwitch;
+    if (!micSwitch) {
+      appendLog('[Call] noise suppression switch tapped with no microphone open - ignored');
+      return;
+    }
+    micSwitch.setEnabled(!micSwitch.isEnabled());
+    // The first ON of the call builds the pipeline - inside the tap, so the engine lets its
+    // AudioContext run.
+    this.ensureMicPipeline(micSwitch);
   }
 
   /** Toggles microphone mute on the local audio track. */

@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { analyze } from './analyze.mjs';
-import { RATE, buildReference, encodeWav, quantised } from './signal.mjs';
+import { RATE, buildReference, encodeWav, quantised, withBackground } from './signal.mjs';
 import { MATRIX, THRESHOLDS, verdict } from './matrix.mjs';
 
 const HERE = import.meta.dir;
@@ -71,6 +71,8 @@ async function buildPage(www) {
   for (const [entry, name] of [
     ['page/page.ts', 'page.js'],
     ['page/impair.worker.ts', 'impair.worker.js'],
+    // The app's own noise-suppression worklet, and below the wasm the app bundles (no copy).
+    ['../../frontend/src/lib/workers/rnnoise.worklet.ts', 'rnnoise.worklet.js'],
   ]) {
     const res = await Bun.build({
       entrypoints: [join(HERE, entry)],
@@ -80,6 +82,10 @@ async function buildPage(www) {
     if (!res.success) throw new Error(`build ${entry}: ${res.logs.map(String).join('\n')}`);
     writeFileSync(join(www, name), await res.outputs[0].text());
   }
+  writeFileSync(
+    join(www, 'rnnoise.wasm'),
+    readFileSync(join(HERE, '../../frontend/node_modules/simple-rnnoise-wasm/dist/rnnoise.wasm'))
+  );
   writeFileSync(
     join(www, 'index.html'),
     '<!doctype html><meta charset="utf-8"><title>rig</title><script type="module" src="/page.js"></script>'
@@ -94,7 +100,11 @@ function serve(www) {
       const path = new URL(req.url).pathname;
       const file = join(www, path === '/' ? 'index.html' : path.slice(1));
       if (!existsSync(file)) return new Response('not found', { status: 404 });
-      const type = file.endsWith('.js') ? 'text/javascript' : 'text/html';
+      const type = file.endsWith('.js')
+        ? 'text/javascript'
+        : file.endsWith('.wasm')
+          ? 'application/wasm'
+          : 'text/html';
       return new Response(readFileSync(file), { headers: { 'content-type': type } });
     },
   });
@@ -200,10 +210,16 @@ async function launch(name, wav, url, row) {
   live.add(side);
   try {
     const portFile = join(profile, 'DevToolsActivePort');
-    side.port = await until(
-      () => existsSync(portFile) && readFileSync(portFile, 'utf8').split('\n')[0],
-      `${name} DevTools port`
-    );
+    side.port = await until(() => {
+      if (!existsSync(portFile)) return false;
+      try {
+        return readFileSync(portFile, 'utf8').split('\n')[0];
+      } catch (e) {
+        // Windows: Chrome still holds the file it is writing (EBUSY) - not written yet, read again.
+        if (e.code === 'EBUSY') return false;
+        throw e;
+      }
+    }, `${name} DevTools port`);
     const targets = await until(async () => {
       const list = await (await fetch(`http://127.0.0.1:${side.port}/json/list`)).json();
       return list.find((t) => t.type === 'page');
@@ -428,15 +444,22 @@ async function runRow(row, wavs, url) {
   let caller = null;
   let callee = null;
   try {
-    caller = await launch('caller', down ? wavs.silence : wavs.caller, url, row.name);
+    caller = await launch(
+      'caller',
+      down ? wavs.silence : row.noisy ? wavs.noisy : wavs.caller,
+      url,
+      row.name
+    );
     callee = await launch(
       'callee',
       down ? wavs.caller : row.farTalk ? wavs.far : wavs.silence,
       url,
       row.name
     );
-    const setupCaller = await caller.cdp.eval(`rig.setup(${JSON.stringify(row.caller)})`);
-    await callee.cdp.eval(`rig.setup(${JSON.stringify(row.callee)})`);
+    const setupCaller = await caller.cdp.eval(
+      `rig.setup(${JSON.stringify({ ...row.caller, role: 'caller' })})`
+    );
+    await callee.cdp.eval(`rig.setup(${JSON.stringify({ ...row.callee, role: 'callee' })})`);
     const offer = await caller.cdp.eval('rig.offer()');
     const answer = await callee.cdp.eval(`rig.answer(${JSON.stringify(offer)})`);
     await caller.cdp.eval(`rig.accept(${JSON.stringify(answer)})`);
@@ -448,6 +471,9 @@ async function runRow(row, wavs, url) {
       await Bun.sleep(1000);
     }
     const videoOps = await runVideoOps(row, caller, callee, down);
+    // A noise-suppression row measures the processed track: the sender must carry it first (or the
+    // pipeline have failed, which the row's `ns-on` check then names).
+    await (down ? callee : caller).cdp.eval('rig.nsSettled()');
     await (down ? caller : callee).cdp.eval('rig.record()');
     await Promise.all([callee.cdp.eval('rig.startStats()'), caller.cdp.eval('rig.startStats()')]);
     await Bun.sleep(SECONDS * 1000);
@@ -487,6 +513,9 @@ async function runRow(row, wavs, url) {
         receiverFrames: rx.report?.framesIn?.receiver ?? 0,
       },
       engine: rx.engine,
+      // The SENDER's noise suppression: what it sent, and the worklet's cost per 10 ms frame.
+      ns: tx.ns ?? undefined,
+      noisy: !!row.noisy,
       videoPath: row.video ? summariseVideo(tx, rx, videoOps) : undefined,
       txTargetBitrate: txStats.out_targetBitrate,
       ...summarise(rx.stats),
@@ -523,7 +552,24 @@ function table(results) {
     const be = (x) => (x ? `${x.identical}/${x.decoded}` : '-');
     return `| ${r.row} | ${f(r.metrics.matchCoef, 2)} | ${be(r.bitExact.measured)} / ${be(r.bitExact.reverse)} | ${f(sp.snrDb)} | ${f(sp.lsdDb, 2)} | ${f(sp.hfLossDb)} | ${r.metrics.bandwidthHz} | ${r.metrics.dropouts.events} (${r.metrics.dropouts.ms}) | ${r.concealedPct} | ${r.insertedPct}/${r.removedPct} | ${r.rxKbps} | ${r.lostPkts}${r.impairDropped ? ` (+${r.impairDropped} injected)` : ''} | ${f(sp.gainDb)} | ${f(r.metrics.silenceFloorDbfs)} | ${verdictText(r.verdict)} |`;
   });
-  return [head, sep, ...lines, videoTable(results)].join('\n');
+  return [head, sep, ...lines, videoTable(results), nsTable(results)].join('\n');
+}
+
+/** The sender's noise suppression in one phrase: what it sent, and the worklet's cost. */
+function nsText(ns) {
+  const s = ns.stats;
+  const cost = s?.frames
+    ? `${(s.busyMs / s.frames).toFixed(3)} ms per 10 ms frame (${((s.busyMs / s.frames) * 10).toFixed(1)} % of real time, max quantum ${s.maxQuantumMs.toFixed(2)} ms, ${s.frames} frames, clock ${s.clock})`
+    : 'no worklet stats';
+  return `ns=${ns.state} sends ${ns.sendsProcessed ? 'PROCESSED' : 'raw'} track, fallbacks=${ns.fallbacks}, ${cost}`;
+}
+
+/** The noise-suppression rows' own table; empty when no row ran it. */
+function nsTable(results) {
+  const rows = results.filter((r) => r.ns);
+  if (!rows.length) return '';
+  const lines = rows.map((r) => `| ${r.row} | ${r.noisy ? 'noisy' : 'clean'} | ${nsText(r.ns)} |`);
+  return `\n\nNoise suppression (the measured sender):\n\n| row | reference | sender |\n|---|---|---|\n${lines.join('\n')}`;
 }
 
 /** The video rows' own table (rows without video are left out); empty when there are none. */
@@ -551,12 +597,15 @@ async function main() {
   const far = buildReference({ seed: 2, gain: 0.5, talkOnly: true });
   const wavs = {
     caller: join(OUT, 'ref.wav'),
+    noisy: join(OUT, 'noisy.wav'),
     far: join(OUT, 'far.wav'),
     silence: join(OUT, 'silence.wav'),
     refSamples: quantised(ref),
     farSamples: quantised(far),
   };
   writeFileSync(wavs.caller, encodeWav(ref));
+  // The noisy rows' microphone: the reference under a steady background; scored against the CLEAN one.
+  writeFileSync(wavs.noisy, encodeWav(withBackground(ref)));
   writeFileSync(wavs.far, encodeWav(far));
   writeFileSync(wavs.silence, encodeWav(new Float64Array(ref.length)));
   const www = join(OUT, 'www');
@@ -585,6 +634,7 @@ ${e?.stack ?? ''}`);
           `  ${r.row} video: ${v.codec} ${v.size} ${v.fps} fps, ${v.freezes} freeze(s), sent ${v.sendSize} ${v.sendKbps} kbps, encode ${v.encodeMsPerFrame} ms/frame (${v.encodeCorePct} % of a core), ladder ${v.ladder?.rung ?? '-'}, worker video frames tx=${v.senderFrames} rx=${v.receiverFrames}, decrypted ${v.decrypted} (failed ${v.decryptFailed})`
         );
       }
+      if (r.ns) say(`  ${r.row} noise suppression: ${nsText(r.ns)}`);
       say(
         `  ${r.row} [${/Chrome\/[\d.]+/.exec(r.engine?.ua ?? '')?.[0] ?? '?'}, transform frames tx=${r.transformPath.senderFrames} rx=${r.transformPath.receiverFrames}]: speech SNR ${r.metrics.segments.speech.snrDb.toFixed(1)} dB, LSD ${r.metrics.segments.speech.lsdDb.toFixed(2)} dB, bw ${r.metrics.bandwidthHz} Hz, ${verdictText(r.verdict)}`
       );

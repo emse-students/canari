@@ -10,6 +10,10 @@
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 import { writable } from 'svelte/store';
+import {
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
 
 vi.mock('$lib/utils/userAvatarCache', () => ({
   resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
@@ -89,6 +93,8 @@ function fakeService(state: CallState) {
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
+    noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
+    toggleNoiseSuppression: vi.fn(),
     ringingOut: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
@@ -301,6 +307,37 @@ describe('the reduced-picture notice (quality ladder, 2026-10-21)', () => {
     service.videoSendReduced.set(false);
     flushSync();
     expect(notice()).toBeNull();
+  });
+});
+
+describe('the noise-suppression switch (owner decision D-B, 2026-10-31)', () => {
+  const button = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="call-noise-suppression"]');
+
+  it('starts unpressed (OFF by default), a tap asks the service to switch it, and ON is pressed', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    expect(button()?.getAttribute('aria-pressed')).toBe('false');
+    expect(button()?.getAttribute('aria-label')).toBe(m.call_noise_suppression_enable_label());
+
+    button()!.click();
+    expect(service.toggleNoiseSuppression).toHaveBeenCalledTimes(1);
+
+    service.noiseSuppression.set({ enabled: true, state: 'on' });
+    flushSync();
+    expect(button()?.getAttribute('aria-pressed')).toBe('true');
+    expect(button()?.getAttribute('aria-label')).toBe(m.call_noise_suppression_disable_label());
+  });
+
+  it('is not offered where the engine could not build the pipeline, nor on the ring', async () => {
+    const service = fakeService('incall');
+    service.noiseSuppression.set({ enabled: true, state: 'unavailable' });
+    await render(service);
+    expect(button()).toBeNull();
+    unmount(mounted.pop()!);
+
+    await render(fakeService('incoming'));
+    expect(button()).toBeNull();
   });
 });
 
