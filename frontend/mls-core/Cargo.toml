@@ -1,6 +1,6 @@
 [package]
 name = "mls-core"
-version = "1.5.4-alpha.1"
+version = "1.6.0-alpha.1"
 edition = "2024"
 
 [dependencies]
