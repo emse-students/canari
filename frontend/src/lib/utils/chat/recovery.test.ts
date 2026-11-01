@@ -649,11 +649,16 @@ describe('requestReAdd', () => {
           const deps = furtherThen(answer, { joined: true });
           await requestReAdd('g1', deps);
           expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
-          expect(deps.log).toHaveBeenCalledWith(
-            expect.stringContaining(
-              "waiting for a member's Add (the server holds the self-join shut)"
+          // ONE line per pass carries both facts - no member online, the door shut (noise rule).
+          const lines = deps.log.mock.calls.map(([l]: unknown[]) => String(l));
+          expect(
+            lines.filter((l: string) =>
+              l.includes(
+                "no member device online - waiting for a member's Add (the server holds the self-join shut)"
+              )
             )
-          );
+          ).toHaveLength(1);
+          expect(lines.filter((l: string) => l.includes('no member online'))).toEqual([]);
         }
       );
     });
