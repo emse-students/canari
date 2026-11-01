@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -428,9 +429,10 @@
       bind:priceMatrix
       {tiers}
       {formations}
-      {items}
+      bind:items
       associationName={association?.name ?? ''}
       {associationCanBePaid}
+      associationSells={!association || kindHasSection(association.type, 'payments')}
     />
 
     <!-- 3. Questions -->

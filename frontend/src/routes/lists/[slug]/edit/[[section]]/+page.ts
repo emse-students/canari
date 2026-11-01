@@ -7,7 +7,7 @@ import {
 import type { PageLoad } from './$types';
 
 /**
- * A list's management area is a hub of four sections, each a route segment. A segment that is not
+ * A list's management area is a hub of sections (`EDIT_SECTIONS_BY_KIND.list`), each a route segment. A segment that is not
  * one of them (including an association-only key such as `payments`) lands on the hub; whether the
  * reader may open a known one is decided by the page once the roster is loaded.
  */
