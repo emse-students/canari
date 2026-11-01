@@ -3521,11 +3521,18 @@ export abstract class BaseMlsService implements IMlsService {
         return 'unverified';
       }
       const settledBefore = this.keyPackageRoundsSettled;
-      // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: no round has settled in this client's
-      // life and one is running, so this is its FIRST publication in flight and the server cannot yet
-      // hold the package. The wake-up is round-driven, so the read is made when that round settles.
+      // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: this device's id was MINTED in this
+      // process (`stateWasExpected` false - no id was stored before this boot, read from durable
+      // state by `resolveDeviceId`), so its whole life is this process, no round of it has settled
+      // yet and one is running: its FIRST publication is in flight and the server cannot hold a
+      // package of it. A RETURNING device (an id stored before this boot) is never skipped - its
+      // package may well be published already, and waiting on its boot round would make a failed
+      // round fail a join that a read would have let through. The read is made when the round settles.
       const firstPublicationRunning =
-        pass === 1 && this.keyPackageRoundsActive > 0 && this.keyPackageRoundsSettled === 0;
+        pass === 1 &&
+        !this.stateWasExpected &&
+        this.keyPackageRoundsActive > 0 &&
+        this.keyPackageRoundsSettled === 0;
       const answer = firstPublicationRunning
         ? null
         : await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
