@@ -385,7 +385,14 @@ run in which NOTHING happens hangs, and the job's `timeout-minutes` is the only 
 **What it does not:** video and the PLI relay, Cloudflare's TURN (production's provider; the
 School drops the UDP the SFU needs to reach it, [feasibility](../infrastructure/realtime-media-feasibility.md)),
 a phone, more than two participants. First measured on a Windows dev box (Chrome 156, no TURN,
-2026-11-01): PASS, ~250 frames each way decrypted, 0 failed.
+2026-11-01): PASS, ~250 frames each way decrypted, 0 failed. **First CI run (#2878, 2026-11-01):
+PASS** - `relay/udp->relay` on both browsers through coturn, 253 and 255 frames decrypted, 0
+failed, both sessions `client-close` with `connected_ms` 5758 and 5557.
+
+**The readiness of coturn is read from the KERNEL** (`ss -lun` shows its UDP socket on the
+runner's address), never from a line of coturn's log: the first two runs waited for good on that
+line - once behind `docker logs | grep -q` under `pipefail`, which is never true (grep's early exit
+gives `docker logs` a SIGPIPE, 141), and once on the line itself.
 
 **No upgrade was needed to make it work**: webrtc-rs 0.17 places the call. The 0.20 port stays a
 separate decision ([calls](../frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)),
