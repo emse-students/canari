@@ -4614,7 +4614,7 @@ static void CanariTakeNotificationDelegate(void) {
   if (holder != nil) {
     g_forwardNotifDelegate = holder;
   }
-  center.delegate = g_notifDelegate;
+  center.delegate = (id<UNUserNotificationCenterDelegate>)g_notifDelegate;
   NSLog(@"[CanariPush] notification delegate taken back from %@ - its own notifications are "
         @"forwarded to it",
         holder == nil ? @"nil" : NSStringFromClass([holder class]));

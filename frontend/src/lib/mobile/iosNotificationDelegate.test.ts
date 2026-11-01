@@ -61,9 +61,9 @@ describe('the delegate slot is taken back with public API', () => {
     const take = body('static void CanariTakeNotificationDelegate(void) {');
     // The holder is kept as the forward target BEFORE Canari's delegate replaces it.
     expect(take.indexOf('g_forwardNotifDelegate = holder;')).toBeGreaterThan(-1);
-    expect(take.indexOf('center.delegate = g_notifDelegate;')).toBeGreaterThan(
-      take.indexOf('g_forwardNotifDelegate = holder;')
-    );
+    expect(
+      take.indexOf('center.delegate = (id<UNUserNotificationCenterDelegate>)g_notifDelegate;')
+    ).toBeGreaterThan(take.indexOf('g_forwardNotifDelegate = holder;'));
   });
 
   it('accuses a later writer at activation only, never by a timer', () => {
