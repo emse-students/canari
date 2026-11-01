@@ -470,13 +470,17 @@ export function answerAfterMailboxDrained(
       await mlsService.waitForGroupQueueIdle('history answer', groupId);
     } catch (e) {
       // THE CLIENT ENDED: an answer now would be sent from a destroyed service. Typed, never read
-      // off a message; any other failure of the wait is passed over, as before.
+      // off a message; any other failure of the wait is said, then passed over as before.
       if (e instanceof GroupDrainAbandonedError) {
         console.info(
           `[HISTORY_REQ] answer about ${groupId.slice(0, 8)}... not sent - the client ended`
         );
         return;
       }
+      console.warn(
+        `[HISTORY_REQ] answer about ${groupId.slice(0, 8)}...: the wait for its queue failed - answering anyway:`,
+        e
+      );
     }
     await answer();
   })();

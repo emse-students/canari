@@ -468,6 +468,11 @@ interface GroupRelease {
    * release's whole life: the delivery memory is bounded and may have evicted them.
    */
   pulled: Set<string>;
+  /**
+   * A demand (a wait, a parked frame) arrived while a pull covering this release was in flight and
+   * started none: that pull's end owes it one if it did not list the mailbox. Spent once.
+   */
+  owed: boolean;
 }
 
 export abstract class BaseMlsService implements IMlsService {
@@ -846,6 +851,7 @@ export abstract class BaseMlsService implements IMlsService {
           parked: [],
           handedBack: new Set(),
           pulled: new Set(),
+          owed: false,
         });
       }
     }
@@ -873,7 +879,7 @@ export abstract class BaseMlsService implements IMlsService {
    * frame of the group is PARKED here (not decrypted, not ACKed, forgotten by the dedup), and once it
    * has, the parked frames are handed back in their arrival order, behind the pull's rows. A pull
    * that fails lists nothing: the group stays parked until one completes ({@link releasesListed}),
-   * and the next live frame parked with no pull in flight starts one ({@link parkLiveFrame}).
+   * and every demand on it is followed by a pull that covers it ({@link pullForUnlistedRelease}).
    */
   private readonly releasing = new Map<string, GroupRelease>();
 
@@ -894,15 +900,60 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * THE TERMINATION OF A RELEASE NOBODY ELSE WILL PULL FOR. A released group whose pull failed, on an
    * open socket that delivers it nothing more, would stay released - and "not drained" - for the
-   * session. So a WAIT on it is an event too: a waiter arriving on a release no pull has listed,
-   * with none in flight, starts one. Pulls are then bounded by the frames delivered plus the waits
-   * made, and the first that lists the mailbox ends the release.
+   * session. So a WAIT on it is an event too, like a parked frame: EVERY DEMAND IS FOLLOWED BY A
+   * PULL THAT COVERS IT. With no pull covering the release in flight, the demand starts one. With
+   * one in flight, it starts none and marks the release `owed`: if that pull fails, its end starts
+   * ONE pull for every demand it absorbed ({@link pullWhatIsOwed}). Each demand is spent once, so
+   * pulls are bounded by the frames delivered plus the waits made, and the first that lists the
+   * mailbox ends the release.
+   *
+   * COVERING, NOT MERELY IN FLIGHT: pulls are chained, and an older one in flight started before
+   * this release - it cannot list it, so it does not answer the demand ({@link pullsInFlight}).
    */
   private pullForUnlistedRelease(groupId: string, why: string): void {
     const release = this.releasing.get(groupId);
-    if (!release || release.listed >= release.generation || this.pendingPullInFlight) return;
+    if (!release || release.listed >= release.generation) return;
+    if (this.highestCoverageInFlight() >= release.generation) {
+      release.owed = true;
+      return;
+    }
     console.warn(
-      `[QUEUE] ${why} on ${groupId.slice(0, 8)}..., released and not listed by any pull, none in flight - pulling`
+      `[QUEUE] ${why} on ${groupId.slice(0, 8)}..., released and not listed by any pull, none covering it in flight - pulling`
+    );
+    void this.fetchPendingMessages();
+  }
+
+  /**
+   * The release generation each pull in flight covers (`releasesCovered` at its start), by pull.
+   * {@link pendingPullInFlight} answers "is a pull in flight"; this answers "is one in flight that
+   * will list release g".
+   */
+  private readonly pullsInFlight = new Map<symbol, number>();
+
+  /** The newest release a pull in flight will list if it completes (0: none in flight). */
+  private highestCoverageInFlight(): number {
+    let highest = 0;
+    for (const covered of this.pullsInFlight.values()) highest = Math.max(highest, covered);
+    return highest;
+  }
+
+  /**
+   * A pull ended: every release still unlisted that a demand marked `owed`, and that no pull still
+   * in flight covers, is owed ONE pull - started here, the owed marks spent. Never on a pull's end
+   * alone: only a demand marks a release owed, so a pull that fails with none absorbed starts nothing.
+   */
+  private pullWhatIsOwed(): void {
+    const covering = this.highestCoverageInFlight();
+    let owed = 0;
+    for (const release of this.releasing.values()) {
+      if (!release.owed || release.listed >= release.generation) continue;
+      if (covering >= release.generation) continue;
+      release.owed = false;
+      owed += 1;
+    }
+    if (owed === 0) return;
+    console.warn(
+      `[QUEUE] ${owed} released group(s) asked for while a pull covering them was in flight, and it did not list the mailbox - pulling once`
     );
     void this.fetchPendingMessages();
   }
@@ -920,10 +971,8 @@ export abstract class BaseMlsService implements IMlsService {
 
   /**
    * Parks a live frame of a released group ({@link releasing}). THE TERMINATION OF A FAILED RELEASE
-   * PULL: if no pull that covers this release has completed and none is in flight, this frame starts
-   * one. Only an ARRIVING frame starts a pull - never a pull's own end, failed or not - and only
-   * while none is in flight, so the pulls are bounded by the frames the socket delivers; the first
-   * one that lists the mailbox ends the release.
+   * PULL: the arriving frame is a demand, followed by a pull that covers it - started now, or owed
+   * by the covering pull in flight ({@link pullForUnlistedRelease}).
    */
   private parkLiveFrame(release: GroupRelease, msg: MlsQueuedMessage): void {
     this.settleDelivery(msg.queuedMessageId, false);
@@ -3168,25 +3217,33 @@ export abstract class BaseMlsService implements IMlsService {
       console.log('[PENDING] A pull is already in flight - the barrier now waits for both');
     }
     this.pendingPullInFlight = announced;
+    const pullKey = Symbol('pull');
+    this.pullsInFlight.set(pullKey, releasesCovered);
     try {
       await pull;
     } finally {
-      // CLEARED BEFORE THE BARRIER, deliberately: the line below is that barrier, and a pull still
-      // announcing itself here would be waiting on its own completion. ONLY WHEN IT IS STILL OURS: a
-      // later pull chained onto it, and clearing would blind the barrier to that one.
-      if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
+      this.pullsInFlight.delete(pullKey);
+      // A released group ({@link releasing}) is LISTED BEFORE THE SLOT IS CLEARED: between the two,
+      // a demand on it would see no pull in flight and start a redundant one - resetting
+      // `mailboxEmptiedByAPull` under the barrier below. Listed, and its parked live frames handed
+      // back behind the withheld ones just enqueued, the group reads "not drained" until they are
+      // applied. A pull that died half-way keeps them parked (see {@link pullWhatIsOwed}).
+      if (emptied) this.releasesListed(releasesCovered);
+      // CLEARED ONCE EVERY PULL IT CHAINED HAS LANDED, not when this one has: an older pull it was
+      // chained onto may still be fetching, and clearing now blinded the barrier below to it - a
+      // `waitForGroupQueueIdle` passed, decrypted a frame, and that pull delivered it again. ONLY
+      // WHEN IT IS STILL OURS: a later pull chained onto it owns the slot and clears it itself.
+      void announced.then(() => {
+        if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
+      });
     }
     await this.settleMailbox();
-    // A released group ({@link releasing}) is listed BEFORE the drained readers are woken: its
-    // withheld frames are enqueued, so its parked live frames go back behind them, and the group
-    // reads "not drained" until they are applied. A pull that died half-way keeps them parked; the
-    // next live frame parked with no pull in flight starts one (`parkLiveFrame`).
-    if (emptied) this.releasesListed(releasesCovered);
-    else if (this.releasing.size > 0) {
+    if (!emptied && this.releasing.size > 0) {
       console.warn(
-        `[QUEUE] ${this.releasing.size} released group(s) stay parked - their pull did not list the mailbox; the next live frame of one starts another`
+        `[QUEUE] ${this.releasing.size} released group(s) stay parked - their pull did not list the mailbox; the next demand on one (a live frame, a wait) is followed by another`
       );
     }
+    this.pullWhatIsOwed();
     // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
     // was listed whole reads drained only now (the start-up sync runs before the first full pull).
     this.wakeGroupDrainedWaiters('pull ended');
@@ -6559,13 +6616,17 @@ export abstract class BaseMlsService implements IMlsService {
         await this.waitForGroupQueueIdle('key-group epoch check', groupId);
       } catch (e) {
         // THE SERVICE ENDED: nothing it would decide here could be acted on. Typed, never read
-        // off a message; any other failure of the wait is passed over, as before.
+        // off a message; any other failure of the wait is said, then passed over as before.
         if (e instanceof GroupDrainAbandonedError) {
           console.info(
             `[GRAINE] epoch check of key group ${short}... abandoned - the client ended`
           );
           return 'abandoned';
         }
+        console.warn(
+          `[GRAINE] epoch check of key group ${short}...: the wait for its queue failed - checking the epoch anyway:`,
+          e
+        );
       }
       const local = this.getEpoch(groupId);
       if (local >= activeEpoch) return 'current';

@@ -562,6 +562,21 @@ describe('the mailbox barrier', () => {
     expect(answer).not.toHaveBeenCalled();
     info.mockRestore();
   });
+
+  it('any OTHER failure of the wait is said, naming the caller, and the answer still goes', async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failure = new Error('scheduler broke');
+    answerAfterMailboxDrained(
+      { waitForGroupQueueIdle: vi.fn().mockRejectedValue(failure) } as never,
+      GROUP,
+      answer
+    );
+    await flush();
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[HISTORY_REQ]'), failure);
+    warn.mockRestore();
+  });
 });
 
 describe('reconcileAllGroups', () => {

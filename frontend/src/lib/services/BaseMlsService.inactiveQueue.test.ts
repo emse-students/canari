@@ -269,6 +269,59 @@ describe('a queued frame while the iPhone app is inactive', () => {
       await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
     });
 
+    it('A PARK DURING THE IN-FLIGHT RELEASE PULL is owed a pull when that one fails - and ends the release', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      let failFirst: (e: Error) => void = () => undefined;
+      const serve = vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
+        .mockImplementation(async () => {
+          inner(svc).enqueueMessage(row('q-w1'), 'pull');
+          inner(svc).enqueueMessage(row('q-live'), 'pull');
+        });
+      realPull(serve);
+      active(true);
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
+      // The live frame is parked while the release pull is still in flight: it starts none.
+      await deliver(row('q-live'));
+      expect(serve).toHaveBeenCalledTimes(1);
+      failFirst(new Error('server error'));
+      await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
+      expect(serve).toHaveBeenCalledTimes(2);
+    });
+
+    it('a release is listed BEFORE its pull leaves the slot: a live frame meanwhile starts no redundant pull', async () => {
+      let letW1Apply: () => void = () => undefined;
+      const w1Gate = new Promise<void>((resolve) => (letW1Apply = resolve));
+      Object.assign(svc, {
+        messageCallback: vi.fn(async (...args: unknown[]) => {
+          const id = (args[6] as { queuedMessageId: string }).queuedMessageId;
+          // Out of front the gate never reaches here; on return, q-w1 holds the settle open.
+          if (id === 'q-w1') await w1Gate;
+          applied.push(id);
+          return true;
+        }),
+      });
+      active(false);
+      await deliver(row('q-w1'));
+      const serve = vi.fn(async () => {
+        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+      });
+      realPull(serve);
+      active(true);
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
+      await tick();
+      await tick();
+      // The pull has emptied the mailbox and is settling (q-w1 still applying): a live frame lands.
+      inner(svc).enqueueMessage(row('q-live'), 'live');
+      await tick();
+      letW1Apply();
+      await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
+      await tick();
+      expect(serve).toHaveBeenCalledTimes(1);
+    });
+
     it('a parked frame the pull brought is not handed back, even once the delivery memory forgot it', async () => {
       active(false);
       await deliver(row('q-w1'));
@@ -381,6 +434,77 @@ describe('a queued frame while the iPhone app is inactive', () => {
       void svc.whenGroupDrained('group-a');
       await vi.waitFor(() => expect(drained).toBe(true));
       expect(serve).toHaveBeenCalledTimes(1);
+      expect(applied).toEqual(['q-w1']);
+    });
+
+    it('A WAIT DURING THE IN-FLIGHT RELEASE PULL is owed a pull when that one fails, and resolves', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      let failFirst: (e: Error) => void = () => undefined;
+      const serve = vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
+        .mockImplementation(async () => {
+          inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        });
+      releaseBy(serve);
+      active(true);
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
+      let drained = false;
+      void svc.whenGroupDrained('group-a').then(() => (drained = true));
+      await tick();
+      expect(serve).toHaveBeenCalledTimes(1);
+      failFirst(new Error('server error'));
+      await vi.waitFor(() => expect(drained).toBe(true));
+      expect(serve).toHaveBeenCalledTimes(2);
+      expect(applied).toEqual(['q-w1']);
+    });
+
+    it('a later pull that lands first leaves the barrier standing while the older one still fetches', async () => {
+      let endOlder: () => void = () => undefined;
+      const serve = vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => new Promise<void>((resolve) => (endOlder = resolve)))
+        .mockImplementation(async () => undefined);
+      releaseBy(serve);
+      const slot = () => (svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight;
+      void svc.fetchPendingMessages();
+      void svc.fetchPendingMessages();
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(2));
+      await tick();
+      await tick();
+      expect(slot()).not.toBeNull();
+      endOlder();
+      await vi.waitFor(() => expect(slot()).toBeNull());
+    });
+
+    it('AN OLDER PULL IN FLIGHT does not answer a wait: it started before the release, so the wait pulls at once', async () => {
+      active(false);
+      await deliver(row('q-w1'));
+      let endOlder: () => void = () => undefined;
+      const serve = vi
+        .fn<() => Promise<void>>()
+        // P0: started before the release, still in flight across it.
+        .mockImplementationOnce(() => new Promise<void>((resolve) => (endOlder = resolve)))
+        // P1: the release's own pull, failing.
+        .mockImplementationOnce(async () => {
+          throw new Error('server error');
+        })
+        .mockImplementation(async () => {
+          inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        });
+      releaseBy(serve);
+      void svc.fetchPendingMessages();
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
+      active(true);
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(2));
+      await tick();
+      let drained = false;
+      void svc.whenGroupDrained('group-a').then(() => (drained = true));
+      // P0 is still in flight, and cannot list a release made after it started: the wait pulls now.
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(3));
+      endOlder();
+      await vi.waitFor(() => expect(drained).toBe(true));
       expect(applied).toEqual(['q-w1']);
     });
   });
