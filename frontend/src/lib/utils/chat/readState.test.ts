@@ -1,6 +1,7 @@
 import type { ChatMessage, ReadWatermarks } from '$lib/types';
 import { compareMessageOrder } from './messageOrder';
 import {
+  countUnreadBelow,
   countUnreadForUser,
   hasRead,
   isUnreadForUser,
@@ -185,6 +186,67 @@ describe('the unread badge', () => {
     const read = watermarkAfterReading(onScreen, 0);
     expect(countUnreadForUser(onScreen, read)).toBe(0);
     expect(countUnreadForUser(afterScrollingUp, read)).toBe(0);
+  });
+});
+
+describe('the unread count of the scroll-to-bottom button', () => {
+  const thread = [
+    msg('a', 1000),
+    msg('b', 2000, ME),
+    msg('c', 3000),
+    msg('d', 4000, ME),
+    msg('e', 5000),
+  ];
+  const at = (rows: ChatMessage[], id: string) => ({
+    id,
+    index: rows.findIndex((m) => m.id === id),
+  });
+
+  it('counts only the unread rows AFTER the last visible one', () => {
+    // Watermark 0: a, c, e are unread. Viewing up to c, only e lies below.
+    expect(countUnreadBelow(thread, at(thread, 'c'), 0)).toBe(1);
+    expect(countUnreadBelow(thread, at(thread, 'a'), 0)).toBe(2);
+  });
+
+  it('shows nothing for an unread row above or in view, the owner report of 2026-11-01', () => {
+    expect(countUnreadBelow(thread, at(thread, 'e'), 0)).toBe(0);
+    expect(countUnreadBelow(thread, at(thread, 'c'), 5000)).toBe(0);
+    const own = [msg('a', 1000), msg('b', 2000, ME)];
+    expect(countUnreadBelow(own, at(own, 'a'), 0)).toBe(0);
+  });
+
+  it('counts nothing while the position is unmeasured', () => {
+    expect(countUnreadBelow(thread, null, 0)).toBe(0);
+  });
+
+  it('follows DISPLAY order, not the order the store holds the rows in', () => {
+    // The store holds e before c; the thread draws c then e. Viewing c, e is below it.
+    const store = [thread[0], thread[4], thread[2]];
+    const display = [thread[0], thread[2], thread[4]];
+    expect(countUnreadBelow(display, at(display, 'c'), 0)).toBe(1);
+    expect(countUnreadBelow(store, at(store, 'c'), 0)).toBe(0);
+  });
+
+  it('never counts a derived system or roster line below the viewport', () => {
+    const roster = msg('r', 9000, 'system', { isSystem: true });
+    const roster2 = msg('r2', 9500, PEER, { isSystem: true });
+    expect(countUnreadBelow([...thread, roster, roster2], at(thread, 'e'), 0)).toBe(0);
+    expect(countUnreadBelow([...thread, roster, roster2], at(thread, 'c'), 0)).toBe(1);
+  });
+
+  it('counts a new incoming row that lands below the viewport', () => {
+    expect(countUnreadBelow([...thread, msg('f', 6000)], at(thread, 'e'), 0)).toBe(1);
+  });
+
+  it('after the list changes, a vanished anchor resolves to the nearest surviving row', () => {
+    // Viewing d (index 3); d is deleted. The row now at index 3 (e) stands in: nothing below it.
+    const withoutD = thread.filter((m) => m.id !== 'd');
+    expect(countUnreadBelow(withoutD, { id: 'd', index: 3 }, 0)).toBe(0);
+    // An anchor past the end of a shortened list clamps to the last row.
+    expect(countUnreadBelow(thread.slice(0, 3), { id: 'gone', index: 4 }, 0)).toBe(0);
+    // The anchor's row moved (rows prepended): found by id, not by its stale index.
+    const prepended = [msg('z', 500), ...thread];
+    expect(countUnreadBelow(prepended, { id: 'c', index: 2 }, 0)).toBe(1);
   });
 });
 
