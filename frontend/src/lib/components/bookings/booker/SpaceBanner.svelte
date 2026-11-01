@@ -40,7 +40,10 @@
 
 <div class="mb-4 space-y-3">
   {#if space.poster}
-    <SpacePoster poster={space.poster} alt={m.bookings_poster_alt({ name: space.name })} />
+    <!-- Capped on a desktop (owner, 2026-11-01): the grid below, not the picture, is the page. -->
+    <div class="md:max-w-2xl">
+      <SpacePoster poster={space.poster} alt={m.bookings_poster_alt({ name: space.name })} />
+    </div>
   {:else}
     <div
       class="border-cn-border from-cn-yellow/25 to-cn-bg text-text-muted/60 flex h-28 w-full items-center justify-center overflow-hidden rounded-xl border bg-linear-to-br sm:h-40"

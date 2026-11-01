@@ -1396,3 +1396,24 @@ the cross-client rig (nothing there asserts the module yet).
 ## The space page and the booking sheet against the mockup (2026-10-30)
 
 The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. Not drawn: the owner line under the title (`BookerSpace` carries no owner name).
+
+## The rolling week and the narrow block (2026-11-01, owner)
+
+Front only (`SpaceGrid`, `SpaceWeek`, `grid.ts`, `gridRuns.ts`). Nothing above is contradicted: D46 says
+"days as columns, like the agenda week", not "starting Monday"; the grid-hours lever named under the
+denser grid ("the hours shown") is taken the other way, below.
+
+- **Narrow blocks stack, they do not vanish.** A `@max-[6rem]:hidden` on the text hid the name and hours
+  of any booked block narrower than ~96 px whatever its height. Now width only picks the layout (a
+  row from 7rem, a stack under it, the hours split start / end under 5rem) and height alone decides
+  how many lines exist (`stackedLines`). Test: `SpaceGrid.narrow.svelte.test.ts`.
+- **The week rolls**: `weekDates(start)` is the seven days FROM `start` (today at first); prev / next
+  move by 7, "Aujourd'hui" restores `start = today`. The ISO week survives only in quotas.
+- **One hour height (`HOUR_REM` = 3 rem) and a whole-day axis (00:00-24:00)**, never derived from a
+  week's units: that stretched and shifted the grid week to week and on every booking. **Trimming the
+  unbookable hours was NOT built**: the booker is never sent the availability rules (only managers
+  read them), so "never bookable" cannot be computed exactly there. Re-open it only with a server field
+  carrying the space's bookable hours. The grid scrolls in its own capped box (sticky day header) and
+  opens once on the first hour a booker may take (`firstUsefulMin`).
+- The page uses the `grid` width shape (the grid is a fixed 7 columns, like the agenda month) and the
+  poster is capped on a desktop.

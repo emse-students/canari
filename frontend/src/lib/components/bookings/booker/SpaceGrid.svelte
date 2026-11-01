@@ -6,6 +6,8 @@
     formatDay,
     formatDayHead,
     formatTimeRange,
+    firstUsefulMin,
+    formatTimeRangeParts,
     gridUnitLimit,
     isPastUnit,
     windowRefusal,
@@ -17,8 +19,10 @@
     buildRuns,
     cutRange,
     spanOf,
+    stackedLines,
     type GridRun,
     type RunKind,
+    type StackedLines,
   } from '$lib/bookings/gridRuns';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
@@ -45,9 +49,18 @@
    * invisible button, so a press, a tap or a drag still lands on the step under the pointer and the
    * keyboard still walks the units. A block that is too short for its text says less (name and
    * range, then avatar and range, then the avatar alone) and the whole reading stays in its tooltip
-   * and its accessible name. The avatar is the initials placeholder: the server sends a booker's
+   * and its accessible name. A block too NARROW for a row (a week column, or one of two lanes, under
+   * about 7rem) stacks instead: avatar, then name, then the hours, each truncated, and under about
+   * 5rem the hours take two lines (start, then end). Height still decides how many of those lines
+   * exist, so text is dropped only when it cannot fit at all, never because the block is narrow. The avatar is the initials placeholder: the server sends a booker's
    * name and, exactly where it sends the name, their id (`holderId`), which the shared `Avatar` turns into
    * their photo; where the name is hidden the block shows an anonymous icon ([bookings-chantier]).
+   *
+   * THE AXIS IS THE WHOLE DAY AND ONE HOUR HEIGHT (`HOUR_REM`), whatever the week holds: the booker
+   * is never told the space's availability rules, so no hour can be proven unbookable here, and an
+   * axis drawn from the week's units would change shape from week to week and jump on a booking.
+   * The grid scrolls inside a capped box (the day's header sticks) and opens on the first hour a
+   * booker may take, once, when it appears.
    *
    * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same DAY, and the
    * range follows the pointer, held by `dragRange` to free touching units and to what one booking
@@ -93,7 +106,15 @@
 
   /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
   let coarse = $state(isCoarsePointerDevice());
+  /** The scrolling box of the grid: it opens on the first useful hour, once, when it appears. */
+  let scroller = $state<HTMLElement | null>(null);
   onMount(() => {
+    if (scroller) {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const at = remOf(firstUsefulMin(layout, space, nowMs) - layout.startMin);
+      // Half an hour of the hour before stays in view, so the first free unit is not under the edge.
+      scroller.scrollTop = Math.max(0, (at - 0.5) * rem);
+    }
     coarse = isCoarsePointerDevice();
     return onCoarsePointerChange((value) => (coarse = value));
   });
@@ -298,6 +319,7 @@
     const unit = run.units[0];
     const text = reading(unit).text;
     const time = formatTimeRange(run.startMs, run.endMs, space.timeZone);
+    const timeParts = formatTimeRangeParts(run.startMs, run.endMs, space.timeZone);
     const label = m.bookings_cell_label({
       resource: resource.name,
       time: formatBookingRange(run.startMs, run.endMs, space.timeZone),
@@ -308,6 +330,7 @@
     return {
       text,
       time,
+      timeParts,
       label,
       holder,
       holderId,
@@ -338,8 +361,9 @@
 
 <!-- The week scrolls inside its own box, never the page, and the hour axis stays in view (sticky). -->
 <div
-  class="border-cn-border bg-cn-surface relative overflow-x-auto rounded-2xl border"
+  class="border-cn-border bg-cn-surface relative max-h-[75vh] overflow-auto rounded-2xl border"
   data-swipe-nav-ignore
+  bind:this={scroller}
 >
   {#if selected && selectedReading}
     <p
@@ -353,7 +377,10 @@
   {/if}
   <div role="group" aria-label={m.bookings_grid_caption({ space: space.name })}>
     {#if mode === 'week'}
-      <div class="grid gap-x-1 pe-1" style:grid-template-columns={columns}>
+      <div
+        class="bg-cn-surface sticky top-0 z-20 grid gap-x-1 pe-1"
+        style:grid-template-columns={columns}
+      >
         <span class="bg-cn-surface sticky left-0 z-10"></span>
         {#each layout.days as day (day.date)}
           {@const head = formatDayHead(day.date)}
@@ -433,7 +460,12 @@
                       <span class="text-2xs block truncate opacity-80">{r.time}</span>
                     {/if}
                   {:else}
-                    {@render bookingFace(r, density, run.units[0])}
+                    {@render bookingFace(
+                      r,
+                      density,
+                      stackedLines(remOf(run.heightMin)),
+                      run.units[0]
+                    )}
                   {/if}
                 </span>
               </button>
@@ -530,11 +562,19 @@
 {/if}
 
 {#snippet bookingFace(
-  r: { text: string; time: string; holder: string | undefined; holderId: string | undefined },
+  r: {
+    text: string;
+    time: string;
+    timeParts: { start: string; end: string };
+    holder: string | undefined;
+    holderId: string | undefined;
+  },
   density: 'full' | 'line' | 'icon',
+  stacked: StackedLines,
   unit: SlotUnit
 )}
-  <span class="flex items-start gap-1.5">
+  <!-- Wide (the container holds 7rem): avatar and text in a row. Narrower: the same, stacked. -->
+  <span class="flex flex-col items-start gap-1 @min-[7rem]:flex-row @min-[7rem]:gap-1.5">
     {#if r.holderId}
       <Avatar userId={r.holderId} size="sm" shape="circle" fallbackLabel={r.holder ?? ''} />
     {:else if r.holder}
@@ -551,14 +591,27 @@
         <User class="h-3 w-3" aria-hidden="true" />
       </AvatarPlaceholder>
     {/if}
-    {#if density !== 'icon'}
-      <span class="min-w-0 flex-1 @max-[6rem]:hidden">
-        {#if density === 'full'}
-          <span class="block truncate font-semibold">{r.text}</span>
-          <span class="text-text-muted text-2xs block truncate">{r.time}</span>
-        {:else}
-          <span class="text-text-muted block truncate font-semibold tabular-nums">{r.time}</span>
+    {#if density === 'full'}
+      <span class="w-full min-w-0 flex-1">
+        <span class="block truncate font-semibold">{r.text}</span>
+        <!-- One line of hours, or two (start, end) where the block is under 5rem wide. -->
+        <span
+          class="text-text-muted text-2xs block truncate {stacked >= 3
+            ? '@max-[5rem]:hidden'
+            : stacked === 2
+              ? ''
+              : '@max-[7rem]:hidden'}">{r.time}</span
+        >
+        {#if stacked >= 3}
+          <span class="text-text-muted text-2xs hidden @max-[5rem]:block" data-time-split>
+            <span class="block truncate">{r.timeParts.start}</span>
+            <span class="block truncate">{r.timeParts.end}</span>
+          </span>
         {/if}
+      </span>
+    {:else if density === 'line'}
+      <span class="hidden min-w-0 flex-1 @min-[7rem]:block">
+        <span class="text-text-muted block truncate font-semibold tabular-nums">{r.time}</span>
       </span>
     {/if}
   </span>
