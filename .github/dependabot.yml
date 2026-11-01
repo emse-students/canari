@@ -149,6 +149,18 @@ updates:
         patterns:
           - "@nestjs/*"
         update-types: ["major", "minor", "patch"]
+      # THE SAME RULE FOR A SECURITY UPDATE, WHICH THE GROUP ABOVE DOES NOT REACH. A group without
+      # `applies-to` is a VERSION-update group; an advisory on a transitive (multer, through
+      # `@nestjs/platform-express`) opens one pull request PER DEPENDENCY PER SERVICE instead.
+      # Measured 2026-10-30: twelve single `@nestjs/*` pull requests, three per service, each
+      # editing adjacent lines of the same `package.json` and the same `bun.lock`. The first to
+      # merge made every sibling `DIRTY`, and Dependabot's rebase on conflict did not catch up -
+      # five were still conflicting a day after the others merged. One pull request per service
+      # leaves nothing to conflict with.
+      nestjs-security:
+        applies-to: security-updates
+        patterns:
+          - "@nestjs/*"
       development-dependencies:
         dependency-type: "development"
         update-types: ["minor", "patch"]

@@ -1557,6 +1557,14 @@ lock instead - `cargo update -p serde_with --precise 3.21.0` also added `bs58` a
 `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
 compiling. The rule is in [durable-rules](durable-rules.md).
 
+**A group is a VERSION-update group unless it says `applies-to: security-updates`** (measured
+2026-10-30, #2750-#2762). The `nestjs` group never reached the multer advisory: Dependabot opened one
+pull request per `@nestjs/*` package per service, twelve in all, each editing adjacent lines of the
+same `package.json` and `bun.lock`. Each merge turned its siblings `DIRTY`, and Dependabot's own
+rebase had not caught up a day later. The backend block now has a `nestjs-security` group, so the
+advisory arrives as one pull request per service. A `DIRTY` Dependabot pull request is rebased by
+asking Dependabot for ONE (`@dependabot rebase` on that pull request), never by a sweep.
+
 ### Native and identity-provider manifests (2026-10-23)
 
 A dependency audit found three committed manifest trees nothing watched. What is declared now, and
