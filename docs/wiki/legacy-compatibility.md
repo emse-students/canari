@@ -687,6 +687,76 @@ already runs. It is cheap; what it must not become is the reason nobody notices 
 mean subtly different things - ids are a SET and an instant is an ORDER, and the translation is
 lossy in exactly one direction.
 
+### No date yet - read marks on the `sentAt` clock: the stamped map, and the `at` of a `read_watermark` frame (2026-10-31)
+
+**Site:** `readState.ts` (`readWatermarks` beside `serverReadWatermarks`, `isCoveredBy`,
+`readWatermarkFrameMark`), `systemMessageHandler.ts` and `historySystemEvents.ts` (a frame with no
+`serverAt`), `readWatermarkCache.ts` (the native shade), `readWatermarkFrameData` (the `at` this build
+still sends).
+**Shim:** since 2026-10-31 a DM or group is ordered and read on the SERVER's clock
+([chat](frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+Every mark written before, every frame from an older client, and the native shade's "mark as read"
+are on the author's `sentAt` clock, and a bare number cannot say which. So they are KEPT in the
+stamped map and compared against the row's `timestamp`, and a row is read when either map covers it.
+In the other direction this build sends `{ at, serverAt }` with the same value: an older client reads
+`at` and compares a server instant against `sentAt` - off by the delivery latency, which it already
+was against its own peers' clocks.
+**What it costs:** a late message whose `sentAt` is older than a STAMPED mark still reads as read, the
+pre-2026-10-31 behaviour, wherever that stamped mark is the newer of a reader's two. An upgraded
+reader's stamped mark stops moving (its own reads write the server map), so the residue shrinks to the
+iOS shade, an Android notification posted by an older build, and older peers.
+**Removal condition:** the native shade sends `serverAt` on BOTH platforms (Android does since
+2026-10-31, `EXTRA_SERVER_AT`; iOS must hand the push's `createdAt` down to
+`canari_native_build_read_watermark_proto` and `CanariAppendReadWatermark` - owed), the floor passes
+the first release where both do, AND no frame with a bare `at` is observed in a history bundle for a full
+retention window (90 days) - a frame outlives the client that wrote it, as for `read_receipt` above.
+Then the stamped map is read for salons only (whose two clocks are one) and the `at` alias goes.
+
+### No date yet - a downgrade below the server-time order: SQLite v16, IndexedDB v12, `outbox_sent` lines (2026-11-01)
+
+**Site:** `sqlite.ts` (the v16 step and the open-time `MESSAGE_PROVISIONAL_ORDER_FILL`),
+`sqliteMigrations.ts` (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), `indexeddb.ts` (the v12 upgrade),
+`outboxMirror.ts` (`id<TAB>receivedAt` lines), the native drains (`CanariFirebaseMessagingService.kt`,
+`canari_push.mm`).
+**What a build older than the server-time order (`1.5.4` and before) does with what this one leaves:**
+
+- **SQLite, a v16 file opened by an older native build** (a store rollback, or a sideloaded older
+  APK). It runs no migration above its own version (15), so it opens the file as it is: it recreates
+  its `idx_messages_conv_time` (unconditional), reads pages on `timestamp` and ignores `order_at`,
+  `order_pending` and `server_read_watermarks`. Every row it WRITES names no `order_at`, so it lands
+  with none - and a row it rewrites (`INSERT OR REPLACE`) loses its key. **Back on this build** the v16
+  step does not run again (`user_version` is still 16); the open-time fill re-keys those rows
+  provisionally through the partial index `idx_messages_order_missing`, and the page reads derive them
+  (`messagesPage.test.ts`, "a row written by an older build that opened the v16 file"); the
+  `idx_messages_conv_time` it recreated is dropped again on the same open.
+  **The `server_read_watermarks` residue:** the older build writes a conversation row with
+  `INSERT OR REPLACE` naming no `server_read_watermarks`, so every conversation it saves comes back
+  with that column NULL - the server marks of EVERY reader of it, this device's and its peers', are
+  gone. Its own reads in the meantime land in the stamped map, covered by the rule above, so nothing
+  it read turns unread; what is lost is the server-clock part: a peer's "seen" head falls back to
+  their stamped mark (or disappears) until their next `read_watermark` frame or a history bundle
+  carries the server map again, and a late message this device had read only by its server mark
+  reads as unread until it reads the conversation again. Nothing repairs it on open: the values are
+  not anywhere on the device to restore from.
+- **IndexedDB, a v12 database opened by an older web build** (a web rollback). `indexedDB.open` with
+  the older version number fails with `VersionError` - IndexedDB never opens a database below its
+  version - so the older build cannot open the store at all, as with every earlier version bump. **A web
+  rollback past this change is therefore not a path**: the answer is a fix forward, or the older build
+  rebuilt with this upgrade's version number and its own schema. The desktop and mobile apps are not
+  affected (SQLite, above).
+- **`outbox_sent.ndjson` lines of the form `id<TAB>receivedAt`**, written by this build's native drain
+  and read after a downgrade by an older TypeScript, which takes the whole line as the id. It matches
+  no outbox entry, so the entry stays and the next foreground flush sends it again - a duplicate the
+  receivers drop on `messageId` (the same cost as a missed reconciliation, `outboxMirror.ts`), and
+  the sender's own row stays undated until that send answers.
+
+**What it costs:** nothing on the way up. On a downgrade: pages on `sentAt` again (the older build's
+order), one duplicate POST per background send whose line it reads, and no web rollback.
+**Removal condition:** none to remove - the provisional fill on open is the steady-state answer to a
+file an older build touched, and it costs one probe of an empty partial index. Revisit when the floor
+passes the first build that writes `order_at` (then no supported build writes a row without it, and
+the open-time fill and its index can go with a migration that drops the index).
+
 ### No date yet - the refresh COOKIE accepted from a `tauri://localhost` client
 
 **Site:** `presentedRefreshToken()` in `apps/core-service/src/auth/auth.controller.ts` - the last

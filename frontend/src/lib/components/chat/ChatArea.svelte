@@ -43,7 +43,7 @@
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadForUser, seenByAnchors, watermarkFor } from '$lib/utils/chat/readState';
+  import { countUnreadForUser, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -729,7 +729,8 @@
       ? seenByAnchors(
           messageGroups.filter(isMessageGroupRow).map((g) => g.message),
           chatView.conversation.readWatermarks,
-          currentUserId
+          currentUserId,
+          chatView.conversation.serverReadWatermarks
         )
       : undefined
   );
@@ -749,10 +750,8 @@
   let unreadBelowCount = $derived.by(() => {
     const convo = chatView?.conversation;
     if (!convo) return 0;
-    return countUnreadForUser(
-      convo.messages,
-      watermarkFor(convo.readWatermarks, currentUserId.trim().toLowerCase())
-    );
+    const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
+    return countUnreadForUser(convo.messages, mine.stamped, mine.server);
   });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
@@ -1564,6 +1563,7 @@
             {messageReactions}
             {currentUserId}
             readWatermarks={conversation?.readWatermarks}
+            serverReadWatermarks={conversation?.serverReadWatermarks}
             {seenBy}
             searchQuery={searchQuery.trim()}
             {onReply}

@@ -117,6 +117,7 @@ describe('a visible system notice carries the sender’s id', () => {
       deletedMessages: new Map(),
       editedMessages: new Map(),
       readWatermarkUpdates: {},
+      serverReadWatermarkUpdates: {},
       historyFloorUpdate: { at: 0 },
       pushPendingMessage: (entry: any) => pushed.push(entry),
       dropOwnExcluded: async (messages: any) => messages,

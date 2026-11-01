@@ -41,12 +41,15 @@ import {
 } from '$lib/utils/chat/messageUtils';
 import {
   advanceLastMessageAt,
+  clockGapNote,
   insertMessageOrdered,
+  largestClockGapNote,
+  messageDate,
   mergeMessagesInInputOrder,
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
-import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
+import { isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -558,7 +561,7 @@ export function useMessaging() {
      */
     convo: Pick<
       Conversation,
-      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks'
+      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks' | 'serverReadWatermarks'
     >,
     senderId: string,
     content: string,
@@ -572,6 +575,11 @@ export function useMessaging() {
     isOwn: boolean,
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
     sentAt: number,
+    /**
+     * The SERVER's acceptance of that message, when the frame carried it: with `sentAt`, what the
+     * "already read here" question compares against (readState.ts, both clocks).
+     */
+    serverAt: number | undefined,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
@@ -579,14 +587,16 @@ export function useMessaging() {
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
+    const mine = readPointFor(convo, ctx.userId.toLowerCase());
     // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
     // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
     // still queued for this device, the next connection delivers it, and it used to be announced
     // again - the reply's banner came back 2.5 s later without the reply line (Mi 9T, 2026-10-01).
     if (
       !isUnreadForUser(
-        { isOwn, isSystem, senderId, timestamp: new SvelteDate(sentAt) },
-        watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase())
+        { isOwn, isSystem, senderId, timestamp: new SvelteDate(sentAt), serverTimestamp: serverAt },
+        mine.stamped,
+        mine.server
       )
     ) {
       console.log(
@@ -642,6 +652,7 @@ export function useMessaging() {
             isSystem,
             isOwn,
             sentAt,
+            serverAt,
             covers,
             true
           );
@@ -730,6 +741,7 @@ export function useMessaging() {
         body: notificationBody,
         mentionsMe,
         sentAt,
+        serverAt: serverAt ?? 0,
         covers,
       })
     );
@@ -1025,10 +1037,11 @@ export function useMessaging() {
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
     // something nobody reads at all.
+    const mineNow = readPointFor(convo, ctx.userId.toLowerCase());
     const shouldMarkUnread =
       !isConversationOpen &&
       !isSalonMuted(normalized) &&
-      isUnreadForUser(newMsg, watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase()));
+      isUnreadForUser(newMsg, mineNow.stamped, mineNow.server);
     const nextUnreadCount = shouldMarkUnread
       ? (convo.unreadCount ?? 0) + 1
       : isConversationOpen
@@ -1041,7 +1054,7 @@ export function useMessaging() {
       messages: insertMessageOrdered(convo.messages, newMsg),
       lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
     });
-    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}`);
+    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
 
     // A salon echo has no server id yet: announced to the sibling tabs now, it would be a row they
     // can never reconcile. `applySalonEchoChange` announces it once it is re-keyed.
@@ -1090,7 +1103,8 @@ export function useMessaging() {
     if (
       !isOwn &&
       !isSystem &&
-      !isStaleInboundMessage(resolvedTimestamp) &&
+      // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
+      !isStaleInboundMessage(messageDate(newMsg)) &&
       canSeeArrival(ctx, normalized)
     ) {
       if (ctx.playReceiveTone) {
@@ -1111,6 +1125,7 @@ export function useMessaging() {
       isSystem,
       isOwn,
       resolvedTimestamp.getTime(),
+      newMsg.serverTimestamp,
       1
     );
 
@@ -1286,11 +1301,11 @@ export function useMessaging() {
     const base = current ?? convo;
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
-    const myWatermark = watermarkFor(base.readWatermarks, ctx.userId.toLowerCase());
+    const mine = readPointFor(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
       ? 0
-      : toAdd.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
+      : toAdd.filter((msg) => isUnreadForUser(msg, mine.stamped, mine.server)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
     const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
@@ -1320,7 +1335,8 @@ export function useMessaging() {
     const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
       `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedContact === normalized}` +
-        (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '')
+        (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '') +
+        largestClockGapNote(brandNew)
     );
 
     // THE SAME QUESTION THE LIVE PATH ASKS, and until 2026-09-05 this path never asked it. A message
@@ -1383,6 +1399,7 @@ export function useMessaging() {
         false,
         false,
         lastInbound.timestamp.getTime(),
+        lastInbound.serverTimestamp,
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
         inbound.length
       );

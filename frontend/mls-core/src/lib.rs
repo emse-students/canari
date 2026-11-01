@@ -252,19 +252,107 @@ impl MlsError {
     /// Decided HERE, on the variant, so no caller has to recognise a verdict by reading prose: the
     /// web asks it of this reader when WebCrypto refused a v2 blob (`state_blob_verdict` in
     /// `mls-wasm`), and an answer that is not one of these four must stay "unreadable right now"
-    /// rather than acquire someone else's recovery. Each code is the exact prefix the variant's
-    /// `Display` writes, which is what the Tauri commands surface (`e.to_string()`), so the two
-    /// boundaries name a verdict with the same word - pinned by `state_load_failure_is_typed.rs`.
+    /// rather than acquire someone else's recovery. The Tauri `initialiser_mls` command and the
+    /// WASM constructor carry the same code as a FIELD ([`StateLoadRefusal`]), so both boundaries
+    /// name a verdict with the same word and neither is read out of prose. Each code is also the
+    /// prefix of the variant's `Display`, for a reader of the logs - pinned by
+    /// `state_load_failure_is_typed.rs`.
     pub fn state_verdict_code(&self) -> Option<&'static str> {
         match self {
             MlsError::StateAltered(_) => Some("STATE_ALTERED"),
-            MlsError::StateSealedUnderAnotherKey(_) => Some("STATE_KEY_MISMATCH"),
+            MlsError::StateSealedUnderAnotherKey(_) => Some(STATE_KEY_MISMATCH),
             MlsError::StateUndecryptable(_) => Some("STATE_UNDECRYPTABLE"),
             MlsError::StateIdentityMismatch(_) => Some("IDENTITY_MISMATCH"),
             _ => None,
         }
     }
 
+    /// The CODE a state-LOAD failure carries across a boundary: a verdict about the bytes
+    /// ([`Self::state_verdict_code`]) or `KEYSTORE_KEY_UNAVAILABLE` (biometric mode found no key -
+    /// not a verdict about the bytes, but a failure the caller answers with the PIN modal), and
+    /// `None` for everything else. It is the closed set the frontend's `classifyStateLoadFailure`
+    /// reads by TYPE; anything outside it is "unknown" there, accused and never guessed from text.
+    pub fn state_load_code(&self) -> Option<&'static str> {
+        match self {
+            MlsError::KeystoreKeyUnavailable(_) => Some(KEYSTORE_KEY_UNAVAILABLE),
+            other => other.state_verdict_code(),
+        }
+    }
+}
+
+/// What a failed state load hands a frontend: its CODE ([`MlsError::state_load_code`], decided on
+/// the variant) and its message, a sentence for the logs only. Serialized as `{ code, message }` -
+/// the Tauri `initialiser_mls` command rejects with it, and `mls-wasm`'s `WasmMlsClient` constructor
+/// rejects with the same two fields - so the TypeScript side builds a TYPED error from `code` at the
+/// boundary and never reads a recovery out of `message`.
+///
+/// `code` is `None` for a failure `mls-core` does not type (a codec error, a poisoned lock, an IPC
+/// fault): the frontend classifies it `unknown`, explicitly.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StateLoadRefusal {
+    /// One of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`,
+    /// `KEYSTORE_KEY_UNAVAILABLE`, or `None`.
+    pub code: Option<&'static str>,
+    /// The failure's own text - evidence for a reader of the logs, never a discriminator. For a
+    /// coded refusal it is the variant's DETAIL, without the code its `Display` leads with: the
+    /// code already crosses as its own field and the frontend's typed error puts it back in front,
+    /// so carrying it here too printed it twice (`STATE_ALTERED: STATE_ALTERED: ...`). An untyped
+    /// refusal keeps the whole `Display`, the only text it has.
+    pub message: String,
+}
+
+/// The code of [`MlsError::KeystoreKeyUnavailable`] across a boundary - one constant, so the code
+/// written ([`MlsError::state_load_code`]) and the code tested
+/// ([`StateLoadRefusal::is_keystore_key_unavailable`]) cannot drift apart.
+const KEYSTORE_KEY_UNAVAILABLE: &str = "KEYSTORE_KEY_UNAVAILABLE";
+
+/// The code of [`MlsError::StateSealedUnderAnotherKey`] - one constant for the code written
+/// ([`MlsError::state_verdict_code`]) and the code tested
+/// ([`StateLoadRefusal::is_sealed_under_another_key`]).
+const STATE_KEY_MISMATCH: &str = "STATE_KEY_MISMATCH";
+
+impl StateLoadRefusal {
+    /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
+    /// wiped entry) - an EXPECTED outcome the caller answers with the PIN modal, read from the
+    /// `code` field, never from `message`.
+    pub fn is_keystore_key_unavailable(&self) -> bool {
+        self.code == Some(KEYSTORE_KEY_UNAVAILABLE)
+    }
+
+    /// True when the saved state is framed under ANOTHER device key (`STATE_KEY_MISMATCH`): the PIN
+    /// was changed on another device and the OLD one opens it - an EXPECTED outcome the caller
+    /// answers with the old-PIN recovery, read from the `code` field, never from `message`.
+    pub fn is_sealed_under_another_key(&self) -> bool {
+        self.code == Some(STATE_KEY_MISMATCH)
+    }
+}
+
+impl From<MlsError> for StateLoadRefusal {
+    fn from(e: MlsError) -> Self {
+        let code = e.state_load_code();
+        let message = match e {
+            MlsError::StateAltered(detail)
+            | MlsError::StateSealedUnderAnotherKey(detail)
+            | MlsError::StateUndecryptable(detail)
+            | MlsError::StateIdentityMismatch(detail)
+            | MlsError::KeystoreKeyUnavailable(detail) => detail,
+            other => other.to_string(),
+        };
+        Self { code, message }
+    }
+}
+
+impl From<String> for StateLoadRefusal {
+    /// A failure that never was an [`MlsError`] (a lock, a path, a join): untyped, by construction.
+    fn from(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl MlsError {
     /// Classifies an incoming decryption error from its variant / its OpenMLS message.
     /// Centralizes the substring matching previously duplicated in `src-tauri`. [[S5]]
     pub fn decrypt_kind(&self) -> DecryptErrorKind {

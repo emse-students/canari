@@ -1215,7 +1215,13 @@ const NOTABLE = [
   // log could not be applied, or not read) are pinned too: the sync watchdog owns what they leave,
   // and the line is the evidence of handing it over.
   /^\[PENDING\] Add of \S+ to [0-9a-f]{8}\.\.\. abandoned before its stage \((?:tree-unconfirmed|not-a-member-device|invitation-withdrawn|removed-meanwhile|premise-unreadable)\) - nothing committed$/,
-  /^\[SYNC\] the Add was abandoned before its stage \((?:tree-unconfirmed|not-a-member-device|invitation-withdrawn|removed-meanwhile|premise-unreadable)\) - nobody added$/,
+  // A member's invitation abandoned before its stage says so in its ONE outcome line (TOK-2's fix,
+  // `narrateBulkAddition`): the refusal its `AddAbortedError` maps to, and the error itself. A person
+  // who left during a rebuild is a race and notable everywhere; a refused ADMISSION (`not-admitted`,
+  // an ask settled first) is forgiven only in the rows that play it, at info
+  // (`admissionMemberNarration`).
+  /^\[GROUP\] an invitation added nobody \((?:tree-unconfirmed|commit-race-lost)\) in [0-9a-f]{8}\.\.\.(?: \(the invitation lost at epoch \d+, re-planned\))?: AddAbortedError: The Add in [0-9a-f]{8}\.\.\. was abandoned before its stage \((?:tree-unconfirmed|premise-unreadable)\): .+$/,
+  /^\[GROUP\] an invitation added nobody \(removed-meanwhile\) in [0-9a-f]{8}\.\.\.(?: \(the invitation lost at epoch \d+, re-planned\))?: AddAbortedError: The Add in [0-9a-f]{8}\.\.\. was abandoned before its stage \(removed-meanwhile\): \S+(?:, \S+)* left the roster or the tree while the Add was (?:rebuilt|kept)$/,
   /^\[\w+\] Tree of [0-9a-f]{8}\.\.\. not confirmed at the server's epoch, cannot say whether \S+ is a member - nothing added$/,
   /^\[COMMIT_RACE\] [0-9a-f]{8}\.\.\. .+ was refused \((?:epoch-moved|seat-claim-overtaken), now epoch \d+\) - rebuilding on the tree that won$/,
   /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: read the commit log, \d+ commit\(s\) applied, now epoch \d+$/,
@@ -2430,23 +2436,20 @@ export function admissionMemberNarration(
               String.raw`^\[COMMIT_RACE\] ${g} the gate refused to admit every person the Add offered \([^)]+\) - nobody added$`
             )
           ),
-          atLevels(
-            ['log', 'info'],
-            /^\[SYNC\] the Add was abandoned before its stage \(not-admitted\) - nobody added$/
-          ),
-          // The same refusal as the member's console line (a Decline won the race and a seat generation was
-          // carried): per group, at info only - at warn it is the client-side read failure and stays dirt.
+          // The invitation's ONE outcome line (`narrateBulkAddition`) when a Decline won the race and a
+          // seat generation was carried: per group, at info only - at warn it is the client-side read
+          // failure and stays dirt.
           atLevels(
             ['info'],
             new RegExp(
-              String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`
+              String.raw`^\[GROUP\] an invitation added nobody \(removed-meanwhile\) in ${g}: AddAbortedError: The Add in ${g} was abandoned before its stage \(not-admitted\): the gate refused to admit \S+(?:, \S+)*$`
             )
           ),
           // ...and the approver's Add stopped because the ask was settled first (another member declined, or the asker withdrew).
           atLevels(
             ['info'],
             new RegExp(
-              String.raw`^\[SYNC\] processBulkAddition: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`
+              String.raw`^\[GROUP\] an invitation added nobody \(removed-meanwhile\) in ${g}: AddAbortedError: The Add in ${g} was abandoned before its stage \(removed-meanwhile\): the ask of \S+ was settled before the Add was built$`
             )
           ),
           atLevels(
@@ -2624,7 +2627,7 @@ export const FRESH_DEVICE_SESSION_NARRATION = [
   atLevels(['debug'], /^\[VAULT\] persistence already off - every slot kept$/),
   atLevels(
     ['log'],
-    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \(absent, a round is running\): the commit gate refuses an activation without one$/
+    /^\[MLS\] externalJoin [0-9a-f]{8}\.\.\. waits for the server to hold this device's KeyPackage \((?:absent|first publication running, not read), a round is running\): the commit gate refuses an activation without one$/
   ),
   atLevels(
     ['log'],
@@ -2924,8 +2927,7 @@ export const bigRowNarration = (device) =>
  * nowhere else. Anywhere else an Add the lock cancelled is a lost gesture and stays dirt.
  */
 export const ADD_LOCK_REFUSED_NARRATION = [
-  /^\[WARN\] Add-lock busy for \S+ - invite cancelled \(another device is in progress\)\.$/,
-  /^\[SYNC\] Add-lock busy for \S+, aborting to avoid concurrent commits$/,
+  /^\[GROUP\] an invitation added nobody \(add-lock-busy\) in [0-9a-f]{8}\.\.\.$/,
 ];
 
 /**

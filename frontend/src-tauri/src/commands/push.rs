@@ -1288,9 +1288,11 @@ fn remove_graine_sessions(
     (removed, emptied.len())
 }
 
-/// Reads {app_data_dir}/outbox_sent.ndjson (one messageId per line, written by the Android service
-/// after a successful background send), clears the file and returns the ids. Called at login to
-/// drop from the outbox the messages already delivered in the background.
+/// Reads {app_data_dir}/outbox_sent.ndjson (one line per message the native side delivered in the
+/// background: `messageId`, or `messageId<TAB>receivedAt` from an Android build that reads the
+/// server's answer), clears the file and returns the lines as written. Called at login to drop from
+/// the outbox the messages already delivered, and to date the author's copy by the server's receive
+/// time (`reconcileOutboxSent`, outboxMirror.ts, which parses both shapes).
 #[tauri::command]
 pub(crate) fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
     let data_dir = match app.path().app_data_dir() {

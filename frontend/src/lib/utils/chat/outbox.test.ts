@@ -80,7 +80,13 @@ import {
   queuedReadWatermarkAt,
   sendReadWatermark,
 } from './messaging';
-import { flushDmReadMarks, owedDmReadMarks, recordDmReadMark } from './salonReadMarkQueue';
+import {
+  flushDmReadMarks,
+  owedDmReadMarks,
+  owedStampedDmReadMarks,
+  recordDmReadMark,
+} from './salonReadMarkQueue';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import {
   UploadAbortedError,
@@ -1654,7 +1660,69 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
 
     await outbox.flush();
 
-    expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith('m1', undefined);
+    // With the server's receive time, so the follower's echo is ordered like every other copy.
+    expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith(
+      'm1',
+      undefined,
+      1_700_000_000_000
+    );
+  });
+
+  it('a sent reply takes its place by the receivedAt the send answered (server-clock order)', async () => {
+    // The owner's case (2026-10-31): the reply's `sentAt` (1 000) is OLDER than the peer message
+    // that came in while it was typed. Pending, it sits below every dated row; sent, it is placed
+    // by the server's receive time - here after the peer's, so below it, on every device.
+    const convo = convoWith('g1', ['m1']);
+    const peer = {
+      id: 'peer',
+      senderId: 'p',
+      content: 'x',
+      timestamp: new Date(2_000),
+      isOwn: false,
+      serverTimestamp: 1_699_999_999_000,
+    };
+    convo.messages = [peer, ...convo.messages];
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage: makeStorage([textEntry('m1', 'g1', 100)]),
+        conversations,
+      })
+    );
+
+    await outbox.flush();
+
+    const after = conversations.get('g1')!.messages;
+    expect(after.map((m) => m.id)).toEqual(['peer', 'm1']);
+    expect(after[1]).toMatchObject({ status: 'sent', serverTimestamp: 1_700_000_000_000 });
+    outbox.dispose();
+  });
+
+  it('a follower places its echo by the receivedAt the leader reports', () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const convo = convoWith('g1', ['t1']);
+    const later = {
+      id: 'later',
+      senderId: 'p',
+      content: 'x',
+      timestamp: new Date(5_000),
+      isOwn: false,
+      serverTimestamp: 5_000,
+    };
+    convo.messages = [later, ...convo.messages];
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_sent', messageId: 't1', receivedAt: 4_000 });
+    expect(conversations.get('g1')!.messages.map((m) => m.id)).toEqual(['t1', 'later']);
+    expect(conversations.get('g1')!.messages[0]).toMatchObject({
+      status: 'sent',
+      serverTimestamp: 4_000,
+    });
+    outbox.dispose();
   });
 });
 
@@ -3677,7 +3745,10 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
       conversationId,
       sentAt: at,
       kind: 'control',
-      controlProto: encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+      // The shape this build queues: the server-clock mark under both names.
+      controlProto: encodeAppMessage(
+        mkSystem('read_watermark', JSON.stringify({ at, serverAt: at }))
+      ),
       status: 'pending',
       attempts: 0,
       createdAt: at,
@@ -3756,6 +3827,25 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
       stop();
       localStorage.clear();
     }
+  });
+
+  // OWED BEFORE 2026-10-31 MEANS OWED ON THE AUTHORS' CLOCK: the old ledger's number is a `sentAt`,
+  // and stated as `serverAt` it would compare against every reader's server times.
+  it('a DM mark owed before the server clock leaves as the stamped {at} frame, never as serverAt', async () => {
+    localStorage.clear();
+    localStorage.setItem(ACCOUNT_KEY.dmReadMarks('u'), JSON.stringify({ g1: { at: 600 } }));
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService, storage }));
+
+    expect(await flushOwedDmReadMarks('u')).toBe(1);
+    const frames = [...storage._map.values()]
+      .filter((e: OutboxEntry) => e.conversationId === 'g1')
+      .map((e: OutboxEntry) => JSON.parse(decodeAppMessage(e.controlProto!)?.system?.data ?? '{}'));
+    expect(frames).toEqual([{ at: 600 }]);
+    expect(owedStampedDmReadMarks('u')).toEqual({});
+    localStorage.clear();
   });
 
   it('a DM mark the outbox could not take stays owed', async () => {
@@ -4758,6 +4848,76 @@ describe('a text the server keeps failing (5xx) - terminal after N in a row (use
     await attempt(outbox, storage, 't1');
     expect(mls.sendMessage).not.toHaveBeenCalled();
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    outbox.dispose();
+  });
+
+  it('a reload puts back a queued or failed own message older than the page held (review of #2824, P2-3)', async () => {
+    // The page held is one newer row; both queued sends are older than it, so no page read them.
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [])]]);
+    conversations.get('g1')!.messages.push({
+      id: 'newer',
+      senderId: 'peer',
+      content: 'x',
+      timestamp: new Date(9_000),
+      serverTimestamp: 9_000,
+      isOwn: false,
+    });
+    const storage = makeStorage([
+      textEntry('queued', 'g1', 100),
+      { ...textEntry('failed', 'g1', 200), serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+    ]);
+    for (const [id, timestamp] of [
+      ['queued', 100],
+      ['failed', 200],
+    ] as const) {
+      storage._messages.set(id, {
+        id,
+        conversationId: 'g1',
+        senderId: 'u',
+        content: id,
+        timestamp,
+      });
+    }
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.applyPendingStatuses();
+
+    const shown = conversations.get('g1')!.messages;
+    // Unsent, so ordered below every dated row, and shown with the state the queue holds.
+    expect(shown.map((m) => [m.id, m.status])).toEqual([
+      ['newer', undefined],
+      ['queued', 'pending'],
+      ['failed', 'error'],
+    ]);
+    // Applied again (a second history load), nothing is added twice.
+    await outbox.applyPendingStatuses();
+    expect(conversations.get('g1')!.messages).toHaveLength(3);
+    outbox.dispose();
+  });
+
+  it('a queued control entry is no message to put back, and reads nothing for it', async () => {
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', [])]]);
+    const storage = makeStorage([
+      {
+        id: 'ctl',
+        conversationId: 'g1',
+        sentAt: 7,
+        kind: 'control',
+        controlProto: new Uint8Array([1]),
+        status: 'pending',
+        attempts: 0,
+        createdAt: 7,
+      },
+    ]);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.applyPendingStatuses();
+
+    expect(storage.getMessage).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(conversations.get('g1')!.messages).toEqual([]);
+    error.mockRestore();
     outbox.dispose();
   });
 

@@ -42,6 +42,7 @@ import {
   takeAddressedAsk,
 } from '$lib/utils/chat/historyAddressing';
 import {
+  historyGroupStartFor,
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
@@ -49,13 +50,16 @@ import {
 } from '$lib/utils/chat/groupActions';
 import {
   countUnreadForUser,
-  mergeReadWatermark,
   mergeReadWatermarks,
   parseReadWatermarks,
+  readPointFor,
+  boundedServerMarks,
+  receivedReadWatermarkMark,
   watermarkAfterReading,
-  watermarkFor,
   withOwnReadAdvanced,
+  withReadMark,
 } from '$lib/utils/chat/readState';
+import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -413,11 +417,14 @@ export async function handleSystemEvent(
     // echo is what the peer compared against, which is one round trip old and, either side of
     // midnight, a different day.
     const since = await historyRangeStartFor(convoKey, storage);
+    // AND WHERE THE GROUP BEGAN, a fact this device holds about its own row: a shortfall below it
+    // is a past nobody can hold, and walking the membership for it was 8 elections on BIG-1.
+    const startedAt = await historyGroupStartFor(convoKey, storage);
     void noteCoverageShortfall(
       mlsService,
       convoKey,
       from,
-      { since, coveredFrom: Math.floor(coveredFrom) },
+      { since, coveredFrom: Math.floor(coveredFrom), startedAt },
       log
     ).catch((e) =>
       log(
@@ -732,23 +739,35 @@ export async function handleSystemEvent(
       // `read_receipt` is the shape senders used before the watermark, and it names message ids
       // instead of an instant. Translated rather than dropped: the ids we hold give the instant
       // directly, and ids we do not hold say nothing we could act on anyway.
-      const at =
+      // A `read_watermark` says which clock it is on (`serverAt` from this build, a bare `at` from an
+      // older one); ids translate through the rows we hold, whose key is the server's clock.
+      const received =
         event === 'read_watermark'
-          ? Number(data.at)
-          : watermarkAfterReading(
-              c.messages.filter((m) => (data.messageIds ?? []).includes(m.id)),
-              0
-            );
-      const merged = mergeReadWatermark(c.readWatermarks, senderNorm, at);
+          ? receivedReadWatermarkMark(data, deliveryMeta?.queuedCreatedAt)
+          : null;
+      if (received?.refused) {
+        console.error(
+          `[READ] REFUSED a read mark from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: ${received.refused}`
+        );
+      }
+      const mark =
+        event === 'read_watermark'
+          ? (received?.mark ?? null)
+          : {
+              at: watermarkAfterReading(
+                c.messages.filter((m) => (data.messageIds ?? []).includes(m.id)),
+                0
+              ),
+              clock: 'server' as const,
+            };
+      const at = mark?.at ?? 0;
+      const merged = mark ? withReadMark(c, senderNorm, mark.at, mark.clock) : null;
       // Read by OURSELVES on another device: clear the badge here too, which is the whole point of
       // the watermark travelling between our own devices. The count follows the watermark rather
       // than being zeroed, so a message newer than what was read there stays counted.
       const selfRead = senderNorm === userId;
-      const next = selfRead
-        ? withOwnReadAdvanced(c, senderNorm, at)
-        : merged
-          ? { ...c, readWatermarks: merged }
-          : c;
+      const next =
+        selfRead && mark ? withOwnReadAdvanced(c, senderNorm, mark.at, mark.clock) : (merged ?? c);
       if (next !== c) {
         conversations.set(convoKey, next);
         // The read state lives on the conversation row, so this save is what persists it - for a
@@ -756,7 +775,9 @@ export async function handleSystemEvent(
         await saveConversation?.(convoKey).catch(() => {});
       }
       if (merged) {
-        log(`[READ] ${senderNorm} has read up to ${new Date(at).toISOString()}`);
+        log(
+          `[READ] ${senderNorm} has read up to ${new Date(at).toISOString()} (${mark?.clock} clock)`
+        );
         onReadStateAdvanced?.({ conversationKey: convoKey, senderId: senderNorm, at });
       }
     }
@@ -952,7 +973,15 @@ export async function handleSystemEvent(
       );
     }
     try {
-      const msgs: BundleMsg[] = incoming;
+      // A RELAYED SERVER TIME IS BELIEVED ONLY INSIDE WHAT THE SERVER ITSELF SAYS (`messageTime.ts`):
+      // it is the order key and the read-mark key, and this member wrote it, not the server.
+      const vettedTimes = withVettedBundleServerTimes(incoming, deliveryMeta?.queuedCreatedAt);
+      if (vettedTimes.dropped > 0) {
+        console.error(
+          `[HISTORY_BUNDLE] ${vettedTimes.dropped} server time(s) relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie outside the bundle's own server time (${deliveryMeta?.queuedCreatedAt ?? 'unknown'}) - dropped, those rows keep their sentAt`
+        );
+      }
+      const msgs: BundleMsg[] = vettedTimes.rows;
       // EVERY REFUSAL BELOW IS ONE OF THESE: a proof that does not hold is a member forging
       // history, which is logged at ERROR and reported - never merely skipped.
       const refuseForged = (what: string, id: string, why: string): void => {
@@ -980,11 +1009,27 @@ export async function handleSystemEvent(
           beforeMerge.readWatermarks,
           parseReadWatermarks(data.readWatermarks)
         );
+        // The server-clock marks travel beside the stamped ones; an older sender has none.
+        // Bounded like a read_watermark frame: none above the server's time for this bundle.
+        const bundleServerMarks = boundedServerMarks(
+          parseReadWatermarks(data.serverReadWatermarks),
+          deliveryMeta?.queuedCreatedAt
+        );
+        if (bundleServerMarks.dropped > 0) {
+          console.error(
+            `[HISTORY_BUNDLE] ${bundleServerMarks.dropped} server-clock read mark(s) relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie after the bundle's own server time - dropped`
+          );
+        }
+        const mergedServerWatermarks = mergeReadWatermarks(
+          beforeMerge.serverReadWatermarks,
+          bundleServerMarks.kept ?? undefined
+        );
         const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
-        if (mergedWatermarks || mergedFloor !== null) {
+        if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
           conversations.set(convoKey, {
             ...beforeMerge,
             ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+            ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
             ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
           });
           await saveConversation?.(convoKey).catch((e: unknown) => {
@@ -1075,19 +1120,33 @@ export async function handleSystemEvent(
         //    carry reactions/tombstones, so that metadata is merged in step 4 for new AND existing
         //    messages alike. A signed message is taken from the signed bytes - content and time -
         //    whatever the relayer wrote beside them.
-        const toAdd = vettedBundle.fresh.map(({ entry: m, verdict }) => ({
-          senderId: canonicalUserId(m.senderId),
-          content: verdict.kind === 'verified' ? verdict.content : m.content,
-          messageId: m.id,
-          timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
-          // The secondary sort key. Dropping it here - the replay path keeps it - left two
-          // messages sharing a client timestamp in an order that changed on every reload.
-          ...(typeof m.serverTimestamp === 'number' ? { serverTimestamp: m.serverTimestamp } : {}),
-          // Kept whenever it was not refused - also when it could not be checked NOW - so this
-          // device relays it on and a later reader can still prove it.
-          ...(m.authorship ? { authorship: m.authorship } : {}),
-          ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
-        }));
+        let belowSigned = 0;
+        const toAdd = vettedBundle.fresh.map(({ entry: m, verdict }) => {
+          // The relayed server time checked once more, against the SIGNED sentAt: the first check
+          // could only read the relayer's own `timestamp` (`boundedByVerifiedSentAt`).
+          const serverTimestamp =
+            verdict.kind === 'verified'
+              ? boundedByVerifiedSentAt(m.serverTimestamp, verdict.timestamp)
+              : m.serverTimestamp;
+          if (serverTimestamp === undefined && m.serverTimestamp !== undefined) belowSigned++;
+          return {
+            senderId: canonicalUserId(m.senderId),
+            content: verdict.kind === 'verified' ? verdict.content : m.content,
+            messageId: m.id,
+            timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
+            // The order key: the relayed server time that survived both checks, or none.
+            ...(typeof serverTimestamp === 'number' ? { serverTimestamp } : {}),
+            // Kept whenever it was not refused - also when it could not be checked NOW - so this
+            // device relays it on and a later reader can still prove it.
+            ...(m.authorship ? { authorship: m.authorship } : {}),
+            ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
+          };
+        });
+        if (belowSigned > 0) {
+          console.error(
+            `[HISTORY_BUNDLE] ${belowSigned} server time(s) relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… lie below the SIGNED sentAt - dropped, those rows keep their sentAt`
+          );
+        }
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty
@@ -1147,10 +1206,8 @@ export async function handleSystemEvent(
           //    Clamped to the current value: an open conversation was already zeroed by the
           //    add-path and must never regain a badge, and a genuine new member - whose watermark
           //    is 0 - keeps the full count.
-          const stillUnread = countUnreadForUser(
-            nextMessages,
-            watermarkFor(c.readWatermarks, userId.toLowerCase())
-          );
+          const mine = readPointFor(c, userId.toLowerCase());
+          const stillUnread = countUnreadForUser(nextMessages, mine.stamped, mine.server);
           const nextUnreadCount = Math.min(c.unreadCount ?? 0, stillUnread);
           if (changedIds.size > 0 || nextUnreadCount !== (c.unreadCount ?? 0)) {
             conversations.set(convoKey, {

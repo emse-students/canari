@@ -7,7 +7,9 @@ import {
   isEmptyHistoryDiff,
   selectEntryIdsForPrefixes,
 } from '$lib/utils/chat/historyManifest';
+import { coverageFallsShort } from '$lib/utils/chat/historyWindow';
 import {
+  historyGroupStartFor,
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
@@ -52,7 +54,11 @@ export async function stateOurCoverage(params: {
 }): Promise<void> {
   const { groupId, selfIdentity, requesterIdentity, since, deps } = params;
   const coveredFrom = await historyRangeStartFor(groupId, deps.storage);
-  if (coveredFrom <= since) return;
+  // SILENT ALSO WHEN THE GROUP BEGAN AFTER OUR OWN WINDOW: nothing below its beginning exists, so
+  // "I cover what you asked" is true, and stating a shortfall would send the asker walking every
+  // member for a past no member can hold.
+  const startedAt = await historyGroupStartFor(groupId, deps.storage);
+  if (!coverageFallsShort({ since, coveredFrom, startedAt })) return;
   await sendHistoryCoverage(
     groupId,
     { from: selfIdentity, to: requesterIdentity, since, coveredFrom },
