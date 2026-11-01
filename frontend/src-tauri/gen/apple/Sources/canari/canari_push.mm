@@ -3027,11 +3027,9 @@ static NSDictionary *_Nullable CanariReadDisplayNames(NSString *_Nullable me,
   return names;
 }
 
-// The `names` map of `display_names.json`, or nil when it cannot be used - see
-// `CanariReadDisplayNames`, whose reason is logged here for the mention renderers.
-static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
-  NSString *unusable = nil;
-  NSDictionary *names = CanariReadDisplayNames(me, &unusable);
+// Why a read of `display_names.json` names nobody, under `[MENTION_NAME]` - the mention renderers'
+// line. Nothing when the file names.
+static void CanariLogMentionNamesUnusable(NSString *_Nullable unusable) {
   if ([unusable isEqualToString:@"no-name-file"]) {
     NSLog(@"[CanariPush] [MENTION_NAME] no display_names.json - every other mention is 'someone'");
   } else if ([unusable isEqualToString:@"unreadable"]) {
@@ -3041,7 +3039,70 @@ static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
   } else if ([unusable isEqualToString:@"no-names"]) {
     NSLog(@"[CanariPush] [MENTION_NAME] display_names.json names nobody (no-names)");
   }
+}
+
+// The `names` map of `display_names.json`, or nil when it cannot be used - see
+// `CanariReadDisplayNames`, whose reason is logged here for the mention renderers.
+static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
+  NSString *unusable = nil;
+  NSDictionary *names = CanariReadDisplayNames(me, &unusable);
+  CanariLogMentionNamesUnusable(unusable);
   return names;
+}
+
+// THE PHONE'S NAMES FOR ONE BANNER: `display_names.json` is read on the first `-names` only, so the
+// speaker, the author line and the tokens of one banner cost ONE file read, and a banner needing
+// none of them none. The read keeps its reason (`unusable`). `onFirstRead`, when set, says it: the
+// caller sets it only for a reader whose own line does not already carry the reason, so a read is
+// never said twice. Swift twin: the NSE's `DisplayNamesReader`.
+@interface CanariNameBook : NSObject
+- (instancetype)initWithUserId:(NSString *_Nullable)myUserId;
+- (NSDictionary *_Nullable)names;
+@property(nonatomic, readonly) BOOL hasRead;
+@property(nonatomic, copy, readonly, nullable) NSString *unusable;
+@property(nonatomic, copy, nullable) void (^onFirstRead)(NSString *_Nullable unusable);
+@end
+
+@implementation CanariNameBook {
+  NSString *_me;
+  NSDictionary *_names;
+}
+- (instancetype)initWithUserId:(NSString *_Nullable)myUserId {
+  if ((self = [super init])) {
+    _me = [myUserId.lowercaseString copy];
+  }
+  return self;
+}
+- (NSDictionary *_Nullable)names {
+  if (!_hasRead) {
+    NSString *unusable = nil;
+    _names = CanariReadDisplayNames(_me, &unusable);
+    _unusable = [unusable copy];
+    _hasRead = YES;
+    if (self.onFirstRead != nil) {
+      self.onFirstRead(_unusable);
+    }
+  }
+  return _names;
+}
+@end
+
+// Whether an unnamed salon speaker's reason is a FAULT (said with "WARN"): an unreadable name file,
+// a file of this account naming nobody, an opened push naming nobody, no push context. The rest are
+// states a banner ordinarily meets. Twins: the NSE's `salonAuthorAccuses`, Android's
+// `ChannelBannerAuthor.accuses`.
+static BOOL CanariSalonAuthorAccuses(NSString *_Nullable reason) {
+  return [@[ @"unreadable", @"no-names", @"no-sender-id", @"no-account" ] containsObject:reason ?: @""];
+}
+
+// Why `display_names.json` names nobody, for a salon banner whose speaker rule did not read it - the
+// tokens were its first reader. Same levels as the speaker's line; nothing when the file names.
+static void CanariLogSalonNamesUnusable(NSString *_Nullable unusable, NSString *channelId) {
+  if (unusable == nil) {
+    return;
+  }
+  NSLog(@"[CanariPush] [SALON_AUTHOR] %@display_names.json names nobody reason=%@ channel=%@",
+        CanariSalonAuthorAccuses(unusable) ? @"WARN " : @"", unusable, channelId);
 }
 
 // "Someone", capitalised: the word opens the sentence (or stands alone) where it is used.
@@ -3061,9 +3122,9 @@ static NSString *CanariSomeoneCapitalised(void) {
 //    push's `senderId` is the server's claim), or a proven author the phone has no name for.
 //    "Someone", the "?" disc, and no face. ONE line, "WARN" only for a fault.
 // `*initialsName` is non-empty exactly for a named speaker, which is how the caller knows to draw
-// a face.
+// a face. `names` is the banner's one read of the names, shared with the author line and the tokens.
 static NSString *_Nullable CanariSalonSpeaker(BOOL showsMessage, BOOL authorProven,
-                                              NSString *senderId, NSString *_Nullable myUserId,
+                                              NSString *senderId, CanariNameBook *names,
                                               NSString *channelId,
                                               NSString *_Nonnull *_Nonnull initialsName) {
   *initialsName = @"";
@@ -3080,12 +3141,11 @@ static NSString *_Nullable CanariSalonSpeaker(BOOL showsMessage, BOOL authorProv
   } else if (!authorProven) {
     reason = @"v1-session";
   } else {
-    NSString *unusable = nil;
-    NSDictionary *names = CanariReadDisplayNames(myUserId.lowercaseString, &unusable);
-    if (names == nil) {
-      reason = unusable ?: @"no-names";
+    NSDictionary *book = [names names];
+    if (book == nil) {
+      reason = names.unusable ?: @"no-names";
     } else {
-      id stored = names[idLower];
+      id stored = book[idLower];
       NSString *trimmed = [stored isKindOfClass:[NSString class]]
                               ? [(NSString *)stored stringByTrimmingCharactersInSet:
                                                         [NSCharacterSet whitespaceCharacterSet]]
@@ -3101,35 +3161,21 @@ static NSString *_Nullable CanariSalonSpeaker(BOOL showsMessage, BOOL authorProv
     *initialsName = name;
     return name;
   }
-  BOOL accuses = [@[ @"unreadable", @"no-sender-id", @"no-account" ] containsObject:reason];
   NSLog(@"[CanariPush] [SALON_AUTHOR] %@author UNNAMED reason=%@ author=%@ channel=%@ -> "
         @"'someone' and a '?' disc",
-        accuses ? @"WARN " : @"", reason,
+        CanariSalonAuthorAccuses(reason) ? @"WARN " : @"", reason,
         idLower.length > 8 ? [idLower substringToIndex:8] : idLower, channelId);
   return CanariSomeoneCapitalised();
 }
 
-// The phone's names for ONE banner: `display_names.json` is read on the first call only, so the
-// author line and the tokens of one banner cost one file read, and a banner needing neither none.
+// The renderers' view of a banner's `CanariNameBook`: its names, read on the first call only.
 typedef NSDictionary *_Nullable (^CanariMentionNameBook)(void);
-static CanariMentionNameBook CanariMakeMentionNameBook(NSString *_Nullable myUserId) {
-  NSString *me = myUserId.lowercaseString;
-  __block NSDictionary *names = nil;
-  __block BOOL read = NO;
-  return ^NSDictionary *_Nullable {
-    if (!read) {
-      names = CanariLoadMentionNames(me);
-      read = YES;
-    }
-    return names;
-  };
-}
 
 // "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME, 2026-10-18):
 // the AUTHOR, named from the phone's own copy of names under the same owner rule as the tokens, and
 // "Someone" when the phone has never named them. Never from the push, which carries only
-// `senderId`. Salon only: an MLS banner already names its sender. Twins: the NSE's and Android's
-// `mentionAuthorLine`.
+// `senderId`. Salon only: an MLS banner already names its sender. Twin: the NSE's
+// `mentionAuthorLine` (Android has none since 2026-11-01: the speaker's Person names the author).
 static NSString *CanariMentionAuthorLine(NSString *senderId, CanariMentionNameBook nameBook) {
   NSString *idLower = senderId.lowercaseString;
   id name = idLower.length > 0 ? nameBook()[idLower] : nil;
@@ -3207,6 +3253,10 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // reader names its author in the subtitle (`CanariMentionAuthorLine`, WP-MENTION-NAME). An MLS
 // banner passes NO - its push already names the sender in the title or the subtitle.
 //
+// `salonNames` is the salon's `CanariNameBook`, the one its speaker read, so the author line and the
+// tokens read the file at most once more - never twice - and its reason is said once. nil on the MLS
+// path, which opens its own book and says the reason under `[MENTION_NAME]`.
+//
 // `scansBodyForMention` is YES on the MLS path only. The salon caller has already DECIDED the
 // mention (`mentionedByServer` is its answer, and NO on a blind banner, which nothing proved), and a
 // scan of a blind banner's body would read the generic line, whose salon name the server wrote -
@@ -3215,7 +3265,8 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
                                           BOOL mentionedByServer, NSString *_Nullable initialsName,
-                                          BOOL namesMentionAuthor, BOOL scansBodyForMention) {
+                                          BOOL namesMentionAuthor, BOOL scansBodyForMention,
+                                          CanariNameBook *_Nullable salonNames) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -3254,7 +3305,16 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
   NSString *subtitle = isGroup ? senderName : nil;
   // The phone's names, read at most once for this banner: the author line and the tokens share it.
-  CanariMentionNameBook nameBook = CanariMakeMentionNameBook(ctx != nil ? ctx.userId : nil);
+  CanariNameBook *book = salonNames;
+  if (book == nil) {
+    book = [[CanariNameBook alloc] initWithUserId:ctx != nil ? ctx.userId : nil];
+    book.onFirstRead = ^(NSString *_Nullable unusable) {
+      CanariLogMentionNamesUnusable(unusable);
+    };
+  }
+  CanariMentionNameBook nameBook = ^NSDictionary *_Nullable {
+    return [book names];
+  };
   if (namesMentionAuthor && mentionsMe) {
     subtitle = CanariMentionAuthorLine(senderId, nameBook);
   }
@@ -4085,7 +4145,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName, NO, YES);
+                                    senderName, NO, YES, nil);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -4245,9 +4305,17 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
     // `CanariSalonSpeaker`. Until 2026-11-01 the salon stood in as the "sender": no author named,
     // and the SALON's letter drawn as a face (the defect the owner read on Android `v1.6.0`).
     NSString *initialsName = @"";
-    NSString *speaker = CanariSalonSpeaker(showsMessage, authorProven, shownSenderId,
-                                           CanariLoadPushContext().userId, channelId,
-                                           &initialsName);
+    CanariNameBook *names = [[CanariNameBook alloc] initWithUserId:CanariLoadPushContext().userId];
+    NSString *speaker = CanariSalonSpeaker(showsMessage, authorProven, shownSenderId, names,
+                                           channelId, &initialsName);
+    // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line
+    // already carries the reason; when it did not (a v1 row, a push naming nobody, a blind banner),
+    // the author line or the tokens are the first reader, and they say it - never twice.
+    if (!names.hasRead) {
+      names.onFirstRead = ^(NSString *_Nullable unusable) {
+        CanariLogSalonNamesUnusable(unusable, channelId);
+      };
+    }
     // A FACE, AND A NAME IN THE MENTION LINE, ONLY FOR A NAMED SPEAKER: a photo beside "Someone"
     // would name them by the back door, and a v1 author is only the server's claim.
     NSString *speakerId = initialsName.length > 0 ? shownSenderId : @"";
@@ -4257,7 +4325,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       // channels (WP-XP-3 is MLS DM/group only) -> pass nil.
       CanariShowMessageNotification(speaker ?: displayName, speaker != nil ? displayName : @"", body,
                                     conversationId, speakerId, nil, shownMentionsMe,
-                                    initialsName, YES, NO);
+                                    initialsName, YES, NO, names);
     });
   });
 }

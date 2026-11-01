@@ -104,7 +104,7 @@ describe('the initials disc, across the three notification implementations', () 
       'attachInitials(content: content, name: Self.salonInitialsSource(author))'
     );
     expect(swift).not.toContain('attachInitials(content: content, name: channelName)');
-    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO\);/);
+    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO, names\);/);
     expect(objc).toContain('NSString *initialsName = @"";');
     expect(objc).not.toContain('shownMentionsMe, channelName, YES, NO);');
   });

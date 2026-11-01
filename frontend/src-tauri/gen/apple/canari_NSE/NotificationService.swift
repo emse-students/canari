@@ -1622,20 +1622,15 @@ class NotificationService: UNNotificationServiceExtension {
       )
     }
     // The phone's names, read at most once for this banner: the speaker, the author line and the
-    // tokens share it. The read keeps its reason, which the speaker's accusing line names.
-    let namesRead = Self.displayNamesReader(myUserId: ctx?.userId)
-    let nameBook: () -> [String: Any]? = { namesRead().names }
-    content.body =
-      body.map {
-        Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale, nameBook: nameBook)
-      }
-      ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
+    // tokens share it. The read keeps its reason, said ONCE by whichever reader reads it first.
+    let namesRead = DisplayNamesReader(myUserId: ctx?.userId)
     // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
     // `channelBannerAuthor`. Until 2026-11-01 the salon stood in as the "sender": no author named,
     // and the SALON's letter drawn as a face (the defect the owner read on Android `v1.6.0`).
+    // Decided BEFORE the tokens are rendered, so the first reader of the names is known.
     let author = Self.channelBannerAuthor(
       showsMessage: body != nil, authorProven: authorProven, authorId: attribution.authorId,
-      book: namesRead)
+      book: namesRead.read)
     switch author {
     case .named(_, let name):
       content.subtitle = name
@@ -1650,9 +1645,28 @@ class NotificationService: UNNotificationServiceExtension {
     case .unproven:
       break
     }
-    // A mention of this reader says WHO and "you" in the subtitle - the Android twin puts the same
-    // line above the body (WP-MENTION-NAME). It names the speaker too, so it replaces the name.
-    // Named from the book only for a NAMED speaker: a v1 author is the server's claim.
+    // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line above
+    // already carries the reason; when it did not (a v1 row, a push naming nobody, a blind banner),
+    // the tokens are the first reader, and a broken or foreign file is said here - never twice.
+    // Android twin: `logSalonNamesUnusable`.
+    var namesReasonSaid = namesRead.hasRead
+    let nameBook: () -> [String: Any]? = {
+      let read = namesRead.read()
+      if !namesReasonSaid {
+        namesReasonSaid = true
+        Self.logSalonNamesUnusable(read.unusable, channelId: channelId)
+      }
+      return read.names
+    }
+    content.body =
+      body.map {
+        Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale, nameBook: nameBook)
+      }
+      ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
+    // A mention of this reader says WHO and "you" in the subtitle - iOS has no line above the body
+    // to put the speaker on, so the subtitle carries both (Android names the speaker on the Person
+    // and the body says "@vous"). Named from the book only for a NAMED speaker: a v1 author is the
+    // server's claim.
     if mentionsMe {
       content.subtitle = Self.mentionAuthorLine(
         senderId: Self.salonDrawsFace(author) ? senderId : "", nameBook: nameBook,
@@ -1832,8 +1846,9 @@ class NotificationService: UNNotificationServiceExtension {
   /// "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME,
   /// 2026-10-18): the AUTHOR, named from the phone's own copy of names under the same owner rule as
   /// the tokens, and "Someone" when the phone has never named them. Never from the push, which
-  /// carries only `senderId`. Salon only: an MLS banner already names its sender. Android twin:
-  /// `mentionAuthorLine`.
+  /// carries only `senderId`. Salon only: an MLS banner already names its sender. No Android twin
+  /// since 2026-11-01: there the speaker's Person names the author and the line keeps no prefix.
+  /// ObjC twin: `CanariMentionAuthorLine`.
   private static func mentionAuthorLine(
     senderId: String, nameBook: () -> [String: Any]?, locale: String?
   ) -> String {
@@ -1883,18 +1898,34 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// The phone's names for one banner WITH the reason they may be missing, read on the first call
-  /// only - the salon path's twin of `mentionNameBook`. Not logged here: the ONE `[SALON_AUTHOR]`
-  /// line says the reason, so a read never prints twice.
-  private static func displayNamesReader(myUserId: String?)
-    -> () -> (names: [String: Any]?, unusable: String?)
-  {
-    var cached: (names: [String: Any]?, unusable: String?)?
-    return {
+  /// only - the salon path's twin of `mentionNameBook`. Not logged here: the banner says the reason
+  /// once, from whichever reader read first, which `hasRead` tells it.
+  final class DisplayNamesReader {
+    private let myUserId: String?
+    private var cached: (names: [String: Any]?, unusable: String?)?
+
+    init(myUserId: String?) { self.myUserId = myUserId?.lowercased() }
+
+    /// Whether the file has been read for this banner yet.
+    var hasRead: Bool { cached != nil }
+
+    func read() -> (names: [String: Any]?, unusable: String?) {
       if let read = cached { return read }
-      let read = Self.readDisplayNames(myUserId: myUserId?.lowercased())
+      let read = NotificationService.readDisplayNames(myUserId: myUserId)
       cached = read
       return read
     }
+  }
+
+  /// Why `display_names.json` names nobody, for a salon banner whose speaker rule did not read it -
+  /// the tokens were its first reader. "WARN" for a fault (`salonAuthorAccuses`); nothing when the
+  /// file names.
+  private static func logSalonNamesUnusable(_ reason: String?, channelId: String) {
+    guard let reason = reason else { return }
+    let level = salonAuthorAccuses(reason) ? "WARN " : ""
+    NSLog(
+      "[CanariNSE] [SALON_AUTHOR] \(level)display_names.json names nobody reason=\(reason) channel=\(channelId)"
+    )
   }
 
   /// The `names` map of `display_names.json` in the App Group, or nil when it cannot be used - see
@@ -1940,10 +1971,11 @@ class NotificationService: UNNotificationServiceExtension {
     return name.isEmpty ? .unnamed(id: id, reason: "not-in-name-book") : .named(id: id, name: name)
   }
 
-  /// Whether an unnamed reason is a FAULT (said with "WARN"): an unreadable name file, an opened push
-  /// naming nobody, no push context. The rest are states a banner ordinarily meets.
+  /// Whether an unnamed reason is a FAULT (said with "WARN"): an unreadable name file, a file of
+  /// this account naming nobody, an opened push naming nobody, no push context. The rest are states
+  /// a banner ordinarily meets. Android twin: `ChannelBannerAuthor.accuses`.
   static func salonAuthorAccuses(_ reason: String) -> Bool {
-    ["unreadable", "no-sender-id", "no-account"].contains(reason)
+    ["unreadable", "no-names", "no-sender-id", "no-account"].contains(reason)
   }
 
   /// The text the initials disc is drawn from: the speaker's name, else nothing (the "?" disc).

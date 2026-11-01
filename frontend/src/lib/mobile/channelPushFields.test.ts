@@ -337,7 +337,7 @@ describe('channel push payload contract (social-service writer vs the three nati
     // The salon caller decided the mention, so the shared builder must not re-derive it by scanning
     // a body whose blind form carries the server's salon name (the last `NO`).
     expect(objcHandler).toMatch(
-      /CanariShowMessageNotification\(speaker \?: displayName, speaker != nil \? displayName : @"", body,\s*conversationId, speakerId, nil, shownMentionsMe,\s*initialsName, YES, NO\);/
+      /CanariShowMessageNotification\(speaker \?: displayName, speaker != nil \? displayName : @"", body,\s*conversationId, speakerId, nil, shownMentionsMe,\s*initialsName, YES, NO, names\);/
     );
     expect(objcSource).toContain(
       'if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {'

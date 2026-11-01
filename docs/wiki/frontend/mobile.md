@@ -1300,7 +1300,13 @@ three answers and reason codes as Android:
   "?" disc, **no photo**, and the mention line names nobody either.
 - **Unproven**: a blind banner. No subtitle, the "?" disc.
 - **One log line**, `[SALON_AUTHOR] author UNNAMED reason=...`, prefixed `WARN` only for a fault
-  (`unreadable`, `no-sender-id`, `no-account`); the names read is not logged a second time.
+  (`unreadable`, `no-names`, `no-sender-id`, `no-account`).
+- **One read of `display_names.json` per banner, its reason said once.** The speaker, the mention
+  line and the tokens share one book (the NSE's `DisplayNamesReader`; `CanariNameBook`, which the
+  ObjC handler hands to `CanariShowMessageNotification` as `salonNames`). Whichever reads first says
+  why the file names nobody: the speaker's line above, or - when the speaker rule did not read it (a
+  v1 row, a push naming nobody) - `[SALON_AUTHOR] display_names.json names nobody reason=...` from the
+  tokens, at the same levels. The NSE decides the speaker before rendering the tokens for that.
 
 An older native library answers without `authorProven`, which reads as not proven: such a build
 names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
