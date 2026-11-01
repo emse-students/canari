@@ -1,9 +1,12 @@
 // @vitest-environment happy-dom
 /** The feed's (i) button opens a surface that explains all three tabs, and closes again. */
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import FeedTabsInfo from './FeedTabsInfo.svelte';
 import { m } from '$lib/paraglide/messages';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+afterAll(adoptTransitionAnimations());
 
 let mounted: Record<string, unknown> | null = null;
 
