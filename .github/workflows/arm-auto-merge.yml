@@ -126,6 +126,37 @@ jobs:
         run: |
           set -euo pipefail
 
+          # canari-only:begin
+          # A PULL REQUEST THAT APPROVES A HELD MIGRATION IS NEVER ARMED, WHOEVER OPENED IT (review of
+          # #2873, 2026-11-01). `infrastructure/migration-approvals.txt` is the owner's yes to a
+          # migration that is not plainly additive, and the deploy applies what it names
+          # (infrastructure/lib/migration-hold.sh). Armed, such a pull request would merge itself on
+          # a green CI, and the yes would be anybody's. So it reaches `main` only by the owner's own
+          # merge. Read FIRST, for every author, by pull request number only (no branch name, no
+          # checkout); a rename counts by either name. An unreadable file list refuses and disarms,
+          # and a push that adds the file to an armed pull request disarms it.
+          approvals='infrastructure/migration-approvals.txt'
+          if ! touched="$(gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate --jq '.[] | .filename, (.previous_filename // empty)')"; then
+            echo "::error::#$PR: its file list could not be read, so nobody can say whether it approves a held migration - not armed."
+            echo "armable=false" >> "$GITHUB_OUTPUT"
+            gh pr merge "$PR" --disable-auto --repo "$REPO" || echo "::error::#$PR: auto-merge could NOT be disabled - check it by hand."
+            exit 1
+          fi
+          if grep -qxF "$approvals" <<<"$touched"; then
+            echo "::warning::#$PR changes $approvals - an approval of a held migration is merged by the OWNER's own hand, never armed (docs/wiki/cicd.md)."
+            echo "armable=false" >> "$GITHUB_OUTPUT"
+            armed_now="$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest != null')" || armed_now=unknown
+            if [ "$armed_now" != 'false' ]; then
+              if ! gh pr merge "$PR" --disable-auto --repo "$REPO"; then
+                echo "::error::#$PR: auto-merge could NOT be disabled - check it by hand."
+                exit 1
+              fi
+              echo "::warning::#$PR: auto-merge is disabled."
+            fi
+            exit 0
+          fi
+          # canari-only:end
+
           # Dependabot is never a collaborator and never will be - it is the whole population this
           # escape hatch exists for, same as before. Kept as a GitHub expression (not `$AUTHOR` in
           # shell) so the exact literal survives for anything that greps this file for it.

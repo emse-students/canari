@@ -96,8 +96,10 @@ log "Demarrage de la sauvegarde -> $ARCHIVE_PATH"
 # ── 1. PostgreSQL Canari (auth_db) ────────────────────────────────────────────
 # Dump logique coherent via le conteneur (auth socket trust, pas de mot de passe).
 log "Dump PostgreSQL auth_db…"
-"${DC[@]}" exec -T postgres sh -c "pg_dump -U \"$POSTGRES_USER\" -d auth_db --clean --if-exists" \
-  | gzip > "$STAGE/postgres_auth_db.sql.gz"
+# La recette est dans dump-auth-db.sh, partagee avec le deploiement (sauvegarde juste avant une
+# migration approuvee par le proprietaire) ; elle verifie aussi le flux avec gzip -t.
+dump_auth_db "$STAGE/postgres_auth_db.sql.gz" "${DC[@]}" ||
+  fail "dump PostgreSQL auth_db impossible ou tronque"
 
 # ── 2. Metadonnees media-service ──────────────────────────────────────────────
 log "Archivage du volume media_meta…"

@@ -1,14 +1,16 @@
-# The owner's approvals of held migrations - read by `require_owner_approvals` in
-# infrastructure/lib/migrations.sh, on every deploy and every dev reset.
+# The owner's approvals of held migrations - read by `migration_gate_verdict`
+# (infrastructure/lib/migration-hold.sh) on every deploy, every dev reset and every release preflight.
 #
-# A migration is HELD when it carries the line `-- canari:hold-for-owner` or contains a statement
-# that destroys data (DROP TABLE/COLUMN/SCHEMA/DATABASE, TRUNCATE, DELETE FROM, a column TYPE
-# change). A held migration is refused - the deploy fails, nothing is applied - until a line here
-# names it AND the sha256 of its current content:
+# A migration is HELD when it carries a line `-- canari:hold-for-owner`, or contains a statement that
+# is not plainly additive (any DROP but CONSTRAINT/INDEX/TRIGGER/DEFAULT/NOT NULL, RENAME, TRUNCATE,
+# DELETE FROM, a column TYPE change, dynamic EXECUTE). A held migration refuses the release tag and the
+# deploy - nothing is applied - until a line here names it AND the sha256 of its current content:
 #
 #   apps/<service>/src/migrations/<NNN>_<name>.sql <sha256sum of the file>
 #
-# Only the OWNER adds a line, in a reviewed pull request, once the migration is additive or its loss
-# is accepted, it is reviewed, and a backup is taken just before the deploy (owner, 2026-11-01).
-# An edit to the file after its approval changes the checksum, and the migration is held again.
+# Only the OWNER adds a line, and merges it BY HAND: a pull request touching this file is never armed
+# for auto-merge. Then a NEW pre-release tag is cut (a rerun re-reads the old commit). The deploy dumps
+# the database right before applying an approved migration (owner, 2026-11-01: additive or its loss
+# accepted, reviewed, a backup just before). An edit to the file after its approval changes the
+# checksum, and the migration is held again.
 # Mechanism: docs/wiki/cicd.md ("A migration the owner must approve is held").

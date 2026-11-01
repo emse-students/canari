@@ -308,6 +308,23 @@ else
   fi
 fi
 
+# THE RESET RUNS THE OWNER'S HOLD TOO. A held file the ledger has not recorded - here a real one, a
+# historic DROP COLUMN struck off the stub ledger - refuses the reset before it applies, truncates or
+# seeds anything, and the services come back.
+held_file='apps/chat-delivery-service/src/migrations/002_drop_group_member_left_at.sql'
+if [ -f "$held_file" ] && STUB_LEDGER="$(grep -vxF "$held_file" <<<"$stub_ledger")" STUB_LOG="$TMP/held.log" \
+  STUB_STREAM="$TMP/held.stream" STUB_PROJECT=canari-dev STUB_USERS="$seed_users" \
+  PATH="$TMP/bin:$PATH" bash "$SCRIPT" </dev/null >"$TMP/held.out" 2>&1; then
+  fail "the reset applied past an unrecorded held migration"
+else
+  if grep -q "::error::$held_file is HELD" "$TMP/held.out" && [ ! -s "$TMP/held.stream" ] &&
+    ! grep -q 'INSERT INTO schema_migrations' "$TMP/held.log" && grep -qE '^start ' "$TMP/held.log"; then
+    ok "an unrecorded held migration refuses the reset by name: nothing applied, truncated or seeded, services restarted"
+  else
+    fail "the reset's refusal of a held migration is missing, late or left the services down: $(tail -3 "$TMP/held.out")"
+  fi
+fi
+
 printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf 'FAILED: %d problem(s) across %d assertion(s)\n' "$failures" "$((checks + failures))"

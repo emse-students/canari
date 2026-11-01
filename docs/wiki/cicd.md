@@ -261,29 +261,62 @@ by the dev reset) applies every file the `schema_migrations` ledger has not reco
 release anyway: the yes was a sentence in the backlog, never a gate. The owner's rule (2026-11-01): a
 migration is applied only if it is additive, reviewed, and with a backup taken just before.
 
-**What holds a migration.** Before ANY file is applied, `require_owner_approvals` examines every
-unrecorded file. It is held when it carries a line of its own `-- canari:hold-for-owner` (the
-author's call: a backfill, a lock on a hot table, anything not plainly additive), or when its SQL,
-`--` comments stripped, contains a data-destroying statement: `DROP TABLE|COLUMN|SCHEMA|DATABASE`,
-`TRUNCATE`, `DELETE FROM`, or `ALTER COLUMN ... TYPE`. The second rule catches what the author
-forgot to mark; it does NOT match an `UPDATE` backfill (mark it) nor the `DROP CONSTRAINT|INDEX|TRIGGER
-IF EXISTS` that precedes a re-create. A file already in the ledger is history, never examined.
+**What holds a migration** (`infrastructure/lib/migration-hold.sh`, the ONE judge, read by the deploy
+and by the release preflight). A file is held when it carries the marker - a line
+`-- canari:hold-for-owner`, any case, trailing text allowed (the author's call: a backfill, a lock on
+a hot table) - or when its SQL, comments stripped and whitespace collapsed, contains a statement that
+is not plainly additive. **That list is an allowlist**: ANY `DROP` except `DROP
+CONSTRAINT|INDEX|TRIGGER|DEFAULT|NOT NULL` (the re-create idiom, a relaxed column), any `RENAME`,
+`TRUNCATE`, `DELETE FROM`, a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`) and `EXECUTE`
+of dynamic SQL (`EXECUTE FUNCTION|PROCEDURE` of a trigger and `GRANT EXECUTE ON` are not). The first
+version matched spellings (`DROP TABLE|COLUMN`) and its review listed what walked past it - `ALTER
+TABLE t DROP foo`, a statement split over lines, `DROP TYPE ... CASCADE`, a materialized view, a
+sequence, `DROP OWNED`, `RENAME COLUMN`; each is a row of `deploy-migrations.test.sh`. Comments are
+stripped by a scanner that knows `'...'` strings (with `''` and `E'\''`), `"..."` identifiers and
+nested `/* */`, so a `--` inside a string does not eat the code after it; an unterminated string or
+comment is HELD, not guessed. An `UPDATE` backfill is not matched: the author marks it. The marker is
+read by ONE `grep` on the file - the first version piped `tr | grep -q`, and under `pipefail` grep's
+early exit made the pipe report a miss on any file above ~64 KB (30 misses in 30).
 
 **What lifts it.** A line `<repo-relative path> <sha256 of the file>` in
-`infrastructure/migration-approvals.txt`, merged by the owner through a pull request - durable,
-reviewed, and bound to the CONTENT: a file edited after its approval is held again, and the refusal
-says so. Chosen over a release input because `gh release create` carries none, and over an
-environment flag because a switch nobody reads is no approval.
+`infrastructure/migration-approvals.txt` (the hex compared case-insensitively), bound to the CONTENT:
+a file edited after its approval is held again, and the refusal says so. Chosen over a release input
+because `gh release create` carries none, and over an environment flag because a switch nobody reviews
+is no approval. **A pull request that touches that file is NEVER armed for auto-merge**, whoever opened
+it (`arm-auto-merge.yml`, its first `canari-only` region; a push that adds the file to an armed pull
+request disarms it, and an unreadable file list refuses and disarms): without that, any armed pull
+request adding the line would merge itself on a green CI and the yes would be anybody's. It reaches
+`main` only by the owner's own merge. `arm-auto-merge-app.test.sh` B32 pins it.
+
+**Where it is asked, twice.**
+- **Gate 6 of the release preflight** (`held_migrations_since` in `release-preconditions.sh`): every
+  migration file added, changed or renamed between the latest stable tag and the released commit is
+  judged against the approvals file of the released tree. A held, unapproved one refuses the TAG,
+  before the bump and the store builds - pure repository, no database.
+- **The deploy, and the dev reset**, on the files the ledger has not recorded - the last line. It logs
+  every decision (`owner hold: N unrecorded file(s) examined, M held, A approved, R refused`).
 
 **How it fails.** Closed and loud: one `::error::` per held file naming it, why it is held, and the
 exact line to commit; then `NOTHING was applied`, and the deploy stops before any service is
-replaced. **Dev and production are held alike** - a pre-release carrying a held migration does not
-reach dev before the owner's line, so the approval precedes the first estate it touches. After the
-approval merges, re-run the deploy (a pre-release rerun) or cut the next tag.
+replaced. An unreadable ledger refuses too, with its own accusing line, rather than reading as empty.
+**Dev and production are held alike**, so the approval precedes the first estate it touches. **The
+remedy is the owner's merge of the approval, then a NEW pre-release tag**: a rerun of the refused
+release re-reads its own commit, which does not carry an approval merged after it.
 
-`deploy-migrations.test.sh` drives the real `apply_migrations`: a held file and an unmarked `DROP
-COLUMN` are refused with nothing applied, both apply once approved, a stale checksum is refused, a
-plain file and the re-create idiom apply as before, and a recorded held file does not block.
+**The backup right before.** When an approved held file is due, the loop calls the caller's
+`migration_backup` right before applying it, and applies nothing more if it fails. The deploy's takes
+the nightly backup's own dump (`dump_auth_db`, `infrastructure/backup/dump-auth-db.sh`, shared with
+`backup.sh`, the stream checked with `gzip -t`) into `<BACKUP_DIR>/pre-migration/<project>-<UTC time>-<migration>.sql.gz`,
+kept until removed by hand. A caller that defines none - the dev reset, which truncates dev and holds
+only the fictional seed - applies NO approved held file: the next deploy does, with its backup.
+
+**And the schema outside migrations is closed too.** TypeORM `synchronize` used to follow
+`NODE_ENV !== 'production'`, and the production compose file defaults `${NODE_ENV:-production}`: one
+wrong `.env` line and a service would have altered production's schema at boot, outside this gate. It
+is now an explicit `TYPEORM_SYNCHRONIZE=1` (`typeorm-synchronize.ts`, one copy per TypeORM service,
+declared duplicates), set only by the local stack and the CI boot probe, and a service refuses to
+start with it next to `NODE_ENV=production`; `compose-wiring.test.sh` asserts neither deployed compose
+file names it.
 
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
@@ -695,7 +728,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The five gates, and the one that makes a lag impossible
+#### The six gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -707,6 +740,7 @@ both store uploads and the version bump itself:
 | 3   | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one         |
 | 4   | Has the dev estate already served it? (stable only)  | **production cannot be ahead of dev**                                                                 |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
+| 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -1174,7 +1208,7 @@ gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gestur
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   five gates; a refusal ends it here, having moved nothing
+       |- preflight   six gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |

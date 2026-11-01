@@ -30,8 +30,8 @@ import { AppModule } from './app.module';
  * that social-service and media-service did not have until this was added, which is why they had
  * been shipping 111 and 9 compiled test artefacts into their production images.
  *
- * WHY IT MAY DESTROY A DATABASE: the services set `synchronize: process.env.NODE_ENV !==
- * 'production'`, so booting CREATES and ALTERS the schema. It must only ever be pointed at a
+ * WHY IT MAY DESTROY A DATABASE: the CI boot job sets `TYPEORM_SYNCHRONIZE=1`
+ * (`typeorm-synchronize.ts`), so booting CREATES and ALTERS the schema. It must only ever be pointed at a
  * throwaway database, which is what the service container in CI is.
  */
 describe('the real AppModule boots', () => {

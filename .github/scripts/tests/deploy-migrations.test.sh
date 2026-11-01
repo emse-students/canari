@@ -75,12 +75,11 @@ guard="$(sed -n '/^require_orm_schema() {/,/^}/p' "$SCRIPT")"
 sentinel_decl="$(sed -n '/^readonly ORM_SENTINEL_TABLE=/p' "$SCRIPT")"
 ledger_decl="$(sed -n '/^readonly MIGRATION_LEDGER_TABLE=/p' "$SCRIPT")"
 SENTINEL="$(printf '%s' "$sentinel_decl" | sed "s/^readonly ORM_SENTINEL_TABLE='//; s/'$//")"
-# The owner's hold: its three declarations and two functions, verbatim, evaluated by every runner
-# below because `apply_migrations` calls the gate before it applies anything.
-hold_parts="$(
-  sed -n '/^readonly MIGRATION_APPROVALS_FILE=/p; /^readonly MIGRATION_HOLD_MARKER_PATTERN=/p; /^readonly MIGRATION_DESTRUCTIVE_PATTERN=/p' "$SCRIPT"
-  sed -n '/^migration_hold_reason() {/,/^}/p; /^require_owner_approvals() {/,/^}/p' "$SCRIPT"
-)"
+# The owner's hold: its library (shared with the release preflight) and the gate `apply_migrations`
+# calls before it applies anything, verbatim, loaded by every runner below.
+HOLD_LIB="$REPO/infrastructure/lib/migration-hold.sh"
+hold_parts=". \"$HOLD_LIB\"
+$(sed -n '/^MIGRATIONS_APPROVED_HELD=/p; /^require_owner_approvals() {/,/^}/p' "$SCRIPT")"
 
 run_with_draining_psql() {
   (
@@ -232,23 +231,85 @@ else
   ok "and it does not point production at a dev-only remedy"
 fi
 
-printf '\na migration the owner must approve is HELD until a committed line approves its content\n'
+printf '\nwhat holds a migration: the marker, or any statement that is not plainly additive\n'
 
 # WHY THIS SECTION EXISTS. Migrations 034, 038 and 042 were written as "owed the owner's yes" and
-# reached production with the next release anyway, because this loop applies every unrecorded file
-# and the yes was a sentence in the backlog (2026-11-01). The gate is exercised end to end through
-# the real `apply_migrations`, never by grepping the library for its message.
+# reached production with the next release anyway, because the loop applies every unrecorded file
+# and the yes was a sentence in the backlog (2026-11-01). The FIRST version of this gate matched
+# spellings (`DROP TABLE|COLUMN`) and its review listed what walked past it; every one of those is a
+# row below, so a regression to a denylist fails here by name.
+CLS="$TMP/classify"
+mkdir -p "$CLS"
+# classify <held|plain> <name> <sql, printf-escaped>
+classify() {
+  local want="$1" name="$2" got reason
+  # shellcheck disable=SC2059 # the SQL is a printf format on purpose: it carries \n and \r escapes
+  printf -- "$3" >"$CLS/$name.sql"
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/migration-hold.sh
+  reason="$(. "$HOLD_LIB" && migration_hold_reason "$CLS/$name.sql")"
+  if [ -n "$reason" ]; then got=held; else got=plain; fi
+  if [ "$got" = "$want" ]; then
+    ok "$want: $name${reason:+ - $reason}"
+  else
+    fail "$name is $got, expected $want${reason:+ ($reason)}"
+  fi
+}
+classify plain additive 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\nCREATE INDEX IF NOT EXISTS i ON t (a);\n'
+classify plain recreate-idiom 'ALTER TABLE t DROP CONSTRAINT IF EXISTS c;\nDROP INDEX IF EXISTS i;\nDROP TRIGGER IF EXISTS x ON t;\nALTER TABLE t ALTER COLUMN a DROP DEFAULT, ALTER COLUMN a DROP NOT NULL;\n'
+classify plain commented-drop '-- DROP TABLE t;\n/* DROP TABLE u; /* nested */ still a comment: DROP COLUMN v */\nSELECT 1;\n'
+classify plain trigger-execute 'CREATE TRIGGER x AFTER DELETE ON t FOR EACH ROW EXECUTE FUNCTION f();\nCREATE TRIGGER y AFTER INSERT ON t FOR EACH ROW EXECUTE PROCEDURE g();\nGRANT EXECUTE ON FUNCTION f() TO r;\n'
+classify plain identifier-named-drop 'CREATE TRIGGER "TRG_posts_drop_x" AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION f();\n'
+classify plain not-the-marker '-- canari:hold-for-owners is another word\nUPDATE t SET a = 1;\n'
+classify held drop-without-a-noun 'ALTER TABLE t DROP foo;\n'
+classify held drop-over-lines 'ALTER TABLE t\n  DROP\n  COLUMN\n  b;\n'
+classify held drop-type-cascade 'DROP TYPE IF EXISTS e CASCADE;\n'
+classify held drop-extension 'DROP EXTENSION x CASCADE;\n'
+classify held drop-materialized-view 'DROP MATERIALIZED VIEW v;\n'
+classify held drop-sequence 'DROP SEQUENCE s;\n'
+classify held drop-owned 'DROP OWNED BY someone;\n'
+classify held rename-column 'ALTER TABLE t RENAME COLUMN a TO b;\n'
+classify held dashes-in-a-string "INSERT INTO t VALUES ('a -- b'); DROP TABLE x;\n"
+classify held escaped-quote-in-a-string "SELECT E'it\\\\'s -- not a comment'; DROP TABLE z;\n"
+classify held dynamic-sql "DO \$\$ BEGIN EXECUTE 'SELECT 1'; END \$\$;\n"
+classify held alter-type 'ALTER TABLE t ALTER b TYPE text;\n'
+classify held alter-set-data-type 'ALTER TABLE t ALTER COLUMN "b"\n  SET DATA TYPE text;\n'
+classify held delete-from 'DELETE   FROM t WHERE a = 1;\n'
+classify held truncate 'TRUNCATE t;\n'
+classify held unterminated-string "SELECT 'abc;\n"
+classify held marker-any-case-trailing-text-crlf '-- Canari:Hold-For-Owner: the backfill of 2026-11-02\r\nUPDATE t SET a = 1;\r\n'
+classify held marker-indented-no-space '  --canari:hold-for-owner\nUPDATE t SET a = 1;\n'
+
+# A MARKER IS READ ON A LARGE FILE TOO. The first version piped `tr | grep -q`, and under pipefail
+# grep's early exit SIGPIPE'd tr on anything above ~64 KB: 30 misses in 30 on Linux. One MB, the
+# marker on the LAST line, so the whole file is read.
+big="$CLS/large.sql"
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "INSERT INTO t (a) VALUES (%d); -- padding padding padding\n", i }' >"$big"
+printf -- '-- canari:hold-for-owner\n' >>"$big"
+size="$(wc -c <"$big" | tr -d ' ')"
+for attempt in 1 2 3; do
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/migration-hold.sh
+  reason="$(. "$HOLD_LIB" && migration_hold_reason "$big")"
+  if [ "$reason" = 'it carries the hold marker' ]; then
+    ok "a $size-byte file with the marker on its last line is held (attempt $attempt)"
+  else
+    fail "a $size-byte marked file was not held on attempt $attempt (got: ${reason:-nothing})"
+  fi
+done
+
+printf '\na held migration is REFUSED until a committed line approves its content, and a backup precedes it\n'
+
 HOLD="$TMP/hold"
 HMIG="apps/core-service/src/migrations"
 mkdir -p "$HOLD/$HMIG" "$HOLD/infrastructure"
 printf 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\n' >"$HOLD/$HMIG/001_plain.sql"
 printf -- '-- Migration 002: a backfill the owner must see.\n-- canari:hold-for-owner\nUPDATE t SET a = 1;\n' >"$HOLD/$HMIG/002_held.sql"
 printf -- '-- dropping nothing in a comment: DROP TABLE t;\nALTER TABLE t DROP COLUMN IF EXISTS b;\n' >"$HOLD/$HMIG/003_drop.sql"
-printf -- '-- the re-create idiom is not destructive\nALTER TABLE t DROP CONSTRAINT IF EXISTS c;\nSELECT 1;\n' >"$HOLD/$HMIG/004_plain.sql"
+printf -- '-- a real commented DROP, in a file nothing else holds: DROP TABLE t;\nALTER TABLE t DROP CONSTRAINT IF EXISTS c;\nSELECT 1;\n' >"$HOLD/$HMIG/004_plain.sql"
 held_sum="$(sha256sum "$HOLD/$HMIG/002_held.sql" | cut -d' ' -f1)"
 drop_sum="$(sha256sum "$HOLD/$HMIG/003_drop.sql" | cut -d' ' -f1)"
+HELD_SUM_UPPER="$(printf '%s' "$held_sum" | tr '[:lower:]' '[:upper:]')"
 
-# $1: the approvals file's content; $2: the filenames the ledger already records, one per line.
+# run_hold <approvals file content> <ledger filenames>   (BACKUP=ok|fail|none, LEDGER=ok|fail)
 run_hold() {
   (
     cd "$HOLD" || exit 1
@@ -262,7 +323,10 @@ run_hold() {
       cat >/dev/null 2>&1 || true
       case "$args" in
       *to_regclass*) printf 't\n' ;;
-      *"SELECT filename FROM"*) [ -n "$LEDGER_ROWS" ] && printf '%s\n' "$LEDGER_ROWS" ;;
+      *"SELECT filename FROM"*)
+        [ "${LEDGER:-ok}" = fail ] && return 2
+        [ -n "$LEDGER_ROWS" ] && printf '%s\n' "$LEDGER_ROWS"
+        ;;
       *"SELECT checksum FROM"*)
         name="${args#*filename = \'}"
         name="${name%\'*}"
@@ -271,6 +335,13 @@ run_hold() {
       esac
       return 0
     }
+    if [ "${BACKUP:-ok}" != none ]; then
+      # shellcheck disable=SC2317,SC2329 # called only from `eval`ed code
+      migration_backup() {
+        printf 'backup-before %s\n' "$1"
+        [ "${BACKUP:-ok}" = ok ]
+      }
+    fi
     eval "$sentinel_decl"
     eval "$ledger_decl"
     eval "$guard"
@@ -279,6 +350,7 @@ run_hold() {
     apply_migrations
   )
 }
+applied_list() { printf '%s\n' "$out" | sed -n 's/^applying //p' | tr '\n' ' '; }
 
 if [ -n "$(sed -n '/^require_owner_approvals() {/,/^}/p' "$SCRIPT")" ]; then
   ok "require_owner_approvals() is extractable from the real script"
@@ -308,31 +380,68 @@ if printf '%s\n' "$out" | grep -qF "$HMIG/002_held.sql $held_sum"; then
 else
   fail "the refusal does not print the approval line the owner would commit"
 fi
-if [ "$(printf '%s\n' "$out" | grep -c '^applying ')" = "0" ]; then
-  ok "and NOTHING is applied, not even the plain files before the held one"
+if printf '%s\n' "$out" | grep -q 'cuts a NEW pre-release tag' && ! printf '%s\n' "$out" | grep -qi 're-runs this deploy'; then
+  ok "the remedy is a NEW pre-release tag - a rerun re-reads the release's own commit, which carries no approval"
 else
-  fail "files were applied before the refusal: $(printf '%s\n' "$out" | grep '^applying ' | tr '\n' ' ')"
+  fail "the remedy does not send the owner to a new pre-release tag"
+fi
+if printf '%s\n' "$out" | grep -q '^owner hold: 4 unrecorded file(s) examined, 2 held, 0 approved, 2 refused$'; then
+  ok "the decision is logged: 4 examined, 2 held, 2 refused"
+else
+  fail "no decision line counts what the gate examined and held"
+fi
+if [ -z "$(applied_list)" ] && ! printf '%s\n' "$out" | grep -q '^backup-before'; then
+  ok "and NOTHING is applied or backed up, not even the plain files before the held one"
+else
+  fail "files were touched before the refusal: $(applied_list)"
 fi
 if printf '%s\n' "$out" | grep -qE '00[14]_plain\.sql is HELD'; then
-  fail "a plain migration (or a DROP CONSTRAINT IF EXISTS re-create, or a DROP in a comment) was held"
+  fail "a plain migration (or the re-create idiom, or a DROP in a comment) was held"
 else
-  ok "the plain files, the DROP CONSTRAINT IF EXISTS idiom and a DROP in a comment are not held"
+  ok "the plain files, the DROP CONSTRAINT IF EXISTS idiom and a real commented DROP are not held"
 fi
 
-out="$(run_hold "$HMIG/002_held.sql $held_sum
+# Approved for their content - one sum in upper case, which is still the same sum.
+out="$(run_hold "$HMIG/002_held.sql $HELD_SUM_UPPER
 $HMIG/003_drop.sql $drop_sum
 " '' </dev/null 2>&1)"
 rc=$?
-applied_lines="$(printf '%s\n' "$out" | grep -c '^applying ')"
-if [ "$rc" -eq 0 ] && [ "$applied_lines" = "4" ]; then
-  ok "once both are approved for their content, all 4 files apply (plain ones exactly as before)"
+if [ "$rc" -eq 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql $HMIG/002_held.sql $HMIG/003_drop.sql $HMIG/004_plain.sql " ]; then
+  ok "once both are approved for their content (one sum in upper case), all 4 files apply, plain ones as before"
 else
-  fail "approved held migrations did not apply (exit $rc, $applied_lines of 4 applied)"
+  fail "approved held migrations did not apply (exit $rc, applied: $(applied_list))"
 fi
-if printf '%s\n' "$out" | grep -q '002_held\.sql needs the owner.*APPROVED'; then
+order="$(printf '%s\n' "$out" | grep -E '^(backup-before|applying) ' | tr '\n' '|')"
+want="applying $HMIG/001_plain.sql|backup-before $HMIG/002_held.sql|applying $HMIG/002_held.sql|backup-before $HMIG/003_drop.sql|applying $HMIG/003_drop.sql|applying $HMIG/004_plain.sql|"
+if [ "$order" = "$want" ]; then
+  ok "a backup is taken RIGHT BEFORE each approved held file, and only before those"
+else
+  fail "the backups are not right before the approved files: $order"
+fi
+if printf '%s\n' "$out" | grep -q '002_held\.sql is held because.*APPROVED'; then
   ok "and the log says which approval let each one through"
 else
   fail "an approved held migration applied without a line saying so"
+fi
+
+out="$(BACKUP=fail run_hold "$HMIG/002_held.sql $held_sum
+$HMIG/003_drop.sql $drop_sum
+" '' </dev/null 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && printf '%s\n' "$out" | grep -q '^::error::the backup before .*002_held\.sql failed'; then
+  ok "a FAILED backup refuses the approved file and everything after it (only the plain 001 ran)"
+else
+  fail "a failed backup did not stop the approved migration (exit $rc, applied: $(applied_list))"
+fi
+
+out="$(BACKUP=none run_hold "$HMIG/002_held.sql $held_sum
+$HMIG/003_drop.sql $drop_sum
+" '' </dev/null 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$(applied_list)" ] && printf '%s\n' "$out" | grep -q 'defines no migration_backup'; then
+  ok "a caller that cannot take a backup applies NO approved held file - and nothing else"
+else
+  fail "an approved held file was applicable without a backup route (exit $rc, applied: $(applied_list))"
 fi
 
 stale="0000000000000000000000000000000000000000000000000000000000000000"
@@ -341,8 +450,8 @@ $HMIG/002_held.sql $stale
 $HMIG/003_drop.sql $drop_sum
 " '' </dev/null 2>&1)"
 rc=$?
-if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q '002_held\.sql is HELD.*approves another version'; then
-  ok "an approval of ANOTHER version of the file does not apply this one - an edit after approval re-holds it"
+if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q '002_held\.sql is HELD.*approves another content'; then
+  ok "an approval of ANOTHER content of the file does not apply this one - an edit after approval re-holds it"
 else
   fail "an approval with a stale checksum let the edited migration through (exit $rc)"
 fi
@@ -355,11 +464,18 @@ fi
 out="$(run_hold '' "$HMIG/002_held.sql
 $HMIG/003_drop.sql" </dev/null 2>&1)"
 rc=$?
-applied_lines="$(printf '%s\n' "$out" | grep -c '^applying ')"
-if [ "$rc" -eq 0 ] && [ "$applied_lines" = "2" ]; then
+if [ "$rc" -eq 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql $HMIG/004_plain.sql " ]; then
   ok "a held migration the ledger already records is history, not a request: the 2 others apply"
 else
-  fail "recorded held migrations blocked the deploy or were replayed (exit $rc, $applied_lines applied)"
+  fail "recorded held migrations blocked the deploy or were replayed (exit $rc, applied: $(applied_list))"
+fi
+
+out="$(LEDGER=fail run_hold '' '' </dev/null 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$(applied_list)" ] && printf '%s\n' "$out" | grep -q '^::error::the schema_migrations ledger .* could not be read'; then
+  ok "an UNREADABLE ledger is refused with an accusing line, never read as empty"
+else
+  fail "an unreadable ledger was not refused as one (exit $rc, applied: $(applied_list))"
 fi
 
 if [ -f "$REPO/infrastructure/migration-approvals.txt" ]; then
@@ -397,6 +513,71 @@ if [ -n "$seed_line" ] && [ -n "$migrate_line" ] && [ "$migrate_line" -lt "$seed
   ok "the reset migrates before it seeds (line $migrate_line < $seed_line)"
 else
   fail "the reset does not migrate before the seed (migrate ${migrate_line:-?}, seed ${seed_line:-?})"
+fi
+
+printf '\nthe backup before an approved migration is the nightly backup'"'"'s own dump\n'
+
+# ONE RECIPE, TWO TAKERS. The owner's rule wants a backup right before an approved held migration;
+# a second pg_dump recipe in the deploy would be a backup a restore has never read. So the deploy's
+# `migration_backup` and `backup.sh` both call `dump_auth_db`, which is exercised here against a
+# compose stub: a whole dump passes, a failed pg_dump and a truncated stream are refused.
+DUMP_LIB="$REPO/infrastructure/backup/dump-auth-db.sh"
+dump_with() { # <ok|fail|truncated> <out>
+  (
+    # shellcheck disable=SC2317,SC2329 # called through dump_auth_db's "$@"
+    stub_compose() {
+      case "$MODE" in
+      ok) printf 'CREATE TABLE t (a int);\n' ;;
+      fail) return 1 ;;
+      esac
+    }
+    MODE="$1"
+    # shellcheck disable=SC2034 # read by dump_auth_db, sourced below
+    POSTGRES_USER=canari
+    # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/backup/dump-auth-db.sh
+    . "$DUMP_LIB"
+    dump_auth_db "$2" stub_compose
+    rc=$?
+    # A truncated stream: a gzip whose tail is gone, as a killed pipe leaves it.
+    if [ "$MODE" = truncated ]; then
+      printf 'CREATE TABLE t (a int);\n%.0s' {1..200} | gzip | head -c 40 >"$2"
+      gzip -t "$2" 2>/dev/null
+      return $?
+    fi
+    return "$rc"
+  )
+}
+if dump_with ok "$TMP/ok.sql.gz" && [ "$(gzip -dc "$TMP/ok.sql.gz")" = 'CREATE TABLE t (a int);' ]; then
+  ok "dump_auth_db writes a whole, readable dump"
+else
+  fail "dump_auth_db did not write the dump it was given"
+fi
+if dump_with fail "$TMP/fail.sql.gz"; then
+  fail "a failed pg_dump was reported as a backup"
+else
+  ok "a failed pg_dump is a failed backup, not an empty file that looks like one"
+fi
+if dump_with truncated "$TMP/cut.sql.gz"; then
+  fail "a truncated dump stream passed gzip -t"
+else
+  ok "a truncated stream is caught by the same gzip -t the dump runs"
+fi
+# shellcheck disable=SC2016 # the patterns are the scripts' literal text
+if grep -qE '^[[:space:]]*if ! dump_auth_db "\$out" dc; then' "$DEPLOY" && grep -qE '^migration_backup\(\) \{' "$DEPLOY"; then
+  ok "the deploy defines migration_backup, and it takes the dump through dump_auth_db"
+else
+  fail "the deploy takes no backup through dump_auth_db before an approved migration"
+fi
+# shellcheck disable=SC2016 # the pattern is the script's literal text
+if grep -qE '^dump_auth_db "\$STAGE/postgres_auth_db\.sql\.gz"' "$REPO/infrastructure/backup/backup.sh"; then
+  ok "the nightly backup takes its database member through the same dump_auth_db"
+else
+  fail "backup.sh does not use dump_auth_db - two dump recipes can drift"
+fi
+if grep -qE '^[[:space:]]*migration_backup\(\)' "$RESET"; then
+  fail "the dev reset defines a migration_backup - it truncates dev, so it must never be the one to apply an approved held migration"
+else
+  ok "the dev reset defines no migration_backup, so an approved held migration is applied by a deploy, never by a reset"
 fi
 
 printf '\n'

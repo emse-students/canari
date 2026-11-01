@@ -290,6 +290,73 @@ for needle in 'ADMIN-MERGED' 'own CI' 'gh run list --branch main' 'gh run rerun'
   fi
 done
 
+printf '\ngate 6: a held migration added since the latest stable refuses the tag without the approval\n'
+# =================================================================================================
+# THE DEPLOY REFUSES IT ANYWAY, AT THE END. This asks the tree, before anything moves, through the
+# deploy's own judge. A throwaway repository: a stable with the history, then a release adding files.
+HOLD_LIB="$HERE/../../../infrastructure/lib/migration-hold.sh"
+GREPO="$(mktemp -d)"
+trap 'rm -rf "$GREPO"' EXIT
+MIG='apps/core-service/src/migrations'
+# No hook and no signing from the machine's own configuration: this repository is a fixture.
+gitq() { git -C "$GREPO" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false -c tag.gpgsign=false -c core.hooksPath=/dev/null "$@" >/dev/null 2>&1 || printf 'fixture git %s failed\n' "$1" >&2; }
+gitq init -q
+mkdir -p "$GREPO/$MIG" "$GREPO/infrastructure"
+printf 'ALTER TABLE t DROP COLUMN old;\n' >"$GREPO/$MIG/001_history.sql"
+printf '# approvals\n' >"$GREPO/infrastructure/migration-approvals.txt"
+gitq add -A
+gitq commit -qm stable
+gitq tag v1.0.0
+printf 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\n' >"$GREPO/$MIG/002_additive.sql"
+printf -- '-- canari:hold-for-owner\nUPDATE t SET a = 1;\n' >"$GREPO/$MIG/003_backfill.sql"
+gitq add -A
+gitq commit -qm release
+held() { # -> sets $hout, $hrc
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/migration-hold.sh
+  hout="$(cd "$GREPO" && . "$HOLD_LIB" && held_migrations_since v1.0.0 HEAD)"
+  hrc=$?
+}
+held
+if [ "$hrc" = 1 ] && grep -q "^refused $MIG/003_backfill.sql [0-9a-f]\{64\} it carries the hold marker$" <<<"$hout"; then
+  pass "a held file added since the stable, with no approval, is REFUSED by name and checksum"
+else
+  fail "the unapproved held file was not refused (rc $hrc): $hout"
+fi
+if grep -q "^plain $MIG/002_additive.sql$" <<<"$hout" && ! grep -q '001_history' <<<"$hout"; then
+  pass "an additive file passes, and a destructive file the stable already shipped is not asked again"
+else
+  fail "the comparison judged the wrong files: $hout"
+fi
+sum="$(sha256sum "$GREPO/$MIG/003_backfill.sql" | cut -d' ' -f1)"
+printf '%s %s\n' "$MIG/003_backfill.sql" "$sum" >>"$GREPO/infrastructure/migration-approvals.txt"
+held
+if [ "$hrc" = 0 ] && grep -q "^approved $MIG/003_backfill.sql$" <<<"$hout"; then
+  pass "once the approvals file of the released tree names its content, it passes"
+else
+  fail "an approved held file was refused (rc $hrc): $hout"
+fi
+# shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/migration-hold.sh
+hout="$(cd "$GREPO" && . "$HOLD_LIB" && held_migrations_since v0.0.0-missing HEAD 2>/dev/null)"
+hrc=$?
+if [ "$hrc" = 2 ] && grep -q '^undecidable ' <<<"$hout"; then
+  pass "a comparison git cannot make is UNDECIDABLE - refused by the gate, never permission"
+else
+  fail "a missing base was not undecidable (rc $hrc): $hout"
+fi
+hout="$(cd "$GREPO" && held_migrations_since v1.0.0 HEAD)"
+hrc=$?
+if [ "$hrc" = 2 ]; then
+  pass "without the hold library loaded it decides nothing (undecidable)"
+else
+  fail "it judged without the deploy's own judge (rc $hrc)"
+fi
+# shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
+if grep -qF 'held_migrations_since "$BASE_TAG" HEAD' "$PREFLIGHT" && grep -qF 'infrastructure/lib/migration-hold.sh' "$PREFLIGHT"; then
+  pass "release-preflight.sh asks gate 6 through this function and the deploy's hold library"
+else
+  fail "release-preflight.sh does not run gate 6"
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

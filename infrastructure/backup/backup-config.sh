@@ -12,7 +12,10 @@
 # MICONNECT_SSH_HOST, BACKUP_SSH_HOST): `:-` treats empty as unset and puts the default back, so
 # "empty to disable" was a comment the code contradicted until 2026-09-25.
 
-BACKUP_DIR="${BACKUP_DIR:-/home/canari/backups}"
+# The default is named once, beside the dump the deploy shares with backup.sh.
+# shellcheck source-path=SCRIPTDIR source=dump-auth-db.sh
+. "$(dirname "${BASH_SOURCE[0]}")/dump-auth-db.sh"
+BACKUP_DIR="${BACKUP_DIR:-$CANARI_DEFAULT_BACKUP_DIR}"
 
 # The compose project's name (docker-compose.prod.yml's `name:`): the volumes are mounted by a raw
 # `docker run`, outside `docker compose`, so nothing resolves it for us.

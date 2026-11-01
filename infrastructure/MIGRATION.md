@@ -231,8 +231,10 @@ Production runs TypeORM with `synchronize: false`, so **an entity change without
 never reaches production**. The CD step "Run database migrations" collects
 `apps/*/src/migrations/*.sql`, sorts by path, and applies every file not yet listed in the
 `schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`. A file
-carrying `-- canari:hold-for-owner`, or a data-destroying statement, is REFUSED - the deploy fails
-before applying anything - until `infrastructure/migration-approvals.txt` names it with its sha256
+carrying `-- canari:hold-for-owner`, or a statement that is not plainly additive, is REFUSED - the
+release preflight refuses the tag, and the deploy fails before applying anything - until
+`infrastructure/migration-approvals.txt` names it with its sha256 (a line the owner merges by hand);
+the deploy then dumps the database into `<BACKUP_DIR>/pre-migration/` right before applying it
 ([cicd](../docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
 
 Writing one: idempotent statements only (`IF NOT EXISTS` / `IF EXISTS`, or a `DO $$ ... $$` guard),

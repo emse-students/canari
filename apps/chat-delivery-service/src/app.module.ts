@@ -43,6 +43,7 @@ import { SeatEviction } from './entities/seat-eviction.entity';
 import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import Redis from 'ioredis';
+import { typeormSynchronize } from './typeorm-synchronize';
 
 const RedisProvider: Provider = {
   provide: 'REDIS_CLIENT',
@@ -108,7 +109,7 @@ class RedisShutdown implements OnModuleDestroy {
         JoinAskPush,
         RevokedDeviceGroup,
       ],
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: typeormSynchronize(),
     }),
     TypeOrmModule.forFeature([
       QueuedMessage,

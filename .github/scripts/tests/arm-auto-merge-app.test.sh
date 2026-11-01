@@ -166,8 +166,10 @@ not_armed "B2 the App from any other branch is not armed"
 for ref in 'deps/lock-refresh/cargo/dependabot-12;touch PWNED' 'deps/lock-refresh/cargo/dependabot-$(touch PWNED)' \
   $'deps/lock-refresh/cargo/dependabot-12\nx' 'deps/lock-refresh/cargo/dependabot-012' 'deps/lock-refresh/npm/dependabot-12'; do
   run_case false "$APP" "$ref"
-  if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep -q '^api' "$work/gh.log"; then
-    pass "B3 a hostile or foreign refresh branch is refused before any API call: $(printf '%q' "$ref")"
+  # The ONE call before the branch is read is the held-migration check, by pull request number only
+  # (B32); nothing derived from the branch name reaches the API.
+  if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep '^api' "$work/gh.log" | grep -vqxF 'api repos/o/r/pulls/5/files?per_page=100 --paginate --jq .[] | .filename, (.previous_filename // empty)'; then
+    pass "B3 a hostile or foreign refresh branch is refused before any API call it names: $(printf '%q' "$ref")"
   else
     fail "B3 the branch $(printf '%q' "$ref") was not refused cleanly (exit $st)" "$out"
   fi
@@ -362,6 +364,48 @@ not_armed "B19 a login without write access is not armed"
 # shellcheck disable=SC2209 # a per-call variable for a shell function
 FAKE_PERMISSION=read run_case false 'some-other-app[bot]' "$REF"
 not_armed "B19 another bot on the refresh branch name is not armed"
+
+# ── B32: a pull request that approves a held migration is merged by the owner's hand, never armed ─
+# infrastructure/migration-approvals.txt is the owner's yes to a migration the deploy would otherwise
+# refuse; armed, it would merge itself on a green CI and the yes would be anybody's (review of #2873).
+APPROVALS='infrastructure/migration-approvals.txt'
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+run_case true 'dependabot[bot]' 'dependabot/cargo/x'
+if [ "$st" = 0 ] && ! armed && grep -q 'merged by the OWNER' <<<"$out"; then pass "B32 Dependabot touching the approvals file is not armed, and the run says why"; else fail "B32 Dependabot touching the approvals file was armed (exit $st)" "$out"; fi
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=admin run_case false 'an-admin' 'chore/approve-042'
+not_armed "B32 even an admin's pull request touching the approvals file is not armed"
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+run_case false "$APP" "$REF"
+not_armed "B32 the App's refresh touching the approvals file is not armed"
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"elsewhere.txt\", previous_filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+not_armed "B32 a pull request that RENAMES the approvals file away is not armed either"
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B32 a push that adds the approvals file to an ARMED pull request DISARMS it"
+else
+  fail "B32 an armed pull request kept its arming after the approvals file was added (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_API_FAIL=1 FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" != 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B32 an unreadable file list fails the run, arms nothing and disarms"
+else
+  fail "B32 an unreadable file list armed or passed (exit $st)" "$out"
+fi
 
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────
 if grep -qE '^\s*-?\s*uses:\s*actions/checkout' "$wf"; then
