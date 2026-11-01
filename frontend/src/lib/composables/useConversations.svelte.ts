@@ -76,6 +76,7 @@ import {
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import { drainOwedRemovalNotices, forgetRemovalNotices } from '$lib/utils/chat/removalNotice';
 import {
   makeLostInvitationReplanner,
   makeUnrecordedInvitationTeller,
@@ -1260,6 +1261,8 @@ export function useConversations() {
     // entries stay in the leaving account's own record.
     replannerMls?.setOwedInvitationReplanner(null);
     replannerMls = null;
+    // An answered removal ("no instant") is this account's, this session's: the next asks afresh.
+    forgetRemovalNotices();
     // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
     // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
     // landing) must wait for that session's restore rather than trust the one that left.
@@ -1380,6 +1383,20 @@ export function useConversations() {
             makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
           );
           replannerMls = mlsService;
+          // A removal line owed by an earlier session (its instant unanswered then): the retired row
+          // receives no further evidence, so the restore is what asks again.
+          const owedOf = mlsService;
+          void drainOwedRemovalNotices({
+            ownerId: ctx.userId,
+            conversations,
+            askRemovedAt: (groupId) => owedOf.ownRemovalAt(groupId),
+            addMessageToChat: ctx.addMessageToChat,
+            log: ctx.log,
+            // A late answer must not land in the next account's map: the sign-out retires `gen`.
+            isCurrent: () => !gen.retired,
+          }).catch((e: unknown) =>
+            console.error(`[EVICT] the owed removal notices could not be drained: ${String(e)}`)
+          );
         }
       }
     }
@@ -1882,6 +1899,8 @@ export function useConversations() {
       conversations,
       groupId: convo.id,
       evidence,
+      askRemovedAt: () => ctx.ensureMls().ownRemovalAt(convo.id),
+      ownerId: ctx.userId,
       saveConversation: (key) => saveConversation(key, ctx),
       addMessageToChat: ctx.addMessageToChat,
       log: ctx.log,

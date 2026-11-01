@@ -1,6 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { DeliveryRefusal } from '$lib/mls-client/mlsDeliveryHttp';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
+import { cachedCommitInstants, type ServerInstant } from '$lib/mls-client/serverInstant';
 import type {
   IMlsService,
   GroupMeta,
@@ -4153,6 +4154,21 @@ export abstract class BaseMlsService implements IMlsService {
     groups: Array<{ groupId: string; afterStreamId?: string }>
   ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryPage>> {
     return this.delivery.fetchHistoryBatch(groups);
+  }
+
+  /** Commit instants, asked once per commit for the session (`cachedCommitInstants`). */
+  private readonly commitInstants = cachedCommitInstants((groupId, baseEpoch) =>
+    this.delivery.fetchCommitAcceptedAt(groupId, baseEpoch)
+  );
+
+  /** {@link IMlsService.commitAcceptedAt}: the commit log's own instant, asked once per commit. */
+  async commitAcceptedAt(groupId: string, baseEpoch: number): Promise<ServerInstant> {
+    return this.commitInstants(groupId, baseEpoch);
+  }
+
+  /** {@link IMlsService.ownRemovalAt}: the server's record of this device's own removal. */
+  async ownRemovalAt(groupId: string): Promise<ServerInstant> {
+    return this.delivery.fetchOwnRemovalAt(groupId);
   }
 
   async fetchCommitsSince(

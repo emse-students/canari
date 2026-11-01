@@ -597,6 +597,20 @@ registration pre-claim does NOT settle it: it skips devices idle for 30 days (ab
 list) and keys still "new" by `isNewToItsOwner`, so a legacy marker can outlive it; only the
 migration on a hit retires one. Data at rest, so the floor alone does not retire this.
 
+### No date yet - a call record with no start clocks, written by a build before the derived-notices fix (2026-11-01)
+
+**Site:** the last branch of `callDurationMs` in `frontend/src/lib/utils/chat/callSystemMessages.ts`.
+**Shim:** a call's duration is measured on ONE clock - the server's two acceptances, or, for an end
+that is this device's own act, its own two instants - read from the `startClocks` the start row
+carries ([chat](frontend/modules/chat.md)). A start row an older build wrote carries none, so its end
+is measured as the hangup's instant minus the inviter's `startedAt`: two devices' clocks. Logged at
+`console.error` every time it runs, and so is the other reason it runs (a received end with no server
+time, which every delivery route carries - a fault, not a shim).
+**Removal condition:** no call row without `startClocks` is still open on any device - a call row is
+finalised when its call ends, so this lasts only for a call in flight across the upgrade. Removable
+once `minClientVersion` is at or above the build that ships this, on both estates; the branch then
+stays only as the accusing log of a received end with no server time.
+
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
 **Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,

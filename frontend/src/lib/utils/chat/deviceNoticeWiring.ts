@@ -304,6 +304,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       storedConversation: session.storedConversation,
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       removalEpochs: (groupId, userId) => mls.removalEpochs(groupId, userId),
+      commitAcceptedAt: (groupId, baseEpoch) => mls.commitAcceptedAt(groupId, baseEpoch),
       addMessageToChat: session.addMessageToChat,
       resolveDisplayNames,
       deviceLabel: (deviceId) => deviceLabelOf(mls, session.getUserId(), deviceId),

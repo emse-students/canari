@@ -42,6 +42,11 @@ export const ACCOUNT_KEY = {
    */
   owedInvitations: (userId: string) => `mls_owed_invitations:v1:${userId}`,
   /**
+   * `owedRemovalNotices.ts`: the groups whose "you were removed" line is owed - the removal recorded,
+   * its instant not answered yet (a route this server does not serve, or no answer) - a JSON array.
+   */
+  owedRemovalNotices: (userId: string) => `chat_owed_removal_notices:v1:${userId}`,
+  /**
    * `addLockMarkers.ts`: the add locks this device took and has not had a release ANSWERED for - per
    * group, the token of the acquisition, cleared when its release is answered.
    */
@@ -196,6 +201,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.deviceId(userId),
     ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.owedInvitations(userId),
+    ACCOUNT_KEY.owedRemovalNotices(userId),
     ACCOUNT_KEY.addLockMarkers(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),

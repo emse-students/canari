@@ -27,6 +27,13 @@ const admitRefused = (userIds: string[]) =>
   new CommitRefusedError('admit_refused', 2, 2, null, userIds);
 import { decodeAppMessage } from '$lib/proto/codec';
 
+/** A send the delivery service accepted, with its receive time. */
+const SENT = {
+  sealed: new Uint8Array(),
+  authorProof: new Uint8Array(),
+  receivedAt: 1_700_000_000_040,
+};
+
 /**
  * AN ADD THAT LOSES A COMMIT RACE IS REBUILT ON PROVEN PROGRESS, OR SURFACED - NEVER DROPPED (CC-4,
  * 1.4.1 dev campaign, 2026-10-25). W1's leaf refresh took epoch 2 -> 3 while W2's Add of W4 was being
@@ -109,7 +116,7 @@ function inviteHarness() {
       }
     ),
     sendWelcome: vi.fn(async () => {}),
-    sendMessage: vi.fn(async (_g: string, _bytes: Uint8Array) => {}),
+    sendMessage: vi.fn(async (_g: string, _bytes: Uint8Array) => SENT),
     getDeviceId: vi.fn(() => 'dev-2'),
   };
   const deps = {
@@ -312,7 +319,7 @@ function sweepHarness() {
     registerMember: vi.fn(async () => {}),
     sendWelcome: vi.fn(async () => {}),
     updateInvitationStatus: vi.fn(async () => {}),
-    sendMessage: vi.fn(async () => {}),
+    sendMessage: vi.fn(async () => SENT),
   };
   const run = () =>
     processPendingInvitations({
