@@ -94,6 +94,7 @@ import {
   publishOutboxEntryRetired,
   subscribeTabOutboxEvents,
   forwardReelTakeWrite,
+  acknowledgeReelTakeAdoption,
 } from '$lib/mls-client/tabMessageSync';
 import { MessageWrittenError, OutboxEntryWrittenAloneError } from './messageWrittenError';
 import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
@@ -898,6 +899,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * produce a file, so a withdrawal meanwhile keeps the row (`releasing`) for that file's release.
    */
   const adopting = new Set<string>();
+  /**
+   * The `releasing` write of a take withdrawn while its transfer ran, when that write FAILED (L1): the
+   * patch is kept so the take drive writes it again, under the lock, from the row re-read there.
+   */
+  const releasingOwed = new Map<string, Partial<OutboxEntry>>();
+  /**
+   * Publish-step uploads this FOLLOWER tab forwarded to the leader and the leader has not yet
+   * acknowledged (L2). Read when the publish step ends: still here, the leader never took it.
+   */
+  const adoptionsForwarded = new Set<string>();
+  /** The leader kept its take records in this page life (`maintainTakeRecords`, once). */
+  let takeRecordsMaintained = false;
   /** The one writer per take row at a time: its sends settle, are marked sent or deleted, in turn. */
   const takeLocks = new Map<string, Promise<void>>();
   /** A take drive is running; `takesRerun` asks it for one more pass (an event arrived meanwhile). */
@@ -1023,10 +1036,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       void (
         event.type === 'outbox_reel_send_deleted'
           ? reelSendDeletedHere(event.messageId)
-          : adoptPublishedUploadHere(event.takeId, event.uploaded)
+          : adoptPublishedUploadHere(event.takeId, event.uploaded).then(() =>
+              acknowledgeReelTakeAdoption(event.takeId)
+            )
       ).catch((e: unknown) =>
         log(`[OUTBOX] ${event.type} forwarded by a follower tab FAILED: ${String(e)}`)
       );
+      return;
+    }
+    // THE LEADER TOOK THIS TAB'S FORWARDED ADOPTION (L2): nothing is owed any more.
+    if (event.type === 'outbox_reel_take_adopt_ack') {
+      if (adoptionsForwarded.delete(event.takeId)) {
+        log(
+          `[OUTBOX] take ${event.takeId.slice(0, 8)}… its forwarded adoption was taken by the leader`
+        );
+      }
       return;
     }
     // Not leader-gated, and deliberately ahead of the one that is: the tab that must forget a
@@ -2970,6 +2994,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       requestLeaderOutboxFlush();
       return;
     }
+    // THE TAKE RECORDS ARE THE LEADER'S, kept once per page life at its first flush (L2, L3).
+    if (!takeRecordsMaintained) {
+      takeRecordsMaintained = true;
+      void maintainTakeRecords().catch((e: unknown) =>
+        log(`[OUTBOX] take record maintenance failed: ${String(e)}`)
+      );
+    }
     // A flush needs a session that can actually send. Two different reasons it may not be able to:
     // there is no network at all, or the session was unlocked offline and holds no token yet
     // (promoteOfflineSession calls back here the moment it does). Attempting anyway is not merely
@@ -3464,9 +3495,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           })
         : {}),
     };
-    await storage
+    const recorded = await storage
       ?.updateOutboxEntry(id, patch, deviceKey())
-      .catch((e: unknown) => log(`[OUTBOX] take ${short}… its release NOT recorded: ${String(e)}`));
+      .then(() => true)
+      .catch((e: unknown) => {
+        // OWED, NEVER DROPPED (L1): the drive meets this take in its no-state form and writes the
+        // state again (`writeReleasingOwed`); a relaunch would otherwise be the only way back.
+        console.warn(`[OUTBOX] take ${short}… its release NOT recorded, owed: ${String(e)}`);
+        log(`[OUTBOX] take ${short}… its release NOT recorded, owed: ${String(e)}`);
+        releasingOwed.set(id, patch);
+        return false;
+      });
+    if (recorded === false) {
+      void runFlush();
+      return;
+    }
     if (!ref) {
       log(
         `[OUTBOX] take ${short}… withdrawn (${why}) - its transfer is still under way; what it produces is released`
@@ -3479,6 +3522,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     log(`[OUTBOX] take ${short}… withdrawn (${why}) - its file ${ref.mediaId} is released`);
     await releaseTakeFile({ ...take, ...patch } as OutboxEntry, ref.mediaId);
+  }
+
+  /**
+   * Writes a take's owed `releasing` state again (L1), under its lock and from its row re-read there:
+   * a row already `releasing` or gone owes nothing more. Written, the takes are driven again, which
+   * releases it (or waits for its transfer, whose end drives them again).
+   */
+  async function writeReleasingOwed(id: string): Promise<void> {
+    const short = id.slice(0, 8);
+    const patch = releasingOwed.get(id);
+    if (!patch) return;
+    try {
+      const written = await writeTakeRow(id, (row) => (row.take?.state ? null : patch));
+      releasingOwed.delete(id);
+      log(`[OUTBOX] take ${short}… its owed release ${written ? 'recorded' : 'no longer owed'}`);
+      if (written) takesRerun = true;
+    } catch (e) {
+      log(`[OUTBOX] take ${short}… its owed release still NOT recorded: ${String(e)}`);
+    }
   }
 
   /**
@@ -3616,8 +3678,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await driveReleasing(id);
       return;
     }
-    // WITHDRAWN IN THIS PAGE LIFE, met in an older snapshot: nothing is left to move.
-    if (takeWithdrawn.has(id)) return;
+    // WITHDRAWN IN THIS PAGE LIFE: nothing is left to move - but a `releasing` write that failed is
+    // written again here (L1), so the take is driven to its release in this page life.
+    if (takeWithdrawn.has(id)) {
+      if (releasingOwed.has(id)) await writeReleasingOwed(id);
+      return;
+    }
     noteTake(take, present);
     if (liveSendsOf(take, present).length === 0) {
       await settleTake(id, 'no queued send names it');
@@ -3914,6 +3980,54 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return until !== undefined && until <= now ? null : record;
     }
     return (await readQueue(why)).find(names) ?? null;
+  }
+
+  /**
+   * Once per page life, at the LEADER's first flush (L3: never in a follower): the SENT-TAKE RECORDS are kept in step with what the
+   * device holds. A record past its expiry is deleted; a send it still counts as standing whose
+   * message is TOMBSTONED on this device (deleted for everyone, `isDeleted` on the stored message) is
+   * marked deleted - so a deletion pressed in a follower tab whose forwarded event no leader received
+   * (L2) is re-derived here, from durable state, and the last one releases the file. Each record under
+   * its take's lock; best effort, and every failure logged.
+   */
+  async function maintainTakeRecords(): Promise<void> {
+    if (!storage) return;
+    let records: OutboxEntry[];
+    try {
+      records = await storage.getReelTakeRecords(deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] take records unreadable, not maintained: ${String(e)}`);
+      return;
+    }
+    const now = Date.now();
+    let expired = 0;
+    let rederived = 0;
+    for (const record of records) {
+      const until = record.media?.expiresAtMs;
+      try {
+        if (until !== undefined && until <= now) {
+          await withTakeLock(record.id, async () => {
+            const row = await readTake(record.id);
+            if (row?.take?.state === 'sent') await storage.deleteOutboxEntry(record.id);
+          });
+          expired++;
+          continue;
+        }
+        for (const send of record.take?.sends ?? []) {
+          if (!send.sent || send.deleted) continue;
+          const message = await storage.getMessage(send.id, deviceKey());
+          if (!message?.isDeleted) continue;
+          await reelSendDeletedHere(send.id);
+          rederived++;
+        }
+      } catch (e) {
+        log(`[OUTBOX] take record ${record.id.slice(0, 8)}… not maintained: ${String(e)}`);
+      }
+    }
+    if (expired > 0) log(`[OUTBOX] ${expired} expired take record(s) swept`);
+    if (rederived > 0) {
+      log(`[OUTBOX] ${rederived} reel deletion(s) re-derived from their tombstones`);
+    }
   }
 
   /**
@@ -4498,10 +4612,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     async adoptPublishedUpload(takeId: string, uploaded: PublishedReelUpload): Promise<void> {
       if (await writesTakesHere()) return adoptPublishedUploadHere(takeId, uploaded);
       log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish upload forwarded to the leader tab`);
+      adoptionsForwarded.add(takeId);
       forwardReelTakeWrite({ type: 'outbox_reel_take_adopt', takeId, uploaded });
     },
 
     endPublishWait(takeId: string): void {
+      // AN ADOPTION THIS FOLLOWER FORWARDED, NOT TAKEN by the end of its publish step (L2): no leader
+      // received it. Said with its cost - the take uploads its own file, a second upload - and read
+      // at an EVENT (the publish step's end, which RC-12 owes in a `finally`), never a clock.
+      if (adoptionsForwarded.delete(takeId)) {
+        const line = `[OUTBOX] take ${takeId.slice(0, 8)}… its forwarded publish upload was NOT taken by a leader tab before the publish step ended - the take uploads its own file (a second upload)`;
+        console.warn(line);
+        log(line);
+      }
       if (!publishing.delete(takeId)) return;
       log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish step ended`);
       runFlush();
@@ -4574,7 +4697,6 @@ export function registerOutbox(deps: OutboxDeps): OutboxController {
   active = createOutbox(deps);
   const controller = active;
   sweepOrphanBlobs(deps);
-  sweepExpiredTakeRecords(deps);
   setUploadRetry((messageId) => controller.retryUpload(messageId));
   for (const listener of registrationListeners) {
     try {
@@ -4615,32 +4737,6 @@ function sweepOrphanBlobs(deps: OutboxDeps): void {
       if (n > 0) deps.log(`[OUTBOX] swept ${n} orphan attachment blob(s) (no row owns them)`);
     })
     .catch((e) => deps.log(`[OUTBOX] orphan blob sweep failed: ${String(e)}`));
-}
-
-/**
- * Once per session, delete the SENT-TAKE RECORDS (RC-13) past their expiry: kept for "Supprimer
- * partout" while their messages live, they are not queued work, so no flush meets them. Best-effort
- * and logged; a record met expired before this runs is read as no record (`takeNaming`).
- */
-function sweepExpiredTakeRecords(deps: OutboxDeps): void {
-  const storage = deps.storage;
-  if (!storage) return;
-  Promise.resolve()
-    .then(async () => {
-      const now = Date.now();
-      const expired = (await storage.getReelTakeRecords(deps.deviceKey())).filter(
-        (r) => r.media?.expiresAtMs !== undefined && r.media.expiresAtMs <= now
-      );
-      for (const record of expired) {
-        await storage
-          .deleteOutboxEntry(record.id)
-          .catch((e: unknown) =>
-            deps.log(`[OUTBOX] expired take record ${record.id.slice(0, 8)}… NOT deleted: ${e}`)
-          );
-      }
-      if (expired.length > 0) deps.log(`[OUTBOX] ${expired.length} expired take record(s) swept`);
-    })
-    .catch((e: unknown) => deps.log(`[OUTBOX] take record sweep failed: ${String(e)}`));
 }
 
 /** Tear down the active controller (logout). */

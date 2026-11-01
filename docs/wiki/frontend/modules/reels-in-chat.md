@@ -1299,14 +1299,22 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
 - **A record is not queued work.** Its `conversationId` becomes `REEL_TAKE_RECORDS`, which
   `getOutboxQueue` leaves out on both engines (before anything is decrypted): no flush reads, drives or
   counts it. `getReelTakeRecords` is its one reader (`sentTakeOf`, `reelSendDeleted`); an expired one
-  reads as no record, and the records past their expiry are swept once per session beside the orphan
-  blobs. A release moves it back to `REEL_TAKE_QUEUE` - that is queued work, retried.
+  reads as no record. **The records are the leader's** (`maintainTakeRecords`, once per page life at
+  the leader's first flush, never in a follower): the expired ones are deleted, and a send a record
+  still counts as standing whose message is TOMBSTONED on this device (`isDeleted`) is marked deleted
+  - the last one releasing the file. A release moves it back to `REEL_TAKE_QUEUE` - that is queued
+  work, retried.
 - **A file that lands after the withdrawal is released durably.** A withdrawal while the take's
   transfer or its chat hold is still under way keeps the row `releasing` instead of deleting it; the
   transfer writes its ref onto that row (or the hold its file), and the take drive releases it - or,
   when nothing came of it, deletes the row (giving back the session the row names, after a relaunch).
   The `releasing` drive re-reads the row under the take's lock, so an older snapshot never asks a
-  second release.
+  second release. **A `releasing` write that fails is owed, never dropped** (`releasingOwed`): said
+  at warn, and the take drive writes it again under the lock (`writeReleasingOwed`) - otherwise the
+  withdrawn take would sit undriven until a relaunch.
+- **Known cost, kept (verifier's L4):** the upload task's session write waits on the take's lock, so
+  a part can wait while a release (`releaseTakeFile`, a network call) holds it. Only during a
+  withdrawal or a settle, a delay and never a deadlock - nothing under the lock awaits the upload.
 - **No late write resurrects a take, and every take write is the take's lock's.** The upload task's
   session and ref writes, the preparation's write and the adoption's go through `writeTakeRow`: under
   the lock, from the row re-read there (nothing on a deleted row or a record; the ref and the session
@@ -1322,6 +1330,12 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   follower does not wait for its publish step - a wait on another tab's publish would hang on a tab
   that may close, with nothing to tell the leader - so the leader uploads its own file (the forwarded
   adoption is taken if it lands first).
+- **A forwarded write no leader takes is never silent.** A DELETION is durable without the event: the
+  tombstone is on the shared message row, and the next leader re-derives it (`maintainTakeRecords`
+  above; a promotion reloads the page, so a new leader always starts with it) - lost, it only waits.
+  An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`); one still unacknowledged when the
+  follower's publish step ends (`endPublishWait`, an event, never a clock) is said at warn with its
+  cost - the take uploads its own file, a second upload.
 - **Failures.** The take's upload failure takes an attachment's dispositions; a refusal for good
   (`too-large`, `refused`, `unpreparable`, `over-budget`) fails EACH queued send for good, its sentence
   in each thread (`failTakeSends`). **`over-budget` is media-service's own 429 for the daily
