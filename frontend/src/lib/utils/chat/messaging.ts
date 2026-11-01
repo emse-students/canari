@@ -51,6 +51,7 @@ import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
 import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
 import { flushDmReadMarks } from './salonReadMarkQueue';
+import { MessageWrittenError } from './messageWrittenError';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -504,15 +505,21 @@ async function queueSalonSend(
   salonSends.set(messageId, send);
   // Before the POST leaves: a kill from here on sends it again at the next start.
   recordUnsentSalonText(deps.userId, entry);
-  if (mayHaveLanded && !salonRepeatIsSafe()) {
-    deps.log(
-      `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
-    );
-    deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
-    awaitRepeatProof(messageId);
-    return { echoed: true, refusal: null };
+  // From here the message is in the ledger: a throw is about a message that EXISTS, typed so no
+  // caller sends it again.
+  try {
+    if (mayHaveLanded && !salonRepeatIsSafe()) {
+      deps.log(
+        `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
+      );
+      deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
+      awaitRepeatProof(messageId);
+      return { echoed: true, refusal: null };
+    }
+    return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
+  } catch (e) {
+    throw new MessageWrittenError(messageId, e);
   }
-  return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
 }
 
 /** The tail of the resumes in flight - see `resumeUnsentSalonSends`. */
@@ -733,8 +740,13 @@ export async function sendChatMessage(
     outboxEntry: entry,
     ...(replyToData ? { replyTo: replyToData } : {}),
   });
-  // The durable half is already done; this is the mirror and the flush.
-  await enqueueOutboxMessage(entry, { alreadyDurable: true });
+  // The durable half is already done; this is the mirror and the flush - and a throw from it is
+  // about a message that EXISTS, typed so no caller sends it again.
+  try {
+    await enqueueOutboxMessage(entry, { alreadyDurable: true });
+  } catch (e) {
+    throw new MessageWrittenError(messageId, e);
+  }
   deps.log(`[SEND] ${messageId.slice(0, 8)}… queued (pending)`);
   return { success: true };
 }

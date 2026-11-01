@@ -1,4 +1,5 @@
 import { sendChatMessage } from './messaging';
+import { MessageWrittenError } from './messageWrittenError';
 import type { Conversation } from '$lib/types';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 
@@ -91,6 +92,28 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
     });
     await sendChatMessage('hello', 'alice', null, h.deps);
     expect(h.calls).toEqual(['echo', 'enqueue']);
+  });
+
+  it('a throw AFTER the durable write is typed as a written message, so nobody sends it again', async () => {
+    // Review of #2843, A3: the quick-reply drain put a reply back on any throw, and the next take
+    // sent it a second time beside the copy the outbox already held.
+    const h = harness();
+    enqueueOutboxMessage.mockImplementationOnce(async () => {
+      throw new Error('mirror write failed');
+    });
+    const sent = sendChatMessage('hello', 'alice', null, h.deps);
+    await expect(sent).rejects.toBeInstanceOf(MessageWrittenError);
+    await expect(sent).rejects.toMatchObject({ messageId: h.options.messageId });
+  });
+
+  it('a throw BEFORE the write is not one', async () => {
+    const h = harness();
+    h.deps.addMessageToChat = async () => {
+      throw new Error('storage refused');
+    };
+    const sent = sendChatMessage('hello', 'alice', null, h.deps);
+    await expect(sent).rejects.toThrow('storage refused');
+    await expect(sent).rejects.not.toBeInstanceOf(MessageWrittenError);
   });
 
   it('a reply carries its quote into the entry, and still travels with the echo', async () => {

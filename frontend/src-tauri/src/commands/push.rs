@@ -1362,28 +1362,77 @@ pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> 
 }
 
 /// The quick replies the iOS notification delegate hands to the page while it holds the MLS state
-/// (`canari_push.mm`, `CanariHandQuickReplyToPage`): one JSON object per line. The NAME is the
-/// contract (`iosNotificationDelegate.test.ts` reads it on both sides).
+/// (`canari_push.mm`, `CanariHandQuickReplyToPage`). The NAME is the contract
+/// (`iosNotificationDelegate.test.ts` reads it on both sides).
+///
+/// ONE SEALED LINE PER REPLY (`native_cache`, [`Purpose::QuickReply`]), whose plaintext is
+/// `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}`: what the user typed is never
+/// on disk in the clear, and each line names the ACCOUNT that typed it, so a reply one account left
+/// is never sent by the next. It is an account file ([`ACCOUNT_PUSH_FILES`]), deleted with the
+/// others on that account's sign-out.
 pub(crate) const PENDING_QUICK_REPLIES_FILE: &str = "pending_quick_replies.ndjson";
 
-/// Claims `{dir}/pending_quick_replies.ndjson` and returns its non-empty lines; empty when none wait.
-pub(crate) fn take_quick_replies_in(dir: &std::path::Path) -> Vec<String> {
-    crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
-        .map(|content| {
-            content
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+/// Claims `{dir}/pending_quick_replies.ndjson` and returns the plaintext of each reply typed under
+/// `account_id`; empty when none wait.
+///
+/// A line typed under another account is DROPPED, never handed back: sending it would post one
+/// account's words as another's, and putting it back would hand it to every later take for ever
+/// (review of #2843, A2). A line this install's key does not open, a plaintext line (no build ever
+/// wrote this file in the clear) or one naming no account is dropped too. Each kind is counted and
+/// said once per take, which is once per line, since a dropped line is gone.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn take_quick_replies_in(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    account_id: &str,
+) -> Vec<String> {
+    let Some(content) =
+        crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
+    else {
+        return vec![];
+    };
+    let mut replies = Vec::new();
+    let mut other_account = 0usize;
+    let mut unreadable = 0usize;
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let plain = match open_line(key, Purpose::QuickReply, line) {
+            Ok(Opened::Sealed(plain)) => plain,
+            Ok(Opened::Plaintext(_)) | Err(_) => {
+                unreadable += 1;
+                continue;
+            }
+        };
+        let owner = serde_json::from_str::<serde_json::Value>(&plain)
+            .ok()
+            .and_then(|v| v.get("accountId")?.as_str().map(str::to_string));
+        match owner {
+            Some(owner) if !owner.is_empty() && owner == account_id => replies.push(plain),
+            Some(owner) if !owner.is_empty() => other_account += 1,
+            _ => unreadable += 1,
+        }
+    }
+    if other_account > 0 {
+        log::warn!(
+            "[QUICK_REPLY] {other_account} reply(ies) typed under ANOTHER account dropped - never \
+             sent by this one"
+        );
+    }
+    if unreadable > 0 {
+        log::error!(
+            "[QUICK_REPLY] {unreadable} line(s) unsealed, unopenable or naming no account dropped"
+        );
+    }
+    log::info!("[QUICK_REPLY] {} reply(ies) taken", replies.len());
+    replies
 }
 
-/// Appends `lines` back to `{dir}/pending_quick_replies.ndjson`, ONE `O_APPEND` write per line, so a
-/// line the native side appends meanwhile is never overwritten or interleaved.
+/// Appends `lines` (the plaintext a take returned) back to `{dir}/pending_quick_replies.ndjson`,
+/// each SEALED again, ONE `O_APPEND` write per line, so a line the native side appends meanwhile is
+/// never overwritten or interleaved.
+#[cfg(any(target_os = "ios", test))]
 pub(crate) fn append_quick_replies_in(
     dir: &std::path::Path,
+    key: &CacheKey,
     lines: &[String],
 ) -> std::io::Result<()> {
     use std::io::Write;
@@ -1397,49 +1446,165 @@ pub(crate) fn append_quick_replies_in(
         if line.is_empty() {
             continue;
         }
-        file.write_all(format!("{line}\n").as_bytes())?;
+        let sealed = crate::native_cache::seal_line(key, Purpose::QuickReply, line);
+        file.write_all(format!("{sealed}\n").as_bytes())?;
     }
     Ok(())
 }
 
-/// Takes the quick replies waiting for the page - each line acted on once: the page sends it, or
-/// hands it back through [`return_pending_quick_replies`] when it cannot yet.
+/// Runs `f` with the app data directory and the install's cache key, off the main thread (the key
+/// is a keystore plugin read). `None` when either cannot be had - each logged where it fails, and
+/// the file is then NOT claimed: it waits for a take that can read it.
+#[cfg(target_os = "ios")]
+async fn with_quick_reply_key<T: Send + 'static>(
+    app: tauri::AppHandle,
+    f: impl FnOnce(&std::path::Path, &CacheKey) -> T + Send + 'static,
+) -> Option<T> {
+    let ran = tauri::async_runtime::spawn_blocking(move || {
+        let dir = match app.path().app_data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::error!("[QUICK_REPLY] app_data_dir() failed: {e}");
+                return None;
+            }
+        };
+        // Logged by `app_cache_key` (on the transition).
+        let key = crate::native_cache::app_cache_key(&app).ok()?;
+        Some(f(&dir, &key))
+    })
+    .await;
+    ran.unwrap_or_else(|e| {
+        log::error!("[QUICK_REPLY] the blocking task failed: {e}");
+        None
+    })
+}
+
+/// Takes the quick replies `account_id` typed that wait for the page - each line acted on once:
+/// the page sends it, or hands it back through [`return_pending_quick_replies`] when it cannot yet.
+/// Always empty off iOS, where nothing writes the file.
 #[tauri::command]
-pub(crate) fn read_and_clear_pending_quick_replies(app: tauri::AppHandle) -> Vec<String> {
-    match app.path().app_data_dir() {
-        Ok(dir) => take_quick_replies_in(&dir),
+pub(crate) async fn read_and_clear_pending_quick_replies(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Vec<String> {
+    #[cfg(target_os = "ios")]
+    {
+        with_quick_reply_key(app, move |dir, key| {
+            take_quick_replies_in(dir, key, &account_id)
+        })
+        .await
+        .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, account_id);
+        vec![]
+    }
+}
+
+/// Puts back the quick replies the page took and could not send, sealed again, so none is lost:
+/// the next take hands them over again.
+#[tauri::command]
+pub(crate) async fn return_pending_quick_replies(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        let count = lines.len();
+        let written = with_quick_reply_key(app, move |dir, key| {
+            append_quick_replies_in(dir, key, &lines).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|| Err("no data directory or no cache key".to_string()));
+        match &written {
+            Ok(()) => log::info!("[QUICK_REPLY] {count} reply(ies) put back for a later take"),
+            Err(e) => log::error!("[QUICK_REPLY] {count} reply(ies) NOT put back: {e}"),
+        }
+        written
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, lines);
+        Err("quick replies exist on iOS only".to_string())
+    }
+}
+
+/// The native listener told when the page ACKNOWLEDGES a quick reply (`canari_push.mm`,
+/// `CanariPageAcknowledgedQuickReply`): `queued` is true when the page owns it (queued in its
+/// outbox, or shown as a failed row), false when it put it back. The native side holds the
+/// notification response and a background task until then (review of #2843, A1).
+///
+/// REGISTERED, NEVER LINKED: this crate is linked into the notification extension too, where
+/// `canari_push.mm` is not (`page_ring.rs`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) type QuickReplyAckListener =
+    extern "C" fn(reply_id: *const std::os::raw::c_char, queued: bool);
+
+#[cfg(any(target_os = "ios", test))]
+static QUICK_REPLY_ACK_LISTENER: std::sync::Mutex<Option<QuickReplyAckListener>> =
+    std::sync::Mutex::new(None);
+
+/// Registers (or, with `None`, removes) the native listener of [`QuickReplyAckListener`].
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn set_quick_reply_ack_listener(listener: Option<QuickReplyAckListener>) {
+    *QUICK_REPLY_ACK_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = listener;
+    log::debug!(
+        "[QUICK_REPLY] acknowledgement listener {}",
+        if listener.is_some() {
+            "registered"
+        } else {
+            "removed"
+        }
+    );
+}
+
+/// Tells the native listener the page acknowledged `reply_id`, outside the lock. False when nobody
+/// could be told.
+#[cfg(any(target_os = "ios", test))]
+fn tell_quick_reply_acknowledged(reply_id: &str, queued: bool) -> bool {
+    let listener = *QUICK_REPLY_ACK_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(listener) = listener else {
+        log::error!(
+            "[QUICK_REPLY] reply {reply_id} acknowledged and no native listener is registered - \
+             its notification response is held until iOS ends the background time"
+        );
+        return false;
+    };
+    match std::ffi::CString::new(reply_id) {
+        Ok(c) => {
+            listener(c.as_ptr(), queued);
+            true
+        }
         Err(e) => {
-            log::warn!("[QUICK_REPLY] app_data_dir() failed: {e}");
-            vec![]
+            log::error!("[QUICK_REPLY] reply id {reply_id:?} has a NUL byte, not told: {e}");
+            false
         }
     }
 }
 
-/// Puts back the quick replies the page took and could not send, so none is lost: the next take
-/// hands them over again.
+/// The page OWNS quick reply `reply_id` (`queued`), or put it back (`!queued`): the native side
+/// may end the background task it held for it and complete the notification response
+/// (`$lib/mobile/quickReplyDrain`).
 #[tauri::command]
-pub(crate) fn return_pending_quick_replies(
-    app: tauri::AppHandle,
-    lines: Vec<String>,
-) -> Result<(), String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir() failed: {e}"))?;
-    append_quick_replies_in(&dir, &lines).map_err(|e| {
-        log::error!("[QUICK_REPLY] {} reply(ies) not put back: {e}", lines.len());
-        e.to_string()
-    })?;
+pub(crate) fn acknowledge_quick_reply(reply_id: String, queued: bool) {
     log::info!(
-        "[QUICK_REPLY] {} reply(ies) put back for a later take",
-        lines.len()
+        "[QUICK_REPLY] the page acknowledges reply {reply_id}: {}",
+        if queued { "queued" } else { "NOT queued" }
     );
-    Ok(())
+    #[cfg(target_os = "ios")]
+    tell_quick_reply_acknowledged(&reply_id, queued);
 }
 
 #[cfg(test)]
 mod quick_reply_tests {
     use super::*;
+
+    const KEY: CacheKey = [7u8; 32];
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("quick-reply-{tag}-{}", std::process::id()));
@@ -1448,39 +1613,99 @@ mod quick_reply_tests {
         dir
     }
 
-    #[test]
-    fn nothing_waits_reads_as_empty() {
-        assert!(take_quick_replies_in(&temp_dir("empty")).is_empty());
+    fn reply(account: &str, group: &str) -> String {
+        format!("{{\"accountId\":\"{account}\",\"groupId\":\"{group}\",\"text\":\"t\"}}")
     }
 
     #[test]
-    fn each_line_is_taken_once() {
+    fn nothing_waits_reads_as_empty() {
+        assert!(take_quick_replies_in(&temp_dir("empty"), &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn each_line_is_taken_once_and_was_sealed_on_disk() {
         let dir = temp_dir("once");
-        std::fs::write(
-            dir.join(PENDING_QUICK_REPLIES_FILE),
-            "{\"groupId\":\"a\"}\n\n{\"groupId\":\"b\"}\n",
-        )
-        .unwrap();
-        assert_eq!(
-            take_quick_replies_in(&dir),
-            vec!["{\"groupId\":\"a\"}", "{\"groupId\":\"b\"}"]
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "a"), reply("me", "b")]).unwrap();
+        let on_disk = std::fs::read_to_string(dir.join(PENDING_QUICK_REPLIES_FILE)).unwrap();
+        assert!(
+            !on_disk.contains("groupId"),
+            "what the user typed is never on disk in the clear"
         );
-        assert!(take_quick_replies_in(&dir).is_empty());
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "a"), reply("me", "b")]
+        );
+        assert!(take_quick_replies_in(&dir, &KEY, "me").is_empty());
     }
 
     #[test]
     fn a_reply_put_back_is_taken_again_beside_a_newer_one() {
         let dir = temp_dir("back");
-        append_quick_replies_in(&dir, &["{\"groupId\":\"old\"}".to_string()]).unwrap();
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "old")]).unwrap();
         // The native side appends a newer reply after the put-back: both survive, in order.
-        append_quick_replies_in(
-            &dir,
-            &["{\"groupId\":\"new\"}".to_string(), "  ".to_string()],
-        )
-        .unwrap();
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "new"), "  ".to_string()]).unwrap();
         assert_eq!(
-            take_quick_replies_in(&dir),
-            vec!["{\"groupId\":\"old\"}", "{\"groupId\":\"new\"}"]
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "old"), reply("me", "new")]
+        );
+    }
+
+    #[test]
+    fn another_accounts_reply_is_dropped_never_handed_back() {
+        let dir = temp_dir("account");
+        append_quick_replies_in(&dir, &KEY, &[reply("a", "g1"), reply("b", "g2")]).unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "b"),
+            vec![reply("b", "g2")]
+        );
+        // Gone, not waiting for account A: the next take of A finds nothing either.
+        assert!(take_quick_replies_in(&dir, &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn plaintext_foreign_key_and_ownerless_lines_are_dropped() {
+        let dir = temp_dir("unreadable");
+        append_quick_replies_in(&dir, &[9u8; 32], &[reply("me", "other-key")]).unwrap();
+        append_quick_replies_in(&dir, &KEY, &["{\"groupId\":\"no-owner\"}".to_string()]).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join(PENDING_QUICK_REPLIES_FILE))
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "{}", reply("me", "plain"))
+            })
+            .unwrap();
+        assert!(take_quick_replies_in(&dir, &KEY, "me").is_empty());
+    }
+
+    #[test]
+    fn the_quick_reply_file_is_an_account_file() {
+        assert!(ACCOUNT_PUSH_FILES.contains(&PENDING_QUICK_REPLIES_FILE));
+    }
+
+    static ACKED: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
+
+    extern "C" fn record_ack(reply_id: *const std::os::raw::c_char, queued: bool) {
+        let id = unsafe { std::ffi::CStr::from_ptr(reply_id) }
+            .to_string_lossy()
+            .into_owned();
+        ACKED.lock().unwrap().push((id, queued));
+    }
+
+    #[test]
+    fn an_acknowledgement_reaches_the_native_listener() {
+        assert!(
+            !tell_quick_reply_acknowledged("r0", true),
+            "no listener yet"
+        );
+        set_quick_reply_ack_listener(Some(record_ack));
+        assert!(tell_quick_reply_acknowledged("r1", true));
+        assert!(tell_quick_reply_acknowledged("r2", false));
+        set_quick_reply_ack_listener(None);
+        assert!(!tell_quick_reply_acknowledged("r3", true));
+        assert_eq!(
+            *ACKED.lock().unwrap(),
+            vec![("r1".to_string(), true), ("r2".to_string(), false)]
         );
     }
 }
@@ -1737,14 +1962,16 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
 /// (`take_fcm_cache`; what a take moved aside, `FCM_CACHE_TAKEN_PREFIX*`, goes with them), the read
 /// marks and sent ids the background side handed over, and the device-notice ledger (one marker per
-/// announced device, named by `userId:deviceId`). Not `mls.bin`, `graine_seeds.json` or the push
-/// secret - kept by this command on purpose.
-const ACCOUNT_PUSH_FILES: [&str; 5] = [
+/// announced device, named by `userId:deviceId`), and the notification replies waiting for the page
+/// (sealed, each line naming its account - [`PENDING_QUICK_REPLIES_FILE`]). Not `mls.bin`,
+/// `graine_seeds.json` or the push secret - kept by this command on purpose.
+const ACCOUNT_PUSH_FILES: [&str; 6] = [
     "outbox_pending.ndjson",
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
     DEVICE_NOTICES_DIR,
+    PENDING_QUICK_REPLIES_FILE,
 ];
 
 /// The directory of the device-notice ledger (`mobile::device_notice`), in the app data directory on
@@ -2497,7 +2724,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 7);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 8);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -2564,7 +2791,7 @@ mod delete_user_push_files_tests {
         let ctx = r#"{"userId":"a","deviceId":"d","pushToken":"t"}"#;
         let dir = dir_with("group_own", Some(ctx));
         let group = extension_container(&dir, ctx);
-        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 9);
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 10);
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
         assert!(!group.join(super::FCM_CACHE_FILE).exists());
         assert!(!group.join(super::DEVICE_NOTICES_DIR).exists());
@@ -2621,7 +2848,7 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
             .unwrap();
         let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
-        assert!(err.contains("6 push file(s) removed"), "{err}");
+        assert!(err.contains("7 push file(s) removed"), "{err}");
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -2640,7 +2867,7 @@ mod delete_user_push_files_tests {
         merge_display_names(&group, "a", &names, &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
-            6
+            7
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());

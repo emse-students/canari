@@ -398,17 +398,21 @@
   // (`quickReplyDrain.ts`): the signed-in session is its sender, through the composer's own path.
   $effect(() => {
     if (!isIosTauriRuntime()) return;
-    if (!globalSession.isLoggedIn) {
+    // The account the native side stamped in `push_context.json` - the same id: only its replies
+    // are taken.
+    const accountId = globalSession.userId;
+    if (!globalSession.isLoggedIn || !accountId) {
       setNativeQuickReplySender(null);
       return;
     }
     // Re-registered (so drained again) when the set of conversations changes: a reply put back
     // because its conversation was not loaded yet is sent once it is.
     void globalConvs.conversations.size;
-    setNativeQuickReplySender(
-      async (reply) =>
-        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx())).queued
-    );
+    setNativeQuickReplySender({
+      accountId,
+      send: async (reply) =>
+        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx())).queued,
+    });
     return () => setNativeQuickReplySender(null);
   });
   $effect(() => {

@@ -16,6 +16,7 @@ import {
   TAKE_NOTIFICATION_TAP_COMMAND,
 } from './notificationTapDrain';
 import {
+  ACKNOWLEDGE_QUICK_REPLY_COMMAND,
   NATIVE_QUICK_REPLY_EVENT,
   RETURN_QUICK_REPLIES_COMMAND,
   TAKE_QUICK_REPLIES_COMMAND,
@@ -159,7 +160,11 @@ describe('willPresent: only a remote push is an arrival (no re-post loop)', () =
     expect(own).toContain('kCanariThreadSocial');
     expect(own).toContain('kCanariThreadForms');
     expect(own).toContain('UNNotificationPresentationOptionBanner');
-    expect(own).toContain('return UNNotificationPresentationOptionNone;');
+    // Any other local post is hidden while ACTIVE only: inactive (Notification Center down), it is
+    // the only surface, as for a push (review of #2843, A5).
+    expect(own).toContain(
+      'return canari_ios_is_in_foreground() ? UNNotificationPresentationOptionNone : shown;'
+    );
     // The poster writes the same two names.
     expect(push).toContain(
       '[msgType isEqualToString:@"form_reminder"] ? kCanariThreadForms : kCanariThreadSocial'
@@ -212,28 +217,87 @@ describe('a quick reply over a page holding the MLS state is handed to the page'
     const q = body('static void CanariHandleQuickReplyAction(');
     const fact = q.indexOf('if (canari_ios_page_holds_mls()) {');
     expect(fact).toBeGreaterThan(-1);
-    expect(fact).toBeLessThan(q.indexOf('canari_native_build_text_message_proto'));
+    expect(fact).toBeLessThan(q.indexOf('CanariSendQuickReplyNatively('));
     const branch = q.slice(fact, q.indexOf('\n  }\n', fact));
-    expect(branch).toContain('CanariHandQuickReplyToPage(groupId, text, notifiedAt)');
+    expect(branch).toContain('CanariHandQuickReplyToPage(groupId, text, notifiedAt, completion);');
     expect(branch.trimEnd().endsWith('return;')).toBe(true);
     expect(bridge).toContain('bool canari_ios_page_holds_mls(void);');
     expect(ffiRs).toContain('crate::concurrency::live_manager_in_process()');
   });
 
-  it('appends the reply, then tells the page', () => {
-    const h = body('static BOOL CanariHandQuickReplyToPage(');
-    expect(h).toContain('O_APPEND');
-    expect(h.indexOf('write(fd')).toBeLessThan(
-      h.indexOf(`CanariTellPage(@"${NATIVE_QUICK_REPLY_EVENT}"`)
-    );
+  it('holds the process before the line is written, appends it, then tells the page', () => {
+    const h = body('static void CanariHandQuickReplyToPage(');
+    const hold = h.indexOf('CanariHoldQuickReply(replyId, completion);');
+    const append = h.indexOf('CanariAppendQuickReplyLine(sealed)');
+    expect(hold).toBeGreaterThan(-1);
+    expect(hold).toBeLessThan(append);
+    expect(append).toBeLessThan(h.indexOf(`CanariTellPage(@"${NATIVE_QUICK_REPLY_EVENT}"`));
+    expect(body('static BOOL CanariAppendQuickReplyLine(')).toContain('O_APPEND');
   });
 
   it('names the same file and commands on every side', () => {
     expect(push).toContain('@"pending_quick_replies.ndjson"');
     expect(pushRs).toContain('"pending_quick_replies.ndjson"');
-    for (const cmd of [TAKE_QUICK_REPLIES_COMMAND, RETURN_QUICK_REPLIES_COMMAND]) {
-      expect(pushRs).toContain(`pub(crate) fn ${cmd}(`);
+    for (const cmd of [
+      TAKE_QUICK_REPLIES_COMMAND,
+      RETURN_QUICK_REPLIES_COMMAND,
+      ACKNOWLEDGE_QUICK_REPLY_COMMAND,
+    ]) {
+      expect(pushRs).toMatch(new RegExp(`pub\\(crate\\) (async )?fn ${cmd}\\(`));
       expect(libRs.match(new RegExp(`\\b${cmd}\\b`, 'g')), cmd).toHaveLength(2);
     }
+  });
+});
+
+describe('a suspended page gets the time to own a reply (review of #2843, A1)', () => {
+  it('passes the response on and never completes it in the reply branch', () => {
+    const r = didReceive();
+    const start = r.indexOf('isEqualToString:kCanariReplyActionId');
+    const branch = r.slice(start, r.indexOf('isEqualToString:kCanariMarkReadActionId'));
+    expect(branch).toContain('notifiedAt, completionHandler);');
+    expect(branch).not.toContain('completionHandler();');
+  });
+
+  it('holds a background task whose expiry tells the user and accuses, never a clock of ours', () => {
+    const h = body('static void CanariHoldQuickReply(');
+    expect(h).toContain('beginBackgroundTaskWithName:@"canari-quick-reply"');
+    const expiry = h.slice(h.indexOf('expirationHandler:'));
+    expect(expiry).toContain('ERROR quick reply');
+    expect(expiry).toContain('CanariReleaseQuickReplyHold(replyId, NO,');
+    expect(h).not.toMatch(/dispatch_after|NSTimer|asyncAfter/);
+    const release = body('static void CanariReleaseQuickReplyHold(');
+    expect(release).toContain('CanariShowPendingSyncNotification();');
+    expect(release).toContain('hold.completion();');
+    expect(release).toContain('endBackgroundTask:task');
+  });
+
+  it("is released by the page's acknowledgement, through a listener registered at setup", () => {
+    expect(setup()).toContain(
+      'canari_ios_set_quick_reply_ack_listener(CanariPageAcknowledgedQuickReply);'
+    );
+    expect(bridge).toContain('void canari_ios_set_quick_reply_ack_listener(');
+    expect(ffiRs).toContain('pub extern "C" fn canari_ios_set_quick_reply_ack_listener(');
+    expect(pushRs).toContain('tell_quick_reply_acknowledged(&reply_id, queued);');
+  });
+});
+
+describe('a reply is sealed and names its account (review of #2843, A2)', () => {
+  it('stamps the account and seals the line before it touches the disk', () => {
+    const s = body('static NSString *CanariSealQuickReply(');
+    expect(s).toContain('@"accountId" : accountId');
+    expect(s).toContain('canari_native_seal_quick_reply_line(');
+    expect(ffiRs).toContain('crate::native_cache::Purpose::QuickReply');
+    // The hand-over writes only what the seal returned.
+    const h = body('static void CanariHandQuickReplyToPage(');
+    expect(h).toContain('CanariSealQuickReply(replyId, groupId, text, notifiedAt)');
+    expect(h).not.toContain('NSJSONSerialization');
+  });
+});
+
+describe('the add recorder is installed once (review of #2843, A4)', () => {
+  it('guards the install with dispatch_once, its only caller', () => {
+    const r = body('static void CanariRecordNotificationsPostedThisProcess(void) {');
+    expect(r).toContain('dispatch_once(&once');
+    expect(push.match(/CanariInstallNotificationRecorder\(\);/g)).toHaveLength(1);
   });
 });

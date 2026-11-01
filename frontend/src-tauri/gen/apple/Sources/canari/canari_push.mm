@@ -2257,80 +2257,7 @@ static void CanariSendCallDecline(NSString *groupId, NSString *callId) {
  * notification so the user can retry from the app. Android twin: handleReply in
  * CanariNotificationActionReceiver.kt.
  */
-static void CanariTellPage(NSString *event, NSString *what);
-
-/// The quick replies handed to the page, one JSON object per line
-/// (`{"groupId","text","notifiedAt","repliedAt"}`), drained by `read_and_clear_pending_quick_replies`.
-static NSString *const kPendingQuickRepliesFileName = @"pending_quick_replies.ndjson";
-
-/**
- * Hands a quick reply to the PAGE, which holds the MLS state and sends it through its own composer
- * path (`$lib/mobile/quickReplyDrain`). APPENDED, never rewritten: two replies before a take are two
- * lines, and a line the page could not send is appended back by the page. Then the page is told
- * (`canari:quick-reply`), on the main queue.
- *
- * WHY: with a manager loaded, the native encrypt is refused by the foreground guard, and the entry
- * this file used to leave in `outbox_pending.ndjson` was erased by the page's next
- * `store_outbox_mirror` - a reply typed in Notification Center over an open app was lost (review of
- * #2843, F7).
- */
-static BOOL CanariHandQuickReplyToPage(NSString *groupId, NSString *text, long long notifiedAt) {
-  NSString *dir = CanariTauriDataDir();
-  if (dir == nil) {
-    NSLog(@"[CanariPush] ERROR: no data directory - the quick reply cannot be handed to the page");
-    return NO;
-  }
-  long long repliedAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
-  NSError *err = nil;
-  NSData *json = [NSJSONSerialization
-      dataWithJSONObject:@{
-        @"groupId" : groupId,
-        @"text" : text,
-        @"notifiedAt" : @(notifiedAt),
-        @"repliedAt" : @(repliedAt)
-      }
-                 options:0
-                   error:&err];
-  if (json == nil) {
-    NSLog(@"[CanariPush] ERROR the quick reply could not be serialised (%@)", CanariErrorReason(err));
-    return NO;
-  }
-  NSMutableData *line = [json mutableCopy];
-  [line appendBytes:"\n" length:1];
-  NSString *path = [dir stringByAppendingPathComponent:kPendingQuickRepliesFileName];
-  // O_APPEND: one write of one line, which the page's own append-back cannot interleave with.
-  int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0600);
-  if (fd < 0) {
-    NSLog(@"[CanariPush] ERROR the quick reply file could not be opened (errno %d)", errno);
-    return NO;
-  }
-  ssize_t written = write(fd, line.bytes, line.length);
-  close(fd);
-  if (written != (ssize_t)line.length) {
-    NSLog(@"[CanariPush] ERROR the quick reply was not written whole (errno %d)", errno);
-    return NO;
-  }
-  NSLog(@"[CanariPush] handleQuickReplyAction: the page holds the MLS state - reply handed to it "
-        @"(group=%@)",
-        groupId);
-  CanariTellPage(@"canari:quick-reply", @"quick reply");
-  return YES;
-}
-
-static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long long notifiedAt) {
-  if (groupId.length == 0 || text.length == 0) {
-    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text missing");
-    return;
-  }
-  // DECIDED ON THE FACT, before any encrypt: a page holding a manager owns the state, and a native
-  // encrypt would only be refused (never learn by failing what a fact could tell).
-  if (canari_ios_page_holds_mls()) {
-    if (!CanariHandQuickReplyToPage(groupId, text, notifiedAt)) {
-      // No second path: the native encrypt would be refused for the same manager.
-      NSLog(@"[CanariPush] ERROR the quick reply is LOST - it could not be handed to the page");
-    }
-    return;
-  }
+static void CanariSendQuickReplyNatively(NSString *groupId, NSString *text, long long notifiedAt) {
   CanariPushContext *ctx = CanariLoadPushContext();
   if (ctx == nil) {
     NSLog(@"[CanariPush] handleQuickReplyAction: push_context.json absent -> abort");
@@ -2380,6 +2307,222 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long
     NSLog(@"[CanariPush] handleQuickReplyAction: reply still queued (remaining=%d) - notification left as-is, entry NOT persisted",
           remaining);
   }
+}
+
+static void CanariTellPage(NSString *event, NSString *what);
+static void CanariShowPendingSyncNotification(void);
+
+/// The quick replies handed to the page: one line each, SEALED under the install's cache key
+/// (`canari_native_seal_quick_reply_line`), whose plaintext is
+/// `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}` - never what the user typed
+/// in the clear, and never a line another account could send (review of #2843, A2). Taken by
+/// `read_and_clear_pending_quick_replies`, deleted with the account's other push files.
+static NSString *const kPendingQuickRepliesFileName = @"pending_quick_replies.ndjson";
+
+// --- A quick reply handed to the page holds the process until the page OWNS it --------------------
+//
+// THE PAGE MAY BE SUSPENDED. `canari_ios_page_holds_mls()` is true from the manager's load to the
+// session's end, so it is true for an app in the background too - and there the native encrypt
+// stays forbidden for the same reason (a write under a warm manager is persisted over), so the
+// decision cannot move to "the app is active". What changes is the WAIT: the notification response
+// used to be completed at once, the process re-suspended, and the reply sat unsent and unannounced
+// until the next opening (review of #2843, A1). So the response and a background task are HELD
+// until the page acknowledges the reply (`acknowledge_quick_reply` -> `CanariPageAcknowledgedQuickReply`).
+// The background task's expiration handler is iOS's own end of that time, not a clock of ours: it
+// tells the user the reply is not sent yet (the pending-sync notice) and accuses the page that did
+// not answer. The reply itself stays in its file for the page's next take.
+
+@interface CanariQuickReplyHold : NSObject
+@property(nonatomic, assign) UIBackgroundTaskIdentifier task;
+@property(nonatomic, copy) void (^completion)(void);
+@end
+@implementation CanariQuickReplyHold
+@end
+
+/// The holds by `replyId`. A hold is released exactly once: whoever removes it from here first.
+static NSMutableDictionary<NSString *, CanariQuickReplyHold *> *g_quickReplyHolds = nil;
+
+/// Releases the hold of `replyId`: completes the notification response and ends the background
+/// task. `queued` NO tells the user the reply is not sent yet, unless the app is in front - where
+/// the page shows it. Ends the task synchronously when called on the main thread, as the expiration
+/// handler requires.
+static void CanariReleaseQuickReplyHold(NSString *replyId, BOOL queued, NSString *why) {
+  CanariQuickReplyHold *hold = nil;
+  @synchronized(g_quickReplyHolds) {
+    hold = g_quickReplyHolds[replyId];
+    [g_quickReplyHolds removeObjectForKey:replyId];
+  }
+  if (hold == nil) {
+    // Expected after a relaunch: the page took a reply an earlier process handed over.
+    NSLog(@"[CanariPush] quick reply %@ %@ - no hold for it in this process", replyId, why);
+    return;
+  }
+  NSLog(@"[CanariPush] quick reply %@ %@ - the notification response is completed", replyId, why);
+  if (!queued && !canari_ios_is_in_foreground()) {
+    CanariShowPendingSyncNotification();
+  }
+  hold.completion();
+  UIBackgroundTaskIdentifier task = hold.task;
+  void (^end)(void) = ^{
+    if (task != UIBackgroundTaskInvalid) {
+      [[UIApplication sharedApplication] endBackgroundTask:task];
+    }
+  };
+  if ([NSThread isMainThread]) {
+    end();
+  } else {
+    dispatch_async(dispatch_get_main_queue(), end);
+  }
+}
+
+/// The listener `acknowledge_quick_reply` calls (registered in `CanariPushSetup`).
+static void CanariPageAcknowledgedQuickReply(const char *replyId, bool queued) {
+  if (replyId == NULL) {
+    NSLog(@"[CanariPush] ERROR a quick reply acknowledgement named no reply");
+    return;
+  }
+  CanariReleaseQuickReplyHold([NSString stringWithUTF8String:replyId], queued,
+                              queued ? @"queued by the page" : @"NOT queued by the page (put back)");
+}
+
+/// Starts holding `completion` and the process for `replyId`, BEFORE the line is written: a take
+/// racing the write (a drain the page runs for its own reasons) then finds the hold already there.
+static void CanariHoldQuickReply(NSString *replyId, void (^completion)(void)) {
+  CanariQuickReplyHold *hold = [[CanariQuickReplyHold alloc] init];
+  hold.completion = completion;
+  hold.task = UIBackgroundTaskInvalid;
+  @synchronized(g_quickReplyHolds) {
+    g_quickReplyHolds[replyId] = hold;
+  }
+  UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication]
+      beginBackgroundTaskWithName:@"canari-quick-reply"
+                expirationHandler:^{
+                  NSLog(@"[CanariPush] ERROR quick reply %@: iOS ended the background time before "
+                        @"the page acknowledged it - it waits in its file for the page's next take, "
+                        @"and the user is told it is not sent yet",
+                        replyId);
+                  CanariReleaseQuickReplyHold(replyId, NO, @"expired unacknowledged");
+                }];
+  @synchronized(g_quickReplyHolds) {
+    if (g_quickReplyHolds[replyId] == hold) {
+      hold.task = task;
+      return;
+    }
+  }
+  // Released between the two locks (acknowledged already): the task is ours alone to end.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (task != UIBackgroundTaskInvalid) {
+      [[UIApplication sharedApplication] endBackgroundTask:task];
+    }
+  });
+}
+
+/// The sealed line of one reply, or nil (said) - no account to stamp, or no cache key.
+static NSString *CanariSealQuickReply(NSString *replyId, NSString *groupId, NSString *text,
+                                      long long notifiedAt) {
+  NSString *accountId = CanariLoadPushContext().userId;
+  if (accountId.length == 0) {
+    NSLog(@"[CanariPush] ERROR the quick reply names no account (push_context.json absent)");
+    return nil;
+  }
+  long long repliedAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+  NSError *err = nil;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:@{
+    @"replyId" : replyId,
+    @"accountId" : accountId,
+    @"groupId" : groupId,
+    @"text" : text,
+    @"notifiedAt" : @(notifiedAt),
+    @"repliedAt" : @(repliedAt)
+  }
+                                                 options:0
+                                                   error:&err];
+  if (json == nil) {
+    NSLog(@"[CanariPush] ERROR the quick reply could not be serialised (%@)", CanariErrorReason(err));
+    return nil;
+  }
+  NSString *plain = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+  char *sealedPtr = canari_native_seal_quick_reply_line(CanariRetrieveNativeCacheKey().UTF8String,
+                                                        plain.UTF8String);
+  if (sealedPtr == NULL) {
+    NSLog(@"[CanariPush] ERROR no cache key - the quick reply is NOT written in the clear");
+    return nil;
+  }
+  NSString *sealed = [NSString stringWithUTF8String:sealedPtr];
+  canari_free_string(sealedPtr);
+  return sealed;
+}
+
+/// Appends one sealed line. O_APPEND: one write of one line, which the page's own put-back cannot
+/// interleave with.
+static BOOL CanariAppendQuickReplyLine(NSString *sealed) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    NSLog(@"[CanariPush] ERROR: no data directory - the quick reply cannot be handed to the page");
+    return NO;
+  }
+  NSMutableData *line = [[sealed dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+  [line appendBytes:"\n" length:1];
+  NSString *path = [dir stringByAppendingPathComponent:kPendingQuickRepliesFileName];
+  int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0600);
+  if (fd < 0) {
+    NSLog(@"[CanariPush] ERROR the quick reply file could not be opened (errno %d)", errno);
+    return NO;
+  }
+  ssize_t written = write(fd, line.bytes, line.length);
+  close(fd);
+  if (written != (ssize_t)line.length) {
+    NSLog(@"[CanariPush] ERROR the quick reply was not written whole (errno %d)", errno);
+    return NO;
+  }
+  return YES;
+}
+
+/**
+ * Hands a quick reply to the PAGE, which holds the MLS state and sends it through its own composer
+ * path (`$lib/mobile/quickReplyDrain`), and holds `completion` until the page acknowledges it.
+ * APPENDED, never rewritten: two replies before a take are two lines, and a line the page could not
+ * send is appended back by the page. Then the page is told (`canari:quick-reply`), on the main queue.
+ *
+ * WHY: with a manager loaded, the native encrypt is refused by the foreground guard, and the entry
+ * this file used to leave in `outbox_pending.ndjson` was erased by the page's next
+ * `store_outbox_mirror` - a reply typed in Notification Center over an open app was lost (review of
+ * #2843, F7). No second path when this fails: the native encrypt would be refused for the same
+ * manager, so a failure is said LOST and the user is told it is not sent.
+ */
+static void CanariHandQuickReplyToPage(NSString *groupId, NSString *text, long long notifiedAt,
+                                       void (^completion)(void)) {
+  NSString *replyId = [[NSUUID UUID] UUIDString];
+  NSString *sealed = CanariSealQuickReply(replyId, groupId, text, notifiedAt);
+  CanariHoldQuickReply(replyId, completion);
+  if (sealed == nil || !CanariAppendQuickReplyLine(sealed)) {
+    NSLog(@"[CanariPush] ERROR the quick reply is LOST - it could not be handed to the page");
+    CanariReleaseQuickReplyHold(replyId, NO, @"not handed to the page");
+    return;
+  }
+  NSLog(@"[CanariPush] handleQuickReplyAction: the page holds the MLS state - reply %@ handed to it "
+        @"(group=%@), the response held until it is acknowledged",
+        replyId, groupId);
+  CanariTellPage(@"canari:quick-reply", @"quick reply");
+}
+
+/// A notification reply: handed to the page when it holds the MLS state, sent natively otherwise.
+/// `completion` (the notification response's) is called exactly once, by whichever path owns it.
+static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long long notifiedAt,
+                                         void (^completion)(void)) {
+  if (groupId.length == 0 || text.length == 0) {
+    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text missing");
+    completion();
+    return;
+  }
+  // DECIDED ON THE FACT, before any encrypt: a page holding a manager owns the state, and a native
+  // encrypt would only be refused (never learn by failing what a fact could tell).
+  if (canari_ios_page_holds_mls()) {
+    CanariHandQuickReplyToPage(groupId, text, notifiedAt, completion);
+    return;
+  }
+  CanariSendQuickReplyNatively(groupId, text, notifiedAt);
+  completion();
 }
 
 /**
@@ -4549,8 +4692,9 @@ static void CanariRecordingAddNotificationRequest(id self, SEL _cmd, UNNotificat
   CanariOrigAddNotificationRequest(self, _cmd, request, completion);
 }
 
-/// Installs the recorder. Called once from `CanariPushSetup`, in `main()`, before any plugin exists.
-static void CanariRecordNotificationsPostedThisProcess(void) {
+/// The method replacement itself - a pass-through of `addNotificationRequest:withCompletionHandler:`.
+/// Run only through `CanariRecordNotificationsPostedThisProcess`.
+static void CanariInstallNotificationRecorder(void) {
   g_postedThisProcess = [NSMutableSet set];
   Class cls = [UNUserNotificationCenter class];
   SEL sel = @selector(addNotificationRequest:withCompletionHandler:);
@@ -4565,6 +4709,16 @@ static void CanariRecordNotificationsPostedThisProcess(void) {
   CanariOrigAddNotificationRequest =
       (void (*)(id, SEL, UNNotificationRequest *, void (^)(NSError *)))method_getImplementation(m);
   class_replaceMethod(cls, sel, (IMP)CanariRecordingAddNotificationRequest, method_getTypeEncoding(m));
+}
+
+/// Installs the recorder, ONCE per process (`dispatch_once`): called from `CanariPushSetup`, in
+/// `main()`, before any plugin exists. A second install would read the recorder itself as the
+/// "original" and call itself for ever (review of #2843, A4).
+static void CanariRecordNotificationsPostedThisProcess(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    CanariInstallNotificationRecorder();
+  });
 }
 
 static BOOL CanariPluginPostedThisProcess(NSString *identifier) {
@@ -4637,16 +4791,24 @@ static void CanariCheckNotificationDelegate(NSString *moment) {
 // THE POSTER DECIDES, never the transport that brought the frame. `CanariHandleFcmData` posts a
 // `social` or `form_reminder` notification even in the foreground (its `showsWhileForeground`),
 // on the threads below; those are shown. Every other local notification Canari posts is about a
-// conversation whose content the page already shows, and is not presented while in front.
+// conversation whose content the page already shows, and is not presented while ACTIVE.
+//
+// `willPresent` is also asked while the app is INACTIVE - Notification Center pulled down, a system
+// alert up, the launch window - and there the page is not what the user sees: a message a
+// background frame decrypted, or the "not sent yet" notice of a quick reply, answered None was
+// swallowed (review of #2843, A5). Inactive, every one is presented, exactly as the push branch
+// presents a push.
 
 /// The presentation of a notification `canari_push.mm` posted itself, while the app is in front.
 static UNNotificationPresentationOptions CanariOwnLocalPresentation(UNNotificationRequest *request) {
+  UNNotificationPresentationOptions shown = UNNotificationPresentationOptionBanner |
+                                            UNNotificationPresentationOptionSound |
+                                            UNNotificationPresentationOptionList;
   NSString *thread = request.content.threadIdentifier ?: @"";
   if ([thread isEqualToString:kCanariThreadSocial] || [thread isEqualToString:kCanariThreadForms]) {
-    return UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound |
-           UNNotificationPresentationOptionList;
+    return shown;
   }
-  return UNNotificationPresentationOptionNone;
+  return canari_ios_is_in_foreground() ? UNNotificationPresentationOptionNone : shown;
 }
 
 // --- A tap waits in a file until the page takes it ---------------------------------------------------
@@ -4831,11 +4993,12 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
       text = ((UNTextInputNotificationResponse *)response).userText ?: @"";
     }
     long long notifiedAt = CanariNotifiedSentAt(userInfo);
+    // The handler is passed on, never called here: a reply handed to the page holds it until the
+    // page owns the reply (`CanariHoldQuickReply`).
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       CanariHandleQuickReplyAction(groupId, [text stringByTrimmingCharactersInSet:
                                                         [NSCharacterSet whitespaceAndNewlineCharacterSet]],
-                                   notifiedAt);
-      completionHandler();
+                                   notifiedAt, completionHandler);
     });
     return;
   }
@@ -4874,6 +5037,10 @@ void CanariPushSetup(void) {
   g_cacheLock = [[NSLock alloc] init];
   // Before any plugin exists: every identifier this process posts is recorded from here on.
   CanariRecordNotificationsPostedThisProcess();
+  if (g_quickReplyHolds == nil) {
+    g_quickReplyHolds = [NSMutableDictionary dictionary];
+  }
+  canari_ios_set_quick_reply_ack_listener(CanariPageAcknowledgedQuickReply);
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
   // Set now for what arrives before launch completes; taken back at DidFinishLaunching from whatever
   // registered meanwhile (`CanariTakeNotificationDelegate`).

@@ -63,9 +63,9 @@ use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
-    ack_fcm_cache, check_push_secret_health, claim_device_notices, delete_user_push_files,
-    forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
-    get_voip_token, load_push_context, read_and_clear_outbox_sent,
+    ack_fcm_cache, acknowledge_quick_reply, check_push_secret_health, claim_device_notices,
+    delete_user_push_files, forget_graine_channel, forget_graine_sessions, get_fcm_token,
+    get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_outbox_sent,
     read_and_clear_pending_call_accept, read_and_clear_pending_notification_tap,
     read_and_clear_pending_quick_replies, read_and_clear_read_watermarks, read_outbox_mirror,
     return_pending_quick_replies, set_push_context_locale, store_device_identity,
@@ -1742,6 +1742,7 @@ pub fn run() {
             read_and_clear_pending_notification_tap,
             read_and_clear_pending_quick_replies,
             return_pending_quick_replies,
+            acknowledge_quick_reply,
             read_and_clear_pending_share,
             advance_share_epoch,
             get_voip_token,
