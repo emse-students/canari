@@ -455,3 +455,38 @@ export function gridUnitLimit(
 export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>): number {
   return space.slotMode === 'slots' ? 1 : Math.max(1, space.maxSteps ?? 1);
 }
+
+/**
+ * What a unit says in a cell or a row: the holder (or "Ma réservation"), the block's reason, "Libre"
+ * for a free unit a booking may start on now, and "Non réservable" for one it may not. ONE reading
+ * for the grid and the phone's planning.
+ */
+export function unitText(unit: SlotUnit, bookable: boolean): string {
+  if (unit.state === 'booked') {
+    return unit.booking.mine
+      ? m.bookings_cell_mine()
+      : (unit.booking.holderName ?? m.bookings_cell_booked());
+  }
+  if (unit.state === 'blocked') return unit.blockReason || m.bookings_cell_blocked();
+  return bookable ? m.bookings_cell_free() : m.bookings_cell_closed();
+}
+
+/**
+ * Whether a range may START on `unit` now: the booking window takes its start and the server has not
+ * refused it, or a later start, as `started` or `notice` (`lastRefusedStart`). The organiser's block
+ * mode is not bound by the window: any free unit may start a block. ONE rule for the grid and the
+ * phone's planning.
+ */
+export function isOfferedStart(
+  space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
+  unit: { startMs: number },
+  nowMs: number,
+  lastRefusedStart: number | null,
+  blockMode: boolean
+): boolean {
+  if (blockMode) return true;
+  return (
+    windowRefusal(space, unit.startMs, nowMs) === null &&
+    (lastRefusedStart === null || unit.startMs > lastRefusedStart)
+  );
+}

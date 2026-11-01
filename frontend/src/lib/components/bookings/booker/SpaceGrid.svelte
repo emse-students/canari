@@ -9,8 +9,9 @@
     firstUsefulMin,
     formatTimeRangeParts,
     gridUnitLimit,
+    isOfferedStart,
+    unitText,
     isPastUnit,
-    windowRefusal,
     type DayColumn,
     type WeekLayout,
   } from '$lib/bookings/grid';
@@ -24,10 +25,7 @@
     type RunKind,
     type StackedLines,
   } from '$lib/bookings/gridRuns';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
-  import { getInitials } from '$lib/utils/avatar';
-  import { User } from '@lucide/svelte';
+  import HolderAvatar from '$lib/components/bookings/booker/HolderAvatar.svelte';
   import { onMount } from 'svelte';
   import { gridDragHint } from '$lib/bookings/gridHint';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -293,28 +291,15 @@
 
   /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it, or a later start, as a start. */
   function bookableStart(unit: SlotUnit): boolean {
-    return (
-      windowRefusal(space, unit.startMs, nowMs) === null &&
-      (lastRefusedStart === null || unit.startMs > lastRefusedStart)
-    );
+    return isOfferedStart(space, unit, nowMs, lastRefusedStart, false);
   }
 
   /** What a cell says, and whether the booking window refuses it now. */
   function reading(unit: SlotUnit): { text: string; closed: boolean; past: boolean } {
-    if (unit.state === 'booked') {
-      const who = unit.booking.mine
-        ? m.bookings_cell_mine()
-        : (unit.booking.holderName ?? m.bookings_cell_booked());
-      return { text: who, closed: false, past: false };
-    }
-    if (unit.state === 'blocked') {
-      return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false, past: false };
-    }
-    if (bookableStart(unit)) {
-      return { text: m.bookings_cell_free(), closed: false, past: false };
-    }
+    const bookable = unit.state !== 'free' || bookableStart(unit);
+    const text = unitText(unit, bookable);
     // A free unit already over keeps its name for a screen reader but is not written in the cell.
-    return { text: m.bookings_cell_closed(), closed: true, past: isPastUnit(unit, nowMs) };
+    return { text, closed: !bookable, past: !bookable && isPastUnit(unit, nowMs) };
   }
 
   /** What a unit is, for the eye: the booking window and the device's clock decide free from closed. */
@@ -600,22 +585,7 @@
 )}
   <!-- Wide (the container holds 7rem): avatar and text in a row. Narrower: the same, stacked. -->
   <span class="flex flex-col items-start gap-1 @min-[7rem]:flex-row @min-[7rem]:gap-1.5">
-    {#if r.holderId}
-      <Avatar userId={r.holderId} size="sm" shape="circle" fallbackLabel={r.holder ?? ''} />
-    {:else if r.holder}
-      <AvatarPlaceholder
-        seed={unit.state === 'booked' ? unit.booking.id : ''}
-        initials={getInitials(r.holder)}
-        class="h-6 w-6 shrink-0 rounded-full text-xs"
-      />
-    {:else}
-      <AvatarPlaceholder
-        seed={unit.state === 'booked' ? unit.booking.id : ''}
-        class="h-6 w-6 shrink-0 rounded-full"
-      >
-        <User class="h-3 w-3" aria-hidden="true" />
-      </AvatarPlaceholder>
-    {/if}
+    <HolderAvatar {unit} />
     {#if density === 'full'}
       <span class="w-full min-w-0 flex-1">
         <span class="block truncate font-semibold">{r.text}</span>
