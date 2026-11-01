@@ -3,9 +3,11 @@
  * #2843).
  *
  * `sendTextTo` answered `not-queued` for a conversation that was not in memory, and the quick-reply
- * drain put such a reply back - for ever when the conversation was removed or unknown to this
- * device. It now reads the row: in memory, else in storage. Removed or absent is `gone` (acked LOST,
- * so the user sees "reply not sent"); stored but not loaded yet, or unreadable, stays `not-queued`.
+ * drain put such a reply back - for ever when the conversation was removed. It now reads the row:
+ * in memory, else in storage. Removed is `gone` (acked LOST, so the user sees "reply not sent").
+ * Absent is NOT gone: a notification proves the conversation exists on the server, so a missing row
+ * is a Welcome not installed yet (first contact). It stays `not-queued`, like a row stored but not
+ * loaded yet, or unreadable, and a later take sends it.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
@@ -63,9 +65,9 @@ describe('sendTextTo classifies a conversation that will never take the reply', 
     expect(outcome).toBe('gone');
   });
 
-  it('a conversation unknown to this device is gone', async () => {
+  it('a conversation not installed here yet (first contact) is not-queued: a later take sends it', async () => {
     const ctx = makeContext(null, async () => null);
-    expect((await useMessaging().sendTextTo('hi', 'g1', ctx)).outcome).toBe('gone');
+    expect((await useMessaging().sendTextTo('hi', 'g1', ctx)).outcome).toBe('not-queued');
   });
 
   it('a stored row that is removed is gone', async () => {

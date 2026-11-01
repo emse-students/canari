@@ -506,8 +506,12 @@ export interface OutboxController {
    *   outlive it when a sibling lane threw), and the lane an exit claims (`drainForExit`). Each
    *   calls `releaseUnsettled`, which answers them once NOTHING runs - so the last one to end does;
    * - `dispose()` (a sign-out, a session swap), which answers every waiter left.
-   * The premise is that a running flush or lane ends: each awaits network calls that answer or fail
-   * on their own (the transport's), never a promise only a later flush would resolve.
+   * The premise is that a running flush or lane ends, and an explicit deadline bounds it, not the
+   * transport: every POST a lane awaits in `mlsDeliveryApi.ts` (`postApplicationMessage`, the commit)
+   * runs under the `write` head deadline of `requestDeadline.ts` (30 s plus the body's upload time),
+   * whose expiry is a typed `RequestDeadlineError` (surfaced as `DeliveryUnreachableError`), and the
+   * key package round under `raceDeadline`, whose expiry is a `DeliveryDeadlineError`. No lane awaits
+   * a promise only a later flush would resolve.
    */
   awaitSettled: (messageId: string) => Promise<OutboxSettlement>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */

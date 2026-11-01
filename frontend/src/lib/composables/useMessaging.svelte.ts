@@ -2611,9 +2611,10 @@ export function useMessaging() {
   ): Promise<{ outcome: OutboxSettlement | 'not-queued' | 'gone'; error?: string }> {
     const convo = ctx.conversations.get(targetName);
     // A CONVERSATION THAT WILL NEVER TAKE IT is `gone`, read from the facts - the row in memory, else
-    // the stored row - never from a refusal's wording (round-4 review of #2843): removed, or unknown
-    // to this device. Only a conversation stored and not loaded yet is `not-queued`, which a later
-    // take retries; a `gone` one used to be put back for ever.
+    // the stored row - never from a refusal's wording (round-4 review of #2843): REMOVED, and only
+    // that. A notification proves its conversation exists on the server, so a row MISSING here is a
+    // Welcome this device has not installed yet (a first contact), not a gone conversation: it is
+    // `not-queued`, like one stored and not loaded yet, and a later take retries it.
     if (convo?.lifecycle === 'removed') return { outcome: 'gone', error: 'conversation removed' };
     if (!convo) {
       if (!ctx.storage) return { outcome: 'not-queued', error: 'no storage to look it up' };
@@ -2625,8 +2626,13 @@ export function useMessaging() {
         ctx.log(`[SEND] sendTextTo: the conversation row could not be read: ${String(e)}`);
         return { outcome: 'not-queued', error: 'conversation row unreadable' };
       }
-      if (!stored || stored.lifecycle === 'removed') {
-        return { outcome: 'gone', error: stored ? 'conversation removed' : 'conversation unknown' };
+      if (stored?.lifecycle === 'removed')
+        return { outcome: 'gone', error: 'conversation removed' };
+      if (!stored) {
+        ctx.log(
+          `[SEND] sendTextTo: ${targetName.slice(0, 8)} has no row here yet, its Welcome is awaited`
+        );
+        return { outcome: 'not-queued', error: 'conversation not installed yet' };
       }
       return { outcome: 'not-queued', error: 'conversation not loaded yet' };
     }

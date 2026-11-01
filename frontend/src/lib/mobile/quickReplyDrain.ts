@@ -52,12 +52,13 @@ export interface NativeQuickReply {
  * - `failed`: out of the queue unsent - a failed row the page shows, with its retry;
  * - `pending`: queued and not sent yet (it waits for a retry);
  * - `returned`: not queued, put back in its file for a later take;
- * - `lost`: not sent and never will be (unreadable, its conversation gone, or not put back).
+ * - `lost`: not sent and never will be (unreadable, its conversation removed, or not put back).
  */
 export type QuickReplyOutcome = 'sent' | 'failed' | 'pending' | 'returned' | 'lost';
 
 /** What the session's send answers: how the queue settled it, that it was not queued (a later take
- * retries it), or that its conversation is `gone` (removed, or unknown here - never retried). */
+ * retries it - a conversation not installed here yet among them), or that its conversation is
+ * `gone` (removed - never retried). */
 export type SendQuickReply = (
   reply: NativeQuickReply
 ) => Promise<'sent' | 'failed' | 'pending' | 'not-queued' | 'gone'>;
@@ -240,7 +241,7 @@ export async function drainNativeQuickReplies(why: string): Promise<void> {
       continue;
     }
     if (outcome === 'gone') {
-      // ITS CONVERSATION WILL NEVER TAKE IT (removed, or unknown here): LOST and said, never put
+      // ITS CONVERSATION WILL NEVER TAKE IT (removed): LOST and said, never put
       // back - a put-back would come round on every take for ever (round-4 review of #2843).
       appendLog(
         `[QuickReply] ERROR the reply to ${reply.groupId} has no conversation to go to - LOST`

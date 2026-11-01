@@ -970,9 +970,11 @@ Notification Center over an open app was lost. The fix:
   -> `sendChatMessage`).
 - A line the page cannot queue (for example, its conversation is not loaded yet) is APPENDED BACK,
   sealed again (`return_pending_quick_replies`), and the page shows "your reply is waiting" once
-  (M2). The next take sends it. Only a conversation that is STORED and not loaded yet is that case:
-  one removed, or unknown to this device, will never take the reply, so `sendTextTo` answers `gone`
-  (read from the row in memory, else the stored row - never a refusal's wording) and the reply is
+  (M2). The next take sends it. A conversation STORED and not loaded yet is that case, and so is one
+  with NO row here: a notification proves its conversation exists on the server, so a missing row is
+  a Welcome this device has not installed yet (a first contact), never a gone conversation. Only a
+  REMOVED conversation will never take the reply, so `sendTextTo` answers `gone` for it alone (read
+  from the row in memory, else the stored row - never a refusal's wording) and the reply is
   acknowledged LOST, which shows the "reply not sent" notice. It used to be put back for ever
   (round 4).
 - **A send that throws AFTER its message was written is owned, never put back (review A3).** The
@@ -996,7 +998,9 @@ Notification Center over an open app was lost. The fix:
   everything that can be running when a waiter registers answers the waiters in a `finally` of its
   own - a flush, a lane (which can outlive its flush when a sibling lane threw), the lane an exit
   claims (`drainForExit`) - and the last to end answers them `pending`; `dispose()` (a sign-out)
-  answers every waiter left, and a waiter after it at once. The JSDoc of `awaitSettled` carries the
+  answers every waiter left, and a waiter after it at once. A running flush or lane ends because an
+  explicit deadline bounds every POST it awaits (the `write` class of `requestDeadline.ts`, a typed
+  `RequestDeadlineError`; the key package round's `DeliveryDeadlineError`), not the transport. The JSDoc of `awaitSettled` carries the
   proof; `outbox.test.ts` holds a sign-out during a settle and a waiter behind an exit lane alone.
 - The acknowledgement (`acknowledge_quick_reply(replyId, outcome)` -> the registered native listener,
   a `QuickReplyOutcome` code: 0 sent, 1 failed, 2 pending, 3 returned, 4 lost) releases the hold, and
