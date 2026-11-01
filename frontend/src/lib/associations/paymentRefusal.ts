@@ -56,7 +56,10 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === TIER_NOT_RANKABLE) {
     return m.shop_tier_not_rankable();
   }
-  if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
+  if (
+    err instanceof SocialApiError &&
+    (err.code === COTISATION_DISABLED || err.code === MEMBERSHIP_PRODUCT_UNGRANTABLE)
+  ) {
     return m.shop_cotisation_disabled();
   }
   if (err instanceof SocialApiError && err.code === ASSOCIATION_ARCHIVED) {
@@ -156,6 +159,12 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
  * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
  */
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
+ * The body `code` of social-service's 409 for a membership product that stores no tag (a legacy
+ * row): it could grant nothing. Worded like `COTISATION_DISABLED`: the buyer can do nothing else.
+ */
+export const MEMBERSHIP_PRODUCT_UNGRANTABLE = 'MEMBERSHIP_PRODUCT_UNGRANTABLE';
 
 /**
  * The body `code` of social-service's 409 when the product's association is ARCHIVED: its page and

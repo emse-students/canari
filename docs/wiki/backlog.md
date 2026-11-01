@@ -43,37 +43,6 @@ no `bookings` host on Android - a cost accepted on 2026-10-29
 release on both estates (the owner's gesture), read it back from the public version endpoint, and
 delete this entry.
 
-## Cotisation-disabled follow-ups (after the tier stack lands)
-
-Left by the review of #2584. Start after the tier stack has merged.
-
-- **P2 - a paid form that grants a cotisation still takes money after its association disables
-  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
-  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
-  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
-  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
-  record is written), but the grant is still retried as if it could succeed. Fix it like the
-  product path: refuse opening the payment of a granting form while the association has no
-  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
-- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
-  membership product with a cotisation mode but no stored tag opens a checkout, then ends
-  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
-  operator, privately.
-- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
-  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
-  never one whose tier is no longer a rise when the sweep settles it.
-- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
-  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
-- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
-  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
-  local fresh-database run only - CI never shows it. Make the spec create what it reads.
-- **P3 - retagging a tier leaves the forms that grant the old key behind.** Changing a tier's key
-  does not update the `cotisationVariantKey` of the forms granting the old one: those forms then
-  refuse every new answer (the tier ranks `unranked`) and an answer already in flight ends
-  `paid_not_granted`. Either carry the new key to those forms in the retag's transaction, or refuse
-  the retag while a form still names the old key; the hourly `[PAID_NOT_GRANTED]` line is what
-  names a payment it already caught.
-
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 
 Left by the review of #2544. Start after the tier stack (#2544 and its followers) has merged.
