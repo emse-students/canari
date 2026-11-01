@@ -550,10 +550,25 @@ rotation_reload() {
 # misdirected mount), would reload, pass the check, and keep choosing the replica about to stop. The
 # one proxy allowed to read no list is a frontend image from before the lists (rotation_is_legacy),
 # which is drained the way every deploy drained before them.
+#
+# A REPLICA THAT IS NOT RUNNING IS SKIPPED IN MODE `plain`, with a warning (2026-11-01 third review).
+# `docker ps` lists restarting and paused containers too, and an `exec` into one fails: refusing on it
+# would stop the deploy before its migrations, so the release that fixes a crash-looping frontend could
+# never ship. Skipping is exact for a restarting one - it reads the list on disk when it starts - and a
+# paused one serves nothing until it is unpaused. In mode `retiring` the refusal stands: the pairing
+# check cannot be proven on a replica it cannot read, and a replica is about to stop.
 rotation_apply() {
-  local proxy="$1" mode="$2" pid dump ports legacy=0
+  local proxy="$1" mode="$2" pid dump ports="" legacy=0 status
   for pid in $($DOCKER_CLI ps -q --filter "label=com.docker.compose.project=$PROJECT" \
     --filter "label=com.docker.compose.service=$proxy" --filter "label=com.docker.compose.oneoff=False"); do
+    if [ "$mode" = plain ]; then
+      status="$($DOCKER_CLI inspect -f '{{.State.Status}}' "$pid" 2>/dev/null)" || status="unreadable"
+      if [ "$status" != running ]; then
+        printf '::warning title=A proxy replica that is not running::%s: %s is %s - not reloaded; it reads the list on disk when it starts\n' \
+          "$proxy" "${pid:0:12}" "$status" >&2
+        continue
+      fi
+    fi
     if ! dump="$($DOCKER_CLI exec "$pid" sh -c "$ROTATION_DUMP_SCRIPT" 2>&1)"; then
       printf '::error::%s: %s refuses its configuration with the new list - it keeps serving the old one; stopping the deploy\n' "$proxy" "${pid:0:12}" >&2
       printf '%s\n' "$dump" | tail -5 >&2
@@ -566,7 +581,10 @@ rotation_apply() {
           "$proxy" "${pid:0:12}" "$proxy" "$ROTATION_DIR" "$ROTATION_TOKEN" >&2
         return 1
       fi
-      ports="$(printf '%s\n' "$dump" | rotation_subrequest_ports "$proxy")" || return 1
+      # The subrequest ports serve the pairing check alone, which only mode `retiring` runs.
+      if [ "$mode" = retiring ]; then
+        ports="$(printf '%s\n' "$dump" | rotation_subrequest_ports "$proxy")" || return 1
+      fi
       rotation_reload "$proxy" "$pid" "$mode" "$ports" || return 1
     elif printf '%s\n' "$dump" | rotation_is_legacy "$proxy"; then
       # A TRANSITION ONLY: the image still running is the PREVIOUS release's (the first deploy carrying
@@ -635,12 +653,13 @@ ROTATION_IN_FLIGHT=""
 
 # rotation_restore_in_flight <why> - puts the list of the service in flight back at rest, if any, and
 # says so at a level that accuses: a deploy that ends between a take-out and its restore is a deploy
-# that did not end the way it was written to. For the caller's EXIT trap (deploy-environment.sh).
+# that did not end the way it was written to. For the caller's EXIT trap (deploy-environment.sh). The
+# proxy is ALWAYS reloaded: the file may already be at rest from a restore whose reload failed.
 rotation_restore_in_flight() {
   local service="$ROTATION_IN_FLIGHT"
   [ -n "$service" ] || return 0
   printf '::error::%s with %s out of rotation - putting its list back at rest\n' "$1" "$service" >&2
-  if rotation_restore "$service"; then
+  if rotation_restore "$service" force; then
     ROTATION_IN_FLIGHT=""
     return 0
   fi
@@ -674,15 +693,18 @@ rotation_take_out() {
   rotation_apply "$proxy" retiring
 }
 
-# rotation_restore <service> - the block of <service> back in the resting form (its DNS name: every
-# replica that runs), the proxy reloaded on it when that changed it.
+# rotation_restore <service> [force] - the block of <service> back in the resting form (its DNS name:
+# every replica that runs), the proxy reloaded on it when that changed it - or ALWAYS, with `force`.
+# The retry after a failure needs `force` (2026-11-01 third review): a restore whose reload failed has
+# already written the file at rest, so the retry finds it unchanged, and without `force` it would reload
+# nothing, clear the marker and report success while nginx still names the container.
 rotation_restore() {
-  local service="$1" route proxy
+  local service="$1" force="${2:-}" route proxy
   route="$(rotation_route "$service")"
   [ -n "$route" ] || return 0
   proxy="${route%% *}"
   rotation_write "$proxy" "$service" "$(rotation_block "$proxy" "$service" "${route#* }")" || return 1
-  [ "$ROTATION_CHANGED" = yes ] || return 0
+  [ "$ROTATION_CHANGED" = yes ] || [ "$force" = force ] || return 0
   rotation_apply "$proxy" plain
 }
 

@@ -351,6 +351,17 @@ if [ -n "$trap_line" ] && [ -n "$seed_line" ] && [ "$trap_line" -lt "$seed_line"
 else
   fail "deploy-environment.sh lacks the exit trap before the seed, or a signal turned into an exit:${signals:- none missing}"
 fi
+# Those traps fire only if the signal reaches the script: the job's shell must BE the deploy (exec),
+# not its parent, which a cancelled job signals before killing the tree.
+unexeced=""
+for wf in serve-prod serve-dev; do
+  grep -qE '^ +exec bash infrastructure/deploy/deploy-environment\.sh ' "$REPO/.github/workflows/$wf.yml" || unexeced="$unexeced $wf"
+done
+if [ -z "$unexeced" ]; then
+  ok "both serve workflows exec the deploy, so a cancelled job's signal reaches its traps"
+else
+  fail "a serve workflow runs the deploy as a child, so a cancelled job's signal never reaches its traps:$unexeced"
+fi
 
 # ── 5. The rotation library, against a Docker it can only ask ─────────────────
 # Every function below reads Docker through DOCKER_CLI; here that is a stub describing an estate, so
@@ -434,6 +445,58 @@ edge pinned yes -'
   verdict "a service still in flight when the deploy ends is put back at rest, and is no longer in flight" \
     '[ "$(block_of api)" = " server api:3000 resolve;|" ] && [ -z "$ROTATION_IN_FLIGHT" ]'
   verdict "with nothing in flight, the exit trap does nothing" '[ -z "$(rotation_restore_in_flight "a test" 2>&1)" ]'
+  # The restore at the end of a replacement writes the file at rest, then its reload fails: the exit
+  # trap finds the file unchanged and must STILL reload, or nginx keeps naming the container.
+  retried="$(
+    APPLIES="$ROT/applies"
+    : >"$APPLIES"
+    rotation_apply() {
+      echo "$1:$2" >>"$APPLIES"
+      [ "$(wc -l <"$APPLIES")" -gt 1 ]
+    }
+    rotation_take_out api api-new >/dev/null
+    : >"$APPLIES"
+    ROTATION_IN_FLIGHT=api
+    rotation_restore api >/dev/null 2>&1 && echo first-restore-passed
+    rotation_restore_in_flight "a test" 2>/dev/null && [ -z "$ROTATION_IN_FLIGHT" ] && printf 'trap-cleared '
+    tr '\n' ' ' <"$APPLIES"
+  )"
+  verdict "after a restore whose reload failed, the exit trap reloads again though the file is already at rest" \
+    '[ "$retried" = "trap-cleared front:plain front:plain " ]'
+
+  # A proxy replica that is not running (restarting, paused) cannot be exec-ed into: a plain reload
+  # skips it with a warning rather than stopping the deploy that may be the fix; a retiring one refuses.
+  stopped="$(
+    fake_docker() {
+      case "$1" in
+      ps) echo fe-1 ;;
+      inspect) echo restarting ;;
+      *) return 1 ;;
+      esac
+    }
+    rotation_apply front plain 2>&1 | grep -q '^::warning title=A proxy replica that is not running::front: fe-1 is restarting' && echo plain-skipped
+    rotation_apply front plain >/dev/null 2>&1 && echo plain-passed
+    rotation_apply front retiring >/dev/null 2>&1 || echo retiring-refused
+  )"
+  verdict "a plain reload skips a proxy replica that is not running, with a warning, and goes on" \
+    '[ "$(printf "%s\n" "$stopped" | tr "\n" " ")" = "plain-skipped plain-passed retiring-refused " ]'
+  # The subrequest ports feed the pairing check alone, which a plain reload does not run.
+  ports_read="$(
+    fake_docker() {
+      case "$1" in
+      ps) echo fe-1 ;;
+      inspect) echo running ;;
+      exec) printf '# configuration file /etc/nginx/rotation/front.conf:\n# render %s\n' "$ROTATION_TOKEN" ;;
+      *) return 1 ;;
+      esac
+    }
+    rotation_subrequest_ports() { echo read >&2; }
+    rotation_reload() { echo "reload:$3:$4"; }
+    rotation_apply front plain 2>&1
+    rotation_apply front retiring 2>&1
+  )"
+  verdict "a plain reload reads no subrequest port, a retiring one does" \
+    '[ "$(printf "%s\n" "$ports_read" | tr "\n" " ")" = "reload:plain: read reload:retiring: " ]'
 
   # A proxy that reads no list is a TRANSITION only when it runs the previous release's image.
   legacy="$(
@@ -441,7 +504,7 @@ edge pinned yes -'
       case "$1" in
       ps) echo fe-1 ;;
       exec) printf '# configuration file /etc/nginx/conf.d/default.conf:\nset $a api:3000;\nset $b sib:3001;\n' ;;
-      inspect) echo sha256:running ;;
+      inspect) case "$3" in '{{.State.Status}}') echo running ;; *) echo sha256:running ;; esac ;;
       image) echo "$WANTED" ;;
       *) return 1 ;;
       esac

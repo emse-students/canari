@@ -311,7 +311,20 @@ for the minute its replacement takes. Three things follow:
   would leave both unable to start. `deploy-environment.sh` reads the plan and calls `rotation_seed`
   BEFORE its first `dc up`: every list written in the resting form (a list a killed deploy left
   mid-replacement is put back at rest too), and EVERY running proxy is reloaded on it, changed or not
-  ([why](#a-rollback-across-the-replica-lists)).
+  ([why](#a-rollback-across-the-replica-lists)). Two consequences, both deliberate (2026-11-01 third
+  review):
+  - **A proxy replica that is not running is skipped, at `::warning`.** `docker ps` lists restarting
+    and paused containers, and an `exec` into one fails; refusing on it would stop the deploy before
+    its migrations, so the release that fixes a crash-looping frontend could never ship. A restarting
+    replica reads the list on disk when it starts, a paused one serves nothing. Only a plain reload
+    skips: a take-out (mode `retiring`) still refuses a replica it cannot read.
+  - **The seed's edge reload loads the edge's whole `edge/nginx.conf`, before the migrations.** The
+    edge is bind-mounted from the checkout this deploy has just reset, so that file is already this
+    release's. It would be loaded later in the same deploy anyway ("reloading the edge
+    configuration"); the seed only moves the moment earlier, after the same `nginx -T` validation, so
+    a configuration nginx refuses stops the deploy before a migration instead of after. Reloading
+    only the frontend at the seed was considered and rejected: the edge's list names a FRONTEND
+    replica, so an edge left on a container name is the whole-site `502` a rollback would cause.
 - **A rollback across the replica lists works** ([below](#a-rollback-across-the-replica-lists)).
 
 **Before a reload, the proxy is asked what it would load.** `nginx -T` in the proxy's replica must
@@ -351,6 +364,15 @@ WebSocket opened before the release: a `/api/ws` lives an hour and is kept alive
 test holds such a connection open across the release and asserts the check holds with that old
 worker still alive. It is believed when it holds, and terminates when the requests do - never by a
 clock; the read count bounds only a request that never ends.
+
+**Old workers outlive a reload, and nothing cuts them.** A deploy reloads the frontend about nine
+times (the seed, then a take-out and a restore per service it routes), and every reload leaves its
+old workers alive until their last connection closes - for a WebSocket, until the client leaves or
+its server replica is retired. There is deliberately no `worker_shutdown_timeout`. It would close
+those connections on a clock, so every member would get a reconnect at a time the deploy did not
+choose, and the pairing check would be proven against connections that were about to be cut anyway.
+What it costs is memory: a few idle workers per reload, until those WebSockets end. The retirement of
+`chat-gateway` closes most of them in the same deploy.
 
 - **An `auth_request` subrequest pairs nothing** (2026-11-01 review). Every API location of the
   frontend asks core-service first, on an upstream connection of its own, BEFORE the request chooses
@@ -521,21 +543,29 @@ running a list that names a container** - finished, failed (step 6), or interrup
 hold it, none of them a human procedure (2026-11-01 second review):
 
 - **A failure between take-out and restore** restores the service in flight
-  (`rotation_restore_in_flight`), whose reload is verified like any other.
-- **A deploy that ends there anyway** - `set -e`, a cancelled job, a dropped session - runs
-  `deploy-environment.sh`'s EXIT trap, which does the same and says so at `::error`; `HUP`, `INT` and
-  `TERM` are turned into exits so that trap runs for them too. A `SIGKILL` runs nothing.
-- **What none of that reached** - a restore whose reload failed (the file at rest, nginx not), or a
-  `SIGKILL` - is corrected first by the next deploy of this code: `rotation_seed` reloads EVERY
-  running proxy, its list changed or not, because a file at rest proves nothing about what nginx
-  loaded. The one window left is a rollback started straight after such a `SIGKILL` or failed reload,
-  before any newer deploy: both are logged at `::error` when they happen, naming the consequence.
+  (`rotation_restore_in_flight`), whose reload is verified like any other. That restore ALWAYS
+  reloads (`rotation_restore <service> force`, 2026-11-01 third review). A failed restore has already
+  written the file at rest, so a retry that reloaded only on a changed file would reload nothing and
+  report success while nginx still named the container.
+- **A deploy that ends there anyway** - `set -e`, a final restore whose reload failed, a cancelled
+  job, a dropped session - runs `deploy-environment.sh`'s EXIT trap, which does the same and says so
+  at `::error`. `HUP`, `INT` and `TERM` are turned into exits so that trap runs for them too, and both
+  serve workflows `exec` the script, so the runner's signal on a cancelled job reaches it rather than
+  a parent shell. A `SIGKILL` runs nothing.
+- **What none of that reached** - a retry that failed too, or a `SIGKILL` - is corrected first by the
+  next deploy of this code: `rotation_seed` reloads EVERY running proxy, its list changed or not,
+  because a file at rest proves nothing about what nginx loaded. The one window left is a rollback
+  started straight after such a `SIGKILL` or double failure, before any newer deploy. Both are logged
+  at `::error` when they happen, naming the consequence.
 
 `deploy-rolling.test.sh` puts the frontend on a container-name list with the file at rest and asserts
 the next seed reloads it (with the old conditional reload, it did not), then rolls the fixture back with
 the library main shipped before the lists (frozen as `rolling-fixture/rolling-pre-rotation.sh`) and
 asserts the estate answers on the older version with no edge reload, and `deploy-replace.test.sh`
-holds `ROLLING_RESOLVER_TTL_SECONDS` equal to that library's wait and to every `valid=`.
+holds `ROLLING_RESOLVER_TTL_SECONDS` equal to that library's wait and to every `valid=`. It also
+fails a restore's reload once and asserts the exit trap reloads again with the file already at rest,
+skips a replica that is not running in a plain reload (and refuses it in a take-out), and checks that
+both serve workflows `exec` the deploy.
 
 #### The edge is ready when it listens, not when it runs
 
