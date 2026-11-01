@@ -134,6 +134,24 @@ describe('a conversation whose run deferred a row', () => {
     expect(again).toHaveBeenCalledTimes(1);
   });
 
+  it('a re-arm landing right after the run settled starts a NEW run, never joins the settled one (review 4 of #2824)', async () => {
+    const derivations = new OrderKeyDerivations();
+    const again = vi.fn(async () => ({ derived: 2, unreadable: 0, deferred: 0 }));
+    const page = [{ pageKey: { orderAt: 1, id: 'x', provisional: false } }];
+    // The warning is written inside the callback that records the deferral; a microtask queued
+    // there runs once that callback has returned and BEFORE any reaction chained on its result -
+    // the window in which a `.finally` used to still hold the settled run in `inFlight`.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {
+      queueMicrotask(() => derivations.readableAgain('conv', page, again));
+    });
+    await derivations.run('conv', async () => ({ derived: 0, unreadable: 0, deferred: 2 }));
+    warn.mockRestore();
+    await settle();
+
+    expect(derivations.gaveUp('conv')).toBe(false);
+    expect(again).toHaveBeenCalledTimes(1);
+  });
+
   it('is left alone by a page read in a conversation that deferred nothing', async () => {
     const derivations = new OrderKeyDerivations();
     const page = [{ pageKey: { orderAt: 1, id: 'x', provisional: false } }];

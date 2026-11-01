@@ -187,8 +187,16 @@ export class OrderKeyDerivations {
     const settled = new Promise<OrderKeyDerivation>((resolve, reject) => {
       queued = { conversationId, start, resolve, reject };
     });
-    const run = settled
-      .then((done) => {
+    // The entry goes IN THE SAME CALLBACK that records the outcome, before it: a settled run can
+    // never be joined. Dropped one microtask later (a `.finally`), a `readableAgain` landing in
+    // between re-armed the conversation, then joined the finished run and derived nothing (review 4
+    // of #2824).
+    const forget = () => {
+      if (this.inFlight.get(conversationId) === run) this.inFlight.delete(conversationId);
+    };
+    const run: Promise<OrderKeyDerivation> = settled.then(
+      (done) => {
+        forget();
         if (done.deferred > 0) {
           this.deferred.add(conversationId);
           console.warn(
@@ -196,10 +204,12 @@ export class OrderKeyDerivations {
           );
         }
         return done;
-      })
-      .finally(() => {
-        if (this.inFlight.get(conversationId) === run) this.inFlight.delete(conversationId);
-      });
+      },
+      (e: unknown) => {
+        forget();
+        throw e;
+      }
+    );
     this.inFlight.set(conversationId, run);
     (priority === 'waited' ? this.waited : this.background).push(queued);
     this.next();

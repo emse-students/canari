@@ -45,7 +45,6 @@ import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
 
-/** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 /**
  * The newest time THE SERVER stamped on a page of its history log (`timestamp` is the `receivedAt`
  * the delivery service wrote when it accepted the frame), or `undefined` for a page that states none.
@@ -69,6 +68,7 @@ export function newestServerRowTime(
   return newest;
 }
 
+/** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
   return ACCOUNT_KEY.seenCipher(userId, groupId);
 }
