@@ -157,11 +157,49 @@ describe('UserBlocksService', () => {
   });
 
   describe('unblock', () => {
-    it('refuses when there is nothing to lift', async () => {
+    beforeEach(() => {
+      blockRepo.findOne.mockResolvedValue({ blockerId: 'alice', blockedId: 'bob' } as never);
+    });
+
+    it('refuses when there is nothing to lift, and severs nothing', async () => {
+      blockRepo.findOne.mockResolvedValue(null as never);
+      await expect(service.unblock('alice', 'bob')).rejects.toMatchObject({
+        response: { code: 'NOT_BLOCKED' },
+      });
+      expect(severFollows).not.toHaveBeenCalled();
+      expect(blockRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the row went between the read and the delete (a concurrent unblock)', async () => {
       blockRepo.delete.mockResolvedValue({ affected: 0, raw: [] });
       await expect(service.unblock('alice', 'bob')).rejects.toMatchObject({
         response: { code: 'NOT_BLOCKED' },
       });
+    });
+
+    it('SEVERS the pair BEFORE lifting the block, so a left-over follow cannot come back (WP-F5 F2)', async () => {
+      const order: string[] = [];
+      severFollows.mockImplementation(() => {
+        order.push('sever');
+        return Promise.resolve({ data: { ok: true } });
+      });
+      blockRepo.delete.mockImplementation(() => {
+        order.push('delete');
+        return Promise.resolve({ affected: 1, raw: [] });
+      });
+      await service.unblock('alice', 'bob');
+      expect(order).toEqual(['sever', 'delete']);
+      expect(severFollows).toHaveBeenCalledWith(
+        expect.stringContaining('internal/follows/between/alice/bob'),
+        expect.anything()
+      );
+    });
+
+    it('a severing that fails refuses the unblock with a 503 and LEAVES THE BLOCK in place', async () => {
+      severFollows.mockRejectedValue(new Error('ECONNREFUSED'));
+      await expect(service.unblock('alice', 'bob')).rejects.toMatchObject({ status: 503 });
+      expect(blockRepo.delete).not.toHaveBeenCalled();
+      expect(dropFeedCache).not.toHaveBeenCalled();
     });
 
     it('deletes only the row the caller owns, so a block cannot be lifted by its target', async () => {
@@ -169,10 +207,9 @@ describe('UserBlocksService', () => {
       expect(blockRepo.delete).toHaveBeenCalledWith({ blockerId: 'alice', blockedId: 'bob' });
     });
 
-    it('drops the feed cache too - lifting restores no follow, so nothing else fires here', async () => {
+    it('drops the feed cache too', async () => {
       await service.unblock('alice', 'bob');
 
-      expect(severFollows).not.toHaveBeenCalled();
       expect(dropFeedCache).toHaveBeenCalledWith(
         expect.stringContaining('internal/posts/list-cache/invalidate'),
         expect.anything(),

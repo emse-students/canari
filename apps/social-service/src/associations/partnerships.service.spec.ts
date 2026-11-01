@@ -6,6 +6,12 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
 import { ProductsService } from './products.service';
 import { AssociationsService } from './associations.service';
+import { associationVisibleTo } from '../spaces/viewer-visibility';
+
+/** Visibility is SQL, proven in `shop-partnership-visibility.integration.spec.ts`; visible here unless a test says otherwise. */
+jest.mock('../spaces/viewer-visibility', () => ({
+  associationVisibleTo: jest.fn(() => Promise.resolve(true)),
+}));
 
 /**
  * WHAT AN `UPDATE ... RETURNING` REALLY ANSWERS, and the reason this suite was green while the
@@ -27,9 +33,20 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
       query: jest.fn(() => Promise.resolve([])),
     };
     manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(manager));
-    const cardRepo = {
+    const cardRepo: any = {
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
+      // The listings (`activeCardsVisibleTo`): answered by `find`, so each test states its rows in
+      // one place. Which association is VISIBLE is SQL, proven against PostgreSQL in
+      // `shop-partnership-visibility.integration.spec.ts`.
+      createQueryBuilder: jest.fn(() => {
+        const qb: any = {};
+        for (const method of ['where', 'andWhere', 'orderBy', 'addOrderBy']) {
+          qb[method] = jest.fn(() => qb);
+        }
+        qb.getMany = jest.fn(() => cardRepo.find({ where: { isActive: true } }));
+        return qb;
+      }),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       remove: jest.fn((x: unknown) => Promise.resolve(x)),
@@ -95,6 +112,22 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
 
       const [allActive] = await service.listAllActive('user1');
       expect(allActive.sharedCode).toBeNull();
+    });
+  });
+
+  describe('a card of an association the claimant cannot see', () => {
+    it('is refused as NOT FOUND, exactly like a card that does not exist, and claims nothing', async () => {
+      const { service, cardRepo, manager } = makeService();
+      Object.assign(cardRepo, { manager });
+      cardRepo.findOne.mockResolvedValue(card({ claimMode: 'text', staticText: 'Show your ID' }));
+      (associationVisibleTo as jest.Mock).mockResolvedValueOnce(false);
+      const err = await service.claimCard('card1', 'user1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect((err as NotFoundException).getResponse()).toMatchObject({
+        code: PARTNERSHIP_ERROR_CODES.NOT_FOUND,
+      });
+      expect(associationVisibleTo).toHaveBeenCalledWith(manager, 'asso1', 'user1');
+      expect(manager.transaction).not.toHaveBeenCalled();
     });
   });
 
@@ -285,6 +318,73 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
         } as any)
       ).resolves.toBeTruthy();
       expect(cardRepo.save).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('members-only needs a cotisation to be held', () => {
+    const code = async (p: Promise<unknown>) => {
+      const err = await p.then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(BadRequestException);
+      return ((err as BadRequestException).getResponse() as { code: string }).code;
+    };
+
+    it('refuses creating a members-only card when the association has no cotisation mode', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      expect(
+        await code(
+          service.create('asso1', { title: 'X', claimMode: 'code_pool', membersOnly: true } as any)
+        )
+      ).toBe('MEMBERS_ONLY_WITHOUT_COTISATION');
+      expect(cardRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses ticking it on an existing card, and stores nothing', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      cardRepo.findOne.mockResolvedValue({ ...card(), membersOnly: false });
+      expect(await code(service.update('asso1', 'card1', { membersOnly: true } as any))).toBe(
+        'MEMBERS_ONLY_WITHOUT_COTISATION'
+      );
+      expect(cardRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: an association with a cotisation mode may reserve a card', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      await service.create('asso1', {
+        title: 'X',
+        claimMode: 'code_pool',
+        membersOnly: true,
+      } as any);
+      expect(cardRepo.save).toHaveBeenCalled();
+    });
+
+    it('CONTROL: the editor repeats membersOnly on every save, and renaming a card already ticked is not asked', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      cardRepo.findOne.mockResolvedValue({ ...card(), membersOnly: true });
+      // The PartnershipEditor's real update body: every field, membersOnly included.
+      await service.update('asso1', 'card1', {
+        title: 'Renamed',
+        membersOnly: true,
+        isActive: true,
+        badgeText: null,
+      } as any);
+      expect(cardRepo.save).toHaveBeenCalled();
+      expect(assoRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: an edit that does not tick the box is not asked', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      cardRepo.findOne.mockResolvedValue({ ...card(), membersOnly: true });
+      await service.update('asso1', 'card1', { title: 'Renamed' } as any);
+      expect(cardRepo.save).toHaveBeenCalled();
+      expect(assoRepo.findOne).not.toHaveBeenCalled();
     });
   });
 

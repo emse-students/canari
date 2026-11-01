@@ -95,6 +95,7 @@ function inviteHarness() {
       { deviceId: `${u}-dev`, keyPackage: new Uint8Array([4]) },
     ]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     addMembersBulk: vi.fn(
       async (_g: string, devices: Array<{ userId: string; deviceId: string }>) => {
@@ -270,7 +271,7 @@ describe('inviteMembersToGroup - a lost commit race', () => {
 
   it('a busy add lock is answered as its own reason, never as an Add', async () => {
     const h = inviteHarness();
-    h.mlsService.acquireAddLock.mockResolvedValue(false);
+    h.mlsService.acquireAddLockAnswer.mockResolvedValue('held');
 
     const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
 
@@ -295,6 +296,7 @@ function sweepHarness() {
       .fn()
       .mockResolvedValue([{ userId: 'w4', deviceId: 'w4-new', groupId: G, status: 'pending' }]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     getGroupMembers: vi.fn(async () => []),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),

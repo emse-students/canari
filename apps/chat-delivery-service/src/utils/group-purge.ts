@@ -11,6 +11,7 @@ import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
@@ -38,6 +39,7 @@ export type GroupOwnedRowCounts = {
   invites: number;
   membershipIntervals: number;
   seatEvictions: number;
+  joinAskPushes: number;
   revokedDeviceGroups: number;
   dismissals: number;
 };
@@ -79,6 +81,7 @@ const GROUP_OWNED_TABLES: readonly {
   { count: 'invites', entity: GroupInvite },
   { count: 'membershipIntervals', entity: GroupMembershipInterval },
   { count: 'seatEvictions', entity: SeatEviction },
+  { count: 'joinAskPushes', entity: JoinAskPush },
   { count: 'revokedDeviceGroups', entity: RevokedDeviceGroup },
 ];
 
@@ -94,6 +97,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
     invites: 0,
     membershipIntervals: 0,
     seatEvictions: 0,
+    joinAskPushes: 0,
     revokedDeviceGroups: 0,
     dismissals: 0,
   };

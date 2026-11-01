@@ -43,11 +43,7 @@ import {
   noteFrameConsumed,
 } from '$lib/utils/chat/history';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
-import { admissionRefusedEntrant, classifyIncomingDecryptError } from '../mlsDecryptError';
-import {
-  freezeForAdmissionRefusal,
-  isFrozenByAdmissionRefusal,
-} from '$lib/utils/chat/admissionFreeze';
+import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
 import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -147,6 +143,24 @@ const noMatchKpFailures = new Map<string, number>();
  * 2. `requestReAdd` replaces every escalation (no Poison Pill, no counters).
  * 3. Recovery state (cooldowns) is in-memory only - reset on every session.
  */
+/** The device-wide freeze list a dev build of #2815 wrote; read by nothing since #2817. */
+const LEGACY_ADMISSION_FREEZE_KEY = 'canari_admission_frozen';
+
+/**
+ * Removes {@link LEGACY_ADMISSION_FREEZE_KEY} once per session. It deafens nothing any more, but a
+ * dead key is a question for the next reader of a dev device's storage, so it goes rather than
+ * lingering. The mls-core half - a persisted `closed` classification - is dropped at load.
+ */
+function forgetLegacyAdmissionFreeze(log: (msg: string) => void): void {
+  try {
+    if (localStorage.getItem(LEGACY_ADMISSION_FREEZE_KEY) === null) return;
+    localStorage.removeItem(LEGACY_ADMISSION_FREEZE_KEY);
+    log('[ADMISSION] a freeze list left by an earlier build was removed - nothing read it');
+  } catch (e) {
+    log(`[ADMISSION] the freeze list left by an earlier build could not be removed: ${String(e)}`);
+  }
+}
+
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // No `userId` here any more: its only consumer at this scope was the state persister's config, and
   // the platform now owns where a checkpoint lands (`IMlsService.persistCheckpoint`). The handlers
@@ -160,6 +174,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetReAddCooldowns();
   // And the open history asks: an addressed answer is accepted only by the session that asked.
   forgetHistoryAsks();
+  // And what a dev build of #2815 left behind (review of #2817): nothing reads it any more.
+  forgetLegacyAdmissionFreeze(log);
 
   const receiveSkipBudget = receiveCheckpointSkipBudget();
   if (receiveSkipBudget > 0) {
@@ -1303,25 +1319,6 @@ async function handleKnownGroup({
     const kind = classifyIncomingDecryptError(e);
 
     if (kind === 'own-message') return true;
-    // A REFUSED ADMISSION IS A PROOF, AND EVERY RECOVERY WOULD UNDO IT (`mls-core` `admission.rs`).
-    // A commit brought a new user in on their own into a closed group and was refused unmerged. The
-    // server, if it is the party that let them in, has moved the group on, so a commit replay is
-    // refused again and an external join rebuilds this device from the state that contains them.
-    // ACKed - redelivery brings back the same refusal - and the group is FROZEN for a person, which
-    // is also what stops the epoch-gap escalation below from running on every frame that follows.
-    if (kind === 'admission-refused') {
-      freezeForAdmissionRefusal(groupId, admissionRefusedEntrant(e));
-      return true;
-    }
-    // A group already frozen is repaired by nothing: every frame of the epochs the server moved on
-    // to would read as an epoch gap and be escalated into the forget-and-rejoin that rebuilds this
-    // device from the refused state. ACKed and dropped - this device no longer follows the group.
-    if (isFrozenByAdmissionRefusal(groupId)) {
-      log(
-        `[ADMISSION] frame for frozen group ${convoKey.slice(0, 8)}… (${kind}) - ACKed, no recovery`
-      );
-      return true;
-    }
     // REFUSED FOR ITS SENDER (WP-G2-1b): decrypted, so its generation is spent and it is recorded
     // as consumed - but its envelope names someone MLS did not verify, so nothing of it is shown.
     // `assertVerifiedSender` already said so at ERROR and reported it; nothing here is a heal.
@@ -1404,9 +1401,6 @@ async function handleKnownGroup({
           refusedBacklog: 'judged-by-caller',
         });
         if (replay.healed) return true;
-        // The replay met a commit bringing a new user into a closed group and froze it: rung 2 is
-        // the forget-and-rejoin that would rebuild this device from the state that holds them.
-        if (isFrozenByAdmissionRefusal(groupId)) return true;
         rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;
       } catch (e) {
         log(`[GAP] replay error for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 80)}`);

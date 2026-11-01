@@ -2,6 +2,7 @@
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
+  import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -896,6 +897,7 @@
         globalSession.authToken = v;
       },
       selectedContact: globalConvs.selectedContact,
+      selectedNow: () => globalConvs.selectedContact,
       getSendError: () => globalConvs.sendError,
       setSendError: (v: string) => {
         globalConvs.sendError = v;
@@ -1862,6 +1864,8 @@
           // right after the reload, so a group joined while away is registered before the drain.
           await takeKeyGroupPushJoins(globalSession.ensureMls(), (line) => console.log(line));
           stepDone('key-group-joins');
+          // The notification extension's outcomes while away (`nseOutcomes.ts`), not awaited.
+          void drainNseOutcomes(appendLog);
           if (storage) {
             await reconcileOutboxSent(storage, {
               deviceKeyB64: globalSession.deviceKeyB64,

@@ -32,6 +32,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.push.BackgroundWelcomeAnswer
+import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
@@ -1101,6 +1102,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && activeCallRings.contains(callId)
 
         /**
+         * Whether a call holds the phone's sound - the ongoing-call service holds one, or a call rings
+         * natively ([CallSoundHold]). Every notification posted while it is true is posted silent.
+         */
+        internal fun callHoldsSound(): Boolean =
+            CallSoundHold.held(CallForegroundService.running, activeCallRings.size)
+
+        /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
          * (system call UI with Answer/Decline), classic high-priority notification with the same
          * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen intent
@@ -1177,7 +1185,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // and answers only on the user's tap.
             val fullScreenPending = PendingIntent.getActivity(
                 context, notifId + 2,
-                IncomingCallActivity.intentFor(context, callId, photoOf, title, body, answerPending, declinePending),
+                IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
 
@@ -1868,6 +1876,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pendingIntent)
+                // A call holds the sound ([CallSoundHold]): shown, without its sound.
+                .setSilent(callHoldsSound())
                 .build()
             manager.notify(PENDING_SYNC_NOTIF_ID, notif)
             Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
@@ -1900,6 +1910,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pendingIntent)
+                // A call holds the sound ([CallSoundHold]): shown, without its sound.
+                .setSilent(callHoldsSound())
                 .build()
             manager.notify(NEW_DEVICE_NOTIF_ID, notif)
             Log.d(TAG, "showNewDeviceNotification: shown (id=$NEW_DEVICE_NOTIF_ID)")
@@ -2120,6 +2132,36 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         fun callAvatar(context: Context, userId: String): Bitmap? {
             Log.d(TAG, "callAvatar: for ${userId.take(8)}")
             return context.fetchAvatar(userId)
+        }
+
+        /**
+         * The caller's photo for the incoming-call SCREEN, which draws it full-bleed (the blurred
+         * backdrop) and as a 144dp face - so the notification icon, circle-cropped at
+         * [notificationIconSizePx], is the wrong picture twice: a disc with transparent corners
+         * behind the blur, and an upscaled face. The ORIGINAL bytes are in [avatarCacheFile];
+         * [fetchAvatar] runs first only so a miss fills that cache by the one path that may
+         * (push secret, remembered absence). Decoded UNCROPPED, sampled to [targetPx] by
+         * [decodeSampled]; the screen crops the face itself, in drawing.
+         *
+         * @return null when the caller has no photo; a non-null with `uncropped = false` when only
+         *   the icon could be had (the cache file unreadable) - the screen then keeps its gradient
+         *   and shows the icon as the face. Network I/O on a miss: OFF the main thread.
+         */
+        fun callScreenPhoto(context: Context, userId: String, targetPx: Int): CallScreenPhoto? {
+            val icon = context.fetchAvatar(userId) ?: return null
+            val file = context.avatarCacheFile(userId)
+            val full = if (file.exists()) {
+                context.decodeSampled(targetPx) { BitmapFactory.decodeFile(file.absolutePath, it) }
+            } else {
+                null
+            }
+            if (full == null) {
+                Log.w(TAG, "callScreenPhoto: no readable original for ${userId.take(8)} (exists=${file.exists()}) - the icon is the face, no backdrop")
+                return CallScreenPhoto(icon, uncropped = false)
+            }
+            icon.recycle()
+            Log.d(TAG, "callScreenPhoto: ${full.width}x${full.height} uncropped for ${userId.take(8)} (target=$targetPx)")
+            return CallScreenPhoto(full, uncropped = true)
         }
 
         /**
@@ -2510,14 +2552,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
             // see [RepostAlert].
-            val alertMode = RepostAlert.of(
+            val repostMode = RepostAlert.of(
                 redraw = alreadyPosted || supersedes != 0L,
                 switchesChannel = switchesChannel,
                 hasExistingPost = existingNotif != null,
             )
-            if (alertMode == RepostAlert.Mode.SILENT) {
+            if (repostMode == RepostAlert.Mode.SILENT) {
                 Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${existingNotif != null})")
             }
+            // A CALL HOLDS THE SOUND ([CallSoundHold]): the message is shown, without its sound.
+            val callHolds = callHoldsSound()
+            if (callHolds && repostMode != RepostAlert.Mode.SILENT) {
+                Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${groupId.take(8)} channel=$channel)")
+            }
+            val alertMode = CallSoundHold.alert(repostMode, callHolds)
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
 
@@ -4892,6 +4940,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             this, notifId, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val callHolds = callHoldsSound()
         val notification = NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
@@ -4901,8 +4950,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .apply { largeIcon?.let { setLargeIcon(it) } }
+            // A call holds the sound ([CallSoundHold]): shown, without its sound.
+            .setSilent(callHolds)
             .build()
-        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null}")
+        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds")
         manager.notify(notifId, notification)
     }
 
@@ -5120,6 +5171,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_follow_request" -> Pair(
                 res.getString(R.string.notif_social_follow_request_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_follow_request_body) }
+            )
+            // A new person asks to join a conversation the reader is in: the person names the
+            // title, the conversation's name is the body (a fixed phrase when it has none).
+            // With no name to show (the lookup failed server-side) the title says "someone": an id
+            // never reaches a lock screen.
+            "chat_join_ask" -> Pair(
+                if (actor.isEmpty()) res.getString(R.string.notif_chat_join_ask_anon_title)
+                else res.getString(R.string.notif_chat_join_ask_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_chat_join_ask_body) }
             )
             "social_follow_accepted" -> Pair(
                 res.getString(R.string.notif_social_follow_accepted_title, actor),

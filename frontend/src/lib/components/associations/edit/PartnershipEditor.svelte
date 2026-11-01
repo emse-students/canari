@@ -41,6 +41,7 @@
   import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { m } from '$lib/paraglide/messages';
+  import { membersOnlySaveRefusalMessage } from '$lib/associations/paymentRefusal';
 
   interface Props {
     asso: Association;
@@ -156,7 +157,7 @@
         onSaved({ ...created, claimedCount: 0, totalCodes: 0 }, true);
       }
     } catch (e) {
-      error = m.common_save_error();
+      error = membersOnlySaveRefusalMessage(e) ?? m.common_save_error();
     } finally {
       saving = false;
     }

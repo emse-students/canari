@@ -63,6 +63,7 @@ import {
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
+import { reportCallSoundPhase, retireCallSoundHolder } from '$lib/utils/callSoundGate';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -70,6 +71,14 @@ import {
   type CameraFacing,
 } from '$lib/utils/callVideo';
 import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
+import {
+  buildCallMicPipeline,
+  CALL_NOISE_SUPPRESSION_DEFAULT,
+  CallMicSwitch,
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
+import { callMicPipelineDeps } from '$lib/utils/callNoiseSuppressionAssets';
 import {
   describeE2eReport,
   e2eBypassedSides,
@@ -97,6 +106,12 @@ interface IceServerConfig {
   urls: string | string[];
   username?: string;
   credential?: string;
+}
+
+/** What `ice-servers` answered: the servers, and the server's code when it withheld the relay (B7). */
+interface FetchedIceServers {
+  iceServers: RTCIceServer[];
+  turnWithheldCode: string | null;
 }
 
 /** Optional hook to mirror call lifecycle events into the chat timeline. */
@@ -274,6 +289,13 @@ export function wireDescription(
  */
 export class CallService {
   private pc: RTCPeerConnection | null = null;
+  /**
+   * `pc` was built during the caller's ring and has not met its peer: it gathers candidates
+   * (`iceCandidatePoolSize`) and negotiates nothing until `PeerReady` adopts it. Closed by every
+   * end of the ring - `endCall`, `cleanup` - like any peer connection, at once rather than after
+   * the ended summary, since it holds a TURN allocation for a call nobody answered.
+   */
+  private pcAwaitingPeer = false;
   private signaledWs: WebSocket | null = null;
   /** ICE servers fetched for this call before ringing, so a missing TURN key fails the call early. */
   private iceServers: RTCIceServer[] | null = null;
@@ -301,10 +323,29 @@ export class CallService {
   private inviteSent = false;
   /** The relay paired the two parties: the ring is over whatever the media then does. */
   private peerArrived = false;
-  /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms` / `setup_ms`. */
+  /**
+   * The caller's ring window is open: the invite left and its timer is armed ({@link armRingTimer}).
+   * One of the three facts {@link syncRingingOut} reads; cleared when the call ends.
+   */
+  private ringWindowOpen = false;
+  /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms`. */
   private tapAt: number | null = null;
-  /** Tap to the first unmuted remote audio track - the report's `setup_ms`. */
-  private setupMs: number | null = null;
+  /**
+   * `performance.now()` when the ring started: on the caller once the ring LEFT (the server's
+   * fan-out answered, then the invite - the setup before it is the app's time, not the human's), on
+   * the callee its page starting to ring (an answer from a system surface rings the page only as long as the join takes;
+   * the native ring before it is not seen here).
+   */
+  private ringStartAt: number | null = null;
+  /** `performance.now()` at the answer: the callee's tap, or the caller's first `PeerReady`. */
+  private answeredAt: number | null = null;
+  /**
+   * The report's `ring_ms` (ring start to the answer) and `connect_ms` (the answer to the first
+   * E2E proof). ONE `setup_ms` from the tap held both, so a person taking 40 s to answer read as a
+   * 40 s setup (owner, 2026-10-31). `ring_ms` is a human; `connect_ms` is the app.
+   */
+  private ringMs: number | null = null;
+  private connectMs: number | null = null;
   /** The next `[CALL_REPORT]` tick of the current peer connection (`armCallReport`). */
   private reportTimer: number | null = null;
   /**
@@ -373,6 +414,11 @@ export class CallService {
    */
   private signalQueue: Promise<void> = Promise.resolve();
   private localStream: MediaStream | null = null;
+  /**
+   * The microphone sender's track, raw or through RNNoise (`utils/callNoiseSuppression.ts`), and
+   * the user's per-call switch. One per call: built with the microphone, closed by `cleanup`.
+   */
+  private micSwitch: CallMicSwitch | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
   /**
@@ -504,6 +550,15 @@ export class CallService {
 
   public callState = writable<CallState>('idle');
   /**
+   * THE CALLER HEARS IT RING (owner, 2026-10-31): `true` from the moment the invite has left and the
+   * ring window opened, until the callee answers (the relay pairs the two), declines, is busy, the
+   * caller cancels, the window closes unanswered or the setup fails - every one of them a STATE
+   * TRANSITION, each written by {@link syncRingingOut} with its reason. `CallOverlay` plays the
+   * ringback (`utils/callRingback.ts`) exactly while it is `true`; it has no timer of its own.
+   * Never `true` on the callee: only the `calling` side opens a ring window.
+   */
+  public ringingOut = writable<boolean>(false);
+  /**
    * THE UI's "Reconnexion..." flag (`m.call_reconnecting()`): `true` while a call that had
    * connected is getting its connection back - this device's signalling is being resumed, the
    * other party's is (`PeerAway`), or the media path is down and being restarted. A network blip
@@ -523,6 +578,12 @@ export class CallService {
   public remoteStreams = writable<RemoteStreams>(new Map());
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
+  /**
+   * The microphone's noise suppression for THIS call: the user's switch (OFF at every call, owner
+   * 2026-11-01, `CALL_NOISE_SUPPRESSION_DEFAULT`) and what the sender carries - `unavailable` when
+   * the pipeline could not be built on this engine, and the call screen then offers no switch.
+   */
+  public noiseSuppression = writable<NoiseSuppressionView>(initialNoiseSuppressionView());
   /**
    * THIS device's operating system holds the microphone: the capture track is `muted`, which no
    * button here set (that is {@link isMuted}). The other party hears nothing meanwhile. Measured on
@@ -565,7 +626,7 @@ export class CallService {
   /** The group {@link releaseLeafRefreshHold} is for. */
   private leafRefreshHeldGroup: string | null = null;
 
-  /** This instance's name in the native ring's facts (`page_ring.rs`). */
+  /** This instance's name in the native ring's facts (`page_ring.rs`) and in `callSoundGate`. */
   private readonly pageRingHolder = nextPageRingHolder('call-service');
   /** The call last told to the native side as ringing in this page, or null. */
   private pageRingingCall: string | null = null;
@@ -585,6 +646,13 @@ export class CallService {
     // rings is enough - gives the two ends different keys. Held from leaving `idle` until the
     // call is over (`idle` or `ended`); a commit a person asked for is not delayed by it.
     this.callState.subscribe((state) => this.syncLeafRefreshHold(state));
+    // A CALL HOLDS THE APP'S SOUND from ringing (out or in) to its end (`callSoundGate`), and the
+    // ringback stops on ANY move out of `calling` - the second line is the backstop of the explicit
+    // stops, which name their reason first.
+    this.callState.subscribe((state) => {
+      reportCallSoundPhase(this.pageRingHolder, state);
+      this.syncRingingOut(`state=${state}`);
+    });
     // THE CALL THIS PAGE RINGS, told to the native side (`page_ring.rs`): the iPhone's handover ends
     // an unanswered CallKit ring only when the page rings THAT call. Holding the socket does not
     // say it: the invite of a call rung at the PIN gate was skipped, and the socket the unlock then
@@ -616,6 +684,9 @@ export class CallService {
    * holder nobody withdraws until the next page load.
    */
   public retireFromPageRing(): void {
+    // The app's sound gate too (on every platform, hence before the Tauri-only return): a replaced
+    // service left in a call would otherwise hold the app's sound until the next page load.
+    retireCallSoundHolder(this.pageRingHolder);
     if (!this.reportsPageRinging) return;
     this.reportsPageRinging = false;
     this.pageRingUnsubscribe?.();
@@ -776,6 +847,7 @@ export class CallService {
         );
       }
       this.callState.set('incoming');
+      this.ringStartAt = performance.now();
       this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
       // An answer already given on a system surface is not looked for here: it joins on its own
       // facts the moment the session can ({@link answerFromSystemSurface}), and this invite, if it
@@ -835,6 +907,7 @@ export class CallService {
     this.incomingCallerId = intent.callerId ? intent.callerId.toLowerCase() : null;
     this.incomingHasVideo = CALLS_VIDEO_ENABLED && intent.hasVideo;
     this.callState.set('incoming');
+    this.ringStartAt = performance.now();
     appendLog(
       `[Call] joining call=${intent.callId} from the system-surface answer - no invite awaited`
     );
@@ -928,6 +1001,11 @@ export class CallService {
    */
   private armRingTimer(callId: string, ringTimeoutMs: number, side: 'calling' | 'incoming') {
     this.clearRingTimer();
+    if (side === 'calling') {
+      // The invite has left and the caller's window opens: from here the caller hears it ring.
+      this.ringWindowOpen = true;
+      this.syncRingingOut('the invite left');
+    }
     this.ringTimer = window.setTimeout(() => {
       this.ringTimer = null;
       if (this.currentCallId !== callId || get(this.callState) !== side || this.peerArrived) {
@@ -937,6 +1015,20 @@ export class CallService {
       if (side === 'calling') this.endCall(true, 'not-answered');
       else this.dismissIncomingCall();
     }, ringTimeoutMs);
+  }
+
+  /**
+   * Writes {@link ringingOut} from the three facts that decide it - the caller's ring window is open,
+   * nobody answered yet, and the call is still `calling` - and logs every change with `why`. Called at
+   * each transition that can move it; a repeat changes nothing and says nothing.
+   */
+  private syncRingingOut(why: string): void {
+    const on = this.ringWindowOpen && !this.peerArrived && get(this.callState) === 'calling';
+    if (on === get(this.ringingOut)) return;
+    appendLog(
+      `[Call] ringback ${on ? 'starts' : 'stops'} - ${why} (call=${this.currentCallId ?? 'none'})`
+    );
+    this.ringingOut.set(on);
   }
 
   private clearRingTimer() {
@@ -981,8 +1073,9 @@ export class CallService {
       this.currentRoomToken = roomToken;
       // Before ringing: a server without TURN credentials (503) fails the call here, not after
       // the callee has answered into a call that can never connect.
-      this.iceServers = await this.fetchIceServers(groupId, roomId);
+      const ice = await this.fetchIceServers(groupId, roomId);
       this.assertSetupLive(seq, 'after the ICE servers');
+      this.adoptIceServers(ice);
       await this.setupMedia(video, seq);
       this.installBackgroundHandler();
       await this.setupEncryption(groupId, roomId, 'caller', seq);
@@ -990,6 +1083,10 @@ export class CallService {
       await this.connectSignalling(roomId, seq);
       // Before the ring: a call that ended while the socket joined must ring nobody.
       this.assertSetupLive(seq, 'after the join');
+      // The peer connection is built NOW and gathers its candidates through the ring, its
+      // negotiation held until `PeerReady` adopts it - so the answer meets candidates in hand.
+      await this.initPeerConnection({ awaitingPeer: true });
+      this.assertSetupLive(seq, 'after the peer connection was built');
       // The ring OPENS the server's answer window, and it goes BEFORE the invite: no callee can
       // learn of the call before the server would hand it a token, so an early answer (a quick tap,
       // an auto-accept) can never meet a 410 and hang up a call that was fine. Nothing the caller
@@ -1003,6 +1100,10 @@ export class CallService {
       // hangup + ring-end must go out. Before it (initiate refused, no ICE servers, no microphone,
       // a refused ring - the server opens the window BEFORE it fans out) nobody was rung.
       this.inviteSent = true;
+      // `ring_ms` starts HERE, where the ring left (the server's fan-out, then the invite): the
+      // setup before it is the app's, and a callee can answer from its system ring before the
+      // invite's own send resolves - so not later than this either.
+      this.ringStartAt = performance.now();
       if (!this.stillCalling(roomId, 'after the ring')) {
         // The hangup's ring-end left while this ring was still fanning out, so it may have reached
         // the server FIRST; this one is ordered after a fan-out known to be complete.
@@ -1031,6 +1132,39 @@ export class CallService {
       // leaving it to ring into a call that will never answer.
       // A setup that failed AFTER the invite left is a call nobody answered, not one the user cancelled.
       this.endCall(this.inviteSent, 'not-answered');
+      throw e;
+    }
+  }
+
+  /** Marks the answer once per call: `ring_ms` closes, `connect_ms` starts (see {@link ringMs}). */
+  private markAnswered(who: string): void {
+    if (this.answeredAt !== null) return;
+    this.answeredAt = performance.now();
+    if (this.ringStartAt !== null) this.ringMs = this.answeredAt - this.ringStartAt;
+    appendLog(
+      `[Call] answered (${who}) ring_ms=${this.ringMs === null ? '-' : Math.round(this.ringMs)}`
+    );
+  }
+
+  /**
+   * Runs one setup step and logs its own duration. The callee's steps run SIDE BY SIDE, so the
+   * total says nothing about which one was long: each says its own time, or its failure.
+   */
+  private async timedStep<T>(step: string, run: () => Promise<T>): Promise<T> {
+    const startedAt = performance.now();
+    const took = () => Math.round(performance.now() - startedAt);
+    try {
+      const value = await run();
+      appendLog(`[Call] setup step ${step}: ${took()} ms`);
+      return value;
+    } catch (e) {
+      // A step stopped because its call ended - a sibling step failed, or a hang-up - did not fail:
+      // the line names the step that did, once, and this one says it was abandoned.
+      appendLog(
+        e instanceof CallSetupAbandonedError
+          ? `[Call] setup step ${step} abandoned after ${took()} ms (the call ended)`
+          : `[Call] setup step ${step} failed after ${took()} ms: ${String(e)}`
+      );
       throw e;
     }
   }
@@ -1087,24 +1221,33 @@ export class CallService {
         throw new CallE2eUnsupportedError();
       }
       this.callState.set('incall');
-      // The token FIRST: it is where the server refuses (a block set while the call rang, a closed
-      // window), and a refused answer must not have told anyone it was answered. Our siblings stop
-      // ringing one round trip later than they would otherwise - nothing reads that gap.
-      const roomToken = await this.fetchRoomToken(groupId, callId);
-      this.assertSetupLive(seq, 'after the room token');
-      this.currentRoomToken = roomToken;
-      const deviceId = this.mlsService.getDeviceId();
-      // Tell our other devices to stop ringing before joining the SFU.
-      await this.sendMlsNotification(groupId, mkCallAnswered(callId, deviceId));
-      this.assertSetupLive(seq, 'after the answered notice');
-      // WP-XP-5: also stop the system-surface rings (CallStyle notifs / CallKit) everywhere.
-      void this.endServerRing(groupId, callId, 'answered');
-      this.iceServers = await this.fetchIceServers(groupId, callId);
-      this.assertSetupLive(seq, 'after the ICE servers');
-      await this.setupMedia(useVideo, seq);
+      this.markAnswered('this device answered');
+      // FOUR STEPS SIDE BY SIDE, joined before the room: none needs another's result. Serial, they
+      // were 1.2-2.6 s of "connecting" (Android 1.5.3, 2026-10-31). Each logs its own duration.
+      // - The token is where the server refuses (a block set while the call rang, a closed window),
+      //   and a refused answer must not have told anyone it was answered: the "answered" notice and
+      //   the ring-end leave only once it is in hand.
+      // - The ICE servers need only membership (`calls.service.ts` getIceServers).
+      // - The microphone (and camera): one granted for an answer the server then refuses is
+      //   released by `setupMedia`'s own `assertSetupLive`, as for a hangup during the prompt.
+      // - The keys: zeroed by `setupEncryption` when derived for a call that ended meanwhile.
+      // Any one failing fails the answer; the others settle into the same `seq` guard.
+      const token = this.timedStep('room-token', async () => {
+        const roomToken = await this.fetchRoomToken(groupId, callId);
+        this.assertSetupLive(seq, 'after the room token');
+        this.currentRoomToken = roomToken;
+        this.announceAnswered(groupId, callId);
+      });
+      const [, ice] = await Promise.all([
+        token,
+        this.timedStep('ice-servers', () => this.fetchIceServers(groupId, callId)),
+        this.timedStep('media', () => this.setupMedia(useVideo, seq)),
+        this.timedStep('keys', () => this.setupEncryption(groupId, callId, 'callee', seq)),
+      ]);
+      this.assertSetupLive(seq, 'after the parallel setup');
+      this.adoptIceServers(ice);
       this.installBackgroundHandler();
-      await this.setupEncryption(groupId, callId, 'callee', seq);
-      await this.connectSignalling(callId, seq);
+      await this.timedStep('join', () => this.connectSignalling(callId, seq));
       this.assertSetupLive(seq, 'after the join');
       this.syncCallPresence(true);
     } catch (e) {
@@ -1120,6 +1263,29 @@ export class CallService {
       showToast(describeCallFailure(e), 'warning');
       this.endCall();
     }
+  }
+
+  /**
+   * Tells this account's other devices, and every system-surface ring (WP-XP-5), that the call was
+   * answered here. NOT AWAITED by the join: the one thing that reads the MLS notice is a SIBLING
+   * device still ringing this call (`handleCallSignal`, `callMsg.answered`), whose ring stops when it
+   * lands - nothing on the caller or in the record waits for it, and the server's ring-end stops the
+   * system surfaces on its own path. Awaited, it held the media path 0.3-0.7 s. A notice that fails
+   * leaves those siblings ringing until their window closes, so it is said at ERROR.
+   */
+  private announceAnswered(groupId: string, callId: string): void {
+    const sentAt = performance.now();
+    this.sendMlsNotification(groupId, mkCallAnswered(callId, this.mlsService.getDeviceId())).then(
+      () =>
+        appendLog(
+          `[Call] answered notice sent to our other devices: ${Math.round(performance.now() - sentAt)} ms`
+        ),
+      (e: unknown) =>
+        appendLog(
+          `[Call] ERROR answered notice for ${callId} not sent - our other devices keep ringing until their window closes: ${String(e)}`
+        )
+    );
+    void this.endServerRing(groupId, callId, 'answered');
   }
 
   /**
@@ -1161,6 +1327,10 @@ export class CallService {
     appendLog(
       `[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`
     );
+    // The ringback stops FIRST, with the outcome as its reason: declined, busy, cancelled, not
+    // answered (the window closed, or the setup failed after the invite).
+    this.ringWindowOpen = false;
+    this.syncRingingOut(`the call ends (outcome=${ended})`);
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
     this.reconnecting.set(false);
@@ -1192,6 +1362,9 @@ export class CallService {
     // longer news for anyone. Nor is the link: the camera's ladder stops reading it.
     this.stopWatchingMicrophone();
     this.stopVideoQuality();
+    // A ring that ended unanswered: its peer connection never met a peer, and has no report to
+    // write - closed now rather than when the summary closes.
+    this.closeRingPeerConnection('the ring ended unanswered');
 
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
@@ -1284,8 +1457,13 @@ export class CallService {
     this.reportInFlight = null;
     this.lastSnapshot = null;
     this.tapAt = null;
-    this.setupMs = null;
+    this.ringStartAt = null;
+    this.answeredAt = null;
+    this.ringMs = null;
+    this.connectMs = null;
+    this.pcAwaitingPeer = false;
     this.inviteSent = false;
+    this.ringWindowOpen = false;
     this.peerArrived = false;
     this.resumeToken = null;
     this.signallingLost = false;
@@ -1331,6 +1509,10 @@ export class CallService {
     this.isVideoOff.set(true);
 
     this.stopWatchingMicrophone();
+    // Before the capture stops: its end-of-call cost line, then the pipeline and its context.
+    this.micSwitch?.close();
+    this.micSwitch = null;
+    this.noiseSuppression.set(initialNoiseSuppressionView());
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
@@ -1484,8 +1666,18 @@ export class CallService {
     return data.roomToken;
   }
 
-  /** Fetches short-lived TURN credentials from chat-delivery (Bearer auth, same as /api/mls). */
-  private async fetchIceServers(groupId: string, callId: string): Promise<RTCIceServer[]> {
+  /** The ICE servers of a call, and the server's code when it withheld the TURN relay. */
+  private adoptIceServers(ice: FetchedIceServers): void {
+    this.iceServers = ice.iceServers;
+    this.turnWithheldCode = ice.turnWithheldCode;
+  }
+
+  /**
+   * Fetches short-lived TURN credentials from chat-delivery (Bearer auth, same as /api/mls). RETURNS
+   * what it learned and sets nothing: on the callee it runs beside other steps, and an answer landing
+   * after its call ended must not leave a withheld-relay code on the service for the next call.
+   */
+  private async fetchIceServers(groupId: string, callId: string): Promise<FetchedIceServers> {
     const { historyUrl } = resolveMlsPublicUrls();
     const url = new URL('/api/calls/ice-servers', historyUrl);
     url.searchParams.set('groupId', groupId);
@@ -1537,15 +1729,15 @@ export class CallService {
     // is spent or its meter cannot be read: a call between two reachable peers needs no relay, so
     // refusing it would fail calls that cost nothing. Said loudly - a call that then cannot connect
     // will be the one behind a NAT, and this line is what explains it.
-    this.turnWithheldCode = null;
+    let turnWithheldCode: string | null = null;
     if (data.turn?.status === 'unavailable') {
-      this.turnWithheldCode = data.turn.code ?? 'no code';
+      turnWithheldCode = data.turn.code ?? 'no code';
       // TURN OFF BY CONFIGURATION is the owner's choice and said at info; any other withheld relay
       // is an outage the server is already accusing, and said as one.
       appendLog(
-        this.turnWithheldCode === TURN_DISABLED_CODE
+        turnWithheldCode === TURN_DISABLED_CODE
           ? '[Call] TURN relay disabled by the server (TURN_DISABLED) - direct path only'
-          : `[Call] ERROR: TURN relay withheld by the server (${this.turnWithheldCode}) - direct path only`
+          : `[Call] ERROR: TURN relay withheld by the server (${turnWithheldCode}) - direct path only`
       );
     }
 
@@ -1571,7 +1763,7 @@ export class CallService {
       `[Call] ${mapped.length} ICE server(s) (direct first, TURN relay last): ${urlPreview}`
     );
 
-    return mapped;
+    return { iceServers: mapped, turnWithheldCode };
   }
 
   /**
@@ -1774,8 +1966,13 @@ export class CallService {
 
       ws.onerror = () => {
         clearTimers();
-        appendLog('[Call] signalling WebSocket error');
         fail(new Error('call signalling WebSocket connection failed'));
+        // cleanup() closes the socket and then nulls `signaledWs`, in one synchronous run; the
+        // `error` event is dispatched asynchronously, so by the time it fires a socket that is no
+        // longer ours is one WE closed (a hang-up): WebKit still raises `error` for it, and that is
+        // the close arriving, not a failure. Decided by state, never by the event's (empty) message.
+        if (this.signaledWs !== ws) return;
+        appendLog('[Call] signalling WebSocket error');
       };
 
       ws.onclose = (ev) => {
@@ -1935,6 +2132,7 @@ export class CallService {
   private async onPeerReady(initiator: boolean, resumed = false): Promise<void> {
     this.polite = !initiator;
     this.peerArrived = true;
+    this.syncRingingOut('the callee answered (the relay paired the two)');
     this.peerAway = false;
     this.clearRingTimer();
     this.pairEpoch += 1;
@@ -1942,6 +2140,14 @@ export class CallService {
       `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''} (pairing ${this.pairEpoch})`
     );
     this.announceMicOnPairing();
+    // The caller's answer is the callee in the room (the callee marked its own at its tap).
+    this.markAnswered('the peer joined');
+    if (this.pc && this.pcAwaitingPeer) {
+      // Built during the ring, and never paired: there is nothing to resume or replace.
+      this.adoptRingPeerConnection(this.pc);
+      this.updateReconnecting();
+      return;
+    }
     if (this.pc && resumed) {
       this.updateReconnecting();
       await this.restartIfMediaDidNotSurvive();
@@ -2082,7 +2288,11 @@ export class CallService {
    */
   private onPairBroken(why: string): void {
     this.pairEpoch += 1;
-    if (this.pc && !this.packetsAtLoss) this.packetsAtLoss = inboundAudioPackets(this.pc);
+    // A peer connection built during the ring carries no media yet: a baseline read from it (no
+    // inbound stream yet) would outlive the ring and hide a later dead-but-"connected" path from the restart.
+    if (this.pc && !this.pcAwaitingPeer && !this.packetsAtLoss) {
+      this.packetsAtLoss = inboundAudioPackets(this.pc);
+    }
     appendLog(`[Call] signalling pair broken (${why}) - pairing ${this.pairEpoch}`);
   }
 
@@ -2380,10 +2590,6 @@ export class CallService {
 
     track.onunmute = () => {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
-      // setup_ms: the user's tap to the first remote audio that actually flows - what they waited.
-      if (track.kind === 'audio' && this.setupMs === null && this.tapAt !== null) {
-        this.setupMs = performance.now() - this.tapAt;
-      }
       this.publishRemoteStream();
       this.recheckE2eOnMediaStart(`after the remote ${track.kind} unmuted`);
     };
@@ -2423,24 +2629,93 @@ export class CallService {
   }
 
   /**
+   * One offer, on the negotiation queue: from `negotiationneeded`, and from the adoption of a peer
+   * connection built during the ring (its `negotiationneeded` fired while it waited, and made none).
+   */
+  private async offerIfNeeded(pc: RTCPeerConnection): Promise<void> {
+    // Nothing is offered before the peer is in the room. The polite side never opens the
+    // negotiation: it answers the initiator's first offer, which already carries a slot for its
+    // tracks. After that, either side may renegotiate.
+    if (this.pc !== pc || this.pcAwaitingPeer || (this.polite && !pc.remoteDescription)) return;
+    if (pc.signalingState !== 'stable') {
+      // A step queued before this one (an ICE restart offer) already opened a negotiation.
+      appendLog(`[Call] negotiationneeded in signaling=${pc.signalingState} - already offering`);
+      return;
+    }
+    try {
+      this.makingOffer = true;
+      await pc.setLocalDescription();
+      const seq = this.nextOfferSeq();
+      appendLog(`[Call] offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
+      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
+    } catch (e) {
+      appendLog(`[Call] creating an offer failed: ${String(e)}`);
+    } finally {
+      this.makingOffer = false;
+    }
+  }
+
+  /**
+   * The peer joined a call whose peer connection was built during the ring: it becomes the call's,
+   * with what was held back until now - the report ticks, the camera's ladder, and the offer.
+   * Runs INSIDE the negotiation queue (`onPeerReady`), so the offer is queued after it, never awaited.
+   */
+  private adoptRingPeerConnection(pc: RTCPeerConnection): void {
+    this.pcAwaitingPeer = false;
+    // No outage before the pairing is evidence about the media this pairing will carry.
+    this.packetsAtLoss = null;
+    appendLog(
+      `[Call] the peer joined - the peer connection built during the ring is adopted (ice gathering=${pc.iceGatheringState})`
+    );
+    this.armCallReport(pc);
+    const camera = this.liveCameraTransceiver();
+    if (camera?.sender.track) this.startVideoQuality(pc, camera.sender);
+    void this.serialized('offer', () => this.offerIfNeeded(pc));
+  }
+
+  /**
+   * Closes a peer connection built during the ring that never met its peer - at once, not after the
+   * ended summary: it holds a TURN allocation for a call nobody answered. `cleanup` closes it too,
+   * on the paths that reach it first.
+   */
+  private closeRingPeerConnection(why: string): void {
+    if (!this.pc || !this.pcAwaitingPeer) return;
+    appendLog(`[Call] closing the peer connection built during the ring (${why})`);
+    this.pc.close();
+    this.pc = null;
+    this.pcAwaitingPeer = false;
+    // Its microphone sender died with it: the switch must not `replaceTrack` on a closed sender.
+    this.micSwitch?.detachSender();
+  }
+
+  /**
    * Builds the peer connection to the OTHER PARTY (no SFU in between), attaches the E2E sender
    * transform to every local track, and lets `negotiationneeded` drive the offers.
+   *
+   * `awaitingPeer`: the CALLER's build during its ring, before anyone answered. The candidates are
+   * gathered now (`iceCandidatePoolSize`, which gathers before any description and surfaces them at
+   * the first `setLocalDescription`), and nothing that needs the peer runs - no offer, no report
+   * tick, no path check, no video ladder - until `PeerReady` adopts it ({@link adoptRingPeerConnection}).
+   * The pool gathers ONE transport: both kinds ride it under BUNDLE.
    */
-  private async initPeerConnection() {
+  private async initPeerConnection(opts: { awaitingPeer?: boolean } = {}) {
     if (!this.currentGroupId || !this.currentCallId || !this.iceServers) {
       throw new Error('No active call context');
     }
+    const awaitingPeer = opts.awaitingPeer === true;
 
     appendLog(
-      `[Call] creating PeerConnection (policy=${CALL_ICE_TRANSPORT_POLICY}, ${this.iceServers.length} ICE server(s))`
+      `[Call] creating PeerConnection (policy=${CALL_ICE_TRANSPORT_POLICY}, ${this.iceServers.length} ICE server(s)${awaitingPeer ? ', during the ring: gathering now, negotiating once the peer joins' : ''})`
     );
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers,
       iceTransportPolicy: CALL_ICE_TRANSPORT_POLICY,
+      ...(awaitingPeer ? { iceCandidatePoolSize: 1 } : {}),
     });
     this.pc = pc;
+    this.pcAwaitingPeer = awaitingPeer;
     this.transformEpoch += 1;
-    this.armCallReport(pc);
+    if (!awaitingPeer) this.armCallReport(pc);
 
     const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
     /** Gathering ended with no relay candidate and no working pair yet - see `onicecandidate`. */
@@ -2469,32 +2744,7 @@ export class CallService {
 
     // On the negotiation queue like every other step, so an offer is never made while a frame
     // is half applied.
-    pc.onnegotiationneeded = () =>
-      this.serialized('offer', async () => {
-        // The polite side never opens the negotiation: it answers the initiator's first offer,
-        // which already carries a slot for its tracks. After that, either side may renegotiate.
-        if (this.pc !== pc || (this.polite && !pc.remoteDescription)) return;
-        if (pc.signalingState !== 'stable') {
-          // A step queued before this one (an ICE restart offer) already opened a negotiation.
-          appendLog(
-            `[Call] negotiationneeded in signaling=${pc.signalingState} - already offering`
-          );
-          return;
-        }
-        try {
-          this.makingOffer = true;
-          await pc.setLocalDescription();
-          const seq = this.nextOfferSeq();
-          appendLog(
-            `[Call] offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
-          );
-          this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
-        } catch (e) {
-          appendLog(`[Call] creating an offer failed: ${String(e)}`);
-        } finally {
-          this.makingOffer = false;
-        }
-      });
+    pc.onnegotiationneeded = () => this.serialized('offer', () => this.offerIfNeeded(pc));
 
     pc.onicegatheringstatechange = () => {
       appendLog(`[Call] iceGatheringState=${pc.iceGatheringState}`);
@@ -2606,13 +2856,18 @@ export class CallService {
         // in the worker since `setupEncryption`. Both ends add an audio track before negotiating,
         // and the polite side's answer reuses this transceiver, so the remote audio always lands on
         // a receiver that already decrypts.
-        const sender = pc.addTrack(track, this.localStream);
+        // The microphone goes out raw or through RNNoise (`CallMicSwitch`); the transform belongs
+        // to the SENDER, so a later `replaceTrack` between the two keeps it in the path.
+        const micSwitch = track.kind === 'audio' ? this.micSwitch : null;
+        const sender = pc.addTrack(micSwitch ? micSwitch.trackToSend() : track, this.localStream);
         this.attachSenderTransform(sender);
         // A track muted by the OS (or not producing yet) starts sending with no negotiation.
         track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         this.attachReceiverTransform(transceiver.receiver, track.kind);
+        // After both transforms, in this task: it only QUEUES a `replaceTrack` for later.
+        micSwitch?.attachSender(sender);
         if (track.kind === 'video') {
           if (!preferVp8(transceiver, appendLog)) {
             this.refuseCameraSender(pc, sender, track);
@@ -2696,6 +2951,9 @@ export class CallService {
    * so there is something to compare; the verdict is the comparison (`checkE2eInPath`).
    */
   private scheduleE2ePathCheck(pc: RTCPeerConnection, why: string): void {
+    // A peer connection still waiting for its peer has no media to judge: its first `connected`
+    // arms the check, after the adoption.
+    if (this.pcAwaitingPeer && pc === this.pc) return;
     const worker = this.encryptionWorker;
     if (!worker) {
       appendLog(`[Call] WARN E2E path check (${why}) not armed: no worker`);
@@ -2864,8 +3122,11 @@ export class CallService {
       callId: this.currentCallId ?? '-',
       phase,
       durMs: this.tapAt === null ? 0 : performance.now() - this.tapAt,
-      setupMs: this.setupMs,
+      ringMs: this.ringMs,
+      connectMs: this.connectMs,
       engine: currentEngine(),
+      ns: this.micSwitch?.reportState() ?? null,
+      nsFallbacks: this.micSwitch?.fallbackCount() ?? null,
     };
   }
 
@@ -2935,6 +3196,8 @@ export class CallService {
         this.armCallReport(pc);
         return;
       }
+      // Before the line is stamped, so its `ns=` already says a worklet caught not processing.
+      this.micSwitch?.checkProgress();
       const inFlight = {
         pc,
         snapshot: this.logCallReport(
@@ -3202,7 +3465,14 @@ export class CallService {
   private claimE2eIfProven(): void {
     if (!this.e2eSenderSeen || !this.e2eReceiverSeen || this.e2eClaimWithdrawn) return;
     if (get(this.e2eProven)) return;
-    appendLog('[Call] E2E proven: this device encrypted a frame and decrypted one from the peer');
+    // connect_ms: the answer to the FIRST proof of the call (a claim withdrawn and earned again is
+    // not a second connect).
+    if (this.connectMs === null && this.answeredAt !== null) {
+      this.connectMs = performance.now() - this.answeredAt;
+    }
+    appendLog(
+      `[Call] E2E proven: this device encrypted a frame and decrypted one from the peer (connect_ms=${this.connectMs === null ? '-' : Math.round(this.connectMs)})`
+    );
     this.e2eProven.set(true);
   }
 
@@ -3431,7 +3701,10 @@ export class CallService {
     this.isMuted.set(false);
     this.isVideoOff.set(true);
     const mic = this.localStream.getAudioTracks()[0];
-    if (mic) this.watchSystemMicrophone(mic);
+    if (mic) {
+      this.watchSystemMicrophone(mic);
+      this.startNoiseSuppression(mic);
+    }
     if (video) {
       // `cameraOn` stops a capture that resolves after its call (`sameCameraCall`).
       await this.cameraOn();
@@ -3524,6 +3797,45 @@ export class CallService {
     // Ephemeral too: signalling is only meaningful while the call is live, so replaying it out of
     // the shared log would ring a device about a call that ended.
     await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+  }
+
+  /**
+   * Starts this call's noise-suppression switch on the capture `mic` (owner decisions D-B,
+   * 2026-10-31, and OFF by default, 2026-11-01): the pipeline is built only once the switch is ON,
+   * and the call does NOT wait for it - the sender carries the raw track until the RNNoise
+   * pipeline proves it runs, then switches by `replaceTrack` (`CallMicSwitch`). A pipeline that
+   * cannot be built is logged at WARN with its cause and counted; the call goes on raw.
+   */
+  private startNoiseSuppression(mic: MediaStreamTrack): void {
+    this.micSwitch?.close();
+    const micSwitch = new CallMicSwitch(mic, CALL_NOISE_SUPPRESSION_DEFAULT, appendLog, (view) =>
+      this.noiseSuppression.set(view)
+    );
+    this.micSwitch = micSwitch;
+    this.ensureMicPipeline(micSwitch);
+  }
+
+  /** The switch's one build, from this call's capture, when (and only when) it is ON. */
+  private ensureMicPipeline(micSwitch: CallMicSwitch): void {
+    micSwitch.ensurePipeline((signal) =>
+      buildCallMicPipeline(micSwitch.raw, callMicPipelineDeps(appendLog), signal)
+    );
+  }
+
+  /**
+   * The call screen's noise-suppression switch, for THIS call: OFF sends the raw capture (music),
+   * ON the RNNoise output - on the same sender, no renegotiation, the E2E transform untouched.
+   */
+  public toggleNoiseSuppression(): void {
+    const micSwitch = this.micSwitch;
+    if (!micSwitch) {
+      appendLog('[Call] noise suppression switch tapped with no microphone open - ignored');
+      return;
+    }
+    micSwitch.setEnabled(!micSwitch.isEnabled());
+    // The first ON of the call builds the pipeline - inside the tap, so the engine lets its
+    // AudioContext run.
+    this.ensureMicPipeline(micSwitch);
   }
 
   /** Toggles microphone mute on the local audio track. */
@@ -3819,6 +4131,9 @@ export class CallService {
    */
   private startVideoQuality(pc: RTCPeerConnection, sender: RTCRtpSender): void {
     this.stopVideoQuality();
+    // A peer connection still waiting for its peer sends nothing to sample: the adoption starts
+    // the ladder on the camera sender it then has ({@link adoptRingPeerConnection}).
+    if (this.pcAwaitingPeer && pc === this.pc) return;
     const loop = new CallVideoQualityLoop({
       pc,
       sender,

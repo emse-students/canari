@@ -485,6 +485,10 @@ describe('LiveViewer', () => {
     setContentModerator(true);
     flushSync();
     document
+      .querySelector<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-line-toggle]')!
+      .click();
+    flushSync();
+    document
       .querySelector<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-hide]')!
       .click();
     await settle();

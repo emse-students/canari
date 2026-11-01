@@ -45,7 +45,7 @@ delete this entry.
 
 ## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
 
-Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**
+Owner, 2026-10-29: P1 + schema. **Built and merged; migration 042 is APPLIED in production** (`apply_migrations` applies every unrecorded migration on deploy, [no hold exists](backlog.d/a-migration-the-owner-must-approve-has-no-gate-2026-11-01.md)).
 
 **The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
 else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
@@ -58,8 +58,7 @@ answers `not_creator`). The column is internal: no route returns it. An erasure 
 NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
 images that read the column, which is the deploy's own order.
 
-**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
-release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+**Left.** A group created in the
 seconds a deploy straddles (row written by the old image, NULL creator) has its creation refused, and
 the user retries. The P3 entry on failed creations below can now be closed on `createdBy` (let the
 recorded creator end a group nobody joined) - not done here.
@@ -122,7 +121,7 @@ open (sell the rest and skip the grant, split the payment from the grant) are no
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 BUILT as a draft (2026-10-27), the rest planned below.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 planned below.** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -246,10 +245,8 @@ ordinary review.
   accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
   until the floor passes this stable.
   **Left open by the 2026-10-27 review, each owed before the item it names:**
-  - **Pagination of the three lists, a PRECONDITION OF WP-F5.** The inbox, "Mes abonnes" and the
-    sent requests each load the first 100 rows (`FOLLOW_PAGE_MAX`) and no more. Harmless while a
-    follower only means Suivis; once F5 makes a follower a READER across spaces, a person must be
-    able to see and prune every one of them, so F5 does not arm until the screens page.
+  - **Pagination of the three lists, a PRECONDITION OF WP-F5 - BUILT 2026-10-31 on the WP-F5 pull
+    request**: cursor paging, server and client ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
   - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
     the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
     through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
@@ -264,17 +261,19 @@ ordinary review.
     leaks - the reader filters are server-side - but the person asked can only answer from a new
     build. A decision for the user when the stable is cut, with the share of old clients measured
     from the version header then.
-  - **P3 - a row the block severing missed comes back when the block is lifted.** The severing is
-    a best-effort cross-service call: when it does not run, the request or follow stays in
-    `user_follows`, hidden by every reader while the block stands - and visible again, as it was,
-    the moment the block is lifted. The unblock reaches social-service only as a feed-cache drop,
-    which does not name the pair. The fix is an unblock call that names the pair and deletes what
-    is left between them; until then the stale row is a pending request the person may still
-    refuse, or a follow either side may end.
+  - **A row the block severing missed came back when the block was lifted - FIXED 2026-10-31 on
+    the WP-F5 pull request (F2 of its review)**: the unblock severs the pair before lifting the
+    block and is refused while it cannot ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
   - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
     one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
-  arming).** Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  arming). MERGED as #2827, ships in `1.5.4`** (owner reconfirmed 2026-10-31):
+  [as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
+  the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
+  WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
+  cursor; the security review's F2-F6 are fixed on the same pull request; F1 is DECIDED (owner,
+  2026-11-01: *"Ouvrir à tous les abonnés"*): follows made before follow requests existed open
+  across spaces like answered ones. **Still owed before it arms**: the review's re-read. The plan as written: Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
   (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
   someone must not unmask what they posted anonymously), never through a read grant, and monotone
   for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else
@@ -1481,13 +1480,12 @@ conversation - Accepter / Refuser" (a PERSON, never a device: a member's device 
 ask since 2026-10-31), which replaces the group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
 member's Add); and an entry no member made is written in the conversation and reported
 (`[UNINVITED_ENTRY]`, with its `kind`) - see
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
-deployed with the build; `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Migration 038 is applied in production; owed: `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
 than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
-production once the build serves both stores; the four review findings below. The receiving side is built (2026-10-24): a closed group refuses an external commit that brings in a user
-holding no leaf and freezes - see [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
-Owed for it: the same floor, since a client older than the rule still merges such a commit, and a reading on a phone.
+production once the build serves both stores; the four review findings below. The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
+see [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23); what it owes is in
+[backlog.d](backlog.d/p1-the-admission-rule-fix-forward.md).
 
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 
@@ -1696,8 +1694,8 @@ paged history answer ([channel-encryption §4.4](protocols/channel-encryption.md
 (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue): MERGED (#2260), for the next stable (user). It
 ships the READERS with migration 034 and the writer OFF (`QUEUED_PAYLOAD_SHARED_WRITES=false`).
-Owed: the user's yes to apply migration 034; then, once that stable is in production, a pull
-request turning the writer on in the release after it; then one re-measure of the queue's bytes
+Migration 034 is applied in production; owed: a pull
+request turning the writer on (`QUEUED_PAYLOAD_SHARED_WRITES`, still false) in a later release; then one re-measure of the queue's bytes
 ([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
 Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
@@ -3549,7 +3547,7 @@ The group panel reads the user-level roster (`user-members`) and drops only seat
 `awaitingAdmission`. A link seat written BEFORE migration 038 got `awaitingAdmission` defaulting to
 `false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
 read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
-on production. If it is 0, delete this section; otherwise a backfill migration the user approves.
+on production. If it is 0, delete this section; otherwise a backfill migration (additive, reviewed, backed up just before, per the owner's rule of 2026-11-01).
 
 - **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
 

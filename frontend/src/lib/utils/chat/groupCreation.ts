@@ -332,6 +332,8 @@ export type BulkAdditionRefusal =
   | 'no-devices'
   /** Another device holds the group's add lock: nothing was staged, the invite can be retried. */
   | 'add-lock-busy'
+  /** The add-lock request got no answer (transport error, non-2xx): nothing is known of another device. */
+  | 'add-lock-unanswered'
   /** The commit added no device - every key package was skipped (logged per device). */
   | 'no-device-added'
   /**
@@ -476,15 +478,21 @@ async function processBulkAddition(
       return notAdded('no-devices');
     }
 
-    const lockAcquired = await mlsService.acquireAddLock(conversation.id).catch(() => false);
-    if (!lockAcquired) {
+    const lock = await mlsService
+      .acquireAddLockAnswer(conversation.id)
+      .catch(() => 'unanswered' as const);
+    if (lock !== 'taken') {
+      // ONLY AN ANSWERED REFUSAL IS "ANOTHER DEVICE IS ADDING": a lock request that got no answer
+      // says nothing about anyone else, and is a failure the member may retry.
       log(
-        `[WARN] Add-lock busy for ${conversation.id} - invite cancelled (another device is in progress).`
+        lock === 'held'
+          ? `[WARN] Add-lock busy for ${conversation.id} - invite cancelled (another device is in progress).`
+          : `[WARN] Add-lock request for ${conversation.id} got no answer - invite cancelled.`
       );
       console.warn(
-        `[SYNC] Add-lock busy for ${conversation.id}, aborting to avoid concurrent commits`
+        `[SYNC] Add-lock ${lock === 'held' ? 'busy' : 'unanswered'} for ${conversation.id}, aborting to avoid concurrent commits`
       );
-      return notAdded('add-lock-busy');
+      return notAdded(lock === 'held' ? 'add-lock-busy' : 'add-lock-unanswered');
     }
 
     // Users registered server-side AND whose Welcome was accepted: only those are announced.
@@ -603,7 +611,7 @@ async function processBulkAddition(
         `[SYNC] Members added: ${targetUsers.join(', ')} (${announcedUsers.size}/${targetUsers.length} delivered)`
       );
     } finally {
-      if (lockAcquired) await mlsService.releaseAddLock(conversation.id).catch(() => {});
+      await mlsService.releaseAddLock(conversation.id).catch(() => {});
     }
 
     // NOT ADMITTED IS NOT ADDED: refused by the gate (no leaf given), or departed since the merge.

@@ -5,6 +5,7 @@ import { acceptedFollowSql } from '../follows/follow-status';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { liveVisibleToUserSql } from '../spaces/reader-spaces';
 import { isLiveEnabled } from './live-enabled.guard';
+import { LIVE_MIN_CLIENT_VERSION } from './live-client-version';
 import { short } from './live-log';
 
 /** Short form of an id for a log line. */
@@ -14,7 +15,8 @@ import { short } from './live-log';
  * `user_follows` rows for a member's live (a pending request is not a follow, WP-F1),
  * `association_follows` for a live broadcast as an association - minus the
  * broadcaster, minus a follower who cannot SEE it (`liveVisibleToUserSql`: the rule of a post by the
- * same author or association, so a member's live reaches only followers sharing a space with them),
+ * same author or association, so a member's live reaches every ACCEPTED follower whatever their
+ * space since WP-F5, and an association's live only the followers its audience reaches),
  * minus either side of a block with the broadcaster, minus a viewer the broadcaster already removed.
  * Exactly the accounts `LivesService.assertMayWatch` would let in (read grants aside, which never
  * notify), narrowed to the followers: a push never points at a live its reader would get a 404 or a
@@ -146,6 +148,9 @@ export class LiveAnnouncer {
       associationLogoMediaId,
       pushData: {
         liveId,
+        // The lives floor (a build below it answers every /lives call with a 404): chat-delivery
+        // skips a device KNOWN to run an older build, and strips this key before sending.
+        minAppVersion: LIVE_MIN_CLIENT_VERSION,
         ...(asAssociation ? { associationId: live.associationId as string } : {}),
       },
     });

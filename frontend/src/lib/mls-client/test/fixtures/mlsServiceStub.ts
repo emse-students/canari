@@ -54,6 +54,7 @@ export function createMlsServiceStub(
     getEpoch: vi.fn().mockReturnValue(0),
     registerMember: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
+    acquireAddLockAnswer: vi.fn().mockResolvedValue('taken'),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     // A PAGE, not a bare array: the walk reads `rows` and pins its upper bound from `head`. The
     // stub is cast to `IMlsService`, so a stale shape here is invisible to the type checker and
@@ -126,7 +127,6 @@ export function createMlsServiceStub(
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     setAdmissionPolicy: vi.fn().mockResolvedValue(undefined),
-    getAdmissionPolicy: vi.fn().mockResolvedValue('unclassified'),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     getGroupRosterAtGeneration: vi.fn().mockResolvedValue({ members: [], seatGeneration: 0 }),
     getGroupExclusions: vi.fn().mockResolvedValue(new Map()),

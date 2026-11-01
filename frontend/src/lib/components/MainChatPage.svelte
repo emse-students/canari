@@ -387,6 +387,7 @@
         session.authToken = v;
       },
       selectedContact: convs.selectedContact,
+      selectedNow: () => convs.selectedContact,
       getSendError: () => convs.sendError,
       setSendError: (v: string) => {
         convs.sendError = v;
@@ -1100,14 +1101,19 @@
   });
 
   function sendTextNow(text: string, onRefused?: () => void) {
+    const sentFrom = convs.selectedContact;
     void messaging
       .handleSendChat(msgCtx(), text)
       .then((delivered) => {
         if (delivered === false) onRefused?.();
       })
       .catch((e: unknown) => {
-        convs.sendError = m.chat_send_error_generic();
         log(`[SEND] handleSendChat threw - the message was NOT queued: ${String(e)}`);
+        // NOTHING WAS QUEUED, so a throw is a refusal too: the text cleared at the tap goes back.
+        onRefused?.();
+        // The banner belongs to the conversation the send was made in, if it is still on screen.
+        if (convs.selectedContact === sentFrom) convs.sendError = m.chat_send_error_generic();
+        else log('[SEND] error banner not shown: the conversation changed since the send');
       });
   }
 

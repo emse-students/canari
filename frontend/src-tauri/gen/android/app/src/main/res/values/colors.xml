@@ -1,4 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="app_background">#FFF9FBFF</color>
+    <!-- THE INCOMING-CALL SCREEN (IncomingCallActivity), one visual language with the in-app ring
+         (CallOverlay.svelte): each colour is the app.css token of the same role, and the screen is
+         dark in BOTH themes like the `cn-scrim` it mirrors, so no values-night copy exists.
+         call_screen_top = color-cn-ink, call_screen_bottom = color-cn-scrim, call_halo = cn-yellow,
+         call_accept / call_decline = color-call-accept / color-call-decline. -->
+    <color name="call_screen_top">#FF151B2C</color>
+    <color name="call_screen_bottom">#FF0A0A0A</color>
+    <color name="call_halo">#FFF6C232</color>
+    <color name="call_accept">#FF16A34A</color>
+    <color name="call_decline">#FFDC2626</color>
+    <!-- The white inks over that dark screen, as the in-app ring writes them: text-white,
+         the kind pill's bg-white/10 and ring-white/15, its text-white/90, the action labels'
+         white at 85%, and the buttons' press ripple at 30%. -->
+    <color name="call_on_screen">#FFFFFFFF</color>
+    <color name="call_on_screen_secondary">#E6FFFFFF</color>
+    <color name="call_on_screen_label">#D9FFFFFF</color>
+    <color name="call_pill_fill">#1AFFFFFF</color>
+    <color name="call_pill_stroke">#26FFFFFF</color>
+    <color name="call_ripple">#4DFFFFFF</color>
 </resources>
