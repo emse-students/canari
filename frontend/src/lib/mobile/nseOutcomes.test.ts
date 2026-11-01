@@ -117,9 +117,36 @@ describe('the extension and the reader agree on the file contract', () => {
     expect(append.indexOf('flock(lockFd, LOCK_EX | LOCK_NB)')).toBeLessThan(measured);
     expect(measured).toBeGreaterThan(0);
     expect(measured).toBeLessThan(written);
-    const shortBranch = append.slice(written, append.indexOf('return true'));
+    const shortBranch = append.slice(written, append.indexOf('return .appended'));
     expect(shortBranch).toContain('if wrote != bytes.count {');
     expect(shortBranch).toContain('ftruncate(fd, before)');
-    expect(shortBranch).toMatch(/return false\s*\}\s*$/);
+    expect(shortBranch).toMatch(/return \.shortWrite\([^)]*\)\s*\}\s*$/);
+  });
+
+  it('logs the true cause of a refused append, never a busy log for every refusal', () => {
+    const block = swift.match(/enum NseOutcomeLog \{[\s\S]*?\n {2}\}\n/)?.[0] ?? '';
+    const append = block.slice(block.indexOf('static func append('));
+    expect(append).toContain('-> Appended {');
+    expect(append).toContain('errno == EWOULDBLOCK ? .busy : .lockNotTaken(errno: errno)');
+    expect(append).not.toMatch(/return (true|false)\b/);
+    const end = block.match(/func end\([\s\S]*?\n {6}\}\n/)?.[0] ?? '';
+    expect(end).toContain('if case .appended = appended { return }');
+    expect(end).toContain('not appended (\\(appended.reason))');
+    expect(end).not.toContain('log busy');
+  });
+
+  it('reads the boot session once per process, on both sides', () => {
+    const block = swift.match(/enum NseOutcomeLog \{[\s\S]*?\n {2}\}\n/)?.[0] ?? '';
+    expect(block).toMatch(/static let bootSession: String\? = \{/);
+    expect(block).not.toContain('bootSession()');
+    expect(rust).toMatch(/static SESSION: std::sync::OnceLock<Option<String>>/);
+  });
+
+  it('names a run by (pid, at, n): the sequence is in its record and the reader keeps it', () => {
+    const block = swift.match(/enum NseOutcomeLog \{[\s\S]*?\n {2}\}\n/)?.[0] ?? '';
+    expect(block).toContain('record["n"] = n');
+    expect(block).toContain('n: sequence');
+    expect(rust).toMatch(/const ALLOWED_KEYS: &\[&str\] = &\[[^\]]*"n"/);
+    expect(rust).toContain('type RunIdentity = (i64, i64, Option<i64>);');
   });
 });
