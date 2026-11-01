@@ -363,6 +363,8 @@ for _ in $(seq 1 600); do
 done
 dc exec -T auth wget -qO- http://127.0.0.1:3001/release >/dev/null 2>&1
 wait "$AUTH_PID"
+# The check's own evidence, pass or fail: what it counted in the old frontend workers.
+grep -E '^  frontend: [0-9a-f]+ (reloaded; paired|waiting for)' "$TMP/auth.log" || true
 if wait "$DEPLOY_PID"; then ok "the release succeeded"; else
   fail "the release succeeded"
   cat "$TMP/auth.log" >&2
