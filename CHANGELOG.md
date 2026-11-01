@@ -14,6 +14,132 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-01
+
+### Fixed - a joiner's second device reads its conversation as waiting for a member
+
+The groups list says an invitation-link ask on the account's seat, not only on a device row, so a joiner's device with no row there shows "waiting for a member" and asks one instead of attempting a join the server refuses ([mls-protocol](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
+### Changed - the backlog is triaged against main
+
+Entries that shipped, that were superseded or that the owner abandoned are deleted from `docs/wiki/backlog.md` and `docs/wiki/backlog.d/`; what is left is open, owed a reading, or the owner's. The list of what was removed is in the pull request ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - the organiser's grid no longer greys out units the organiser can tap
+
+In block mode the grid drew units inside the minimum notice as closed while a tap on them worked, and the phone's list drew them free. One rule now (`isOfferedStart`) decides both. The edge scroll also stops at the scroll limit and is reset on pointer release
+([bookings-chantier](docs/wiki/bookings-chantier.md#the-phones-planning-d55-2026-11-01-owner)).
+
+### Fixed - a booked block in the week grid said nothing but the avatar; the week now rolls and the grid is shorter
+
+A narrow column hid the holder's name and hours whatever the block's height; it now stacks avatar,
+name and hours (two lines when very narrow). The week shows seven days from today, moved by sevens,
+on one fixed, shorter hour height over the whole day, opening on the first free hour, on a wider
+page with a capped poster
+([bookings-chantier](docs/wiki/bookings-chantier.md#the-rolling-week-and-the-narrow-block-2026-11-01-owner)).
+
+### Fixed - a lint warning in a bookings grid test
+
+The test unmounted the first grid with `app && unmount(...)` as an expression; it is now an `if`, no behaviour change
+([bookings-chantier](docs/wiki/bookings-chantier.md#the-phones-planning-d55-2026-11-01-owner)).
+
+### Added - the booking page is a planning list on a phone, with a "+" and a form
+
+Below `md` the week is a day-by-day list of bookings, blocks and free stretches; a tap on a free
+stretch or the "+" opens a form (column, day, start, end) drawn from the free runs and then the usual
+booking sheet. The organiser gets the same "+" to block. The grid with drag stays on wide screens
+([bookings-chantier](docs/wiki/bookings-chantier.md#the-phones-planning-d55-2026-11-01-owner)).
+
+### Fixed - the phone's planning and the booking grid: review findings of #2889
+
+An organiser's block can no longer start on a unit that has begun, two slots starting at the same instant are told apart, the "+" sits above the bottom bar, the grid's edge scroll follows the visible part and continues while held, an end past midnight says so, and a bookings sheet unmounted by its parent releases its Back entry. The planning view is D55 (the id D54 was taken)
+([bookings-chantier](docs/wiki/bookings-chantier.md#the-phones-planning-d55-2026-11-01-owner)).
+
+### Fixed - the calls notice no longer claims an outbound UDP rule was granted
+
+The School border still drops the host's outbound UDP; 1:1 calls work because they are peer to peer, by design ([calls](docs/wiki/frontend/modules/calls.md)).
+
+### Changed - Canari rings with its own tone
+
+An incoming call rings with "C1", two canaries in harmony chosen by the owner: on Android's new `canari_calls_v2` channel, through CallKit on the iPhone, and in the open app. On Android the open app now rings on the ringtone stream and honours silent and vibrate mode. It used to play a media-volume beep. Leaving the screen hands the call to the native ring (the power button silences it), a call answered or ended never rings again, and the new channel keeps the old one's settings; a Do Not Disturb exception is asked for again until the user answers ([calls](docs/wiki/frontend/modules/calls.md#the-incoming-ring-canaris-own-owner-2026-11-01)).
+
+### Fixed - no payment is opened that a disabled cotisation or a tagless product could never grant
+
+A paid form that grants a cotisation is refused `409 COTISATION_DISABLED` before its payment opens while the association has no cotisation mode, and a grant meeting that state at settlement is a typed final refusal read under the buyer's lock (`paid_not_granted`), never retried. The boutique refuses a legacy tagless membership product (`MEMBERSHIP_PRODUCT_UNGRANTABLE`) and its listing no longer offers it; one check, `cotisationGrantRefusal`, decides for both. Retagging a tier now moves the forms that grant its old key in the same transaction, and a retry whose earlier payment landed is answered `alreadyPaid` before the tier pre-check ([cotisations](docs/wiki/cotisations.md)).
+
+### Fixed - the new-device alert was never posted: its marker's file name was too long
+
+A device-notice marker was named by its whole key in hex (~320 bytes), which the filesystem refused,
+so no background engine announced a new device since 1.4.1-alpha.2; it is now named by the key's
+SHA-256, and an engine posts only once the app has pre-claimed the account's older devices
+([mls-protocol](docs/wiki/protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)).
+
+### Fixed - a local copy of production no longer stops on an unclassified variable
+
+`env-from-prod.sh` refuses any production variable it does not classify, and `QUEUED_PAYLOAD_SHARED_WRITES` (rendered on both estates since migration 034) was in no list; it is kept as production has it ([chat-delivery](docs/wiki/services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
+
+### Fixed - an iOS salon notification names its sender and shows their face or initials
+
+The iPhone's salon banners named nobody and drew the salon's first letter as a face; they now name an
+author the open proved (a v2 session) from the phone's own copy of names, as Android does, and say
+"Quelqu'un" otherwise ([mobile](docs/wiki/frontend/mobile.md#notification-service-extension-nse)).
+
+### Fixed - a file sent while its DM was merged follows it, and one whose conversation is gone says so
+
+A file sent while a duplicate DM group was merged now follows the conversation to its new key; one
+whose conversation was deleted or left is no longer dropped with only a log line - the member is
+told, and the caption goes back to the draft ([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
+
+### Changed - a DM or group file shows its bubble at the tap and is queued like a text
+
+The pre-send wait for the inbound queue and the membership check (18 s on a stalled link, nothing
+on screen) is gone: the placeholder and its outbox entry are written together at the tap, and the
+outbox's own gates hold, retire or send it. A file its group will never take (deleted, or this
+device no longer a member) now says so in its bubble instead of "refused by the server", and a
+refused file takes its caption back instead of sending it alone ([chat](docs/wiki/frontend/modules/chat.md#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
+
+### Fixed - a group notice received late no longer sinks below the conversation that followed it
+
+A device that drained "X added A, B" hours after the event dated it with its own clock, so a phone opening a group for the first time drew it at the bottom; every notice a received frame draws is now dated by the frame's `sentAt` and the server's acceptance ([chat](docs/wiki/frontend/modules/chat.md#a-visible-notice-is-dated-by-its-frame-never-by-when-this-device-learnt-of-it)).
+
+### Fixed - an edge page no longer proves the server is reachable, and five writes no longer trust a portal's 200
+
+A captive portal's `511`, the WAF's HTML `403` or an edge's 5xx page no longer clears the offline state, fires the reconnect or ends the reachability probe; the rename, group image, three notification-preference writes and `registerMember` read who answered before calling a 2xx done ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#22-only-our-apis-answer-proves-the-server-is-there-2026-11-01)).
+
+### Added - a daily count of orphan devices, and the hand procedure that cleans them
+
+The delivery service logs `[ORPHAN_DEVICES]` once a day: devices with queued rows, no session, no push
+token, no ban and no life in 7 days - the same predicate the hand procedure's allowlist uses. The
+scheduled reaper (#2880) was closed instead; the 90-day GC stays
+([chat-delivery](docs/wiki/services/chat-delivery.md#orphan-devices-the-gcs-blind-spot-counted-daily-cleaned-by-hand)).
+`env-from-prod.sh` now classifies `LIVE_ENABLED`, `LYDIA_RECONCILE_ENABLED` and
+`ANDROID_APP_LINK_SHA256`, and its test reads the deploy manifest so an unclassified variable fails.
+
+### Security - the history, base-refresh, welcome and reaction relays answer only a seat in the conversation
+
+`mls/history-request`, `mls/base-refresh-request` and `mls/notify-reaction` now go through the
+membership gate the group routes share; `mls/welcome-request` relays any roster seat, a waiting one
+included, and re-checks its stored asks at the drain; a salon reaction asks social-service whether the
+caller reads the salon, and the client reads a refusal as an answer
+([chat-delivery](docs/wiki/services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)). The
+gateway's WebSocket `welcome_request` frame is retired and its `typing` frame needs a seat
+([chat-gateway](docs/wiki/services/chat-gateway.md#inbound-frames-typing-is-seat-checked-welcome_request-is-retired-2026-11-01)).
+
+### Fixed - an Android salon notification names its sender and shows their face or initials
+
+A salon banner named nobody and drew the salon's first letter as its face. It now names an author
+only when the message's opening proved who wrote it (a v2 session), using the phone's own copy of
+names and never the push. Otherwise it says "Quelqu'un". The push and the live connection give the
+same answer for the same message, whichever arrives first
+([mobile](docs/wiki/frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)).
+
+### Changed - the owner's sovereignty philosophy is recorded, and content-free push is queued
+
+The philosophy is a section of `docs/wiki/durable-rules.md`; the push minimisation is a P2 backlog entry ([durable-rules](docs/wiki/durable-rules.md#product-philosophy---sovereignty)).
+
+### Fixed - the "scroll to bottom" button no longer shows a "1" with nothing new below
+
+The badge counted every unread row of the conversation, wherever it was; it now counts only the unread incoming messages beneath the viewport ([chat](docs/wiki/frontend/modules/chat.md#the-scroll-to-bottom-badge-counts-only-what-lies-below-the-viewport-2026-11-01)).
+
 ## [1.6.0] - 2026-11-01
 
 ### Fixed - the admission card names the person, the list shows an ask, the joiner is told, and members get one push
