@@ -35,8 +35,22 @@
 //! yet - every group of a state written before this field, until a session classifies it - keeps the
 //! behaviour it always had: its external commits are merged. Closing such a group by default would
 //! make the background engine refuse every community newcomer right after an update, before the app
-//! ever ran. The policy is keyed by group id, not by the group's presence, so it survives a
-//! `forget_group` (half of a forget-and-re-Welcome heal) and can be set before the group exists.
+//! ever ran. The policy is keyed by group id, not by the group's presence, so it can be set before
+//! the group exists.
+//!
+//! # What is kept while the rule is disarmed, and what is pruned (review of #2817)
+//!
+//! The setter stays: the app still opens every key group it registers (`setAdmissionPolicy(_,
+//! 'open')`), which is the "mechanism stays" of the owner's 2026-10-31 decision - the classification
+//! the fix-forward re-arms on. Two things go, because nothing reads them while nothing refuses:
+//!
+//! - **`forget_group` prunes the group's entry** ([`MlsManager::forget_admission_policy`]), so the map
+//!   is bounded by the groups held, not by every group ever held. A key group forgotten for a heal is
+//!   unclassified until its NEXT REGISTRATION opens it again (`openAdmissionOfKeyGroup`, the next
+//!   session at the latest); until then, unclassified and open merge the same commits.
+//! - **A persisted `closed` is dropped at load** ([`MlsManager::drop_closed_admission_policies`]): no
+//!   build classifies a conversation closed any more, so a `closed` entry is a dev build's leftover,
+//!   and the verdict it produced would WARN on every legitimate join.
 
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +89,7 @@ impl AdmissionPolicy {
 
 impl MlsManager {
     /// Classifies `group_id`. Keyed by id and independent of whether the group is held, so it may be
-    /// set before a join and outlives a `forget_group`. Logged, because a policy change is the one
+    /// set before a join; `forget_group` removes it. Logged, because a policy change is the one
     /// thing that decides whether an entry is refused.
     pub fn set_admission_policy(&mut self, group_id: &str, policy: AdmissionPolicy) {
         let previous = self.admission.insert(group_id.to_string(), policy);
@@ -95,6 +109,34 @@ impl MlsManager {
     /// The policy `group_id` was classified with, `None` when nobody did (the legacy behaviour).
     pub fn admission_policy(&self, group_id: &str) -> Option<AdmissionPolicy> {
         self.admission.get(group_id).copied()
+    }
+
+    /// Forgets `group_id`'s classification - called by `forget_group`, so the map never outgrows the
+    /// groups this device holds (module doc).
+    pub(crate) fn forget_admission_policy(&mut self, group_id: &str) {
+        if self.admission.remove(group_id).is_some() {
+            self.state_snapshot.borrow_mut().invalidate();
+            log::info!(
+                "[ADMISSION] group {} forgotten - its classification goes with it",
+                group_id.get(..8).unwrap_or(group_id)
+            );
+        }
+    }
+
+    /// Drops every persisted `closed` classification - a dev build's leftover that no build writes
+    /// any more (module doc). Called once at load. Returns how many were dropped.
+    pub(crate) fn drop_closed_admission_policies(&mut self) -> usize {
+        let before = self.admission.len();
+        self.admission
+            .retain(|_, policy| *policy != AdmissionPolicy::Closed);
+        let dropped = before - self.admission.len();
+        if dropped > 0 {
+            self.state_snapshot.borrow_mut().invalidate();
+            log::info!(
+                "[ADMISSION] {dropped} closed classification(s) left by an earlier build dropped - nothing classifies a conversation closed while the rule is disarmed"
+            );
+        }
+        dropped
     }
 }
 

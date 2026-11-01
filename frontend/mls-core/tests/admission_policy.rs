@@ -17,7 +17,8 @@
 //!   Any other is `Uninvited` - and merged, while the rule is disarmed.
 //! - Three states. A group nobody classified keeps the behaviour it always had; the app opens a
 //!   key-distribution group, whose members enter by external commit by design, and closes nothing
-//!   while the rule is disarmed. The choice survives a save, a reload and a `forget_group`.
+//!   while the rule is disarmed. An `open` choice survives a save and a reload; a `closed` one is
+//!   dropped at load (no build writes it any more), and `forget_group` forgets either.
 //!
 //! The one case this policy cannot name is a device FORGED under an existing member's identity:
 //! a `BasicCredential` binds nothing, so only a device endorsement signed by one of that user's
@@ -189,6 +190,108 @@ fn a_device_rejoining_after_losing_its_state_is_accepted() {
         .expect("a member's own device rejoining is accepted");
 }
 
+// ---- The legitimate paths that produce an entry no member made (review of #2817) ---------------
+//
+// One named test each. Every one is the commit #2815 refused and froze on; each must be MERGED, the
+// group must stay converged, and the verdict still names it (the `[UNINVITED_ENTRY]` count the
+// fix-forward is read on).
+
+/// `entrant` lets itself into `gid` from `alice`'s base; alice (and `others`) merge the commit, and
+/// the entrant can read what alice sends next.
+fn merged_and_converged(
+    alice: &mut MlsManager,
+    others: &mut [&mut MlsManager],
+    entrant: &mut MlsManager,
+    entrant_id: &str,
+    gid: &str,
+) {
+    let commit = external_commit_from(alice, gid, entrant);
+    assert_eq!(
+        verdict_on(alice, gid, entrant_id),
+        AdmissionVerdict::Uninvited(Some(entrant_id.to_string())),
+        "the rule still names it"
+    );
+    entrant
+        .merge_pending_commit_for(gid)
+        .expect("the entrant's join is accepted");
+    alice
+        .process_incoming_message(gid, &commit)
+        .expect("alice merges it");
+    for other in others.iter_mut() {
+        other
+            .process_incoming_message(gid, &commit)
+            .expect("every member merges it");
+    }
+    let ciphertext = alice
+        .send_message(gid, b"welcome back")
+        .expect("alice sends");
+    let plaintext = entrant
+        .process_incoming_message(gid, &ciphertext)
+        .expect("the entrant decrypts")
+        .expect("application message");
+    assert_eq!(plaintext, b"welcome back");
+}
+
+#[test]
+fn a_1_1_peer_whose_key_package_was_skipped_at_creation_enters_and_is_merged() {
+    // alice created the 1:1 while bob had no usable KeyPackage, so the tree holds alice alone and
+    // bob's first device enters by its own external commit - the 1:1 IS that peer.
+    let gid = "g-legit-skipped-kp";
+    let mut alice = make_device("alice", "dev1");
+    alice.create_group(gid.to_string()).expect("create");
+    alice.set_admission_policy(gid, AdmissionPolicy::Closed);
+    let mut bob = make_device("bob", "dev1");
+    merged_and_converged(&mut alice, &mut [], &mut bob, "bob:dev1", gid);
+}
+
+#[test]
+fn a_user_whose_only_device_was_revoked_and_swept_comes_back_and_is_merged() {
+    // bob's only device was revoked, so a member's stray sweep removed its leaf; bob's new device
+    // holds no leaf of its user any more.
+    let gid = "g-legit-swept";
+    let (mut alice, _bob) = conversation_alice_bob(gid);
+    alice
+        .remove_members_for_devices(gid, &["bob:dev1"])
+        .expect("the sweep removes the revoked leaf");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    let mut bob_new = make_device("bob", "dev2");
+    merged_and_converged(&mut alice, &mut [], &mut bob_new, "bob:dev2", gid);
+}
+
+#[test]
+fn a_user_whose_only_leaf_was_evicted_on_a_standing_seat_rejoins_and_is_merged() {
+    // bob's only leaf was evicted (a duplicate-leaf repair, a fork heal) while his roster seat still
+    // stands (`unhonoured-seat`): the same device id rejoins with no leaf of its user in the tree.
+    let gid = "g-legit-evicted";
+    let (mut alice, _bob) = conversation_alice_bob(gid);
+    let mut carol = make_device("carol", "dev1");
+    let kp = carol.generate_key_package().expect("kp");
+    let (_c, welcome, _a, _s) = alice.add_members_bulk(gid, &[&kp]).expect("add carol");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    let rt = alice.export_ratchet_tree_for(gid).expect("tree");
+    carol
+        .process_welcome(welcome.as_deref().unwrap(), Some(&rt))
+        .expect("carol joins");
+    let eviction = {
+        let (commit, _base) = alice
+            .remove_members_for_devices(gid, &["bob:dev1"])
+            .expect("evict bob's only leaf");
+        commit
+    };
+    alice.merge_pending_commit_for(gid).expect("merge");
+    carol
+        .process_incoming_message(gid, &eviction)
+        .expect("carol merges the eviction");
+    let mut bob_again = make_device("bob", "dev1");
+    merged_and_converged(
+        &mut alice,
+        &mut [&mut carol],
+        &mut bob_again,
+        "bob:dev1",
+        gid,
+    );
+}
+
 #[test]
 fn the_verdict_is_the_same_for_a_member_that_processes_it_late() {
     // Determinism across desynchronised members: bob is one commit behind when the intruder's
@@ -279,9 +382,10 @@ fn an_opened_key_distribution_group_accepts_a_new_user_by_external_commit() {
 }
 
 #[test]
-fn a_classification_survives_a_save_and_a_reload() {
-    // Otherwise a restart would silently reopen a conversation, or close a key group and refuse
-    // every newcomer.
+fn an_open_classification_survives_a_reload_and_a_closed_one_is_dropped() {
+    // An `open` key group must stay open across a restart. A `closed` conversation is a dev build's
+    // leftover (review of #2817): nothing classifies one any more, and the verdict it produced would
+    // WARN on every legitimate join - so the load drops it.
     let gid = "g-admission-reload";
     let (mut alice, _bob) = conversation_alice_bob(gid);
     alice.set_admission_policy("g-admission-reload-key", AdmissionPolicy::Open);
@@ -290,7 +394,8 @@ fn a_classification_survives_a_save_and_a_reload() {
     let restored = MlsManager::load_or_create("alice", "dev1", Some(snapshot)).expect("reload");
     assert_eq!(
         restored.admission_policy(gid),
-        Some(AdmissionPolicy::Closed)
+        None,
+        "a closed classification is dropped at load"
     );
     assert_eq!(
         restored.admission_policy("g-admission-reload-key"),
@@ -318,13 +423,27 @@ fn a_classification_made_after_a_save_is_in_the_next_save() {
 }
 
 #[test]
-fn a_classification_survives_forgetting_the_group() {
-    // `forget_group` is half of a forget-and-re-Welcome heal: the group id comes back, and the
-    // device must not have lost what it was.
+fn forgetting_a_group_forgets_its_classification() {
+    // Review of #2817: the map is bounded by the groups held, not by every group ever held. A key
+    // group healed by forget-and-re-Welcome is opened again where it is registered.
     let gid = "g-admission-forget";
     let (mut alice, _bob) = conversation_alice_bob(gid);
+    alice.set_admission_policy("g-admission-forget-key", AdmissionPolicy::Open);
     alice.forget_group(gid, 0);
-    assert_eq!(alice.admission_policy(gid), Some(AdmissionPolicy::Closed));
+    assert_eq!(alice.admission_policy(gid), None);
+    assert_eq!(
+        alice.admission_policy("g-admission-forget-key"),
+        Some(AdmissionPolicy::Open),
+        "only the forgotten group's entry goes"
+    );
+    let restored =
+        MlsManager::load_or_create("alice", "dev1", Some(alice.save_state().expect("save")))
+            .expect("reload");
+    assert_eq!(
+        restored.admission_policy(gid),
+        None,
+        "and the next save says so"
+    );
 }
 
 #[test]

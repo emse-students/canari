@@ -848,7 +848,7 @@ impl MlsManager {
                 device_trust.prune_departures(&held_groups);
             }
 
-            let manager = Self {
+            let mut manager = Self {
                 provider,
                 keypair,
                 credential,
@@ -909,6 +909,11 @@ impl MlsManager {
             // this were measured on a handset, and a browser profile does not live long enough to
             // reach the horizon. When the web needs it, the caller passes `Date.now()/1000` to
             // `prune_key_packages_expired_at` - no clock inside this crate, on any target.
+            // A `closed` classification left by an earlier build is dropped once, here, for the same
+            // reason a load is the place for the prune below: it happens once per session, with the
+            // whole state in hand (`crate::admission`, review of #2817).
+            manager.drop_closed_admission_policies();
+
             #[cfg(not(target_arch = "wasm32"))]
             match manager.prune_expired_key_packages() {
                 Ok(0) => {}
