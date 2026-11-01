@@ -303,7 +303,7 @@ else
     cat /proc/net/tcp6 2>/dev/null
   } | awk -v skip="$3" "$2")"
 fi
-echo "$fresh $unpaired $(echo $old | wc -w)"
+echo "$fresh $(echo $old | wc -w) $unpaired"
 '
 
 # THE PAIRING CHECK - what it proves, and what it does not.
@@ -345,10 +345,15 @@ $1 == "sl" { hdr = 1; next }
 }
 END {
   if (!hdr) { print "?"; exit }
-  for (i = 1; i <= k; i++) { if (P[i] in listen) c[W[i]]++; else if (!(R[i] in sk) && ST[i] == "01") u[W[i]]++ }
+  for (i = 1; i <= k; i++) {
+    if (P[i] in listen) { c[W[i]]++; C++ }
+    else if (R[i] in sk) S++
+    else if (ST[i] == "01") { u[W[i]]++; U++ }
+  }
   bad = 0
   for (w in c) if (c[w] > u[w] + 0) bad += c[w] - u[w]
-  print bad + 0
+  # The verdict, then its evidence: client connections, upstreams counted, subrequest ones left out.
+  print bad + 0, C + 0, U + 0, S + 0
 }'
 
 # rotation_subrequest_ports <proxy> - reads `nginx -T` on stdin and prints, one per line, the port of
@@ -431,7 +436,7 @@ rotation_reload() {
     # held vacuously. nginx keeps its workers dumpable, so their own uid reads them with no
     # capability at all. A worker whose fds still read as nothing makes the read `?` (unknown).
     out="$($DOCKER_CLI exec -u "$uid" "$pid" sh -c "$ROTATION_READ_SCRIPT" sh "$before" "$ROTATION_PAIRS_AWK" "$hex")" || out=""
-    read -r fresh unpaired alive <<<"$out"
+    read -r fresh alive unpaired clients ups skipped <<<"$out"
     case "$fresh:$unpaired" in
     0:*)
       # No new worker yet: either the master has not got to the signal, or it refused the files.
@@ -444,14 +449,16 @@ rotation_reload() {
       if [ "$mode" != retiring ] || [ "$unpaired" = 0 ]; then
         printf '  %s: %s reloaded; ' "$proxy" "${pid:0:12}"
         if [ "$mode" = retiring ]; then
-          printf 'paired after %s read(s) (%s old worker(s) still finishing proxied requests)\n' "$read" "$alive"
+          printf 'paired after %s read(s) (%s old worker(s) still finishing proxied requests; %s client connection(s), %s upstream(s), %s subrequest connection(s) not counted)\n' \
+            "$read" "$alive" "$clients" "$ups" "$skipped"
         else
           printf 'a new worker runs on the list\n'
         fi
         return 0
       fi
       if [ "$waited" = 0 ]; then
-        printf '  %s: %s waiting for %s request(s) of the old workers to choose an upstream\n' "$proxy" "${pid:0:12}" "$unpaired"
+        printf '  %s: %s waiting for %s request(s) of the old workers to choose an upstream (%s client connection(s), %s upstream(s), %s subrequest connection(s) not counted)\n' \
+          "$proxy" "${pid:0:12}" "$unpaired" "$clients" "$ups" "$skipped"
         waited=1
       fi
       ;;

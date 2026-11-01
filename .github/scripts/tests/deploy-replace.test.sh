@@ -423,9 +423,9 @@ S 10 222
    1: 0200A8C0:0050 0300A8C0:D431 01 00000000:00000000 00:00000000 00000000     0        0 111 1
    2: 0200A8C0:A1B2 0400A8C0:0BC4 01 00000000:00000000 00:00000000 00000000     0        0 222 1'
   verdict "an upstream connection to a subrequest port pairs nothing: the request has not chosen yet" \
-    '[ "$(printf "%s\n" "$TABLE" | awk -v skip=" 0BC4" "$ROTATION_PAIRS_AWK")" = 1 ]'
+    '[ "$(printf "%s\n" "$TABLE" | awk -v skip=" 0BC4" "$ROTATION_PAIRS_AWK")" = "1 1 0 1" ]'
   verdict "an upstream connection elsewhere pairs its client: the request has chosen" \
-    '[ "$(printf "%s\n" "$TABLE" | awk -v skip="" "$ROTATION_PAIRS_AWK")" = 0 ]'
+    '[ "$(printf "%s\n" "$TABLE" | awk -v skip="" "$ROTATION_PAIRS_AWK")" = "0 1 1 0" ]'
   verdict "an unreadable TCP table is unknown to the pairing check, never clean" \
     '[ "$(printf "S 10 111\n" | awk -v skip="" "$ROTATION_PAIRS_AWK")" = "?" ]'
   verdict "an unreadable TCP table is unknown to the queue read, never clean" \
