@@ -24,8 +24,10 @@ Owed, in this order, before any refusal is re-armed:
      `archive_logs` copies every container's log to `~/deploy-log-archive/canari-prod/<stamp>/`
      before each deploy, the newest 10 deploys, none older than 30 days
      ([logging](../infrastructure/logging.md)). Each line carries `group`, `entrant` and `epoch`,
-     the dedup key, so lines from several archives can be merged and deduplicated offline. That
-     widens the reading to at most 30 days, read by hand, and no further.
+     the dedup key, so lines from several archives can be merged and deduplicated offline. An
+     archive holds the 30 days before its deploy and is itself kept 30 days, so a line can live
+     about 60 days in it ([logging](../infrastructure/logging.md#the-90-day-ceiling-2026-10-16)),
+     at most 10 deploys back; past that, nothing holds it. Read by hand.
    - **No persisted report carries it.** The daily jobs of `scheduled.yml` (`hosts`, `backups`,
      `log-retention`) persist their output only as GitHub Actions run logs, and this repository is
      public, so those logs are public: such a line could carry counts by `kind` and nothing else,

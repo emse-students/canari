@@ -27,25 +27,41 @@ export function isNeverAdmitted(
  * The ask is the person's, not the device's (review of #2442): the list says it whether or not this
  * device holds a device row there, so a joiner's second device - no row yet - reads its conversation
  * as waiting for a member like the first, never as an ordinary `pending` one. A row the server says
- * nothing about (an older server without the field) is left as it is: "the server did not say" is
- * not "not an ask". An `active` row is never flagged: this device is in the group, so the person was
- * admitted.
+ * nothing about is left as it is: "the server did not say" is not "not an ask". An `active` row is
+ * never flagged: this device is in the group, so the person was admitted.
  *
+ * AN OLDER SERVER says the flag only on this device's seat (`deviceMembership.awaitingAdmission`), so
+ * that is read when the row carries no account-seat flag - a shim while a store build runs ahead of
+ * production (`docs/wiki/legacy-compatibility.md`), logged at
+ * WARN once per pass because reaching it means the server is older than this client.
+ *
+ * @param log where the fallback is said; one line per pass, naming how many rows took it.
  * @returns the keys whose flag changed, for the caller to persist.
  */
 export function syncAdmissionFlags(
   conversations: Map<string, Conversation>,
-  serverGroups: readonly UserGroupRow[]
+  serverGroups: readonly UserGroupRow[],
+  log?: (message: string) => void
 ): string[] {
   const changed: string[] = [];
+  let fromDeviceSeat = 0;
   for (const g of serverGroups) {
     const convo = conversations.get(g.groupId);
-    const said = g.awaitingAdmission;
+    if (g.awaitingAdmission === undefined && g.deviceMembership?.awaitingAdmission !== undefined) {
+      fromDeviceSeat++;
+    }
+    const said = g.awaitingAdmission ?? g.deviceMembership?.awaitingAdmission;
     if (!convo || said === undefined) continue;
     const awaiting = said === true && convo.lifecycle !== 'active';
     if ((convo.awaitingAdmission === true) === awaiting) continue;
     conversations.set(g.groupId, { ...convo, awaitingAdmission: awaiting });
     changed.push(g.groupId);
+  }
+  if (fromDeviceSeat > 0) {
+    log?.(
+      `[DISCOVERY] [WARN] the groups list carries no account-seat awaitingAdmission on ${fromDeviceSeat} row(s) - ` +
+        `read off this device's seat instead (a server older than this client)`
+    );
   }
   return changed;
 }

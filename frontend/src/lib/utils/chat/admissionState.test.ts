@@ -72,11 +72,45 @@ describe('syncAdmissionFlags', () => {
     expect(syncAdmissionFlags(active, listed(true))).toEqual([]);
   });
 
-  it('leaves the row alone when the server does not say - an older server', () => {
+  it('leaves the row alone when the server says nothing at all', () => {
     const conversations = new Map([['g1', row('pending', true)]]);
 
     expect(syncAdmissionFlags(conversations, listed())).toEqual([]);
     expect(conversations.get('g1')?.awaitingAdmission).toBe(true);
+  });
+
+  /**
+   * AN OLDER SERVER says the flag only on this device's seat. The joiner's FIRST device, whose row
+   * carries it, must still read "waiting for a member" while a store build runs ahead of production
+   * (review of #2894, M1) - and the fallback is said, since reaching it accuses the server's age.
+   */
+  it("reads this device's seat from an older server, and says that it did", () => {
+    const conversations = new Map([['g1', row('pending')]]);
+    const log = vi.fn();
+    const older = [
+      {
+        groupId: 'g1',
+        name: 'Groupe',
+        isGroup: true,
+        deviceMembership: {
+          status: 'pending',
+          welcomeQueued: false,
+          addInFlight: false,
+          admitted: false,
+          awaitingAdmission: true,
+        },
+      } as UserGroupRow,
+    ];
+
+    expect(syncAdmissionFlags(conversations, older, log)).toEqual(['g1']);
+    expect(conversations.get('g1')?.awaitingAdmission).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("read off this device's seat"));
+  });
+
+  it('says nothing when the server carries the account-seat flag', () => {
+    const log = vi.fn();
+    syncAdmissionFlags(new Map([['g1', row('pending')]]), listed(true), log);
+    expect(log).not.toHaveBeenCalled();
   });
 });
 

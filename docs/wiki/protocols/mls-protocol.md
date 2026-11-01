@@ -1238,8 +1238,10 @@ winner's outcome without a refresh.
 **The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
 conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,
 for the ACCOUNT's seat, `awaitingAdmission` on each row - said whether or not this device holds a
-device row there, never on a group this device is `active` in (the per-device
-`deviceMembership.awaitingAdmission` stays for older clients). The ask is the person's, not the
+device row there, never while ANY device of the person is `active` in the group - the commit gate's
+own predicate, `seatStillAwaits` (`utils/group-membership.ts`), read for the flagged groups only. The
+per-device `deviceMembership.awaitingAdmission` stays: an older client reads it, and a client facing
+an older server falls back to it with a WARN ([legacy-compatibility](../legacy-compatibility.md)). The ask is the person's, not the
 device's (review of #2442): a joiner's second device, which holds no device row yet, read its row as
 an ordinary `pending` conversation and its recovery fell through to an external join the base refused
 with a 409; it now reads "waiting for a member" like the first device, and `requestReAdd` reads the

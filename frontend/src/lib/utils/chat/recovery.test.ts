@@ -1207,6 +1207,29 @@ describe('requestReAdd - an invitation-link ask a member declined', () => {
     );
   });
 
+  it("a seat the list says is NOT awaiting keeps a further device's own door (#2832's self-join unchanged)", async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getDeviceMemberships: vi.fn().mockResolvedValue([]),
+        getUserGroups: vi.fn().mockResolvedValue([
+          {
+            groupId: 'g1',
+            name: '',
+            isGroup: true,
+            deviceMembership: null,
+            awaitingAdmission: false,
+          },
+        ]),
+        externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+      }),
+    });
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
+  });
+
   it('a seated account with no row for this device keeps its own door (the control)', async () => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
