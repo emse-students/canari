@@ -27,6 +27,8 @@ describe('PostsService republication fields', () => {
     publisherOf?: string[];
     /** The reader sees the post ONLY through a nominative read grant. */
     grantOnly?: boolean;
+    /** The reader sees the post ONLY through a member's repost (WP-F6): grant-free, not first-hand. */
+    repostOnly?: boolean;
     /** D38b: among `republishAs`, the associations of the kind that may ask an author. */
     personalAs?: string[];
     /** D38b: the server's requestable predicate holds for the post. */
@@ -44,9 +46,12 @@ describe('PostsService republication fields', () => {
         );
       }
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
-      if (sql.startsWith('SELECT posts.id FROM posts')) {
-        // The grant-free predicate: a grant-only post is absent from the answer.
-        return Promise.resolve(opts.grantOnly ? [] : [{ id: opts.post.id }]);
+      if (sql.startsWith('SELECT posts.id,') && sql.includes('AS "firstHand"')) {
+        // The grant-free predicate: a grant-only post is absent from the answer; a post seen only
+        // through a member repost is present, and not first-hand.
+        return Promise.resolve(
+          opts.grantOnly ? [] : [{ id: opts.post.id, firstHand: !opts.repostOnly }]
+        );
       }
       if (sql.includes('FROM post_republications pr')) {
         return Promise.resolve(
@@ -147,6 +152,14 @@ describe('PostsService republication fields', () => {
     expect(await service.getById('p1', { viewerId: 'grantee' })).toMatchObject({
       canRepublish: false,
       canVote: false,
+    });
+  });
+
+  it('NO CHAIN (WP-F6): offers no "Republier" on a post only a member repost shows, and still the vote', async () => {
+    const service = makeService({ post: assoPost, republishAs: [A2], repostOnly: true });
+    expect(await service.getById('p1', { viewerId: 'follower' })).toMatchObject({
+      canRepublish: false,
+      canVote: true,
     });
   });
 

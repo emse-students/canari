@@ -672,10 +672,18 @@
     {/if}
 
     {#if ShareSheet && shareFor}
+      {@const sharedReel = reels.find((r) => r.id === shareFor)}
       <ShareSheet
         open
         postId={shareFor}
         onClose={() => (shareFor = null)}
+        canRepost={sharedReel?.canRepost === true}
+        repostedByMe={sharedReel?.repostedByMe === true}
+        onRepostChange={(id, reposted) => {
+          // WP-F6: the server's answer, written onto the reel so the next sheet offers the right row.
+          const reel = reels.find((r) => r.id === id);
+          if (reel) setPost({ ...reel, repostedByMe: reposted, canRepost: !reposted });
+        }}
         onSentInApp={() => {
           // The link waits in a conversation's composer, under this viewer: step aside for it.
           console.debug('[reel-viewer] closed: the reel was sent into a conversation');

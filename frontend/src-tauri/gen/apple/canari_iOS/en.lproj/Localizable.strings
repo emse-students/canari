@@ -31,6 +31,8 @@
 "notif.social.followed_post.body" = "New post";
 "notif.social.association_repost.title" = "%@ shared a post";
 "notif.social.association_repost.body" = "New post";
+"notif.social.member_repost.title" = "%@ reposted a post";
+"notif.social.member_repost.body" = "New post";
 "notif.social.repost_proposed.title" = "%@ proposes a post to share";
 "notif.social.repost_proposed.body" = "A post to share";
 "notif.social.repost_personal_requested.title" = "%@ asks to share your post";

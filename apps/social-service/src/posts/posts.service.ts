@@ -1,5 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
+  memberRepostContext,
+  EMPTY_MEMBER_REPOST_CONTEXT,
+  type MemberRepostContext,
+  type Reposter,
+} from './member-repost-card';
+import type { RepostConsent } from './member-reposts.service';
+import {
   BadRequestException,
   Injectable,
   Logger,
@@ -47,6 +54,7 @@ import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
   inAssociationsFeedSql,
   republishedFeedAtSql,
+  memberRepostedAmongSql,
   republishedForViewerSql,
 } from './republished-feed-sql';
 import {
@@ -90,6 +98,13 @@ interface PostViewerContext {
    */
   grantFreeIds: Set<string>;
   /**
+   * Of `grantFreeIds`, those the reader sees FIRST-HAND - leaving member reposts out too
+   * (`memberReposts: false`): what a republication enforces, so an association is never the second
+   * step of a chain that began with a member's repost (WP-F6, Opus review 2026-11-01). A vote keeps
+   * `grantFreeIds`: a repost opens a post to every reader-side act a follow opens.
+   */
+  firstHandIds: Set<string>;
+  /**
    * D38b: the associations the reader may ask an author IN THE NAME OF - `POST_AS_ASSO` HELD (a
    * global admin included: the tier grants nothing here), of the kind that may ask, not archived.
    */
@@ -101,6 +116,8 @@ interface PostViewerContext {
   requestablePersonalIds: Set<string>;
   /** D38b: per post, the standing requests of the reader's associations (any status but withdrawn). */
   personalRequests: Map<string, StandingPersonalRequest[]>;
+  /** WP-F6: what the page's cards say and offer about member reposts (`memberRepostContext`). */
+  memberReposts: MemberRepostContext;
 }
 
 /** A request one of the reader's associations made for a personal post and that still stands (D38b). */
@@ -163,6 +180,17 @@ interface PostCapabilities {
    * (a grant opens read, react and comment, never a vote - `assertVisible` 'VOTE').
    */
   canVote: boolean;
+  /** WP-F6 "Republier pour mes abonnes": the reader may repost it now (the write's own rules). */
+  canRepost: boolean;
+  /** WP-F6: the reader reposted it, so the card offers to take it back. */
+  repostedByMe: boolean;
+  /** WP-F6: the people the reader FOLLOWS who reposted it, oldest first - "Republie par Y". */
+  repostedBy: Reposter[];
+  /**
+   * WP-F6: on the reader's OWN personal, non-anonymous post only, its repost consent (the post's
+   * override and what applies); absent on every other card.
+   */
+  repostConsent?: RepostConsent;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -286,9 +314,11 @@ export class PostsService {
     managedAssociationIds: new Set(),
     republishAsIds: new Set(),
     grantFreeIds: new Set(),
+    firstHandIds: new Set(),
     personalRepublishAsIds: new Set(),
     requestablePersonalIds: new Set(),
     personalRequests: new Map(),
+    memberReposts: EMPTY_MEMBER_REPOST_CONTEXT,
   };
 
   /**
@@ -317,33 +347,39 @@ export class PostsService {
           ? await this.republishAsOf(viewerId)
           : { all: new Set<string>(), personal: new Set<string>() };
       return {
+        memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         viewerId,
         isGlobalAdmin: true,
         isModerator: true,
         managedAssociationIds: new Set(),
         republishAsIds: new Set(),
         grantFreeIds: new Set(),
+        firstHandIds: new Set(),
         ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator, memberships, grantFreeIds] = await Promise.all([
-      this.associationsService.mayActOnAny(
-        viewerId,
-        associationIds,
-        AssociationPermissionFlag.POST_AS_ASSO
-      ),
-      this.associationsService.isContentModerator(viewerId),
-      this.republishAsOf(viewerId),
-      this.grantFreeVisibleIds(postIds, viewerId),
-    ]);
+    const [managedAssociationIds, isModerator, memberships, grantFree, memberReposts] =
+      await Promise.all([
+        this.associationsService.mayActOnAny(
+          viewerId,
+          associationIds,
+          AssociationPermissionFlag.POST_AS_ASSO
+        ),
+        this.associationsService.isContentModerator(viewerId),
+        this.republishAsOf(viewerId),
+        this.grantFreeVisibleIds(postIds, viewerId),
+        memberRepostContext(this.postRepo.manager, postIds, viewerId),
+      ]);
     return {
+      memberReposts,
       viewerId,
       isGlobalAdmin: false,
       isModerator,
       managedAssociationIds,
       republishAsIds: memberships.all,
-      grantFreeIds,
+      grantFreeIds: grantFree.grantFreeIds,
+      firstHandIds: grantFree.firstHandIds,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
@@ -353,14 +389,25 @@ export class PostsService {
    * same `postVisibleToViewerSql` (`readGrants: false`) that `assertVisible(.., 'VOTE')` and the
    * republication path enforce, so a control is offered exactly when its write is accepted.
    */
-  private async grantFreeVisibleIds(postIds: string[], viewerId: string): Promise<Set<string>> {
-    if (postIds.length === 0) return new Set();
+  private async grantFreeVisibleIds(
+    postIds: string[],
+    viewerId: string
+  ): Promise<{ grantFreeIds: Set<string>; firstHandIds: Set<string> }> {
+    const grantFreeIds = new Set<string>();
+    const firstHandIds = new Set<string>();
+    if (postIds.length === 0) return { grantFreeIds, firstHandIds };
     const rows: unknown = await this.postRepo.manager.query(
-      `SELECT posts.id FROM posts WHERE posts.id = ANY($1::uuid[])
+      `SELECT posts.id,
+              ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS "firstHand"
+         FROM posts WHERE posts.id = ANY($1::uuid[])
          AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })}`,
       [postIds, viewerId]
     );
-    return new Set(Array.isArray(rows) ? rows.map((r: { id: string }) => r.id) : []);
+    for (const r of Array.isArray(rows) ? (rows as { id: string; firstHand: boolean }[]) : []) {
+      grantFreeIds.add(r.id);
+      if (r.firstHand === true) firstHandIds.add(r.id);
+    }
+    return { grantFreeIds, firstHandIds };
   }
 
   /**
@@ -430,7 +477,7 @@ export class PostsService {
             AND NOT posts."hiddenByModeration"
             AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
             AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
-            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}
+            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })}
             AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
               WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")
                  OR (req_block."blockerId" = posts."authorId" AND req_block."blockedId" = $2))`,
@@ -553,6 +600,25 @@ export class PostsService {
             (r): r is PersonalRepublicationRequestState => r.status !== 'accepted'
           )
         : [],
+      ...this.memberRepostFields(post.id, viewer),
+    };
+  }
+
+  /** WP-F6: the card's member-repost fields, read from the page's context. */
+  private memberRepostFields(
+    postId: string | undefined,
+    viewer: PostViewerContext
+  ): Pick<PostCapabilities, 'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent'> {
+    const ctx = viewer.memberReposts;
+    if (!viewer.viewerId || !postId) {
+      return { canRepost: false, repostedByMe: false, repostedBy: [] };
+    }
+    const consent = ctx.consent.get(postId);
+    return {
+      canRepost: ctx.repostable.has(postId),
+      repostedByMe: ctx.mine.has(postId),
+      repostedBy: ctx.reposters.get(postId) ?? [],
+      ...(consent ? { repostConsent: consent } : {}),
     };
   }
 
@@ -599,8 +665,9 @@ export class PostsService {
   ): boolean {
     if (!viewer.viewerId || !post.associationId) return false;
     if (viewer.isGlobalAdmin) return true;
-    // A grant opens a post to read only: republishing it is a 404 (`RepublicationsService`).
-    if (!this.viewerSeesWithoutGrant(post, viewer)) return false;
+    // A grant opens a post to read only, and a member's repost is not a door an association
+    // republishes through (no chain): either is a 404 (`RepublicationsService`).
+    if (!post.id || !viewer.firstHandIds.has(post.id)) return false;
     const already = new Set((post.republishedBy ?? []).map((r) => r.id));
     return [...viewer.republishAsIds].some((id) => id !== post.associationId && !already.has(id));
   }
@@ -665,6 +732,8 @@ export class PostsService {
     viewer: PostViewerContext
   ): Promise<Record<string, unknown>> {
     const raw: any = { ...(post as any) };
+    // WP-F6: the author's per-post consent is served to the author alone, as `repostConsent`.
+    delete raw.allowReposts;
     // Backward compatibility: expose both `media` (canonical) and `images` (legacy clients).
     if (Array.isArray(raw.media)) {
       raw.images = raw.media;
@@ -1342,6 +1411,8 @@ export class PostsService {
          -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
          OR (NOT COALESCE(posts.anonymous, false)
              AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
+         -- What a followed PERSON reposted (WP-F6), never anonymous.
+         OR ${memberRepostedAmongSql('$4', `$${5 + tail.length}`)}
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
@@ -1350,7 +1421,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3'))}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3', '$4'))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );

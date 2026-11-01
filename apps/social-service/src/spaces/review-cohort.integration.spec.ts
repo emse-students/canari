@@ -131,9 +131,14 @@ maybe('the review cohort against PostgreSQL', () => {
       '073_republications.sql',
       '074_coorganise.sql',
       '078_read_grants.sql',
+      '121_member_reposts.sql',
     ]) {
       await client.query(migration(name));
     }
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     for (const [id, u] of Object.entries(USERS)) {
       await client.query(`INSERT INTO users (id, admin, campus, cursus) VALUES ($1, $2, $3, $4)`, [
         id,
