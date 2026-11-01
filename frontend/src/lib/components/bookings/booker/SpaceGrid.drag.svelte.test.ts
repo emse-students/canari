@@ -57,7 +57,20 @@ async function open(units: SlotUnit[], space = spaceOf(4), blockMode = false, no
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();
-  return [...document.querySelectorAll<HTMLElement>('[data-cell]')];
+  return cellsByIndex();
+}
+
+/**
+ * The hit areas by the index of their unit in the day. Only FREE units have one
+ * (a booking or a block is one button of its own; a refused start keeps a DISABLED one, so a drag
+ * can still cross it), so the others are `undefined` and each unit keeps its own index.
+ */
+function cellsByIndex(): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (const cell of document.querySelectorAll<HTMLElement>('[data-cell]')) {
+    out[Number(cell.dataset.idx)] = cell;
+  }
+  return out;
 }
 
 /** A pointer event on `target`; `y` is the UNIT (its index in the day) the stubbed hit-test will answer with. */
@@ -123,9 +136,9 @@ describe('SpaceGrid - drag a range', () => {
     pointer('pointerdown', cells[0], 'mouse', 0, 0);
     pointer('pointermove', cells[2], 'mouse', 20, 2);
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(/\d/);
-    expect(cells[0].className).toContain('bg-cn-yellow');
-    expect(cells[2].className).toContain('bg-cn-yellow');
-    expect(cells[3].className).not.toContain('bg-cn-yellow/40');
+    // ONE accent block for the whole range, not a coloured cell per unit.
+    expect(document.querySelectorAll('[data-selection]')).toHaveLength(1);
+    expect(document.querySelector('[data-selection]')!.className).toContain('bg-cn-yellow');
     pointer('pointerup', cells[2], 'mouse', 20, 2);
     expect(document.querySelector('[role="status"]')).toBeNull();
   });
@@ -171,11 +184,11 @@ describe('SpaceGrid - drag a range', () => {
     mounted.push(() => unmount(app, { outro: false }));
     flushSync();
     await tick();
-    const cells = [...document.querySelectorAll<HTMLButtonElement>('[data-cell]')];
+    const cells = cellsByIndex();
     // Both refusals only grow with time: the refused start and every earlier one are retired.
-    expect(cells[0].disabled).toBe(true);
-    expect(cells[1].disabled).toBe(true);
-    expect(cells[2].disabled).toBe(false);
+    expect((cells[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((cells[1] as HTMLButtonElement).disabled).toBe(true);
+    expect((cells[2] as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('drags upward from the lower row, the first unit being the upper one', async () => {
@@ -257,7 +270,7 @@ describe('SpaceGrid - block mode, the organiser dashboard (WP-R5, D50)', () => {
     pointer('pointerdown', cells[1], 'mouse', 0, 1);
     pointer('pointermove', cells[1], 'mouse', 0, 1);
     pointer('pointermove', cells[6], 'mouse', 20, 6);
-    expect(cells[6].className).toContain('border-red-err');
+    expect(document.querySelector('[data-selection]')!.className).toContain('border-red-err');
     pointer('pointerup', cells[6], 'mouse', 20, 6);
     expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 6);
   });

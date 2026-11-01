@@ -257,6 +257,8 @@ export interface BookingView {
   /** The viewer is the holder or a participant still in. */
   mine: boolean;
   holderName?: string;
+  /** Sent exactly when `holderName` is: the booker's photo is shown only where the name is. */
+  holderId?: string;
   participantNames?: string[];
   answers?: Record<string, unknown> | null;
   /** With `answers`: the name each FILE answer's file was uploaded under, by file id (WP-B6). */

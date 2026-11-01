@@ -63,22 +63,26 @@ async function grid(blockMode: boolean) {
 describe('SpaceGrid in block mode', () => {
   it('draws free units with no "Libre" text and no green', async () => {
     const cells = await grid(true);
-    const free = cells.filter((c) => !c.textContent!.includes('Accordage'));
-    expect(free.length).toBeGreaterThan(0);
-    for (const cell of free) {
+    // Only free units are hit areas; the blocked stretch is one button of its own, keeping its reason.
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) {
       expect(cell.textContent!.trim()).toBe('');
       expect(cell.className).not.toContain('green-ok');
       // The word is still the cell's NAME for a screen reader.
       expect(cell.getAttribute('aria-label')).toContain(m.bookings_cell_free());
     }
-    expect(cells.some((c) => c.textContent!.includes('Accordage'))).toBe(true);
+    expect(document.body.textContent).toContain('Accordage');
+    expect(document.body.textContent).not.toContain(m.bookings_cell_free());
   });
 
   it('keeps the booker green "Libre" outside block mode', async () => {
-    const cells = await grid(false);
-    const free = cells.find((c) => c.textContent!.includes(m.bookings_cell_free()));
-    expect(free).toBeDefined();
-    expect(free!.className).toContain('green-ok');
+    await grid(false);
+    // ONE block for the stretch of free time, its word said once.
+    const words = [...document.querySelectorAll<HTMLElement>('span')].filter(
+      (e) => e.textContent!.trim() === m.bookings_cell_free()
+    );
+    expect(words).toHaveLength(1);
+    expect(words[0].parentElement!.className).toContain('green-ok');
   });
 });
 

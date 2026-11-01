@@ -64,10 +64,11 @@ async function open(units: SlotUnit[], onPick = vi.fn(), blockMode = false, days
 describe('SpaceGrid - past and unavailable units', () => {
   it('writes no label in a past unit, and labels a coming refused run once', async () => {
     // 08-09 and 09-10 are over at NOW (10:00); 10-11, 11-12 and 12-13 are to come and refused.
-    const cells = await open([0, 1, 2, 3, 4].map(unit));
-    const written = cells.map((c) => c.textContent?.trim() ?? '');
-    expect(written.slice(0, 2)).toEqual(['', '']);
-    expect(written.slice(2)).toEqual([m.bookings_cell_closed(), '', '']);
+    await open([0, 1, 2, 3, 4].map(unit));
+    // Two blocks: the past run (one block over its two units) says nothing, the coming refused run
+    // (one block over its three units) says it once.
+    const blocks = [...document.querySelectorAll<HTMLElement>('div[aria-hidden="true"].absolute')];
+    expect(blocks.map((b) => b.textContent?.trim() ?? '')).toEqual(['', m.bookings_cell_closed()]);
   });
 
   it('does not offer a unit the booking window refuses: disabled, and a tap picks nothing', async () => {
