@@ -1,3 +1,3 @@
-version: 1.5.3
+version: 1.5.4
 
-Nouveau : la liste complète des votants d'un sondage en un geste ; un nouvel appareil d'un membre rejoint seul ses conversations ; un nouveau membre d'un groupe ne reçoit plus les messages d'avant son arrivée. Amélioré : le filtre du fil tient dans une pastille flottante ; une réservation peut passer minuit. Corrigé : un message écrit pendant qu'un appareil attend d'être réintégré part ensuite ; le compteur d'associations du profil ; le GIF d'un commentaire replié.
+Nouveau : toucher une personne dans une conversation ouvre son profil ; une tonalité Canari pendant qu'un appel sonne ; les lives sont redessinés et peuvent partager l'écran. Amélioré : un appel se connecte plus vite et l'app se fait discrète pendant ; une demande pour rejoindre un groupe prévient ses membres ; la boutique, les partenariats et les réservations suivent votre campus. Corrigé : toucher la notification d'un message ouvre la bonne conversation.
