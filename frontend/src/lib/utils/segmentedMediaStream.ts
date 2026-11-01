@@ -131,8 +131,9 @@ export interface SegmentedStreamHandle {
   /**
    * The whole plaintext once every segment has been appended, so the lightbox and the download
    * reuse what was already decrypted instead of fetching it a second time. Rejects with the
-   * reader's typed error (`SegmentedMediaError`, `MediaPurgedError`, `MediaRangeUnsupportedError`).
-   * A paced stream resolves it only once its element has asked for the last segment, or
+   * reader's typed error (`SegmentedMediaError`, `MediaPurgedError`, `MediaRangeUnsupportedError`,
+   * `MediaUnreachableError`). THE CONSUMER LOGS THAT REJECTION, by cause (`logMediaFailure`): the
+   * stream says nothing of its own, so one failure is one line. A paced stream resolves it only once its element has asked for the last segment, or
    * {@link fetchAll} was called - a card scrolled past never does, and never builds the copy.
    */
   done: Promise<Blob>;
@@ -264,9 +265,11 @@ export function openSegmentedStream(
     return new Blob(parts, { type: ref.mimeType });
   })();
 
-  done.catch((err) => {
+  // NOT LOGGED HERE: `done` is handed to the consumer, which logs the failure by its cause - a range
+  // that got no answer is the expected state of an absent link, not an error. Logging here too
+  // printed every failure twice, once at `error` whatever its cause (production 1.5.1).
+  done.catch(() => {
     if (closed) return;
-    console.error(`[media-seg] stream ${ref.mediaId} stopped`, err);
     // Tells the element the stream is broken rather than leaving it waiting for bytes for ever.
     if (source.readyState === 'open') source.endOfStream('decode');
   });

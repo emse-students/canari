@@ -439,9 +439,8 @@ fulfillment as a trigger, via an `order_ref` Canari encodes itself
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
 [backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
 since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
-requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
-`lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
-`vendor_token` is PUBLIC.
+requires. The `business/create` webhook is described in
+[payments](../frontend/modules/payments.md).
 
 **How core-service reads an association's payment account (2026-10-05).** the Lydia manual
 validation reads social-service's INTERNAL route
@@ -476,6 +475,7 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
 | POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). With `expectedAmountCents` the answer is VERIFIED - Lydia's signature checked with the Business key over that amount - and carries `verification` (`verified`, `mismatch`, `unsigned`, or `no-key` without asking Lydia); the reconciliation sweep's read ([lydia-api](../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) |
 | POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`, the association's Business key) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
+| POST | `/api/payments/lydia-business-webhook` | none - UNSIGNED by Lydia, so it writes nothing | `business/create`'s `webhook`: `BUSINESS_VALIDATED` / `BUSINESS_UNVALIDATED` logged with the association holding the `vendor_token`, for a global admin who still validates by hand ([payments](../frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) |
 
 ### Health
 

@@ -1,3 +1,4 @@
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
@@ -8,6 +9,8 @@ import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-targe
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService, short } from './follows.service';
+import { decodeFollowCursor, encodeFollowCursor } from './follow-cursor';
+import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 
 /** The bell row a request writes for the person asked, and the one an acceptance writes back. */
 export const FOLLOW_REQUEST_NOTIFICATION = 'follow_request';
@@ -25,11 +28,27 @@ const NOTICE_KIND: Record<string, FollowNoticeKind> = {
 /**
  * One person in a follow list: who, and since when. `createdAt` is when the request was made in
  * the inbox and the sent list, and when it was ACCEPTED in the followers list - since when that
- * person follows.
+ * person follows. `cursor` names this row's place in its list: passed back as `after`, the next
+ * page starts right after it (`follow-cursor.ts`).
  */
 export interface FollowListEntry {
   userId: string;
   createdAt: Date;
+  cursor: string;
+}
+
+/** One follow list, as `listPage` reads it: whose rows, of which status, sorted on which column. */
+interface FollowListShape {
+  /** The column naming the CALLER: whose list it is. */
+  owner: '"followedUserId"' | '"followerUserId"';
+  /** The column naming the person each row shows. */
+  other: '"followedUserId"' | '"followerUserId"';
+  status: FollowStatus;
+  /** The instant the list is sorted on, and its SQL type, so the cursor casts back exactly. */
+  sortColumn: '"createdAt"' | '"acceptedAt"';
+  sortType: 'timestamp' | 'timestamptz';
+  /** For the debug line. */
+  label: string;
 }
 
 /**
@@ -109,23 +128,29 @@ export class FollowRequestsService {
     const { removed } = await this.follows.unfollowUser(followerUserId, followedUserId);
     if (removed === FOLLOW_PENDING) {
       await this.dropRequestNotification(followedUserId, followerUserId);
+    } else {
+      // An ACCEPTED follow opened the person's posts in the leaver's Suivis (WP-F5): drop the
+      // cached pages, as a removal and a block do, or they keep serving them for the TTL.
+      await this.dropFeedCache('an unfollow');
     }
     return { ok: true };
   }
 
   /** The requests waiting for `userId`'s answer, newest first - their own inbox and nobody else's. */
-  async incoming(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
-    const rows: FollowListEntry[] = await this.dataSource.query(
-      `SELECT f."followerUserId" AS "userId", f."createdAt" AS "createdAt"
-         FROM user_follows f
-        WHERE f."followedUserId" = $1 AND f.status = $2
-          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
-        ORDER BY f."createdAt" DESC, f.id
-        LIMIT $3 OFFSET $4`,
-      [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]
+  async incoming(userId: string, limit: number, after?: string): Promise<FollowListEntry[]> {
+    return this.listPage(
+      {
+        owner: '"followedUserId"',
+        other: '"followerUserId"',
+        status: FOLLOW_PENDING,
+        sortColumn: '"createdAt"',
+        sortType: 'timestamp',
+        label: 'inbox',
+      },
+      userId,
+      limit,
+      after
     );
-    this.logger.debug(`[FOLLOW-REQ] inbox of ${short(userId)}: ${rows.length} row(s)`);
-    return rows;
   }
 
   /** How many requests wait for `userId`'s answer - one count on the partial index of 114. */
@@ -133,7 +158,8 @@ export class FollowRequestsService {
     const rows: { n: string }[] = await this.dataSource.query(
       `SELECT count(*) AS n FROM user_follows f
         WHERE f."followedUserId" = $1 AND f.status = $2
-          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}`,
+          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+          AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}`,
       [userId, FOLLOW_PENDING]
     );
     return { pending: Number(rows[0]?.n ?? 0) };
@@ -145,6 +171,14 @@ export class FollowRequestsService {
    * best-effort cross-service call, so the statement does not trust it to have run).
    */
   async accept(userId: string, followerUserId: string): Promise<{ ok: boolean }> {
+    // A request recorded across the review cohort's boundary before the rule existed is never
+    // accepted (review-cohort.ts).
+    if (!sameSideOfReviewCohort(userId, followerUserId)) {
+      this.logger.log(
+        `[FOLLOW-REQ] ${short(userId)} accept of ${short(followerUserId)}: refused, across the review cohort's boundary`
+      );
+      throw new ReviewCohortBoundaryException();
+    }
     const updated = returnedRows<{ id: string }>(
       await this.dataSource.query(
         `UPDATE user_follows f SET status = $3, "acceptedAt" = now()
@@ -195,18 +229,21 @@ export class FollowRequestsService {
    * has been decided, so none is open). A pair a block stands between is left out, as everywhere a
    * follow is read.
    */
-  async followers(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
-    const rows: FollowListEntry[] = await this.dataSource.query(
-      `SELECT f."followerUserId" AS "userId", f."acceptedAt" AS "createdAt"
-         FROM user_follows f
-        WHERE f."followedUserId" = $1 AND f.status = $2
-          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
-        ORDER BY f."acceptedAt" DESC, f.id
-        LIMIT $3 OFFSET $4`,
-      [userId, FOLLOW_ACCEPTED, clampLimit(limit), Math.max(0, offset)]
+  async followers(userId: string, limit: number, after?: string): Promise<FollowListEntry[]> {
+    // `acceptedAt` is set on every accepted row (the CHECK of migration 114), so it is a total sort.
+    return this.listPage(
+      {
+        owner: '"followedUserId"',
+        other: '"followerUserId"',
+        status: FOLLOW_ACCEPTED,
+        sortColumn: '"acceptedAt"',
+        sortType: 'timestamptz',
+        label: 'followers',
+      },
+      userId,
+      limit,
+      after
     );
-    this.logger.debug(`[FOLLOW-REQ] followers of ${short(userId)}: ${rows.length} row(s)`);
-    return rows;
   }
 
   /**
@@ -232,15 +269,24 @@ export class FollowRequestsService {
     this.logger.log(`[FOLLOW-REQ] ${short(userId)} removed follower ${short(followerUserId)}`);
     // The removed follower's Suivis page is cached with their id in its key: drop the keyspace, as
     // the block path does, or it keeps showing this person's posts until the TTL runs out.
+    await this.dropFeedCache('a removal');
+    return { ok: true };
+  }
+
+  /**
+   * Drops every cached feed page after a follow ENDED (`reason`, for the log line). Best-effort and
+   * loud: the row is already gone and every by-id read already refuses; a cache that could not be
+   * dropped serves a stale page for its 30 s TTL, which failing the write would not fix.
+   */
+  private async dropFeedCache(reason: string): Promise<void> {
     try {
       const dropped = await invalidatePostListCache(this.redis);
-      this.logger.debug(`[FOLLOW-REQ] feed cache dropped after a removal: ${dropped} key(s)`);
+      this.logger.debug(`[FOLLOW-REQ] feed cache dropped after ${reason}: ${dropped} key(s)`);
     } catch (e) {
       this.logger.warn(
-        `[FOLLOW-REQ] feed cache not dropped after a removal: ${e instanceof Error ? e.message : String(e)}`
+        `[FOLLOW-REQ] feed cache not dropped after ${reason}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
-    return { ok: true };
   }
 
   /**
@@ -249,18 +295,62 @@ export class FollowRequestsService {
    * anything is written, but a request made BEFORE a block outlives it when the cross-service
    * severing did not run, so a pair a block stands between is left out here as in the inbox.
    */
-  async outgoing(userId: string, limit: number, offset: number): Promise<FollowListEntry[]> {
-    const rows: FollowListEntry[] = await this.dataSource.query(
-      `SELECT f."followedUserId" AS "userId", f."createdAt" AS "createdAt"
-         FROM user_follows f
-        WHERE f."followerUserId" = $1 AND f.status = $2
-          AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
-        ORDER BY f."createdAt" DESC, f.id
-        LIMIT $3 OFFSET $4`,
-      [userId, FOLLOW_PENDING, clampLimit(limit), Math.max(0, offset)]
+  async outgoing(userId: string, limit: number, after?: string): Promise<FollowListEntry[]> {
+    return this.listPage(
+      {
+        owner: '"followerUserId"',
+        other: '"followedUserId"',
+        status: FOLLOW_PENDING,
+        sortColumn: '"createdAt"',
+        sortType: 'timestamp',
+        label: 'sent requests',
+      },
+      userId,
+      limit,
+      after
     );
-    this.logger.debug(`[FOLLOW-REQ] sent requests of ${short(userId)}: ${rows.length} row(s)`);
-    return rows;
+  }
+
+  /**
+   * ONE PAGE OF ONE FOLLOW LIST, the newest first, starting right after the row `after` names
+   * (`follow-cursor.ts`: keyset on `(instant, id)`, never an offset, so a list of any length is
+   * reachable whole and a row added or removed while it is read shifts nothing). A pair a block
+   * stands between, or one across the review cohort's boundary, is left out as everywhere a follow
+   * is read. A malformed `after` is a 400, decided before any query.
+   */
+  private async listPage(
+    shape: FollowListShape,
+    userId: string,
+    limit: number,
+    after: string | undefined
+  ): Promise<FollowListEntry[]> {
+    const cursor = decodeFollowCursor(after);
+    const params: unknown[] = [userId, shape.status, clampLimit(limit)];
+    const sort = `f.${shape.sortColumn}`;
+    const afterClause = cursor
+      ? `AND (${sort}, f.id) < ($${params.push(cursor.at)}::${shape.sortType}, $${params.push(cursor.id)}::uuid)`
+      : '';
+    const rows: { userId: string; createdAt: Date; sortKey: string; rowId: string }[] =
+      await this.dataSource.query(
+        `SELECT f.${shape.other} AS "userId", ${sort} AS "createdAt",
+                ${sort}::text AS "sortKey", f.id::text AS "rowId"
+           FROM user_follows f
+          WHERE f.${shape.owner} = $1 AND f.status = $2
+            AND ${NO_BLOCK_BETWEEN('f."followerUserId"', 'f."followedUserId"')}
+            AND ${sameSideOfReviewCohortSql('f."followerUserId"', 'f."followedUserId"')}
+            ${afterClause}
+          ORDER BY ${sort} DESC, f.id DESC
+          LIMIT $3`,
+        params
+      );
+    this.logger.debug(
+      `[FOLLOW-REQ] ${shape.label} of ${short(userId)}: ${rows.length} row(s)${cursor ? ' after a cursor' : ''}`
+    );
+    return rows.map(({ userId: other, createdAt, sortKey, rowId }) => ({
+      userId: other,
+      createdAt,
+      cursor: encodeFollowCursor(sortKey, rowId),
+    }));
   }
 
   /**

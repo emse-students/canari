@@ -1,4 +1,5 @@
 /* eslint-disable */
+import { assertKindMaySell } from '../associations/selling-kinds';
 import {
   BadRequestException,
   ConflictException,
@@ -47,6 +48,8 @@ import {
   hasFileQuestion,
   type AnswerFileState,
 } from './form-files.service';
+import { assertReviewerReachesAssociation } from '../associations/review-cohort-reach';
+import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -71,11 +74,11 @@ import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
-  matchesCondition,
   needsProfile,
   type AudienceCondition,
   type PricingFacts,
 } from '../pricing/audience';
+import { FORM_COTISATION_HELD, submitRefusalCode, type SubmitRefusalCode } from './submit-refusal';
 import {
   pricedQuestionIds,
   pricingViewFor,
@@ -97,6 +100,7 @@ import {
   assertUniqueItemIds,
   decidesPrice,
   freeFallbackCells,
+  isChoiceQuestion,
   type PricedItem,
 } from './answer-options';
 import { coreUrl } from '../internal/service-urls';
@@ -104,6 +108,7 @@ import { internalCoreRequestConfig } from '../internal/core-request';
 import {
   amountOutOfRange,
   mapCorePaymentError,
+  lydiaReadinessRefusal,
   PROVIDER_MAX_AMOUNT_CENTS,
   PROVIDER_MIN_AMOUNT_CENTS,
 } from '../common/core-payment-error';
@@ -139,6 +144,36 @@ function chargesMoney(input: CreateFormDto): boolean {
   const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
   if (cells && Object.values(cells).some((c) => (c ?? 0) > 0)) return true;
   return ((input.items ?? []) as PricedItem[]).some((item) => decidesPrice(item, new Set()));
+}
+
+/** JSON with every object's keys sorted: two documents that differ only in key order compare equal. */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * Everything that sets what a form charges, as one comparable string: the base price, the payment
+ * switch, the grid (key-order-insensitive) and every choice option's supplement.
+ */
+export function priceFingerprint(form: CreateFormDto): string {
+  const supplements = ((form.items ?? []) as PricedItem[])
+    .filter(isChoiceQuestion)
+    .flatMap((item) =>
+      (item.options ?? []).map((o, i) => [item.id, o.id ?? i, o.priceModifier ?? 0])
+    );
+  return stableJson({
+    base: form.basePrice ?? 0,
+    pay: form.requiresPayment === true,
+    grid: form.priceMatrix ?? null,
+    supplements,
+  });
 }
 
 /**
@@ -190,6 +225,41 @@ export class FormsService {
     private readonly formFiles: FormFilesService,
     private readonly organiserAlert: FormOrganiserAlertService
   ) {}
+
+  /**
+   * A form of a list or an institution may not be given a price (owner, 2026-10-31): those kinds
+   * collect nothing. Judged on the MERGED form - what the edit leaves, stored fields included - so
+   * every way to charge counts: the base price, the payment switch, a grid cell and a choice
+   * option's supplement (`chargesMoney`).
+   *
+   * A form that already charges stays editable while its PRICE is left as it is, and may always be
+   * made free; a write that makes a charging form out of a free one, or moves the price of one that
+   * charges, is refused. `priceFingerprint` is the comparison - key-order-insensitive, because the
+   * stored jsonb reorders a grid's keys and the client sends them in another order. Nothing here
+   * rewrites a stored price.
+   */
+  private async assertKindMayPrice(
+    input: CreateFormDto,
+    associationId: string | null | undefined,
+    stored?: Form
+  ): Promise<void> {
+    if (!associationId) return;
+    const merged = stored
+      ? ({
+          ...input,
+          items: input.items ?? stored.items,
+          basePrice: input.basePrice ?? stored.basePrice,
+          requiresPayment: input.requiresPayment ?? stored.requiresPayment,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : stored.priceMatrix,
+        } as CreateFormDto)
+      : input;
+    if (!chargesMoney(merged)) return;
+    if (stored && chargesMoney(stored as unknown as CreateFormDto)) {
+      if (priceFingerprint(merged) === priceFingerprint(stored as unknown as CreateFormDto)) return;
+    }
+    const kind = await this.associationsService.kindOf(associationId);
+    if (kind) assertKindMaySell(this.logger, associationId, kind, 'form price');
+  }
 
   /**
    * Paid forms linked to an association require its payment onboarding to be complete.
@@ -465,10 +535,18 @@ export class FormsService {
 
   /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
   private assertMaySubmit(form: Form, facts: PricingFacts): void {
-    if (!form.submitCondition) return;
-    if (matchesCondition(form.submitCondition, facts)) return;
-    this.logger.debug(`[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)}`);
-    throw new ForbiddenException('This form is not open to you.');
+    const code = submitRefusalCode(form.submitCondition, facts);
+    if (code === null) return;
+    this.logger.debug(
+      `[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)} code=${code}`
+    );
+    throw new ForbiddenException({
+      code,
+      message:
+        code === FORM_COTISATION_HELD
+          ? 'This form is for people who do not hold this cotisation, and you already hold it.'
+          : 'This form is not open to you.',
+    });
   }
 
   /**
@@ -496,6 +574,7 @@ export class FormsService {
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
+    await this.assertKindMayPrice(input, input.associationId?.trim());
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -734,6 +813,7 @@ export class FormsService {
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
     });
 
+    await this.assertKindMayPrice(input, form.associationId, form);
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
       { ...input, associationId: form.associationId },
@@ -863,11 +943,15 @@ export class FormsService {
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
    * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
    * user who will be told they are not a member. Answers `failed` ONLY when a retry could succeed
-   * (the grant threw), which is what `fulfilPayment` releases its claim on; `not-granted` when the
-   * tier was refused as not a rise over the one held (`grantCotisantIfARise`) - final, not retried.
+   * (the grant threw - the tier lock or a read included), which is what `fulfilPayment` releases its
+   * claim on; `not-granted` when the locked grant refused it (`grantCotisantIfARise`: the tier held
+   * already, not a rise, or a tier the form's `notCotisation` excludes held) - final, not retried.
    */
   private async grantCotisationIfConfigured(
-    form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    form: Pick<
+      Form,
+      'grantsCotisation' | 'cotisationVariantKey' | 'associationId' | 'submitCondition'
+    >,
     userId: string,
     grantedBy: string,
     metadata: Record<string, unknown>
@@ -881,14 +965,16 @@ export class FormsService {
       return 'granted';
     }
     try {
-      // Ranked under the buyer's tier lock, so a paid form never swaps out a dearer tier by the XOR;
-      // unlike a settlement, it renews the tier when that very tier is held (`grantCotisantIfARise`).
+      // Decided under the buyer's tier lock, so a shop settlement committed while the payment was
+      // in flight is seen: never a renewal of the tier held (its price taken twice), never a held
+      // tier the form is for people WITHOUT (`notCotisation`), never a move down by the XOR.
       const outcome = await this.userTagService.grantCotisantIfARise(
         form.associationId,
         userId,
         grantedBy,
         form.cotisationVariantKey,
-        metadata
+        metadata,
+        form.submitCondition?.notCotisation ?? null
       );
       return 'granted' in outcome ? 'granted' : 'not-granted';
     } catch (e) {
@@ -930,6 +1016,7 @@ export class FormsService {
         grantsCotisation: true,
         cotisationVariantKey: true,
         associationId: true,
+        submitCondition: true,
       },
     });
     if (!form) {
@@ -978,6 +1065,7 @@ export class FormsService {
           userId: submission.userId,
           source: 'form',
           formId: submission.formId,
+          submissionId: submission.id,
           amountCents: submission.totalPaid,
           paymentMethod: how.paymentMethod,
           status: receivedStatus(delivered),
@@ -1002,8 +1090,11 @@ export class FormsService {
    * Whether the tier a paid form grants was delivered, as its purchase record must say
    * (`receivedStatus`). `grant` is the decision THIS call took, when it took one. When it took none -
    * a replay whose grant was claimed by an earlier run, or a late payment that landed with no seat
-   * and so ran no grant - the answer is read from what the submitter holds NOW: without a seat
-   * nothing was granted, otherwise the form's tier is held or it is not. A form that grants no tier,
+   * and so ran no grant - the answer is read from DURABLE state: without a seat nothing was granted,
+   * otherwise the form's tier is delivered only when its held tag names THIS answer
+   * (`metadata.submissionId`, written by the grant). A tier merely held - bought in the shop, so
+   * the locked grant refused to renew it - is not this payment's delivery, and the refund it is owed
+   * survives a record write that failed and was replayed. A form that grants no tier,
    * or a guest's payment (nobody to grant to, logged where it is claimed), is delivered as paid.
    * Every "not delivered" is logged at ERROR. The read can OVER-mark - a replay racing the run that
    * is still granting, a failed grant a later replay retries, a tier risen from since - and nothing
@@ -1017,7 +1108,7 @@ export class FormsService {
   ): Promise<boolean> {
     if (!form.grantsCotisation || !form.associationId || !submission.userId) return true;
     if (grant === 'granted') return true;
-    // Refused as not a rise: `grantCotisantIfARise` logged it at ERROR already.
+    // Refused under the tier lock (`grantCotisantIfARise`): logged at ERROR there already.
     if (grant === 'not-granted') return false;
     const tier = form.cotisationVariantKey ?? 'base';
     if (!seatGiven) {
@@ -1027,21 +1118,23 @@ export class FormsService {
       );
       return false;
     }
-    const holds = await this.userTagService.holdsCotisationTier(
+    const delivered = await this.userTagService.holdsTierDeliveredBy(
       submission.userId,
       form.associationId,
-      form.cotisationVariantKey
+      form.cotisationVariantKey,
+      submission.id
     );
-    if (holds) {
+    if (delivered) {
       this.logger.debug(
-        `[Forms] submission ${submission.id}: tier ${tier} held at record time - recorded paid`
+        `[Forms] submission ${submission.id}: tier ${tier} held as this answer's delivery - recorded paid`
       );
       return true;
     }
     this.logger.error(
-      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held at record ` +
-        `time (grant ${grant ?? 'decided by another run'}) - recorded paid_not_granted; check the ` +
-        'tier is still not held before refunding (a concurrent or later grant does not clear the mark)'
+      `[Forms] submission ${submission.id} on form ${form.id}: tier ${tier} is not held as this ` +
+        `answer's delivery at record time (grant ${grant ?? 'decided by another run'}) - recorded ` +
+        'paid_not_granted; if it is held, it was held already when the payment landed: refund, do ' +
+        'not grant by hand'
     );
     return false;
   }
@@ -1115,6 +1208,12 @@ export class FormsService {
     /** Questions this submitter cannot see because of a PROFILE criterion, answers aside. */
     hiddenItemIds: string[];
     maySubmit: boolean;
+    /**
+     * Why `submitCondition` excludes this person, typed - the code `submit` would refuse them with -
+     * or null. `maySubmit` stays the answer an older client reads; this only lets a newer one say
+     * WHY (`FORM_COTISATION_HELD`: they already hold the cotisation the form is for people without).
+     */
+    refusalCode: SubmitRefusalCode | null;
   }> {
     const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form)
@@ -1124,6 +1223,7 @@ export class FormsService {
         pricing: null,
         hiddenItemIds: [],
         maySubmit: false,
+        refusalCode: null,
       };
 
     // Check global capacity independently of per-user state
@@ -1139,15 +1239,15 @@ export class FormsService {
     // is reported the same way rather than shown as a form with no price.
     const noCombinationAvailable =
       !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
-    const maySubmit =
-      (!form.submitCondition || matchesCondition(form.submitCondition, facts)) &&
-      !noCombinationAvailable;
+    // The same classification `submit` refuses with, so the page and the 403 are one fact.
+    const refusalCode = submitRefusalCode(form.submitCondition, facts);
+    const maySubmit = refusalCode === null && !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
 
     if (form.allowMultipleSubmissions)
-      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };
+      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit, refusalCode };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
     // registry that knows no answer. The status is always `free`: an anonymous form takes no money.
@@ -1160,6 +1260,7 @@ export class FormsService {
         pricing,
         hiddenItemIds,
         maySubmit,
+        refusalCode,
       };
     }
 
@@ -1186,6 +1287,7 @@ export class FormsService {
       pricing,
       hiddenItemIds,
       maySubmit,
+      refusalCode,
     };
   }
 
@@ -1209,6 +1311,24 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
+    // Across the review cohort's boundary nothing is submitted or bought: a review account answers
+    // only its own associations' forms, and nobody answers a review account's personal form
+    // (review-cohort-reach.ts, review-cohort.ts).
+    if (!guest && input.userId) {
+      if (form.associationId) {
+        await assertReviewerReachesAssociation(
+          this.formRepo.manager,
+          input.userId,
+          form.associationId,
+          'form submission'
+        );
+      } else if (!sameSideOfReviewCohort(input.userId, form.ownerId)) {
+        this.logger.log(
+          `[REVIEW_COHORT] form submission refused: form=${id.slice(0, 8)} across the boundary`
+        );
+        throw new ReviewCohortBoundaryException();
+      }
+    }
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
       throw new BadRequestException('The form is not open yet.');
@@ -1307,7 +1427,12 @@ export class FormsService {
       // A question the grid prices on has already been paid for by the cell it selected. Adding its
       // modifier on top would charge the same choice twice, silently, in the direction that
       // overcharges - so it is skipped here rather than trusted to be zero in the document.
-      if (answer && item.options?.length && !pricedQuestions.has(item.id)) {
+      if (
+        answer &&
+        isChoiceQuestion(item) &&
+        item.options?.length &&
+        !pricedQuestions.has(item.id)
+      ) {
         totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
       }
     }
@@ -1570,9 +1695,11 @@ export class FormsService {
 
       const checkoutUrl = coreUrl('payments/create-checkout-session');
 
+      // Out of the try: a refusal naming the Business (Lydia's error 5 / 2701) reverts the
+      // readiness of the HOLDER of the vendor token the request was sent to.
+      let connectAccountId: string | undefined;
       try {
         // If the form belongs to an association, route payment via its connected account
-        let connectAccountId: string | undefined;
         if (form.associationId) {
           await this.associationsService.assertPaymentsReady(form.associationId);
           const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
@@ -1663,9 +1790,17 @@ export class FormsService {
           savedSubmission.stripeSessionId = sessionId;
           savedSubmission.paymentRequestId = requestId;
           // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
+          // The order_ref and the Business beside the ids: what a refund of this payment is sent
+          // with (migration 120) - the order_ref's attempt part is random and kept nowhere else.
+          // OVERWRITTEN by each new request, and the LAST one is the only one that can be paid: a
+          // retry first settles the request before it at Lydia (D2, `settleOpenRequest`) - cancelled,
+          // or found paid and no new request issued - and refuses while it cannot. So no answer ever
+          // holds two payable requests, and the order_ref kept is the one the money came through.
           await this.submissionRepo.update(savedSubmission.id, {
             stripeSessionId: sessionId,
             paymentRequestId: requestId,
+            lydiaOrderRef: idempotencyKey,
+            lydiaVendorToken: connectAccountId ?? null,
           });
         }
 
@@ -1673,6 +1808,13 @@ export class FormsService {
       } catch (err: unknown) {
         // No request was issued, so nothing is payable: the row stops holding a seat for it.
         await this.releaseUnissuedRow(savedSubmission.id);
+        const cause = lydiaReadinessRefusal(err);
+        if (cause && connectAccountId) {
+          await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
+            path: guest ? 'form-guest' : 'form',
+            id: savedSubmission.id,
+          });
+        }
         throw mapCorePaymentError(err, this.logger, 'Forms');
       }
     }

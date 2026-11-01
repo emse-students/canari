@@ -1318,14 +1318,17 @@ const ROW_RULES = [
   // social-service's half (`lives.service.ts`, `live-seats.ts`, `live-segment-store.ts`,
   // `live-announcer.ts`). Forgiven only in a LIVE row. Every refusal (`start refused`, `segment ...
   // refused`, `out of order`, `FULL`) and every `max_duration` end stays dirt: a row that meets one
-  // is a finding. `seat released (held=true)` only: releasing a seat never held is not the path.
+  // is a finding. `seat released (held=true)` or `(held=1)` only - the seat count's Lua release
+  // (#2202) answers the number of seats it removed (read on LIVE-WEB-2, `1.5.1-alpha.8`): releasing a
+  // seat never held (`held=false`, `held=0`) is not the path.
   {
     name: 'live start, segments, seats and end',
     // THE TAG NAMES THE STORE'S TWO PER-LIVE LINES ONLY: its `listing the live folders of the store`
     // is the retention tick's, BENIGN in every window, and a tag that claimed it turned it into
     // "a shape nobody has read" (LIVE-WEB-2, 2026-10-27). `[LIVE_GC] <live> deleted` is the end's
-    // purge; the sweep's other `[LIVE_GC]` lines (kept, OPEN, orphan) stay outside this rule.
-    tag: /\[(LivesService|LiveSeats|InternalLivesModeController|LiveAnnouncer)\] \[(LIVE|LIVE_SEAT|LIVE_ANNOUNCE)\] |\[HttpLiveSegmentStore\] \[LIVE\] (storing segment|purging the segments) |\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted /,
+    // purge, and `<live> kept: N viewer(s) still seated` its wait for them; the sweep's other `[LIVE_GC]`
+    // lines (kept for the next run, OPEN, orphan) stay outside this rule.
+    tag: /\[(LivesService|LiveSeats|InternalLivesModeController|LiveAnnouncer)\] \[(LIVE|LIVE_SEAT|LIVE_ANNOUNCE)\] |\[HttpLiveSegmentStore\] \[LIVE\] (storing segment|purging the segments) |\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} (deleted|kept: [1-9]\d* viewer\(s\)) /,
     shape: new RegExp(
       [
         String.raw`\[LivesService\] \[LIVE\] start asked by [0-9a-f]{8}`,
@@ -1337,13 +1340,16 @@ const ROW_RULES = [
         String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} ended by its broadcaster`,
         String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat held, \d+ on this live, \d+\/\d+ seated`,
         String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: \d+ watching \(broadcaster's read\)`,
-        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat released \(held=true\)`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat released \(held=(?:true|1)\)`,
         String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: ended, \d+ seat\(s\) given back`,
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] storing segment [0-9a-f-]{36} of live [0-9a-f-]{36} \(\d+ B\)`,
         String.raw`\[HttpLiveSegmentStore\] \[LIVE\] purging the segments of live [0-9a-f-]{36}`,
         String.raw`\[InternalLivesModeController\] \[LIVE\] lives_mode relayed to media-service: on`,
         String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=member followers=\d+`,
         String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted \(\d+ segment object\(s\)\)`,
+        // The end's purge WAITS for the viewers still seated (#2689, read on LIVE-WEB-2, `1.5.1-alpha.8`):
+        // a viewer keeps the segments its last manifest named. One or more seated; zero is another sentence.
+        String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} kept: [1-9]\d* viewer\(s\) still seated, owed the segments their last manifest named`,
       ]
         .map((s) => `${s}$`)
         .join('|')

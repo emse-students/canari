@@ -106,6 +106,36 @@ describe('LiveSegmentsService', () => {
     await expect(svc.purge(LIVE)).resolves.toEqual({ deleted: 1, failed: 1, remaining: 1 });
   });
 
+  it('deletes the NAMED segments of one live only, idempotently, and counts a refusal without throwing', async () => {
+    const { svc, objects, undeletable } = bucket();
+    await svc.store(LIVE, SEG_A, Buffer.from('a'));
+    await svc.store(LIVE, SEG_B, Buffer.from('b'));
+    await svc.store(OTHER, SEG_A, Buffer.from('c'));
+    await expect(svc.deleteSegments(LIVE, [SEG_A])).resolves.toEqual({
+      deleted: [SEG_A],
+      failed: [],
+    });
+    expect([...objects.keys()].sort()).toEqual([`live/${LIVE}/${SEG_B}`, `live/${OTHER}/${SEG_A}`]);
+    // A pass repeated after a crash: the object is already gone and that is no failure.
+    await expect(svc.deleteSegments(LIVE, [SEG_A])).resolves.toEqual({
+      deleted: [SEG_A],
+      failed: [],
+    });
+    undeletable.add(`live/${LIVE}/${SEG_B}`);
+    await expect(svc.deleteSegments(LIVE, [SEG_B])).resolves.toEqual({
+      deleted: [],
+      failed: [SEG_B],
+    });
+    await expect(svc.deleteSegments(LIVE, ['not-a-uuid'])).rejects.toThrow(/uuid/);
+  });
+
+  it('validates EVERY name before deleting any: a bad name last leaves the good ones in place', async () => {
+    const { svc, objects } = bucket();
+    await svc.store(LIVE, SEG_A, Buffer.from('a'));
+    await expect(svc.deleteSegments(LIVE, [SEG_A, 'not-a-uuid'])).rejects.toThrow(/uuid/);
+    expect([...objects.keys()]).toEqual([`live/${LIVE}/${SEG_A}`]);
+  });
+
   it('lists one id per live folder, and leaves a folder that is not a live alone', async () => {
     const { svc, objects } = bucket();
     await svc.store(LIVE, SEG_A, Buffer.from('a'));
@@ -249,6 +279,28 @@ describe('the live routes of MediaController', () => {
       ok: true,
     });
     expect(objects.has(`live/${LIVE}/${SEG_A}`)).toBe(true);
+  });
+
+  it('trims for the internal secret, with the switch off too, and refuses a malformed call', async () => {
+    process.env.LIVE_ENABLED = 'true';
+    process.env.INTERNAL_SECRET = 's3cret';
+    const { controller, svc } = rig();
+    await svc.store(LIVE, SEG_A, Buffer.from('a'));
+    process.env.LIVE_ENABLED = 'false';
+    const call = { liveId: LIVE, names: [SEG_A] };
+    expect(await statusOf(() => controller.deleteLiveSegments(call, 'wrong'))).toBe(
+      HttpStatus.FORBIDDEN
+    );
+    expect(
+      await statusOf(() => controller.deleteLiveSegments({ liveId: LIVE, names: [] }, 's3cret'))
+    ).toBe(HttpStatus.BAD_REQUEST);
+    expect(
+      await statusOf(() => controller.deleteLiveSegments({ liveId: LIVE, names: [1] }, 's3cret'))
+    ).toBe(HttpStatus.BAD_REQUEST);
+    await expect(controller.deleteLiveSegments(call, 's3cret')).resolves.toEqual({
+      deleted: [SEG_A],
+      failed: [],
+    });
   });
 
   it('purges for the internal secret even with the switch off: a live started before is still deleted', async () => {

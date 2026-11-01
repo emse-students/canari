@@ -22,6 +22,7 @@
     MessageCircle,
     MessageCircleOff,
     Radio,
+    Share2,
     Volume2,
     VolumeX,
     X,
@@ -41,6 +42,7 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
   import { fetchLiveLimits } from '$lib/live/api';
+  import { shareLiveLink } from '$lib/live/shareLive';
   import {
     LiveChatSession,
     type LiveChatDeps,
@@ -130,6 +132,9 @@
       },
       get seeking() {
         return el.seeking;
+      },
+      get readyState() {
+        return el.readyState;
       },
       async play() {
         try {
@@ -300,33 +305,28 @@
     <div
       class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
     >
-      <button
-        bind:this={closeButton}
-        type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label={m.live_viewer_close()}
-        title={m.live_viewer_close()}
-        onclick={() => overlay.dismissFromUi()}
-        data-live-close
-      >
-        <X size={24} strokeWidth={2.5} />
-      </button>
-      <span class="min-w-0 flex-1 text-sm">
+      <!-- Instagram Live's corner: who, then LIVE, the time and the audience; the controls and the
+           close X at the right. -->
+      <span class="flex min-w-0 flex-1 flex-col items-start gap-1 text-sm">
         <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
-      </span>
-      <LiveBadge />
-      {#if elapsedMs !== null}
-        <span
-          class="rounded-full bg-black/40 px-2 py-0.5 text-xs tabular-nums"
-          aria-label={m.live_viewer_elapsed({ time: formatLiveElapsed(elapsedMs) })}
-          data-live-elapsed
-        >
-          {formatLiveElapsed(elapsedMs)}
+        <span class="flex items-center gap-1.5">
+          {#if viewerState.kind !== 'ended'}
+            <LiveBadge />
+          {/if}
+          {#if elapsedMs !== null}
+            <span
+              class="rounded-full bg-black/40 px-2 py-0.5 text-xs tabular-nums"
+              aria-label={m.live_viewer_elapsed({ time: formatLiveElapsed(elapsedMs) })}
+              data-live-elapsed
+            >
+              {formatLiveElapsed(elapsedMs)}
+            </span>
+          {/if}
+          {#if !terminal}
+            <LiveViewerCount count={viewers} />
+          {/if}
         </span>
-      {/if}
-      {#if !terminal}
-        <LiveViewerCount count={viewers} />
-      {/if}
+      </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <button
         type="button"
@@ -357,6 +357,29 @@
         {:else}
           <MessageCircleOff size={22} />
         {/if}
+      </button>
+      {#if !terminal}
+        <button
+          type="button"
+          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+          aria-label={m.live_share_label()}
+          title={m.live_share_label()}
+          onclick={() => shareLiveLink(live.id)}
+          data-live-share
+        >
+          <Share2 size={22} />
+        </button>
+      {/if}
+      <button
+        bind:this={closeButton}
+        type="button"
+        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-label={m.live_viewer_close()}
+        title={m.live_viewer_close()}
+        onclick={() => overlay.dismissFromUi()}
+        data-live-close
+      >
+        <X size={24} strokeWidth={2.5} />
       </button>
     </div>
 

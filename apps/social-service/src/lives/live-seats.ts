@@ -155,8 +155,16 @@ export class LiveSeats {
    * the broadcaster's poll is also its chat, which a display number must not take down - the viewers'
    * own polls already fail closed on the same outage (`LIVE_SEATS_UNAVAILABLE`), so the accusing line
    * is the signal, and the screen shows no number rather than a wrong one.
+   *
+   * `reader` names who asks, in every line: the broadcaster's poll (`broadcaster`, whose count is
+   * logged at debug) or the purge of an ended live (`purge`, whose own line says what it decided, so
+   * this one says nothing on success - one line per sweep would be noise).
    */
-  async watching(liveId: string): Promise<number | null> {
+  async watching(
+    liveId: string,
+    reader: 'broadcaster' | 'purge' = 'broadcaster'
+  ): Promise<number | null> {
+    const what = reader === 'purge' ? "the ended live's seat count (purge)" : 'the viewer count';
     let reply: unknown;
     try {
       reply = await this.redis.evalScript(
@@ -165,15 +173,19 @@ export class LiveSeats {
         [LIVE_SEAT_LEASE_MS, seatMember(liveId, '')]
       );
     } catch (e) {
-      this.logger.error(`[LIVE_SEAT] ${liveId}: the viewer count did not answer: ${String(e)}`);
+      this.logger.error(`[LIVE_SEAT] ${liveId}: ${what} did not answer: ${String(e)}`);
       return null;
     }
     const count = Number(reply);
     if (!Number.isInteger(count) || count < 0) {
-      this.logger.error(`[LIVE_SEAT] ${liveId}: unreadable count reply ${JSON.stringify(reply)}`);
+      this.logger.error(
+        `[LIVE_SEAT] ${liveId}: ${what}: unreadable reply ${JSON.stringify(reply)}`
+      );
       return null;
     }
-    this.logger.debug(`[LIVE_SEAT] ${liveId}: ${count} watching (broadcaster's read)`);
+    if (reader === 'broadcaster') {
+      this.logger.debug(`[LIVE_SEAT] ${liveId}: ${count} watching (broadcaster's read)`);
+    }
     return count;
   }
 
@@ -193,9 +205,10 @@ export class LiveSeats {
   }
 
   /**
-   * Gives back every seat of an ENDED live at once, so the host's cap does not wait a lease for
-   * viewers whose next poll is a 410. Throws on a Redis failure; the caller logs it and lets the
-   * seats lapse.
+   * Gives back every seat of a live CUT or ERASED at once, so the host's cap does not wait a lease
+   * for viewers whose next poll is a 410. An ordinary end keeps them: they are what its purge waits
+   * for (`LivesService.purgeEnded`). Throws on a Redis failure; the caller logs it and lets the seats
+   * lapse.
    */
   async releaseLive(liveId: string): Promise<number> {
     const freed = Number(

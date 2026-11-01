@@ -18,6 +18,7 @@ import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../test/flush';
+import { callHoldsAppSound, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 /**
  * The client half of a PEER-TO-PEER 1:1 call (lot 1 of the revival, 2026-10-17), driven through
@@ -79,6 +80,8 @@ const server = {
   roomTokenStatus: 200,
   /** When set, the ring request waits for it: a test can act while the ring is in flight. */
   ringHold: null as Promise<void> | null,
+  /** When set, the room-token request waits for it: a test can see what ran beside it. */
+  tokenHold: null as Promise<void> | null,
 };
 /** The order in which the service talked to the server (`api:<path>`) and to the group (`mls`). */
 const order: string[] = [];
@@ -88,6 +91,7 @@ vi.mock('$lib/utils/apiFetch', () => ({
     if (url.includes('/api/calls/ring') && !url.includes('ring-end') && server.ringHold) {
       await server.ringHold;
     }
+    if (url.includes('/api/calls/room-token') && server.tokenHold) await server.tokenHold;
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     if (url.includes('/api/calls/initiate'))
       return json(
@@ -552,6 +556,7 @@ beforeEach(() => {
   server.ringStatus = 200;
   server.roomTokenStatus = 200;
   server.ringHold = null;
+  server.tokenHold = null;
   workerAnswers.report = { sender: 250, receiver: 251 };
   workerAnswers.terminated = 0;
   workerAnswers.video = { sender: 0, receiver: 0 };
@@ -691,7 +696,7 @@ describe('a peer-to-peer call, client side', () => {
     expect(get(service.callState)).toBe('idle');
   });
 
-  it('joins a p2p room with its room token, and builds no peer connection before PeerReady', async () => {
+  it('joins a p2p room with its room token, and builds its peer connection during the ring, offering nothing before PeerReady', async () => {
     const service = new CallService(fakeMls);
     const ws = await callerJoined(service);
 
@@ -701,8 +706,113 @@ describe('a peer-to-peer call, client side', () => {
       room_token: 'rt-1',
       mode: 'p2p',
     });
-    expect(FakePeerConnection.instances).toHaveLength(0);
     expect(get(service.callState)).toBe('calling');
+    // Built before the ring, gathering its candidates while the callee has not answered yet.
+    expect(FakePeerConnection.instances).toHaveLength(1);
+    const pc = FakePeerConnection.instances[0];
+    expect(pc.config.iceCandidatePoolSize).toBe(1);
+    // The transforms are on, in the task that created the transceiver, as for any build.
+    expect(pc.senders[0].transform).toBeInstanceOf(FakeTransform);
+    expect(pc.senders[0].late).toBeUndefined();
+    // The engine asks for a negotiation: nothing is offered to a room with nobody in it.
+    await pc.onnegotiationneeded!();
+    await settle();
+    expect(ws.framesOfType('Offer')).toHaveLength(0);
+    expect(pc.localDescription).toBeNull();
+
+    // The callee joins: the SAME peer connection is adopted and offers at once.
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(FakePeerConnection.instances).toHaveLength(1);
+    expect(pc.closed).toBe(false);
+    expect(ws.framesOfType('Offer')).toHaveLength(1);
+  });
+
+  /** Every way a ring ends before anyone answered closes the peer connection it built. */
+  describe('the peer connection built during the ring is closed on every exit', () => {
+    async function ringingCaller() {
+      const service = new CallService(fakeMls);
+      const ws = await callerJoined(service);
+      const pc = FakePeerConnection.instances[0];
+      expect(pc.closed).toBe(false);
+      return { service, ws, pc };
+    }
+
+    it('the caller hangs up during the ring - closed at once, before the ended summary', async () => {
+      const { service, pc } = await ringingCaller();
+      service.endCall();
+      expect(get(service.callState)).toBe('ended');
+      expect(pc.closed).toBe(true);
+    });
+
+    it('the ring window closes unanswered', async () => {
+      const { service, pc } = await ringingCaller();
+      await vi.advanceTimersByTimeAsync(server.ringTimeoutMs);
+      expect(pc.closed).toBe(true);
+      expect(get(service.callState)).not.toBe('calling');
+    });
+
+    it('the callee declines (its hangup)', async () => {
+      const { service, pc } = await ringingCaller();
+      await service.handleCallSignal(
+        'peer@example.org',
+        'group-1',
+        {
+          callId: 'room-1',
+          hangup: true,
+          deviceId: 'device-2',
+          endReason: canari.CallEndReason.CALL_END_REASON_DECLINED,
+        },
+        'me@example.org',
+        'device-1'
+      );
+      expect(pc.closed).toBe(true);
+    });
+
+    it('the callee is busy', async () => {
+      const { service, pc } = await ringingCaller();
+      await service.handleCallSignal(
+        'peer@example.org',
+        'group-1',
+        { callId: 'room-1', busy: true, deviceId: 'device-2' },
+        'me@example.org',
+        'device-1'
+      );
+      expect(pc.closed).toBe(true);
+    });
+
+    it('the relay refuses the seat mid-ring', async () => {
+      const { service, ws, pc } = await ringingCaller();
+      ws.deliver({ type: 'Refused', reason: 'room closed' });
+      await settle();
+      expect(get(service.callState)).not.toBe('calling');
+      expect(pc.closed).toBe(true);
+    });
+
+    it('the ring request itself fails after the peer connection was built', async () => {
+      server.ringStatus = 503;
+      const service = new CallService(fakeMls);
+      const started = service.startCall('group-1', false);
+      await settle();
+      FakeSocket.instances[0].open();
+      FakeSocket.instances[0].deliver({ type: 'Joined', room_id: 'room-1' });
+      await expect(started).rejects.toThrow();
+      expect(FakePeerConnection.instances).toHaveLength(1);
+      expect(FakePeerConnection.instances[0].closed).toBe(true);
+    });
+
+    it('the call ends while the peer connection is being built - nothing outlives it', async () => {
+      const service = new CallService(fakeMls);
+      const started = service.startCall('group-1', false);
+      await settle();
+      FakeSocket.instances[0].open();
+      // The join resolves the socket wait; the build runs next - the hangup lands in between.
+      FakeSocket.instances[0].deliver({ type: 'Joined', room_id: 'room-1' });
+      service.endCall();
+      await started;
+      await settle();
+      for (const pc of FakePeerConnection.instances) expect(pc.closed).toBe(true);
+    });
   });
 
   it('as initiator, goes direct-first with the TURN servers and offers on negotiationneeded', async () => {
@@ -975,7 +1085,7 @@ describe('the E2E worker report (2026-10-19)', () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (5 s after connected): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+      '[Call] E2E path check (5 s after connected): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=0)'
     );
     expect(get(service.callState)).toBe('incall');
 
@@ -1086,7 +1196,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     pc.videoInboundPackets = 400;
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+      '[Call] E2E path check (re-check): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=400)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -1111,7 +1221,7 @@ describe('the E2E worker report (2026-10-19)', () => {
       pc.videoInboundPackets = 400;
       await vi.advanceTimersByTimeAsync(5_000);
       expect(lines()).toContain(
-        '[Call] E2E path check (after a new video m-line): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+        '[Call] E2E path check (after a new video m-line): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=400)'
       );
       expect(get(service.callState)).toBe('incall');
       const shown = get(service.remoteStream)?.getTracks() ?? [];
@@ -1208,7 +1318,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     camTrack.onunmute?.();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the camera unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after the camera unmuted): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.e2eProven)).toBe(true);
   });
@@ -1255,7 +1365,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     mic.onunmute?.();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the local audio unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after the local audio unmuted): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
   });
 
@@ -1313,7 +1423,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     (pc.onsignalingstatechange as unknown as () => void)();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after signalling reached stable): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+      '[Call] E2E path check (after signalling reached stable): PASS - all media went through the E2E transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -1515,7 +1625,10 @@ describe('the E2E worker report (2026-10-19)', () => {
       const first = await turnCameraOn(service);
       const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
       let hidden = true;
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => (hidden ? 'hidden' : 'visible'),
+      });
       try {
         document.dispatchEvent(new Event('visibilitychange'));
         await settle();
@@ -1533,8 +1646,240 @@ describe('the E2E worker report (2026-10-19)', () => {
         expect(t.direction).toBe('sendrecv');
         expect(get(service.isVideoOff)).toBe(false);
       } finally {
-        delete (document as unknown as { hidden?: boolean }).hidden;
+        delete (document as unknown as { visibilityState?: string }).visibilityState;
+        // Ended, so its listener cannot answer a later test's `canari:foreground` with a camera.
+        service.endCall();
       }
+    });
+
+    describe('on Android, where the WebView stays "visible" in the background', () => {
+      // MainActivity writes `window.__canariForeground` and dispatches `canari:foreground`; the
+      // document never changes (utils/appForeground.ts). The camera must follow THAT signal.
+      const win = window as unknown as { __canariForeground?: boolean };
+      const announce = (foreground: boolean) => {
+        win.__canariForeground = foreground;
+        window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground } }));
+      };
+      // Each test's call is ENDED: a call left up keeps its window listener, and its camera would
+      // answer the next test's `canari:foreground` into the shared `cameras` list.
+      const live: CallService[] = [];
+      const androidCall = async () => {
+        const c = await connectedCall();
+        live.push(c.service);
+        return c;
+      };
+      afterEach(() => {
+        for (const s of live.splice(0)) s.endCall();
+        delete win.__canariForeground;
+      });
+
+      it('canari:foreground false turns the camera OFF, true turns it ON again', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+
+        announce(false);
+        await settle();
+        expect(first.stop).toHaveBeenCalled();
+        expect(t.sender.track).toBeNull();
+        expect(lines()).toContain(
+          '[Call] backgrounded - camera off until the app returns (audio continues)'
+        );
+
+        announce(true);
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('a camera the OS ends while the app is off screen comes back at the return', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+
+        // The OS wins the race: the flag is already false, the event not yet delivered.
+        win.__canariForeground = false;
+        first.onended?.();
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(lines()).toContain(
+          '[Call] the system ended the camera of a backgrounded app - on again at return'
+        );
+
+        announce(false); // the late event finds the camera off and changes nothing
+        await settle();
+        announce(true);
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+      });
+
+      /** The sender's next `replaceTrack` waits for `release()`: an OFF still in flight. */
+      function holdNextReplace(sender: {
+        replaceTrack: (t: { kind: string } | null) => Promise<void>;
+      }) {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        const real = sender.replaceTrack;
+        sender.replaceTrack = async (t) => {
+          sender.replaceTrack = real;
+          await gate;
+          return real(t);
+        };
+        return release;
+      }
+
+      it('the permission dialog pauses the activity: the first camera still ends ON', async () => {
+        const { service, pc, lines } = await androidCall();
+        const release = holdNextCapture();
+        const opening = service.toggleVideo(); // the dialog is up
+        announce(false); // MainActivity.onPause - the pause's off is queued behind the ON
+        await settle();
+        announce(true); // granted: onResume
+        await settle();
+        expect(lines()).toContain(
+          '[Call] foregrounded - the queued background off is cancelled, the camera opens'
+        );
+        release();
+        await opening;
+        await settle();
+        const cam = cameras[cameras.length - 1];
+        const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+        expect(t?.sender.track).toBe(cam);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('an OFF in flight, then the background and the return: the camera stays OFF', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const release = holdNextReplace(t.sender);
+        const off = service.toggleVideo(); // the user's off, waiting on replaceTrack(null)
+        await settle();
+        announce(false); // backgrounded while the user's off still runs
+        await settle();
+        release();
+        await off;
+        await settle();
+        announce(true); // the return, the off long done
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+        // No capture came back into THIS call (the shared `cameras` list also sees other tests').
+        const own = service as unknown as { localStream: { getVideoTracks(): unknown[] } };
+        expect(own.localStream.getVideoTracks()).toHaveLength(0);
+      });
+
+      it('an OFF tapped while an ON opens, then the background and the return: stays OFF', async () => {
+        const { service, pc } = await androidCall();
+        const release = holdNextCapture();
+        const opening = service.toggleVideo();
+        await service.toggleVideo(); // off, queued behind the opening ON
+        announce(false);
+        await settle();
+        release(); // the ON ends, the user's queued off applies - all while off screen
+        await opening;
+        await settle();
+        announce(true);
+        await settle();
+        const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+        expect(t?.sender.track ?? null).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+      });
+
+      it('the return while the background off still runs: the camera comes back when it ends', async () => {
+        const { service, pc, lines } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const release = holdNextReplace(t.sender);
+        announce(false); // the pause's off, held on replaceTrack(null)
+        await settle();
+        announce(true);
+        await settle();
+        expect(lines()).toContain(
+          '[Call] foregrounded - camera on again once the running off ends'
+        );
+        release();
+        await settle();
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('the OS ends a camera the user was turning off, off screen: it stays OFF at the return', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        await service.toggleVideo(); // off, done
+        await settle();
+        const release = holdNextReplace(t.sender);
+        const opening = service.toggleVideo(); // on again: the capture is adopted, replaceTrack held
+        await settle();
+        const cam = cameras[cameras.length - 1];
+        await service.toggleVideo(); // the user's off, queued behind the opening ON
+        announce(false); // not headed on: nothing to pause
+        await settle();
+        cam.onended?.(); // the OS takes it in the same replaceTrack await
+        await settle();
+        release();
+        await opening;
+        await settle();
+        announce(true);
+        await settle();
+        expect(get(service.isVideoOff)).toBe(true);
+        const own = service as unknown as { localStream: { getVideoTracks(): unknown[] } };
+        expect(own.localStream.getVideoTracks()).toHaveLength(0);
+      });
+
+      it("an OFF that outlives its call does not release the NEXT call's camera lock", async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        const releaseOff = holdNextReplace(t.sender);
+        const off = service.toggleVideo(); // the old call's off, held on replaceTrack(null)
+        await settle();
+        service.endCall();
+        await vi.advanceTimersByTimeAsync(1_500);
+        const next = service.startCall('group-1', false);
+        await settle();
+        const ws = FakeSocket.instances[FakeSocket.instances.length - 1];
+        ws.open();
+        ws.deliver({ type: 'Joined', room_id: 'room-2' });
+        await next;
+        const releaseOn = holdNextCapture();
+        const opening = service.toggleVideo(); // the new call's camera, its lock held
+        await settle();
+        const lock = service as unknown as { cameraBusy: boolean };
+        expect(lock.cameraBusy).toBe(true);
+        releaseOff();
+        await off; // the old finally runs now
+        await settle();
+        expect(lock.cameraBusy).toBe(true);
+        releaseOn();
+        await opening;
+        await settle();
+        expect(lock.cameraBusy).toBe(false);
+        expect(get(service.isVideoOff)).toBe(false);
+      });
+
+      it('a camera the OS ends ON screen stays off (another app took it)', async () => {
+        const { service, pc } = await androidCall();
+        const first = await turnCameraOn(service);
+        const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+        first.onended?.();
+        await settle();
+        announce(false);
+        await settle();
+        announce(true);
+        await settle();
+        expect(t.sender.track).toBeNull();
+        expect(get(service.isVideoOff)).toBe(true);
+      });
     });
 
     describe('the quality ladder (utils/callVideoQuality.ts)', () => {
@@ -1729,7 +2074,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     workerAnswers.report = { sender: 500, receiver: 501 };
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+      '[Call] E2E path check (re-check): PASS - all media went through the E2E transform (packets sent audio=250 video=0 received audio=251 video=0)'
     );
     expect(get(service.e2eProven)).toBe(true);
   });
@@ -2443,14 +2788,166 @@ describe('a refused answer', () => {
       'device-1'
     );
     order.length = 0;
+    vi.mocked(fakeMls.sendMessage).mockClear();
 
     await service.acceptCall('group-1', 'room-1');
     await settle();
 
     expect(order[0]).toBe('api:/api/calls/room-token');
-    // The one MLS frame is the hangup; the answered frame never left.
+    // The one MLS frame is the hangup; the answered frame never left, nor the ring-end 'answered'.
     expect(order.filter((o) => o === 'mls')).toHaveLength(1);
-    expect(order).not.toContain('api:/api/calls/ice-servers');
+    expect(sentCallFrames().some((msg) => msg?.answered)).toBe(false);
+    // The ICE servers are asked BESIDE the token (2026-10-31): fetched, never used - no room joined.
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(FakePeerConnection.instances).toHaveLength(0);
+  });
+
+  it('releases a microphone granted beside a token the server refused', async () => {
+    server.roomTokenStatus = 403;
+    const service = new CallService(fakeMls);
+    await ringingCallee(service);
+    await service.acceptCall('group-1', 'room-1');
+    await settle();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const getUserMedia = vi.mocked(navigator.mediaDevices.getUserMedia);
+    for (const r of getUserMedia.mock.results) {
+      const stream = (await r.value) as ReturnType<typeof fakeMicStream>;
+      for (const t of stream.getTracks() as unknown as ReturnType<typeof fakeTrack>[])
+        expect(t.stop).toHaveBeenCalled();
+    }
+    expect(get(service.callState)).toBe('idle');
+  });
+});
+
+/** An incoming call, ringing on this device (the callee's side of `room-1`). */
+async function ringingCallee(service: CallService) {
+  await service.handleCallSignal(
+    'peer@example.org',
+    'group-1',
+    {
+      callId: 'room-1',
+      offerSdp: 'START',
+      hasVideo: false,
+      deviceId: 'device-2',
+      ringTimeoutMs: 60_000,
+    },
+    'me@example.org',
+    'device-1'
+  );
+}
+
+/**
+ * The callee's answer (owner, Android 1.5.3, 2026-10-31): its setup was strictly serial - token,
+ * an AWAITED "answered" notice, ICE servers, microphone, keys, join - 1.2-2.6 s of "connecting".
+ */
+describe("the callee's answer runs its independent steps side by side", () => {
+  it('asks the ICE servers, opens the microphone and derives the keys while the token is in flight', async () => {
+    let releaseToken!: () => void;
+    server.tokenHold = new Promise((r) => (releaseToken = r));
+    const service = new CallService(fakeMls);
+    await ringingCallee(service);
+    vi.mocked(fakeMls.exportSecret).mockClear();
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockClear();
+    order.length = 0;
+
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    // The token has not answered, and the three other steps already ran.
+    expect(order).toContain('api:/api/calls/room-token');
+    expect(order).toContain('api:/api/calls/ice-servers');
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+    expect(fakeMls.exportSecret).toHaveBeenCalled();
+    // Nothing told anyone it was answered before the server said it may be.
+    expect(order).not.toContain('mls');
+    expect(order).not.toContain('api:/api/calls/ring-end');
+    expect(FakeSocket.instances).toHaveLength(0);
+
+    releaseToken();
+    await settle();
+    // The notice and the ring-end left once the token was in hand, and the room is joined.
+    expect(order).toContain('mls');
+    expect(order).toContain('api:/api/calls/ring-end');
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    expect(ws.sent[0]).toMatchObject({ type: 'Join', room_token: 'rt-2' });
+  });
+
+  it('never waits for the "answered" notice: a notice still in flight does not hold the join', async () => {
+    const service = new CallService(fakeMls);
+    await ringingCallee(service);
+    // The MLS send of the notice never settles.
+    vi.mocked(fakeMls.sendMessage).mockImplementationOnce(() => new Promise<never>(() => {}));
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    const ws = FakeSocket.instances[0];
+    expect(ws).toBeDefined();
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    expect(get(service.callState)).toBe('incall');
+  });
+
+  it('says a notice that failed at ERROR, and the call goes on', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    await ringingCallee(service);
+    vi.mocked(fakeMls.sendMessage).mockImplementationOnce(async () => {
+      throw new Error('MLS send refused');
+    });
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    expect(get(service.callState)).toBe('incall');
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(
+      lines.some((l) =>
+        l.startsWith(
+          '[Call] ERROR answered notice for room-1 not sent - our other devices keep ringing'
+        )
+      )
+    ).toBe(true);
+  });
+
+  it('logs each step with its own duration, and the answer with the ring it closed', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    await ringingCallee(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    for (const step of ['room-token', 'ice-servers', 'media', 'keys', 'join'])
+      expect(
+        lines.some((l) => new RegExp(`^\\[Call\\] setup step ${step}: \\d+ ms$`).test(l))
+      ).toBe(true);
+    expect(
+      lines.some((l) => /^\[Call\] answered \(this device answered\) ring_ms=\d+$/.test(l))
+    ).toBe(true);
+  });
+
+  it('a sibling device still stops ringing on the notice, which leaves after the token', async () => {
+    // The guarantee the notice carries, kept: our OTHER device ringing this call is dismissed by it.
+    const sibling = new CallService(fakeMls);
+    await ringingCallee(sibling);
+    expect(get(sibling.callState)).toBe('incoming');
+    await sibling.handleCallSignal(
+      'me@example.org',
+      'group-1',
+      { callId: 'room-1', answered: true, deviceId: 'device-9' },
+      'me@example.org',
+      'device-1'
+    );
+    expect(get(sibling.callState)).toBe('idle');
   });
 });
 
@@ -2575,6 +3072,11 @@ describe('a network blip does not end the call', () => {
     ws.deliver({ type: 'PeerReady', initiator: true });
     await settle();
     const pc = FakePeerConnection.instances[0];
+    // The first offer left at the adoption of the peer connection built during the ring: answered,
+    // as the callee does, and forgotten - the tests below count what happens AFTER the connect.
+    await answer(ws);
+    expect(pc.signalingState).toBe('stable');
+    ws.sent.length = 0;
     pc.setIce('connected');
     pc.setConnection('connected');
     expect(get(service.callState)).toBe('incall');
@@ -2973,6 +3475,49 @@ describe('a network blip does not end the call', () => {
       await ice(pc, 'failed');
       expect(warned()).toBe(true);
     });
+  });
+
+  // Review F6 of #2830: a socket lost DURING THE RING recorded the outage baseline from the peer
+  // connection built for the ring (no media, `null`), and that baseline outlived the ring - so a
+  // later outage whose path still read `connected` while carrying nothing was never restarted.
+  it('a signalling loss during the ring leaves no baseline: a later dead-but-"connected" path is restarted', async () => {
+    const service = new CallService(fakeMls);
+    const started = service.startCall('group-1', false);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-1' });
+    await started;
+    const pc = FakePeerConnection.instances[0];
+    expect(pc.inboundPackets).toBeNull();
+
+    // The caller's socket drops while it rings, and the seat is resumed - nobody answered yet.
+    ws.drop();
+    await settle();
+    const ws2 = await resumeAttempt(1);
+    ws2.open();
+    ws2.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-2' });
+    await settle();
+
+    // The callee answers: the ring's peer connection is adopted, the call connects and carries audio.
+    ws2.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    await answer(ws2);
+    pc.setIce('connected');
+    pc.setConnection('connected');
+    pc.inboundPackets = 500;
+    expect(get(service.callState)).toBe('incall');
+
+    // An outage: the socket drops, comes back, and the path still SAYS connected - with no packet.
+    ws2.drop();
+    await settle();
+    const ws3 = await resumeAttempt(1);
+    ws3.open();
+    ws3.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-3' });
+    ws3.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+    await settle();
+    expect(pc.restarts).toBe(1);
+    expect(ws3.framesOfType('Offer')).toHaveLength(1);
   });
 
   /**
@@ -3770,6 +4315,30 @@ describe('the call keys (port of #2013, 2026-10-21)', () => {
     );
   }
 
+  // Review F8 of #2830: the steps run side by side, so one failing ends the call under the others.
+  // Only the step that failed says "failed"; the others were abandoned.
+  it('acceptCall: a step stopped by a sibling step failing says "abandoned", never "failed"', async () => {
+    server.roomTokenStatus = 403;
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const mic = holdNextMicrophone();
+    const service = new CallService(fakeMls);
+    await ringing(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    await accepted;
+    mic.release();
+    await settle();
+    const lines = await logLines();
+    expect(lines.some((l) => l.startsWith('[Call] setup step room-token failed after'))).toBe(true);
+    expect(
+      lines.some((l) =>
+        /^\[Call\] setup step media abandoned after \d+ ms \(the call ended\)$/.test(l)
+      )
+    ).toBe(true);
+    expect(lines.some((l) => l.startsWith('[Call] setup step media failed'))).toBe(false);
+  });
+
   it('acceptCall: a hangup during the ended SUMMARY (same sequence, state ended) abandons the setup', async () => {
     const { showToast } = await import('$lib/stores/toast.svelte');
     vi.mocked(showToast).mockClear();
@@ -3788,7 +4357,8 @@ describe('the call keys (port of #2013, 2026-10-21)', () => {
     for (const t of mic.got[0].getTracks() as unknown as ReturnType<typeof fakeTrack>[]) {
       expect(t.stop).toHaveBeenCalledTimes(1);
     }
-    expect(workerAnswers.keys).toBeNull();
+    // The keys are derived BESIDE the microphone prompt (2026-10-31), so they reached the worker
+    // while the call was live; the worker holding them dies with the call.
     expect(FakeSocket.instances).toHaveLength(0);
     expect(showToast).not.toHaveBeenCalled();
     expect(await logLines()).toContain(
@@ -3796,6 +4366,7 @@ describe('the call keys (port of #2013, 2026-10-21)', () => {
     );
     await vi.advanceTimersByTimeAsync(1_500);
     expect(get(service.callState)).toBe('idle');
+    expect(workerAnswers.terminated).toBe(1);
   });
 
   it('acceptCall: a step that FAILS after its call ended is logged, not shown as a call failure', async () => {
@@ -4022,6 +4593,62 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
     for (const t of mic) expect(t.stop).toHaveBeenCalled();
   });
 
+  // Owner, 2026-10-31: `setup_ms` ran from the tap, so a person taking 40 s to answer read as a
+  // 40 s setup. The ring (a human) and the connect (the app) are two numbers.
+  it('splits the wait into ring_ms (ring left to answer, the setup excluded) and connect_ms (answer to the E2E proof)', async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      vi.mocked(appendLog).mockClear();
+      const service = new CallService(fakeMls);
+      let releaseRing!: () => void;
+      server.ringHold = new Promise((r) => (releaseRing = r));
+      const started = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1' });
+      await settle();
+      now = 1_500; // half a second of the app's setup (ICE, mic, keys, join): not the ring
+      releaseRing();
+      await started;
+      now = 7_000; // five and a half seconds of ring
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      const pc = FakePeerConnection.instances[0];
+      pc.setConnection('connected');
+      now = 7_800; // the first frame each way crosses the worker
+      const epoch = workerAnswers.epoch;
+      for (const side of ['sender', 'receiver'])
+        workerAnswers.last?.onmessage?.({
+          data: { type: 'inPath', side, epoch, mediaKind: 'audio' },
+        } as MessageEvent);
+      expect(get(service.e2eProven)).toBe(true);
+      const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+      expect(lines).toContain('[Call] answered (the peer joined) ring_ms=5500');
+      expect(lines.some((l) => l.endsWith('(connect_ms=800)'))).toBe(true);
+      service.endCall();
+      await vi.advanceTimersByTimeAsync(1_500);
+      const [end] = await reports('end');
+      expect(end).toContain('ring_ms=5500 connect_ms=800');
+      expect(end).not.toContain('setup_ms');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('says a ring nobody answered as such: no ring_ms, no connect_ms', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    // The peer connection built during the ring never met a peer: no report at all.
+    expect(await reports('end')).toHaveLength(0);
+  });
+
   it('zeroes the call keys at the end of the call', async () => {
     const { service } = await liveCall();
     const keys = (service as unknown as { callKeys: { send: Uint8Array; receive: Uint8Array } })
@@ -4078,5 +4705,233 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
         /^\[CALL_REPORT\] call=- phase=refused engine=\S+ e2e=refused reason=no-rtp-script-transform$/
       ),
     ]);
+  });
+});
+
+/**
+ * AN ANSWER ON THE NATIVE RING JOINS WITH NO INVITE (calls.md, "An answer from the ring joins on the
+ * ring's facts"). Driven through the real `pendingCallAccept` gate and the real `acceptCall`: the
+ * room token is the authority, and nothing happens before the session's catch-up is done.
+ */
+describe('an answer on the native ring, no invite ever delivered', () => {
+  const RING_ANSWER = {
+    groupId: 'group-1',
+    callId: 'room-1',
+    hasVideo: false,
+    callerId: 'peer@example.org',
+  };
+
+  afterEach(async () => {
+    const gate = await import('$lib/stores/pendingCallAccept');
+    gate.setSessionCaughtUp(false);
+    gate.takePendingCallAccept();
+    gate.setPendingCallAcceptHandler(null);
+  });
+
+  async function answeredOnTheRing(service: CallService) {
+    const gate = await import('$lib/stores/pendingCallAccept');
+    gate.setPendingCallAcceptHandler((why) => service.answerFromSystemSurface(why));
+    gate.setPendingCallAccept({ ...RING_ANSWER, acceptedAt: Date.now() });
+    return gate;
+  }
+
+  it('waits for the catch-up, then asks the room token and joins', async () => {
+    const service = new CallService(fakeMls);
+    order.length = 0;
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const gate = await answeredOnTheRing(service);
+    await settle();
+    // The socket is not caught up yet: nothing asked, nothing sent.
+    expect(order).toHaveLength(0);
+    expect(get(service.callState)).toBe('idle');
+
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    expect(sentCallFrames().some((c) => c.answered)).toBe(true);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(service.incomingCallerId).toBe('peer@example.org');
+  });
+
+  it('joins nothing when the room token says the ring is over (410)', async () => {
+    server.roomTokenStatus = 410;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
+    await settle();
+
+    expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(sentCallFrames().some((c) => c.answered)).toBe(false);
+  });
+
+  it('a second answer of the call being joined starts nothing and accuses nothing', async () => {
+    const service = new CallService(fakeMls);
+    const gate = await answeredOnTheRing(service);
+    gate.setSessionCaughtUp(true);
+    await settle();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    order.length = 0;
+
+    gate.setPendingCallAccept({ ...RING_ANSWER, acceptedAt: Date.now() });
+    await settle();
+
+    expect(order).toHaveLength(0);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('WARN'))).toBe(false);
+  });
+});
+
+describe("the caller's ringback and the app's sound gate (2026-10-31)", () => {
+  beforeEach(() => resetCallSoundGateForTest());
+
+  /** Every value `ringingOut` took, the initial `false` included. */
+  const ringbackOf = (service: CallService) => {
+    const seen: boolean[] = [];
+    service.ringingOut.subscribe((v) => seen.push(v));
+    return seen;
+  };
+  const incoming = { callId: 'room-1', offerSdp: 'START', ringTimeoutMs: 60_000, deviceId: 'd-2' };
+
+  it('starts once the invite has left, and stops when the callee answers', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    const ws = await callerJoined(service);
+    expect(seen).toEqual([false, true]);
+
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    expect(seen).toEqual([false, true, false]);
+    // Answered, still `calling` until the media connects: the ringback does not come back.
+    expect(get(service.callState)).toBe('calling');
+  });
+
+  it('stops when the callee declines', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-1', hangup: true, endReason: canari.CallEndReason.CALL_END_REASON_DECLINED },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('stops when the callee is busy', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+
+    await service.handleCallSignal(
+      'callee@example.org',
+      'group-1',
+      { callId: 'room-1', busy: true, deviceId: 'device-9' },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('stops when the caller cancels, and names the outcome in the log', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+
+    service.endCall();
+
+    expect(seen).toEqual([false, true, false]);
+    expect(
+      vi
+        .mocked(appendLog)
+        .mock.calls.some(([l]) =>
+          String(l).includes('ringback stops - the call ends (outcome=cancelled)')
+        )
+    ).toBe(true);
+  });
+
+  it('stops when a setup step fails after the invite', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await callerJoined(service);
+
+    (service as unknown as { failCall: (r: string) => void }).failCall('signalling closed');
+
+    expect(seen).toEqual([false, true, false]);
+  });
+
+  it('stops when the ring window closes unanswered', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      server.ringTimeoutMs = 5;
+      const service = new CallService(fakeMls);
+      const seen = ringbackOf(service);
+      await callerJoined(service);
+      expect(seen).toEqual([false, true]);
+
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(seen).toEqual([false, true, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never plays for the callee, from the ring to the decline', async () => {
+    const service = new CallService(fakeMls);
+    const seen = ringbackOf(service);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      incoming,
+      'me@example.org',
+      'device-1'
+    );
+    expect(get(service.callState)).toBe('incoming');
+
+    service.endCall();
+
+    expect(seen).toEqual([false]);
+  });
+
+  it("holds the app's sound from the outgoing ring to the end, and releases it at the summary", async () => {
+    const service = new CallService(fakeMls);
+    expect(callHoldsAppSound()).toBe(false);
+    await callerJoined(service);
+    expect(callHoldsAppSound()).toBe(true);
+
+    service.endCall();
+
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(callHoldsAppSound()).toBe(false);
+  });
+
+  it("holds the app's sound while a call rings in, and a retired service lets go", async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      incoming,
+      'me@example.org',
+      'device-1'
+    );
+    expect(callHoldsAppSound()).toBe(true);
+
+    service.retireFromPageRing();
+
+    expect(callHoldsAppSound()).toBe(false);
   });
 });

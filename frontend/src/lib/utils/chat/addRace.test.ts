@@ -17,15 +17,6 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
 
-// A device whose own leaf is not in the tree is added only on a member's approval under its key
-// (`memberDeviceAnswers.ts`, 2026-10-27). The packages here are opaque bytes, so the key they carry is
-// read through this seam, and the devices these tests add are approved under it.
-vi.mock('$lib/mls-client/deviceTrust', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/mls-client/deviceTrust')>()),
-  keyPackageFingerprintOf: vi.fn().mockResolvedValue('fp-approved'),
-}));
-
-import { approveMemberDevice, resetMemberDeviceAnswers } from './memberDeviceAnswers';
 import { inviteMembersToGroup } from './groupCreation';
 
 import { processPendingInvitations } from './actions';
@@ -35,17 +26,6 @@ import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 const admitRefused = (userIds: string[]) =>
   new CommitRefusedError('admit_refused', 2, 2, null, userIds);
 import { decodeAppMessage } from '$lib/proto/codec';
-
-beforeEach(() => {
-  for (const [userId, deviceId] of [
-    ['w4', 'w4-new'],
-    ['w4', 'w4-a'],
-    ['w4', 'w4-b'],
-  ]) {
-    approveMemberDevice(userId, deviceId, 'fp-approved');
-  }
-});
-afterEach(() => resetMemberDeviceAnswers());
 
 /**
  * AN ADD THAT LOSES A COMMIT RACE IS REBUILT ON PROVEN PROGRESS, OR SURFACED - NEVER DROPPED (CC-4,
@@ -115,6 +95,7 @@ function inviteHarness() {
       { deviceId: `${u}-dev`, keyPackage: new Uint8Array([4]) },
     ]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     addMembersBulk: vi.fn(
       async (_g: string, devices: Array<{ userId: string; deviceId: string }>) => {
@@ -290,7 +271,7 @@ describe('inviteMembersToGroup - a lost commit race', () => {
 
   it('a busy add lock is answered as its own reason, never as an Add', async () => {
     const h = inviteHarness();
-    h.mlsService.acquireAddLock.mockResolvedValue(false);
+    h.mlsService.acquireAddLockAnswer.mockResolvedValue('held');
 
     const outcome = await inviteMembersToGroup(['w4'], { id: G } as never, h.deps as never);
 
@@ -315,6 +296,7 @@ function sweepHarness() {
       .fn()
       .mockResolvedValue([{ userId: 'w4', deviceId: 'w4-new', groupId: G, status: 'pending' }]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     getGroupMembers: vi.fn(async () => []),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),

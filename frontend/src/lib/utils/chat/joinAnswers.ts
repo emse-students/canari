@@ -2,9 +2,8 @@ import type { IMlsService } from '$lib/mlsService';
 import type { JoinDeclineOutcome } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
-import type { AnsweredJoinAsk, BulkAdditionOutcome } from './groupCreation';
-import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
-import { approveMemberDevice, declineMemberDevice } from './memberDeviceAnswers';
+import type { AnsweredJoinAsk, BulkAdditionOutcome, BulkAdditionRefusal } from './groupCreation';
+import type { JoinAnswerResult, JoinRefusalKind, JoinRequest } from './joinRequests.svelte';
 
 /**
  * A MEMBER'S TWO ANSWERS TO "X ASKS TO JOIN" (`joinRequests.svelte.ts`), each saying whether it
@@ -103,7 +102,6 @@ export async function admitJoinRequest(
   request: JoinRequest,
   deps: JoinAnswerDeps
 ): Promise<JoinAnswerResult> {
-  if (request.kind === 'device') return admitUnseenDevice(request, deps);
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   if ((await holdsALeaf(request, deps)) === true) {
@@ -133,12 +131,35 @@ export async function admitJoinRequest(
     request.askId !== undefined ? { userId: request.userId, askId: request.askId } : undefined
   );
   if (outcome.kind === 'not-added') {
-    return { done: false, reason: `the Add did not happen (${outcome.reason})` };
+    const kind = refusalKindOf(outcome.reason);
+    return {
+      done: false,
+      reason: `the Add did not happen (${outcome.reason})`,
+      ...(kind ? { kind } : {}),
+    };
   }
   if (!outcome.addedUsers.includes(request.userId.toLowerCase())) {
     return { done: false, reason: 'the Add admitted none of their devices' };
   }
   return { done: true };
+}
+
+/**
+ * The refusals of an Add that mean ANOTHER MEMBER is the cause ({@link JoinRefusalKind}): the
+ * group's add lock is held (an ANSWERED refusal - no answer at all is a failure), or the Add was
+ * abandoned because the person was declined or removed meanwhile. A lost commit race is neither: it
+ * proves no one answered this ask. A
+ * typed switch on the refusal, never a read of its text.
+ */
+function refusalKindOf(reason: BulkAdditionRefusal): JoinRefusalKind | undefined {
+  switch (reason) {
+    case 'add-lock-busy':
+      return 'busy';
+    case 'removed-meanwhile':
+      return 'raced';
+    default:
+      return undefined;
+  }
 }
 
 /** What each answer of the server to a Decline means, as the log line says it - one line each. */
@@ -164,14 +185,6 @@ export async function declineJoinRequest(
   request: JoinRequest,
   deps: JoinAnswerDeps
 ): Promise<JoinAnswerResult> {
-  if (request.kind === 'device') {
-    // About this DEVICE in this conversation alone: the person stays a member, their seat and other
-    // devices untouched. Undone from the toast the banner shows (`undoMemberDeviceDecline`).
-    const [deviceId] = request.deviceIds;
-    if (deviceId === undefined) return { done: false, reason: 'the ask names no device' };
-    declineMemberDevice(request.groupId, request.userId, deviceId);
-    return { done: true };
-  }
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
   let outcome: JoinDeclineOutcome;
@@ -181,29 +194,5 @@ export async function declineJoinRequest(
     return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
   }
   deps.log(`[JOIN_REQUEST] ${request.userId} ${DECLINE_OUTCOME_LINE[outcome]}`);
-  return { done: true };
-}
-
-/**
- * ADMITS ONE device this device never saw, of a user already in the conversation (`kind: 'device'`):
- * the member's approval is recorded for that DEVICE under the key fingerprint the entry showed, and
- * the pending-invitation sweep - started, not awaited - adds it: the same Add every member device
- * gets, in every conversation this device shares with its owner, refused for a package under another
- * key (`memberDeviceAnswers.ts`). Done once the approval is recorded; a sweep that cannot add the
- * device now says why in its log. An entry with no fingerprint, or naming several devices, binds
- * nothing and is refused.
- */
-function admitUnseenDevice(request: JoinRequest, deps: JoinAnswerDeps): JoinAnswerResult {
-  const [deviceId, ...others] = request.deviceIds;
-  if (deviceId === undefined || others.length > 0 || !request.keyFingerprint) {
-    console.error(
-      `[JOIN_REQUEST] a device ask of ${request.userId} in ${request.groupId.slice(0, 8)}... names ${request.deviceIds.length} device(s) and ${request.keyFingerprint ? 'a key' : 'no key'} - not approved`
-    );
-    return { done: false, reason: 'the ask does not name exactly one device under one key' };
-  }
-  approveMemberDevice(request.userId, deviceId, request.keyFingerprint);
-  deps.log(
-    `[JOIN_REQUEST] unseen device ${deviceId.slice(0, 12)}... of ${request.userId} approved in ${request.groupId.slice(0, 8)}... - the sweep adds it`
-  );
   return { done: true };
 }

@@ -74,6 +74,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
+  // A booking notice's place and slot (migration 117): holds no account id itself, and goes with
+  // the row the recipient's (or the actor's) statement above deletes - never kept past its person.
+  'post_notifications.meta': { action: 'delete', via: 'recipientId' },
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },
   'minesweeper_bans.userId': { action: 'delete' },
@@ -131,6 +134,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'association_calendar_events.rejectedBy': { action: 'anonymise' },
   'association_documents.uploadedBy': { action: 'anonymise' },
   'associations.createdBy': { action: 'anonymise' },
+  // A Lydia cashier (migration 118): the person's own row goes, sealed phone included - the rights
+  // Lydia still holds for that number are lot 3's removal (docs/wiki/account-erasure.md).
+  'lydia_cashiers.userId': { action: 'delete' },
+  'lydia_cashiers.addedByUserId': { action: 'anonymise' },
   'poster_projects.createdBy': { action: 'anonymise' },
   'workspace_invites.createdBy': { action: 'anonymise' },
   'channel_workspaces.createdBy': { action: 'anonymise' },
@@ -141,6 +148,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // Who recorded how a payment paid and not granted was settled (migration 113): an accounting
   // record, kept, its author anonymised like every other authorship column.
   'purchase_record_closings.closedByUserId': { action: 'anonymise' },
+  // Who asked for a Lydia refund, and who settled one Lydia never confirmed (migration 120): an
+  // accounting record kept as long as the payment it refunds, its authors anonymised.
+  'lydia_refunds.requestedByUserId': { action: 'anonymise' },
+  'lydia_refunds.resolvedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -451,6 +462,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Own content and standing
   { label: 'posts', sql: `DELETE FROM posts WHERE "authorId" = $1` },
   { label: 'association_members', sql: `DELETE FROM association_members WHERE "userId" = $1` },
+  { label: 'lydia_cashiers', sql: `DELETE FROM lydia_cashiers WHERE "userId" = $1` },
+  {
+    label: 'lydia_cashiers_added_by',
+    sql: `UPDATE lydia_cashiers SET "addedByUserId" = $2 WHERE "addedByUserId" = $1`,
+  },
   { label: 'role_history', sql: `DELETE FROM association_role_history WHERE user_id = $1` },
   {
     label: 'user_follows',
@@ -607,6 +623,14 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'purchase_closings',
     sql: `UPDATE purchase_record_closings SET "closedByUserId" = $2 WHERE "closedByUserId" = $1`,
+  },
+  {
+    label: 'lydia_refunds_requested_by',
+    sql: `UPDATE lydia_refunds SET "requestedByUserId" = $2 WHERE "requestedByUserId" = $1`,
+  },
+  {
+    label: 'lydia_refunds_resolved_by',
+    sql: `UPDATE lydia_refunds SET "resolvedByUserId" = $2 WHERE "resolvedByUserId" = $1`,
   },
   {
     label: 'moderation_muted',
@@ -974,7 +998,17 @@ export interface SocialErasureResult {
   postsScrubbed: number;
   /** Pinned salon messages that were deleted: each salon is told its pin is gone. */
   pinsRemoved: Array<{ id: string; channelId: string }>;
+  /**
+   * The account's LIVE Lydia cashier rows (`removedAt` NULL) the erasure deleted: Lydia still holds
+   * that person as a cashier of that Business, and nothing in Canari tracks it any more - the
+   * caller reports each one at ERROR. Never the phone.
+   */
+  liveCashiersErased: Array<{ associationId: string; vendorToken: string }>;
 }
+
+/** The account's live Lydia cashier rows, read before the erasure deletes them. */
+const LIVE_CASHIERS_SQL = `SELECT "associationId", "vendorToken" FROM lydia_cashiers
+  WHERE "userId" = $1 AND "removedAt" IS NULL`;
 
 /**
  * The media of the account's association posts, which stay with the association. Read BEFORE the
@@ -1014,6 +1048,10 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   // Before anything else: the associations, in the order an association delete takes them.
   const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
+  const liveCashiersErased = await db.read<{ associationId: string; vendorToken: string }>(
+    LIVE_CASHIERS_SQL,
+    [userId]
+  );
 
   const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
   // In the log line's `rows=`: how many associations the erasure held while it ran.
@@ -1033,5 +1071,5 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   }
   // Proposals LAST, after every post lock: the order every acceptance takes (`lockPostRow`).
   Object.assign(counts, await runErasureStatements(db, ERASURE_PROPOSAL_STATEMENTS, userId));
-  return { counts, postsScrubbed, pinsRemoved };
+  return { counts, postsScrubbed, pinsRemoved, liveCashiersErased };
 }

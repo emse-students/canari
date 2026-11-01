@@ -53,6 +53,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
@@ -272,6 +273,17 @@
   }
 
   let showCreateModal = $state(false);
+  /** The broadcaster's screen is open, with who it broadcasts as; it replaced the composer. */
+  let liveTarget = $state<{ associationId: string | null; associationName: string | null } | null>(
+    null
+  );
+
+  /** "En direct" from the composer: it closes (by state, no history change) and the live takes over. */
+  function onGoLive(target: { associationId: string | null; associationName: string | null }) {
+    Log.d('POSTS', 'going live from the composer: the composer closes, the live replaces it');
+    showCreateModal = false;
+    liveTarget = target;
+  }
 
   /**
    * `?compose=1` AND `?search=1` ARE COMMANDS, NOT STATE MIRRORS.
@@ -922,11 +934,12 @@
        because a sticky box only sticks inside its parent. `inert` while hidden keeps it out of the
        tab order, and it never hides while focus is inside it (`tabsFocused`). `motion-reduce` drops
        the slide. While a search replaces the feed its content is hidden, so it is neither sticky
-       nor padded: an empty opaque band would sit over the results. -->
+       nor padded. THE WRAPPER HAS NO BACKGROUND (owner, 2026-10-31): the row is a floating glass
+       pill over the cards, and the gaps between its pieces are the feed's, so touches pass through. -->
   <div
-    class="-mx-1 mb-2 px-1 transition-transform duration-200 ease-out motion-reduce:transition-none {searchQuery
+    class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'bg-cn-bg sticky top-0 z-10 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 pt-2 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {
@@ -979,8 +992,21 @@
     phoneFullScreen
     onClose={() => (showCreateModal = false)}
   >
-    <CreatePostForm {onPostCreated} />
+    <CreatePostForm {onPostCreated} {onGoLive} />
   </Modal>
+
+  <!-- THE LIVE REPLACES THE COMPOSER (owner, 2026-10-31): hosted HERE, not inside the composer, so
+       the composer can close without ending it, and ending or closing the live leaves the feed. -->
+  {#if liveTarget}
+    <LiveOverlay
+      associationId={liveTarget.associationId}
+      associationName={liveTarget.associationName}
+      onclose={() => {
+        Log.d('POSTS', 'the live screen closed: back on the feed');
+        liveTarget = null;
+      }}
+    />
+  {/if}
 
   <section>
     {#if searchQuery}

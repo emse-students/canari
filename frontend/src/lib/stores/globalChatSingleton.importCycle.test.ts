@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, normalize, relative, resolve } from 'node:path';
 
 /**
@@ -47,23 +47,25 @@ function resolveSpec(spec: string, from: string): string | null {
     `${base}.svelte`,
     join(base, 'index.ts'),
   ]) {
-    if (existsSync(c) && !c.endsWith('/')) {
-      try {
-        readFileSync(c);
-        return c;
-      } catch {
-        // a directory
-      }
-    }
+    // A stat, not a read: the walk visits hundreds of modules five times, and reading each
+    // candidate whole to learn it is a file is what made this test outrun its budget under load.
+    if (statSync(c, { throwIfNoEntry: false })?.isFile()) return c;
   }
   return null;
 }
 
+/** Each module's value imports, read once for all five walks. */
+const importsOf = new Map<string, string[]>();
+
 function valueImports(file: string): string[] {
+  const known = importsOf.get(file);
+  if (known) return known;
   const source = readFileSync(file, 'utf8');
-  return [...source.matchAll(IMPORT_RE)]
+  const deps = [...source.matchAll(IMPORT_RE)]
     .map((m) => resolveSpec(m[1] ?? m[2], file))
     .filter((f): f is string => f !== null);
+  importsOf.set(file, deps);
+  return deps;
 }
 
 /** Every module that imports the singleton, reachable from `start` without passing through it. */

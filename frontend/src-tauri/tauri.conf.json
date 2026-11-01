@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "1.5.1",
+  "version": "1.5.4",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -151,6 +151,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "bookings"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",
@@ -176,7 +182,8 @@
             "/notifications/",
             "/calendar/",
             "/shop/",
-            "/bookings/"
+            "/bookings/",
+            "/lives/"
           ]
         },
         {
@@ -206,7 +213,8 @@
             "/notifications/",
             "/calendar/",
             "/shop/",
-            "/bookings/"
+            "/bookings/",
+            "/lives/"
           ]
         }
       ]
@@ -228,7 +236,7 @@
       "minimumSystemVersion": "16.0"
     },
     "android": {
-      "versionCode": 100500107
+      "versionCode": 100500401
     }
   }
 }

@@ -32,6 +32,10 @@ import {
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
+  bookingAddedContent,
+  bookingCancelledContent,
+  bookingReminderContent,
+  bookingWithdrawnContent,
   publicMediaIconId,
   MENTION_TOKEN_RE,
   type PushContent,
@@ -39,6 +43,7 @@ import {
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
+import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 
 /**
  * What a notification ABOUT an anonymous post carries instead of the real author - the identity
@@ -60,6 +65,19 @@ export const ANONYMOUS_NOTIFICATION_ACTOR_NAME = 'Anonyme';
  * answer. One constant, so every such row names the platform the same way.
  */
 export const SYSTEM_ACTOR_NAME = 'Canari';
+
+/** The `actorId` of a notice no person acted on - the platform, which has no face to show. */
+export const SYSTEM_ACTOR_ID = 'system';
+
+/**
+ * `content` with `icon`, when there is one: the bookings' builders take no picture of their own.
+ * The platform's "face" is no picture at all: a notice that names nobody (a link-only space's
+ * organiser, Q-R5) must not show the face of whoever acted either.
+ */
+const withIcon = (content: PushContent, icon?: PushIcon): PushContent =>
+  icon && !(icon.kind === 'user' && icon.userId === SYSTEM_ACTOR_ID)
+    ? { ...content, icon }
+    : content;
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
@@ -133,6 +151,16 @@ export class PostNotificationsService {
         return liveSuspendedContent();
       case 'live_withdrawn':
         return liveWithdrawnContent();
+      // The bookings' four (WP-N). `text` is the PLACE - or the organiser's word for a cancellation
+      // (Q-R3), the place and the time for a reminder - and empty for a link-only space (Q-R5).
+      case 'booking_cancelled':
+        return withIcon(bookingCancelledContent(actorName, text), icon);
+      case 'booking_withdrawn':
+        return withIcon(bookingWithdrawnContent(actorName, text), icon);
+      case 'booking_added':
+        return withIcon(bookingAddedContent(actorName, text), icon);
+      case 'booking_reminder':
+        return bookingReminderContent(text);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
@@ -244,6 +272,9 @@ export class PostNotificationsService {
     actorId: string;
     text: string;
     actorName?: string;
+    /** The association whose logo the bell row draws instead of the actor's face (row only, never the push). */
+    associationId?: string;
+    associationLogoUrl?: string | null;
     skipPush?: boolean;
     pushData?: Record<string, string>;
   }) {
@@ -303,6 +334,8 @@ export class PostNotificationsService {
     associationLogoMediaId?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
+    /** Structured facts stored on each row (never in the push), see `PostNotification.meta`. */
+    meta?: Record<string, unknown>;
     /**
      * In-app rows only, no push - a type that is deliberately never pushed (the answer to a
      * republication request, D38b) rather than one `pushContent` forgot.
@@ -323,6 +356,7 @@ export class PostNotificationsService {
           associationId: data.associationId ?? null,
           associationLogoUrl: data.associationLogoUrl ?? null,
           text: data.text,
+          meta: data.meta ?? null,
           actorName,
         })
       )
@@ -450,13 +484,19 @@ export class PostNotificationsService {
     });
   }
 
-  /** Returns the most recent notifications for a user, newest first. */
+  /**
+   * Returns the most recent notifications for a user, newest first - never one whose actor stands
+   * across the review cohort's boundary (`review-cohort.ts`): a row written before the rule is left
+   * out, so nobody has to delete it.
+   */
   async getNotifications(userId: string, limit = 30) {
-    return this.notifRepo.find({
-      where: { recipientId: userId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-    });
+    return this.notifRepo
+      .createQueryBuilder('n')
+      .where('n."recipientId" = :userId', { userId })
+      .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
+      .orderBy('n.createdAt', 'DESC')
+      .take(limit)
+      .getMany();
   }
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */

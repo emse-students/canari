@@ -969,6 +969,26 @@ pub(crate) fn lister_identites_membres(
     })
 }
 
+/// Classifies `group_id` for the admission rule (`mls_core::admission`): `closed` for a conversation,
+/// `open` for a community or salon key group, whose members enter by external commit by design.
+/// The caller checkpoints the state after it, like every mutation. Rejects any other name.
+#[tauri::command]
+pub(crate) fn definir_politique_admission(
+    group_id: String,
+    policy: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let policy = mls_core::AdmissionPolicy::parse(&policy)
+        .ok_or_else(|| format!("unknown admission policy '{policy}'"))?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.set_admission_policy(&group_id, policy);
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn retirer_membres(
     group_id: String,
@@ -1715,21 +1735,6 @@ pub(crate) async fn graine_verify_signatures(packed_b64: String) -> Result<Vec<S
         log::error!("[GRAINE_SIG] signature batch task failed: {e}");
         e.to_string()
     })?
-}
-
-/// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
-///
-/// ASYNC so the UI's call never waits on the manager mutex on the main thread.
-#[tauri::command]
-pub(crate) async fn mls_own_signature_key(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    Ok(manager.own_signature_key())
 }
 
 /// Signs a v2 session ENDORSEMENT with this device's MLS credential key.

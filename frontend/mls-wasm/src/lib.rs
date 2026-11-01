@@ -310,12 +310,6 @@ impl WasmMlsClient {
         self.manager.key_package_census_summary_at(now_secs as u64)
     }
 
-    /// This device's own credential signature key, public half (`MlsManager::own_signature_key`).
-    #[wasm_bindgen]
-    pub fn own_signature_key(&self) -> Vec<u8> {
-        self.manager.own_signature_key()
-    }
-
     /// Signs a v2 session ENDORSEMENT with this device's MLS credential key (channel-encryption §21).
     #[wasm_bindgen]
     pub fn sign_with_device_credential(&self, message: &[u8]) -> Result<Vec<u8>, JsValue> {
@@ -895,6 +889,21 @@ impl WasmMlsClient {
             .into_iter()
             .map(|id| JsValue::from_str(&id))
             .collect())
+    }
+
+    /// Classifies `group_id` for the admission rule (`mls_core::admission`): `"closed"` for a
+    /// conversation, `"open"` for a community or salon key group, whose members enter by external
+    /// commit by design. Any other name is rejected. The caller checkpoints the state after it.
+    #[wasm_bindgen]
+    pub fn set_admission_policy(
+        &mut self,
+        group_id: String,
+        policy: String,
+    ) -> Result<(), JsValue> {
+        let policy = mls_core::AdmissionPolicy::parse(&policy)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown admission policy '{policy}'")))?;
+        self.manager.set_admission_policy(&group_id, policy);
+        Ok(())
     }
 
     /// Remove all devices of one or more users from a group.

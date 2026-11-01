@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AssociationProduct } from '$lib/associations/api';
 import { m } from '$lib/paraglide/messages';
+import { formatAmount } from '$lib/forms/fillAnswers';
 import {
   linkedTierName,
+  memberOfferLabel,
   preferentialDueCents,
   preferentialPriceLabel,
   tierNotOffered,
@@ -70,8 +72,12 @@ describe('linkedTierName', () => {
 });
 
 describe('preferentialPriceLabel', () => {
-  it('formats the preferential amount, and is null at the full price', () => {
-    expect(preferentialPriceLabel(tier({ viewerDueCents: 1500 }))).toBe('15.00 EUR');
+  // Through `formatAmount` (Intl, never `toFixed`): `src/test/locale.ts` resets every test to the
+  // base locale (`fr`), where EUR reads with a comma and the currency SYMBOL, not the ISO code.
+  it('formats the preferential amount in the reader locale, and is null at the full price', () => {
+    // Intl's fr-FR currency format joins the amount and the symbol with U+00A0 (no-break space),
+    // not an ordinary space - spelled out so this assertion cannot silently rot back to one.
+    expect(preferentialPriceLabel(tier({ viewerDueCents: 1500 }))).toBe('15,00 €');
     expect(preferentialPriceLabel(tier({ viewerDueCents: 3000 }))).toBeNull();
   });
 });
@@ -94,5 +100,68 @@ describe('preferentialDueCents', () => {
       )
     ).toBeNull();
     expect(preferentialDueCents(tier({ amountCents: null, viewerDueCents: null }))).toBeNull();
+  });
+});
+
+describe('memberOfferLabel', () => {
+  const base = tier({ id: 'prod-base', variantKey: null, name: 'Cotisation', amountCents: 300 });
+  const etudiant = (overrides: Partial<AssociationProduct> = {}) =>
+    tier({
+      id: 'prod-etu',
+      name: 'Etudiant',
+      amountCents: 1000,
+      amountCentsMember: 500,
+      memberPriceTag: 'cotisant:cercle',
+      memberPriceTierKey: null,
+      viewerDueCents: 1000,
+      ...overrides,
+    });
+  const siblings = [{ ...base, variantKey: 'cercle' } as AssociationProduct];
+
+  // Owner review of 1.5.1-alpha.7: the Etudiant tier's 5 EUR member price was shown nowhere.
+  it('tells a full-price viewer what the holders of the linked tier pay', () => {
+    expect(memberOfferLabel(etudiant({ memberPriceTierKey: 'cercle' }), siblings)).toBe(
+      m.shop_member_offer_tier({ amount: formatAmount(500, 'eur'), tier: 'Cotisation' })
+    );
+  });
+
+  // Opus review of #2546: an unpriced (or gridded) base tier cannot be ranked, so its holders are
+  // refused every rise as `unranked` and nobody can pay the member price linked to it.
+  it('says nothing when the linked tier has no single price', () => {
+    const linked = etudiant({ memberPriceTierKey: 'cercle' });
+    const unpriced = [{ ...siblings[0], amountCents: null } as AssociationProduct];
+    const gridded = [
+      {
+        ...siblings[0],
+        priceMatrix: {} as AssociationProduct['priceMatrix'],
+      } as AssociationProduct,
+    ];
+    expect(memberOfferLabel(linked, unpriced)).toBeNull();
+    expect(memberOfferLabel(linked, gridded)).toBeNull();
+  });
+
+  it('still announces it when the linked tier is an unpriced BASE tier (ranks lowest)', () => {
+    const unpricedBase = [{ ...base, variantKey: null, amountCents: null } as AssociationProduct];
+    expect(memberOfferLabel(etudiant({ memberPriceTierKey: null }), unpricedBase)).toBe(
+      m.shop_member_offer_tier({ amount: formatAmount(500, 'eur'), tier: 'Cotisation' })
+    );
+  });
+
+  it('words a price with no linked tier as the cotisant price', () => {
+    expect(memberOfferLabel(etudiant({ memberPriceTag: null }), siblings)).toBe(
+      m.shop_member_offer_cotisants({ amount: formatAmount(500, 'eur') })
+    );
+  });
+
+  it('says nothing when the viewer already pays it, the link names no tier, or no fixed price', () => {
+    expect(
+      memberOfferLabel(etudiant({ memberPriceTierKey: 'cercle', viewerDueCents: 500 }), siblings)
+    ).toBeNull();
+    expect(memberOfferLabel(etudiant({ memberPriceTierKey: undefined }), siblings)).toBeNull();
+    expect(memberOfferLabel(etudiant({ amountCentsMember: null }), siblings)).toBeNull();
+    expect(
+      memberOfferLabel(etudiant({ priceMatrix: {} as AssociationProduct['priceMatrix'] }), siblings)
+    ).toBeNull();
+    expect(memberOfferLabel(etudiant({ amountCentsMember: 1000 }), siblings)).toBeNull();
   });
 });

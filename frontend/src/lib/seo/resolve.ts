@@ -47,6 +47,8 @@ export const PRIVATE_PREFIXES = [
   '/communities',
   '/dashboard',
   '/dev',
+  // Help written for members of an association (a new Lydia cashier): not a search result.
+  '/help',
   '/directory',
   '/documents',
   '/events',
@@ -125,6 +127,7 @@ function adminTitle(section: string): string {
  * exactly once across the whole app. Lazy for the reason `LEGAL_SEO` is.
  */
 const PAGE_TITLES: Record<string, () => string> = {
+  '/help/lydia-pro': () => m.help_lydia_pro_title(),
   '/account/purchases': () => m.purchases_heading(),
   '/admin': () => m.admin_title(),
   '/admin/agenda': () => adminTitle(m.admin_pending_agenda_label()),

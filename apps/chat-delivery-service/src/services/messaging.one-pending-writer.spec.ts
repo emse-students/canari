@@ -170,6 +170,11 @@ describe('the ONE writer of a pending membership', () => {
       service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null })
     ).resolves.toBe(true);
     expect(deviceGroupRepo.update).toHaveBeenCalled();
+    // Swallowed, never silent: the route it leaves is what an erasure later finds unseated.
+    const holder = service as unknown as { logger: { warn: jest.Mock } };
+    expect(holder.logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/route NOT removed group=g1 .*connection lost/)
+    );
   });
 
   it('never creates a seat: with no row it writes nothing, still drops the route, and says so', async () => {

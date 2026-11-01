@@ -653,7 +653,11 @@ window with a durable row and a lock:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
   roster write and its eviction record in one transaction), the commit's advance (its admits), an
   account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
-  that transaction, so an accepted commit never leaves a leaf without its seat),
+  that transaction; an external join whose seat cannot be written - a departure in progress, a
+  revoked device, no key package - is refused whole with `NOT_A_MEMBER`, so an accepted external
+  commit never leaves a leaf without its seat; a pending member's commit adds no leaf, since its Add
+  did, and stands with its seat left `pending`, logged `committer seat NOT written` or
+  `REFUSED ... reason=`),
   `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
   registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
   roster re-read under it).
@@ -710,15 +714,13 @@ window with a durable row and a lock:
   the admit is dropped and the commit accepted, since the leaf belongs to an account that is going or
   a device revoked while the Add was in flight, and the accept names it in `refusedAdmits` so the
   committer owes and sends it no Welcome - [mls-protocol](mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)),
-  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats`. **Two known exceptions.** The
-  demotion (`deactivateDeviceMembership`, the stale-device cron among its callers), deliberately:
-  it upserts a `pending` row without that read - the cron demotes precisely a device with no recent
-  key package - and removes the route itself. And the creation bootstrap of `addGroupMember` (a
-  caller enrolling ITSELF into an empty roster), which writes the roster row and `pending` seats
-  with no seat lock. Since ADM-3 (2026-10-25) the route enrols nobody else: another person's device
-  rows go through `writePendingSeats` under the seat lock, or the route refuses
-  ([backlog](../backlog.md), P2 "addGroupMember can enrol an erased account after the final erasure
-  pass", narrowed). An account erasure deletes the account's key packages FIRST, in a
+  both Welcome stores (`lockWelcomeSeat`) and `writePendingSeats` - which `addGroupMember` uses for
+  every write, the creator enrolling itself into its empty roster included (`enrol: 'creator'`, the
+  recorded creator alone since migration 042).
+  **One known exception.** The demotion (`deactivateDeviceMembership`, the stale-device cron among
+  its callers), deliberately: it only moves a row that exists to `pending`, without that read - the
+  cron demotes precisely a device with no recent key package - and removes the route itself. An
+  account erasure deletes the account's key packages FIRST, in a
   transaction of its own, so a writer either holds one and the delete waits for it - its row is
   then there for the erasure's discovery - or finds none and writes nothing. The erasure cuts every
   group it found, under each group's seat lock (`eraseSeats`: rows, queue and routes together), so
@@ -727,9 +729,13 @@ window with a durable row and a lock:
   package (`register-device`), and a token issued before the deletion is honoured for up to an
   hour. So the roster rows go once every group was cut (`writePendingSeats` seats a registering
   device only where its owner is on the roster), and the run ends with a SWEEP - the key packages
-  deleted again, then every group a device row names NOW cut through the same `eraseSeats`. **No
-  device row is deleted outside `eraseSeats`**, because the row is what names the route: a seat
-  admitted after the sweep's read stays whole, row and route, for the FINAL PASS, which core starts
+  deleted again, then every group a device row names NOW cut through the same `eraseSeats`, then
+  every route of the account FOUND off the routing sets by its prefix (`findRoutesOfUser`, never off
+  a row) and removed under that group's seat lock when no active seat of the account stands behind
+  it (`removeUnseatedRoutes`) - a 1:1 DM whose tombstone committed before a crash is named by no
+  row, and its route goes all the same. **No device row is deleted outside `eraseSeats`**: a seat
+  admitted after the sweep's read stays whole, row and route, for the FINAL PASS - a route removed
+  alone would be written back by the next send's reconciliation (`MEMBERS_CACHE_REPAIRED`) - which core starts
   once every token expired, so no republish can follow it - termination is that pass's, never the
   ordering's ([account-erasure](../account-erasure.md)). After it, only a demotion's route-less
   `pending` row can appear, naming a device with no key package, which `cleanupStaleDevices`
@@ -3237,7 +3243,7 @@ phone processes it in the background with the app shut; a community newcomer now
 | Welcome authorization | `sendWelcome` in `apps/chat-delivery-service/src/services/messaging.service.ts`, through `memberOfGroupKind` | It asked `dm_group_members`, which names nobody for a key group (section 16), so every such Welcome would have been a 403. Now an ACTIVE device row - the one helper the replay (`getCommitsSince`) also uses |
 | The newcomer, foreground | `handleDistributionWelcome` in `setupMessageHandler.ts` | `getGroupMeta` names the kind (it now carries `distributionWorkspaceId` / `distributionChannelId`); registers the seed carrier BEFORE installing, installs, promotes the row. No conversation row. A failed install is ACKed and nothing else: the queued Welcome is gone, so the device's own load joins |
 | The newcomer, app killed | `processReceivedWelcomeBackground` (Android, unchanged) | Installs the Welcome and calls `membership-active` |
-| One door at a time | `ensureDistributionGroupFor` + `readWelcomeOwedFromRow` (`utils/chat/welcomeOwed.ts`, shared with `requestReAdd`) | A device holding nothing whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining; an unreadable seat opens neither door this pass |
+| One door at a time | `externalJoin(groupId, { welcomeOwed: 'ask' })` from `ensureDistributionGroup` + `readWelcomeOwedFromSeat` (`utils/chat/welcomeOwed.ts`); the seat is SERVED WITH THE BASE (`DistributionSeat`: chat-delivery `GET internal/mls/distribution-groups/:scope/:scopeId?userId=&deviceId=`, passed through social-service's two `distribution-group` routes as `?deviceId=`); `ensureDistributionGroupFor` logs the `welcome_owed` and `seat_unreadable` outcomes | ONE read per attempt carries the base and this device's seat, the seat read server-side AFTER the base. A device whose seat is `pending` with a queued Welcome or an add in flight WAITS instead of external-joining (`welcome_owed`); no seat served, or an add lock the server could not read (`addInFlight` absent, never `false`), is `seat_unreadable` and opens neither door this pass |
 
 **Why two admitters, or an admitter and the newcomer's own join, cannot both land.** Two admitters
 are serialised by the add-lock, taken before the tree is read. The external commit takes no lock and
@@ -3248,6 +3254,45 @@ writes their `pending` seats in the same transaction as the epoch advance, befor
 base can be minted - so a newcomer that reads that base also reads a seat, with `addInFlight` while
 the admitter holds the lock through its Welcomes, and waits. The same record makes the newcomer a
 recipient of every frame sealed from that epoch on (below).
+
+**That holds only if the seat is read AFTER the base, and until 2026-10-30 it was read before.**
+`ensureDistributionGroupFor` asked the seat question of its `ref` - the roster social-service served
+before the join - and only when that roster already named the device; `externalJoin` then fetched
+the base again and built on it. An Add accepted between the two reads stored the base the join used
+while the roster it was judged on predated the Add's seat, so the device joined over the Add: its
+external commit replaced the leaf the Add had written (`removes=1` on every member), and the
+admitter's Welcome, arriving tens of milliseconds later, found the group built and was logged
+`[WELCOME] key group <kg>... already held - redelivered Welcome ignored (idempotent)`. It was never
+a redelivery and never a second mint: on 11 of 11 kept rig consoles (RM-4, RM-4b, RM-5,
+SALON-REVOKE-COMMIT, 2026-10-25..29) the Welcome's `qId` appears once, and `externalJoin succeeded`
+for the same group follows within 200 ms. The question now lives inside the join
+(`welcomeOwed: 'ask'`), and the answer comes IN THE SAME RESPONSE as each attempt's base:
+chat-delivery reads the device's seat after the base and serves both, so no seat can be older than
+the base it is judged against and the join costs no extra round trip. A separate seat read after the
+base was the first version (one more request per attempt, and a second failure mode); it was dropped
+in review before merging. The idempotent drop stays as the witness that would show the race again.
+The loader's own pre-read on a held-but-evicted group went the same way: it forgets the dead tree
+and lets the join's served seat decide, so an owed Welcome installs on a group no longer held.
+
+**The two facts of a `pending` seat are read lock first, queue second** (`readPendingMembershipFacts`).
+An Add queues its Welcome and only then releases the add lock. Read queue-first, a queue read made
+before the insert and a lock read made after the release both answer "nothing", and the seat an Add
+has just written reads as one nothing follows. Read lock-first, a lock seen free means any Add whose
+seat was read had already queued its Welcome, which the queue read then sees. The exception is a
+Welcome the device already took: installed, the group is held; failed and ACKed, a seat nothing
+follows is the truth. An add lock Redis could not read is served as unknown (`addInFlight` absent),
+never `false`.
+
+**`admittedAtEpoch` is not served in the seat, deliberately.** It is written in the epoch advance's
+own transaction, so it would close the window without any read order. But nothing clears it when the
+Welcome's install fails and the Welcome is ACKed. A seat carrying it would then read as owed forever,
+and the device would wait for a Welcome already spent: the failed-install strand.
+
+**The client and the server ship together.** A client from this change reads a base served without
+`seat` as `seat_unreadable` and joins nothing, on purpose, because "no answer" is never "nothing
+owed". So social-service, chat-delivery and the frontend go out in ONE release. A server rolled back
+under a newer client strands every key-group external join (`seat_unreadable` on each attempt) until
+the server serves `seat` again.
 
 **When the admitter's Add is the one refused, it is rebuilt - on a proof (NOTIF-21, 2026-09-28).**
 The first run measured the losing side: the newcomer's two live web clients joined by their own
@@ -3977,9 +4022,9 @@ and only because the server was further ahead (on the PC it was not, for three d
 **Held is now three questions, and the second one is asked everywhere it matters**:
 
 - **The loader** (`joinDistributionGroup`) reads `isGroupActive` on a held group. Held but inactive is
-  stale: it forgets the tree and joins, **unless a Welcome may be owed to this device**
-  (`readWelcomeOwedForThisDevice`), which is the only other way back in and which a second join
-  would race.
+  stale: it forgets the tree and joins, and **the join stands down when a Welcome is owed to this
+  device** (the seat served with its base, section 20 "One door at a time"), which is the only other
+  way back in and which a second join would race.
 - **The frame path and both replays** tell a new verdict, `evicted`, ONCE per group until it is
   forgotten (`tellEvictedOnce`), since a queued burst is one eviction. The frame is still
   acknowledged: its epoch belongs to a leaf this device no longer holds, and the seeds come back

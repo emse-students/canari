@@ -70,7 +70,7 @@ the two mechanisms above claim: **dev cannot corrupt production's data, and dev 
 production down - but the host can take both down in one gesture, and no compose-level property
 prevents that.** Anything that reasons "the dev estate is isolated, so operating on it is safe"
 must exclude host-level operations from that sentence. The consequence for scheduling unattended
-host upgrades is in [backlog](../backlog.md#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03).
+host upgrades is in [backlog](../infrastructure/host-updates.md#the-owners-three-old-vms-are-ignored-on-purpose-2026-10-24).
 
 ### The two host ports that differ, and why only two
 
@@ -157,7 +157,7 @@ needs no toolchain to load it (`bun tools/dev-seed/seed.ts --write` after an edi
 | --- | --- |
 | 10 people, last name `Fictif`, across formations, promotions and both campuses | communities, salons, DMs - anything under MLS. A community inserted as rows has no key-distribution group and no device holding its state, so nobody could ever read it. Testers create them through the product |
 | the ten spaces, three categories, six associations (`BDE Fictif` as the ICM x Saint-Etienne BDE, three clubs, a list, `Ecole Fictive` addressing everyone), their audiences and memberships (each president holds every flag) | media: a row naming an object the dev bucket does not hold renders as a 404 |
-| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (1.2.7, to follow the production floor: a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
+| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (`1.2.7` today; production's floor is `1.2.9` since 2026-10-29, so the seed must follow, owed in [backlog](../backlog.md): a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
 
 **Fake, checkably.** Last names are the marker, association names say `Fictif`/`Fictive`, every
 address is on `example.invalid` - the TLD RFC 2606 reserves so it can never resolve. User ids are 64

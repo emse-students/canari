@@ -13,8 +13,7 @@
  *
  * THE ASK IS ADDRESSED BY ITS PERSON, never by its position: `[data-join-request]` carries the
  * canonical user id (`JoinRequestRow.svelte`), compared case-folded because the canonical form folds
- * ASCII letters. The banner (`JoinRequestBanner.svelte`) is the other place an ask shows, and it is
- * read by its text: it carries no attribute.
+ * ASCII letters. It is the only place an ask shows: the app-wide banner is gone (2026-10-30).
  */
 import { assertCampaignOwned } from '../campaign.mjs';
 import { evaluate, goto, realClick, until } from '../chat.mjs';

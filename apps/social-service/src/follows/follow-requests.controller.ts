@@ -18,6 +18,7 @@ import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throt
 import { ModerationService } from '../moderation/moderation.service';
 import { FOLLOW_PAGE_MAX, FollowRequestsService } from './follow-requests.service';
 import { FollowsService } from './follows.service';
+import { sameSideOfReviewCohort } from '../review-cohort';
 
 /**
  * Asks one account may make per minute, ALL targets together: the route's parameter is `:userId`,
@@ -82,18 +83,26 @@ export class FollowRequestsController {
     @Headers('x-user-id') xUserId: string,
     @Param('userId') userId: string
   ) {
+    // Across the review cohort's boundary there is no follow to report, even one written before
+    // the rule (review-cohort.ts): it reads as none, as it does in every list.
+    if (!sameSideOfReviewCohort(xUserId, userId)) return { following: false, status: null };
     const status = await this.follows.userFollowStatus(xUserId, userId);
     return { following: status !== null, status };
   }
 
-  /** The follow requests waiting for the caller's answer, newest first (`limit` at most 100). */
+  /**
+   * The follow requests waiting for the caller's answer, newest first (`limit` at most 100). EVERY
+   * follow list pages by `after`, the `cursor` of the last entry served (`follow-cursor.ts`); a
+   * page shorter than `limit` is the last. `offset` is gone: an older client only ever sent 0,
+   * which is the first page either way.
+   */
   @Get('me/follow-requests')
   incoming(
     @Headers('x-user-id') xUserId: string,
     @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+    @Query('after') after?: string
   ) {
-    return this.requests.incoming(xUserId, limit, offset);
+    return this.requests.incoming(xUserId, limit, after);
   }
 
   /** HOW MANY follow requests wait for the caller's answer - for a badge, without the list. */
@@ -122,9 +131,9 @@ export class FollowRequestsController {
   sent(
     @Headers('x-user-id') xUserId: string,
     @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+    @Query('after') after?: string
   ) {
-    return this.requests.outgoing(xUserId, limit, offset);
+    return this.requests.outgoing(xUserId, limit, after);
   }
 
   /** The caller's own ACCEPTED followers, newest first. Nobody reads another person's list. */
@@ -132,9 +141,9 @@ export class FollowRequestsController {
   followers(
     @Headers('x-user-id') xUserId: string,
     @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
-    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number
+    @Query('after') after?: string
   ) {
-    return this.requests.followers(xUserId, limit, offset);
+    return this.requests.followers(xUserId, limit, after);
   }
 
   /** The caller removes `userId` from their followers: deleted, nobody told; 404 if not one. */

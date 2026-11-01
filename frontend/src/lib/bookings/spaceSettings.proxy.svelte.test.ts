@@ -28,6 +28,7 @@ function loadedSpace(): ManagedSpace {
     slotMode: 'step',
     stepMinutes: 30,
     maxSteps: 4,
+    slotMinutes: null,
     nameVisibility: 'occupied',
     discoverability: 'listed',
     audience: AUDIENCE,
@@ -42,6 +43,7 @@ function loadedSpace(): ManagedSpace {
     participantWithdrawMinMinutes: 0,
     maxPeople: null,
     retentionDays: 7,
+    reminderMinutes: 60,
   };
 }
 

@@ -74,6 +74,12 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     );
   });
 
+  it("a booking's notice opens Reservations, even though it carries the booking as postId", () => {
+    expect(socialDeepLink({ type: 'social', postId: 'booking-1', target: 'bookings' })).toBe(
+      'fr.emse.canari://bookings'
+    );
+  });
+
   it('a payload naming nothing opens the posts list', () => {
     expect(socialDeepLink({ type: 'social' })).toBe('fr.emse.canari://posts');
   });

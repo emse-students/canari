@@ -30,15 +30,29 @@ function fakeStream(torch = false) {
 function deferredOpener() {
   const calls: {
     facing: CameraFacing;
+    switching: boolean | undefined;
     resolve: (s: MediaStream) => void;
     reject: (e: unknown) => void;
   }[] = [];
-  const open = (facing: CameraFacing) =>
-    new Promise<MediaStream>((resolve, reject) => calls.push({ facing, resolve, reject }));
+  const open = (facing: CameraFacing, switching?: boolean) =>
+    new Promise<MediaStream>((resolve, reject) =>
+      calls.push({ facing, switching, resolve, reject })
+    );
   return { open, calls };
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('CameraSession lens request', () => {
+  it('the first open is not a switch, the flip button is', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    void session.start();
+    expect(calls[0].switching).toBe(false);
+    void session.switchFacing();
+    expect(calls[1]).toMatchObject({ facing: 'environment', switching: true });
+  });
+});
 
 describe('CameraSession', () => {
   it('starts on the FRONT lens, then is live with the stream', async () => {
@@ -443,5 +457,93 @@ describe('CameraSession - zoom (user, 2026-10-22)', () => {
     const zoomLines = info.mock.calls.filter((c) => String(c[0]).includes('zoom is'));
     expect(zoomLines).toHaveLength(1);
     expect(String(zoomLines[0][0])).toContain('digital');
+  });
+});
+
+describe('CameraSession - the switch needs a second camera (owner, 2026-10-31)', () => {
+  it('offers no switch with one camera, and offers it from two', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open, open, async () => 1);
+    // Before any read the count is unknown, and unknown keeps the switch (fails open).
+    expect(session.cameraCount).toBeNull();
+    expect(session.canSwitch).toBe(true);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    await vi.waitFor(() => expect(session.cameraCount).toBe(1));
+    expect(session.canSwitch).toBe(false);
+
+    const two = new CameraSession(open, open, async () => 2);
+    void two.start();
+    calls[1].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(two.canSwitch).toBe(true));
+  });
+
+  it('recounts on devicechange while open, and stops listening once stopped', async () => {
+    const { open, calls } = deferredOpener();
+    const target = new EventTarget();
+    vi.stubGlobal('navigator', { mediaDevices: target });
+    let count = 1;
+    const session = new CameraSession(open, open, async () => count);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    await vi.waitFor(() => expect(session.cameraCount).toBe(1));
+
+    count = 2;
+    target.dispatchEvent(new Event('devicechange'));
+    await vi.waitFor(() => expect(session.canSwitch).toBe(true));
+
+    session.stop();
+    count = 1;
+    target.dispatchEvent(new Event('devicechange'));
+    await Promise.resolve();
+    // Stopped: the count is forgotten (null), and the later devicechange (to 1) was not heard.
+    expect(session.cameraCount).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('KEEPS the switch when the device list cannot be read (fails open)', async () => {
+    const { open, calls } = deferredOpener();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const session = new CameraSession(open, open, async () => {
+      throw new Error('no list');
+    });
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    await Promise.resolve();
+    expect(session.cameraCount).toBeNull();
+    expect(session.canSwitch).toBe(true);
+  });
+
+  it('keeps the switch on a list that told nothing (0 videoinput) and logs the count it read', async () => {
+    const { open, calls } = deferredOpener();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const session = new CameraSession(open, open, async () => 0);
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() =>
+      expect(info.mock.calls.some((c) => String(c[0]).includes('[CAMERA_COUNT]'))).toBe(true)
+    );
+    expect(session.cameraCount).toBeNull();
+    expect(session.canSwitch).toBe(true);
+    expect(
+      String(info.mock.calls.find((c) => String(c[0]).includes('[CAMERA_COUNT]'))![0])
+    ).toContain('videoinput=0');
+  });
+
+  it('a count read that lands AFTER stop() writes nothing', async () => {
+    const { open, calls } = deferredOpener();
+    let release: (n: number) => void = () => {};
+    const session = new CameraSession(open, open, () => new Promise<number>((r) => (release = r)));
+    void session.start();
+    calls[0].resolve(fakeStream().stream);
+    await vi.waitFor(() => expect(session.phase).toBe('live'));
+    session.stop();
+    release(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(session.cameraCount).toBeNull();
   });
 });

@@ -12,8 +12,9 @@
  * Saturday's column (it is a Saturday morning) while the read that holds it starts the day before
  * (`slotsReadRange`).
  *
- * The window check is `bookingWindowRefusal`, the server's own (`bookingWindow.ts`). It only
- * DRAWS: the device's clock may be wrong, so the screen never withholds a request on it.
+ * The window check is `bookingWindowRefusal`, the server's own (`bookingWindow.ts`), read on the
+ * device's clock. It decides what is OFFERED: a unit whose START it refuses is drawn greyed and is
+ * not a control. The server's clock decides every request, and its refusal is said plainly.
  */
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
@@ -36,7 +37,8 @@ export const BLOCK_LENGTH_CHOICES = 48;
 
 const DAY_MS = 86_400_000;
 
-const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
+/** The Intl locale this client formats dates and numbers in. */
+export const intlLocale = () => (getLocale() === 'en' ? 'en-US' : 'fr-FR');
 
 /** The day a unit is ON: the local date of its start in the space's zone (see the header). */
 export function unitDay(unit: { startMs: number }, zone: string): string {
@@ -56,7 +58,7 @@ export function formatDay(date: string, withYear = false): string {
 }
 
 /** A calendar date, short: "sam. 7 nov.". */
-function formatShortDay(date: string): string {
+export function formatShortDay(date: string): string {
   const [y, mo, d] = date.split('-').map(Number);
   return new Intl.DateTimeFormat(intlLocale(), {
     timeZone: 'UTC',
@@ -130,8 +132,8 @@ export function zoneDiffersFromDevice(zone: string, nowMs: number): boolean {
 }
 
 /**
- * The server's window rule (`bookingWindow.ts`) for one start, on the DEVICE's clock: it draws a
- * unit as bookable or not, nothing more - the server answers every request on its own clock.
+ * The server's window rule (`bookingWindow.ts`) for one start, on the DEVICE's clock: a unit it
+ * refuses as a start is not offered. The server answers every request on its own clock.
  */
 export function windowRefusal(
   space: Pick<BookerSpace, 'opensAt' | 'minNoticeMinutes' | 'horizonDays'>,
@@ -147,6 +149,15 @@ export function windowRefusal(
     startMs,
     nowMs
   );
+}
+
+/**
+ * A unit that is over on the device's clock. The grid DIMS it and says nothing in it: "not
+ * bookable" is news only for a unit that is still to come, and repeating it down every past cell
+ * of the week buried the cells that were still worth reading.
+ */
+export function isPastUnit(unit: { endMs: number }, nowMs: number): boolean {
+  return unit.endMs <= nowMs;
 }
 
 /** Days of one week on the booker's page. */
@@ -388,6 +399,18 @@ export function dragRange(
     last = i;
   }
   return { first: Math.min(anchor, last), count: Math.abs(last - anchor) + 1 };
+}
+
+/**
+ * How many units one drag over the grid may select: a block's length on the organiser's dashboard
+ * (`blockMode`), else what one booking may cover. Above 1, a drag means something, so the screen
+ * says it; the grid and the dashboard read it from here and cannot disagree.
+ */
+export function gridUnitLimit(
+  space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>,
+  blockMode: boolean
+): number {
+  return blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space);
 }
 
 /** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */

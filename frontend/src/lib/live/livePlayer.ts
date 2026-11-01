@@ -1,7 +1,8 @@
 /**
  * THE LIVE VIEWER'S PLAYER: a growing fMP4 source fed through Media Source Extensions, one sealed
- * segment at a time, kept behind the live edge by the buffer policy (`liveBufferPolicy.ts`): the
- * longest delivery gap it measured, never under one segment plus one poll (WP-L5, L-F1).
+ * segment at a time, kept behind the live edge by the buffer policy (`liveBufferPolicy.ts`): one poll
+ * past the longest wait for the next delivery, which the shape of the deliveries bounds before a gap
+ * proves it (WP-L5, L-F1, LIVE-STALL-1).
  *
  * The sequence is the one the WP-L1 bench measured (0 append errors in ~2 200 segments, Chromium
  * `MediaSource` and iOS WebKit `ManagedMediaSource`; `tools/live-bench/bench.js` on
@@ -16,9 +17,11 @@
  *    appended only when it DIFFERS from the last one (a camera re-acquired mid-live); its media
  *    timestamps then jump FORWARD, leaving a time gap that a `waiting` seeks across at once.
  * 4. A manifest poll every {@link LIVE_MANIFEST_POLL_MS} from the last index taken; each new
- *    segment fetched (the plain public fetch), opened with the live key, appended in order. More than
- *    {@link LIVE_PLAYER_CATCHUP_SEGMENTS} new at once, or a gap the window already passed, or a stall,
- *    and the player jumps to the newest and seeks to the edge rather than replaying the backlog.
+ *    segment fetched (the plain public fetch), opened with the live key, appended in order. A backlog
+ *    longer than the policy lets the video sit behind (`LiveBufferPolicy.isBacklog`), or a gap the
+ *    window already passed, or a stall, and the player jumps to the newest and seeks to the edge
+ *    rather than replaying the backlog. A delivery that leaves less media ahead than the longest wait
+ *    for the next one re-anchors at the target at once (`LiveBufferPolicy.reanchor`).
  *
  * Every failure goes through {@link liveFailureOutcome}, ONE decision: a state to stop on, or a
  * retry with a backoff while the screen says "reconnecting". The end is the server's verdict (`410`,
@@ -42,14 +45,16 @@ import { Fmp4ParseError, initSegmentEnd } from './fmp4Segments';
 import { liveViewerCount } from './liveViewerCount';
 import {
   classifyLiveWait,
+  formatLiveRanges,
   LiveBufferPolicy,
+  mediaAheadS,
   type LiveCadenceBreak,
   type LiveTimeRanges,
 } from './liveBufferPolicy';
 import {
   LIVE_BROADCASTER_QUIET_MS,
   LIVE_MANIFEST_POLL_MS,
-  LIVE_PLAYER_CATCHUP_SEGMENTS,
+  LIVE_PLAYER_HELD_WAIT_BUDGET_MS,
   LIVE_PLAYER_JOIN_SEGMENTS,
   LIVE_PLAYER_KEEP_BEHIND_MS,
   LIVE_RECORDER_MIME,
@@ -92,9 +97,18 @@ export interface LiveVideoLike {
   readonly paused: boolean;
   /** True while the engine completes a seek: a `waiting` then is the seek's own, never a stall. */
   readonly seeking: boolean;
+  /**
+   * The engine's `HTMLMediaElement.readyState`: at {@link HAVE_FUTURE_DATA} or above it can play on.
+   * Read when the engine's own wait is settled - a playhead that crept but sits below it is still
+   * waiting.
+   */
+  readonly readyState: number;
   play(): Promise<void>;
   pause(): void;
 }
+
+/** `HTMLMediaElement.HAVE_FUTURE_DATA`: enough is decoded ahead for the engine to play on. */
+export const HAVE_FUTURE_DATA = 3;
 
 /** What the player needs from outside: the network, the seal, the media source, a timer. */
 export interface LivePlayerDeps {
@@ -246,6 +260,12 @@ export class LivePlayer {
   /** True from `start()` until `stop()` or a final state: a stale continuation must not act then. */
   private running = false;
   private stalled = false;
+  /**
+   * The engine's own wait (`held`, media buffered ahead of the playhead): where the playhead stood
+   * and the monotonic clock then, until the next delivery reads whether it ended; null when none is
+   * open.
+   */
+  private held: { at: number; wallMs: number } | null = null;
   private broadcasterQuiet = false;
   /** How far behind the edge to sit, from the delivery cadence this run measures. */
   private readonly policy = new LiveBufferPolicy();
@@ -324,18 +344,29 @@ export class LivePlayer {
 
   /**
    * The `<video>` fired `waiting`. Classified ONCE ({@link classifyLiveWait}): the wait of a seek is
-   * no stall and changes nothing; a hole ahead is crossed now; a starved buffer makes the next
-   * delivery re-anchor at the policy's target - which that delivery's own gap has already raised.
+   * no stall and changes nothing; the engine's own wait with media ahead is left to end by itself
+   * and read again at the next delivery; a hole ahead is crossed now; a starved buffer makes the
+   * next delivery re-anchor at the policy's target - which that delivery's own gap has already raised.
    */
   noteStall(): void {
     if (!this.joined || this.stalled) return;
     const at = this.video.currentTime;
-    const wait = classifyLiveWait(this.video.seeking, at, this.buffer?.buffered ?? null);
+    const ranges = this.buffer?.buffered ?? null;
+    const wait = classifyLiveWait(this.video.seeking, at, ranges);
     switch (wait.kind) {
       case 'seeking':
         console.debug(
           `[LIVE] viewer ${this.liveId}: waiting while seeking at ${at.toFixed(2)} - not a stall`
         );
+        return;
+      case 'held':
+        // Nothing is missing ahead (LIVE-STALL-1, `1.5.1-alpha.8`): a seek would skip media and
+        // shorten nothing. The next delivery reads the playhead: moved, the wait ended by itself;
+        // still here, it is a stall and is re-anchored as one.
+        console.debug(
+          `[LIVE] viewer ${this.liveId}: waiting at ${at.toFixed(2)} with ${wait.ahead.toFixed(2)} s buffered ahead ${formatLiveRanges(ranges)} - the engine's own wait`
+        );
+        this.held = { at, wallMs: this.deps.now() };
         return;
       case 'time-gap':
         // The broadcaster re-acquired its camera, its timestamps moved forward: no engine plays
@@ -343,10 +374,7 @@ export class LivePlayer {
         this.seekToEdge('time gap');
         return;
       case 'starved':
-        console.debug(
-          `[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${Math.round(this.policy.targetMs)} ms)`
-        );
-        this.stalled = true;
+        this.latchStall(at);
         return;
     }
   }
@@ -391,6 +419,7 @@ export class LivePlayer {
     this.openFailures = 0;
     this.appendFailures = 0;
     this.stalled = false;
+    this.held = null;
     this.broadcasterQuiet = false;
     this.policy.reset();
     this.appended = 0;
@@ -485,8 +514,10 @@ export class LivePlayer {
     this.abortDownloads();
     this.cancelTimer?.();
     this.cancelTimer = null;
-    // A refused seat (`full`) was never held, and an ended live freed every seat on the server.
-    if (final.kind === 'full' || final.kind === 'ended') this.seated = false;
+    // A refused seat (`full`) was never held. Every other final state gives it back - an ended live
+    // included: the server's purge of an ordinary end waits for its seated viewers, so this is what
+    // tells it this viewer is owed nothing more (lives.md, "Deletion: at the end, plus a sweep").
+    if (final.kind === 'full') this.seated = false;
     else this.giveBackSeat();
     // Every final screen stops the picture and its sound: nothing plays behind it.
     this.video.pause();
@@ -596,7 +627,7 @@ export class LivePlayer {
       // the OLDEST window from that index, so after a background the window is still the past: the
       // viewer asks for the NEWEST window instead and takes only its newest segment.
       const behind = manifest.nextIndex - 1 - this.last;
-      if (behind > LIVE_PLAYER_CATCHUP_SEGMENTS) {
+      if (this.policy.isBacklog(behind)) {
         const top =
           manifest.segments.at(-1)?.index === manifest.nextIndex - 1
             ? manifest
@@ -626,12 +657,14 @@ export class LivePlayer {
         // or appended is therefore re-anchored now, on the media that just arrived - never cleared
         // with no seek (LIVE-STALL-1: a stall latched mid-fetch was wiped, and the viewer stalled
         // again 4 s later). A stall latched during the trim below stays latched for the next one.
+        // Otherwise the policy says whether the media ahead outlasts the longest wait for the next
+        // delivery (`short`: re-anchored NOW, before that wait drains it - LIVE-STALL-1) or sits
+        // past the target and its slack (`drift`). The engine's own wait, if one is open, is read
+        // first: a playhead that never moved since is a stall like any other.
+        this.settleHeldWait();
         const stall = this.stalled;
-        if (stall || catchUp || this.behindMs() > this.policy.maxBehindMs) {
-          if (this.seekToEdge(stall ? 'stall' : catchUp ? 'catch-up' : 'drift')) {
-            this.stalled = false;
-          }
-        }
+        const why = stall ? 'stall' : catchUp ? 'catch-up' : this.policy.reanchor(this.behindMs());
+        if (why !== null && this.seekToEdge(why) && stall) this.stalled = false;
         // A pause from outside (an audio interruption, another player claiming playback) is not
         // left frozen until the drift forces a seek.
         this.resume();
@@ -763,6 +796,43 @@ export class LivePlayer {
     }
   }
 
+  /**
+   * Reads the engine's own wait ({@link held}) at a delivery and closes it. It ENDED only when the
+   * engine says it plays on - the playhead moved, `readyState` is at least {@link HAVE_FUTURE_DATA}
+   * and the video is not paused: a playhead that crept a sub-frame (WebKit) or recovered and froze
+   * again with no second `waiting` fails that, and is a stall like any other, latched for this
+   * delivery's re-anchor. An ended wait says how long it held the picture: the wall time since it
+   * began minus the media played meanwhile, against {@link LIVE_PLAYER_HELD_WAIT_BUDGET_MS} - the
+   * rig's judge counts a longer hold as a stall. Read at a delivery the poll was making anyway: no
+   * timer.
+   */
+  private settleHeldWait(): void {
+    const held = this.held;
+    if (held === null) return;
+    this.held = null;
+    const at = this.video.currentTime;
+    const playing =
+      at !== held.at && this.video.readyState >= HAVE_FUTURE_DATA && !this.video.paused;
+    if (!playing) {
+      this.latchStall(at);
+      return;
+    }
+    const wallMs = Math.max(0, this.deps.now() - held.wallMs);
+    const playedMs = Math.max(0, (at - held.at) * 1000);
+    const heldMs = Math.max(0, wallMs - playedMs);
+    console.debug(
+      `[LIVE] viewer ${this.liveId}: the engine's own wait at ${held.at.toFixed(2)} ended by itself after ${Math.round(wallMs)} ms, now at ${at.toFixed(2)}: held about ${Math.round(heldMs)} ms (budget ${LIVE_PLAYER_HELD_WAIT_BUDGET_MS} ms)`
+    );
+  }
+
+  /** A stall at `at`: said once, and latched for the next delivery's re-anchor. */
+  private latchStall(at: number): void {
+    console.debug(
+      `[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${Math.round(this.policy.targetMs)} ms)`
+    );
+    this.stalled = true;
+  }
+
   /** How far behind its buffered end the video plays, in ms. */
   private behindMs(): number {
     const ranges = this.buffer?.buffered;
@@ -783,7 +853,17 @@ export class LivePlayer {
     const end = ranges.end(ranges.length - 1);
     const start = ranges.start(ranges.length - 1);
     const target = this.policy.targetMs;
+    if (why === 'short' && end - target / 1000 < start) {
+      // The buffer does not hold the target's worth behind its edge: a seek clamped to its start
+      // would replay that start at every delivery until it did. The next deliveries fill it.
+      console.debug(
+        `[LIVE] viewer ${this.liveId}: ${(end - start).toFixed(2)} s buffered, under the ${Math.round(target)} ms target - no seek (short)`
+      );
+      return false;
+    }
     this.video.currentTime = Math.max(start, end - target / 1000);
+    // A seek ends any wait of the engine's own: the playhead it moved proves nothing about it.
+    this.held = null;
     this.seeks++;
     console.debug(
       `[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`
@@ -797,25 +877,39 @@ export class LivePlayer {
     const ranges = this.buffer?.buffered ?? null;
     const at = this.video.currentTime;
     const end = ranges && ranges.length > 0 ? ranges.end(ranges.length - 1) : null;
-    return { at, end, ahead: mediaAheadS(at, ranges) };
+    return {
+      at,
+      end,
+      ahead: mediaAheadS(at, ranges),
+      ranges: ranges?.length ?? 0,
+      spans: formatLiveRanges(ranges),
+    };
   }
 
   /**
    * Media was appended by a poll: its gap since the previous one feeds the buffer policy, and ONE
    * debug line says what this delivery did to the buffer - the segments, the buffered end, the
-   * playhead and the media ahead of it, before and after the append. One delivery per poll at most,
+   * playhead and the media ahead of it, and every buffered range (a hole ahead of the playhead shows
+   * there and nowhere else - LIVE-STALL-1), before and after the append. One delivery per poll at most,
    * so the line is bounded by the poll's own pace, like the seek line beside it. It is what separates
    * a producer whose segments carry uneven media (the end grows by other than one segment's length)
    * from a player that drifts (the playhead moves by other than the wall time between deliveries).
    */
   private noteDelivery(fresh: LiveManifestSegment[], count: number, seen: LivePlayhead): void {
-    const d = this.policy.delivered(this.deps.now());
     const now = this.playhead();
+    // The media this delivery added, read from the growth of the buffered end - only when no hole
+    // opened (a re-acquired camera moves the end by its time away, which measures no segment).
+    const mediaMs =
+      seen.end !== null && now.end !== null && seen.ranges === now.ranges
+        ? (now.end - seen.end) * 1000
+        : null;
+    const d = this.policy.delivered(this.deps.now(), { segments: count, mediaMs });
     const range = `${fresh[0].index}-${fresh[fresh.length - 1].index}`;
     console.debug(
       `[LIVE] viewer ${this.liveId}: delivery of ${count} appended of ${fresh.length} taken (${range}), gap ${d.gapMs === null ? '-' : Math.round(d.gapMs)} ms: ` +
         `end ${fmtS(seen.end)} -> ${fmtS(now.end)}, at ${fmtS(seen.at)} -> ${fmtS(now.at)}, ` +
-        `ahead ${fmtS(seen.ahead)} -> ${fmtS(now.ahead)} s`
+        `ahead ${fmtS(seen.ahead)} -> ${fmtS(now.ahead)} s, ` +
+        `ranges ${seen.spans} -> ${now.spans}`
     );
     if (d.grew) {
       console.debug(
@@ -878,18 +972,10 @@ interface LivePlayhead {
   at: number;
   end: number | null;
   ahead: number;
-}
-
-/**
- * How many seconds can play from `position` before the video waits: the rest of the range holding
- * it, or 0 when it sits in no range (a hole, or before the first media).
- */
-function mediaAheadS(position: number, ranges: LiveTimeRanges | null): number {
-  if (!ranges) return 0;
-  for (let i = 0; i < ranges.length; i++) {
-    if (position >= ranges.start(i) && position < ranges.end(i)) return ranges.end(i) - position;
-  }
-  return 0;
+  /** How many buffered ranges there are: a new one means a hole opened. */
+  ranges: number;
+  /** Every buffered range, for the log line ({@link formatLiveRanges}). */
+  spans: string;
 }
 
 /** Seconds for a log line, two decimals; `-` for none. */

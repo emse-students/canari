@@ -234,6 +234,8 @@ services:
     expose:
       - "3010"
     environment:
+      # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
       NODE_ENV: ${NODE_ENV:-production}
       # Same as core/social: browser origin for CORS (same-site prod usually unaffected).
@@ -303,7 +305,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: dxflrs/garage:v2.4.1
+    image: dxflrs/garage:v2.5.0
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
@@ -354,7 +356,7 @@ services:
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
@@ -495,7 +497,7 @@ services:
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       MEDIA_SERVICE_URL: http://media-service:3011
       # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
-      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      # exactly `true`. render-env.sh writes `true` on both estates; lives_mode closes them at runtime.
       LIVE_ENABLED: ${LIVE_ENABLED:-false}
       # THE LYDIA RECONCILIATION SWITCH (docs/wiki/lydia-api.md section 7): the sweep asks Lydia
       # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on

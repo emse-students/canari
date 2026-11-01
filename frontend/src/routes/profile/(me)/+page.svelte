@@ -26,7 +26,7 @@
   // A count only once its list has arrived, so the row never says "0" for a list still loading.
   const rows = $derived(
     profileHubRows({
-      membershipCount: model.membershipsLoading ? null : model.memberships.length,
+      memberships: model.membershipsLoading ? null : model.memberships,
       careerCount: model.roleHistoryLoading ? null : model.roleHistory.length,
       hasSponsorship: model.hasSponsorship,
     })

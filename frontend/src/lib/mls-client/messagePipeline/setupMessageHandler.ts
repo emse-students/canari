@@ -142,6 +142,24 @@ const noMatchKpFailures = new Map<string, number>();
  * 2. `requestReAdd` replaces every escalation (no Poison Pill, no counters).
  * 3. Recovery state (cooldowns) is in-memory only - reset on every session.
  */
+/** The device-wide freeze list a dev build of #2815 wrote; read by nothing since #2817. */
+const LEGACY_ADMISSION_FREEZE_KEY = 'canari_admission_frozen';
+
+/**
+ * Removes {@link LEGACY_ADMISSION_FREEZE_KEY} once per session. It deafens nothing any more, but a
+ * dead key is a question for the next reader of a dev device's storage, so it goes rather than
+ * lingering. The mls-core half - a persisted `closed` classification - is dropped at load.
+ */
+function forgetLegacyAdmissionFreeze(log: (msg: string) => void): void {
+  try {
+    if (localStorage.getItem(LEGACY_ADMISSION_FREEZE_KEY) === null) return;
+    localStorage.removeItem(LEGACY_ADMISSION_FREEZE_KEY);
+    log('[ADMISSION] a freeze list left by an earlier build was removed - nothing read it');
+  } catch (e) {
+    log(`[ADMISSION] the freeze list left by an earlier build could not be removed: ${String(e)}`);
+  }
+}
+
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // No `userId` here any more: its only consumer at this scope was the state persister's config, and
   // the platform now owns where a checkpoint lands (`IMlsService.persistCheckpoint`). The handlers
@@ -155,6 +173,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetReAddCooldowns();
   // And the open history asks: an addressed answer is accepted only by the session that asked.
   forgetHistoryAsks();
+  // And what a dev build of #2815 left behind (review of #2817): nothing reads it any more.
+  forgetLegacyAdmissionFreeze(log);
 
   const receiveSkipBudget = receiveCheckpointSkipBudget();
   if (receiveSkipBudget > 0) {
@@ -581,7 +601,7 @@ async function handleWelcome({
     void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
       .catch(() => {});
-    onGroupReady?.(terminalId);
+    onGroupReady(terminalId);
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… already held - redelivered Welcome ignored (idempotent)`
     );
@@ -809,7 +829,7 @@ async function handleWelcome({
 
       // History: delegated to onWelcomeProcessed (after reinject) to avoid blocking
       // the queue under the MLS lock (createDecryptSession re-acquires the same mutex).
-      onGroupReady?.(joinedGroupId);
+      onGroupReady(joinedGroupId);
       log(`[WELCOME] Group ${joinedGroupId.slice(0, 8)}… ready`);
       return null;
     } catch (e) {

@@ -1711,6 +1711,13 @@ export class WebMlsService extends BaseMlsService {
     return Array.from(this.client.get_member_identities(groupId) as Iterable<string>);
   }
 
+  /** WASM client wrapper - classifies a group for the admission rule. */
+  async setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot classify ${groupId} (${policy})`);
+    this.client.set_admission_policy(groupId, policy);
+  }
+
   /** WASM client wrapper - the tree's signature key for one leaf, or null when it has none. */
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     if (!this.client)
@@ -1738,12 +1745,6 @@ export class WebMlsService extends BaseMlsService {
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */
   graineSignatureEngine(): GraineSignatureEngine {
     return wasmGraineSignatureEngine();
-  }
-
-  /** WASM client wrapper - this device's own credential signature key, public half. */
-  async ownSignatureKey(): Promise<Uint8Array> {
-    if (!this.client) throw new Error('[MLS] WASM client not ready - no own signature key yet');
-    return this.client.own_signature_key() as Uint8Array;
   }
 
   /** WASM client wrapper - this device's credential key signs `message` (a v2 endorsement). */

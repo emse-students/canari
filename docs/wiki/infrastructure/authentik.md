@@ -686,7 +686,53 @@ printed in full (the rollback):**
 
 ## Database and backup
 
-The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
+The PostgreSQL database (volume `miconnect_database_18` since 2026-10-31, `miconnect_database` before) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
+
+### PostgreSQL 16 -> 18 (2026-10-31)
+
+**Production's Authentik serves PostgreSQL 18.6 since 2026-10-31.** Dependabot proposed the major
+(#2742); its CI never became healthy, because an 18 image refuses a mount at
+`/var/lib/postgresql/data` even when the volume is empty, and would refuse a 16 cluster in any
+case. The ceiling refused it too, correctly ([cicd](../cicd.md#a-major-bump-of-a-data-store-is-refused-and-which-images-may-cross-a-major-is-an-allowlist-2742-2026-10-31)),
+and as that page prescribes for this database, the major moved by a person's pull request carrying
+the operation. **The method is Canari's own 15 -> 18 of 2026-09-18, unchanged**
+([databases](databases.md#crossing-a-major-version---the-rehearsed-procedure)): a logical dump of
+the stopped estate, restored onto a NEW volume, so 18 never opens a directory 16 wrote and the old
+volume is the rollback. `pg_upgrade` was not considered worth building: the database is ~370 MB, of
+which half is the task log, and the restore takes seconds.
+
+**Rehearsed first, on a copy, with the same scripts that then ran on the host**: a fresh production
+dump restored into the exact 16 image digest, Authentik at the exact production digest, dummy
+secrets, and a Docker network with no egress, so a worker booted on production data could not send
+mail or reach a source. What the cut-over checks, in order, and refuses on:
+
+| Check | Why |
+| --- | --- |
+| a snapshot before and after: the exact row count of every table (230), every sequence's value, the extensions, the collation, index and constraint counts | must be IDENTICAL; the writers are stopped, so nothing may move. The only accepted difference is `pg_constraint` gaining `contype = 'n'` rows: PostgreSQL 17 began cataloguing NOT NULL constraints |
+| `pg_restore --exit-on-error` | without it a failed restore still exits 0 |
+| the 18 database holds 0 tables before the restore | a reused volume is only safe when it is empty |
+| health, OIDC discovery and JWKS for every application, the flow executors, the outpost and providers present, no unknown error line in either log | the instance serves, not only boots |
+| a real sign-in: the password flow with PKCE, ending with a Canari core-service redeeming the code | the only check that crosses the whole chain |
+
+**Measured on production: 60 s of sign-in downtime**, 298 snapshot lines identical, no Django
+migration applied at boot (Authentik runs the same version on both majors). The 16 volume was kept
+untouched as the rollback, then **retired the same day on the owner's decision**, once production had
+been re-checked on 18 (health, providers, a real sign-in) and a checksummed copy of the cut-over dump
+was confirmed kept off the host. It went BY NAME after the same checks as Canari's 2026-09-18: no
+container referencing it, `PG_VERSION` 16. The `postgres:16-alpine` image was NOT removed - another
+stack on the host still runs it. From here, the way back is the dump, not a volume.
+
+**A first attempt rolled itself back, and the cause is a trap worth knowing.** On a FRESH volume
+the postgres entrypoint starts a temporary server to initialise the cluster, listening on the unix
+socket only; `pg_isready` over the socket answers "accepting" from it, then "rejecting" a second
+later while it shuts down. The rehearsal had won that race by timing; production lost it, the
+script failed before any restore, and the rollback brought 16 back. Readiness is now read over TCP
+(`pg_isready -h 127.0.0.1`), which the temporary server never answers, three times in a row. The
+compose healthcheck still probes the socket, and is safe only because its first probe comes 30 s
+after start ([durable-rules](../durable-rules.md#object-storage-and-deleting-infrastructure---docker)).
+
+**What this did NOT do**: retire the ceiling's refusal of `postgres` (the next major is this
+operation again), upgrade Authentik itself, or touch any other instance.
 
 Restore: `./infrastructure/backup/restore.sh --latest-from-mitv --yes` (restores `authentik_db` alongside Canari data).
 

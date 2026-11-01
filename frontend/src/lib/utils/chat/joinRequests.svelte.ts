@@ -2,20 +2,19 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import type { JoinAskOutcome } from '$lib/mls-client/joinAskFrames';
 import type { JoinApprovalRequest } from './actions';
-import { resetMemberDeviceAnswers, setMemberDeviceSweep } from './memberDeviceAnswers';
 
 /**
  * A NEW PERSON ASKING TO JOIN A CONVERSATION, held until a member of it answers.
  *
  * An automatic Add never brings a new person in (`automaticAdmission` in `actions.ts`): whatever a
  * server row or a relayed request says, a user with no leaf in this device's tree is admitted only by
- * a member's own gesture. The two automatic adders raise the ask here instead, and the banner shows
- * it. Accepting is the member's Add (`inviteMembersToGroup`, signed by this device); refusing removes
+ * a member's own gesture. The two automatic adders raise the ask here instead, and the conversation
+ * shows it as a discreet system line (`JoinRequestRow`; there is no app-wide banner). Accepting is the member's Add (`inviteMembersToGroup`, signed by this device); refusing removes
  * the request's roster row on the server, which is what stops the ask from coming back.
  *
  * ONE ENTRY PER PERSON AND CONVERSATION, whatever the number of their devices or of the sweeps that
- * raise it - and ONE ENTRY PER DEVICE for an unseen device of a member (`kind: 'device'`), which the
- * member approves on its own, under the key it shows. The pending-invitation sweep is the durable source - the server's `pending` rows - so a
+ * raise it. THERE IS NO ASK ABOUT A DEVICE: a device of a member is added automatically (owner,
+ * 2026-10-31 - the gate is on the user, never the device). The pending-invitation sweep is the durable source - the server's `pending` rows - so a
  * finished sweep REPLACES what it raised ({@link settleSweptJoinRequests}): an ask another member
  * answered, or whose row is gone, leaves with the next sweep rather than staying on screen.
  */
@@ -29,16 +28,6 @@ export interface JoinRequest {
    * from a server older than the field.
    */
   askId?: string;
-  /**
-   * `device`: a DEVICE never seen by this one, of a user already in the conversation, asks to join
-   * (`memberDeviceAnswers.ts`). ONE ENTRY PER DEVICE - `deviceIds` holds exactly that device - beside
-   * any ask of the person, never merged with another device's: one tap approves one device.
-   */
-  kind?: 'device';
-  /** A `device` entry's key fingerprint, shown and bound into the approval. */
-  keyFingerprint?: string;
-  /** A `device` entry's name, as its account registered it; shown, never trusted. */
-  deviceLabel?: string;
 }
 
 /**
@@ -46,7 +35,21 @@ export interface JoinRequest {
  * device is in the tree (approve), or their roster row is gone (decline). Anything else names why,
  * and the ask stays on screen.
  */
-export type JoinAnswerResult = { done: true } | { done: false; reason: string };
+export type JoinAnswerResult =
+  | { done: true }
+  | { done: false; reason: string; kind?: JoinRefusalKind };
+
+/**
+ * WHY AN ANSWER DID NOT HAPPEN WHEN ANOTHER MEMBER IS THE CAUSE, classified where it is known
+ * (`admitJoinRequest`, from the Add's typed refusal) and never read back from the `reason` prose:
+ * `busy` - another device holds the group's add lock, so someone is answering now; `raced` - the
+ * ask was declined or removed under this member's tap. Either way
+ * the settlement frame clears the card, so the member is told who answered, not that something broke.
+ */
+export type JoinRefusalKind = 'busy' | 'raced';
+
+/** What running a member's answer came to, for the caller that tells the member. */
+export type JoinAnswerOutcome = 'done' | 'failed' | JoinRefusalKind;
 
 /** What a member's answer runs, registered by the page holding a conversation context. */
 export interface JoinRequestHandlers {
@@ -55,6 +58,25 @@ export interface JoinRequestHandlers {
 }
 
 const requests = new SvelteMap<string, JoinRequest>();
+
+/**
+ * A DECLINE THIS MEMBER MADE, kept for the session so the conversation can say so. An accepted ask
+ * needs no record: the Add writes its own `memberAdded` notice on every member's device. No frame
+ * tells the OTHER members of a decline, so this line is this device's alone - never a stored row,
+ * which history reconciliation would relay under an id nobody else holds.
+ */
+export interface DeclinedAsk {
+  /** The entry's identity, unique per line. */
+  key: string;
+  groupId: string;
+  userId: string;
+}
+const declined = new SvelteMap<string, DeclinedAsk>();
+
+/** The declines this member made in one conversation, oldest first. Reactive. */
+export function declinedJoinRequests(groupId: string): DeclinedAsk[] {
+  return [...declined.values()].filter((d) => d.groupId === groupId);
+}
 /**
  * THE ASKS THE SERVER SAID WERE ANSWERED THIS SESSION, BY IDENTITY (`askId`, the seat's id). An ask
  * is settled for good: a raise naming a settled identity is a read made before the settlement - a
@@ -62,25 +84,38 @@ const requests = new SvelteMap<string, JoinRequest>();
  * the same person is a new seat, so a new identity, and is raised. No order of arrival is assumed.
  */
 const settledAsks = new SvelteSet<string>();
-// Reactive, so the banner shows an ask only while something can answer it (`canAnswerJoinRequests`).
+// Reactive, so a line is drawn for an ask only while something can answer it (`canAnswerJoinRequests`).
 let handlers = $state.raw<JoinRequestHandlers | null>(null);
 
-function keyOf(groupId: string, userId: string, device?: { kind?: 'device'; deviceId: string }) {
-  const person = `${groupId}|${canonicalUserId(userId)}`;
-  return device?.kind === 'device' ? `${person}|device|${device.deviceId}` : person;
+function keyOf(groupId: string, userId: string) {
+  return `${groupId}|${canonicalUserId(userId)}`;
 }
 
 /** The store key of one ask as an automatic adder raised it. */
 function keyOfAsk(ask: JoinApprovalRequest): string {
-  return keyOf(ask.groupId, ask.requesterUserId, {
-    kind: ask.kind,
-    deviceId: ask.requesterDeviceId,
-  });
+  return keyOf(ask.groupId, ask.requesterUserId);
 }
 
 /** The store key of one entry. */
 function keyOfEntry(entry: JoinRequest): string {
-  return keyOf(entry.groupId, entry.userId, { kind: entry.kind, deviceId: entry.deviceIds[0] });
+  return keyOf(entry.groupId, entry.userId);
+}
+
+/**
+ * The `groupId|userId` pairs whose seat was flagged as a person's ask while the user still held a
+ * leaf (`admissionOfSeat` in `actions.ts`), already accused this session. The state is EXPECTED for
+ * as long as a removed member's leaf outlives the removal, and every sweep meets it again: it is said
+ * once at a level that accuses, then quietly, and asked about anew after a sign-out.
+ */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log dedup ledger, nothing renders it
+const flaggedAsksSaid = new Set<string>();
+
+/** Whether this is the first time this session that the flagged ask of `userId` in `groupId` is met. */
+export function firstSightOfFlaggedAsk(groupId: string, userId: string): boolean {
+  const key = keyOf(groupId, userId);
+  if (flaggedAsksSaid.has(key)) return false;
+  flaggedAsksSaid.add(key);
+  return true;
 }
 
 function short(groupId: string): string {
@@ -94,10 +129,6 @@ function short(groupId: string): string {
 export function raiseJoinRequest(ask: JoinApprovalRequest): void {
   const key = keyOfAsk(ask);
   const userId = canonicalUserId(ask.requesterUserId);
-  if (ask.kind === 'device') {
-    raiseDeviceAsk(key, userId, ask);
-    return;
-  }
   if (ask.askId && settledAsks.has(ask.askId)) {
     console.log(
       `[JOIN_REQUEST] ${userId} in ${short(ask.groupId)} - ask ${ask.askId.slice(0, 8)} was already answered, not raised`
@@ -126,31 +157,9 @@ export function raiseJoinRequest(ask: JoinApprovalRequest): void {
   );
 }
 
-/**
- * Records the ask about ONE unseen device of a member. The same device showing ANOTHER key replaces
- * the entry - the member answers about the key now shown, never one an earlier read showed.
- */
-function raiseDeviceAsk(key: string, userId: string, ask: JoinApprovalRequest): void {
-  const known = requests.get(key);
-  if (known?.keyFingerprint === ask.keyFingerprint && known?.deviceLabel === ask.deviceLabel) {
-    return;
-  }
-  requests.set(key, {
-    groupId: ask.groupId,
-    userId,
-    deviceIds: [ask.requesterDeviceId],
-    kind: 'device',
-    ...(ask.keyFingerprint ? { keyFingerprint: ask.keyFingerprint } : {}),
-    ...(ask.deviceLabel ? { deviceLabel: ask.deviceLabel } : {}),
-  });
-  console.log(
-    `[JOIN_REQUEST] an unseen device ${ask.requesterDeviceId.slice(0, 12)}... of ${userId} asks to join ${short(ask.groupId)} under key ${ask.keyFingerprint ?? '(none)'}${known ? ' (its key changed since the last ask)' : ''} - a member's answer is awaited`
-  );
-}
-
 /** What one entry IS, for a sweep: its ask's identity, or - from a server older than it - its key. */
 function tokenOf(key: string, entry: JoinRequest): string {
-  return entry.askId ?? `key:${key}|${entry.keyFingerprint ?? ''}`;
+  return entry.askId ?? `key:${key}`;
 }
 
 /**
@@ -245,14 +254,6 @@ export function settleJoinRequest(settled: SettledJoinAsk): void {
   );
 }
 
-/**
- * Whether `request` is about a device of the signed-in account itself - the owner's own new device,
- * told to its owner in their own words (`join_request_device_body_own`).
- */
-export function isOwnDeviceAsk(request: JoinRequest, myUserId: string | null | undefined): boolean {
-  return request.kind === 'device' && !!myUserId && canonicalUserId(myUserId) === request.userId;
-}
-
 /** The asks awaiting an answer, oldest first. Reactive. */
 export function pendingJoinRequests(): JoinRequest[] {
   return [...requests.values()];
@@ -275,7 +276,7 @@ export function setJoinRequestHandlers(next: JoinRequestHandlers | null): void {
 function forget(request: JoinRequest): void {
   const key = keyOfEntry(request);
   const live = requests.get(key);
-  if (live?.askId === request.askId && live?.keyFingerprint === request.keyFingerprint) {
+  if (live?.askId === request.askId) {
     requests.delete(key);
   }
 }
@@ -296,17 +297,28 @@ export async function answerJoinRequest(
   request: JoinRequest,
   answer: 'approve' | 'decline'
 ): Promise<boolean> {
+  return (await answerJoinRequestOutcome(request, answer)) === 'done';
+}
+
+/**
+ * {@link answerJoinRequest} with the cause of a refusal kept: `done` when nothing is left to answer,
+ * `busy` / `raced` ({@link JoinRefusalKind}) when another member is the cause, `failed` otherwise.
+ */
+export async function answerJoinRequestOutcome(
+  request: JoinRequest,
+  answer: 'approve' | 'decline'
+): Promise<JoinAnswerOutcome> {
   const settledBefore = request.askId !== undefined && settledAsks.has(request.askId);
   if (settledBefore) {
     forget(request);
     console.log(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} not run - the server already settled this ask`
     );
-    return true;
+    return 'done';
   }
   if (!handlers) {
     console.error(`[JOIN_REQUEST] no handler registered - the ${answer} of an ask was not run`);
-    return false;
+    return 'failed';
   }
   let result: JoinAnswerResult;
   try {
@@ -316,34 +328,40 @@ export async function answerJoinRequest(
     console.error(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} threw, the ask stays: ${String(e)}`
     );
-    return false;
+    return 'failed';
   }
   if (!result.done) {
     if (request.askId !== undefined && settledAsks.has(request.askId)) {
       console.log(
         `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} did not happen - the server settled the ask meanwhile (${result.reason})`
       );
-      return true;
+      return 'done';
     }
     // An answer that did not happen is a known outcome (another device holds the add lock, the
     // network is down), named by its reason and retried by the member - a warning, not an error.
     console.warn(
       `[JOIN_REQUEST] ${answer} of ${request.userId} in ${short(request.groupId)} did not happen, the ask stays: ${result.reason}`
     );
-    return false;
+    return result.kind ?? 'failed';
   }
   forget(request);
+  if (answer === 'decline') {
+    declined.set(keyOfEntry(request), {
+      key: keyOfEntry(request),
+      groupId: request.groupId,
+      userId: request.userId,
+    });
+  }
   console.log(
     `[JOIN_REQUEST] ${request.userId} ${answer === 'approve' ? 'admitted' : 'declined'} in ${short(request.groupId)}`
   );
-  return true;
+  return 'done';
 }
 
 /** Forgets every ask (sign-out, tests): they belong to the account that was signed in. */
 export function resetJoinRequests(): void {
   requests.clear();
+  declined.clear();
   settledAsks.clear();
-  // And this member's answers about unseen devices, with the sweep that would act on them.
-  resetMemberDeviceAnswers();
-  setMemberDeviceSweep(null);
+  flaggedAsksSaid.clear();
 }

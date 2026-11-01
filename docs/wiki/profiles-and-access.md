@@ -650,7 +650,8 @@ is deleted, and the client no longer decides from `formation === 'ICM'`.
   rules reach one of the reader's spaces - or, since D38, when a REPUBLISHING association is
   visible to the reader the same way ([D38 as built](#d38-republication-as-built-2026-10-04)). The
   per-post `post_audiences` rules 6b first built are gone. A PERSONAL post (anonymous included) is visible to readers sharing at least one space
-  with its author. Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
+  with its author - and, since WP-F5, a NON-anonymous one to the author's accepted followers
+  ([as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)). Reels are posts here. Scheduled, hidden and expired-reel rules are unchanged.
 - **The gate** (`FeedAudienceGuard`, `IN_FEED_AUDIENCE_SQL`): an admin, a reader with at least
   one space, or a member of at least one association. **Readers**: `GET /api/posts` (all four
   feeds), `/search`, `/:postId`, `/:postId/calendar-link` and `/calendar-link/:eventId` apply
@@ -737,7 +738,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Population | Space | Sees student content | State |
 | --- | --- | --- | --- |
 | Student or alumnus (no distinction) | formation x campus (an alumnus keeps the former one) | what their spaces and memberships reach | built |
-| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, not built: [backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | next |
+| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, built 2026-10-31 as WP-F5: [as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)) | built |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
 spaces by default (D36, built - see below; NOT an institution, which starts with no rule, WP6e). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
@@ -750,7 +751,7 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); never an institution; an admin only by id. Decided 2026-10-25, not built: also the author's ACCEPTED followers, whatever their space, and a member's repost with the author's consent ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | built |
+| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id. Decided 2026-10-25, not built: a member's repost with the author's consent (WP-F6, [backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) | built |
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
@@ -760,7 +761,9 @@ box no longer defines anything.
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
 | Feed (the gate) | admin, or one space, or one membership | built |
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
-| Messaging, forms, people directory | any valid profile, no border | built |
+| Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31) | built |
+| Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Booking spaces | an association's space: as its association; a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 
 ### Filters and rights
 
@@ -769,7 +772,7 @@ box no longer defines anything.
 | Filters (promo, contributor) | kept, per association, cumulated: original's OR a republication's that reaches the reader - **NOT BUILT: no promo or contributor filter exists in code yet**, so nothing narrows either branch |
 | Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38, migration 073) |
 | Join an association | its admins add the member; following opens nothing |
-| Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); until WP-F5 an accepted follow fills Suivis and opens nothing a shared space did not already open |
+| Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); an ACCEPTED follow opens the person's non-anonymous personal posts and lives across spaces, in Suivis (WP-F5) |
 | Moderation | global (D23) |
 
 ### Decided last (user, 2026-10-04)
@@ -835,6 +838,49 @@ them. `associations.service.create-default-audience.spec.ts` holds the transacti
 frontend's two requests and their separate cache keys. `AssociationsService.list` and `create` were
 also run through TypeORM against a copy of a local estate (directory per reader, a membership
 adding one, the map filter, creation with and without a space).
+
+### The shop, the partnerships and the bookings follow the campus (owner, 2026-10-31)
+
+An audit found that a product, a partnership card and a booking space were listed to, and could be
+bought, claimed or booked by, every signed-in account, whatever its campus. The listings and the
+claim now ask the directory's predicate (D37) of the row's OWNING association, and a personal
+booking space its owner's campus - no new column, no migration:
+
+| Surface | Rule | Where |
+| --- | --- | --- |
+| Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, or its rules reach one of their spaces) | `products.service.ts` |
+| A purchase by id | NOT scoped (owner, 2026-10-31: buying by link is allowed, as with forms): whoever holds the association page's link may pay for what it lists | `products.service.ts` (`preparePurchase` asks no campus) |
+| Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible; `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it | `partnerships.service.ts` |
+| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
+
+**Unchanged on purpose:** the association's page reached by its link (D37) keeps listing its
+products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashSale`, the space
+organiser) are not scoped; forms are not (the link is enough); a personal booking space is still
+LISTED to its owner alone (D43). A global admin is an ordinary reader here (D41), and the review
+cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a review account has no
+real space and the predicate is membership alone for it. A refusal by id is a 404, asked AFTER the
+cohort's typed 403, so the cohort keeps its own answer.
+
+**Two decisions the owner took on review (2026-10-31).** A personal booking space follows its owner's
+CAMPUS, not a space, so staff (a campus, an empty cursus) can offer one to their campus - the school
+psychologist case; an owner with no campus opens theirs to nobody else. And a product of another
+campus is not on /shop, yet whoever holds the association page's link may BUY it: the campus decides
+what the shop offers, not who may pay. A partnership card stays hidden and unclaimable outside the
+audience.
+
+**Client cache.** Every per-reader cache (the directory, the profile, the memberships) is forgotten
+when the reader's own campus or cursus changes - `noteReaderSpaces` (`stores/user.ts`) compares the
+profile `GET /api/users/me` returns with the one last recorded (durable state, never a clock); the
+access token carries neither. Saving an association's audience rules or a space's BDE drops the held
+directory (`setAssociationAudiences`, `setSpaceBde`).
+
+**Proof.** `shop-partnership-visibility.integration.spec.ts` and the `the campus` block of
+`bookings.service.integration.spec.ts`, against a real PostgreSQL: another campus is not listed and
+gets a 404 on a claim or a booking by id, the same campus is served, a member of the association
+from the other campus is served (D21), a purchase by link from another campus goes through, a staff
+owner's space is booked by a student of its campus and refused to the other one, and the same
+campus is no bridge across the review cohort. A control that opened personal spaces to everyone made
+the three personal-space cases fail.
 
 ### D38 republication as built (2026-10-04)
 
@@ -1384,6 +1430,179 @@ Set up through the API as the dev global admin (a dedicated test account): two t
 | 8 | a star reads audiences of its own campus only | PASS | before: 403 `AUDIENCE_ADMIN_OR_BDE_REQUIRED`; as `MANAGE_ASSO` of a saint-etienne BDE: own-campus association 200 `[{campus: saint-etienne}]`, the gardanne association 403 `AUDIENCE_OUTSIDE_BDE_CAMPUS` |
 
 Two P3 client defects were found on the way, both in the [backlog](backlog.md#audiences-of-associations-lists-and-institutions---built-in-production-since-v120).
+
+### WP-F5 - accepted followers read across spaces, as built (2026-10-31)
+
+Decisions 4 and 5 of the [follow requests](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)
+(user, 2026-10-25, reconfirmed 2026-10-31): a PERSONAL post, and a personal LIVE, are visible to
+the author's ACCEPTED followers whatever their space, campus or formation; the opening reaches
+nobody else.
+
+- **One disjunct, in the personal branch only**: `acceptedFollowerOfAuthorSql`
+  (`spaces/reader-spaces.ts`) is ORed into the personal branch of `postVisibleToUserSql` and of
+  `liveVisibleToUserSql`, never the association branch. It holds when an `accepted` `user_follows`
+  row (`acceptedFollowSql`) links the reader to the author, NO block stands between them either
+  way (checked here rather than trusted to the best-effort severing, so a left-over row cannot
+  re-open anything), and both stand on the same side of the review cohort's boundary.
+- **Never an anonymous post** (`NOT COALESCE(post.anonymous, false)`): a follower reading an
+  anonymous post would learn who wrote it - the same reason the Suivis arm already excluded
+  anonymous posts ("the leak is membership, not the name") and D38b never carries one. A live has no
+  anonymous form.
+- **Never a read grant**: the personal branch takes no `readGrants`, as before (WP7).
+- **Tout stays SPACES (decision 5)**: `postVisibleToUserSql` takes `followers: false`
+  (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. Everything else - the
+  Suivis arm, the Associations arm (where it changes nothing: a personal post is there only through
+  a republication the reader sees), the search, a post by id, its comments, reactions and votes,
+  the D38b request menu, the announcement (`announceRecipientsSql`) and the newly-reached rules -
+  counts the follower.
+- **Monotone in republications, unchanged**: the disjunct reads no republication, so
+  `NEWLY_REACHED_BY_REPUBLICATION_SQL` still computes "after and not before"; an accepted follower
+  already sees the post and is never newly reached. `newlyReachedByPersonalRepublicationSql`'s
+  "never a follower before the first announce" term is now implied by it for every post D38b can
+  carry, and kept as the statement that keeps the two notification paths apart.
+- **Notifications follow from the predicate**: the announcement sweep already narrows a personal post
+  to the author's accepted followers who SEE it, and the live push (`liveAudienceSql`) to followers
+  who may watch it; both now reach the cross-space follower, and neither touches an anonymous post.
+- **Revocation is the row**: unfollowing (`leave`), "Retirer" (`removeFollower`) or a block
+  deletes or overrides the follow, and the next read no longer counts it; the first two also drop
+  the feed cache, as a block already did, so no cached Suivis page outlives them.
+- **A block's left-over follow cannot come back (F2 of the review)**: the block's severing is
+  best-effort and harmless while the block stands (the predicate checks the block itself), so the
+  durable record that a severing is owed is THE BLOCK ROW: `UserBlocksService.unblock`
+  (core-service) severs the pair, both directions, BEFORE deleting it, and a severing that fails
+  refuses the unblock with a 503 and leaves the block in place. Nothing can recreate a follow in
+  between - an ask and an acceptance are both refused across a block inside their own statement.
+  After an unblock the two people follow each other only through a new request.
+- **The feed gate admits a follower (F3 of the review)**: `IN_FEED_AUDIENCE_SQL` also admits the
+  holder of one accepted follow, so a staff member with a campus, no cursus and no
+  membership is not pushed a post the gate then refuses (proved through `FeedAudienceGuard`).
+- **Grandfathered follows open like any other (F1 of the review, owner 2026-11-01: "Ouvrir à tous
+  les abonnés")**: migration 114 recorded every pre-request follow as accepted with
+  `acceptedAt = createdAt`, though nobody answered it. The owner decided they open across spaces
+  exactly like an answered follow, so no predicate tells them apart (a switch prepared for the
+  other answer was deleted unflipped). The privacy policy says so, and each person may prune their
+  followers list; `follower-visibility.integration.spec.ts` proves such a follow opens a post and
+  a live.
+- **No one-time notice (owner, 2026-10-31: "Non, ouvrir directement")**: the backlog planned a
+  notice to every person before the opening, so the grandfathered followers could be pruned first;
+  the owner waived it. The opening ships as is; the followers list pages to its end (below).
+- **The D38b request menu counts the follower, deliberately (2026-10-31)**: a cross-space follower
+  who may post as an association that can ask sees the "ask to carry" entry on a post they read as a
+  follower, and may ASK. Nothing widens before the AUTHOR consents, exactly as for a reader of the
+  same space.
+- **The three follow lists page by cursor (a precondition of the opening)**: the inbox, the
+  followers and the sent requests answer at most `FOLLOW_PAGE_MAX` (100) rows a page, newest first,
+  ordered `(instant DESC, id DESC)`; each entry carries an opaque `cursor` (`follows/follow-cursor.ts`:
+  PostgreSQL's own text of the instant plus the row id - never a JS `Date`, which drops the
+  microseconds) and `?after=<cursor>` starts the next page right after it, so a row answered or
+  removed while the list is read shifts nothing. `offset` is gone (older clients only ever sent 0).
+  The client appends pages behind a "Voir plus" button (`nextFollowCursor`, `appendFollowPage`);
+  a list of 250 is proved reachable whole, server and client.
+- **Proof**: `spaces/follower-visibility.integration.spec.ts` (real PostgreSQL: accepted / pending /
+  none x same space / other space x personal / anonymous / association post, the live, the
+  announcement and the live push, a block either way with the row left behind, a removal, an
+  unfollow, a read grant, Tout against the default for every non-follower, monotone newly-reached);
+  `lives.integration.spec.ts` (an accepted cross-space follower is pushed, listed and let in until a
+  block or a removal; a pending one is not); `posts.service.visibility.spec.ts` (which feed arms
+  carry the follower disjunct); `review-cohort.integration.spec.ts` (a follow across the cohort
+  boundary opens nothing, either way); `follow-requests.integration.spec.ts` (250 rows per list,
+  a removal between two pages, a forged cursor, the unfollow's cache drop);
+  `core-service/src/users/user-blocks.service.spec.ts` (sever before lifting, 503 keeps the block). `reader-spaces` and `personal-republications` PostgreSQL specs were
+  re-pointed where the opening changes who sees or is newly reached.
+
+### The review cohort - store reviewers in a world of their own (2026-10-31)
+
+**The owner's requirement (2026-10-31):** the Google Play and App Store reviewers sign in with accounts
+the team gives them, and they must see no real person's data while no member ever sees what they do.
+Until then ONE review account was hidden from search, the directory and the feed, but it carried a
+real student profile, so it READ that space's posts and lives, and a live it started reached that
+space; a second account (a counterpart to call and to watch) had no rule at all.
+
+**The rule:** the review accounts are a COHORT that is a space of its own, and **nothing crosses its
+boundary in either direction** - "Tout fermer" (owner, 2026-10-31). A review account finds, reads,
+follows, messages, calls, mentions and buys only within the cohort; a member never does any of these
+with a review account. It holds **whatever profile the identity provider hands the account**, so
+nobody has to keep a reviewer's profile empty. Every refusal of an ACT is the same typed 403,
+`REVIEW_COHORT_BOUNDARY`, worded neutrally like a block's: it never says the other account is a
+review account. A READ across the boundary returns nothing, as for anything outside one's spaces.
+
+| Surface | Rule | Where |
+| --- | --- | --- |
+| Search and the people directory | a review account finds the cohort only; nobody but a global admin finds a review account | `applyReviewCohortVisibility`, core `users.service.ts` |
+| A profile (`GET /users/:id`, `POST /users/batch`) | refused across the boundary, both ways (a batch reads an id across it as unknown); a global admin opens every profile, a review account opens no admin's | `assertMayOpenProfile` / `profilesOpenTo`, core `users.service.ts` |
+| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles read with no session are empty for a review account | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
+| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - the member's name in the head, nothing more | core `users.controller.ts`, `internal-users.controller.ts` |
+| Spaces | a review account has NO real space | `isReaderSpaceSql`, its pure twin `readerSpaces`, `spaces/reader-spaces.ts` |
+| Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
+| The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |
+| Feed and post search | a review account's posts are also filtered on the AUTHOR for every reader outside the cohort but an admin | `reviewCohortAuthorFilterSql`, `spaces/reader-spaces.ts` |
+| Comments, reactions, mentions | no notice crosses (post author, parent author, mention), and a mention across is not sent at creation or at an edit | `post-interactions.service.ts`, `posts.service.ts` |
+| Follow requests | an ask, and an acceptance of one written before the rule, refused both ways; a row written before the rule is left out of the inbox, the followers, the sent requests and the bell | `recordFollowRequest`, `follow-requests.service.ts`, `sameSideOfReviewCohortSql` |
+| Communities | no invitation link or salon invitation seats one side among the other; a roster row across the community creator's side entitles no NEW seat in its key group - the question is asked of a pending seat only, so a device already active keeps its keys | `review-cohort-community.ts`, `channel.service.ts` |
+| The shop, partnerships, an association's roster, its forms | a review account sees, buys, claims, submits and reads the roster of only the associations it is a member of - none real; nobody but an admin sees a review account on a roster, and the public roster never lists one; a personal form is not answered across | `review-cohort-reach.ts`, `products` / `partnerships` / `forms.service.ts`, `listMembers`, `listMembersPublic` |
+| Association membership and read grants | an officer cannot add a review account to a roster holding a member, nor a member to the cohort's; a read grant never opens a real association to a review account | `assertRosterStaysOnOneSide`, `readGrantReachesAssociationSql` |
+| The Minesweeper board | each side ranks among its own; a member never sees a review account on the board | `minesweeper.service.ts` |
+| Conversations and calls | no Add, invitation link or admission puts the two sides in one conversation, and no call or ring crosses | chat-delivery `utils/review-cohort-groups.ts`, `enrolAdmittedPeople`, `calls.service.ts` |
+| Booking spaces (the Reservations page, and a space reached by its link) | a review account lists and uses only spaces a review account created, and nobody else lists or uses those - a link reaches the space, never across; nobody books for, or names as a participant, someone across | `listedSpaces`, `assertSameSideAsSpace`, `bookings.service.ts` |
+
+**AN ADMIN BROWSES LIKE ANY READER, AND THE COHORT IS NOT ONE OF THEIR SPACES.** The house rule holds:
+browsing the feed, the "Live now" list or the agenda, a platform admin sees their own spaces and
+nothing of the cohort. An admin reaches the cohort only by an id: a post opened by its id
+(`adminSeesAll`), a profile, and **a review account's live opened by its id (`adminSeesCohort`,
+`get` and `manifest` only)** - no admin ever shares the cohort's space, so without it a reported live
+of the cohort could be judged by nobody. It opens the key and the manifest and nothing else: the
+admin's chat lines and reactions on that live are refused (`mayWatch`).
+
+**Rows written before the rule: two kinds close themselves, the rest is the operator's.** A follow
+(pending or accepted) or a bell row across the boundary is left out of every list and the bell. A
+community roster row across its creator's side stops a NEW join only: entitlement is asked of a
+pending seat, never of an active one, so a device seated before the rule keeps its keys, and the row
+still shows on the roster. **So every crossing row - a community seat, an association membership, a
+booking - is removed by the operator BEFORE the secret changes, through the app (leave, remove,
+cancel), never by a raw delete.** None is filtered out of the rosters or the booking lists, and
+deliberately: counted on both estates on 2026-10-31 (read-only), there were none - no community,
+association or booking crossing the boundary, no seat - and none can be written since, because every
+writer of those rows is gated (a community row has three writers: creation, which seats its creator,
+an invitation link and a salon invitation; a booking and its participants have one, `book`). A
+filter for rows that cannot exist would be a second rule nobody exercises. The count is re-run before
+each change of the list, and a crossing row it finds is removed, not hidden. What the operator also
+does is the review account's OWN history - its conversation with a member is left the way the app
+leaves one, never by a raw delete. An officer cannot make a review account a member of a real association (the add is
+refused while the roster holds a member), so an association reaches a review account only when it is
+the cohort's own.
+
+**Where the cohort comes from:** `SERVICE_ACCOUNT_USER_ID` (dev `DEV_SERVICE_ACCOUNT_USER_ID`), a
+comma-separated list of user ids, read by `review-cohort.ts` - one module, byte-identical in
+core-service, social-service and chat-delivery-service (declared duplicate). An entry follows the
+user-id grammar (`users/user-id.ts`: visible ASCII, no `:`) minus `,`, and is read lower-cased, as
+every service compares a user id. **An entry outside
+it stops each of the three services at boot** (`assertReviewCohortConfigured`): dropping it would
+leave that account visible with no sign of it. The three are replaced `overlap`
+([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)), so a new replica that never
+becomes healthy is removed, the previous one keeps serving and the deploy fails red. An id is never
+written into SQL as text: bound as a parameter, or hex-encoded where a fragment has no parameter
+slot. The ids, the accounts and their credentials are in the private operations notes, never here
+([MIGRATION](../../infrastructure/MIGRATION.md)). Pinned by `review-cohort.spec.ts` and the cohort
+block of `users.service.spec.ts` (core-service); `review-cohort.integration.spec.ts`,
+`follow-requests.integration.spec.ts` and `bookings.service.integration.spec.ts` against PostgreSQL,
+and the cohort cases of the products, partnerships, forms, roster, posts and comment specs
+(social-service); `add-enrolment.integration.spec.ts`, `members.controller.blocks.spec.ts`,
+`refusal-codes.spec.ts` and `calls.service.spec.ts` (chat-delivery-service).
+
+**THE SECRET CHANGES IN THREE STEPS, IN THIS ORDER** (2026-10-31): (1) ship the release carrying
+the cohort code with the CURRENT one-id value - the rule runs with a one-member cohort; (2) once the count of
+crossing rows (below) reads zero for the full list, change the secret to the full list (and its `DEV_` twin); (3) redeploy that same release (a rerun of its deploy
+is a redeploy). Never the list before the code: a value the running code reads differently is a
+second change hidden in the first. **One window is accepted:** step 3 replaces the three services
+one after another, so for a few seconds one may read the old list and another the new one - the
+account being added is outside the cohort in one and inside it in the other, and that account is
+fictional, holds no relationship and has posted nothing anybody can see.
+
+**What it does not do:** it changes no account. The cohort's own content (a few fictional posts, a
+conversation, a link-only booking space) is seeded by an operator BEFORE the deploy - with the
+current code a review account shares no space with anyone, so what it posts is seen by nobody until
+the cohort reaches it - and the review notes are on
+[store-review-live-checklist](store-review-live-checklist.md).
 
 ### FEED_GATE - a 403 is a verdict, not a failure (2026-10-06)
 

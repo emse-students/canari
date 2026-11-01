@@ -904,6 +904,7 @@ destination column is what the app opens, the coverage column is what a test or 
 | `repost_proposed`, `coorganise_proposed` | FCM + APNs | none (`postId` is the RECEIVING association) | **was the feed `/posts`**; now `proposals/<associationId>` -> slug lookup -> `/associations/<slug>/edit/republications` | `push-target.spec`, `deepLinkRoutes.test` | **fixed on the branch**, never run on a phone |
 | `form_opening_soon`, `form_open` | FCM + APNs | `formId` | `/forms/<id>` | same | routes |
 | `form_paid_over_capacity` (organiser alert, 2026-10-22) | FCM + APNs | `target: 'form-responses'` + `formId` (wins over the plain `form/<id>`) -> `form-responses/<formId>` | `/forms?responses=<formId>`, that form's responses accordion opened | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test`, `page.responsesLink.svelte.test` | SWITCHED OFF until the floor covers #1911 ([forms](modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)); never run on a phone. A build older than this host's declaration drops the tap's link on Android (the app opens where it was) |
+| `booking_cancelled`, `booking_withdrawn`, `booking_added`, `booking_reminder` (WP-N, 2026-10-29) | FCM + APNs | `target: 'bookings'` (wins over `postId`, the booking) -> `bookings` | `/bookings` | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | SWITCHED OFF until the floor allows it ([bookings-chantier](../bookings-chantier.md#wp-n-as-built---the-bookings-notices-and-the-reminder-d53-2026-10-29)); never run on a phone. A build older than this host's declaration drops the tap's link on Android (the app opens where it was) |
 | `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
@@ -1057,6 +1058,90 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 (`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
+
+#### What the extension did, in the app's log (2026-11-01)
+
+**Reported by the owner from a real user on iOS 1.5.3: iPhone notifications show no content, and the
+user's exported log held nothing about it** - the extension logged through `NSLog` only, which a
+tethered Mac's Console.app sees and nothing else. Three changes, one pull request
+([backlog](../backlog.d/p1-ios-notifications-show-no-content.md) holds the readings owed):
+
+- **The outcome log.** `NseOutcomeLog` (in `NotificationService.swift`) appends ONE line per
+  notification to `nse_outcomes.ndjson` in the App Group: `outcome` (`decrypted`, `fallback`,
+  `server-content`, `call-blank`, `expired`), the first `cause` found (`no-push-context`,
+  `no-device-key`, `no-proto`, `proto-fetch-failed`, `state-absent`, `refused-for-good`,
+  `locality-unknown;direct=<token>`, `catchup-failed;direct=<token>`, `group-absent;direct=<token>`,
+  `no-seed`, `no-ciphertext`, `not-opened`, where `<token>` is Rust's refusal reason of the direct
+  decrypt), the last `stage` reached, `ms`, `peakMB` (the physical footprint, which jetsam holds an
+  extension to) and `stateKB` (the size of `mls.bin`). A `cause` is written for `fallback` and for
+  `expired` (the stage it reached) only. Rotated to `nse_outcomes.1.ndjson` past 32 KiB, so the
+  pair stays bounded. Both sides `flock` `nse_outcomes.lock` - **the extension never waits for
+  it**: it sits on the path that hands the content back, so the extension takes it `LOCK_NB`, and
+  when the app holds it the run's line is written atomically as `nse_done.<pid>.<n>.json`, and
+  only THEN is its marker removed - so the app's listing sees the marker, the done record or both,
+  never a marker carrying an outcome and never neither. The app consumes a done record like a line.
+  A short append is cut back (`ftruncate`) to the size measured under the lock before it, so no
+  torn line stays to glue itself to the next one. Every append that does not land returns its
+  cause as a typed value (`Appended`: busy, lock or log not opened, not measured, short write cut
+  back or not), and the done-record line names THAT cause - a busy lock is only one of them. Every
+  `Trace` property is read and written under the run's lock, because the expiry reads it on another
+  thread while the decrypt writes it.
+- **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
+  `nse_inflight.<pid>.<n>.json`, stamped with the boot session it ran in (`kern.bootsessionuuid`,
+  compared for EQUALITY - not `kern.boottime`, which Darwin recomputes when the clock is stepped and
+  would call a live run killed), rewritten at every stage, removed with its line - under the run's
+  lock, and never rewritten once the run has ended, so an expired run cannot come back as a marker.
+  The boot session is read ONCE per process on both sides (a `static let` in the extension, a
+  `OnceLock` in the app), so a kernel that does not answer is said once, not at every stage.
+  **A run's identity is `(pid, at, n)`**: `at` is a millisecond and two runs of one process can
+  start in the same one, so the sequence `n` its file names carry is written into its record too
+  (and kept by the allowlist - a per-process counter from 1, no more personal than `pid`). A marker
+  whose run's line was already taken (same identity) is removed uncounted, alive or not; otherwise
+  the app turns the marker of a process PROVEN gone (stamped in another boot session, or
+  `kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying the stage and footprint it
+  reached - **but only when the app's own removal of that marker is what removed it**. A proof of
+  death is not a proof the run never ended: between the listing and the proof the run can write its
+  done record, remove its marker and exit. It removes its marker before handing the content back,
+  so a marker already gone (or a done record of the same `<pid>.<n>` now present) means the run
+  reached its end, and its line arrives as that done record - never also as `killed`. A marker gone
+  before the app even read it is the same finished run, not an unreadable one. A live or
+  unknowable process keeps its marker - no clock - and at most 64 are kept, the oldest beyond that
+  removed with a warning. A file the run removed between the app's listing and its removal is
+  "already moved", not an error; a done record the app fails to remove is withheld (logged ERROR)
+  and handed over by the drain that does remove it, so one run is never two lines, and one it
+  cannot READ (other than "not found") is kept, never removed - removing it would lose the outcome
+  AND the twin that keeps its dead marker from being counted `killed`. A dead run's marker the run
+  itself removed after the listing, with no done record beside it, is a run whose done-record write
+  failed: not a kill, and logged as an outcome lost. **The known residual:** a finished run whose
+  marker unlink fails TWICE - once in the extension, once at the app's drain `k` - is counted
+  `killed` at drain `k+1`, since nothing names its line any more; both failures are logged at
+  ERROR (the extension's in its `NSLog`, the app's in its own log), so such a `killed` is never
+  silent.
+- **The drain.** `take_nse_outcomes` (`commands/nse_outcomes.rs`) takes both files, the done
+  records and the dead markers under the lock and re-serialises each line through a TYPED
+  allowlist (numbers for `v`/`at`/`ms`/`peakMB`/`stateKB`/`pid`/`n`, enums for `outcome` and `stage`,
+  and for `kind`/`cause` a code token `^[a-z0-9_-]+(;direct=[a-z0-9-]+)?$` with no digit and no
+  UUID shape), so nothing but codes and numbers can reach a log; `nseOutcomes.ts` writes them as
+  `[NSE_OUTCOME] {...}` plus a per-outcome summary line, at login and at every resume. No text,
+  name or id is ever written.
+- **A chat link is built from an id only.** Every `fr.emse.canari://chat/...` the app or the
+  extension builds goes through `CanariChatLink` / `NotificationService.chatLink`, which refuse a
+  value outside `^[A-Za-z0-9_-]{1,128}$` (logged by its length); a payload's own `deepLink` is
+  opened on a tap only when its scheme is `fr.emse.canari`, and is logged by its shape only.
+
+**The extension's deployment target was 18.2 since it was created (2026-07-21)**, while the app
+installs from 16.0: iOS does not run an extension whose minimum is above its own version, and says
+so nowhere, so every iPhone on 16.0-18.1 showed the server's generic banner. All targets are 16.0
+now, and `csp.test.ts` refuses any other value. **And the tap no longer depends on the extension:**
+the server's message and salon pushes carry no `deepLink` (the extension writes it), so a tap on a
+banner the extension never rewrote opened the app on nothing. `CanariTapDeepLink`
+(`canari_push.mm`) derives `chat/<groupId>` / `chat/channel_<id>` from the clear fields when the
+payload has no link (`iosTapTarget.test.ts`).
+
+**Which banner says what.** `Nouveau message` exactly (the server's `APNS_FALLBACK_BODY`) means the
+extension never handed content back: not loaded, killed or crashed. `Nouveau message de <name>` or
+`Vous avez reçu un message chiffré` means it ran and fell back (`fallbackText`) - and its line now
+says why.
 
 **It also never sees a silent frame, so it can never cancel anything.** The extension runs on
 `mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app.
@@ -1428,7 +1513,7 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 - **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
   with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
   engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
-  project and the app target, both configurations; the NSE keeps its own higher value), `project.yml`,
+  project and every target, extensions included - an extension above the phone's iOS is never run), `project.yml`,
   the `Podfile`, and `bundle.iOS.minimumSystemVersion` in `tauri.conf.json` - plus the Rust prebuild's
   `IPHONEOS_DEPLOYMENT_TARGET` in `ios.yml`. `csp.test.ts` asserts them
   ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
@@ -1711,7 +1796,9 @@ A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) start
 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
 system as Back: the page saw only `touchstart > touchcancel`, 8 of 8 (class B of the 2026-10-21
 camera-swipe matrix, `<harness-dir>/a1-bench/camera-swipe-r1021/`). Owner decision 2026-10-21:
-exclude the left edge over the feed, with the mechanism of the right edge above.
+exclude the left edge over the feed, with the mechanism of the right edge above. Re-confirmed by the
+owner 2026-10-30 (the two backlog rows asking for that decision are closed; the mechanism was
+already built, #2184, and only the Mi 9T reading below is owed).
 
 - **One mechanism, two edges.** The `canariGestures` bridge gained `setLeftBand` / `clearLeftBand`;
   `MainActivity.applyEdgeExclusions` holds one span per edge and hands BOTH bands to
@@ -3841,7 +3928,7 @@ both halves run only on hardware.
 
 ## One row arriving through the push, the pull and the socket (measured 2026-09-08 to 2026-10-06)
 
-The open line is in [backlog](../backlog.md#p3---the-pull-and-the-socket-hand-the-same-row-in-and-the-queue-notices-afterwards-instead-of-the-overlap-not-existing-measured-2026-09-08).
+The open line is in [backlog](../backlog.d/closed-without-a-fix-not-planned-2026-10-24.md).
 
 **On the phone, the overlap reaches openmls.** NOTIF-7 (backgrounded, push, tap, foreground), 2026-09-08, left six `severe` lines on A1: two frames at one epoch (group 2bd5add9, `msg_epoch=196 group_epoch=196`, generations 7 and 8), each refused with `Ciphertext generation out of bounds` / `SecretReuseError` and `MLS decryption failed at exactly its own epoch, so no redelivery can help`. A same-epoch `SecretReuseError` means the generation was already consumed, so these are duplicates, not losses (the row displayed exactly one message). On the web the same overlap is caught by the queue and files `[QUEUE] delivery ... arrived twice`, a notice; on the phone nothing catches it first, so the same defect costs a `PASS-DIRTY` on the web and severe lines on a handset. Re-measured on `00a86a1a8` (2026-09-23, NOTIF-7b killed): two severe lines instead of six, same shape, 21 ms apart - the count moved, the mechanism did not.
 

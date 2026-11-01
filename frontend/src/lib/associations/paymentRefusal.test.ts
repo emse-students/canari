@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import { amountBoundsOf, holderCountOf, SocialApiError, socialRefusal } from './api';
-import { providerRefusalMessage } from './paymentRefusal';
+import { membersOnlySaveRefusalMessage, providerRefusalMessage } from './paymentRefusal';
 import { formatAmount } from '$lib/forms/fillAnswers';
 import { setLocale } from '$lib/paraglide/runtime';
 
@@ -20,6 +20,14 @@ describe('providerRefusalMessage', () => {
       409
     );
     expect(providerRefusalMessage(err)).toBe(m.form_previous_payment_open());
+  });
+
+  it('words an association whose payments are not active, and one Lydia blocked, apart', () => {
+    const notActive = new SocialApiError('Payments off', 'PAYMENTS_NOT_ACTIVATED', 409);
+    const blocked = new SocialApiError('Blocked', 'PAYMENTS_BLOCKED', 409);
+    expect(providerRefusalMessage(notActive)).toBe(m.shop_payments_not_activated());
+    expect(providerRefusalMessage(blocked)).toBe(m.shop_payments_blocked());
+    expect(m.shop_payments_not_activated()).not.toBe(m.shop_payments_blocked());
   });
 
   it('words an out-of-range amount from the typed bounds, not from the server prose', () => {
@@ -109,6 +117,21 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_already_answered());
   });
 
+  it('words a held cotisation, and any other audience refusal, from its code', () => {
+    expect(providerRefusalMessage(new SocialApiError('x', 'FORM_COTISATION_HELD', 403))).toBe(
+      m.form_cotisation_held()
+    );
+    expect(providerRefusalMessage(new SocialApiError('x', 'FORM_NOT_OPEN_TO_YOU', 403))).toBe(
+      m.form_view_not_open_to_you_title()
+    );
+  });
+
+  it('words a condition both requiring and excluding a cotisation from its code', () => {
+    expect(
+      providerRefusalMessage(new SocialApiError('x', 'AUDIENCE_COTISATION_BOTH_MODES', 400))
+    ).toBe(m.form_condition_cotisation_both_modes());
+  });
+
   it("words a guest's ceiling of waiting answers from its code, never the server English", () => {
     const err = new SocialApiError(
       'This visitor already has 3 answers waiting for payment on this form.',
@@ -168,6 +191,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          "This product is reserved to the association's cotisants",
+          'PRODUCT_COTISANTS_ONLY',
+          403
+        )
+      )
+    ).toBe(m.shop_members_only_hint());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'The payment account of this association changed while the purchase was opened.',
           'PAYMENT_ROUTING_CHANGED',
           409
@@ -219,9 +251,42 @@ describe('providerRefusalMessage', () => {
     expect(m.form_tier_not_sold()).not.toBe(m.shop_tier_not_rankable());
   });
 
+  it('words a sale refused for a list or an institution by its typed code, in the reader language', () => {
+    const refusal = new SocialApiError(
+      'A list does not sell or collect money',
+      'ASSOCIATION_KIND_DOES_NOT_SELL',
+      403
+    );
+    expect(providerRefusalMessage(refusal)).toBe(m.asso_kind_does_not_sell());
+    expect(providerRefusalMessage(refusal)).not.toContain('does not sell');
+  });
+
   it('is null for any other failure, so each surface keeps its own generic line', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();
     expect(providerRefusalMessage(new Error('PAYMENT_PROVIDER_REFUSED'))).toBeNull();
+  });
+});
+
+describe('the archived association and the members-only save', () => {
+  it('words a purchase from an archived association from its code', () => {
+    expect(
+      providerRefusalMessage(
+        new SocialApiError('This association is archived.', 'ASSOCIATION_ARCHIVED', 409)
+      )
+    ).toBe(m.shop_association_archived());
+  });
+
+  it('words a members-only save with no cotisation mode from its code', () => {
+    expect(
+      membersOnlySaveRefusalMessage(
+        new SocialApiError('Enable the cotisation.', 'MEMBERS_ONLY_WITHOUT_COTISATION', 400)
+      )
+    ).toBe(m.admin_members_only_without_cotisation());
+  });
+
+  it('CONTROL: any other save failure is left to the caller generic line', () => {
+    expect(membersOnlySaveRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();
+    expect(membersOnlySaveRefusalMessage(new Error('MEMBERS_ONLY_WITHOUT_COTISATION'))).toBeNull();
   });
 });

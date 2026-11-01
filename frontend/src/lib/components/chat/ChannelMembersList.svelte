@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ShieldAlert, User } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import ProfileLink from '$lib/components/shared/ProfileLink.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
@@ -86,7 +87,9 @@
             class="group hover:bg-cn-surface flex cursor-pointer items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 transition-all duration-200 hover:translate-x-1 hover:border-black/5 hover:shadow-sm dark:hover:border-white/5 dark:hover:bg-white/5"
           >
             <div class="relative shrink-0">
-              <Avatar userId={member.userId} size="sm" />
+              <ProfileLink userId={member.userId}
+                ><Avatar userId={member.userId} size="sm" /></ProfileLink
+              >
               {#if member.status === 'online'}
                 <span
                   class="dark:ring-cn-ink absolute right-0 bottom-0 block h-3 w-3 rounded-full bg-emerald-500 shadow-sm ring-2 ring-white"
@@ -121,7 +124,9 @@
             class="group hover:bg-cn-surface flex cursor-pointer items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 opacity-90 transition-all duration-200 hover:translate-x-1 hover:border-black/5 hover:opacity-100 hover:shadow-sm dark:hover:border-white/5 dark:hover:bg-white/5"
           >
             <div class="relative shrink-0">
-              <Avatar userId={member.userId} size="sm" />
+              <ProfileLink userId={member.userId}
+                ><Avatar userId={member.userId} size="sm" /></ProfileLink
+              >
               {#if member.status === 'online'}
                 <span
                   class="dark:ring-cn-ink absolute right-0 bottom-0 block h-3 w-3 rounded-full bg-emerald-500 shadow-sm ring-2 ring-white"

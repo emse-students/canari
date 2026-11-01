@@ -21,6 +21,9 @@
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { openProfile } from '$lib/utils/users/profileHref';
+  import { isAbsentUser } from '$lib/utils/users/absentUsers';
+  import ProfileLink from '../shared/ProfileLink.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -122,6 +125,27 @@
   );
 
   /**
+   * WHERE THE PEER'S AVATAR AND NAME LEAD, in a direct conversation only (user, 2026-11-01: reach
+   * the profile of the person you are talking to from the header). A group or a channel has no one
+   * profile, and an account the server says is gone has no page worth opening: both keep the old
+   * behaviour of the phone pill (the settings). The settings stay one tap away in every case - the
+   * desktop gear, the phone menu's "Settings" entry.
+   */
+  const peerLinked = $derived(
+    !isGroupConversation && !isChannel && !!contactName.trim() && !isAbsentUser(contactName)
+  );
+
+  /** What the phone pill does: the peer's profile in a DM, the conversation's settings otherwise. */
+  function openPill() {
+    if (peerLinked) {
+      Log.d('chatHeader.openPill -> peer profile');
+      void openProfile(contactName);
+    } else {
+      onOpenSettings?.();
+    }
+  }
+
+  /**
    * THE ACTIONS THE PHONE HEADER'S MENU GROWS INTO - the same ones, under the same conditions, as the
    * desktop header's row of icons below, so the two cannot offer different things (user, 2026-09-30:
    * a back and a menu button that grows to show the other options).
@@ -186,6 +210,10 @@
     !isGroupConversation && !isChannel ? resolvedContactDisplayName : displayName
   );
 
+  const pillLabel = $derived(
+    peerLinked ? m.chat_open_profile_label({ name: effectiveDisplayName }) : settingsLabel
+  );
+
   /**
    * A DM watches its peer's presence. The teardown names the peer through `watched`, captured here,
    * and NEVER through the prop: a derived read in a teardown is re-run with the stale values and
@@ -246,14 +274,14 @@
     <div class="flex min-w-0 flex-1 justify-center">
       <button
         type="button"
-        onclick={() => onOpenSettings?.()}
-        aria-label={settingsLabel}
+        onclick={openPill}
+        aria-label={pillLabel}
         use:nativeGlassPiece={{
           id: 'chat-title',
-          label: settingsLabel,
+          label: pillLabel,
           title: effectiveDisplayName,
           avatar: true,
-          onClick: () => onOpenSettings?.(),
+          onClick: openPill,
         }}
         class="glass-chrome flex max-w-full min-w-0 items-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]"
       >
@@ -266,13 +294,7 @@
           </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
-            <GroupAvatar
-              {imageMediaId}
-              name={displayName}
-              variant="group"
-              size="md"
-              shape="circle"
-            />
+            <GroupAvatar id={groupId} {imageMediaId} name={displayName} size="md" shape="circle" />
           </span>
         {:else}
           <span
@@ -339,11 +361,13 @@
     </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" fill />
+      <GroupAvatar id={groupId} {imageMediaId} name={displayName} fill />
     </div>
   {:else}
     <div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
-      <Avatar userId={contactName} fill fallbackLabel={effectiveDisplayName} />
+      <ProfileLink userId={contactName} class="block h-10 w-10">
+        <Avatar userId={contactName} fill fallbackLabel={effectiveDisplayName} />
+      </ProfileLink>
       {#if isOnline}
         <span
           class="absolute right-0 bottom-0 block h-3.5 w-3.5 rounded-full bg-green-500 shadow-sm ring-2 ring-white dark:ring-zinc-900"
@@ -355,7 +379,13 @@
   <!-- Info (name, status) -->
   <div class="flex min-w-0 flex-1 flex-col justify-center">
     <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
-      <EmojiText text={effectiveDisplayName} />
+      {#if peerLinked}
+        <ProfileLink userId={contactName} class="hover:underline">
+          <EmojiText text={effectiveDisplayName} />
+        </ProfileLink>
+      {:else}
+        <EmojiText text={effectiveDisplayName} />
+      {/if}
     </h2>
 
     {#if isChannel}

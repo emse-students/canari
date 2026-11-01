@@ -41,6 +41,9 @@
 "notif.social.live_started.body" = "Tap to watch";
 "notif.social.follow_request.title" = "%@ asks to follow you";
 "notif.social.follow_request.body" = "Tap to answer";
+"notif.social.join_ask.title" = "%@ wants to join";
+"notif.social.join_ask.body" = "this conversation";
+"notif.social.join_ask_anon.title" = "Someone wants to join";
 "notif.social.follow_accepted.title" = "%@ accepted your request";
 "notif.social.follow_accepted.body" = "Your request was accepted";
 "notif.social.live_cut.title" = "Your live was stopped";
@@ -49,12 +52,26 @@
 "notif.social.live_suspended.body" = "After another cut by moderators, you cannot start a live for now.";
 "notif.social.live_withdrawn.title" = "Right to go live withdrawn";
 "notif.social.live_withdrawn.body" = "Moderators have withdrawn your right to start a live.";
+"notif.social.booking_cancelled.title" = "%@ cancelled a booking";
+"notif.social.booking_cancelled.body" = "It will not take place";
+"notif.social.booking_withdrawn.title" = "%@ left your booking";
+"notif.social.booking_withdrawn.body" = "Your booking still stands";
+"notif.social.booking_added.title" = "%@ added you to a booking";
+"notif.social.booking_added.body" = "Find it in Bookings";
+"notif.social.booking_reminder.title" = "Booking reminder";
+"notif.social.booking_reminder.body" = "Your booking starts soon";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";
 "notif.form.open.body" = "The form is available - hurry, spots are limited!";
 "notif.form.paid_over_capacity.title" = "Payment on a full form";
 "notif.form.paid_over_capacity.body" = "“%1$@”: a payment arrived after the form was full. A refund is owed.";
+"notif.lydia_payments_active.title" = "Lydia payments active";
+"notif.lydia_payments_active.body" = "Lydia payments for %1$@ are active.";
+"notif.lydia_payments_paused.title" = "Lydia payments paused";
+"notif.lydia_payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
+"notif.lydia_refund_issued.title" = "Refund";
+"notif.lydia_refund_issued.body" = "%1$@ refunded one of your payments.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";

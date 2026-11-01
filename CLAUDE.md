@@ -1,18 +1,14 @@
 # **Canari - Rules & Session State**
 
-> **The hard-won rules are in [docs/wiki/durable-rules.md](docs/wiki/durable-rules.md)** - constraints
-> each written after something broke, indexed by area and linked to the page carrying the reasoning.
-> **Open the section matching what you are about to touch, before you write anything.** This file
-> keeps only what applies to EVERY task, plus the live session state.
+> **The hard-won rules are in [durable-rules](docs/wiki/durable-rules.md)**, indexed by area: **open
+> the section matching what you are about to touch, before you write anything.** This file keeps only
+> what applies to EVERY task, plus the live session state.
 >
-> **THIS REPOSITORY IS THE ONLY REFERENCE, AND THIS FILE IS ITS INDEX.** Anyone holding the repo and
-> the secrets must be able to pick the work up with nothing else.
->
-> **An agent's local memory is SECONDARY AND DELETABLE.** It may hold machine-local wiring (an MCP
-> server's absolute path, a shell shim) and secrets that must never enter a public repo - nothing
-> else. If it ever holds a project fact, that is a bug in this file: move the fact here and delete
-> the memory. Never let a decision, a measurement or an open item exist only in a chat history, a
-> scratch directory or a memory file.
+> **THIS REPOSITORY IS THE ONLY REFERENCE, AND THIS FILE IS ITS INDEX** - anyone holding the repo and
+> the secrets must be able to pick the work up with nothing else. **An agent's local memory is
+> SECONDARY AND DELETABLE**: machine-local wiring and secrets only. A project fact found there is a
+> bug - move it into the repo and delete the memory. Never let a decision, a measurement or an open
+> item exist only in a chat history, a scratch directory or a memory file.
 
 ## **WHERE THINGS LIVE**
 
@@ -21,22 +17,23 @@
 | What is open, and what rule holds everywhere | this file |
 | The constraint for the area I am about to touch | [docs/wiki/durable-rules.md](docs/wiki/durable-rules.md) |
 | How something works, in depth | `docs/wiki/` - **search it before reading source** ([index](docs/wiki/index.md)) |
-| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) |
+| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) + one file per new entry in [backlog.d/](docs/wiki/backlog.d/README.md) |
 | A question the code cannot answer, parked deliberately | [docs/wiki/open-questions.md](docs/wiki/open-questions.md) |
 | The story of a defect that shipped | `CHANGELOG.md` |
-| Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
-| Campaign design: the ladder, the scope, the preflight | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
-| Picking the campaign back up: the delta since the pause, and the restart order | [cross-client-campaign-resume.md](docs/wiki/cross-client-campaign-resume.md) |
-| What a prompt handing ONE row to another session must carry | [cross-client-campaign.md](docs/wiki/cross-client-campaign.md#a-row-handed-to-another-session---the-delegation-contract) |
+| **The `1.4.1` campaign on dev: the MLS core matrix that blocks the stable, its order and its open questions** | [cross-client-campaign-1-4-1.md](docs/wiki/cross-client-campaign-1-4-1.md) |
+| Campaign board (the pre-`1.4.1` campaign, it carries a notice pointing at the page above): every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
+| Campaign design (notice: superseded for `1.4.1` by the page above): the ladder, the scope, the preflight, the standing rules for a run, and [what a prompt handing ONE row to another session must carry](docs/wiki/cross-client-campaign.md#a-row-handed-to-another-session---the-delegation-contract) | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
+| Picking the old campaign back up (notice: superseded for `1.4.1`): the delta since the pause, and the restart order | [cross-client-campaign-resume.md](docs/wiki/cross-client-campaign-resume.md) |
 | Why a result may be believed | [docs/wiki/testing-methodology.md](docs/wiki/testing-methodology.md) |
 | What the app has that NOTHING watches | [docs/wiki/mechanism-audit.md](docs/wiki/mechanism-audit.md) |
 | How to operate the test rig | [tools/cross-client-harness/README.md](tools/cross-client-harness/README.md) |
 | What Google Play sees that no gate here does | [tools/play-vitals/README.md](tools/play-vitals/README.md) |
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
+| Where the App Store submission stands | [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |
 | Private operations notes (access routes, hosts) | outside the repo, local only: `../../canari-private-docs`, relative to the repository (never commit) |
 | Store texts and screenshots, refreshed without personal data | [docs/wiki/store-listings.md](docs/wiki/store-listings.md) |
-| The second estate: isolation, the prod copy, the declared version gap | [dev-environment.md](docs/wiki/infrastructure/dev-environment.md) |
+| The second estate (`dev.canari-emse.fr`, the pre-release target): isolation, the prod copy, the declared version gap | [dev-environment.md](docs/wiki/infrastructure/dev-environment.md) |
 | The move onto the Portail-etu host, then onto `emse.fr`: the phases, the decisions, the traps | [estate-migration.md](docs/wiki/infrastructure/estate-migration.md) |
 | Whether the BOXES take their security updates, and what reports it | [host-updates.md](docs/wiki/infrastructure/host-updates.md) |
 | What the USER must do by hand, and the long-term dev/release workflow (French) | [workflow-developpement.md](docs/user-guide/workflow-developpement.md) |
@@ -44,7 +41,7 @@
 | What a report is, and what a block does and does not close | [docs/wiki/moderation-and-blocking.md](docs/wiki/moderation-and-blocking.md) |
 | GDPR: the Art. 30 register (the privacy policy is its public face - change both), the MiGallery DPIA, breach and data-subject procedures, the DPO dossier | [register-of-processing](docs/wiki/compliance/register-of-processing.md) |
 | Whether the four repos STILL have ONE CI shape, asserted rather than described | [ecosystem-shape](tools/ecosystem-shape/README.md) |
-| The cross-repo convergence plan, repo by repo | [ecosystem-convergence.md](docs/wiki/ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo) |
+| The five repos: the user's homogeneity mandate, every convergence decision, repo by repo | [ecosystem-convergence.md](docs/wiki/ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo) |
 | The 2026-09-02 workflow migration: its decisions, its order, its state | [workflow-migration.md](docs/wiki/workflow-migration.md) |
 
 ## **AGENT DIRECTIVES**
@@ -52,34 +49,26 @@
 - **THIS REPOSITORY IS PUBLIC: no private address, host or account map, no unfixed weakness, no incident detail naming people or accounts, no real person or user id.** Those go to the private folder; docs that guard code keep the generic lesson. `.github/scripts/tests/docs-private-guard.test.mjs` fails `make test-ci-scripts` on a private IP, an ssh alias, a workstation path or a hypervisor guest id in a tracked markdown, env template, shell script or ts/mjs comment; infrastructure names come from an out-of-repo denylist (`DOCS_PRIVATE_DENYLIST_FILE`).
 - NO BLIND GREP: never run generic grep or find across the project. Check SESSION STATE first, or ask for exact paths.
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
-- SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
-- **FOUR WORKFLOWS ARE VISIBLE IN THE ACTIONS LIST, AND THAT IS DELIBERATE** (user, 2026-09-04:
-  *"le moins de workflows differents possibles, ca inonde la console github"*): `ci.yml`,
-  `release.yml`, `arm-auto-merge.yml`, `scheduled.yml`. Six more are `workflow_call` LIBRARIES.
-  What each carries, and why the deploy library became three files on 2026-09-07, is
-  [cicd](docs/wiki/cicd.md). **A fifth visible workflow needs a reason beyond "another topic".**
-- **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF; NOTHING DEPLOYS ON A PUSH.** Both are the same fact and the commands are in THE DEVELOPMENT CYCLE below. Two consequences no task escapes: **a merged fix is not a shipped fix**, and a hyphen in the version IS the definition of a pre-release - read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh`, the ONE implementation, and by `scripts/bump-app-version.sh`'s store band. Model on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written into `CHANGELOG.md` when taken.
-- NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
-- FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
-- FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
-- STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
-- CLAUDE.md HYGIENE: **INDEX FIRST** - same triplet as STATE PRUNING above, applied to this file: if it grows, something in it belongs somewhere else. **The cap is ~350 lines and it moved from ~250 on 2026-09-04**, deliberately and once: the user asked for the development cycle to live here so it can be USED (*"tu consigneras le cycle de developpement dans le claude.md de Canari pour pouvoir l'utiliser en pratique"*), and that section is COMMANDS, which is the one thing a pointer cannot replace. It was paid for, not granted: two sections that restated the five gates and the deploy model were cut to pointers in the same commit. A cap the file itself breaks is worse than no cap.
-- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> pull request -> merge -> update SESSION STATE -> STOP. **The commands are in THE DEVELOPMENT CYCLE below.**
-- COMMIT **AND PUSH** IN THE BACKGROUND, ALWAYS - both are minutes long and neither is worth a blocked session. The pre-commit hook sweeps the WHOLE frontend (2-3 min) and re-stages it; a push to this remote routinely exceeds a 5-min foreground timeout. Isolate unrelated dirty files first. `rm -rf apps/*/dist` before `git push`.
-- DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**). User guides in `docs/user-guide/` (French). Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
-- WIKI IS PREFERRED: update the relevant wiki page alongside code changes - stale wiki is worse than none. Keep `apps/*/README.md` synced with its wiki counterpart. Cross-link freely.
-- CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17). Reasoning, measurements and what was refuted go on the wiki page it points at. A long entry is not a thorough one, it is one nobody reads - and that records nothing.
+- **QUESTIONS TO THE USER GO FOUR AT A TIME** (user, 2026-10-22: *"Pose moi toujours tes questions 4 par 4"*): one `AskUserQuestion` call carries up to four questions, never one at a time, never a long numbered list in prose; each has a recommended option first, and a question already answered is never asked again.
 - ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
+- SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
+- FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it - "pre-existing" is not a disposition. FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
+- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> pull request -> merge -> update SESSION STATE -> STOP. **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF; NOTHING DEPLOYS ON A PUSH** - the commands are in THE DEVELOPMENT CYCLE below. Model on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies. **Admin bypass is the EMERGENCY path only**: taking it means production is broken right now, and it is written into `CHANGELOG.md` when taken.
+- **RELEASE AUTHORITY** (user, 2026-10-11): the lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release is read on a phone and nothing blocks, telling the user each time; a direct production change, a data migration or a deletion still waits for the user's yes ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd); the 48-hour window of 2026-10-22 has ended). **NEVER INFER A STORE, A VERSION OR A CI STATE FROM A LINE HERE.** `gh release list` is the shipped version, `git log <latest stable>..origin/main` the unreleased work, Play a MEASUREMENT (`bun tools/play-vitals/vitals.mjs`), CI `gh run list`.
+- **FOUR WORKFLOWS ARE VISIBLE IN THE ACTIONS LIST, AND THAT IS DELIBERATE** (user, 2026-09-04: *"le moins de workflows differents possibles, ca inonde la console github"*): `ci.yml`, `release.yml`, `arm-auto-merge.yml`, `scheduled.yml`; the rest are `workflow_call` libraries ([cicd](docs/wiki/cicd.md)). **A fifth visible workflow needs a reason beyond "another topic".**
+- COMMIT **AND PUSH** IN THE BACKGROUND, ALWAYS - both are minutes long and neither is worth a blocked session. The pre-commit hook sweeps the WHOLE frontend (2-3 min) and re-stages it; a push to this remote routinely exceeds a 5-min foreground timeout. Isolate unrelated dirty files first. `rm -rf apps/*/dist` before `git push`.
+- STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
+- CLAUDE.md HYGIENE: **INDEX FIRST** - the STATE PRUNING triplet applied to this whole file: if it grows, something in it belongs somewhere else. **The cap is ~250 lines** (back from ~350 on 2026-10-22, when the file was cleaned to an index; the raise of 2026-09-04 paid for THE DEVELOPMENT CYCLE, which the user asked to live here - *"tu consigneras le cycle de developpement dans le claude.md de Canari pour pouvoir l'utiliser en pratique"* - and those commands stay). `claude-md-cap.test.mjs` reads the number from this sentence. A cap the file itself breaks is worse than no cap.
+- DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**), updated alongside the code - stale wiki is worse than none; keep `apps/*/README.md` synced with its wiki counterpart and cross-link freely. User guides in `docs/user-guide/` (French). Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
+- CHANGELOG: one **SHORT** entry per change, as ITS OWN FILE in `changelog.d/` - never under `[Unreleased]`, which GitHub cannot merge in parallel ([README](changelog.d/README.md)). A sentence or two and a LINK (user, 2026-09-17); reasoning, measurements and what was refuted go on the wiki page it points at. **A NEW BACKLOG ENTRY IS THE SAME: its own file in `docs/wiki/backlog.d/`, never a new heading in `backlog.md`** (2026-10-30, [README](docs/wiki/backlog.d/README.md)).
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
-- **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The installed set is in the private operations notes (WHERE THINGS LIVE); the rule is in [durable-rules](docs/wiki/durable-rules.md).
-- PROD ACCESS: production, dev and the identity provider run on one shared host reached over SSH. **The aliases, the box map, the shell wiring and the database and identity-provider access routes are in the private operations notes** (WHERE THINGS LIVE) and nowhere in this repository. Either Bash or PowerShell reaches it, but **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost), so a binary pipe goes through Bash.
+- **THE SHARED HOST IS THE SCHOOL IT DEPARTMENT'S: NO INSTALL, REMOVAL OR SECURITY SETTING WITHOUT THEIR WRITTEN AGREEMENT, ASKED BEFORE** (2026-10-09). Read-only commands are free. The installed set is in the private operations notes; the rule is in [durable-rules](docs/wiki/durable-rules.md).
+- PROD ACCESS: production, dev and the identity provider run on one shared host reached over SSH. **The aliases, the box map, the shell wiring and the database and identity-provider access routes are in the private operations notes** and nowhere in this repository. Either Bash or PowerShell reaches it, but **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost), so a binary pipe goes through Bash.
 
 ## **THE DEVELOPMENT CYCLE - THE COMMANDS, IN ORDER**
 
-Two human gestures and nothing else: **open a pull request**, and **publish a release**. Everything
-between them is mechanical. The same shape is in all four GitHub repositories since 2026-09-04 -
-`ci` + `release` + `arm-auto-merge` + `scheduled` visible, `code-analysis` + `deploy` as libraries -
-so this cycle reads the same in Sky, MiGallery and Portail-etu, minus the bump and the two stores.
+Two human gestures, everything between them mechanical - and the same in Sky, MiGallery and
+Portail-etu since 2026-09-04, minus the bump and the two stores.
 
 ```
                     ONE                                        TWO
@@ -105,22 +94,27 @@ so this cycle reads the same in Sky, MiGallery and Portail-etu, minus the bump a
                                                    BOTH stores took the version)
 ```
 
+**Before every commit**: `bun run check` (0 errors), `bun run lint`, `bun run format` in `frontend/` -
+the hook runs them anyway and re-stages, so run them first rather than reading a commit you have not
+seen. Then commit AND push in the background.
+
 **GESTURE ONE, and the whole of it.** `git switch -c`, commit, `gh pr create` - then **nothing**.
 No approval is required, the merge and the branch deletion are automatic, and `main` carries ruleset
 `22152902`: no direct push, no force-push, one required check, `CI passed`. **A merged fix is not a
 shipped fix.**
 
 **GESTURE TWO, and what it owes.** A STABLE `vX.Y.Z` deploys production and ships both stores; a
-PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and the store TESTER programmes. The
-hyphen IS the definition. **A stable owes exactly one thing written by a human**:
-`store/whats-new.txt`, first line `version: X.Y.Z` - one text reaching the App Store, Play and the
-GitHub release body through ONE implementation. Check it before tagging:
+PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and the store TESTER programmes. **The
+hyphen IS the definition**, read by `release_kind()` in `.github/scripts/lib/release-preconditions.sh`
+(the ONE implementation) and by `scripts/bump-app-version.sh`'s store band. **A stable owes exactly
+one thing written by a human**: `store/whats-new.txt`, first line `version: X.Y.Z` - one text reaching
+the App Store, Play and the GitHub release body through ONE implementation. Check it before tagging:
 
 ```sh
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
-**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z`, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
+**A STABLE SHIPS THE LATEST `vX.Y.Z-alpha.N` OF ITS VERSION** (built on `release/vX.Y.Z` like every pre-release, tag moved to the shipped commit, so `main` may keep merging) **and is REFUSED without one that served dev**, so the ordinary
 sequence is two releases:
 
 ```sh
@@ -130,18 +124,13 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 ```
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
-version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
+version parses; `main` contains the commit (merging after the cut is free: every bump pushes
+`release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)) and a pre-release is the newest release (no tag has a higher store build); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
-rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY** - it re-reads the
-SAME tag, so a release `main` has moved past stays REFUSED and needs a NEW tag at the current head
-(three pre-releases for one stable, 2026-09-24, [backlog](docs/wiki/backlog.md)); dev has served it
+rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY, AND ONLY WHILE NOTHING NEWER SHIPPED** - it re-reads the SAME tag, so once a later pre-release is out the rerun is REFUSED (it would move dev and the store build back) and the answer is a NEW tag at the current head; dev has served it
 (stables); the notes name it. *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
-
-**Before every commit**: `bun run check` (0 errors), `bun run lint`, `bun run format` - the hook runs
-them anyway and re-stages, so run them first rather than reading a commit you have not seen. Then
-commit AND push in the background, for the reason the directive above gives.
 
 **Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,
 and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update SESSION STATE, STOP.
@@ -151,9 +140,7 @@ and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update S
 - Stack: SvelteKit 5 + Tailwind 4 + Tauri 2 (front) | Rust WASM openmls | NestJS + Rust Axum (back).
 - Nginx: single public entry point. Source of truth is `infrastructure/local/Dockerfile.frontend`.
 - MLS (RFC 9420): all encryption in WASM. Server stores ciphertexts. NEVER modify keys manually.
-- Build: `frontend/src/lib/wasm/` and `src/lib/proto/canari.{js,d.ts}` are GENERATED and NOT in git.
-  `cd frontend && bun run generate` after a structural change; every pipeline builds them itself
-  ([mls-wasm](docs/wiki/frontend/mls-wasm.md#why-it-is-not-committed)).
+- Build: `frontend/src/lib/wasm/` and `src/lib/proto/canari.{js,d.ts}` are GENERATED and NOT in git - `cd frontend && bun run generate` after a structural change; every pipeline builds them itself ([mls-wasm](docs/wiki/frontend/mls-wasm.md#why-it-is-not-committed)).
 - Auth: access tokens in memory ONLY (never localStorage). Refresh token in an HttpOnly cookie **everywhere the engine keeps one** - on `tauri://localhost` (iOS, macOS, Linux) WKWebView drops it and the client carries it in `X-Canari-Refresh` instead, one fact deciding both sides ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)). WS auth via `canari_ws_token`.
 - Media: the client generates the CEK (AES-256-GCM) before upload. The backend sees opaque blobs.
 - Infra truth: keep `infrastructure/MIGRATION.md` synced with new secrets, services or bootstrap steps; add a new service to `docs/wiki/infrastructure/` and the `README.md` diagram.
@@ -163,7 +150,7 @@ and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update S
 - Logs: mandatory (`Log.d`, `appendLog`, `log::debug!`) at function entry, decisions and error branches.
 - Docs: JSDoc/Rustdoc required for exports. Explain WHAT and WHY, never restate types.
 - Factorization: extract and export reusable logic. Zero duplication.
-- Language: code, comments, docs and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline literals, ALWAYS, even in a plain `.ts` util, and even when a nearby call site already has raw strings.
+- Language: code, comments, docs and dev-facing strings MUST be English. **User-visible strings use Paraglide (`messages/fr.json`, `en.json`) on the FIRST draft** - no inline literals, ALWAYS, even in a plain `.ts` util, and even when a nearby call site already has raw strings. Nothing types a string as user-visible, so no compiler enforces it.
 - Punctuation: ASCII (`'`, `"`, `-`) everywhere; escape quotes in code. Keep French accents ONLY in localized strings and French comments.
 - Tests: changing logic requires changing the associated test.
 - UI: `src/app.css` holds the tokens, and **COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447** - seven `--text-*` steps replacing 36 sizes, and `--radius-*` replacing 14 corners with FOUR meanings (8px card / 12px larger card / 18px bubble / 999px pill). **Read the scale before reaching for a number**: `rounded-2xl` is 12px here, not Tailwind's 16px. The measured target, and the Messenger/Facebook numbers it copies, are in [design-reference](docs/wiki/frontend/design-reference.md), the only copy. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old name - both resolve).
@@ -173,8 +160,7 @@ and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update S
 - **BUN RUNS THE SCRIPTS TOO, NEVER `node`** (user, 2026-09-04: *"Jamais node, toujours bun"*). Every `.mjs` in `tools/` is invoked `bun x.mjs`, the Makefile's harness gate included; a script that spawns another uses `process.execPath` so it inherits the runtime rather than naming one. `archive/gate-selftest.mjs` parses the `test-harness` recipe and would match nothing if the two ever disagreed - it accepts both spellings and FAILS on an empty gate, which is how a silent mismatch surfaces.
 - Package manager: bun everywhere - frontend and the four NestJS apps each commit a `bun.lock`, CI installs `--frozen-lockfile`, the Makefile calls bun. **`.bun-version` is the ONE place this repo names a bun version.** No `packageManager` field, no `engines.bun`, no npm.
 - Setup/dev: `make install`, `make run-services`, `cd frontend && bun run dev`.
-- Tests: `make test`, `make test-frontend`, `cargo test`.
-- Frontend gates before every commit: `bun run check` (0 errors), `bun run lint`, `bun run format`. Rust >= 1.97. `cargo clippy` for Rust crates. `make run-ci` for the full local pipeline.
+- Tests: `make test`, `make test-frontend`, `cargo test`, `make test-ci-scripts`; `make run-ci` for the full local pipeline. Rust >= 1.97, `cargo clippy` for Rust crates.
 - **NOTHING IN THIS REPO IS FORMATTED BY PRETTIER.** Everything is `oxfmt` (`oxfmt.json`) + `oxlint`. A bare `npx prettier --write` finds NO config, silently applies its own defaults (double quotes, 80 cols) and rewrites whole files - it did, and shipped. Use the package's own `format` / `lint` script, always. `bun run lint` shells out to `sh` (the oxvelte shim), so run it through the Bash tool.
 
 ## **THE RULES THAT APPLY TO EVERY TASK**
@@ -182,20 +168,19 @@ and a kept one is what a later push RESURRECTS - pushed and UNSHIPPED), update S
 Everything area-specific is in [durable-rules](docs/wiki/durable-rules.md). These are the ones no task
 escapes.
 
+- **The user's standing directives, verbatim:** *"le probleme doit etre architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les tailles"*; *"pense factorisation, proprete, simplicite"*.
+- **A REFUSAL IS NEVER A ROUTING DECISION TO A HUMAN QUEUE** (user, 2026-08-31: *"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*, *"pour avoir un projet qui peut 'vivre tout seul'"*) - it is a statement that a gate is MISSING, and it must NAME the test that would lift it. A queue nobody drains is worse than the merge it prevented.
+- **A FALLBACK IS A SIGNAL, NEVER A PATH.** Never add one: reaching one means the primary path failed and the fix belongs THERE. So it is logged at a level that ACCUSES, and its rate is measured against the population before its name is believed.
 - **A status code is an ANSWER, a transport failure is not.** Only a 401/403 may log a user out, and `navigator.onLine` never proves reachability (a captive portal reports `true`).
 - **Never branch on an error MESSAGE.** A distinction carried in prose is a distinction exactly ONE call site will make - classify at the THROW, as a type. When auditing such a seam, enumerate its consumers, never just the ones that mention it.
 - **IDEMPOTENCE COMES FROM DURABLE STATE, TERMINATION FROM A PROOF - never from a clock.** Ask of every timer what it would mean if it were wrong; if the answer is "more traffic", it is load-bearing and should not be. But durable state answers only THE QUESTION IT WAS WRITTEN FOR: "is this broken" and "have I already asked" differ only in lifetime, and using one for the other silences the trigger.
-- **A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER.** A liveness clock must be written by the thing whose liveness it measures.
-- **A PREDICATE THAT NAMED THE LAST INCIDENT IS NOT THE PREDICATE THAT NAMES THE NEXT ONE.** Re-measure it against the population it will actually run on - one `GROUP BY` settles it in seconds.
-- **A CORRECT MECHANISM WITH NO REPORT IS FOUND BY HAND, A DAY LATE**, and the report must carry the evidence separating the causes it cannot itself distinguish.
-- **A CLAIM THAT SOMETHING IS STALE MUST NAME THE MECHANISM THAT WOULD HONOUR IT AND SHOW THAT MECHANISM GONE.**
+- **A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER.** A liveness clock must be written by the thing whose liveness it measures. **A PREDICATE THAT NAMED THE LAST INCIDENT IS NOT THE PREDICATE THAT NAMES THE NEXT ONE.** Re-measure it against the population it will actually run on - one `GROUP BY` settles it in seconds.
+- **A CORRECT MECHANISM WITH NO REPORT IS FOUND BY HAND, A DAY LATE**, and the report must carry the evidence separating the causes it cannot itself distinguish. **A CLAIM THAT SOMETHING IS STALE MUST NAME THE MECHANISM THAT WOULD HONOUR IT AND SHOW THAT MECHANISM GONE.**
 - **Every swallowed branch logs** - in a best-effort path that is all a loss leaves. A batch of jobs catches and logs PER JOB; isolation is a `try` per subscriber or it does not exist.
 - **A DESTRUCTIVE CONTROL NEEDS AN ALLOWLIST OF WHAT IT MAY TOUCH, NOT A DENYLIST** - and a destructive repair must be gated on knowing the state is really broken.
 - **WHEN SOMETHING KEEPS REFILLING, DELETING IT IS NOT THE FIX** - revoke whatever keeps naming it as a destination. And before deleting a container to reclaim what one member costs, enumerate the other members.
-- **Default to Paraglide for ANY new user-visible string, on the first draft.** Nothing types a string as user-visible, so no compiler enforces it.
 - **Never assert a wall clock in a test.** Two isolated browser contexts = two devices.
 - **A green gate is not a working system.** Everything native is verified by COMPILING, which proves nothing about running; a green deploy proves the containers started, never that the site answers.
-- **A FALLBACK IS A SIGNAL, NEVER A PATH.** Reaching one means the primary path failed and the fix belongs THERE. So it is logged at a level that ACCUSES, and its rate is measured against the population before its name is believed.
 - **A RACE THAT HEALS CLEANLY IS STILL A DEFECT.** If the mechanism needs a heal in THEORY it is wrong, whatever it does in practice. Name what makes the two paths overlap and delete the overlap - a ledger that reconciles them afterwards is a witness, never a fix.
 - **NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU.** Handing an operation to a layer certain to refuse it, in order to classify the refusal, is work the design owes: carry the discriminator to where the decision is made, from where it is already KNOWN.
 - **NOISE IS NEVER ACCEPTABLE - web, mobile or server.** A line is either expected AND necessary, or it is the visible end of something upstream. Explain it or fix it, and never demote it - the cost is real, and a line its reader learns to skip is the one that hides the next defect.
@@ -204,147 +189,49 @@ escapes.
 
 ## **SESSION STATE (Active Memory)**
 
-**Five repos**, all on `main`. **Canari** (this monorepo, `emse-students/canari`, **PUBLIC**) is the
-only active one; **Sky** (`../Sky`), **MiGallery** (`../MiGallery`), **Portail-etu**
-(`../refonte-portail-etu`, **PUBLIC**) and **Le Cercle** (`../le-cercle`) are COMPLETE. How each is
-REACHED is in the private operations notes (WHERE THINGS LIVE).
+**Five repos** on `main`: **Canari** (`emse-students/canari`, **PUBLIC**) is the only active one;
+**Sky**, **MiGallery**, **Portail-etu** (**PUBLIC**) and **Le Cercle** (`../Sky`, `../MiGallery`,
+`../refonte-portail-etu`, `../le-cercle`) are COMPLETE. **P1** security or a broken user-facing path,
+**P2** correctness, **P3** hygiene. Nothing is parked (2026-08-18): a new item goes into the queue AND
+its substance into a [backlog.d/](docs/wiki/backlog.d/README.md) file, and BOTH are deleted the day it ships. **What only
+the USER can do is ONE table** - [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
-
-Work is tracked as Work Packages by severity: **P1** (security, or a broken user-facing path), **P2**
-(correctness), **P3** (hygiene). Nothing is parked since 2026-08-18: anything new goes into the queue
-below, its substance into [backlog](docs/wiki/backlog.md), and BOTH copies are deleted the day it
-ships. **What only the USER can do is ONE table** -
-[backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
-only; never re-enumerate it here.
+**CLOSED, DO NOT REOPEN** (user: record closed chantiers so nobody returns to them fifty times):
+section navigation ([section-navigation](docs/wiki/frontend/section-navigation.md)), read-receipt
+privacy ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md)), the first pass of community-open
+slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md)) and the weak-network
+audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)).
 
 ### CANARI - THE QUEUE, IN ORDER
 
-**A HEADLINE AND A LINK EACH, AND THAT IS ALL THIS SECTION IS FOR.** It was 152 lines for 11 items
-on 2026-09-03, restating what the linked pages carry - and TWO items had gone FALSE unnoticed.
-Order = priority; detail lives where the link says, and WHERE THINGS LIVE says which page.
+**A HEADLINE AND A LINK EACH, AND NOTHING ELSE** - the detail lives where the link says. Order = priority.
 
-0. **`gh release list` IS THE SHIPPED STATE, `git log <latest stable>..origin/main` THE UNRELEASED WORK** (a stable ships the LATEST pre-release of its version). **CLOSED 2026-10-14, DO NOT REOPEN (user: record closed chantiers so nobody returns to them fifty times): section navigation in depth ([section-navigation](docs/wiki/frontend/section-navigation.md)); read-receipt privacy ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md)); the first pass of community-open slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md)); the weak-network audit - what it left open is in [backlog](docs/wiki/backlog.md).** **OPEN NOW:** the shared `mls.bin` P3, a per-install file ([backlog](docs/wiki/backlog.md)); the community-open BUDGET measurement ([community-open-budget](docs/wiki/frontend/community-open-budget.md)); the identity-provider change of #1866 (sign-out ends the MiConnect session) is MERGED and reaches production by an operator action tracked in the private operations notes. Later: association enrolment with conditions and documents. **Operator actions owed to the USER are in the private operations notes and [backlog](docs/wiki/backlog.md).**
-1. **`canari.emse.fr` IS CANARI'S NAME AND THE OLD ONE SERVES APPS ONLY (2026-09-25)** - the legacy vhost `301`s every document and keeps serving `/api/`, `/.well-known/` and an open tab's assets, a cost the user took knowingly ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)). Every other estate has its `emse.fr` name and its SEO pass; left: the wiki has no sitemap and two pages carry placeholder descriptions. ([estate-migration](docs/wiki/infrastructure/estate-migration.md#the-old-name-of-miconnect-redirects-and-the-dsi-replaced-the-cas-callback-2026-10-06), [backlog](docs/wiki/backlog.md)).
-3. **P1 - COMMUNITIES (user, 2026-09-27): EVERYTHING NAMED IS FIXED AND SHIPPED (`0.18.28`-`0.18.31`); ONLY READINGS ARE OWED** - the iPhone readings and one look on the Mi 9T (one personal phone is observation-only); read receipts and salon settings (#1235, #1228) SHIPPED in `v0.18.32`, owed one look each ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
-2a. **P1 - GRAINE V2 (user, 2026-09-28: the whole of it, DMs included): EVERYTHING IS BUILT AND THE SERVER'S REFUSAL OF AN UNSIGNED ROW (#1802) SHIPPED; TWO THINGS CLOSE IT** - the 0-unsigned-rows count re-run a day after the deploy plus the rig re-run on a live local estate (GRAINE-AUTH-1..3, -6, -7), and one device reading of the native v1-seed refusal line. The v1 reader goes when production counts 0 unsigned rows (the count and the revisit date are in the private operations notes) and lives in [legacy-compatibility](docs/wiki/legacy-compatibility.md) alone ([backlog](docs/wiki/backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28)).
-2b. **P1 - A NEW GROUP MEMBER RECEIVES THE WHOLE PAST (found 2026-10-21, never decided); the user decided they must not, as on WhatsApp** ([backlog](docs/wiki/backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)). **AND A NEW PERSON IS ADMITTED ONLY BY A MEMBER (user, 2026-10-23): STEP ONE BUILT (no automatic Add of a user absent from the tree, a member's Add / Decline, an uninvited entry written and reported); A SECOND STEP IS OWED** ([backlog](docs/wiki/backlog.md#a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23-step-one-built)).
-4. **THE CARTE DE LA VIE ASSO CHANTIER IS BUILT AND IN PROD (#1143-#1149, migration 064 included, first stable `v0.18.28`); WHAT IS LEFT IS A MEASUREMENT AND AN EYE, NOT CODE** - an A0 export measured WITH D8's cost (time, memory, size), then the user's look (D11). Two costs measured and accepted: 9 of 107 cards LOST size (worst 2.11 pt), and the badge lights up when any roster changes ([backlog](docs/wiki/backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
-4a. **THE COMPOSER AND CANAREELS CHANTIER IS BUILT AND SHIPPED IN `v1.0.0`-`v1.0.2` (user, 2026-09-29; the camera tab, 90 s capture, publish, the viewer, the 30-day `reel` class, gallery save, media playable while downloading); WHAT IS LEFT IS READINGS** - the user's look on both phones, the iPhone letterbox fix of `v1.0.2` (one video element per stream, #1370, **shipped UNVERIFIED on the iPhone by the user's choice**), the front-lens default and full-bleed preview, and the live-mic echo fix (#1368) ([backlog](docs/wiki/backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)). **No expiry notification for reel authors (user, 2026-10-02).** **AND THE LIQUID GLASS CHROME, PHONE APPS ONLY (user, 2026-09-30): WP-G1 and WP-G2 SHIPPED, the iPhone re-read PASSED 2026-10-11 except the keyboard rise (check W, a new P3)** ([backlog](docs/wiki/backlog.md#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)).
-4b. **CANAREELS IN CHATS, RC-0 TO RC-11: RC-1 (reader) AND RC-2 (server) SHIPPED IN `v1.2.2`, THE WRITER WAITS FOR RC-5 (resumable upload) AND RC-7 (native push) BEFORE ANY STABLE (user, 2026-10-14); NO NATIVE CAMERA ANYWHERE: the in-app CanaReel camera, the gallery picker stays (user, 2026-10-11; draft #1859)** ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order), [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-11)).
-5. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election now reads presence and waits for a member to come online; **shipped in `v0.18.26` (2026-09-27), owed ONE reading on the returner's devices** ([backlog](docs/wiki/backlog.md)).
-6. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT - NO COUNT HERE; run it.** **THE TEST TOOLING IS REFORMED NOW, NOT AFTER THE CAMPAIGN (user, 2026-10-18: "un nombre de test aberrant") - [WP-TEST-TOOLING-REFORM](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).** PIN's four rows change a PIN or restart a browser, hence
-   last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
-7. **P2 - THE UNDATED LAST-RESORT KEY PACKAGES ARE A CLIENT VERSION (`< 0.18.10`) AND CLOSE ON THEIR
-   DRAIN (~20/day, 2026-09-22)**; the 1024-bundle web pool is closed and both client repairs are
-   REFUTED. Owed: a re-measure; a server decoder only if the count floors ([backlog](docs/wiki/backlog.md#p2---nothing-republishes-a-last-resort-packages-expiry-so-the-undated-rows-drain-only-as-their-owners-upgrade-production-re-measured-2026-10-09)).
-8. **P1 - whether the deleted placeholder left a LEAF in the MLS tree** - a member's client question ([backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered)).
-9. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-9a. **P1 - A HISTORY REPLAY SAVES ITS STREAM CURSOR BEFORE THE CHECKPOINT IT CLAIMS TO FOLLOW** (found 2026-10-21 by reading; since 2026-08-14; a kill in that window is the `wrong-epoch` class, unmeasured) - fix in review ([backlog](docs/wiki/backlog.md)); the inert checkpoint-skip measurement switch rides #2078 ([open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
-10. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
-   and the blob-header READER reached users in `v0.18.18`, NOT on the 2026-09-08 they MERGED; the
-   WRITER cannot follow until that reader is the floor (`minClientVersion`: both stores serving it),
-   so the two causes are still not separated in the field ([backlog](docs/wiki/backlog.md)).
-12. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
-   re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
-   never the audit's**; the table emptied 2026-09-14. D8/R-D8 REFUTED, not to be re-opened. **A FEW
-   CONVERSATIONS REST ON ONE HOLDER (the counts are in the private operations notes)** - the hourly report says so and repairs nothing. [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
-13. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
-   and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
-   ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
-   Two open, all in [backlog](docs/wiki/backlog.md): the suppression control case, and [host-updates](docs/wiki/infrastructure/host-updates.md).
-14. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
-   BEEN OBSERVED** - some prod accounts grant at their next sign-in, others close `already-held`, and an
-   empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
-15. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
-   [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-16. **PHONE CAMPAIGN: LOTS 1-4, U1-U8 AND ANDROID 200 % TEXT SHIPPED IN `v0.18.32`; THE 2026-10-01 MI 9T PASS D1-D6 (#1280-#1283) AND #1287/#1288 RIDE `0.18.33-alpha.1` (dev + testers), OWED A RE-READ ON BOTH PHONES; NEXT U5 ON THE LOCAL BENCH and what is left of lot 5 (200 % text, three-button nav and Dynamic Type READ 2026-10-13)** ([state](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30), [owed](docs/wiki/backlog.md#owed-a-verification-and-nothing-else)). **UX/RENDERING - OPEN: REAL HARDWARE (all of it Chrome with an override) AND THREE of the ELEVEN
-    2026-09-18 REPORTS.** 41 channels hold at 390 and 1280; the phone agenda was RENDERED at last -
-    its rolling window is right, the two things AROUND it were not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md), [calendar](docs/wiki/frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)).
-    **#1223 (2026-09-29): the tab swipe SHOWS the page it goes to, a drifting tap no longer turns it, a reply swipe no longer closes the thread - every gate here is blind to the RESULT, owed ONE look on the reporting phone** ([design-reference](docs/wiki/frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
-17. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
-    path is unbroken for the third time, and the poll composer it named was REBUILT: one row per option, an identity on each (an edit used to ERASE EVERY VOTE), a cap the SERVER applies.
-    **ONE OBSERVATION OWED** - the reporting member is on an old client ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23)).
-18. **CALLING IS HELD OFF IN PRODUCTION (`CALLS_COMPILED = false`); LOT 1 - in-app 1:1 AUDIO, PEER TO PEER, DEV BUILDS ONLY - is built (2026-10-17, #1997; the dev TURN secrets exist), owed a pre-release deploy, then Tier A on the Mi 9T and the iPhone; FOUR items block `CALLS_COMPILED`** ([backlog](docs/wiki/backlog.md)) ([calls lot 1](docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)). The native ring's FIVE switches still move in ONE commit. Prod HAS TURN, never used.
-19. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract and audit in [backlog](docs/wiki/backlog.md).
-20. **P2 - A NEW DEVICE'S COMMUNITY JOIN REACHES THE COMMIT GATE BEFORE ITS KEYPACKAGE (cause read from prod 2026-10-09; the Welcome-livelock and twelve-messages items closed the same day, by evidence)** - a DRAFT pull request waits for the user's review of the join path ([backlog](docs/wiki/backlog.md)). **AND P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service, `503` when it does not answer - BUILT, owed its unanswered rate on dev then production (2026-10-22)** ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
-22. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). An
-    unreachable registry now exits 75 under its own title, apart from a broken change.
-23. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08 PROD P1 is FIXED and SHIPPED in `v0.18.18`, owing ONE hardware run nothing
-    blocks. **A reaction to your OWN message HAS notified since 2026-05-17**, on `canari_reactions` since 2026-09-17 ([backlog](docs/wiki/backlog.md)).
-24. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
-    TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
-25. **P2 - NOTIF-18 WATCHED A SHUT PHONE READ ITS SEED ON HARDWARE (`PASS` 2026-09-21), AND THE MESSAGE STILL ARRIVES FIRST - A HOLD AND A REDRAW ARE WHAT COVER IT.**
-    ONE open: iOS, whose NSE does not wake on a silent frame at all ([backlog](docs/wiki/backlog.md)).
-26. **THE FIRST iOS FEEDBACK EVER (2026-09-20) IS TWO REPORTS - NEITHER IS A CLASS.** Scroll: fixed, owing ONE reading on that iPhone; the Mi 9T settles only Chromium, where it REFUTED the `touch-action` half.
-    **EMOJI ARE NOTO SVG PICTURES EVERYWHERE, THE FONTS ARE DELETED** (user, 2026-09-25: the font never drew on WebKit) - shipped in `v0.18.26`, owed the iPhone rows ([emoji](docs/wiki/frontend/emoji.md), [backlog](docs/wiki/backlog.md)).
-27. **P3 - MICONNECT IS FLAT, FRENCH AND LANDS ON CANARI (LIVE 2026-09-25); THREE STRINGS AND ONE SIGNED-IN OBSERVATION ARE LEFT** - admin accounts keep an internal path, described in the private operations notes ([backlog](docs/wiki/backlog.md)). **THE INTERFACE CHANTIER IS CLOSED (2026-09-29) - the last hardware checks passed, and what is left to the user is [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)**. **THE REFORM (profiles, spaces, per-app access; 11 work packages, PLAN VALIDATED 2026-09-29): WP0 SHIPPED 2026-09-30; WPA DONE AND APPLIED to prod (#1241, #1246, #1255), PKCE proven by a real sign-in; ONE authentik instance, no dev one (user, 2026-09-30); WP1 (the profile, Master -> Autre) LIVE on prod 2026-09-30; WP4 is on main and WP5 is next** ([profiles-and-access](docs/wiki/profiles-and-access.md)). **AND FOLLOW REQUESTS, MEMBER REPOSTS AND FOLLOWER VISIBILITY ACROSS SPACES (user, 2026-10-25): DECIDED, NOT BUILT, AFTER THE STABLE `1.4.1`; four questions owed to the user** ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
-28. **P2 - GRAINE ROTATES ON EVERY ADD (2026-10-21): one seed per two messages, so the history bundle and the key-group queue grow with device joins, not senders** ([backlog](docs/wiki/backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21), [comparison](docs/wiki/protocols/dm-vs-community-encryption.md)).
+1. **P1 - iOS notifications show no content (owner, 2026-11-01): the extension's 18.2 target lowered to 16.0, its outcome logged as `[NSE_OUTCOME]`, the tap freed from it; the bench readings decide the cause** ([backlog](docs/wiki/backlog.d/p1-ios-notifications-show-no-content.md)).
+2. **P1 - opening a community: F1-F7 built, the 200 ms budget measurement is left** ([community-open-budget](docs/wiki/frontend/community-open-budget.md), [backlog](docs/wiki/backlog.md#p1---opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026-10-14-state-re-read-2026-10-22)).
+3. **P3 - one `mls.bin` per install, shared by every account on it** ([backlog](docs/wiki/backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
+4. **`canari.emse.fr` is Canari's name; the old one serves apps only, a cost taken knowingly** ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)); SEO residue in [backlog](docs/wiki/backlog.d/three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md).
+5. **P1 - communities (user, 2026-09-27): shipped; readings, one user decision, three test pairs and one native log fix are owed** ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
+6. **P1 - Graine v2: built and shipped; three rows close it** (the unsigned-row count, the rig re-run, one native refusal reading) ([backlog](docs/wiki/backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28), [legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+7. **P1 - a new group member receives the whole past; decided they must not: step A merged (#2270); and a new person is admitted only by a member: merged (#2358, its review fixes, the card #2373), owed migration 038, the review findings and a second step** ([past](docs/wiki/backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not), [admission](docs/wiki/backlog.md#a-new-person-is-admitted-only-by-a-member-decided-by-the-user-on-2026-10-23-step-one-built)). **And the creation bootstrap is bound to the recorded creator (owner, 2026-10-29): built, migration 042 owed the owner's yes** ([backlog](docs/wiki/backlog.md#p1---the-creation-bootstrap-is-bound-to-the-recorded-creator-migration-042)).
+8. **Carte de la vie asso: in prod; owed an A0 export measured, then the user's look** ([backlog](docs/wiki/backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
+9. **Composer and CanaReels, and the Liquid Glass chrome: shipped, readings owed** ([composer](docs/wiki/backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken), [glass](docs/wiki/backlog.md#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)).
+10. **CanaReels in chats: RC-1/RC-2 shipped (`v1.2.2`), RC-7 shipped (#2112, `v1.3.1`), RC-3/RC-4 (#2098) and RC-5 (#2117) merged with the writer switch OFF; sharing and the reel drawers merged (#2311, #2314, #2327); the in-app camera built (#1859, `v1.2.9`). Owed before the writer switch: the durable release of a leaked upload session, the chat profile wired in, the RC-0 re-run and the readings** ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)). **And "Envoyer à..." from the camera tab to several targets, one shared file (owner, 2026-10-30): designed (RC-12..RC-14, RC-13 before the writer switch), every question answered** ([section 15](docs/wiki/frontend/modules/reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built)).
+11. **The campaign: the MLS core matrix on dev ([cross-client-campaign-1-4-1](docs/wiki/cross-client-campaign-1-4-1.md), written for a `1.4.1` stable that was never cut - `1.5.x` shipped instead); the test tooling is reformed NOW** ([WP-TEST-TOOLING-REFORM](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); rules for a run: [campaign](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check)).
+12. **P2 - undated last-resort KeyPackages drain only as their owners upgrade** ([backlog](docs/wiki/backlog.md#p2---nothing-republishes-a-last-resort-packages-expiry-so-the-undated-rows-drain-only-as-their-owners-upgrade-production-re-measured-2026-10-09)).
+13. **P1 - whether the deleted placeholder left a leaf in the MLS tree** ([backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered)).
+14. **P1 - HEAL-repair heals 3 times in 10; two causes refuted, not to be re-opened** ([backlog](docs/wiki/backlog.md#messaging-convergence)).
+15. **The checkpoint-skip build decision is the user's, measured on the Mi 9T** ([open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+16. **P1 - a damaged MLS state is called a PIN rotation: step 2 shipped (`v1.3.0`), the CORRUPT-2 row owed** ([backlog](docs/wiki/backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
+17. **The MLS audit: the dead ends are what is left - work to the swept numbers** ([backlog](docs/wiki/backlog.md#the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026-09-12)).
+18. **The dependency chain: one merge mechanism, one arming point, asserted by `bun tools/ecosystem-shape/shape.mjs`** ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)); open: [host-updates](docs/wiki/infrastructure/host-updates.md).
+19. **P2 - legacy cotisation rows loaded, not one claim observed** ([backlog](docs/wiki/backlog.md#p2---the-legacy-cotisation-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171)).
+20. **Blocked on hardware, or on a condition named with each** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
+21. **Phone campaign: lot 5 and U5 left, re-reads owed on both phones** ([phone-comparison](docs/wiki/phone-comparison.md#the-correction-plan---where-it-stands-2026-09-30)); rendering owes REAL hardware ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-18-and-2026-09-17---what-is-still-owed)).
+22. **Calls are live in production: in-app 1:1 audio since `v1.5.0` (`CALLS_COMPILED = true`, #2299; the server's `calls_mode = audio`); 1:1 video (#2711) and the native ring (#2727, all five switches in ONE commit) ride `1.5.2`, video shut by `calls_mode` until its readings pass** ([calls](docs/wiki/frontend/modules/calls.md), [backlog](docs/wiki/backlog.md)).
+23. **One named starting point for every phase, step and step group** (user, 2026-08-25; [backlog](docs/wiki/backlog.md#p2---one-named-starting-point-reachable-at-every-granularity-asked-2026-08-25)).
+24. **P1 - WP-KEYGROUP-JOIN-GATE: built, owed its `503` rate** ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)); **and P2 - a new device's join before its KeyPackage: shipped (#1666 `v1.2.2`, #1700 `v1.2.3`), the production read owed** ([backlog](docs/wiki/backlog.md#p2---a-new-devices-join-of-a-communitys-key-group-reaches-the-commit-gate-before-its-keypackage-2026-08-29-cause-measured-on-production-2026-10-09)).
+25. **P3 - MiConnect: one string and one signed-in observation; the profile reform, WP5 next** ([backlog](docs/wiki/backlog.md#p3---miconnect-one-string-left-after-the-french-pass), [profiles-and-access](docs/wiki/profiles-and-access.md)). **And follow requests, member reposts and follower visibility across spaces (user, 2026-10-25): decided, not built; four questions owed to the user** ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+26. **P2 - Graine rotates on every key-group epoch: the three fixes merged (#2263, #2255, #2260), owed the rig rows, the production ratio and migration 034's yes** ([backlog](docs/wiki/backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21), [comparison](docs/wiki/protocols/dm-vs-community-encryption.md)).
+27. **P2 - a DM/group file is queued at the tap like a text, and the pre-send media barrier goes** ([backlog](docs/wiki/backlog.d/media-send-queued-at-the-tap.md)).
 
-### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
-
-The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de
-partout. Partout. oxlint/oxfmt ect partout, TS7 partout ou c'est possible..., Lucide derniere version
-avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."*
-
-**Every decision, measurement, guardrail and per-repo state is on
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the ONLY copy - add to its tables rather
-than re-deriving anything here, which is what made this section wrong twice.** Its "NOT TO BE
-RELITIGATED" paragraphs exist so a later session cannot "finish" the work by undoing a measurement.
-
-**What is left is JUDGEMENT, not migration**, and listing which ones HERE is the re-derivation that
-paragraph forbids. **NestJS 12 is HALF DONE and needs nothing done to it**, an ASSERTION rather than
-an ignore, so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md).
-
-**FIVE THINGS CANNOT BE PULLED FORWARD**, and [backlog](docs/wiki/backlog.md) is where each is
-NAMED with its blocking condition - listing them here is the re-derivation the paragraph above forbids.
-
-### CANARI - release, store submission, iOS
-
-**NEVER INFER A STORE, A VERSION OR A CI STATE FROM A LINE HERE - this paragraph has been stale
-THREE times**, so it names no version. **RELEASE AUTHORITY (user, 2026-10-11, replacing the 2026-10-01 rule): the lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release is read on a phone and nothing blocks, telling the user each time; a direct production change, a data migration or a deletion still waits for the user's yes** ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)). `gh release list` is the shipped version, Play a MEASUREMENT
-(`bun tools/play-vitals/vitals.mjs`), CI is `gh run list`, and the App Store half is on
-[mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on).
-**No HEAL-REVOKE verdict about a clean device may be taken on a build older than 0.14.12.** **An
-APK is not reached by a deploy** - `frontendDist: "../build"` means the app EMBEDS the frontend, so
-`minClientVersion` and check S reason about a NAME unless a version identifies its content.
-**2.1(a) IS PASSED; CHECK R IS FIVE OF SIX ON `0.18.21`, AND THE INSPECTABLE STORE WEBVIEW IT FOUND
-IS FIXED IN `0.18.22`** ([device-verification](docs/wiki/device-verification.md)); **WP-RESTORE-1** ACCEPTED.
-
-**iOS: two things are PROVEN and must not be re-verified** - the session HOLDS on the iPhone, and a
-full parity audit read everything else as symmetric. Four items open in
-[backlog](docs/wiki/backlog.md), one **diagnosable with no phone at all**. **THREE OF THREE iOS
-DEFECTS WERE INVISIBLE TO EVERY GATE HERE**, so those classes close by HARDWARE, one lettered check
-at a time - **never by a fix written against a suspected lifecycle bug nobody has seen.**
-
-### CANARI - the test campaign
-
-Four files, four jobs, all listed in WHERE THINGS LIVE: board = state, campaign page = design,
-methodology = how a result earns belief, README = operating manual. **Read them rather than
-re-deriving anything here, and keep no second copy.**
-
-**THREE COMMANDS RUN BEFORE ANY MEASUREMENT IS BELIEVED**, each because skipping it has already
-cost a verdict: `bun rows.mjs` (does the board match the ledger), `bun cleanup.mjs` (is the estate
-free of debris that would REATTRIBUTE the run - and it now PRINTS what it does not sweep), `bun
-identity.mjs` (which account each client SHOWS and which it ACTS AS). A push row adds
-`fcmlink.mjs`. Every count, incident and disposition behind them is on
-[methodology](docs/wiki/testing-methodology.md) and the campaign page. **Read them; do not restate
-them here** - this paragraph was a second copy of all of it until 2026-09-10.
-
-**FOUR STANDING RULES FOR A RUN.** The bar is `PASS`, **never `PASS-DIRTY`** (user) - a P1 met on
-the way is fixed in the SAME session, P2/P3 go to [backlog](docs/wiki/backlog.md) rather than
-inline. **READ THE LOGS ON EVERY PASS** (user, 2026-08-28): a heal that works is not a heal that
-was observed. **READ THE OTHER END BEFORE FILING A CLIENT DEFECT** - one P1 died to three
-`docker logs`, every load-bearing claim wrong. **A killed run can destroy a measurement seconds
-from being recorded**, and losing a `chrome-w1`/`chrome-w2` profile costs a DEVICE.
-
-**Standing architectural directives from the user, verbatim:** *"le probleme doit etre
-architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout
-soit deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les
-tailles"*; *"pense factorisation, proprete, simplicite"*.
-
-**AND ON DEPENDENCIES, 2026-08-31, WHICH DECIDES THE SHAPE OF EVERY GATE:** *"Je prefere blinder de
-test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*, and
-*"pour avoir un projet qui peut 'vivre tout seul'"*. **So a refusal is NEVER a routing decision to a
-human queue - it is a statement that a gate is MISSING, and it must NAME the test that would lift
-it.** A queue nobody drains is worse than the merge it prevented.
+**Closed without a fix, readings owed** - each a row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), not queue work: a returner's community past (`v0.18.26`), the member who could not publish, a first contact's notification, a salon seed after its message and the iOS silent frames (#2000), the first iOS feedback (scroll, emoji). #752's two P2s are closed ([backlog](docs/wiki/backlog.md)).

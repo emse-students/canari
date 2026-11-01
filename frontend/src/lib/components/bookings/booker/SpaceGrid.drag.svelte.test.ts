@@ -13,6 +13,8 @@ import SpaceGrid from './SpaceGrid.svelte';
 
 const START = Date.parse('2026-11-02T08:00:00Z');
 const STEP = 30 * 60_000;
+// Before the first unit: every unit drawn is still to come, so the booker's grid offers it.
+const NOW = START - STEP;
 
 function unit(index: number, state: 'free' | 'blocked' = 'free'): SlotUnit {
   return {
@@ -39,22 +41,36 @@ const mounted: (() => void)[] = [];
 const onPick = vi.fn();
 
 /** Mounts one day of `units` and returns its cells in time order. */
-async function open(units: SlotUnit[], space = spaceOf(4)) {
+async function open(units: SlotUnit[], space = spaceOf(4), blockMode = false, now = NOW) {
   const app = mount(SpaceGrid, {
     target: document.body,
     props: {
       space,
       resource,
-      layout: weekLayout(units, ['2026-11-02'], space, START),
+      layout: weekLayout(units, ['2026-11-02'], space, now),
       mode: 'day',
-      nowMs: START,
+      blockMode,
+      nowMs: now,
       onPick,
     },
   });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();
-  return [...document.querySelectorAll<HTMLElement>('[data-cell]')];
+  return cellsByIndex();
+}
+
+/**
+ * The hit areas by the index of their unit in the day. Only FREE units have one
+ * (a booking or a block is one button of its own; a refused start keeps a DISABLED one, so a drag
+ * can still cross it), so the others are `undefined` and each unit keeps its own index.
+ */
+function cellsByIndex(): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (const cell of document.querySelectorAll<HTMLElement>('[data-cell]')) {
+    out[Number(cell.dataset.idx)] = cell;
+  }
+  return out;
 }
 
 /** A pointer event on `target`; `y` is the UNIT (its index in the day) the stubbed hit-test will answer with. */
@@ -91,7 +107,7 @@ describe('SpaceGrid - drag a range', () => {
         resource,
         layout: weekLayout(free(2), ['2026-11-02', '2026-11-03'], spaceOf(4), START),
         mode: 'week',
-        nowMs: START,
+        nowMs: NOW,
         onPick,
       },
     });
@@ -120,11 +136,59 @@ describe('SpaceGrid - drag a range', () => {
     pointer('pointerdown', cells[0], 'mouse', 0, 0);
     pointer('pointermove', cells[2], 'mouse', 20, 2);
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(/\d/);
-    expect(cells[0].className).toContain('bg-cn-yellow');
-    expect(cells[2].className).toContain('bg-cn-yellow');
-    expect(cells[3].className).not.toContain('bg-cn-yellow/40');
+    // ONE accent block for the whole range, not a coloured cell per unit.
+    expect(document.querySelectorAll('[data-selection]')).toHaveLength(1);
+    expect(document.querySelector('[data-selection]')!.className).toContain('bg-cn-yellow');
     pointer('pointerup', cells[2], 'mouse', 20, 2);
     expect(document.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('drags DOWN past units the horizon refuses as starts: only the start is judged', async () => {
+    // A one-day horizon ending inside unit 2: units 2.. are refused AS STARTS, not as steps.
+    const space = { ...spaceOf(4), horizonDays: 1 } as BookerSpace;
+    const now = START - 24 * 3_600_000 + 1.5 * STEP;
+    const units = free(6);
+    const cells = await open(units, space, false, now);
+    expect((cells[2] as HTMLButtonElement).disabled).toBe(true);
+    pointer('pointerdown', cells[1], 'mouse', 0, 1);
+    pointer('pointermove', cells[1], 'mouse', 20, 3);
+    pointer('pointerup', cells[1], 'mouse', 20, 3);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 3);
+  });
+
+  it('stops an UPWARD drag before a unit the window refuses as a start', async () => {
+    // A 1 h notice from NOW (30 min before unit 0): unit 0 is too near to start a booking.
+    const space = { ...spaceOf(4), minNoticeMinutes: 60 } as BookerSpace;
+    const units = free(6);
+    const cells = await open(units, space);
+    pointer('pointerdown', cells[3], 'mouse', 0, 3);
+    pointer('pointermove', cells[3], 'mouse', 20, 0);
+    pointer('pointerup', cells[3], 'mouse', 20, 0);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 3);
+  });
+
+  it('never offers the latest start the server refused, nor any start before it', async () => {
+    const units = free(3);
+    const app = mount(SpaceGrid, {
+      target: document.body,
+      props: {
+        space: spaceOf(4),
+        resource,
+        layout: weekLayout(units, ['2026-11-02'], spaceOf(4), NOW),
+        mode: 'day',
+        nowMs: NOW,
+        lastRefusedStart: units[1].startMs,
+        onPick,
+      },
+    });
+    mounted.push(() => unmount(app, { outro: false }));
+    flushSync();
+    await tick();
+    const cells = cellsByIndex();
+    // Both refusals only grow with time: the refused start and every earlier one are retired.
+    expect((cells[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((cells[1] as HTMLButtonElement).disabled).toBe(true);
+    expect((cells[2] as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('drags upward from the lower row, the first unit being the upper one', async () => {
@@ -196,5 +260,38 @@ describe('SpaceGrid - drag a range', () => {
     pointer('pointermove', cells[2], 'mouse', 20, 2);
     pointer('pointerup', cells[2], 'mouse', 20, 2);
     expect(onPick).not.toHaveBeenCalled();
+  });
+});
+
+describe('SpaceGrid - block mode, the organiser dashboard (WP-R5, D50)', () => {
+  it('drags past what one booking may cover, up to a block, in red', async () => {
+    const units = free(8);
+    const cells = await open(units, spaceOf(2), true);
+    pointer('pointerdown', cells[1], 'mouse', 0, 1);
+    pointer('pointermove', cells[1], 'mouse', 0, 1);
+    pointer('pointermove', cells[6], 'mouse', 20, 6);
+    expect(document.querySelector('[data-selection]')!.className).toContain('border-red-err');
+    pointer('pointerup', cells[6], 'mouse', 20, 6);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[1], 6);
+  });
+
+  it('drags in a space of whole slots too', async () => {
+    const units = free(4);
+    const cells = await open(units, spaceOf(4, 'slots'), true);
+    pointer('pointerdown', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[2], 'mouse', 20, 2);
+    pointer('pointerup', cells[2], 'mouse', 20, 2);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[0], 3);
+  });
+
+  it('stops at a unit that is not free, so a block drag never crosses a booking', async () => {
+    const units = [unit(0), unit(1), unit(2, 'blocked'), unit(3)];
+    const cells = await open(units, spaceOf(4), true);
+    pointer('pointerdown', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[0], 'mouse', 0, 0);
+    pointer('pointermove', cells[3], 'mouse', 20, 3);
+    pointer('pointerup', cells[3], 'mouse', 20, 3);
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(resource, units[0], 2);
   });
 });

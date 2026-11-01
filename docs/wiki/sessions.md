@@ -473,7 +473,8 @@ things read it, and they converge on ONE reset ([auth](frontend/modules/auth.md#
 owner → reset if it is this one`, `[SECURITY] Revoked-device reset starting.`, `[RESET] done - nothing
 of this device remains`, and on the live variant also `revocation check: the server ended this
 session BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
-`the server disagrees`, and no `Gateway inaccessible` after it.
+`the server disagrees`, and no `[WS] Gateway connection failed` after it (`Gateway inaccessible`
+before 2026-10-30).
 
 **Designed outcomes of that end, and how they log (2026-10-26).** The reset's own `clearAuth` IS the
 device's one sign-out: `endExpiredSession` (the session-expired handler's decision) skips its own
@@ -598,10 +599,13 @@ redirect would have built survives; the root and the sign-in pages stay bare. So
 
 A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain
 `<a href>` as well as `goto` and the stored sign-in return. `safeInternalPath`
-(`utils/internalPath.ts`) is the ONE gate: a target is validated against the page's origin, by the
-URL parser's own resolution rather than a reading of its first characters, and control characters
-and backslashes are refused at any position. A refused value falls back to the caller's default and
-logs its length, never the value. Tests: `internalPath.test.ts` (the function) and
+(`utils/internalPath.ts`) is the ONE gate. A target must start with `/` and, resolved by the URL
+parser against a fixed reserved origin, keep that origin - for a value starting with `/` that is
+the same as keeping the page's own, whatever the page. It is the parser's verdict, not a reading of
+the first characters. Control characters (C0, DEL, C1), the line and paragraph separators and
+backslashes are refused at any position, and a value that is not a string is refused. A refused
+value falls back to the caller's default and logs its length, never the value. `gotoAppPath` holds
+a full-page load to the page's origin a second time, at the load itself. Tests: `internalPath.test.ts` (the function) and
 `routes/forms/create/page.backLink.svelte.test.ts` (a rendered link).
 
 ## A token that names another account than the local identity is refused (2026-10-10)

@@ -22,7 +22,7 @@ here and nothing else.**
 
 ## Where the pass stands
 
-**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.md#p2---a-killed-phone-answers-a-background-welcome-from-a-stale-epoch-and-the-route-reports-it-as-sent-read-on-the-mi-9t-2026-10-22). Not read: the newcomer afterwards.
+**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md). Not read: the newcomer afterwards.
 
 **2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
@@ -1179,6 +1179,15 @@ other 3 it spends 24 ms at 881.5. No real IME on this phone is that short; a flo
 one-row keyboard would be. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkW-mi9t.json`
 (the LatinIME run; the ADB-keyboard numbers above are the only record of that run).
 
+**Two more steps, owed on the Mi 9T on the first build carrying the fix of 2026-10-29**
+([the field that stays focused](frontend/modules/chat.md#a-field-that-stays-focused-with-the-keyboard-down-the-rise-that-covered-the-thread-and-the--that-raised-the-keyboard-2026-10-29)):
+
+4. Open the keyboard in a long DM, put it away with Back, scroll up ~150-300 px, tap the text field:
+   the thread goes to its last message above the composer (`[ChatArea] keyboard opened:
+   follow-bottom`); on `1.5.1-alpha.7` it stayed put and the keyboard covered 345 px of it.
+5. Open the keyboard, put it away with Back, tap "+": the menu, and NO keyboard. Then tap the field
+   and "+" again: the menu over the keyboard, the keyboard still up.
+
 ## DT. A double tap likes a post - owed on BOTH phones
 
 **Proves** [the double tap that likes](frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)
@@ -1220,8 +1229,8 @@ both clicks - the one case worth a detector change, and only once it is seen wit
 
 **Proves** [the live viewer](frontend/modules/live.md#the-viewer-as-built-2026-10-19) in the app's
 own WebViews, which no gate here runs: the tests drive fake MSE objects, and WP-L1 measured the
-bench page, not this player. **Precondition:** a DEV build carrying the viewer (`LIVE_ENABLED` is on
-for dev builds only), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
+bench page, not this player. **Precondition:** a build carrying the viewer (`LIVE_ENABLED` is on
+in every build since 2026-10-30; a dev pre-release until a stable carries it), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
 (the app's own broadcaster on the other phone - run with [LIVE-B1](#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both);
 the WP-L1 bench's own `live-bench` seal reads "Live indisponible" here, by design), and the console over CDP or the WebKit bridge for the `[LIVE]` lines.
 
@@ -1379,7 +1388,7 @@ the build it names.**
 | #1744 feed reel fetch, playback start | PR #1744 (open) | **WAITS**: not merged |
 | An account deletion empties the App Group copies: delete a throwaway account on a debug (inspectable) build, then list `group.fr.emse.canari` - no `push_context.json` or `fcm_message_cache.ndjson` left, `mls.bin` / `graine_seeds.json` / `push_secret.txt` kept; `[DEL-LOCAL] push files: N removed from the extension's container` in the log, no `no App Group container` | [auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18), added 2026-10-19 | **WAITS for a pre-release carrying it**: the `#[cfg(target_os = "ios")]` branch is not even compiled before the release's iOS build |
 | PDF viewer performance | branch `perf/pdf-viewer` | **WAITS**: no pull request yet |
-| Session holds, check P | CLAUDE.md | **not re-read by rule**: proven, "must not be re-verified" |
+| Session holds, check P | [parity](frontend/android-ios-parity.md) | **not re-read by rule**: proven, "must not be re-verified" |
 
 **Met again: the account-switch P3, and how the bench got there.** TestFlight "Mises à jour
 automatiques" was ON, and it had replaced the bench's `1.2.2-alpha.1` with the `1.2.3` STABLE, a
@@ -1603,8 +1612,8 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 
 ## LIVE-B1. The broadcaster on both bench phones - owed on BOTH
 
-The broadcaster of WP-L5 ([live](frontend/modules/live.md#the-broadcaster-as-built)), on dev builds
-only (`LIVE_ENABLED = deployEnvironment() === 'development'`; dev's server has `LIVE_ENABLED` on).
+The broadcaster of WP-L5 ([live](frontend/modules/live.md#the-broadcaster-as-built)), in every build
+since the production flip of 2026-10-30 (`LIVE_ENABLED` in `features.ts`; both estates' servers open, `lives_mode` the runtime switch).
 Every test of it runs on fakes: none of the readings below has been taken. Written 2026-10-19.
 
 **Preconditions - each a reading:** both phones on a PRE-RELEASE build carrying the broadcaster
@@ -1703,8 +1712,8 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 
 **`[CALL_REPORT]` reaches a build with the first pre-release carrying the 2026-10-21 port of #2011**
 (check the release notes; no build before it has the line). From then on each device logs one line per call every 10 s and once at the end
-(`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
-e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
+(`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= ring_ms= connect_ms= engine= ice= pair= relayed= ...
+e2e=on enc_frames= dec_frames= dec_fail=`); record `connect_ms` (and `ring_ms` apart: a human; one `setup_ms` from the tap on a build before the split of 2026-10-31), `relayed`, `rtt_ms`, `loss_in_pct` and
 `dec_fail` per direction, which is the plan's exit criterion
 ([calls-revival-plan](frontend/modules/calls-revival-plan.md)).
 

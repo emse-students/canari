@@ -141,6 +141,41 @@ association that runs it, surfaced on the read side as the denormalised `parentN
 it carries two names and two logos. Migration `015_list_second_theme.sql` added both columns; they
 are always optional and associations leave them NULL.
 
+### What a list and an institution manage (owner, 2026-10-31)
+
+ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
+the hub, the route guard and the permission editor all read it. An association has every section. A
+**list** and an **institution** sell nothing (no shop, cotisations, purchases, delegation or payments)
+and share eight: profile, members, documents, forms, bookings, partnerships, the republication /
+co-organisation queue and danger; an institution adds its audience (global admin only). The list
+route `/lists/[slug]/edit/[[section]]` renders them with the SAME tab components as the association
+page. `/associations/<slug>/edit` of a list forwards to the list route, so an old link or a
+notification lands on the same section.
+
+**The role editor derives its rights from that table** (`permissionMaskFor`): a list or institution
+is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `MANAGE_DOCUMENTS`, `MANAGE_FORMS`,
+`MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
+checkbox edits its own bit only; the server strips the shop and payout rights on write (below). The admin preset a new member receives is
+`adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
+endpoints carry no type check, so they already accepted a list; the republication allowlist
+(`REPUBLISHING_ASSOCIATION_TYPES`) gained `list`. A person's consent to republish
+(`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. **The server holds the same rule** (`associations/selling-kinds.ts`, an allowlist: only `association`
+sells). A list or an institution gets a typed `403 ASSOCIATION_KIND_DOES_NOT_SELL`, logged at ERROR, on:
+product create and update (`ProductsService`), the cotisation provisioning and `cotisationEnabled: true`
+on `PATCH :id`, the Lydia account link (`setLydiaAccountId`, the one writer of the payout account),
+`requestPaymentDelegation` / `approvePaymentDelegation`, and a form price (`POST` and `PUT` of a form).
+It judges NEW WRITES only: no existing product, account or priced form is deleted or rewritten. An
+existing product may be taken OFF sale (`isActive: false` alone), never put on sale or repriced. A form
+is judged MERGED (`assertKindMayPrice`): any price source counts - base price, payment switch, grid cell,
+a choice option's supplement (only a CHOICE question's: `isChoiceQuestion`, the one rule at save and at submit) - and a form that already charges stays editable while its
+`priceFingerprint` (key-order-insensitive: jsonb reorders a grid's keys) is unchanged, and may always be
+made free. The shop and payout rights are STRIPPED from any member bitmask written for such a kind
+(`writablePermissions`, on `addMember` and `updateMemberRole`); a bit stored before stays until that
+member is next saved and opens nothing meanwhile, since every route behind it refuses the kind. The
+role editor never shows them. The form editor draws no price section for these kinds; a priced one is
+shown frozen with a "make this form free" button (it also clears option supplements) (`FormPaymentSection`, `associationSells`), and the
+refusal reads from the typed code (`asso_kind_does_not_sell`), never the server's English.
+
 ### The half that could only ever be turned off
 
 Until 2026-09-22 `logoMediaId2` was plumbed end to end - column, entity, `Create`/`Update` DTO,
@@ -331,3 +366,15 @@ left in its kind).
 `/associations/me/list` filters them out. If archived associations are ever to be refused as
 authors, the refusal goes in `canPostAs` first and the group turns `disabled` with a reason in the
 same change - the picker must never offer what the server refuses, nor hide what it accepts.
+
+## The external profile projection
+
+`GET /api/external/profile/:sub` (core-service, `x-api-key`, consumed by Sky) relays social-service's
+internal `GET users/:userId/associations` unchanged - there is no DTO or whitelist in between. Both
+arrays, `current` and `former`, carry `type` (`association` | `list` | `institution`) and `promo`
+(a list's campaign year, else `null`); `former` rows also carry `slug` (`null` when the association
+no longer exists). The fields are additive: the only consumer of the route is that controller.
+Sky shows a list only until 1 August of its `promo` (`isPastCampaignList`, mirrored from
+`frontend/src/lib/associations/campaign.ts`), never in its former section, and matches a past
+mandate against a current one by `slug`.
+Pinned by `apps/social-service/src/internal/internal-user-associations.spec.ts`.

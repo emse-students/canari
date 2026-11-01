@@ -28,6 +28,10 @@
     /** The space's SAVED zone: the bookings a refusal names are read on it (D25). */
     timeZone: string;
     stepMinutes: number | null;
+    /** The space's SAVED mode is fixed slots: its painter opens and closes whole slots. */
+    fixedSlots: boolean;
+    /** The space's SAVED slot length (migration 116); null when not stored. */
+    slotMinutes: number | null;
     onChanged: (resource: ManagedResource) => void;
     onDeleted: (resourceId: string) => void;
     /** Whether the fields or the availability hold changes not saved, for the leave warning. */
@@ -41,6 +45,8 @@
     spaceId,
     timeZone,
     stepMinutes,
+    fixedSlots,
+    slotMinutes,
     onChanged,
     onDeleted,
     onDirty,
@@ -136,7 +142,9 @@
   }
 </script>
 
-<article class="border-cn-border space-y-4 rounded-2xl border p-3 sm:p-4">
+<!-- A column has its own card. The one HIDDEN column (D44) has none: its hours lead (the mockup's
+     "Horaires d'ouverture"), then the account that may block, in a card each. -->
+<article class="flex flex-col gap-4 {hidden ? '' : 'border-cn-border rounded-2xl border p-4'}">
   {#if !hidden}
     <div class="flex items-start gap-2">
       <div class="min-w-0 flex-1">
@@ -182,7 +190,7 @@
       <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
     </div>
   {/if}
-  <div>
+  <div class={hidden ? 'border-cn-border bg-cn-surface rounded-2xl border p-3 sm:p-4' : ''}>
     <label class={CONTROL_LABEL_CLASS} for={fieldId('linked')}>{m.bookings_resource_linked()}</label
     >
     <UserAutocomplete
@@ -220,7 +228,11 @@
     </button>
   </div>
 
-  <div class="border-cn-border/60 border-t pt-4">
+  <div
+    class={hidden
+      ? 'border-cn-border bg-cn-surface order-first rounded-2xl border p-3 sm:p-4'
+      : 'border-cn-border/60 border-t pt-4'}
+  >
     <AvailabilityEditor
       {spaceId}
       {timeZone}
@@ -229,6 +241,8 @@
       lines={resource.lines}
       exceptions={resource.exceptions}
       {stepMinutes}
+      {fixedSlots}
+      {slotMinutes}
       onSaved={(lines, exceptions) => onChanged({ ...resource, lines, exceptions })}
       onDirty={(d) => (availabilityDirty = d)}
     />
