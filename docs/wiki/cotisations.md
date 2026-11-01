@@ -756,7 +756,18 @@ All three are enforced server-side in `products.service.ts` (`isBuyerCotisant`, 
 member row**: `assertCanPurchase` is handed `isCotisant` from `tierFactsOf` (an active tag of one of
 the association's tiers), and an association with no `cotisationMode` has no cotisant at all. Its
 refusal is a 403 with the code `PRODUCT_COTISANTS_ONLY` (2026-10-31), which the shop maps to its own
-sentence (`paymentRefusal.ts`); a `requiredTags` refusal still carries no code.
+sentence (`paymentRefusal.ts`); a `requiredTags` refusal still carries no code. **So `membersOnly` is
+refused at SAVE when the association has no `cotisationMode`** (400
+`MEMBERS_ONLY_WITHOUT_COTISATION`, `assertMembersOnlyGateable`, 2026-11-01): the product would be on
+sale to nobody. Asked on create, and on an update only when it touches `membersOnly` or
+`requiredTags` (an old gated product can still be withdrawn); a product gated by `requiredTags` is not
+asked, since they take precedence. Both product editors (`EditBoutiqueTab.svelte`, `/admin/cercle`)
+word it from the code (`productSaveRefusalMessage`).
+
+**An ARCHIVED association sells nothing** (409 `ASSOCIATION_ARCHIVED`, `assertNotArchived`,
+2026-11-01): buying by the page's link is open, and an archived page stays reachable with whatever
+products it left active, so the purchase refuses it - in `preparePurchase` and again under the lock in
+`decidePurchase` - before any payment request; the shop words it (`paymentRefusal.ts`).
 
 ### Form pricing fields
 

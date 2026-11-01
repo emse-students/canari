@@ -53,6 +53,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
     return m.shop_cotisation_disabled();
   }
+  if (err instanceof SocialApiError && err.code === ASSOCIATION_ARCHIVED) {
+    return m.shop_association_archived();
+  }
   if (err instanceof SocialApiError && err.code === FORM_TIER_ALREADY_HELD) {
     return m.form_tier_already_held();
   }
@@ -147,6 +150,30 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
  * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
  */
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
+ * The body `code` of social-service's 409 when the product's association is ARCHIVED: its page and
+ * its products stay reachable by link, and the purchase is what refuses it, before any money.
+ */
+export const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
+
+/**
+ * The body `code` of social-service's 400 when a product is saved reserved to cotisants
+ * (`membersOnly`) by an association with no cotisation mode: no tier exists to hold, so it would be
+ * on sale to nobody.
+ */
+export const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
+
+/**
+ * The sentence for a refusal of a product SAVE that the admin can act on, or `null` for anything
+ * else (the caller keeps its generic error). Classified by the typed `code`, never by the message.
+ */
+export function productSaveRefusalMessage(err: unknown): string | null {
+  if (err instanceof SocialApiError && err.code === MEMBERS_ONLY_WITHOUT_COTISATION) {
+    return m.admin_product_members_only_without_cotisation();
+  }
+  return null;
+}
 
 /**
  * The body `code` of social-service's 409 when a paid answer's form grants the cotisation tier the

@@ -1265,6 +1265,58 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(service.getSpace(space.id, as(ORGA))).resolves.toBeDefined();
     });
 
+    /**
+     * THE ACCOUNT LINKED TO A RESOURCE (D10) IS NAMED BY THE SPACE ITSELF, so the campus never
+     * stands between it and its own column: an alumnus holding a column of an association space it
+     * is not a member of, a colleague of another campus on a personal space. Review of #2828.
+     */
+    it('an association space: the account linked to one of its resources reads it from another campus', async () => {
+      const { space, resourceIds } = await setup({ name: 'campus asso linked' });
+      await q(
+        `UPDATE association_audiences SET campus = 'saint-etienne' WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+      // CONTROL: before the link, GARDANNE is outside the space.
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [
+        GARDANNE,
+        resourceIds[0],
+      ]);
+      const read = await service.getSpace(space.id, as(GARDANNE));
+      expect(read.resources.find((r) => r.id === resourceIds[0])?.linkedToMe).toBe(true);
+      await expect(
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE))
+      ).resolves.toBeDefined();
+      // Being linked opens the space it names, and only that: still not listed (not a member).
+      expect(await listedTo(GARDANNE, space.id)).toBe(false);
+    });
+
+    it('a personal space: the account linked to one of its resources reads it from another campus', async () => {
+      const { space, resourceIds } = await setup({
+        name: 'campus personal linked',
+        associationId: null,
+        ownerId: BOB,
+        discoverability: 'link',
+      });
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [
+        GARDANNE,
+        resourceIds[0],
+      ]);
+      await expect(service.getSpace(space.id, as(GARDANNE))).resolves.toBeDefined();
+      await expect(
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE))
+      ).resolves.toBeDefined();
+      // Another account of that campus, linked to nothing, is still outside.
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE_MEMBER)))).toEqual({
+        code: 'space-not-found',
+      });
+    });
+
     it("a personal space: open to its owner's CAMPUS, 404 to another campus, the owner always", async () => {
       const { space, resourceIds } = await setup({
         name: 'campus personal',

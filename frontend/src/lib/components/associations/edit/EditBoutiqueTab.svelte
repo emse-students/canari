@@ -32,6 +32,7 @@
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
+  import { productSaveRefusalMessage } from '$lib/associations/paymentRefusal';
   import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
@@ -142,7 +143,7 @@
       resetProductForm();
       await loadProducts();
     } catch (e) {
-      productsError = m.common_load_error();
+      productsError = productSaveRefusalMessage(e) ?? m.common_load_error();
     } finally {
       savingProduct = false;
     }
@@ -244,7 +245,7 @@
       expandedProductSettingsId = null;
       editingMatrix = null;
     } catch (e) {
-      productsError = m.common_save_error();
+      productsError = productSaveRefusalMessage(e) ?? m.common_save_error();
     } finally {
       savingProductSettings = null;
     }

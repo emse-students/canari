@@ -48,6 +48,20 @@ export const PRODUCT_ALREADY_PURCHASED = 'PRODUCT_ALREADY_PURCHASED';
 export const PRODUCT_COTISANTS_ONLY = 'PRODUCT_COTISANTS_ONLY';
 
 /**
+ * The body `code` of the 409 a checkout gets when the product's association is ARCHIVED: its page is
+ * still reachable by its link and may still show the products it left active, but an association
+ * that no longer exists takes no money (review of #2828).
+ */
+export const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
+
+/**
+ * The body `code` of the 400 a product save gets when it asks `membersOnly` of an association with
+ * no cotisation mode: such an association has no cotisant at all (`isBuyerCotisant` is always
+ * false), so the product could never be bought (review of #2828).
+ */
+export const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
+
+/**
  * The `code` of the 409 a checkout of a cotisation tier gets when its buyer holds, ACTIVE, a sibling
  * tier whose product price is greater than or equal to it: the sibling XOR would replace the held
  * tier, a silent downgrade (or a sideways swap paid in full). Holding that very tier answers

@@ -25,6 +25,8 @@ import {
   PREVIOUS_CHECKOUT_OPEN,
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_COTISANTS_ONLY,
+  ASSOCIATION_ARCHIVED,
+  MEMBERS_ONLY_WITHOUT_COTISATION,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
   productCheckoutLookup,
@@ -1260,6 +1262,7 @@ export class ProductsService {
 
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
+    this.assertMembersOnlyGateable(asso, dto.membersOnly ?? false, dto.requiredTags ?? null);
 
     if (
       dto.customAmountMinCents !== undefined &&
@@ -1493,6 +1496,18 @@ export class ProductsService {
       minCents > maxCents
     ) {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
+    }
+
+    // Only an edit that touches the gate is asked: an old product left gated by a since-disabled
+    // cotisation can still be withdrawn or renamed, and unticking the box is what clears it.
+    if (dto.membersOnly !== undefined || dto.requiredTags !== undefined) {
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      if (!asso) throw new NotFoundException('Association not found');
+      this.assertMembersOnlyGateable(
+        asso,
+        dto.membersOnly ?? product.membersOnly,
+        dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags
+      );
     }
 
     // Setting `isActive` by hand is the admin taking ownership of the state: whatever the platform
@@ -2938,6 +2953,7 @@ export class ProductsService {
     if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
+    this.assertNotArchived(asso, product);
     // Route to the association's own account, or an approved parent's when delegating.
     const provider = await this.activePaymentProvider();
     const paymentTarget = await this.routeWith(asso, provider);
@@ -3017,6 +3033,9 @@ export class ProductsService {
       });
     }
 
+    // Re-read under the lock, like the routing: an archive committed while the purchase was being
+    // prepared refuses it here.
+    this.assertNotArchived(asso, product);
     this.assertMembershipGrantable(asso, product);
 
     // The profile is the one other input fetched before the lock: a grid that now needs it, read
@@ -4247,6 +4266,50 @@ export class ProductsService {
         `was issued as request ${row.requestId ?? 'none'} - nothing recorded`
     );
     return false;
+  }
+
+  /**
+   * Refuses (400 `MEMBERS_ONLY_WITHOUT_COTISATION`) a product gated on `membersOnly` by an
+   * association with no cotisation mode: `membersOnly` means "holds an active cotisation tier of
+   * this association", and with no mode there is no tier to hold, so the product would be on sale
+   * to nobody. `requiredTags` takes precedence over `membersOnly` at purchase (`assertCanPurchase`),
+   * so a product gated by tags is not asked.
+   */
+  private assertMembersOnlyGateable(
+    asso: Pick<Association, 'id' | 'cotisationMode'>,
+    membersOnly: boolean,
+    requiredTags: string[] | null
+  ): void {
+    if (!membersOnly || (requiredTags ?? []).length > 0 || asso.cotisationMode) return;
+    this.logger.log(
+      `[SHOP] refused (${MEMBERS_ONLY_WITHOUT_COTISATION}): assoc=${asso.id.slice(0, 8)} has no ` +
+        `cotisation mode, so a members-only product would be sold to nobody`
+    );
+    throw new BadRequestException({
+      code: MEMBERS_ONLY_WITHOUT_COTISATION,
+      message: 'Enable the cotisation before reserving a product to cotisants.',
+    });
+  }
+
+  /**
+   * Refuses (409 `ASSOCIATION_ARCHIVED`) a purchase from an ARCHIVED association, before any money
+   * is requested: buying by the page's link is open (owner, 2026-10-31), and an archived
+   * association's page stays reachable with whatever products it left active. Asked before the lock
+   * (`preparePurchase`) and again under it (`decidePurchase`), on the association re-read there.
+   */
+  private assertNotArchived(
+    asso: Pick<Association, 'id' | 'archived'>,
+    product: Pick<AssociationProduct, 'id'>
+  ): void {
+    if (!asso.archived) return;
+    this.logger.log(
+      `[SHOP] refused (${ASSOCIATION_ARCHIVED}): product=${product.id.slice(0, 8)} of archived ` +
+        `assoc=${asso.id.slice(0, 8)}`
+    );
+    throw new ConflictException({
+      code: ASSOCIATION_ARCHIVED,
+      message: 'This association is archived: its products are no longer sold.',
+    });
   }
 
   /**

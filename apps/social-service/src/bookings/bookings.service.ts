@@ -213,6 +213,11 @@ export class BookingsService {
    * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
    * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
    * manager - the owner of a personal space - never reaches here (`assertMayUse`).
+   *
+   * THE ACCOUNT LINKED TO ONE OF ITS RESOURCES (D10) IS NEVER REFUSED HERE: the organiser named it -
+   * an alumnus holding a column of an association space, a colleague on another campus - and it
+   * reads its own column's bookings from the grid (`spaceSlots`). The campus is a border for
+   * readers the space never named; the audience (D6) still applies to it as before.
    */
   private async assertSpaceVisible(space: BookingSpace, userId: string) {
     const visible =
@@ -220,6 +225,13 @@ export class BookingsService {
         ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
         : await sameCampusAs(this.spaces.manager, space.ownerId, userId);
     if (visible) return;
+    if (await this.resources.exists({ where: { spaceId: space.id, linkedUserId: userId } })) {
+      this.logger.debug(
+        `[BOOKINGS] space=${space.id.slice(0, 8)} open to ${userId.slice(0, 8)} outside its campus: ` +
+          'the account linked to one of its resources (D10)'
+      );
+      return;
+    }
     this.logger.log(
       `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
         `(${space.associationId !== null ? 'association' : 'personal'} space)`

@@ -19,6 +19,7 @@
   import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2 } from '@lucide/svelte';
   import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { productSaveRefusalMessage } from '$lib/associations/paymentRefusal';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
@@ -164,7 +165,7 @@
       saved = true;
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to save the top-up product', e);
-      error = m.admin_cercle_generic_error();
+      error = productSaveRefusalMessage(e) ?? m.admin_cercle_generic_error();
     } finally {
       saving = false;
     }

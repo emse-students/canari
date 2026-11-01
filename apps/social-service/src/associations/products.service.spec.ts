@@ -978,6 +978,70 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ).resolves.toBeDefined();
     });
 
+    describe('members-only needs a cotisation to be held', () => {
+      const refusal = (err: unknown) => {
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'MEMBERS_ONLY_WITHOUT_COTISATION',
+        });
+      };
+
+      it('refuses creating a members-only product when the association has no cotisation mode', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        refusal(
+          await service
+            .create('asso1', { name: 'Recharge', type: 'balance_topup', membersOnly: true }, true)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses ticking it on an existing product, and stores nothing', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        refusal(
+          await service
+            .update('asso1', 'prod1', { membersOnly: true }, true)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: an association with a cotisation mode may reserve it', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso());
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        const saved = await service.update('asso1', 'prod1', { membersOnly: true }, true);
+        expect(saved.membersOnly).toBe(true);
+      });
+
+      it('CONTROL: requiredTags take precedence, so a tag-gated product needs no mode', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        await service.create(
+          'asso1',
+          { name: 'Soiree', type: 'other', membersOnly: true, requiredTags: ['vip:bde'] },
+          false
+        );
+        expect(productRepo.save).toHaveBeenCalled();
+      });
+
+      it('CONTROL: an edit that leaves the gate alone is not asked, so the product can be withdrawn', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(product({ type: 'other', membersOnly: true }));
+        await expect(
+          service.update('asso1', 'prod1', { isActive: false }, false)
+        ).resolves.toBeDefined();
+      });
+    });
+
     it('persists badgeText on update, and clears it with null', async () => {
       const { service, productRepo } = makeService();
       productRepo.findOne.mockResolvedValue(product({ type: 'other', badgeText: null }));
@@ -3895,6 +3959,43 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         t.userTagService.hasActiveTag.mockResolvedValue(false);
         const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
         expect(opened.amountCents).toBe(500);
+      });
+    });
+
+    /**
+     * Buying by the page's link is open (owner, 2026-10-31), and an archived association's page
+     * stays reachable with whatever products it left active - so the purchase itself refuses it,
+     * before the lock and again under it, and no payment request is ever issued.
+     */
+    describe('an archived association sells nothing', () => {
+      it('refuses the checkout with ASSOCIATION_ARCHIVED, and issues nothing', async () => {
+        const t = setup();
+        t.assoRepo.findOne.mockResolvedValue(asso({ archived: true }));
+        const err = await t.checkout().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'ASSOCIATION_ARCHIVED',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+        expect(t.checkouts.rows).toHaveLength(0);
+      });
+
+      it('refuses it under the lock too, when the archive lands while the purchase is prepared', async () => {
+        const t = setup();
+        t.assoRepo.findOne
+          .mockResolvedValueOnce(asso())
+          .mockResolvedValue(asso({ archived: true }));
+        const err = await t.checkout().catch((e: unknown) => e);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'ASSOCIATION_ARCHIVED',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+      });
+
+      it('CONTROL: the same product of a live association opens its checkout', async () => {
+        const t = setup();
+        await t.checkout();
+        expect(orderRefs(t.calls)).toHaveLength(1);
       });
     });
 
