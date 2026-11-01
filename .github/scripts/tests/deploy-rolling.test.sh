@@ -396,10 +396,22 @@ else
   cat "$TMP/rollback.log" >&2
 fi
 # NO edge reload in between: what the edge loaded from the list it found must reach v5 by itself.
-if [ "$(answered_by)" = v5 ] && [ "$(running_versions)" = "rolltest/api:v5 " ]; then
-  ok "the rolled-back estate answers v5 through the edge, the lists untouched"
+# The older library retires the old frontend as soon as its own 3 s wait is over, so the edge may still
+# hold that address for the rest of its `valid=2s` - the reset window that library always had (CI,
+# 2026-11-01: the first POST failed, the next answered v5). A list still naming a removed container
+# would fail EVERY attempt, so the attempts span one resolver lifetime and no more: one POST each
+# half second, ROLLING_RESOLVER_TTL_SECONDS * 2 + 2 of them.
+rolled=""
+# shellcheck disable=SC2031 # this file's own rolling.sh value; the frozen library's copy lived in its subshell
+for _ in $(seq 1 $((ROLLING_RESOLVER_TTL_SECONDS * 2 + 2))); do
+  rolled="$(answered_by)"
+  [ "$rolled" = v5 ] && break
+  sleep 0.5
+done
+if [ "$rolled" = v5 ] && [ "$(running_versions)" = "rolltest/api:v5 " ]; then
+  ok "the rolled-back estate answers v5 through the edge within one resolver lifetime, the lists untouched"
 else
-  fail "after the rollback: answered by '$(answered_by)', running $(running_versions)"
+  fail "after the rollback: answered by '$rolled', running $(running_versions)"
 fi
 
 # ── 5. A new replica that never becomes healthy ──────────────────────────────
