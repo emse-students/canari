@@ -507,7 +507,7 @@ describe('requestReAdd', () => {
       };
 
       it('a STORED ask is followed, in the same pass, by the self-join (D1)', async () => {
-        const deps = furtherOnPair({ status: 'stored' });
+        const deps = furtherOnPair({ status: 'stored', selfJoin: true });
         deps.mlsService.externalJoin = vi
           .fn()
           .mockResolvedValueOnce({ joined: false, reason: 'further_device' })
@@ -565,7 +565,7 @@ describe('requestReAdd', () => {
       };
 
       it('joins on a stored answer and ends the recovery like any self-service join', async () => {
-        const deps = furtherThen({ status: 'stored' }, { joined: true });
+        const deps = furtherThen({ status: 'stored', selfJoin: true }, { joined: true });
         await requestReAdd('g1', deps);
         expect(deps.mlsService.externalJoin).toHaveBeenLastCalledWith('g1', { welcomeOwed: 'ask' });
         expect(deps.mlsService.updateInvitationStatus).toHaveBeenCalledWith(
@@ -605,7 +605,7 @@ describe('requestReAdd', () => {
 
       it('waits for the Add the seat served with the base names, and asks nothing more', async () => {
         const deps = furtherThen(
-          { status: 'stored' },
+          { status: 'stored', selfJoin: true },
           { joined: false, reason: 'welcome_owed', reading: 'add-in-flight' }
         );
         await requestReAdd('g1', deps);
@@ -617,7 +617,7 @@ describe('requestReAdd', () => {
 
       it('skips the round on a seat that did not answer', async () => {
         const deps = furtherThen(
-          { status: 'stored' },
+          { status: 'stored', selfJoin: true },
           { joined: false, reason: 'seat_unreadable' }
         );
         await requestReAdd('g1', deps);
@@ -631,12 +631,31 @@ describe('requestReAdd', () => {
           .fn()
           .mockResolvedValueOnce({ joined: false, reason: 'further_device' })
           .mockRejectedValueOnce(new NotAGroupMemberError('g1'));
-        deps.mlsService.sendWelcomeRequest = vi.fn().mockResolvedValue({ status: 'stored' });
+        deps.mlsService.sendWelcomeRequest = vi
+          .fn()
+          .mockResolvedValue({ status: 'stored', selfJoin: true });
         await requestReAdd('g1', deps);
         expect(deps.log).toHaveBeenCalledWith(
           expect.stringContaining('server holds no membership row for us')
         );
       });
+
+      it.each([
+        ['the server holds the door shut', { status: 'stored', selfJoin: false }],
+        ['an older server that does not say', { status: 'stored' }],
+      ])(
+        'waits for a member without a second join or base fetch when %s',
+        async (_label, answer) => {
+          const deps = furtherThen(answer, { joined: true });
+          await requestReAdd('g1', deps);
+          expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+          expect(deps.log).toHaveBeenCalledWith(
+            expect.stringContaining(
+              "waiting for a member's Add (the server holds the self-join shut)"
+            )
+          );
+        }
+      );
     });
 
     it('a 1:1 peer or a demoted device joins by itself when the tree holds no other device of it', async () => {

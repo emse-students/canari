@@ -2988,7 +2988,11 @@ export abstract class BaseMlsService implements IMlsService {
     }
     if (answer?.status === 'no_peer_online') {
       const facts = parseNoHolderFacts(answer.facts);
-      return facts ? { status: 'stored', facts } : { status: 'stored' };
+      return {
+        status: 'stored',
+        ...(facts ? { facts } : {}),
+        ...(answer.selfJoin === true ? { selfJoin: true } : {}),
+      };
     }
     console.warn(
       `[MLS] welcome_request for ${groupId.slice(0, 8)}... got no answer naming what was done with it (status ${answer === null ? 'none' : String(answer.status)})`

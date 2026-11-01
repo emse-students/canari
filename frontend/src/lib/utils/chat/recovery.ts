@@ -794,6 +794,15 @@ export async function requestReAdd(
       { selfJoinIfNobody: true }
     );
     if (answer?.status !== 'stored') return;
+    // THE SERVER HOLDS THE DOOR SHUT until every member client reads such an entry as an ordinary
+    // added device (`FURTHER_DEVICE_SELF_JOIN_OPEN`, the gate of mls-availability-no-holder.md): it
+    // says so in the answer, so no join is attempted and no base fetched only to be refused.
+    if (answer.selfJoin !== true) {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... no member device online - waiting for a member's Add (the server holds the self-join shut)`
+      );
+      return;
+    }
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... no member device online to Add this one - joining by itself in this pass (D1)`
     );

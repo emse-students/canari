@@ -80,8 +80,9 @@ export const FURTHER_DEVICE_SELF_JOIN_OPEN = false;
 
 /**
  * Whether a member could still answer, read in the same request (D5 of
- * docs/wiki/protocols/mls-availability-no-holder.md): `liveHolderDevices` counts OTHER users'
- * devices with an `active` row in the group AND a KeyPackage published within the retention window
+ * docs/wiki/protocols/mls-availability-no-holder.md): `liveHolderDevices` counts every device but
+ * the asking one - the requester's OWN other devices included, since one of them coming back re-adds
+ * this one - with an `active` row in the group AND a KeyPackage published within the retention window
  * (`RETENTION_WINDOW_MS` - the one liveness window this service keeps); `wakeSent` says whether this
  * very request woke member phones in the background. A member who simply did not open the app tonight
  * is still a live holder, so the client never calls such a group unopenable.
