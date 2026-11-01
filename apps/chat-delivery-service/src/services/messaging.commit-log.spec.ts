@@ -2772,28 +2772,35 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 9 });
       groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
       // The requester's open stretch began at ARRIVAL.
-      manager.findOne = jest.fn().mockResolvedValue({ joinedAt: ARRIVAL, admittedAt: null });
+      manager.findOne = jest
+        .fn()
+        .mockResolvedValue({ id: 'stretch-1', joinedAt: ARRIVAL, admittedAt: null });
       errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     });
     afterEach(() => errorSpy.mockRestore());
 
-    /** The log: commits at bases 2..8, base 4 the one that admitted the requester. */
-    const log = (missing: number[] = []) =>
-      commitLogRepo.findOne.mockImplementation(
+    /**
+     * The log: commits at bases 2..8, base 4 the one that admitted the requester. The floor is
+     * compared in the database (`commitFloorOf`), so its answer is the `query` stub's; what it
+     * selects at the boundary is the PostgreSQL spec's (`commit-time.integration.spec.ts`).
+     */
+    const log = (missing: number[] = [], floor: number | null = 4) => {
+      commitLogRepo.query.mockResolvedValue([{ floor }]);
+      return commitLogRepo.findOne.mockImplementation(
         async ({
           where,
           order,
         }: {
-          where: { baseEpoch?: number; createdAt?: unknown };
+          where: { baseEpoch?: number };
           order?: { baseEpoch: 'ASC' | 'DESC' };
         }) => {
-          if (where.createdAt) return { baseEpoch: 4 }; // the admitting commit
           if (order?.baseEpoch === 'ASC') return { baseEpoch: 2 }; // the oldest retained
           const b = where.baseEpoch as number;
           if (b < 2 || b > 8 || missing.includes(b)) return null;
           return { baseEpoch: b, createdAt: new Date(Date.UTC(2026, 10, 1, b)) };
         }
       );
+    };
 
     it('forbids a non-member', async () => {
       groupMemberRepo.findOne.mockResolvedValue(null);
@@ -2822,9 +2829,17 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       }
     });
 
-    it('a key-distribution seat with no stretch is floored by the requesting device row', async () => {
-      manager.findOne = jest.fn().mockResolvedValue(null);
-      deviceGroupRepo.findOne.mockResolvedValue({ createdAt: ARRIVAL });
+    it('a key-distribution seat is floored by the requesting device row', async () => {
+      groupRepo.findOne.mockResolvedValue({
+        id: 'group-1',
+        activeEpoch: 9,
+        distributionChannelId: 'chan-1',
+      });
+      deviceGroupRepo.findOne.mockResolvedValue({
+        id: 'row-1',
+        createdAt: ARRIVAL,
+        status: 'active',
+      });
       log();
       await expect(
         service.getCommitAcceptedAt('group-1', 3, 'member-1', 'dev-1')
@@ -2832,19 +2847,66 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: { groupId: 'group-1', userId: 'member-1', deviceId: 'dev-1' },
       });
+      // Anchored on THAT row, by id, never on a stretch.
+      expect(commitLogRepo.query).toHaveBeenCalledWith(
+        expect.stringContaining('dm_device_group_memberships'),
+        ['group-1', 'row-1']
+      );
+      expect(manager.findOne).not.toHaveBeenCalled();
+    });
+
+    /**
+     * FAILS CLOSED (review of #2890, MED-3): without an arrival there is no floor, and "no floor"
+     * would hand a community newcomer every retained commit time.
+     */
+    it('a key group asked with no device header is a 400, and reads no commit', async () => {
+      groupRepo.findOne.mockResolvedValue({
+        id: 'group-1',
+        activeEpoch: 9,
+        distributionChannelId: 'chan-1',
+      });
+      deviceGroupRepo.findOne.mockResolvedValue({
+        id: 'row-1',
+        createdAt: ARRIVAL,
+        status: 'active',
+      });
+      log();
+      commitLogRepo.findOne.mockClear();
+      commitLogRepo.query.mockClear();
+      await expect(service.getCommitAcceptedAt('group-1', 3, 'member-1')).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
+      expect(commitLogRepo.query).not.toHaveBeenCalled();
+    });
+
+    it('a member with no stretch and no device row is a 403, said at ERROR', async () => {
+      manager.findOne = jest.fn().mockResolvedValue(null);
+      deviceGroupRepo.findOne.mockResolvedValue(null);
+      log();
+      commitLogRepo.findOne.mockClear();
+      commitLogRepo.query.mockClear();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(commitLogRepo.findOne).not.toHaveBeenCalled();
+      expect(commitLogRepo.query).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('no arrival'));
     });
 
     it('answers null without an ERROR when the row was pruned or the commit is not made yet', async () => {
       // Arrival before every retained commit: no floor.
-      commitLogRepo.findOne.mockImplementation(
-        async ({ where, order }: { where: { createdAt?: unknown }; order?: unknown }) =>
-          where.createdAt ? null : order ? { baseEpoch: 5 } : null
+      commitLogRepo.query.mockResolvedValue([{ floor: null }]);
+      commitLogRepo.findOne.mockImplementation(async ({ order }: { order?: unknown }) =>
+        order ? { baseEpoch: 5 } : null
       );
       await expect(service.getCommitAcceptedAt('group-1', 4, 'member-1')).resolves.toEqual({
         acceptedAt: null,
+        reason: 'pruned',
       });
       await expect(service.getCommitAcceptedAt('group-1', 9, 'member-1')).resolves.toEqual({
         acceptedAt: null,
+        reason: 'not-yet',
       });
       expect(errorSpy).not.toHaveBeenCalled();
     });
@@ -2853,6 +2915,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       log([6]);
       await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1')).resolves.toEqual({
         acceptedAt: null,
+        reason: 'hole',
       });
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HOLE in the commit log'));
     });

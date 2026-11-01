@@ -14,6 +14,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
+import { replaceMessageOrdered } from '$lib/utils/chat/messageOrder';
 
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
@@ -46,6 +47,15 @@ export function getCallSystemMessageContext(): CallSystemMessageContext | null {
 
 function callMessageId(callId: string): string {
   return `call-${callId}`;
+}
+
+/**
+ * WHEN A CALL ENDED, and whether the end is THIS device's own act (`CallService.endCall`): only an
+ * own end was stamped by this device's clock, so only an own end may be measured against the start
+ * row's local clock. A received end is the hangup frame's time (`receivedNoticeTime`).
+ */
+export interface CallEndTime extends EventTime {
+  ownAct?: boolean;
 }
 
 function isCallInvite(callMsg: ICallMsg): boolean {
@@ -123,7 +133,7 @@ export async function recordCallEnded(
   ctx: CallSystemMessageContext | null,
   groupId: string,
   callId: string,
-  at: EventTime,
+  at: CallEndTime,
   outcome?: CallEndReason,
   starterId?: string
 ): Promise<void> {
@@ -170,24 +180,66 @@ export async function recordCallEnded(
  * HOW LONG A CALL LASTED, measured on ONE clock. The row's `startedAt` is the inviter's clock (it
  * dates the row as every member dates it), and the end is this device's or the hangup sender's: their
  * difference was two phones' clocks subtracted, so a callee whose clock ran a minute fast read a
- * minute too much. The server's two acceptances when both are known; otherwise this device's own
- * clock at the start row and now - the end is being written NOW, on this device.
+ * minute too much. The server's two acceptances when both are known; otherwise, for an end that is
+ * THIS device's own act, its own two instants - the start row's local clock and the act's stamp. Never
+ * the clock at finalisation: a remote end drained hours late would measure hours.
  */
 function callDurationMs(
   start: { startedAt: number; startClocks?: { server?: number; local: number } },
-  end: EventTime,
+  end: CallEndTime,
   callId: string
 ): number {
   const clocks = start.startClocks;
   if (clocks?.server !== undefined && end.serverTimestamp !== undefined) {
     return end.serverTimestamp - clocks.server;
   }
-  if (clocks) return Date.now() - clocks.local;
-  // A row an older build wrote carries no clocks: the only measure left subtracts two devices.
-  appendLog(
-    `[CallRecord] ${callId} has no start clocks (written by an older build) - its duration mixes two devices' clocks`
+  if (clocks && end.ownAct) {
+    appendLog(
+      `[CallRecord] ${callId} duration on this device's clock: its own end, no server time on both sides`
+    );
+    return eventMs(end) - clocks.local;
+  }
+  // A FALLBACK, AND IT ACCUSES: a row an older build wrote carries no clocks (legacy-compatibility.md),
+  // or a received end came with no server time, which every delivery route carries. The only measure
+  // left subtracts the inviter's clock from the hangup sender's.
+  console.error(
+    `[CallRecord] ${callId} duration MIXES two devices' clocks: ${clocks ? 'a received end with no server time' : 'a row with no start clocks (older build)'}`
   );
   return eventMs(end) - start.startedAt;
+}
+
+/**
+ * Gives a call row the server's acceptance of this device's own hangup, once its send answers - the
+ * way `patchServerTimestamp` gives an own text row its own. The record is written at the act, never
+ * held for the send (a catch-up gate or an epoch barrier can hold a send for minutes, and a kill
+ * before it settles would leave the row unfinalised). Only a row that has no server time yet (one the
+ * end itself created) takes it: a finalised row keeps the order key of its start.
+ */
+export async function patchCallRecordServerTime(
+  ctx: CallSystemMessageContext | null,
+  groupId: string,
+  callId: string,
+  serverTimestamp: number
+): Promise<void> {
+  if (!ctx) return;
+  const convo = ctx.conversations.get(groupId);
+  const messageId = callMessageId(callId);
+  const idx = convo ? convo.messages.findIndex((x) => x.id === messageId) : -1;
+  if (!convo || idx === -1) {
+    appendLog(`[CallRecord] ${callId} server time not patched: no row`);
+    return;
+  }
+  if (convo.messages[idx].serverTimestamp !== undefined) return;
+  const messages = replaceMessageOrdered(convo.messages, idx, {
+    ...convo.messages[idx],
+    serverTimestamp,
+  });
+  ctx.conversations.set(groupId, { ...convo, messages });
+  await ctx.storage
+    ?.updateMessage(messageId, { serverTimestamp }, ctx.deviceKey())
+    .catch((e: unknown) =>
+      appendLog(`[CallRecord] ${callId} server time not persisted: ${String(e).slice(0, 120)}`)
+    );
 }
 
 /**
@@ -198,7 +250,7 @@ async function finalizeCallRow(
   ctx: CallSystemMessageContext,
   groupId: string,
   callId: string,
-  end: EventTime,
+  end: CallEndTime,
   outcome: CallEndReason | undefined
 ): Promise<void> {
   const endedAt = eventMs(end);

@@ -541,7 +541,7 @@ const fakeMls = {
 
 /** The instant this device ended a call, as it hands it to the record writer (`endCall`). */
 const ENDED_AT = expect.objectContaining({ timestamp: expect.any(Date) });
-/** The record waits for the hangup's answer (its server time): lets it land before it is read. */
+/** Lets the record's async writer settle, and the hangup's server-time patch land, before either is read. */
 const recordWritten = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 };
@@ -2504,23 +2504,27 @@ describe('the typed end reason of an unanswered call (B15)', () => {
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_CANCELLED);
   });
 
-  it('ONE ACT, ONE INSTANT: the record is dated by the hangup frame it sent, and its server time', async () => {
-    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
+  it('ONE ACT, ONE INSTANT: the record is dated by the hangup frame it sent, then given its server time', async () => {
+    const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn(), onCallEndAnswered: vi.fn() };
     const service = new CallService(fakeMls);
     service.setChatNotifier(chat);
     await callerJoined(service);
     vi.mocked(fakeMls.sendMessage).mockClear();
 
     service.endCall();
+    // Written AT THE ACT, before the send answers: never held for it.
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
     await recordWritten();
 
     const frame = vi
       .mocked(fakeMls.sendMessage)
       .mock.calls.map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1]))
       .find((f) => f?.call?.hangup);
-    const at = chat.onCallEnded.mock.calls[0][2] as { timestamp: Date; serverTimestamp?: number };
+    const at = chat.onCallEnded.mock.calls[0][2] as { timestamp: Date; ownAct?: boolean };
     expect(at.timestamp.getTime()).toBe(appMessageSentAtMs(frame?.sentAt));
-    expect(at.serverTimestamp).toBe(1_700_000_000_040);
+    expect(at.ownAct).toBe(true);
+    // The server's acceptance of the hangup is patched in once the send answers.
+    expect(chat.onCallEndAnswered).toHaveBeenCalledWith('group-1', 'room-1', 1_700_000_000_040);
   });
 
   it('says DECLINED, naming the caller, when the callee refuses a ring', async () => {

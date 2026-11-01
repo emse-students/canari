@@ -8,6 +8,8 @@
  *
  * - `at`: the instant.
  * - `none`: the server holds no record - the line has no date and will never get one (settled).
+ *   The commit route says WHY (`reason`: `pruned`, `not-yet`, `hole`), so the line is logged at
+ *   the level its cause deserves rather than one level for all three.
  * - `refused` (403): the server will not say (this device left the group, or the commit predates its
  *   arrival) - an answer too, and settled: asking again can only be refused again.
  * - `unserved` (404): this server does not serve the route at all - a build that shipped before its
@@ -19,7 +21,7 @@
  */
 export type ServerInstant =
   | { kind: 'at'; at: number }
-  | { kind: 'none' }
+  | { kind: 'none'; reason?: string }
   | { kind: 'refused' }
   | { kind: 'unserved' };
 
@@ -38,7 +40,11 @@ export async function readServerInstant(
   if (!res.ok) return null;
   const body = (await res.json()) as Record<string, unknown>;
   const raw = body[field];
-  if (raw === null || raw === undefined) return { kind: 'none' };
+  if (raw === null || raw === undefined) {
+    return typeof body.reason === 'string'
+      ? { kind: 'none', reason: body.reason }
+      : { kind: 'none' };
+  }
   const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
   if (!Number.isFinite(at) || at <= 0) {
     throw new Error(`${field}: unparseable instant ${String(raw).slice(0, 40)}`);

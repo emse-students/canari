@@ -738,11 +738,16 @@ async function eventCommitTime(
   switch (answer.kind) {
     case 'at':
       return { timestamp: new Date(answer.at), serverTimestamp: answer.at };
-    case 'none':
-      console.error(
-        `[DEVICE_NOTICE] line REFUSED in ${short}...: the commit log holds no commit at base epoch ${baseEpoch} (pruned or never recorded) - no durable instant dates it, and this device's clock is not one`
-      );
+    case 'none': {
+      // The server's reason picks the level: a pruned row is the retention working, a commit not
+      // made yet is this device ahead of the server's view, and only a HOLE (or no reason - an older
+      // server) is a fault.
+      const line = `[DEVICE_NOTICE] line settled UNDATED in ${short}...: the commit log holds no commit at base epoch ${baseEpoch} (${answer.reason ?? 'no reason given'}) - no durable instant dates it, and this device's clock is not one`;
+      if (answer.reason === 'pruned') console.log(line);
+      else if (answer.reason === 'not-yet') console.warn(line);
+      else console.error(line);
       return 'settled';
+    }
     case 'refused':
       console.log(
         `[DEVICE_NOTICE] line settled in ${short}...: the server refuses the time of the commit at base epoch ${baseEpoch} (this device left the group, or the commit predates its arrival)`

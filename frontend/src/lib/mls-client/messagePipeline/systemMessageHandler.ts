@@ -652,6 +652,7 @@ export async function handleSystemEvent(
         // The server's acceptance of the announcement its author sent right after the Remove commit.
         removedAt: deliveryMeta?.queuedCreatedAt,
         askRemovedAt: () => mlsService.ownRemovalAt(convo.id),
+        ownerId: userId,
         saveConversation,
         addMessageToChat,
         log,

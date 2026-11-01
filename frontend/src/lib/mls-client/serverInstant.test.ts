@@ -14,6 +14,12 @@ describe('readServerInstant - a status is an answer, classified at the throw', (
     );
   });
 
+  it('carries the server reason for no record, so the line is logged at its level', async () => {
+    await expect(
+      readServerInstant(json(200, { acceptedAt: null, reason: 'pruned' }), 'acceptedAt')
+    ).resolves.toEqual({ kind: 'none', reason: 'pruned' });
+  });
+
   it('a 403 is a refusal and a 404 an unserved route; anything else is no answer', async () => {
     await expect(readServerInstant(json(403, {}), 'acceptedAt')).resolves.toEqual({
       kind: 'refused',

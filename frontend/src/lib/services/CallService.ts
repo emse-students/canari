@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
+import type { CallEndTime } from '$lib/utils/chat/callSystemMessages';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
@@ -128,9 +129,15 @@ export interface CallChatNotifier {
     groupId: string,
     callId: string,
     /** The instant this device ended the call - the one its hangup frame carries as `sentAt`. */
-    at: EventTime,
+    at: CallEndTime,
     outcome?: CallEndReason,
     starterId?: string
+  ) => void | Promise<void>;
+  /** The server accepted this device's hangup at `serverTimestamp`: patched onto the record. */
+  onCallEndAnswered?: (
+    groupId: string,
+    callId: string,
+    serverTimestamp: number
   ) => void | Promise<void>;
 }
 
@@ -1347,20 +1354,20 @@ export class CallService {
     // event's time - taken once, and carried by both the hangup frame every member dates the record
     // by and this device's own record, so the two cannot disagree.
     const endedAt = Date.now();
-    // The record waits for the hangup's answer, so it carries the server's acceptance of it - the
-    // order key every member's copy has. A hangup that is not sent, or not answered, leaves the act's
-    // own instant alone (said, when the send failed).
-    let hangup: Promise<EventTime> = Promise.resolve({ timestamp: new Date(endedAt) });
+    // The record is written AT THE ACT, never held for the send (a catch-up gate or an epoch barrier
+    // can hold it for minutes, and a kill meanwhile would leave the row unfinalised); the server's
+    // acceptance is patched in once the send answers (`onCallEndAnswered`).
+    let hangup: Promise<EventTime | null> = Promise.resolve(null);
     if (notify && groupId && callId) {
       hangup = this.sendMlsNotification(
         groupId,
         mkCallHangup(callId, this.mlsService.getDeviceId(), outcome),
         endedAt
-      ).catch((e: unknown): EventTime => {
+      ).catch((e: unknown) => {
         console.error(
           `[Call] hangup of ${callId} not sent - its record carries no server time: ${String(e)}`
         );
-        return { timestamp: new Date(endedAt) };
+        return null;
       });
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
       // or a late ring after the call ended).
@@ -1374,9 +1381,22 @@ export class CallService {
       // The one record writer, told WHY the call ended. A call that failed before its invite
       // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
       const starterId = state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined;
-      void hangup.then((at) =>
-        this.chatNotifier?.onCallEnded(groupId, callId, at, outcome, starterId)
+      const notifier = this.chatNotifier;
+      const recorded = Promise.resolve(
+        notifier?.onCallEnded(
+          groupId,
+          callId,
+          { timestamp: new Date(endedAt), ownAct: true },
+          outcome,
+          starterId
+        )
       );
+      // After the row exists: a patch that ran first would find nothing to patch.
+      void Promise.all([recorded, hangup]).then(([, sent]) => {
+        if (sent?.serverTimestamp !== undefined) {
+          return notifier?.onCallEndAnswered?.(groupId, callId, sent.serverTimestamp);
+        }
+      });
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no
@@ -3828,7 +3848,7 @@ export class CallService {
     // the shared log would ring a device about a call that ended.
     const sent = await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
     if (sent.receivedAt === null) {
-      appendLog(
+      console.error(
         `[Call] signal sent in ${groupId.slice(0, 8)}... but the server answered no receive time - its record is ordered by sentAt alone`
       );
     }

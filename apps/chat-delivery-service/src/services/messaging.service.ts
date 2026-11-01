@@ -851,6 +851,13 @@ interface FanOutTally {
   pushes: Promise<unknown>[];
 }
 
+/**
+ * Why `getCommitAcceptedAt` answered no instant - carried to the client so its line can be logged at
+ * the level the cause deserves: `pruned` is the retention working, `not-yet` a client ahead of the
+ * group, `hole` a commit path that advanced without logging.
+ */
+export type MissingCommitReason = 'pruned' | 'not-yet' | 'hole';
+
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
@@ -3227,7 +3234,7 @@ export class MessagingService {
     baseEpoch: number,
     requesterUserId: string,
     requesterDeviceId?: string
-  ): Promise<{ acceptedAt: string | null }> {
+  ): Promise<{ acceptedAt: string | null; reason?: MissingCommitReason }> {
     const group = await this.groupRepo.findOne({ where: { id: groupId } });
     const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
       group,
@@ -3244,7 +3251,12 @@ export class MessagingService {
     // arrived is the group's history, so the floor is the commit that ADMITTED them - the last one
     // accepted at or before their arrival - and anything older is refused. `admittedAtEpoch` cannot
     // say it: it is cleared the moment the device is activated, so an active member holds none.
-    const floor = await this.commitFloorOf(groupId, requesterUserId, requesterDeviceId);
+    const floor = await this.commitFloorOf(
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+      isKeyDistribution
+    );
     if (floor !== null && baseEpoch < floor) {
       this.logger.warn(
         `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - before the commit that admitted them (base ${floor})`
@@ -3255,8 +3267,12 @@ export class MessagingService {
     }
     const row = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
     if (!row) {
-      await this.reportMissingCommitRow(groupId, baseEpoch, group?.activeEpoch ?? null);
-      return { acceptedAt: null };
+      const reason = await this.reportMissingCommitRow(
+        groupId,
+        baseEpoch,
+        group?.activeEpoch ?? null
+      );
+      return { acceptedAt: null, reason };
     }
     return { acceptedAt: row.createdAt.toISOString() };
   }
@@ -3266,33 +3282,74 @@ export class MessagingService {
    * membership - the last commit accepted at or before their arrival - or `null` when no retained
    * commit precedes it (everything the log holds is theirs to see).
    *
-   * Arrival is the open membership stretch's (`admittedAt ?? joinedAt`); a key-distribution group,
-   * whose seats are per device and keep no stretch, falls back to the requesting device's row. Both
-   * are written by this service's clock and the log's `createdAt` by the database's: the two are one
-   * host's UTC, and a skew of a few ms can only move the floor ONE commit earlier, never hide the
-   * admitting commit from the member it admitted.
+   * Arrival is the open membership stretch's (`admittedAt ?? joinedAt`). A key-distribution group,
+   * whose seats are per device and keep no stretch, is anchored on the REQUESTING DEVICE's row
+   * `createdAt` - so a row deleted and recreated (a re-seat) moves the floor forward, and the commits
+   * before it are refused: a line about them is settled undated, never leaked. Both are written by
+   * this service's clock and the log's `createdAt` by the database's: the two are one host's UTC, and
+   * a skew of a few ms can only move the floor ONE commit earlier, never hide the admitting commit
+   * from the member it admitted.
+   *
+   * FAILS CLOSED (review of #2890, MED-3): with no arrival there is no floor, and "no floor" would
+   * hand the whole retained log to a newcomer. A key group asked with no device header is a 400 (the
+   * seat is per device, so the question is malformed without one); a member with no stretch and no
+   * device row is a 403, said at ERROR - `memberOfGroupKind` admitted them from a row this read
+   * cannot find, which is a fault, not a newcomer.
+   *
+   * COST, AND WHY NO INDEX: the admitting-commit read orders the group's rows at or before arrival by
+   * `baseEpoch DESC` through the `(groupId, baseEpoch)` key, so it may walk the retained window of
+   * one group - bounded by the commit-log retention (about a year), never the table. It runs once per
+   * (group, base epoch) per session: the client caches every answer (`cachedCommitInstants`), so the
+   * read is a few per merged commit at most, and an index on `createdAt` would buy nothing measured.
    */
   private async commitFloorOf(
     groupId: string,
     userId: string,
-    deviceId: string | undefined
+    deviceId: string | undefined,
+    isKeyDistribution: boolean
   ): Promise<number | null> {
-    const open = await this.groupRepo.manager.findOne(GroupMembershipInterval, {
-      where: { groupId, userId, leftAt: IsNull() },
-    });
-    let arrival: Date | null = open ? (open.admittedAt ?? open.joinedAt) : null;
+    const who = `group=${groupId} user=${userId.slice(0, 8)}`;
+    // The arrival is named by its ROW and compared IN THE DATABASE: read into a JS `Date` it loses
+    // the microseconds `now()` carries, and the commit that admitted a device - written in the same
+    // transaction as its row, so at the same `now()` - then compared AFTER it, lowering the floor one
+    // commit and handing out the one before (found by the PostgreSQL spec, review of #2890 LOW-2).
+    let arrival: { table: string; column: string; id: string } | null = null;
+    if (!isKeyDistribution) {
+      const open = await this.groupRepo.manager.findOne(GroupMembershipInterval, {
+        where: { groupId, userId, leftAt: IsNull() },
+      });
+      if (open) {
+        arrival = {
+          table: 'dm_group_membership_intervals',
+          column: 'COALESCE(a."admittedAt", a."joinedAt")',
+          id: open.id,
+        };
+      }
+    } else if (!deviceId) {
+      this.logger.warn(`[COMMIT_AT] refused ${who} - a key group asked with no device header`);
+      throw new BadRequestException('x-canari-device is required for a key-distribution group');
+    }
     if (!arrival && deviceId) {
       const device = await this.deviceGroupRepo.findOne({
         where: { groupId, userId, deviceId },
       });
-      arrival = device?.createdAt ?? null;
+      if (device) {
+        arrival = { table: 'dm_device_group_memberships', column: 'a."createdAt"', id: device.id };
+      }
     }
-    if (!arrival) return null;
-    const admitting = await this.commitLogRepo.findOne({
-      where: { groupId, createdAt: LessThanOrEqual(arrival) },
-      order: { baseEpoch: 'DESC' },
-    });
-    return admitting?.baseEpoch ?? null;
+    if (!arrival) {
+      this.logger.error(
+        `[COMMIT_AT] refused ${who} keyDistribution=${isKeyDistribution} device=${deviceId ? 'given' : 'none'} - a member with no arrival (no open stretch, no device row): no floor, so nothing is answered`
+      );
+      throw new ForbiddenException(`No arrival of the requester in ${groupId}`);
+    }
+    // `table` and `column` are the two literals above, never input.
+    const [row]: { floor: number | null }[] = await this.commitLogRepo.query(
+      `SELECT MAX(c."baseEpoch") AS floor FROM mls_commit_log c, ${arrival.table} a
+        WHERE a.id = $2 AND c."groupId" = $1 AND c."createdAt" <= ${arrival.column}`,
+      [groupId, arrival.id]
+    );
+    return row?.floor ?? null;
   }
 
   /**
@@ -3307,12 +3364,12 @@ export class MessagingService {
     groupId: string,
     baseEpoch: number,
     activeEpoch: number | null
-  ): Promise<void> {
+  ): Promise<MissingCommitReason> {
     if (activeEpoch !== null && baseEpoch >= activeEpoch) {
       this.logger.warn(
         `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - no such commit yet (active epoch ${activeEpoch})`
       );
-      return;
+      return 'not-yet';
     }
     const oldest = await this.commitLogRepo.findOne({
       where: { groupId },
@@ -3322,11 +3379,12 @@ export class MessagingService {
       this.logger.log(
         `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - pruned below the retained floor`
       );
-      return;
+      return 'pruned';
     }
     this.logger.error(
       `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - HOLE in the commit log: retained from base ${oldest.baseEpoch}, active ${activeEpoch ?? '?'}, and this commit was never logged`
     );
+    return 'hole';
   }
 
   /**

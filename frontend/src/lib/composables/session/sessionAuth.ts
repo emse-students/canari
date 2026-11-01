@@ -228,9 +228,11 @@ import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
+  patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
   setCallSystemMessageContext,
+  type CallEndTime,
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -1991,7 +1993,7 @@ export async function loginImpl(
       onCallEnded: (
         groupId: string,
         callId: string,
-        at: EventTime,
+        at: CallEndTime,
         outcome?: CallEndReason,
         starterId?: string
       ) =>
@@ -2003,6 +2005,8 @@ export async function loginImpl(
           outcome,
           starterId ?? ctx.getUserId()
         ),
+      onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
+        patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
 
     setupMessageHandler({

@@ -1024,16 +1024,35 @@ describe('deliverDeviceEvents - a line is dated by the commit that admitted the 
     }
   });
 
-  it('no commit log row: the line is REFUSED with an error, written nowhere and not owed', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { ctx, addMessageToChat } = makeCtx({ commitAcceptedAt: answering({ kind: 'none' }) });
-    await deliverDeviceEvents([event()], ctx);
+  it.each([
+    ['hole', 'error'],
+    [undefined, 'error'],
+    ['not-yet', 'warn'],
+    ['pruned', 'log'],
+  ] as const)(
+    'no commit log row (%s): settled undated at %s, written nowhere and not owed',
+    async (reason, level) => {
+      const spies = {
+        error: vi.spyOn(console, 'error').mockImplementation(() => {}),
+        warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
+        log: vi.spyOn(console, 'log').mockImplementation(() => {}),
+      };
+      const { ctx, addMessageToChat } = makeCtx({
+        commitAcceptedAt: answering(reason ? { kind: 'none', reason } : { kind: 'none' }),
+      });
+      await deliverDeviceEvents([event()], ctx);
 
-    expect(addMessageToChat).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('line REFUSED'));
-    expect(storedNotices().owedLines ?? []).toEqual([]);
-    error.mockRestore();
-  });
+      expect(addMessageToChat).not.toHaveBeenCalled();
+      expect(spies[level]).toHaveBeenCalledWith(expect.stringContaining('line settled UNDATED'));
+      for (const [name, spy] of Object.entries(spies)) {
+        if (name !== level) {
+          expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('line settled UNDATED'));
+        }
+      }
+      expect(storedNotices().owedLines ?? []).toEqual([]);
+      for (const spy of Object.values(spies)) spy.mockRestore();
+    }
+  );
 
   it('a 403 is an ANSWER: the line is settled - not owed, not asked again, no warning', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1111,7 +1130,7 @@ describe('deliverDeviceEvents - a line is dated by the commit that admitted the 
       const refused = makeCtx({ commitAcceptedAt: answering({ kind: 'none' }) });
       await deliverDeviceEvents([intruder], refused.ctx);
       expect(refused.addMessageToChat).not.toHaveBeenCalled();
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('line REFUSED'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('line settled UNDATED'));
       error.mockRestore();
     });
 

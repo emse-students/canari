@@ -76,6 +76,7 @@ import {
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import { drainOwedRemovalNotices } from '$lib/utils/chat/removalNotice';
 import {
   makeLostInvitationReplanner,
   makeUnrecordedInvitationTeller,
@@ -1380,6 +1381,18 @@ export function useConversations() {
             makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
           );
           replannerMls = mlsService;
+          // A removal line owed by an earlier session (its instant unanswered then): the retired row
+          // receives no further evidence, so the restore is what asks again.
+          const owedOf = mlsService;
+          void drainOwedRemovalNotices({
+            ownerId: ctx.userId,
+            conversations,
+            askRemovedAt: (groupId) => owedOf.ownRemovalAt(groupId),
+            addMessageToChat: ctx.addMessageToChat,
+            log: ctx.log,
+          }).catch((e: unknown) =>
+            console.error(`[EVICT] the owed removal notices could not be drained: ${String(e)}`)
+          );
         }
       }
     }
@@ -1883,6 +1896,7 @@ export function useConversations() {
       groupId: convo.id,
       evidence,
       askRemovedAt: () => ctx.ensureMls().ownRemovalAt(convo.id),
+      ownerId: ctx.userId,
       saveConversation: (key) => saveConversation(key, ctx),
       addMessageToChat: ctx.addMessageToChat,
       log: ctx.log,

@@ -21,6 +21,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
 
 import {
   handleCallSignalForChat,
+  patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
   setCallSystemMessageContext,
@@ -290,21 +291,57 @@ describe('a call record is dated by its frame, never by when this device drained
     expect(rows()[0].text).toBe('name-of-caller a démarré un appel qui a duré 3 minutes');
   });
 
-  it("with no server time at the end, it is this device's own start and end", async () => {
+  it("with no server time at its OWN end, it is this device's own start row and act", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      vi.setSystemTime(AT.timestamp.getTime() + 60_000);
+      // This device wrote the start row at T; it ended the call itself two minutes later.
+      const T = AT.timestamp.getTime() + 3_600_000;
+      vi.setSystemTime(T);
       const { ctx, rows } = makeCtx();
-      await recordCallStarted(ctx, G, 't5', 'caller', AT);
-      vi.setSystemTime(AT.timestamp.getTime() + 3 * 60_000);
-      // This device's end, stamped by a clock that disagrees with the inviter's by an hour.
-      await recordCallEnded(ctx, G, 't5', {
-        timestamp: new Date(AT.timestamp.getTime() + 3_600_000),
-      });
+      await recordCallStarted(ctx, G, 't5', 'caller', { timestamp: AT.timestamp });
+      // Finalised much later: the clock at finalisation is never read.
+      vi.setSystemTime(T + 5 * 3_600_000);
+      await recordCallEnded(ctx, G, 't5', { timestamp: new Date(T + 2 * 60_000), ownAct: true });
       expect(rows()[0].text).toBe('name-of-caller a démarré un appel qui a duré 2 minutes');
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a remote end drained hours late measures the call, not the drain', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(AT.timestamp.getTime());
+      const { ctx, rows } = makeCtx();
+      await recordCallStarted(ctx, G, 't6', 'caller', AT);
+      vi.setSystemTime(AT.timestamp.getTime() + 6 * 3_600_000);
+      await handleCallSignalForChat(ctx, 'caller', G, { callId: 't6', hangup: true }, 'me', {
+        timestamp: new Date(AT.timestamp.getTime() + 4 * 60_000),
+        serverTimestamp: AT.serverTimestamp + 4 * 60_000,
+      });
+      expect(rows()[0].text).toBe('name-of-caller a démarré un appel qui a duré 4 minutes');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the own hangup's server time is patched onto a row its end created, never over a start", async () => {
+    const { ctx, conversations, addMessageToChat } = makeCtx();
+    // A missed call written by the end itself, with no server time yet.
+    await recordCallEnded(ctx, G, 't7', { timestamp: AT.timestamp, ownAct: true }, 'busy', 'me');
+    expect(
+      (addMessageToChat.mock.calls[0][3] as { serverTimestamp?: number }).serverTimestamp
+    ).toBeUndefined();
+    await patchCallRecordServerTime(ctx, G, 't7', 1_700_000_000_999);
+    const serverTimeOf = () =>
+      (
+        conversations.get(G)!.messages.find((x) => x.id === 'call-t7') as {
+          serverTimestamp?: number;
+        }
+      ).serverTimestamp;
+    expect(serverTimeOf()).toBe(1_700_000_000_999);
+    await patchCallRecordServerTime(ctx, G, 't7', 1);
+    expect(serverTimeOf()).toBe(1_700_000_000_999);
   });
 
   it('a signal with no instant at all is REFUSED with an error and writes nothing', async () => {

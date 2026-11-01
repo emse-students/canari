@@ -1186,6 +1186,7 @@ async function handleKnownGroup({
         removedAt: deliveryMeta?.queuedCreatedAt,
         // A Remove commit reached through the replay carries no delivery time: the server's record.
         askRemovedAt: () => mlsService.ownRemovalAt(groupId),
+        ownerId: userId,
         reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
@@ -1367,6 +1368,7 @@ async function handleKnownGroup({
         groupId,
         evidence: 'inbound-frame',
         askRemovedAt: () => mlsService.ownRemovalAt(groupId),
+        ownerId: userId,
         reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
