@@ -1,0 +1,3 @@
+### Added - the SFU places a real call in CI: two browsers, coturn, encrypted audio
+
+`call-service` is proven by an end-to-end call on every change that touches it (owner decision D3): its binary, a throwaway coturn and two headless Chromes running the app's own E2E transform, passing only on frames decrypted under the other browser's key over a relay pair ([call-service](docs/wiki/services/call-service.md#the-end-to-end-call-in-ci)). Group calls' mesh-to-SFU switch and the choice of relay are decided (D1, D2, D4) ([backlog](docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).

@@ -1888,8 +1888,13 @@ audio and 3 in video**; beyond that a relay SFU carries it. The numbers come fro
 receiver costs the SENDER one more encode, and the Mi 9T encoding 720p for two receivers already
 dipped to 18-23 fps at 19-24 ms of encode per frame per receiver, while audio is capped at
 48 kbit/s a peer (`AUDIO_BITRATE_VOICE`; ~50 kbit/s on the wire in the audio rig), ~150 kbit/s up
-for a 4-way mesh. **The mesh-to-SFU switch when one more person joins is an OPEN design point**,
-with the SFU choice (WP-C4), per-sender keys and the TURN volume of a relayed mesh:
+for a 4-way mesh. **Decided by the owner on 2026-11-01**: past the cap EVERYONE moves to the relay
+SFU mid-call, transforms in the path throughout (D1); both relays are kept - Cloudflare Realtime
+serves now, the Rust `call-service` is kept working for the day the School opens UDP, one
+server-side setting picks (D2); `call-service` is proven by an encrypted end-to-end call in CI (D3,
+[built](../../services/call-service.md#the-end-to-end-call-in-ci)); direct peer to peer keeps no IP
+masking (D4). Per-sender keys and the TURN volume of a relayed mesh stay open, and the work
+packages that follow are listed in order:
 [backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
 
 ## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
@@ -3222,6 +3227,13 @@ Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no
 `apps/call-service` was brought back to compiling on 2026-08-27 after two Dependabot majors (`webrtc` 0.11 -> 0.17, `axum` 0.7 -> 0.8) had merged through a CI hole (closed: the crate is in the Rust matrix now). Verified: it builds, clippy is clean under `--all-features`, its ten unit tests pass. Not one of those ten runs the ICE stack. **Since 2026-10-09 `apps/call-service/tests/relay_path.rs` does, in CI**: two relay-only peers through an in-process TURN server carry a data-channel message and an SRTP packet ([cicd](../../cicd.md)). It places no call through the SFU and no browser peer - a green gate is not a working system.
 
 Six majors of webrtc-rs is a different library. One change is known because it broke the build: `RTCIceServer::credential_type` is gone and its rule moved inside the crate - `RTCIceServer::urls()` returns `ErrNoTurnCredentials` for a `turn:`/`turns:` URL with an empty username or credential, where 0.11 accepted it. A misconfigured TURN entry used to degrade quietly and now fails the WHOLE ICE configuration for that peer connection; `build_rtc_ice_server` warns and names the offending server. The changes that did not break the build cannot be enumerated from a diff: the crate reworked ICE gathering, DTLS and the RTP/RTCP interceptor chain. The next bump (0.20) is a port, not a bump (see the port section below, and `.github/scripts/lib/ceiling.sh`).
+
+**The call is placed in CI since 2026-11-01 (owner decision D3)**: two headless Chromes running
+the app's E2E worker, relay-only through a throwaway coturn, call each other through the SFU on
+every change that touches it, and the job passes only on audio frames decrypted under the other
+browser's key ([call-service](../../services/call-service.md#the-end-to-end-call-in-ci)). It answers
+the audio half below on 0.17 with no upgrade, the renegotiation path included; video, the PLI relay,
+Cloudflare's TURN and a phone are still outside it.
 
 **What settles it is one call**: two peers, audio and video, over the SFU, with TURN configured as production configures it (prod HAS it and has never used it) - the relay path, because that is where `ErrNoTurnCredentials` sits and a STUN-only test never touches it. Watch the peer connection reaching `connected`, the terminal ICE line the crate already logs, and whether renegotiation still lands (`main.rs` has a renegotiation path no test covers). It is taken BY HAND, with no call runner written (decided 2026-09-06): `CALLS_ENABLED` is flipped in the LOCAL tree only and put back. The twenty CALL rows (rung 15) stay NEVER RUN, deliberately - calls are UNVERIFIED on this build, not broken.
 

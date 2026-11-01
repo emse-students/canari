@@ -143,6 +143,17 @@ Runs on every pull request to `main`, and again on every push to `main`:
 | **Frontend tests**   | `vitest` in `frontend/`                                                                                                                                           |
 | **Frontend lint**    | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required)                                                                                       |
 | **Build**            | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
+| **Call Service E2E** | `test-call-service-e2e`: the SFU binary, a throwaway coturn and two headless Chromes place an encrypted call ([call-service](services/call-service.md#the-end-to-end-call-in-ci)) |
+
+**THE SFU'S CALL IS A JOB OF THIS FILE, AND IT RUNS ONLY WHEN WHAT IT READS CHANGED (owner decision
+D3, 2026-11-01).** `test-call-service-e2e` fires on `changes`' `run-call-e2e`: `apps/call-service/`
+(the harness lives in its `e2e/`), `tools/headless-chrome/`, the app's `encryption.worker.ts` and the
+five `utils/` modules it and the page import, `rust-toolchain.toml` and `.bun-version`. A skipped run
+is `skipped`, which `CI passed` accepts. It is a job, not a called workflow file:
+`tools/ecosystem-shape/shape.mjs` refuses a workflow file it does not expect, and a job here is
+already invisible in the Actions list and already a need of `CI passed`. Its coturn is a
+`docker run --network host` step rather than a `services:` container, because a service container
+takes no arguments and coturn is configured by its arguments alone.
 
 **THE HARNESS SELF-TESTS ARE TRIGGERED BY THE APP'S MESSAGE FILE TOO, AND FOR TWELVE DAYS THEY WERE
 NOT.** `changes` said the rig "reads its own sources and nothing else", so `tools/cross-client-harness/`
@@ -1761,9 +1772,10 @@ ICE reaches `Connected`, a data-channel message crosses (DTLS and SCTP) and an o
 (SRTP). It runs in the `Call Service (SFU)` job of the Rust matrix whenever `apps/call-service/` changes,
 which is every Dependabot cargo bump of it, in about 2 s once compiled. **What it does not cover:** the
 SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly), a browser peer,
-renegotiation, and any TURN provider but the library's own - so the by-hand call in
-[calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
-stays owed before calling is revived. The `webrtc` 0.20 major is not refused by name any more: it does
+renegotiation, and any TURN provider but the library's own. **Those three are covered since
+2026-11-01 by `test-call-service-e2e`** (D3): the real binary, two Chromes, coturn, encrypted audio
+both ways ([call-service](services/call-service.md#the-end-to-end-call-in-ci)); video through the SFU
+stays owed ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)). The `webrtc` 0.20 major is not refused by name any more: it does
 not compile against this SFU, which the suite sees on its own, and the port meets this test.
 
 **`openmls*`, `tls_codec*`, `hpke-rs*` and `libcrux*` left on 2026-09-15, and that one could not be

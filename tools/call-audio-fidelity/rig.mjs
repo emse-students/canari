@@ -13,13 +13,19 @@
  *   bun tools/call-audio-fidelity/rig.mjs --seconds 40 --out <dir> --keep
  *   bun tools/call-audio-fidelity/rig.mjs --reanalyze <dir>  # re-score a run's recordings, no browser
  */
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { analyze } from './analyze.mjs';
 import { RATE, buildReference, encodeWav, quantised, withBackground } from './signal.mjs';
 import { MATRIX, THRESHOLDS, verdict } from './matrix.mjs';
+import {
+  closeChrome,
+  defaultChrome,
+  killTree,
+  launchChrome,
+  serveDirectory,
+} from '../headless-chrome/chrome.mjs';
 
 const HERE = import.meta.dir;
 const args = process.argv.slice(2);
@@ -27,7 +33,7 @@ const opt = (name, dflt) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : dflt;
 };
-const CHROME = opt('chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe');
+const CHROME = opt('chrome', defaultChrome());
 const SECONDS = Number(opt('seconds', '32'));
 const OUT = resolve(opt('out', join(tmpdir(), `canari-call-audio-${process.pid}`)));
 const ONLY = opt('only', '').split(',').filter(Boolean);
@@ -48,11 +54,7 @@ const live = new Set();
 function onSignal(signal) {
   say(`${signal}: killing ${live.size} Chrome(s) and removing their profiles`);
   for (const side of live) {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/PID', String(side.proc.pid), '/T', '/F'], { stdio: 'ignore' });
-    } else {
-      side.proc.kill('SIGKILL');
-    }
+    killTree(side, { sync: true });
     if (KEEP) continue;
     try {
       rmSync(side.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
@@ -92,190 +94,27 @@ async function buildPage(www) {
   );
 }
 
-function serve(www) {
-  return Bun.serve({
-    port: 0,
-    hostname: '127.0.0.1',
-    fetch(req) {
-      const path = new URL(req.url).pathname;
-      const file = join(www, path === '/' ? 'index.html' : path.slice(1));
-      if (!existsSync(file)) return new Response('not found', { status: 404 });
-      const type = file.endsWith('.js')
-        ? 'text/javascript'
-        : file.endsWith('.wasm')
-          ? 'application/wasm'
-          : 'text/html';
-      return new Response(readFileSync(file), { headers: { 'content-type': type } });
-    },
-  });
-}
-
 /** How long one page call may take: the longest (`finish`) reads the stats and asks the worker twice. */
 const EVAL_ANSWER_MS = 60_000;
 
-/** A minimal CDP session over one page target. */
-class Cdp {
-  constructor(ws) {
-    this.ws = ws;
-    this.id = 0;
-    this.pending = new Map();
-    ws.addEventListener('message', (e) => {
-      const msg = JSON.parse(e.data);
-      const p = this.pending.get(msg.id);
-      if (!p) return;
-      this.pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(JSON.stringify(msg.error)));
-      else p.resolve(msg.result);
-    });
-  }
-
-  static async open(url) {
-    const ws = new WebSocket(url);
-    await new Promise((res, rej) => {
-      ws.addEventListener('open', res, { once: true });
-      ws.addEventListener('error', rej, { once: true });
-    });
-    return new Cdp(ws);
-  }
-
-  send(method, params = {}) {
-    const id = ++this.id;
-    this.ws.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
-  }
-
-  /**
-   * Evaluates `expr` in the page, awaiting a promise; throws the page's exception text. A page that
-   * does not answer within `EVAL_ANSWER_MS` fails the row, named, rather than hanging the run.
-   */
-  async eval(expr) {
-    let timer = 0;
-    const silent = new Promise((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(`the page did not answer ${expr.slice(0, 40)} in ${EVAL_ANSWER_MS / 1000} s`)
-          ),
-        EVAL_ANSWER_MS
-      );
-    });
-    const r = await Promise.race([
-      this.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
-      silent,
-    ]).finally(() => clearTimeout(timer));
-    if (r.exceptionDetails) {
-      throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-    }
-    return r.result.value;
-  }
-}
-
-async function until(fn, what, ms = 20_000) {
-  const t0 = Date.now();
-  for (;;) {
-    const v = await fn();
-    if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
-    await Bun.sleep(100);
-  }
-}
-
 /** Launches one headless Chrome whose fake microphone plays `wav`; returns its page session. */
-async function launch(name, wav, url, row) {
-  const profile = join(OUT, `profile-${row}-${name}`);
-  rmSync(profile, { recursive: true, force: true });
-  mkdirSync(profile, { recursive: true });
-  const proc = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`,
-      // 30 fps: the app's camera constraint (the fake device's default is 20).
-      '--use-fake-device-for-media-stream=fps=30',
-      '--use-fake-ui-for-media-stream',
-      `--use-file-for-fake-audio-capture=${wav}`,
-      '--mute-audio',
-      '--autoplay-policy=no-user-gesture-required',
-      '--no-first-run',
-      '--disable-breakpad',
-      '--disable-crash-reporter',
-      '--no-default-browser-check',
-      'about:blank',
-    ],
-    { stdio: 'ignore' }
-  );
-  const exited = new Promise((res) => proc.once('exit', res));
-  const side = { name, proc, exited, port: 0, cdp: null, profile };
-  live.add(side);
-  try {
-    const portFile = join(profile, 'DevToolsActivePort');
-    side.port = await until(() => {
-      if (!existsSync(portFile)) return false;
-      try {
-        return readFileSync(portFile, 'utf8').split('\n')[0];
-      } catch (e) {
-        // Windows: Chrome still holds the file it is writing (EBUSY) - not written yet, read again.
-        if (e.code === 'EBUSY') return false;
-        throw e;
-      }
-    }, `${name} DevTools port`);
-    const targets = await until(async () => {
-      const list = await (await fetch(`http://127.0.0.1:${side.port}/json/list`)).json();
-      return list.find((t) => t.type === 'page');
-    }, `${name} page target`);
-    side.cdp = await Cdp.open(targets.webSocketDebuggerUrl);
-    await side.cdp.send('Page.navigate', { url });
-    await until(
-      async () => (await side.cdp.eval('document.title').catch(() => '')) === 'rig-ready',
-      `${name} page`
-    );
-    return side;
-  } catch (e) {
-    // A Chrome that never became usable is still a running Chrome: take it down before the throw.
-    say(`WARN ${name}: launch failed (${String(e)}), killing the tree`);
-    await close(side);
-    throw e;
-  }
+function launch(name, wav, url, row) {
+  return launchChrome({
+    chrome: CHROME,
+    name,
+    profile: join(OUT, `profile-${row}-${name}`),
+    url,
+    readyTitle: 'rig-ready',
+    wav,
+    live,
+    keep: KEEP,
+    log: say,
+    answerMs: EVAL_ANSWER_MS,
+  });
 }
 
-/** Kills the whole process tree: on Windows, killing the browser process leaves its children. */
-function killTree(side) {
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(side.proc.pid), '/T', '/F'], { stdio: 'ignore' });
-  } else {
-    side.proc.kill('SIGKILL');
-  }
-}
-
-async function close(side) {
-  live.delete(side);
-  try {
-    if (!side.port) throw new Error('no DevTools port yet');
-    const v = await (await fetch(`http://127.0.0.1:${side.port}/json/version`)).json();
-    const b = await Cdp.open(v.webSocketDebuggerUrl);
-    void b.send('Browser.close').catch(() => {});
-  } catch (e) {
-    say(`WARN ${side.name}: Browser.close failed (${String(e)}), killing the tree`);
-    killTree(side);
-  }
-  const done = await Promise.race([
-    side.exited.then(() => true),
-    Bun.sleep(10_000).then(() => false),
-  ]);
-  if (!done) {
-    say(`WARN ${side.name}: still running 10 s after Browser.close, killing the tree`);
-    killTree(side);
-    await side.exited;
-  }
-  if (KEEP) return;
-  // Windows releases a dead process's file handles a little after it exits; a profile that is
-  // still locked is named here and swept again at the end of the run.
-  try {
-    rmSync(side.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-  } catch (e) {
-    say(`WARN ${side.name}: profile not removed yet (${e.code}), retried at the end of the run`);
-  }
+function close(side) {
+  return closeChrome(side, { live, keep: KEEP, log: say });
 }
 
 /**
@@ -610,7 +449,7 @@ async function main() {
   writeFileSync(wavs.silence, encodeWav(new Float64Array(ref.length)));
   const www = join(OUT, 'www');
   await buildPage(www);
-  const server = serve(www);
+  const server = serveDirectory(www);
   const url = `http://127.0.0.1:${server.port}/`;
   const rows = MATRIX.filter((r) => !ONLY.length || ONLY.includes(r.name));
   const results = [];
