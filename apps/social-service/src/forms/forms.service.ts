@@ -66,6 +66,7 @@ import {
 } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
+import { cotisationGrantRefusal } from '../associations/product-checkout';
 import { formTierRefusal, type FormTierRank } from '../associations/tier-pricing';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { receivedStatus } from '../users/entities/purchase-record.entity';
@@ -657,7 +658,7 @@ export class FormsService {
   }
 
   /**
-   * Returns a single form by ID with its current submission count.
+   * Returns a single form by ID with its current submission count and `cotisationDisabled`.
    *
    * A form that does not exist (a deleted one included) is a 404, never `null`: Nest serialises a
    * returned `null` as a `200` with an EMPTY body, which the client could only read as a raw
@@ -670,7 +671,16 @@ export class FormsService {
       throw new NotFoundException('Form not found');
     }
     const submissionCount = await this.countActiveSubmissions(id);
-    return { ...form, submissionCount };
+    // A paid form granting a cotisation its association cannot grant (no mode) is not buyable: its
+    // submit is refused `COTISATION_DISABLED` (`assertGrantedTierIsARise`, the SAME
+    // `cotisationGrantRefusal`), so the read says so rather than offer a payment that cannot open.
+    const cotisationDisabled =
+      !!form.grantsCotisation &&
+      !!form.associationId &&
+      !!cotisationGrantRefusal({
+        cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
+      });
+    return { ...form, submissionCount, cotisationDisabled };
   }
 
   /**
@@ -898,6 +908,18 @@ export class FormsService {
     userId: string | undefined
   ): Promise<void> {
     if (!form.grantsCotisation || !form.associationId || !userId) return;
+    // The boutique's rule (`cotisationGrantRefusal`): with no cotisation mode the grant would refuse
+    // ("not enabled") after the money was taken, whoever the submitter is.
+    const disabled = cotisationGrantRefusal({
+      cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
+    });
+    if (disabled) {
+      this.logger.warn(
+        `[Forms] submit refused (${disabled.code}): form=${form.id.slice(0, 8)} grants a cotisation ` +
+          `of assoc=${form.associationId.slice(0, 8)}, whose cotisations are disabled`
+      );
+      throw new ConflictException(disabled);
+    }
     const rank = await this.formTierRank(form.associationId, userId, form.cotisationVariantKey);
     const refusal = formTierRefusal(rank);
     this.logger.debug(
@@ -1466,13 +1488,15 @@ export class FormsService {
     if (oneAnswer) {
       await this.assertNoOtherAnswer(this.submissionRepo.manager, id, input.userId!, previous?.id);
     }
-    // A form that grants a tier takes money for it: refused here, before anything is cancelled or
-    // opened, when it is not a rise over the tier held - the boutique's rule and codes.
-    if (totalCents > 0) await this.assertGrantedTierIsARise(form, input.userId);
     if (previous) {
       const settled = await this.settleOpenRequest(previous, form);
       if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
     }
+    // A form that grants a tier takes money for it: refused here, before anything new is opened,
+    // when it is not a rise over the tier held - the boutique's rule and codes. AFTER the settle,
+    // so a person whose earlier request was in fact paid (and whose grant now makes the tier "held")
+    // is answered `alreadyPaid`, never a 409 for the payment they already made.
+    if (totalCents > 0) await this.assertGrantedTierIsARise(form, input.userId);
 
     // A guest who pays ONLINE leaves for Lydia and comes back with no session: the receipt, minted
     // here and stored hashed on the row, is what its return page shows instead (`guest-receipt.ts`).

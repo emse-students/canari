@@ -46,11 +46,15 @@
 >    obeys the conversation's own CALL PERMISSION, not the level** - see
 >    [the call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
 >    ([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions))
-> 3. **The network was the last blocker (measured 2026-10-15) and is behind us.** From production
->    as built then, the host could not send UDP to the internet while the SFU's TURN client
->    (webrtc-rs 0.17) speaks only UDP 3478 to Cloudflare TURN; the minimal ask was ONE outbound
->    rule ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
->    Production has carried calls since, so that ask was met.
+> 3. **The network blocker was removed by DESIGN, not by an outbound rule (measured 2026-10-15).**
+>    The School border drops the host's outbound UDP, and the SFU's TURN client (webrtc-rs 0.17)
+>    speaks only UDP 3478 to Cloudflare TURN, so the SFU path can never connect from production
+>    ([sections 1 and 8, row 1c](../../infrastructure/realtime-media-feasibility.md)). 1:1 calls
+>    are peer to peer between the CLIENTS, the phones reach Cloudflare TURN from their own
+>    networks, and the host only carries signalling on 443
+>    ([Lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)). No outbound rule was
+>    ever granted; the minimal ask (ONE outbound rule) stays unmet and only a future SFU call
+>    (group calls) would need it.
 
 ## Turning calls on in production - audio 1:1 only (owner, 2026-10-21)
 

@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { assertAnsweredByApi } from '$lib/utils/apiJson';
 import { deliveryUrl } from '$lib/utils/apiUrl';
 import { channelService } from '$lib/services/ChannelService';
 import { Log } from '$lib/utils/Log';
@@ -56,7 +57,8 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
 
 /**
  * Records whether calls in ONE private conversation may ring this account. Throws on any non-2xx
- * answer (403: not a member).
+ * answer (403: not a member), and `NotFromApiError` on a 2xx that is not the API's JSON: a portal's
+ * `200` saved nothing, and the change must not read as kept until the next reload undoes it.
  */
 export async function saveGroupCallsAllowed(groupId: string, allowed: boolean): Promise<void> {
   Log.d(`notificationPreferences.saveGroupCalls(${groupId}, ${allowed})`);
@@ -69,11 +71,13 @@ export async function saveGroupCallsAllowed(groupId: string, allowed: boolean): 
     }
   );
   if (!res.ok) throw new Error(`group calls ${res.status}`);
+  assertAnsweredByApi(res, 'PATCH /api/mls/groups/calls');
 }
 
 /**
  * Sets this account's level for ONE private conversation - the salon's `setNotificationLevel` for an
- * MLS group or DM. Throws on any non-2xx answer (403: not a member).
+ * MLS group or DM. Throws on any non-2xx answer (403: not a member), and `NotFromApiError` on a 2xx
+ * that is not the API's JSON.
  */
 export async function saveGroupNotificationLevel(
   groupId: string,
@@ -89,9 +93,13 @@ export async function saveGroupNotificationLevel(
     }
   );
   if (!res.ok) throw new Error(`group notification-level ${res.status}`);
+  assertAnsweredByApi(res, 'PATCH /api/mls/groups/notification-level');
 }
 
-/** Replaces the account's disabled set on the server, which applies it before every push. */
+/**
+ * Replaces the account's disabled set on the server, which applies it before every push. Throws on
+ * any non-2xx answer, and `NotFromApiError` on a 2xx that is not the API's JSON.
+ */
 export async function saveDisabledCategories(
   disabled: readonly NotificationCategory[]
 ): Promise<void> {
@@ -102,6 +110,7 @@ export async function saveDisabledCategories(
     body: JSON.stringify({ disabled }),
   });
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
+  assertAnsweredByApi(res, `PUT ${PATH}`);
 }
 
 /** This account's level for ONE salon - the social service owns it, so it is read apart from the groups'. */

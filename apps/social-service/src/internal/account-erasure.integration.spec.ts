@@ -17,10 +17,31 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { DataSource, getMetadataArgsStorage } from 'typeorm';
 import { ACCOUNT_ERASURE_COVERAGE, ERASURE_STATEMENTS, eraseSocialRows } from './account-erasure';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
+
+/** Every `*.entity.ts` under `src`, loaded so TypeORM's metadata storage knows its table. */
+async function loadEntities(dir = join(__dirname, '..')): Promise<void> {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) await loadEntities(path);
+    else if (entry.name.endsWith('.entity.ts')) await import(path);
+  }
+}
+
+/**
+ * The entity class of a table production builds with TypeORM `synchronize` and no migration creates,
+ * or undefined: a fresh scratch database lacks such a table, so the spec builds it from its entity
+ * (CI synchronizes the whole schema, which is why only a local fresh-database run ever failed).
+ */
+function entityOfTable(table: string): Function | undefined {
+  return getMetadataArgsStorage().tables.find((t) => t.name === table)?.target as
+    | Function
+    | undefined;
+}
 
 const ERASED = 'erased-it-0000';
 const OTHER = 'other-it-0000';
@@ -60,17 +81,42 @@ function addColumnFromMigrations(table: string, column: string): string | null {
 maybe('account erasure against PostgreSQL', () => {
   let client: Client;
   const schema = `erasure_it_${Date.now()}`;
+  /** Where the entity-built tables are synchronized, then copied from like `public`'s. */
+  const buildSchema = `${schema}_build`;
 
   beforeAll(async () => {
     client = new Client({ connectionString: URL });
     await client.connect();
     await client.query(`CREATE SCHEMA ${schema}`);
+    await loadEntities();
+    let builtFromEntities = false;
     for (const table of TABLES) {
       const exists = await client.query(
         `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`,
         [table]
       );
-      if (exists.rowCount) {
+      const entity = exists.rowCount ? undefined : entityOfTable(table);
+      if (entity) {
+        if (!builtFromEntities) {
+          // ALL entities, in one scratch schema: a relation names its neighbours, so one entity
+          // alone does not initialise.
+          const ds = new DataSource({
+            type: 'postgres',
+            url: URL,
+            entities: getMetadataArgsStorage().tables.map((t) => t.target as Function),
+            synchronize: false,
+            extra: { options: `-c search_path=${buildSchema}` },
+          });
+          await client.query(`CREATE SCHEMA IF NOT EXISTS ${buildSchema}`);
+          await ds.initialize();
+          await ds.synchronize();
+          await ds.destroy();
+          builtFromEntities = true;
+        }
+        await client.query(
+          `CREATE TABLE ${schema}.${table} (LIKE ${buildSchema}.${table} INCLUDING DEFAULTS)`
+        );
+      } else if (exists.rowCount) {
         await client.query(
           `CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING DEFAULTS)`
         );
@@ -115,6 +161,7 @@ maybe('account erasure against PostgreSQL', () => {
 
   afterAll(async () => {
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await client.query(`DROP SCHEMA IF EXISTS ${buildSchema} CASCADE`);
     await client.end();
   });
 

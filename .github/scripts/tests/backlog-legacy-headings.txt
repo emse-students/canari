@@ -1,8 +1,5 @@
 ## Owed after the stable - raise the floor to the release carrying the bookings notices
-## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
-## Cotisation-disabled follow-ups (after the tier stack lands)
 ## Display follow-ups to the shop pricing (after the tier stack lands)
-## A paid form that grants a tier is refused to a holder of an equal or dearer tier, even when it sells more - decided by the user on 2026-10-29
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 ### The decisions
 ### Follow requests: the four product rules taken on 2026-10-25, all of it still to build
@@ -12,15 +9,10 @@
 ## P3 - what the 1.4.1 dev campaign left unexplained or noisy (2026-10-25, alpha.4)
 ## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
 ## P2 - The reel camera re-opened the camera and microphone for a moment after the member left it (Mi 9T, 2026-10-28) - fix in review: #2647
-## P2 - A salon heard of live while its community's listing is in flight is deleted by that listing's clean-up, silently (BIG-3-noI1 on Android, `1.4.1-alpha.6`, 2026-10-26; fix in review)
 ## P3 - An unanswered call is written as a call with a duration, and a busy callee leaves its caller ringing (CALL-WEB, 2026-10-26)
 ## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
-## P2 - The end of a live purges its last segment while viewers are still fetching it (LIVE-WEB-2, `1.5.1-alpha.6`, 2026-10-29)
-## P2 - Graine says "holds nothing" and "absorbed 0/0" once per READ, not once per decision (RMC rows, `1.5.1-alpha.6`, 2026-10-29) - FIXED in #2678, absent from every RMC run on `1.5.1-alpha.7`; delete at the stable
 ## P2 - `[TRUST] ... entered by its OWN commit under a key pinned elsewhere` is logged at ERROR on the normal key-group join (KICK-COMMIT, `1.5.1-alpha.6`, 2026-10-29)
 ## P2 - A Welcome the device already applied is delivered again: the key-group spelling too (RMC rows, `1.5.1-alpha.7`, 2026-10-29)
-## P2 - A minted device's history asks are answered with a second WELCOME_REQ pass 15 s after the first (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
-## P2 - A minted device's history ask is withheld and refused three times, once per re-ask (DEVREVOKE-KEYGROUP, `1.5.1-alpha.7`, 2026-10-29)
 ## P2 - A refused key-group external join is not retried in the log: one `epoch_mismatch`, then "could not join" (SALON-REVOKE-COMMIT, `1.5.1-alpha.7`, 2026-10-29)
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 ## P3 - An epoch-1 frame meets a device already at epoch 2 and is lost to `AeadError` (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
@@ -31,21 +23,17 @@
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 ## Session liveness beyond the verifier, tracked privately (2026-10-25)
 ## P3 - Post-stable proposal for the user: a partial unique index on tier keys (2026-10-26)
-## P3 - No screen turns the base tier into a named one (2026-10-26)
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 ## P3 - A group creation that fails before its creator is registered leaves an orphan group row (2026-10-25)
 ## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
 ## P3 - Key groups still accept a commit with a refused admit dropped (ADM-3 review, 2026-10-26)
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
-## P3 - A salon granted live shows its name in lower case until the grantee reloads (RM-4, 2026-10-25)
 ## P3 - A field change heard during a listing is overwritten by its older answer (2026-10-26)
 ## P3 - A re-fetch after a late Welcome re-reads frames the live socket already delivered (DUP-2, 2026-10-25)
 ## P3 - Verify: an Add accepted but unannounced lets the joiner rejoin over its own leaf (DUP-2 review, 2026-10-25)
 ## P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 ## P2 - An unclean kill of a browser inside ~30 s of a rotation signs the user out (KILL-2, 2026-10-25; design after the stable)
-## P2 - A join ask reaches only the elected member live (ADM-1, 2026-10-25; fix before 1.4.1)
-## P2 - A joiner who was never admitted keeps the conversation, captioned as an established channel (ADM-2, 2026-10-25; fix before 1.4.1)
 ## P2 - A cut holder's add lock ends only by its TTL, and a refused waiter sleeps to it (design after the stable, OFF-3, 2026-10-25)
 ## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
 ## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
@@ -55,16 +43,13 @@
 ## A revoked device whose refresh cannot name its revocation
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 ## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
-## P2/P3 - Writes that trust a 2xx without reading anything (review of #2428, 2026-10-25)
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 ## P3 - The outbox sends into a group whose commit outcome it already knows is unknown (DUP-5, 2026-10-25)
 ## P3 - One failed Add is reported three times (TOK-2, 2026-10-25)
-## P3 - A harness self-test run failed twice and could not be reproduced (2026-10-25)
 ## P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)
 ## P3 - "they can still read it" after a refusal whose commit log has just applied the departure (BIG-3-noI1, 2026-10-27)
 ## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
 ## P3 - A conversation tile watches the presence of the peer it MOUNTED with, never the one it shows later (review of #2618, 2026-10-27)
-## P3 - A Remove refused `concurrent_commit` that moved no epoch is left to the collector (decided 2026-10-25)
 ## P3 - A pass's unconfirmed tree aborts the group's later pending rows (review of #2416, 2026-10-25)
 ## P3 - The add lock is not renewed through a long rebuild chain (review of #2416, 2026-10-25)
 ## P3 - The edges of the lost-invitation re-plan and its add lock (reviews of #2426, 2026-10-25)
@@ -73,37 +58,28 @@
 ## P3 - Three Welcome paths still end in a conversation row or skip a key-group step (2026-10-25)
 ## P3 - A guard answers 5xx for its own faults, and an authorization refusal is a 403 (review of #2420, 2026-10-25)
 ## P3 - Two edges of the pending pull, left by the review of #2420 (2026-10-25)
-## P3 - Two edges left by the gateway-socket rotation fix (review of #2407, 2026-10-25)
-## P3 - What a republication still does not move in the feeds (review of #2384, 2026-10-24)
 ## P2 - A device's one-time KeyPackage pool is topped up only when it connects (measured 2026-10-25, after the stable)
 ## P2 - The nightly archive is mostly one group's undelivered queue (measured 2026-10-24)
 ## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
 ## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
-## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
 ## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
 ## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
 ## P3 - A joiner's device with no device row is never marked awaiting admission (review of #2442)
-## P3 - A restored backup keeps a conversation's `awaitingAdmission: true` (review of #2442)
 ## P3 - The Android background answer refuses a newcomer and tells nobody (review of #2358)
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 ## P2 - Signed authorship of restored history: built (#2276), owed rig rows and a version floor (2026-10-22)
 ## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its readings and a client floor (2026-10-22)
 ## P2 - Local retention is 90 days everywhere while 5 years was intended on native - decision owed (found 2026-10-22)
-## P2 - `setNotificationLevel` saves a whole member copy and can undo a demotion (review of #2284, 2026-10-24)
 ## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
 ## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
-## P3 - Two Redis facts naming an erased account are outside its erasure's trace sweep (review of #2585, 2026-10-27)
 ## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
 ## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 ## P3 - A leave's own `memberLeft` notice is refused with 403, so the others never see it (GRP-6, 2026-10-22)
-## P3 - Three edges of the exit drain, left by the review of #2259 (2026-10-24)
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
-## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 ## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22, re-decided 2026-10-23)
 ## P2 - A forked holder's republished base can send honest members to rung 2 (review of #2269, 2026-10-24, not built)
-## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
 ## P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)
 ## P1 - Live moderation (WP-L8): the server half is BUILT, the client half is BUILT, the decisions of 2026-10-20 are taken and their server work is owed (2026-10-19)
 ## Orphan media rows: source fixed, one reading owed (2026-10-10)
@@ -115,7 +91,6 @@
 ## Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem
 ## Decided by the user on 2026-10-18 (second batch)
 ## Decided by the user on 2026-10-22 - the app needs iOS 16
-## Seen in the 2026-10-18 web console log - two observations, none built
 ## P2 - A killed phone answers a background Welcome from a stale epoch, and the route reports it as sent (read on the Mi 9T, 2026-10-22)
 ## The encryption PIN unlock on the iPhone: READ 2026-10-22, it answers - the "hang" was the rig's tap, and one P3 is left
 ## P3 - iPhone sign-in: the login page stays on a disabled "Redirection..." after the in-app sheet is cancelled (read 2026-10-22)
@@ -139,9 +114,7 @@
 ## P3 - EXIT-FORTIFY: closing the app logs a native abort `pthread_mutex_lock called on a destroyed mutex` (Mi 9T, `v1.3.1-alpha.5`, 2026-10-21)
 ## P3 - `[WS] 4 pings without server response - closing zombie connection`, repeatedly overnight on an idle Mi 9T (2026-10-21)
 ## P3 - Nothing warns a manager whose free-amount bounds fall outside the payable range (review of #2208, 2026-10-21, not built)
-## P3 - Dev bench notes: a dev push cannot be read, and a PIN reset through the rig purges the iPhone (2026-10-21)
 ## P3 - Canonical cotisation products created between migration 057 and #2205 were never withheld, so no release touches them (2026-10-21, no backfill)
-## Idea (owner, 2026-10-21): store videos and screenshots from the bench phones
 ## Sharing into and out of Canari - S1-S4 and S5 (Android) built (user, 2026-10-11, a priority 2026-10-21)
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 ## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
@@ -156,27 +129,20 @@
 ## The composer and CanaReels chantier - compared on the Mi 9T 2026-09-29, every decision taken
 ## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
 ## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
-## Asked by the USER on 2026-10-05 - one request, not built
 ## Asked by the USER on 2026-10-09 - CanaReels in a conversation, a design study, not built
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
-## P2 - A withdrawn or wiped chat reel can leak its upload session for 24 h (owed BEFORE `CHAT_REEL_WRITER_ENABLED`)
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 ## P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)
 ## P1 - CALL-WS-V6 is fixed on a branch and owed ONE phone reading (2026-10-20)
 ## P3 - Two vendored forks are not on the upstream-release watch (2026-10-21, a decision owed)
-## P3 - The call resume ladder has no jitter (review of #2148, 2026-10-19, not built)
 ## P2 - The deploy's rolling replace: two POSTs answered 502 across a release, cause not settled (CI, 2026-10-22)
 ## P2 - Live chat and floating reactions (WP-L6): the server is MERGED (#2131), the client in review (#2136), five things are owed (2026-10-19)
 ## P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)
-## P3 - Asking an author to republish their post (D38b): what was not built (2026-10-19)
 ## P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)
-## P3 - A reel's loop holds its first frame ~210 ms longer than the file says, on the Mi 9T (measured 2026-10-16, not built)
 ## P2 - In a DM, the iPhone's native chrome stands one keyboard too high (2026-10-17)
-## P3 - Accepted: the native "+" menu drops the keyboard (2026-10-17)
 ## P3 - iOS: a Modal or sheet over a conversation has no edge swipe (found 2026-10-16)
 ## P2 - A DM receipt killed inside the 2 s window: BUILT, owed a phone reading (2026-10-17)
-## P3 - An iPhone whose passcode is removed with biometric unlock on keeps a key copy that unlocks with no prompt (found 2026-10-15, review of #1923; accepted)
 ## P3 - A leader taken over in the middle of its own PIN change reloads and tears the change (found 2026-10-18, review of #2058)
 ## P2 - A backup restore resurrects every account erased since that backup (found 2026-10-16, account erasure) - BUILT, draft PR
 ## P2 - Deleting the account leaves its local message database at rest (found 2026-10-15, review of #1892) - BUILT (#2023), in `v1.3.0-alpha.1`
@@ -185,8 +151,6 @@
 ## P3 - Four things the offline cold start fix left open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15)
 ## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
 ## Group notification levels (all / mentions only / none) - SHIPPED in `1.2.8` (#1874), nothing owed here
-## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fix #1911 MERGED, production floor `1.2.9` since 2026-10-29)
-## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, MERGED as #1878, shipped in `1.2.9`; production floor raised to `1.2.9` on 2026-10-29)
 ## P2 - The tab swipe is lost on a slow start: the 12 px lock sits past Chrome's 8 dp slop (Mi 9T, 2026-10-21)
 ## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, MERGED as #1883, owed a reading
 ## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, MERGED as #1884, owed a reading
@@ -196,7 +160,6 @@
 ## P3 - Found reading the Pixel 6a on prod 1.2.7 (Wi-Fi, LTE, offline, 2026-10-14)
 ## P2 - A group joined in the background has no conversation row at cold start, and 47 of its 150 queued frames are lost (Pixel 6a, prod 1.2.7, 2026-10-14)
 ## P3 - A re-added reader rescans its own dropped tail on every launch (fifth review of #1878, 2026-10-15)
-## P2 - How the browser lost the message an overheard digest exposed is not established (2026-10-13)
 ## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
 ## P2 - A notification tap takes 2.7 s to a usable conversation when killed, 5 s behind the PIN (measured 2026-10-11)
 ## P1 - Offline and weak network: the cold start is 103 s on Slow 3G (user, 2026-10-09; measured, partly built)
@@ -294,7 +257,6 @@
 ### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (2026-08-26, widened 2026-08-30)
 ### A device revoked while OFFLINE keeps its store until someone LOGS IN on it: ACCEPTED 2026-10-18, no work
 ### P1 - the cause of a REVOKED device's partial restore is not established
-## Mentions
 ## The harness itself
 ### P2 - the local estate applies no migration file, so a table only a migration creates is missing (2026-10-22)
 ### P1 - one unexplained FAIL in 44: a salon row the reader refused stayed on screen after a reload (GRAINE-AUTH-1, 2026-10-22)

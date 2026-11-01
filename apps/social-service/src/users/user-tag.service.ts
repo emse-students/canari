@@ -82,6 +82,12 @@ export interface GrantTagData {
 export const EXCLUDED_TIER_HELD = 'EXCLUDED_TIER_HELD';
 
 /**
+ * The refusal of a RANKED grant whose association has no cotisation mode, read under the buyer's
+ * tier lock: a payment landed after cotisations were disabled. Final - no retry can change it.
+ */
+export const COTISATION_NOT_ENABLED = 'COTISATION_NOT_ENABLED';
+
+/**
  * The tiers a paid grant must find NOT held (a form's `notCotisation`): `anyTier` for any tier of
  * the association, a deleted tier's tag included (as `unless-holding-any` counts it), else the
  * listed keys, `null` being the base tier.
@@ -97,13 +103,20 @@ export interface ExcludedTiers {
  * twice; the form's submit refuses the same case as `FORM_TIER_ALREADY_HELD`, and this is that rule
  * judged again under the lock, when the money lands), `lower` / `unranked` (not a rise, so a paid
  * grant never swaps out a dearer tier by the XOR), `EXCLUDED_TIER_HELD` (a tier the form excludes is
- * held), or `TAG_HELD_BY_ANOTHER_ISSUER`. A boutique settlement never grants a tier already held
+ * held), `COTISATION_NOT_ENABLED` (cotisations were disabled meanwhile, read under the lock) or
+ * `TAG_HELD_BY_ANOTHER_ISSUER`. A boutique settlement never grants a tier already held
  * either (`settlementVerdict`); the one exception here is the held tag that IS this answer's own
  * delivery (its `metadata.submissionId`), answered `granted` without writing - a replay, not a renewal.
  */
 export type RankedGrantOutcome =
   | { granted: UserTag }
-  | { refused: TierRelation | typeof TAG_HELD_BY_ANOTHER_ISSUER | typeof EXCLUDED_TIER_HELD };
+  | {
+      refused:
+        | TierRelation
+        | typeof TAG_HELD_BY_ANOTHER_ISSUER
+        | typeof EXCLUDED_TIER_HELD
+        | typeof COTISATION_NOT_ENABLED;
+    };
 
 /** How `grantCotisantLocked` treats a tier the user may already hold. */
 type GrantRule = 'manual' | 'unless-holding-any' | 'only-a-rise';
@@ -261,6 +274,20 @@ export class UserTagService {
         `[UserTag] Revoked ${tagName} for ${userId} (sibling-tier switch, assoc=${issuingAssocId})`
       );
     }
+  }
+
+  /**
+   * The association's cotisation mode, or null when cotisations are disabled (or it does not
+   * exist - callers treat the two alike, and `cotisationGrantRefusal` maps both to
+   * `COTISATION_DISABLED`): the input of `cotisationGrantRefusal`, read where a paid form decides whether its
+   * grant could succeed.
+   */
+  async cotisationModeOf(assocId: string): Promise<CotisationMode | null> {
+    const rows: { cotisationMode: CotisationMode | null }[] = await this.repo.manager.query(
+      `SELECT "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    return rows[0]?.cotisationMode ?? null;
   }
 
   /**
@@ -685,6 +712,14 @@ export class UserTagService {
       variantKey = tier.variantKey;
     }
     if (!asso.cotisationMode) {
+      if (rule === 'only-a-rise') {
+        // A paid grant meeting a disabled mode: a typed, FINAL refusal decided under the lock.
+        this.logger.warn(
+          `[UserTag] ranked grant for assoc=${assocId.slice(0, 8)} user=${userId.slice(0, 8)} ` +
+            `refused: ${COTISATION_NOT_ENABLED}`
+        );
+        return { refused: COTISATION_NOT_ENABLED };
+      }
       throw new BadRequestException('Cotisation is not enabled for this association');
     }
 

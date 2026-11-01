@@ -39,8 +39,8 @@ Visibility of the post itself is untouched (`postVisibleToUserSql` already lets 
 audience read it), and since a member's post can now be in the Associations arm, `blockedAuthorSql`
 applies there as in the others. Proven against PostgreSQL by
 `republished-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`; only
-its place is the repost's. What a republication still does not move is in
-[backlog](../../backlog.md#p3---what-a-republication-still-does-not-move-in-the-feeds-review-of-2384-2026-10-24).
+its place is the repost's. A republication does not move the promo cutoff (it reads `publishedAt`) nor the "new" marker (it compares
+`publishedAt`): as built, and final.
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
@@ -2007,10 +2007,9 @@ console line names the post - `[POSTS] card <id> failed to draw` - which the lay
 since a production Svelte error carries only its code. That boundary is a containment, not the fix;
 the line it writes is an error and must be explained when it appears.
 
-**Not changed, noted:** every feed arm orders by `pinned DESC, "publishedAt" DESC` with no unique
-tie-breaker, so two posts sharing a `publishedAt` may swap across an `OFFSET` page boundary. The next
-page's merge (`loadMorePosts`) already drops an id it holds, so this can skip a post, never duplicate
-one.
+Every feed arm orders by `pinned DESC, "publishedAt" DESC` and then `posts.id`, a unique
+tie-breaker, so a page boundary never swaps two posts. The next page's merge (`loadMorePosts`) still
+drops an id it holds.
 
 ## Comment sheet rework (2026-10-21)
 
