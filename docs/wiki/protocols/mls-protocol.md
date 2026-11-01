@@ -1944,9 +1944,18 @@ anyway - a 500, then `Add error ... Could not send the secure invitation` - and 
 invitation of that device asked the server again and was told `revoked`, six 404s for one fact. The
 accept now carries **`refusedAdmits`** (`{ userId, deviceId, reason }`, every admit the gate dropped,
 before or inside its transaction). `undeliverableAdmits` (`BaseMlsService.ts`) says each once and returns
-those whose Welcome cannot be delivered - an ALLOWLIST, `no_key_package` alone
-(`admitRefusalMakesWelcomeUndeliverable`; NOT `not_enrolled`, which the sender's own
-`registerMember` enrols before a Welcome that then lands). `mergeAccepted` owes them nothing,
+those whose Welcome cannot be delivered - an ALLOWLIST (`whyWelcomeUndeliverable`, read off the
+Welcome gate's own refusals): `no_key_package` and `unresolved_identity` (no KeyPackage row to
+resolve the target by, `WELCOME_TARGET_UNKNOWN`), `not_entitled` and `departure_in_progress` (a key
+group's member gate refusing the person, which the Welcome is held to as well - `403
+WELCOME_TARGET_NOT_MEMBER`, met on RM-5 2026-10-26). NOT `not_enrolled`, which the sender's own
+`registerMember` enrols before a Welcome that then lands, nor `already_active` (a re-Add, whose
+Welcome lands); an unknown reason is inert. For the two key-group reasons nothing re-sends that
+Welcome, and a member's next Add does not help either: the refused leaf is still in the tree, and an
+admission skips a device that already holds one. A person granted access later, or whose departure
+is decided cancelled, comes back through the device's OWN external join once its seat claim holds
+again, and that commit removes the stale leaf. The pending sweep only ever sees conversation rows,
+so it never meets those two reasons. `mergeAccepted` owes them nothing,
 `addMember` / `replaceMember` hand out no Welcome and name the refusal (`notAdmitted`), and
 `addMembersBulk` leaves them out of `addedDeviceIds`, the list every caller welcomes. The pending
 sweep registers nobody, sends no Welcome or history, retires the invitation, and answers every other

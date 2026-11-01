@@ -5,6 +5,7 @@ import {
   WelcomeTargetUnknownError,
   admitRefusalMakesWelcomeUndeliverable,
   isTerminalWelcomeRefusal,
+  whyWelcomeUndeliverable,
 } from './mlsDeliveryApi';
 
 /**
@@ -67,18 +68,27 @@ describe('sendWelcome and the refusal of its target', () => {
 });
 
 describe('which refused admits make a Welcome undeliverable - an allowlist', () => {
-  it('names `no_key_package` alone', () => {
-    expect(admitRefusalMakesWelcomeUndeliverable('no_key_package')).toBe(true);
-    for (const reason of [
-      'not_enrolled',
-      'already_active',
-      'not_entitled',
-      'departure_in_progress',
-      'committer',
-      'unresolved_identity',
-      'a-reason-added-later',
-    ]) {
-      expect(admitRefusalMakesWelcomeUndeliverable(reason)).toBe(false);
+  // Each one a reason the delivery service's Welcome gate refuses by construction: no KeyPackage row
+  // to resolve the target by, or a key group's member gate refusing the person.
+  it.each(['no_key_package', 'unresolved_identity', 'not_entitled', 'departure_in_progress'])(
+    'names %s, with why',
+    (reason) => {
+      expect(admitRefusalMakesWelcomeUndeliverable(reason)).toBe(true);
+      expect(whyWelcomeUndeliverable(reason)).toEqual(expect.any(String));
     }
+  );
+
+  // A re-invite enrolled before its Welcome, a re-Add of a routed device, the committer itself, and
+  // anything this build has never heard of: the Welcome is sent and answered as before.
+  it.each([
+    'not_enrolled',
+    'already_active',
+    'committer',
+    'a-reason-added-later',
+    'toString',
+    'constructor',
+  ])('leaves %s inert', (reason) => {
+    expect(admitRefusalMakesWelcomeUndeliverable(reason)).toBe(false);
+    expect(whyWelcomeUndeliverable(reason)).toBeNull();
   });
 });
