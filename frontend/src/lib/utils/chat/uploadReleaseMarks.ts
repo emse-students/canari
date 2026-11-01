@@ -82,7 +82,7 @@ export function markUploadForRelease(
   store: MarkStore | null = defaultStore()
 ): void {
   if (!store) {
-    log(`[UPLOAD-RELEASE] ERROR: no storage: session ${uploadId.slice(0, 8)}… is NOT marked`);
+    log(`[UPLOAD-RELEASE] ERROR: no storage: session ${uploadId.slice(0, 8)}... is NOT marked`);
     return;
   }
   const marks = readMarks(store, log);
@@ -140,7 +140,7 @@ async function releaseOnce(
   try {
     return await release(uploadId, why);
   } catch (e) {
-    log(`[UPLOAD-RELEASE] the releaser threw for ${uploadId.slice(0, 8)}…, kept: ${String(e)}`);
+    log(`[UPLOAD-RELEASE] the releaser threw for ${uploadId.slice(0, 8)}..., kept: ${String(e)}`);
     return 'unanswered';
   }
 }
@@ -148,6 +148,10 @@ async function releaseOnce(
 /**
  * Releases ONE session the durable way: mark, `DELETE`, unmark on an answer. What the outbox's
  * withdrawal and its permanent failures call (`OutboxDeps.releaseUpload`).
+ *
+ * An EMPTY owner id is a session with no account behind it - a fallback signal, never a path: the
+ * mark is NOT written (it could only be swept under nobody's token), the `DELETE` is still tried,
+ * and the line accuses; an unanswered one is left to the server's 24 h sweep.
  */
 export async function releaseUploadDurably(
   ownerId: string,
@@ -157,31 +161,45 @@ export async function releaseUploadDurably(
   log: (line: string) => void,
   store: MarkStore | null = defaultStore()
 ): Promise<ReleaseAnswer> {
+  if (!ownerId) {
+    log(
+      `[UPLOAD-RELEASE] ERROR: no owner id for session ${uploadId.slice(0, 8)}... - NOT marked; an unanswered release is the server's 24 h sweep's`
+    );
+    return releaseOnce(release, uploadId, why, log);
+  }
   markUploadForRelease(ownerId, uploadId, log, store);
   const answer = await releaseOnce(release, uploadId, why, log);
   if (answer === 'answered') unmarkUploadRelease(ownerId, uploadId, log, store);
   else
     log(
-      `[UPLOAD-RELEASE] session ${uploadId.slice(0, 8)}… owed: released at the next start or reconnect`
+      `[UPLOAD-RELEASE] session ${uploadId.slice(0, 8)}... owed: released at the next start or reconnect`
     );
   return answer;
 }
 
 /**
  * Releases every session `ownerId` still owes, one `DELETE` each, removing the marks the server
- * answered. A pass already running for this owner is joined, never doubled.
+ * answered. `stillCurrent` is asked BEFORE EVERY `DELETE`: once it says no (the account signed out,
+ * another signed in), the pass stops and every mark it did not reach is KEPT for its owner.
  */
 export async function sweepUploadReleaseMarks(
   ownerId: string,
   release: SessionReleaser,
   log: (line: string) => void,
-  store: MarkStore | null = defaultStore()
+  store: MarkStore | null = defaultStore(),
+  stillCurrent: () => boolean = () => true
 ): Promise<{ released: number; kept: number }> {
   const owed = uploadReleaseMarksOf(ownerId, log, store);
   if (owed.length === 0) return { released: 0, kept: 0 };
   log(`[UPLOAD-RELEASE] ${owed.length} session release(s) owed from an earlier run`);
   let released = 0;
   for (const uploadId of owed) {
+    if (!stillCurrent()) {
+      log(
+        `[UPLOAD-RELEASE] the session that started this pass is gone: ${owed.length - released} mark(s) kept for their owner`
+      );
+      break;
+    }
     if ((await releaseOnce(release, uploadId, 'owed', log)) === 'answered') {
       unmarkUploadRelease(ownerId, uploadId, log, store);
       released += 1;
@@ -192,50 +210,98 @@ export async function sweepUploadReleaseMarks(
   return { released, kept };
 }
 
-// ── The session's drain: at startup and on every reconnect (the `pendingGroupExits` shape) ───────
+/** The signed-in token is not the mark's owner's: nothing is sent under it. Typed at the throw. */
+export class ReleaseOwnerChangedError extends Error {
+  constructor(ownerId: string, subject: string | null) {
+    super(
+      `the token is ${subject ? subject.slice(0, 8) : 'nobody'}'s, not ${ownerId.slice(0, 8)}'s: release NOT sent`
+    );
+    this.name = 'ReleaseOwnerChangedError';
+  }
+}
 
-interface DrainDeps {
-  getUserId: () => string;
+/**
+ * A token source BOUND TO ONE OWNER: it hands out the current token only while that token's subject
+ * is `ownerId`, and throws {@link ReleaseOwnerChangedError} otherwise - so a `DELETE` is never sent
+ * under another account's token (where its 403 would read as "answered" and drop the mark). The
+ * check runs per request, at the moment the token is taken.
+ */
+export function ownerBoundToken(
+  ownerId: string,
+  getToken: () => Promise<string>,
+  subjectOf: (token: string) => string | null
+): () => Promise<string> {
+  return async () => {
+    const token = await getToken();
+    const subject = subjectOf(token);
+    if (subject !== ownerId) throw new ReleaseOwnerChangedError(ownerId, subject);
+    return token;
+  };
+}
+
+// -- The session's drain: at startup and on every reconnect (the `pendingGroupExits` shape) --------
+
+/** One signed-in session's drain: its owner is FIXED at registration, never re-read. */
+interface DrainRegistration {
+  ownerId: string;
+  /** Releases under `ownerId`'s own token only (see {@link ownerBoundToken}). */
   release: SessionReleaser;
   log: (line: string) => void;
 }
 
-let registered: DrainDeps | null = null;
+let registered: DrainRegistration | null = null;
 let unsubscribeReconnect: (() => void) | null = null;
+/** The ONE pass in flight, whoever started it: two passes never run at once. */
 let running: Promise<unknown> | null = null;
 
-/** Attaches the signed-in session's drain to the reconnect edge. */
-export function registerUploadReleaseDrain(deps: DrainDeps): void {
+/** Attaches the signed-in session's drain to the reconnect edge. An empty owner is refused, said. */
+export function registerUploadReleaseDrain(deps: DrainRegistration): void {
   unregisterUploadReleaseDrain();
+  if (!deps.ownerId) {
+    deps.log('[UPLOAD-RELEASE] ERROR: a drain registered with no owner id - none attached');
+    return;
+  }
   registered = deps;
   unsubscribeReconnect = connectivity.onReconnect(() => {
     void flushUploadReleaseMarks();
   });
 }
 
-/** Detaches it: a mark of the user who signed out must never be released with the next one's token. */
+/**
+ * Detaches it: a mark of the user who signed out is never released with the next one's token. A pass
+ * already running is NOT forgotten - it stops before its next `DELETE` (its registration is no longer
+ * the current one), and the next pass waits for it.
+ */
 export function unregisterUploadReleaseDrain(): void {
   unsubscribeReconnect?.();
   unsubscribeReconnect = null;
   registered = null;
-  running = null;
 }
 
 /**
  * Releases the registered owner's owed sessions now. Called once at startup AND on reconnect: an app
- * killed offline comes back with the link already up, so no `online` edge fires for it.
+ * killed offline comes back with the link already up, so no `online` edge fires for it. A pass in
+ * flight is waited for first, so two never overlap; the pass then runs for the registration CURRENT
+ * at its start, and stops the moment that registration is replaced.
  */
 export async function flushUploadReleaseMarks(): Promise<void> {
-  if (!registered) return;
-  if (running) {
-    await running;
-    return;
+  while (running) await running.catch(() => undefined);
+  const reg = registered;
+  if (!reg) return;
+  const pass = sweepUploadReleaseMarks(
+    reg.ownerId,
+    reg.release,
+    reg.log,
+    defaultStore(),
+    () => registered === reg
+  );
+  running = pass;
+  try {
+    await pass;
+  } catch (e) {
+    // A store that refuses a write (quota): the marks it holds stay owed for the next pass.
+    reg.log(`[UPLOAD-RELEASE] ERROR: the pass failed, its marks stay owed: ${String(e)}`);
+  } finally {
+    if (running === pass) running = null;
   }
-  const { getUserId, release, log } = registered;
-  const ownerId = getUserId();
-  if (!ownerId) return;
-  running = sweepUploadReleaseMarks(ownerId, release, log).finally(() => {
-    running = null;
-  });
-  await running;
 }
