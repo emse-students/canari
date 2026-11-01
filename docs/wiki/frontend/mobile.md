@@ -2553,12 +2553,20 @@ release keeps the ids a pull brought for its whole life, because the delivery me
 may have evicted them). A pull that fails lists nothing, so the group stays parked until a pull
 completes - never a live frame ahead of an unapplied pull.
 
-- **Termination of a failed release pull.** A live frame parked while no pull has listed the
-  release and none is in flight starts one (`parkLiveFrame`). Only an ARRIVING frame starts a pull,
-  never a pull's own end, and never while one is in flight: the pulls are bounded by the frames the
-  socket delivers, and the first that lists the mailbox ends the release. With the server failing
-  and the socket silent, the group waits for the reconnect's pull; meanwhile the server's deferred
-  push may announce the parked rows, which the open conversation does not show yet.
+- **Termination of a failed release pull** (`pullForUnlistedRelease`). A release no pull has listed,
+  with none in flight, is pulled for by the next EVENT that needs it: a live frame parked behind it,
+  or a WAIT on the group (`whenGroupDrained`, `waitForGroupQueueIdle` - the admission gate, the
+  parked seed asks, the key-group epoch check, a history answer). A pull's own end, failed or not,
+  never starts one, and none starts while one is in flight: the pulls are bounded by the frames
+  delivered plus the waits made, and the first that lists the mailbox ends the release. With the
+  server failing, nobody waiting and the socket silent, nothing pulls until the reconnect - and
+  nothing needs it to.
+- **No push asked while the app is in front.** A group whose release is deferred (frames still
+  queued here) stays withheld while the app is active; its frames are not pushed (`push-now` is
+  asked only out of front), because a banner would announce a message the open app shows.
+- **A destroyed client decides nothing.** The two waits that outlive a drain (the key-group epoch
+  check, a history answer) stop on `GroupDrainAbandonedError` - typed, never read off a message -
+  instead of answering from a service that has ended.
 - **A group with frames still queued here is not released** (one held behind this device's own
   commit, say): released then, a frame of it would be applied when the commit ends, ahead of the
   withheld ones the pull brings back. The drain that empties it decides at its end.
