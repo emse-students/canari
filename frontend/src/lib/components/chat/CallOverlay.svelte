@@ -29,6 +29,8 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
   import {
+    AudioLines,
+    AudioLinesOff,
     ChevronDown,
     Mic,
     MicOff,
@@ -514,6 +516,19 @@
 
   let showSwitch = $derived(cameraOn && call.canSwitchCamera && !isEnded);
 
+  // The noise-suppression switch (owner decision D-B): offered for the whole call except where
+  // this engine could not build the pipeline - a switch that changes nothing is not offered.
+  let showNoiseSwitch = $derived(
+    !isIncoming && !isEnded && call.noiseSuppression.state !== 'unavailable'
+  );
+
+  function toggleNoiseSuppression() {
+    appendLog(
+      `[Call] noise suppression switch tapped (was ${call.noiseSuppression.enabled ? 'on' : 'off'})`
+    );
+    callService.toggleNoiseSuppression();
+  }
+
   function switchCamera() {
     appendLog('[Call] switch camera tapped');
     void callService.switchCamera();
@@ -691,6 +706,28 @@
         </span>
       {/if}
       <div class="flex shrink-0 items-center">
+        {#if showNoiseSwitch}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full text-white hover:bg-white/10 {call.noiseSuppression
+              .enabled
+              ? ''
+              : 'bg-white/15'}"
+            aria-pressed={call.noiseSuppression.enabled}
+            aria-label={call.noiseSuppression.enabled
+              ? m.call_noise_suppression_disable_label()
+              : m.call_noise_suppression_enable_label()}
+            title={call.noiseSuppression.enabled
+              ? m.call_noise_suppression_disable_label()
+              : m.call_noise_suppression_enable_label()}
+            data-testid="call-noise-suppression"
+            onclick={toggleNoiseSuppression}
+          >
+            {#if call.noiseSuppression.enabled}<AudioLines size={22} />{:else}<AudioLinesOff
+                size={22}
+              />{/if}
+          </button>
+        {/if}
         {#if showSwitch}
           <button
             type="button"
@@ -714,7 +751,7 @@
             <PictureInPicture2 size={22} />
           </button>
         {/if}
-        {#if !showSwitch && !showPip}
+        {#if !showSwitch && !showPip && !showNoiseSwitch}
           <!-- Keeps the encryption line centred against the chevron. -->
           <span class="ui-icon-button" aria-hidden="true"></span>
         {/if}

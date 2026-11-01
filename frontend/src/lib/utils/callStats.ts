@@ -272,6 +272,14 @@ export interface CallReportContext {
   ice: string;
   /** The worker's answer to `report`; `null` when it could not be asked or did not answer. */
   e2e: E2eWorkerReport | null;
+  /**
+   * What the microphone sender carries (`CallMicSwitch.reportState`): `on` = RNNoise's output,
+   * `off` = the user switched it off, `pending` = not proven running yet, `unavailable` = the
+   * pipeline could not be built. `null` when no microphone is open.
+   */
+  ns: string | null;
+  /** How many times this call's noise-suppression path failed (`CallMicSwitch.fallbackCount`). */
+  nsFallbacks: number | null;
 }
 
 /** What one reading measured, and the snapshot the next reading needs. */
@@ -378,6 +386,8 @@ export function buildCallReport(
     `keyframes_in=${e2e ? (e2e.videoKeyframesIn ?? '-') : '-'}`,
     `codec_a=${codecName(entries, inAudio)}`,
     `codec_v=${codecName(entries, inVideo)}`,
+    `ns=${ctx.ns ?? '-'}`,
+    `ns_fallbacks=${ctx.nsFallbacks ?? '-'}`,
   ];
   return { line: fields.join(' '), snapshot };
 }

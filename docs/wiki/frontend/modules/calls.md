@@ -1871,6 +1871,106 @@ fault: Cloudflare refusing relay pairs to private or IPv6 peers that could never
 when both ends relay; and the relayed path itself carries clean E2E audio over UDP, TCP and TLS 443
 ([readings, 2026-10-20 afternoon](../../device-readings-2026-10.md#2026-10-20-afternoon---v131-alpha4-across-networks-forced-relay-tcp-and-tls-turn-a-nated-hotspot)).
 
+## Group calls - a peer-to-peer mesh up to 4 in audio, 3 in video (owner decision D-A, 2026-10-31)
+
+**Decided, not built** - the input of WP-C11
+([revival plan](calls-revival-plan.md#10-the-work-packages-in-order)). A group call is a mesh of the
+1:1 peer connections this page describes, one per other participant, up to **4 participants in
+audio and 3 in video**; beyond that a relay SFU carries it. The numbers come from the Q3 mesh probe
+([revival plan, section 14](calls-revival-plan.md#14-probes-of-2026-10-16-clients)): every
+receiver costs the SENDER one more encode, and the Mi 9T encoding 720p for two receivers already
+dipped to 18-23 fps at 19-24 ms of encode per frame per receiver, while audio is capped at
+48 kbit/s a peer (`AUDIO_BITRATE_VOICE`; ~50 kbit/s on the wire in the audio rig), ~150 kbit/s up
+for a 4-way mesh. **The mesh-to-SFU switch when one more person joins is an OPEN design point**,
+with the SFU choice (WP-C4), per-sender keys and the TURN volume of a relayed mesh:
+[backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
+
+## Noise suppression (RNNoise) - decided 2026-10-31, built, its clean-speech row fails
+
+**The decision (owner, D-B, 2026-10-31).** The call microphone goes through RNNoise, ON by
+default, with an in-call switch to send the raw capture instead (music).
+
+**Amended (owner, 2026-11-01): it ships OFF by default.** The in-call switch stays; every call
+starts OFF (`CALL_NOISE_SUPPRESSION_DEFAULT = false`), and the switch turns it ON for that call.
+It goes back to ON by default only after a REAL call on the bench phones sounds good with it on -
+the gated clean-speech row below failed. OFF builds nothing: no AudioContext, no worklet, no wasm
+fetched until the first ON of the call (`CallMicSwitch.ensurePipeline`, one build per call, inside
+the tap). `[CALL_REPORT] ns=off` is therefore the ordinary value; `ns=on`, `pending` or
+`unavailable` appear only in a call where someone turned it on.
+
+**Its lifetime is the call's, with no clock (review of #2831).** A build still waiting on the
+worklet's `ready` is cancelled by the call's end (`CallMicSwitch.close` aborts its `AbortSignal`):
+it settles `cancelled` and closes its context, worklet and source. Switched OFF, the context is
+SUSPENDED (no RNNoise runs for a track nobody sends); switched ON, it resumes inside the tap.
+`usable()` reads the context's state, which an engine may report `running` while the worklet no
+longer processes, so each 10 s `[CALL_REPORT]` tick also reads the worklet's frame count (it
+reports every 5 s): while the processed track is sent, a count that did not advance since the last
+tick sends the raw capture again - `WARN noise suppression stopped processing`, counted in
+`ns_fallbacks`, `ns=unavailable` for the rest of the call.
+
+**The mechanism.** `utils/callNoiseSuppression.ts` builds `raw capture -> MediaStreamSource ->
+AudioWorkletNode (workers/rnnoise.worklet.ts) -> MediaStreamDestination` in a 48 kHz
+`AudioContext`. RNNoise is xiph's (BSD-3-Clause), compiled to wasm by `simple-rnnoise-wasm`
+(MIT, pinned `1.1.0`, bundled by Vite as an asset of the app's origin - no CDN); the worklet is the
+app's own code, and the wasm's `pipe` buffers 128-sample quanta into RNNoise's 480-sample 10 ms
+frames (~10.7 ms added). The capture keeps the browser's echo canceller
+(`buildCallAudioConstraints`, unchanged), so RNNoise runs AFTER AEC. **The call never waits for
+it**: `addTrack` takes the raw track, and `CallMicSwitch` moves the SAME sender to the processed
+track with `replaceTrack` once the worklet has PROVEN it processes (`ready` after its first
+quantum) and while its context runs; a context the engine suspends sends it back to raw, loudly.
+`replaceTrack` changes the track, never the sender, so the E2E transform stays in the path and
+nothing renegotiates (the rig's `transform-in-path` and bit-exact frames on the `ns` rows say so).
+The switch is the top-row `AudioLines` button of `CallOverlay`, hidden where the pipeline could not
+be built.
+
+**The primary path failing is a signal.** No AudioWorklet or MediaStream destination (the feature
+test, before any context), a refused context, a context not at 48 kHz, a worklet module or wasm
+that does not load, a worklet scope without WebAssembly: `[Call] WARN noise suppression unavailable
+(<cause>: <detail>) - the raw microphone is sent`, and the call goes on. `[CALL_REPORT]` carries
+`ns=on|off|pending|unavailable` and `ns_fallbacks=<n>` (builds failed, processed paths that stopped,
+`replaceTrack`s refused); `ns=pending` for a whole call is a worklet that never proved it ran. At
+the end, ONE line: `[Call] noise suppression end: ns= ns_fallbacks= frames= cost_ms_per_frame=
+realtime_pct= max_quantum_ms= clock=` - the worklet's time per 10 ms frame. Chrome's
+AudioWorkletGlobalScope has no `performance`, so the clock is `Date.now()` (1 ms steps, averaged
+over thousands of quanta).
+
+**Measured (the audio rig, Chrome 156 to Chrome 156, 2026-10-31, `--seconds 36`).** Scored against
+the CLEAN reference; `noisy` = the reference under steady band noise + hum 10 dB below speech.
+
+| Row | match | speech LSD dB | HF tilt dB | bandwidth Hz | dropouts (ms) | floor dBFS | cost ms / 10 ms frame | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| app (switch OFF, as before D-B) | 0.98 | 3.95 | -3.2 | 10412 | 1 (170) | -88.5 | - | PASS |
+| **app-ns** (switch ON, the default) | 0.90 | 11.02 | -14.8 | 8556 | 10 (1340) | -100.2 | 0.26 | **FAIL**: match, lsd, hf-tilt, bandwidth, dropouts, clipping |
+| raw (no browser processing) | 0.99 | 2.63 | -0.6 | 19515 | 0 | -117.1 | - | PASS |
+| raw-ns | 0.98 | 7.05 | -11.4 | 19515 | 4 (270) | -114.1 | 0.01 | FAIL: lsd, hf-tilt, dropouts |
+| app-browser-ns-off-ns (browser NS off, AEC/AGC on) | 0.90 | 12.50 | -16.3 | 13439 | 9 (1170) | -83.1 | 0.17 | FAIL |
+| app-noisy (switch OFF) | 0.98 | 12.75 | -7.5 | 8556 | 1 (150) | -50.0 | - | (experiment) |
+| app-ns-noisy | 0.86 | 12.35 | -11.4 | 6760 | 7 (1900) | -75.1 | 0.23 | (experiment) |
+
+**What it says.**
+
+1. **It works as built**: every `ns` row sent the processed track to the end with 0 fallbacks,
+   every decrypted frame bit-exact - the E2E path is untouched by the `replaceTrack`.
+2. **It removes a steady background**: the floor between segments falls from -50 to -75 dBFS on
+   the noisy reference (-69 with the browser's suppressor off).
+3. **It FAILS the clean-speech gate**, the acceptance condition the brief set: on the rig's
+   speech-like reference RNNoise cuts the high band (HF tilt -15 dB against -3), gates syllables
+   (1.3 s of dropouts against 0.17) and doubles the spectral distance. RNNoise alone (`raw-ns`)
+   is milder but still over the LSD and dropout bars; turning the browser's suppressor off does
+   not help. **Caveat**: the reference is SYNTHETIC speech (harmonic syllables, noise-burst
+   fricatives), and RNNoise was trained on real voices - the fricative bursts are exactly what it
+   reads as noise. Whether a real voice fares better is a phone reading, not a rig number.
+4. **Cost on the desktop: 0.01-0.26 ms per 10 ms frame (0.1-2.6 % of one core in real time)**;
+   the Mi 9T's number is owed.
+
+**Owed** ([backlog](../../backlog.d/call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)):
+the owner took the call on row 3 (OFF by default, 2026-11-01, above); what turns it back ON by
+default is a real call on the bench phones that sounds good with the switch on. The readings, each
+in a call where the switch was turned ON - `ns=on` and the end line on the Mi 9T (Android WebView)
+and the iPhone 12 (WKWebView, AudioWorklet since iOS 14.5; whether its worklet scope has
+WebAssembly, and whether a second AudioContext moves the call's audio route), the switch turned on
+in a call answered from the native ring, a real voice and music with the switch on and off.
+
 ## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
 
 **The reading** ([device-readings](../../device-readings-2026-10.md), `1.3.1-alpha.3`): on the Mi 9T
