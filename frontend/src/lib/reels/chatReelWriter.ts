@@ -1,3 +1,6 @@
+import type { ReelLimits } from '$lib/posts/api';
+import type { CaptureDestination } from './reelCapture';
+
 /**
  * THE WRITER OF A CANAREEL IN A CONVERSATION - `false` UNTIL RC-5 AND RC-7 HAVE SHIPPED (user,
  * 2026-10-14: the writer waits for the resumable upload and the native push before ANY stable).
@@ -8,9 +11,12 @@
  * `chat-reel` upload class) is reached only from a take the camera cannot make. The flip is THIS ONE
  * LINE, and it may land only when all of these hold (reels-in-chat.md section 7):
  *
- * - RC-3 shipped (the chat encoding profile and the 60 s cap), so a take fits the budget;
+ * - RC-3's chat encoding profile and 60 s cap wired into the queued take (`chatReelPrepareOptions`,
+ *   `captureCapMs`), so a take fits the budget - DONE;
  * - RC-5 shipped (the upload survives a weak network and a kill);
- * - RC-7 shipped (a push says "CanaReel", not "video"), and the readers are the `minClientVersion` floor.
+ * - RC-7 shipped (a push says "CanaReel", not "video"), and the readers are the `minClientVersion` floor;
+ * - and the rest of the section-7 list (re-ordered 2026-10-30): the durable release of a leaked upload
+ *   session, RC-14 then RC-13, RC-6's `410` amendment, RC-8 or salons kept out.
  *
  * Salons are NOT written by this switch even when it is `true`: their send path is RC-8's.
  */
@@ -57,6 +63,55 @@ export function chatReelAllowed(
  */
 export function uploadClassFor(media: { intent?: 'reel-message' }): 'chat-reel' | 'ephemeral' {
   return media.intent === 'reel-message' ? 'chat-reel' : 'ephemeral';
+}
+
+/**
+ * The longest take a CHAT reel may be (D-size, RC-3): the server's `chatMaxDurationMs` (60 s), the
+ * one copy, served by `GET /api/posts/reel-limits` since 89a81ad7d5. There is NO fallback to the
+ * 90 s reel cap: an answer without a usable chat cap is `null`, and the caller refuses to film or
+ * parks the take. Pure - the caller says it.
+ */
+export function servedChatCapMs(limits: Pick<ReelLimits, 'chatMaxDurationMs'>): number | null {
+  const cap: unknown = limits.chatMaxDurationMs;
+  return typeof cap === 'number' && Number.isFinite(cap) && cap > 0 ? cap : null;
+}
+
+/**
+ * The cap the camera arms its ring with for `destination`: the chat cap for a conversation, the reel
+ * cap for every other destination (the feed and a post keep `maxDurationMs`, byte-identical to before).
+ * `null` for a chat whose cap the server did not serve. Pure.
+ */
+export function captureCapMs(
+  limits: Pick<ReelLimits, 'maxDurationMs' | 'chatMaxDurationMs'>,
+  destination: CaptureDestination
+): number | null {
+  return destination === 'chat' ? servedChatCapMs(limits) : limits.maxDurationMs;
+}
+
+/** The server's reel-limits answer carried no usable chat cap: the take is parked, never prepared. */
+export class ChatReelCapMissingError extends Error {
+  constructor() {
+    super('the server served no chat reel cap (chatMaxDurationMs)');
+    this.name = 'ChatReelCapMissingError';
+  }
+}
+
+/**
+ * What the outbox's preparation of a queued chat reel asks of the encoder (RC-3 wired into RC-5): the
+ * `chat` profile (540p, 1.2 Mb/s) and the chat cap, so a take filmed under the cap is encoded at the
+ * size the retention budget was decided on, and a longer one is refused as a FACT of the take (`too
+ * long`, failed for good) rather than uploaded at the feed's size.
+ *
+ * @throws {ChatReelCapMissingError} when the server served no chat cap - an ordinary failure, so the
+ *   outbox PARKS the take (kept, Retry), exactly as when the limits cannot be read at all.
+ */
+export function chatReelPrepareOptions(
+  reel: Pick<ReelLimits, 'chatMaxDurationMs'>,
+  maxPlaintextBytes: number | undefined
+): { profile: 'chat'; maxSeconds: number; maxBytes: number | undefined } {
+  const cap = servedChatCapMs(reel);
+  if (cap === null) throw new ChatReelCapMissingError();
+  return { profile: 'chat', maxSeconds: cap / 1000, maxBytes: maxPlaintextBytes };
 }
 
 /** The files the chat camera filmed as a reel message, keyed by the file like `capturePoster.ts`. */

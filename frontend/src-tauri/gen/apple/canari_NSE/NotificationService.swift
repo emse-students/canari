@@ -220,6 +220,8 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_followed_post": composed = actorTitled("followed_post")
     // Republication (D38): the republishing, then the proposing, association names the title.
     case "social_association_repost": composed = actorTitled("association_repost")
+    // WP-F6: the person who reposted names the title.
+    case "social_member_repost": composed = actorTitled("member_repost")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
     // D38b: an association asks the AUTHOR to republish their personal post.
     case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")
@@ -1413,6 +1415,14 @@ class NotificationService: UNNotificationServiceExtension {
       // rather than substituting a clock (canari_push.mm CanariSendReadWatermark).
       if let sentAt = media?.sentAt, sentAt > 0 {
         content.userInfo["sentAt"] = sentAt
+      }
+      // The ACCOUNT this notification was decrypted for: a quick reply typed on it is sent as that
+      // account, never as whoever holds `push_context.json` when the reply is typed (review of
+      // #2843, M3; canari_push.mm `kCanariRecipientKey`, same key).
+      if let recipient = ctx?.userId, !recipient.isEmpty {
+        content.userInfo["recipientId"] = recipient
+      } else {
+        NSLog("[CanariNSE] ERROR a message notification with no push context names no recipient - a quick reply on it is refused, visibly")
       }
     }
     // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in

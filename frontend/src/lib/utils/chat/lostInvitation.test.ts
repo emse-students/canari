@@ -32,6 +32,7 @@ import {
   PreviousCommitUnresolvedError,
 } from '$lib/mls-client/commitSubmission';
 import type { OwedInvitation } from '$lib/mls-client/owedInvitations';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * A MEMBER'S INVITATION WHOSE KEPT COMMIT DID NOT LAND IS MADE AGAIN AT THE EPOCH THAT WON (OFF-3,
@@ -230,6 +231,15 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
     expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 
+  it('an add-lock request that got NO ANSWER waits on the connection, like any unanswered request', async () => {
+    const h = harness();
+    h.mlsService.acquireAddLockAnswer.mockResolvedValueOnce('unanswered');
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'waiting', on: 'connection' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
   it('a join ask DECLINED meanwhile (on the roster at the gesture, off it now) is never re-added', async () => {
     const h = harness();
     const outcome = await replanLostInvitation(
@@ -281,6 +291,17 @@ describe('replanLostInvitation - the invitation a kept commit lost', () => {
     const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
 
     expect(outcome).toEqual({ kind: 'kept' });
+  });
+
+  it('a re-plan whose request got NO ANSWER before its stage WAITS - never "invite again"', async () => {
+    const h = harness();
+    h.mlsService.registerMember.mockRejectedValueOnce(
+      new TransportFailureError(new TypeError('Failed to fetch'))
+    );
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'waiting', on: 'connection' });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
   });
 });
 

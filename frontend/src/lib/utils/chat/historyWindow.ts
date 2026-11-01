@@ -127,6 +127,63 @@ export function historyRangeStart(floor: number | undefined, now: number = Date.
 }
 
 /**
+ * How far below the server's record of a group's creation a message's own timestamp may still sit.
+ *
+ * A stored message is dated by its SENDER's clock (`sentAt`), while a group's start is the SERVER's
+ * clock. The two are different clocks, so the instant before which nothing can exist is the start
+ * MINUS this slack. A day covers any clock a person would still be using; being generous here costs
+ * nothing, because the bound is only ever compared against retention windows measured in months.
+ */
+export const GROUP_START_CLOCK_SLACK_MS = DAY_MS;
+
+/**
+ * The instant before which no message of a group can exist, or `undefined` when the group's start is
+ * not known.
+ *
+ * `startedAt` is the server's record of the group's creation (`Conversation.startedAt`), a fixed
+ * fact about one row: never merged, never sent, never moved. A start in the FUTURE (this device's
+ * clock behind the server's) is clamped to `now` first, so the bound can never claim that the past
+ * this device is already holding does not exist.
+ */
+export function groupBeginningBound(
+  startedAt: number | undefined,
+  now: number = Date.now()
+): number | undefined {
+  if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || startedAt <= 0) {
+    return undefined;
+  }
+  return Math.min(Math.floor(startedAt), now) - GROUP_START_CLOCK_SLACK_MS;
+}
+
+/**
+ * Whether a member complete only from `coveredFrom` leaves part of the asked range `[since, ...)`
+ * uncovered in which a message COULD exist.
+ *
+ * **A shortfall that predates the group is not a shortfall.** A browser keeps 90 days and a phone
+ * asks for 5 years, so on a group younger than 90 days every browser member used to answer "I cover
+ * only from 90 days ago", and the phone walked the whole membership looking for the years before -
+ * for a group created minutes earlier (BIG-1, 2026-10-26: 8 members, 8 elections, 8 lines, all for
+ * a past that could not exist). The range `[since, coveredFrom)` can hold a message only if it
+ * reaches above the group's beginning, which both sides know locally.
+ *
+ * The SAME predicate decides both ends - whether an answerer states its coverage, and whether an
+ * asker walks on a coverage it was told - so the two cannot disagree about what a shortfall is.
+ * An unknown start keeps the old answer (a shortfall is a shortfall), which is the direction that
+ * cannot lose a message.
+ *
+ * It never changes WHAT is delivered: the `since` an ask states, the state key computed over it and
+ * the clip applied to an answer are untouched. Only the walk and the coverage frame are decided here.
+ */
+export function coverageFallsShort(
+  coverage: { since: number; coveredFrom: number; startedAt?: number },
+  now: number = Date.now()
+): boolean {
+  if (coverage.coveredFrom <= coverage.since) return false;
+  const beginning = groupBeginningBound(coverage.startedAt, now);
+  return beginning === undefined || coverage.coveredFrom > beginning;
+}
+
+/**
  * Reads the window a peer stated on an ask, or `null` when it stated none.
  *
  * **Every ask carries its own `since`**, and every sender types it as required:

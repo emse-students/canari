@@ -124,6 +124,14 @@ void canari_ios_on_pause(void);
    arrives on (Rust `page_ring`). An app in front at the PIN gate holds none, and is rung natively. */
 bool canari_ios_page_rings_in_app(void);
 
+/* Whether the page holds a loaded MLS manager in this process (Rust `live_manager_in_process`):
+   then the page owns the state and sends, and a quick reply is handed to it rather than encrypted
+   natively, where the foreground guard would refuse it. */
+bool canari_ios_page_holds_mls(void);
+char *canari_native_seal_quick_reply_line(const char *cache_key_b64, const char *line);
+/* outcome: 0 sent, 1 failed, 2 pending, 3 returned, 4 lost (`QuickReplyOutcome` in push.rs). */
+void canari_ios_set_quick_reply_ack_listener(void (*listener)(const char *reply_id, int32_t outcome));
+
 /* Whether the page is ringing THIS call itself (its CallService is `incoming` on it, Rust
    `page_ring`). The handover ends an unanswered CallKit ring only on this: a page holding the
    socket may still have skipped that call's invite. */

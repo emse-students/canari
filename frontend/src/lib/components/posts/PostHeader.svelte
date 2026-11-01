@@ -37,7 +37,7 @@
    * "Republie par X, Y +N" (D38): one card per post, however many associations carry it - on the
    * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own.
    */
-  const republished = $derived(republishedByText(post.republishedBy));
+  const republished = $derived(republishedByText(post.republishedBy, post.repostedBy));
 
   /**
    * "Demande envoyee au nom de X" (D38b): what the reader's associations asked the author of this

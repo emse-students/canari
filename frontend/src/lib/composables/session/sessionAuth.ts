@@ -95,7 +95,16 @@ import {
   registerPendingGroupExitDrain,
   unregisterPendingGroupExitDrain,
 } from '$lib/utils/chat/pendingGroupExits';
+import {
+  flushUploadReleaseMarks,
+  registerUploadReleaseDrain,
+  releaseUploadDurably,
+  unregisterUploadReleaseDrain,
+  ownerBoundToken,
+  type SessionReleaser,
+} from '$lib/utils/chat/uploadReleaseMarks';
 import { m } from '$lib/paraglide/messages';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
   forgetProvenDeadEnds,
@@ -213,9 +222,8 @@ import {
   flushOutbox,
   resumeOutboxGroup,
   applyOutboxPendingStatuses,
-  OutboxPrepareRefusedError,
-  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
+import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
@@ -456,67 +464,26 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       );
     },
     prepareMedia: prepareQueuedChatReel,
+    // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
+    // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
-      const { MediaService } = await import('$lib/media');
-      await new MediaService().releaseResumableUpload(uploadId, getToken, why);
+      const ownerId = ctx.getUserId();
+      await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
     },
   };
 }
 
 /**
- * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
- * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget). A cancel is
- * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
- * failure of the take.
+ * The releaser of `ownerId`'s resumable sessions: one media-service `DELETE` each, under a token that
+ * is `ownerId`'s and nobody else's (`ownerBoundToken`). Another account signed in meanwhile gets
+ * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
  */
-async function prepareQueuedChatReel(
-  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
-): Promise<PreparedOutboxMedia> {
-  const [
-    { MediaService },
-    { prepareVideoForUpload, isVideoPrepareError },
-    { UploadAbortedError },
-    { videoPrepareFailureMessage, isUnpreparableFault },
-  ] = await Promise.all([
-    import('$lib/media'),
-    import('$lib/video/prepareVideoForUpload'),
-    import('$lib/utils/uploadXhr'),
-    import('$lib/video/videoPrepareMessages'),
-  ]);
-  const raw = media.fileBytes ?? new Uint8Array(0);
-  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
-    type: media.mimeType,
-  });
-  const limits = await new MediaService().uploadLimits();
-  try {
-    const prepared = await prepareVideoForUpload(source, {
-      maxBytes: limits?.maxPlaintextBytes,
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
-    return {
-      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
-      mimeType: prepared.file.type,
-      fileName: prepared.file.name,
-      width: prepared.width,
-      height: prepared.height,
-      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
-    };
-  } catch (e) {
-    if (isVideoPrepareError(e) && e.fault === 'aborted') {
-      throw new UploadAbortedError(opts.signal.reason);
-    }
-    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
-    // good with the composer's own sentence for it, never a retry that is refused the same way.
-    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
-      throw new OutboxPrepareRefusedError(
-        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
-        e
-      );
-    }
-    throw e;
-  }
+function releaserFor(ownerId: string): SessionReleaser {
+  const token = ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+  return async (uploadId, why) => {
+    const { MediaService } = await import('$lib/media');
+    return new MediaService().releaseResumableUpload(uploadId, token, why);
+  };
 }
 
 /**
@@ -1941,6 +1908,12 @@ export async function loginImpl(
     // Group exits this device decided and the server never answered. Same lifecycle and the same
     // seam as the one above: a delete or a leave that met no server is owed until one answers, and
     // the answer cannot be waited for with a timer (see `pendingGroupExits`).
+    // Upload sessions a withdrawal could not give back (made offline): owed until one answers.
+    // The owner is FIXED here: a pass started for this account never sends under the next one's token.
+    {
+      const ownerId = ctx.getUserId();
+      registerUploadReleaseDrain({ ownerId, release: releaserFor(ownerId), log: cb.log });
+    }
     registerPendingGroupExitDrain({
       getStorage: () => ctx.getStorage(),
       ensureMls: () => ctx.ensureMls(),
@@ -2512,6 +2485,8 @@ export async function loginImpl(
       // Same moment, and NOT covered by the reconnect listener: an app killed while offline comes
       // back with the link already up, so no `online` edge ever fires for the exit it still owes.
       void flushPendingGroupExits();
+      // Same reason for an upload session a withdrawal made offline could not give back.
+      void flushUploadReleaseMarks();
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -3332,6 +3307,8 @@ export function tearDownLiveSession(
   // Same reason: an exit owed by the user who just signed out must not be replayed with the next
   // one's token. The row survives in storage, and that user's next login replays it.
   unregisterPendingGroupExitDrain();
+  // And a session release owed by that user: their marks stay, for their next sign-in.
+  unregisterUploadReleaseDrain();
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();

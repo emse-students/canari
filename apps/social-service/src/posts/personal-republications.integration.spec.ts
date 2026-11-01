@@ -301,6 +301,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(migration('073_republications.sql'));
     await q(migration('078_read_grants.sql'));
     await q(migration('096_personal_republication_requests.sql'));
+    await q(migration('121_member_reposts.sql'));
     // AG and AG2 reach the whole Gardanne campus, and nothing else.
     for (const id of [AG, AG2]) {
       await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [id]);
@@ -472,6 +473,27 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       const offer = await offerFor('outsider', [P(1)]);
       expect([...offer.personalRepublishAsIds]).toEqual([AG]);
       expect(offer.requestablePersonalIds.size).toBe(0);
+    });
+
+    it('NO CHAIN (WP-F6): an officer who sees a post only through a member repost is offered nothing, and asking is a 404', async () => {
+      // pr reposted au's post; outsider, an AG officer in Gardanne, follows pr.
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'pr')`, [P(12)]);
+      await q(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ('outsider', 'pr', 'accepted')`
+      );
+      try {
+        expect(await sees(P(12), 'outsider')).toBe(true);
+        const offer = await offerFor('outsider', [P(12)]);
+        expect(offer.requestablePersonalIds.size).toBe(0);
+        expect(await refusedWith(personal.request(P(12), AG, 'outsider'))).toBeInstanceOf(
+          NotFoundException
+        );
+      } finally {
+        await q(
+          `DELETE FROM user_follows WHERE "followerUserId" = 'outsider' AND "followedUserId" = 'pr'`
+        );
+        await q(`DELETE FROM member_reposts WHERE "postId" = $1`, [P(12)]);
+      }
     });
   });
 
@@ -851,7 +873,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await proposals.accept(pending.id, 'au', false);
       await personal.request(P(9), AG2, 'pr');
       const dropped = await dropRepublicationsOf(ds.manager, P(9));
-      expect(dropped).toEqual({ republications: 1, proposals: 1 });
+      expect(dropped).toEqual({ republications: 1, proposals: 1, memberReposts: 0 });
       expect(await sees(P(9), 'gr')).toBe(false);
     });
 

@@ -18,6 +18,7 @@
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
   import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+  import RepostConsentSetting from './RepostConsentSetting.svelte';
 
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
@@ -181,6 +182,8 @@
         {/each}
       </div>
     </div>
+
+    <RepostConsentSetting />
 
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">

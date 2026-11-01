@@ -100,6 +100,8 @@
     <string name="notif_social_followed_post_body">Nouvelle publication</string>
     <string name="notif_social_association_repost_title">%1$s a relayé une publication</string>
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
+    <string name="notif_social_member_repost_title">%1$s a republié une publication</string>
+    <string name="notif_social_member_repost_body">Nouvelle publication</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
     <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>

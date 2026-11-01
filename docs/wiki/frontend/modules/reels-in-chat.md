@@ -513,8 +513,9 @@ pipeline (RC-5) before the UI polish because a reel that cannot survive a weak n
 that works in the office.
 
 **What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30).** Built and
-merged: RC-1 to RC-5, RC-7. Owed, in this order: (1) RC-3's profile and 60 s cap wired into
-`prepareQueuedChatReel` (section 14); (2) the session-leak P2 ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled));
+merged: RC-1 to RC-5, RC-7, and (1) RC-3's profile and 60 s cap wired into
+`prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01), and (2) the session-leak P2 (the
+durable release mark of section 14, 2026-11-01). Owed, in this order:
 (3) RC-14 then **RC-13 - before the switch, not after: once a reel is written in the field, a
 single-target RC-5 row persisted in a member's outbox would need a legacy decoder when the shape
 changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with its 410 amendment,
@@ -685,7 +686,7 @@ reel message does, and nothing sends one until RC-4 (behind its OFF switch); the
 - **The mark**: a video handed back by the chat camera is marked on the FILE (`markChatReelTake`, a `WeakSet` like `capturePoster.ts`), because the composers' one attachment path is `File[]`. A gallery pick is never marked.
 - **The declaration**: `prepareOneChatVideo` carries the mark onto the PREPARED file with its length; the MLS send builds `intent`, `durationMs` and `expiresAtMs` (send time + 30 days, `chatReelDeclaration`, the clock passed in) into BOTH the optimistic envelope and the outbox payload, so the tile draws at once. The ThumbHash comes from the camera's poster.
 - **The class**: the outbox uploader names `chat-reel` for a declared reel (`uploadClassFor`), `ephemeral` for everything else.
-- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 14) - since RC-5 a filmed take is no longer STAGED.
+- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - wired in on 2026-11-01, section 14), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 14) - since RC-5 a filmed take is no longer STAGED.
 
 ## 14. What the resumable outbox (RC-5) built, and what it owes on devices (2026-10-19)
 
@@ -772,14 +773,40 @@ new field lives in the encrypted outbox payload.
   only mechanism that covers it (no part was ever staged, so no bytes and no budget beyond the
   slot). A permanent failure that deletes the
   row (group deleted, eviction, an unpreparable take) releases it the same way.
-  **Best effort, and what it does not cover**: a `DELETE` that gets no answer (the cancel was made
-  offline, on the weak link the reel was stuck on) is logged `NOT released` and left to the server's
-  sweep - 24 h holding one of the owner's 4 open sessions, up to 256 MiB staged and its share of the
-  daily `chat-reel` budget. Four such cancels in a day would be answered 429 until the sweep. A
-  sign-out, an account erasure and an account deletion wipe the outbox without a `DELETE` either:
-  the same sweep holds those sessions. **Filed as a P2 owed BEFORE the writer is switched on**
-  ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled)):
-  a durable "to release" mark swept at the next start or sign-in.
+  **The release is owed in DURABLE STATE (2026-11-01, `utils/chat/uploadReleaseMarks.ts`).** The
+  outbox's `releaseUpload` is `releaseUploadDurably`: the session id is written to ONE device-wide
+  `localStorage` key (`canari_upload_release_marks`, `{ ownerId: uploadId[] }`, ids only, no key)
+  BEFORE the `DELETE`, and removed only when the server ANSWERED it - a 2xx, or media-service's own
+  JSON 403/404/409 (not this owner's, gone, completed), read through `responseOrigin` like every
+  session answer. A transport failure, an edge page, a 5xx or a refused token keeps the mark
+  (`releaseUploadSession` now returns `answered`/`unanswered`). The session's drain
+  (`registerUploadReleaseDrain`, the `pendingGroupExits` shape) releases the owner's marks once at
+  startup and on every reconnect, and is detached at sign-out. **Two accounts on one device never
+  mix (review of 2026-11-01)**: the drain's owner is FIXED at registration; ONE pass runs at a time
+  (a flush waits for the pass in flight); a pass asks before EVERY `DELETE` whether its registration
+  is still the current one and stops otherwise, keeping the marks it did not reach; and every
+  `DELETE` takes its token through `ownerBoundToken`, which refuses a token whose subject is not the
+  mark's owner (`ReleaseOwnerChangedError`, nothing sent, `unanswered`, the mark kept) - so another
+  account's 403 can never read as an answer and drop the mark. The 401 renewal already refuses a
+  renewed token naming another account (`TokenAccountChangedError`). An EMPTY owner id is a fallback
+  signal: no mark is written, the `DELETE` is still tried, the line accuses at ERROR, and an
+  unanswered one is the server's 24 h sweep's. Idempotent by the server: a repeat is a 404, an
+  answer. **What each former leak path is now:**
+  - a cancel made offline: marked, released at the next start or reconnect;
+  - a sign-out: never was a leak - the outbox survives a sign-out, and the row resumes its session at
+    the next sign-in of that account;
+  - an account deletion: media-service's erasure fan-out ends the owner's open sessions itself
+    (`cancelAllOwnedBy`, [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)),
+    and the device drops that owner's marks with the rest of its data (`wipeDeletedAccountLocalData`);
+  - **left to the 24 h sweep, and why**: a device REVOKED with a reel queued (the factory wipe clears
+    `localStorage`, marks included, and a revoked device must not wait on the network before it
+    wipes), and the "forgot PIN" reset (the rows are encrypted under the device key the forgotten PIN
+    guarded, so no session id is readable). Both need a reel queued at that very moment and cost one
+    of 4 slots for a day.
+  Pinned by `uploadReleaseMarks.test.ts` (an offline cancel, a "relaunch" that only the store
+  survives, the real `releaseUploadSession` against the fake session server: the session closed and
+  the mark gone; a 404 is an answer; another owner's marks untouched; a damaged value said at ERROR)
+  and media-service's `upload-session.service.spec.ts` / `media.controller.account-erasure.spec.ts`.
 - **The tile** shows the sender's own unsent reel with the attachment bubble's figure, cancel and
   retry (`ChatReelTile` `upload`/`uploadFailed`/`orphan`); with no `mediaId` there is nothing to open,
   so no tap is offered. Queued with no transfer running yet it still offers the cancel. Drawn with
@@ -810,10 +837,20 @@ preparation and its Retry; a refused one that fails for good; and a seeded flaky
 media-service's `upload-session.service.spec.ts` walks the client's resume sequence across server
 restarts.
 
-**A BLOCKER OF `CHAT_REEL_WRITER_ENABLED`, owed at the switch-on and not before**: RC-3 (#2049)
-merged the chat profile after #2098 branched, so `prepareQueuedChatReel` must pass `profile: 'chat'`
-and RC-3's 60 s cap before the switch is flipped. Nothing on this branch needs it while the switch is
-off.
+**RC-3 WIRED IN (2026-11-01)**: `prepareQueuedChatReel` (`utils/chat/prepareQueuedChatReel.ts`)
+reads the upload limits and `reel-limits` BEFORE the encoder runs, then prepares with
+`chatReelPrepareOptions` (`profile: 'chat'`, `maxSeconds` = the server's `chatMaxDurationMs` / 1000,
+the plaintext ceiling as `maxBytes`). **There is no fallback to the 90 s reel cap**: `chatMaxDurationMs`
+is REQUIRED in `ReelLimits` (served since 89a81ad7d5), and an answer without a usable one
+(`servedChatCapMs` is `null`) throws `ChatReelCapMissingError`. That error is ordinary, as is a cap that
+cannot be read at all (offline), so the outbox PARKS the take (kept, Retry) and it is never prepared
+without its cap. The chat camera arms its ring and checks a gallery pick against
+`captureCapMs(limits, 'chat')` (60 s); the feed and post destinations keep `maxDurationMs`. A chat
+answer without the cap is said at ERROR when the limits arrive, and the camera does not film (the
+"refused" fault). A take over the cap by more than the encoder's 0.5 s grace is `too long`: failed
+for good, as this section classifies it. Pinned by `chatReelWriter.test.ts`,
+`prepareQueuedChatReel.test.ts`, `outbox.reelResume.test.ts` (the cap unreadable: the real preparer
+parks the take) and `ReelCapture.svelte.test.ts` (60 s in a chat, 90 s in the feed).
 
 **Not built**: a caption on a reel (the review has no text field; "Envoyer" sends the take alone),
 preparing while the member reviews (RC-11), and a background upload a suspended app continues (the

@@ -49,6 +49,7 @@ import {
   serverErrorHoldMs,
   enqueueOutboxMessage,
   isOutboxEntryQueued,
+  OutboxEnqueueError,
   registerOutbox,
   unregisterOutbox,
   type OutboxController,
@@ -65,6 +66,7 @@ import {
   SendServerError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
+import { MessageWrittenError } from './messageWrittenError';
 import { toMirrorEntry } from './outboxMirror';
 import {
   MediaKind,
@@ -5264,5 +5266,150 @@ describe('a 2xx a captive portal answered is no answer (cross-client rig, 1.4.1-
     expect(conversations.get('g1')!.messages[0].status).toBe('sent');
     expect(conversations.get('g1')!.messages[0].serverTimestamp).toBeUndefined();
     expect(logs.some((l) => l.includes('sent, the server answered no receive time'))).toBe(true);
+  });
+});
+
+describe('an enqueue classifies its failure at the throw (review of #2843, M1)', () => {
+  it('a refusal BEFORE any write stays an OutboxEnqueueError, even for a caller that wrote the pair', async () => {
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage: null }));
+    const refused = outbox.enqueue(textEntry('m1', 'g1', 100), { alreadyDurable: true });
+    await expect(refused).rejects.toBeInstanceOf(OutboxEnqueueError);
+    await expect(refused).rejects.not.toBeInstanceOf(MessageWrittenError);
+  });
+
+  it('a failure AFTER its own durable write is a MessageWrittenError - the row is on disk', async () => {
+    const storage = makeStorage();
+    let keyReads = 0;
+    const deviceKey = () => {
+      // The write reads the key once; every read after it fails.
+      if (++keyReads > 1) throw new Error('key gone');
+      return 'device-key';
+    };
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, deviceKey }));
+    const failed = outbox.enqueue(textEntry('m1', 'g1', 100));
+    await expect(failed).rejects.toBeInstanceOf(MessageWrittenError);
+    await expect(failed).rejects.toMatchObject({ messageId: 'm1' });
+    expect(storage._map.has('m1')).toBe(true);
+  });
+
+  it('a failure after a pair the caller wrote is a MessageWrittenError', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const deviceKey = () => {
+      throw new Error('key gone');
+    };
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, deviceKey }));
+    await expect(
+      outbox.enqueue(textEntry('m1', 'g1', 100), { alreadyDurable: true })
+    ).rejects.toBeInstanceOf(MessageWrittenError);
+  });
+
+  it('with no controller, a pair the caller wrote is a written message; anything else a refusal', async () => {
+    unregisterOutbox();
+    await expect(
+      enqueueOutboxMessage(textEntry('m1', 'g1', 100), { alreadyDurable: true })
+    ).rejects.toBeInstanceOf(MessageWrittenError);
+    await expect(enqueueOutboxMessage(textEntry('m2', 'g1', 100))).rejects.toBeInstanceOf(
+      OutboxEnqueueError
+    );
+  });
+});
+
+describe('awaitSettled answers how the queue LEFT a message, never merely that it was queued (H1)', () => {
+  function setUp(send?: (...args: unknown[]) => Promise<void>) {
+    const storage = makeStorage();
+    const mlsService = makeMls({ send });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+    return { storage, mlsService, conversations, outbox };
+  }
+
+  it('sent: the attempt delivered it', async () => {
+    const { outbox } = setUp();
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+    await expect(outbox.awaitSettled('m1')).resolves.toBe('sent');
+  });
+
+  it('sent is not answered before the frame is on the server', async () => {
+    let deliver: () => void = () => {};
+    const { outbox } = setUp(() => new Promise<void>((r) => (deliver = r)));
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+    let answer: string | null = null;
+    void outbox.awaitSettled('m1').then((s) => (answer = s));
+    await outboxIdle();
+    expect(answer).toBeNull();
+    deliver();
+    await outboxIdle();
+    expect(answer).toBe('sent');
+  });
+
+  it('pending: a transport failure leaves it queued for a retry, and nothing running can move it', async () => {
+    const { outbox, storage } = setUp(async () => {
+      throw new TransportFailureError(new TypeError('Failed to fetch'));
+    });
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+    await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+    expect(storage._map.has('m1')).toBe(true);
+  });
+
+  it('pending: queued in a tab that does not encrypt, where no flush of its own runs', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    try {
+      const { outbox } = setUp();
+      await outbox.enqueue(textEntry('m1', 'g1', 100));
+      await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+    } finally {
+      isTabLeaderMock.mockReturnValue(true);
+    }
+  });
+
+  it('ENDS on a sign-out during the settle: dispose answers every waiter pending', async () => {
+    const { outbox } = setUp(() => new Promise<void>(() => {}));
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+    let answer: string | null = null;
+    void outbox.awaitSettled('m1').then((s) => (answer = s));
+    await outboxIdle();
+    expect(answer).toBeNull();
+    outbox.dispose();
+    await outboxIdle();
+    expect(answer).toBe('pending');
+    // And a waiter arriving after the dispose is answered at once.
+    await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+  });
+
+  it('ENDS when the only thing running is an exit drain: its lane answers on release', async () => {
+    let deliver: () => void = () => {};
+    const storage = makeStorage([textEntry('x1', 'leaving', 100), textEntry('m2', 'g2', 200)]);
+    const mlsService = makeMls({ send: () => new Promise<void>((r) => (deliver = r)) });
+    const conversations = new SvelteMap<string, Conversation>([
+      ['leaving', convoWith('leaving', ['x1'])],
+      ['g2', convoWith('g2', ['m2'])],
+    ]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+    const exit = outbox.drainForExit('leaving', 'leave');
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    // Registered while ONLY the exit's lane runs: no flush, no other lane.
+    let answer: string | null = null;
+    void outbox.awaitSettled('m2').then((s) => (answer = s));
+    await outboxIdle();
+    expect(answer).toBeNull();
+    deliver();
+    await exit;
+    await outboxIdle();
+    expect(answer).toBe('pending');
+  });
+
+  it('a waiter that arrives after the attempt reads what it left: the row', async () => {
+    const { outbox, conversations } = setUp();
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+    await outboxIdle();
+    await expect(outbox.awaitSettled('m1')).resolves.toBe('sent');
+    // Out of the queue unsent, its row failed: the page shows a failed message with its retry.
+    const convo = conversations.get('g1')!;
+    conversations.set('g1', {
+      ...convo,
+      messages: convo.messages.map((m) => ({ ...m, status: 'error' as const })),
+    });
+    await expect(outbox.awaitSettled('m1')).resolves.toBe('failed');
   });
 });
