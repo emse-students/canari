@@ -1328,5 +1328,33 @@ describe('ChannelService - the community distribution group', () => {
         false
       );
     });
+
+    /** The reader question of `mls/notify-reaction`: a PUBLIC salon reads too, unlike the entitlement. */
+    describe('isReaderOfChannel', () => {
+      it.each([
+        ["a private salon's reader", { channels: [salon] }],
+        ["a public salon's community member", { channels: [{ ...salon, isPrivate: false }] }],
+      ])('answers true for %s', async (_name, t) => {
+        const { service } = world({ members: [{ workspaceId: WORKSPACE, userId: USER }], ...t });
+
+        await expect(service.isReaderOfChannel('ch-1', USER)).resolves.toBe(true);
+      });
+
+      it.each([
+        [
+          'a stranger to the community',
+          { channels: [{ ...salon, isPrivate: false }], members: [] },
+        ],
+        [
+          'a community member the private salon does not admit',
+          { channels: [{ ...salon, allowedUsers: ['someone-else'] }] },
+        ],
+        ['anyone, for a salon that no longer exists', { channels: [] }],
+      ])('answers false for %s', async (_name, t) => {
+        const { service } = world({ members: [{ workspaceId: WORKSPACE, userId: USER }], ...t });
+
+        await expect(service.isReaderOfChannel('ch-1', USER)).resolves.toBe(false);
+      });
+    });
   });
 });

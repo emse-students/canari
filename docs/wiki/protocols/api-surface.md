@@ -166,7 +166,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | GET | `/api/mls/history/:groupId` | Incremental Redis Stream history |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
-| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push |
+| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push; a member of the conversation only ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
 
 ### Invitations / device sync
 

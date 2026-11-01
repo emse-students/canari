@@ -80,7 +80,6 @@
 ## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
 ## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
 ## P2 - A removed member whose leaf survived is re-added automatically by a link (review of #2358)
-## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
 ## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
 ## P3 - A joiner's device with no device row is never marked awaiting admission (review of #2442)
 ## P3 - A restored backup keeps a conversation's `awaitingAdmission: true` (review of #2442)

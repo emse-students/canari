@@ -65,7 +65,9 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
   const seatLocks: string[] = [];
   const groupRepo = {
     find: jest.fn().mockResolvedValue([]),
-    findOne: jest.fn().mockResolvedValue(null),
+    // The requester's conversation exists and they are seated in it (`seatedRoster` below): the
+    // history and base-refresh doors relay only for an admitted member.
+    findOne: jest.fn().mockResolvedValue({ id: 'g1' }),
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
@@ -88,6 +90,12 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
+  /** The roster: the requester holds an admitted seat in every group asked about. */
+  const seatedRoster = () => ({
+    ...emptyRepo(),
+    findOne: jest.fn().mockResolvedValue({ id: 'seat', awaitingAdmission: false }),
+  });
+
   const body = { groupId: 'g1', requesterUserId: 'reqU', requesterDeviceId: 'reqD' };
 
   beforeEach(async () => {
@@ -100,7 +108,7 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
+        { provide: getRepositoryToken(GroupMember), useValue: seatedRoster() },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },

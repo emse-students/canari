@@ -731,13 +731,31 @@ export async function assertCallerActsOnGroup(
   const standing = group ? await standingOnGroupOfKind(repos, group, groupId, callerUserId) : null;
   if (group && standing === 'admitted') return group;
   if (standing === 'awaiting') throw refuseAwaitingSeat(log, route, groupId, callerUserId);
+  throw refuseNotAMember(log, route, groupId, callerUserId, ` groupFound=${group !== null}`);
+}
+
+/**
+ * The refusal of a caller who holds no seat in the group a route names: the 403 `NOT_A_MEMBER`, with
+ * its WARN line at the 1st, 10th, 100th... refusal of one caller on one route of one group. THE ONE
+ * SHAPE of that refusal - {@link assertCallerActsOnGroup}'s, and a salon's whose roster is
+ * social-service's (`MessagingService.assertCallerReactsIn`) - so a client reads one answer.
+ *
+ * @param detail appended to the line as is: start it with a space.
+ */
+export function refuseNotAMember(
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string,
+  detail = ''
+): ForbiddenException {
   const nth = notAMemberRepeats.hit(`${route}|${groupId}|${callerUserId}`);
   if (nth !== null) {
     log.warn(
-      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)} groupFound=${group !== null} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
+      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)}${detail} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
     );
   }
-  throw new ForbiddenException(
+  return new ForbiddenException(
     refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
   );
 }

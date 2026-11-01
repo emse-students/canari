@@ -6,15 +6,18 @@ describe('InternalChannelReadController', () => {
   const env = { ...process.env };
   const advanceChannelReadMark = jest.fn();
   const markChannelRead = jest.fn();
+  const isReaderOfChannel = jest.fn();
   const controller = new InternalChannelReadController({
     advanceChannelReadMark,
     markChannelRead,
+    isReaderOfChannel,
   } as unknown as ChannelService);
 
   beforeEach(() => {
     process.env.INTERNAL_SECRET = 'shared-secret';
     advanceChannelReadMark.mockReset().mockResolvedValue({ at: 1_700_000_000_000 });
     markChannelRead.mockReset().mockResolvedValue(undefined);
+    isReaderOfChannel.mockReset();
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
@@ -80,5 +83,36 @@ describe('InternalChannelReadController', () => {
       ForbiddenException
     );
     expect(markChannelRead).not.toHaveBeenCalled();
+  });
+
+  describe('reader - the salon question of mls/notify-reaction', () => {
+    const SALON = '11111111-2222-4333-8444-555555555555';
+
+    it('answers true for a reader, asking with the canonical user id', async () => {
+      isReaderOfChannel.mockResolvedValue(true);
+      await expect(controller.reader('shared-secret', SALON, { userId: ' U-1 ' })).resolves.toEqual(
+        { reader: true }
+      );
+      expect(isReaderOfChannel).toHaveBeenCalledWith(SALON, 'u-1');
+    });
+
+    it('answers false for a non-reader, and says so', async () => {
+      isReaderOfChannel.mockResolvedValue(false);
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      await expect(controller.reader('shared-secret', SALON, { userId: 'u-2' })).resolves.toEqual({
+        reader: false,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('is not a reader'));
+    });
+
+    it('refuses a caller without the internal secret, and a question with no user', async () => {
+      await expect(controller.reader('wrong', SALON, { userId: 'u-1' })).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+      await expect(controller.reader('shared-secret', SALON, {})).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      expect(isReaderOfChannel).not.toHaveBeenCalled();
+    });
   });
 });

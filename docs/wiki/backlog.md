@@ -1453,16 +1453,6 @@ anyone, and an Add that carries no invitation generation never admits an awaitin
 who ever departed (`departed_and_undated`, the whole commit refused) - only a member's invitation,
 which says when it was decided, does; a leaf without a seat is the stray collector's ([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 
-## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
-
-`POST mls/history-request`, `POST mls/base-refresh-request` and `POST mls/notify-reaction` relay to
-a group's members without asking whether the caller holds a seat in it, admitted or not: anyone
-authenticated can make the members' devices answer, or notify them, in a group they are not in. The
-waiting seat of #2358 is only one such caller. Owed: the same caller predicate as the other routes
-(`callerSeatStanding`, `utils/group-membership.ts`), an integration case per route, and a look at
-what an older client sends there before it is refused -
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
-
 ## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
 
 Every call route refuses a seat awaiting a member's admission (409) and the ring's callees are

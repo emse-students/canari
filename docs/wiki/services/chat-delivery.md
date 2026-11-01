@@ -1415,12 +1415,34 @@ group names nobody. The client removes exactly those leaves
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device. A target device no key package names (revoked, or never registered) is `404 WELCOME_TARGET_UNKNOWN` (`error: 'welcome_target_unknown'`), one `warn` decision line; a target off the roster is `403 WELCOME_TARGET_NOT_MEMBER`. Until 2026-10-25 the first was a bare `Error`, a 500 with a stack (DEV-3) |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/history-request` | Elect one online member to answer a history request; admitted member only ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
+| POST | `/api/mls/base-refresh-request` | Elect one online member to republish the external-join base; admitted member only ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
 | POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |
 | GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head`. Both history routes drop every row inside the READER's `withheld` windows - the gaps, and in a group conversation the span before their arrival ([history-reconciliation](../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)) |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
-| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push |
+| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push to the message's author; a member of the conversation only ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
+
+#### The relay routes ask the group (2026-11-01)
+
+`history-request`, `base-refresh-request` and `notify-reaction` make another member's device act, or
+ring its owner, on their caller's word. Until 2026-11-01 they asked only who the caller was, never
+whether that person sat in the group named (re-review of #2358). Each now goes through the gate every
+route keyed by a group id shares, [`assertCallerActsOnGroup`](#group-management), before anything is
+read from the routing set or pushed: an admitted member passes; no seat (never a member, removed, an
+absent or tombstoned group) is the 403 `NOT_A_MEMBER`; a seat awaiting a member's admission is the 409
+`awaiting_admission`. Their callers are members by construction - a device asks for history or a base
+refresh only for a conversation it holds a seat in (`historyReconcile.ts`, `recovery.ts`, which skip
+key-distribution groups), and a waiting seat cannot read a base to find it stale - and every client
+reads a non-2xx on these as "no answer" (`deliveryKeepalivePost`), never as a membership verdict.
+
+A reaction has a second kind of conversation: a SALON's push names `groupId = channel_<id>`, which is
+no group of this service. Its roster is social-service's, so `assertCallerReactsIn` asks
+`POST /api/internal/channels/:channelId/reader` (`isSalonReader`, `internal/distribution-entitlement.ts`)
+- a public salon's community member or a private salon's reader - and turns `false` into the same 403.
+An unanswered question is the retryable 503, never a refusal; an id that is neither a salon nor a uuid
+is the unknown group's 403. Pinned per route by `messaging.controller.relay-membership.spec.ts`.
 
 **A history walk is bounded by the head it was given.** `until` is an INCLUSIVE upper bound used as
 the `XRANGE` end in place of `+`; the head is read (one `XREVRANGE ... COUNT 1`) only when the caller

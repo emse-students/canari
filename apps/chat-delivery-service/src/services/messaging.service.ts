@@ -59,6 +59,8 @@ import {
   type DistributionScope,
   distributionScopeOf,
   isEntitledToDistributionGroup,
+  isSalonReader,
+  salonIdOf,
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
@@ -70,6 +72,7 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  refuseNotAMember,
   dateArrivalAtAdmission,
   exclusionWindows,
   openMissingIntervals,
@@ -134,6 +137,7 @@ import {
   isUnresolvedIdentity,
   canonicalDeviceKey,
   canonicalLeafIdentity,
+  canonicalUserId,
 } from '../utils/sanitize';
 import {
   HISTORY_STREAM_MAXLEN,
@@ -3983,6 +3987,37 @@ export class MessagingService {
   }
 
   /**
+   * Refuses unless `userId` is a member of the conversation a reaction was placed in - the gate of
+   * `mls/notify-reaction`, which pushes to another person on its caller's word.
+   *
+   * Two kinds of conversation reach it, and each is asked of the party that holds its roster: a
+   * DM or group (a uuid) goes through {@link assertCallerActsOnGroup} like every route keyed by a
+   * group id; a SALON (`channel_<id>`, {@link salonIdOf}) is no group of this service, so its reader
+   * question goes to social-service ({@link isSalonReader}), and a refusal there is the same 403
+   * `NOT_A_MEMBER`. Social-service unreachable is the retryable 503, never a refusal.
+   */
+  async assertCallerReactsIn(groupId: string, userId: string): Promise<void> {
+    const salon = salonIdOf(groupId);
+    if (salon === null) {
+      // An id that is neither a salon nor a uuid names no conversation: the unknown group's 403,
+      // never the 500 a uuid column answers a string it refuses (22P02).
+      if (!isGroupUuid(groupId)) {
+        throw refuseNotAMember(
+          this.logger,
+          'NOTIFY_REACTION',
+          groupId,
+          userId,
+          ' groupFound=false'
+        );
+      }
+      await this.assertCallerActsOnGroup('NOTIFY_REACTION', groupId, userId);
+      return;
+    }
+    if (await isSalonReader(salon, userId, this.makeTraceId('reaction'))) return;
+    throw refuseNotAMember(this.logger, 'NOTIFY_REACTION', groupId, userId, ' salon=true');
+  }
+
+  /**
    * Whether `userId` is a member of `groupId`, asked of the table that records membership for that
    * kind of group (see `memberOfGroupKind`). An unknown group has no members.
    */
@@ -5501,6 +5536,7 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'HISTORY_REQ');
+    await this.assertCallerActsOnGroup('HISTORY_REQ', groupId, canonicalUserId(requesterUserId));
 
     // Members this requester has already heard from. Compared case-insensitively because the client
     // builds the key from its MLS identity (`digestIdentity`, which lower-cases the user) while the
@@ -5687,6 +5723,7 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'BASE_REFRESH');
+    await this.assertCallerActsOnGroup('BASE_REFRESH', groupId, canonicalUserId(requesterUserId));
 
     const members = await this.routableMembers(groupId, traceId, 'BASE_REFRESH');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
