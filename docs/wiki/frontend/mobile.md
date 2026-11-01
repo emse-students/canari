@@ -1284,6 +1284,28 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
+**A salon banner names its speaker (2026-11-01), the iOS half of Android's `ChannelBannerAuthor`.**
+Both Apple composers (the NSE's `handleChannelMessage`, `canari_push.mm`'s `CanariHandleChannelMessage`)
+used to set no author subtitle except on a mention of the reader, and to draw the SALON's letter
+whenever the face was missing - the shape the owner read on Android `v1.6.0` ("G" for `#général`).
+One rule per composer now (the NSE's `channelBannerAuthor`, `CanariSalonSpeaker`), with the same
+three answers and reason codes as Android:
+
+- **Named**: the open PROVED the author - the native answer's `authorProven`, `true` only under a
+  v2 session (`background.rs` `open_graine_push`) - and `display_names.json` names them. The
+  subtitle is their name (or "<name> vous a mentionné" on a mention), the image their face or their
+  initials.
+- **Unnamed**: a v1 session (`v1-session`: it opens for whoever the push names), a push naming
+  nobody, or a proven author the file has no name for. The subtitle is "Quelqu'un", the image the
+  "?" disc, **no photo**, and the mention line names nobody either.
+- **Unproven**: a blind banner. No subtitle, the "?" disc.
+- **One log line**, `[SALON_AUTHOR] author UNNAMED reason=...`, prefixed `WARN` only for a fault
+  (`unreadable`, `no-sender-id`, `no-account`); the names read is not logged a second time.
+
+An older native library answers without `authorProven`, which reads as not proven: such a build
+names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
+reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+
 #### What the extension did, in the app's log (2026-11-01)
 
 **Reported by the owner from a real user on iOS 1.5.3: iPhone notifications show no content, and the

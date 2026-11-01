@@ -1538,6 +1538,9 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     var body: String?
+    // Whether the open PROVED the author (`authorProven`: a v2 session's minter and signature
+    // checked). A v1 row opens for whoever the push names, so its author is never named.
+    var authorProven = false
     // Read once: the app language Rust words its own sentences in, and the id a mention may name.
     let ctx = loadPushContext()
     let openable = !ciphertext.isEmpty && !nonce.isEmpty && messageIndex != nil
@@ -1567,6 +1570,7 @@ class NotificationService: UNNotificationServiceExtension {
         let json = String(cString: raw)
         canari_free_string(raw)
         body = Self.parseDecryptedText(json)
+        authorProven = body != nil && Self.parseAuthorProven(json)
         if body == nil {
           NSLog(
             "[CanariNSE] handleChannelMessage: not opened reason=\(Self.refusalReason(json) ?? "none") channel=\(channelId) session=\(sessionId)"
@@ -1617,18 +1621,42 @@ class NotificationService: UNNotificationServiceExtension {
         "[CanariNSE] handleChannelMessage: blind banner -> no author, no mention (server named sender=\(senderId.prefix(8)) mentioned=\(serverSaysMentioned)) channel=\(channelId)"
       )
     }
-    // The phone's names, read at most once for this banner: the author line and the tokens share it.
-    let nameBook = Self.mentionNameBook(myUserId: ctx?.userId)
+    // The phone's names, read at most once for this banner: the speaker, the author line and the
+    // tokens share it. The read keeps its reason, which the speaker's accusing line names.
+    let namesRead = Self.displayNamesReader(myUserId: ctx?.userId)
+    let nameBook: () -> [String: Any]? = { namesRead().names }
     content.body =
       body.map {
         Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale, nameBook: nameBook)
       }
       ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
-    // A salon banner names no author (its title is the salon), so a mention of this reader says WHO
-    // in the subtitle - the Android twin puts the same line above the body (WP-MENTION-NAME).
+    // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
+    // `channelBannerAuthor`. Until 2026-11-01 the salon stood in as the "sender": no author named,
+    // and the SALON's letter drawn as a face (the defect the owner read on Android `v1.6.0`).
+    let author = Self.channelBannerAuthor(
+      showsMessage: body != nil, authorProven: authorProven, authorId: attribution.authorId,
+      book: namesRead)
+    switch author {
+    case .named(_, let name):
+      content.subtitle = name
+    case .unnamed(let id, let reason):
+      // ONE LINE, and "WARN" only for a fault (`salonAuthorAccuses`): a v1 session or a name the
+      // app has not resolved yet is an ordinary state.
+      let level = Self.salonAuthorAccuses(reason) ? "WARN " : ""
+      NSLog(
+        "[CanariNSE] [SALON_AUTHOR] \(level)author UNNAMED reason=\(reason) author=\(id.prefix(8)) channel=\(channelId) -> 'someone' and a '?' disc"
+      )
+      content.subtitle = Self.someoneCapitalised(locale: ctx?.locale)
+    case .unproven:
+      break
+    }
+    // A mention of this reader says WHO and "you" in the subtitle - the Android twin puts the same
+    // line above the body (WP-MENTION-NAME). It names the speaker too, so it replaces the name.
+    // Named from the book only for a NAMED speaker: a v1 author is the server's claim.
     if mentionsMe {
       content.subtitle = Self.mentionAuthorLine(
-        senderId: senderId, nameBook: nameBook, locale: ctx?.locale)
+        senderId: Self.salonDrawsFace(author) ? senderId : "", nameBook: nameBook,
+        locale: ctx?.locale)
     }
     content.threadIdentifier = "channel_\(channelId)"
     if let link = Self.chatLink(channelId, prefix: "channel_") { content.userInfo["deepLink"] = link }
@@ -1642,15 +1670,17 @@ class NotificationService: UNNotificationServiceExtension {
     // The sender's face, exactly as the MLS path and both Android paths do it, once the open proved
     // who the sender is. No media thumbnail: WP-XP-3 is MLS-only.
     var attachedFace = false
-    if let ctx = ctx, let authorId = attribution.authorId,
+    // A FACE ONLY FOR A NAMED SPEAKER: a photo beside "Someone" would name them by the back door.
+    if let ctx = ctx, let authorId = attribution.authorId, Self.salonDrawsFace(author),
       let avatarUrl = fetchAvatar(ctx: ctx, userId: authorId)
     {
       attachedFace = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
     }
-    // The SALON's letter, not the composed title's - `<Communaute> - #<salon>` would draw the
-    // community, or a `#`. Android's channel path makes the same choice for the same reason.
+    // The SPEAKER's letter, "?" for anybody else - never the salon's, and never the composed
+    // title's, whose `<Communaute> - #<salon>` would draw the community or a `#`. Android's channel
+    // path makes the same choice (`ChannelBannerAuthor`).
     if !attachedFace {
-      attachInitials(content: content, name: channelName)
+      attachInitials(content: content, name: Self.salonInitialsSource(author))
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
@@ -1811,29 +1841,121 @@ class NotificationService: UNNotificationServiceExtension {
     let name = id.isEmpty ? nil : (nameBook()?[id] as? String).flatMap { $0.isEmpty ? nil : $0 }
     NSLog("[CanariNSE] [MENTION_NAME] author named=\(name != nil)")
     // The placeholder opens the sentence in both languages, so the word is capitalised there.
-    let someone = localized("notif.mention.someone", locale: locale)
-    let who = name ?? (someone.prefix(1).uppercased() + someone.dropFirst())
+    let who = name ?? someoneCapitalised(locale: locale)
     return localizedFormat("notif.social.mention.title", who, locale: locale)
   }
 
-  /// The `names` map of `display_names.json` in the App Group, or nil when it cannot be used:
-  /// absent, unreadable, or written for another account than `myUserId` (one file per install, and
-  /// two accounts may sign in on one phone).
-  private static func loadMentionNames(myUserId: String?) -> [String: Any]? {
-    guard let me = myUserId, let dir = appGroupDir() else { return nil }
-    guard let data = try? Data(contentsOf: dir.appendingPathComponent("display_names.json")) else {
-      NSLog("[CanariNSE] [MENTION_NAME] no display_names.json - every other mention is 'someone'")
-      return nil
-    }
+  /// One read of `display_names.json` in the App Group for `myUserId`: the `names` map, or nil with
+  /// WHY in `unusable` - `no-account`, `no-name-file`, `unreadable`, `other-account`, `no-names` (the
+  /// codes of Android's `readDisplayNames`). Says nothing: `logDisplayNamesRead` speaks for it. One
+  /// file per install, and two accounts may sign in on one phone, hence the owner check.
+  static func readDisplayNames(myUserId: String?) -> (names: [String: Any]?, unusable: String?) {
+    guard let me = myUserId, !me.isEmpty else { return (nil, "no-account") }
+    guard let dir = appGroupDir(),
+      let data = try? Data(contentsOf: dir.appendingPathComponent("display_names.json"))
+    else { return (nil, "no-name-file") }
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      NSLog("[CanariNSE] [MENTION_NAME] display_names.json unreadable")
-      return nil
+      return (nil, "unreadable")
     }
-    guard (root["userId"] as? String)?.lowercased() == me else {
-      NSLog("[CanariNSE] [MENTION_NAME] display_names.json belongs to another account - not used")
-      return nil
+    guard (root["userId"] as? String)?.lowercased() == me else { return (nil, "other-account") }
+    guard let names = root["names"] as? [String: Any] else { return (nil, "no-names") }
+    return (names, nil)
+  }
+
+  /// Logs why a read of `display_names.json` names nobody, under `label`; returns the read.
+  @discardableResult
+  private static func logDisplayNamesRead(
+    _ read: (names: [String: Any]?, unusable: String?), label: String
+  ) -> (names: [String: Any]?, unusable: String?) {
+    switch read.unusable {
+    case "no-name-file":
+      NSLog("[CanariNSE] \(label) no display_names.json - nobody is named")
+    case "unreadable":
+      NSLog("[CanariNSE] \(label) display_names.json unreadable")
+    case "other-account":
+      NSLog("[CanariNSE] \(label) display_names.json belongs to another account - not used")
+    case "no-names":
+      NSLog("[CanariNSE] \(label) display_names.json names nobody (no-names)")
+    default:
+      break
     }
-    return root["names"] as? [String: Any]
+    return read
+  }
+
+  /// The phone's names for one banner WITH the reason they may be missing, read on the first call
+  /// only - the salon path's twin of `mentionNameBook`. Not logged here: the ONE `[SALON_AUTHOR]`
+  /// line says the reason, so a read never prints twice.
+  private static func displayNamesReader(myUserId: String?)
+    -> () -> (names: [String: Any]?, unusable: String?)
+  {
+    var cached: (names: [String: Any]?, unusable: String?)?
+    return {
+      if let read = cached { return read }
+      let read = Self.readDisplayNames(myUserId: myUserId?.lowercased())
+      cached = read
+      return read
+    }
+  }
+
+  /// The `names` map of `display_names.json` in the App Group, or nil when it cannot be used - see
+  /// `readDisplayNames`, whose reason is logged here for the mention renderers.
+  private static func loadMentionNames(myUserId: String?) -> [String: Any]? {
+    logDisplayNamesRead(readDisplayNames(myUserId: myUserId), label: "[MENTION_NAME]").names
+  }
+
+  /// "Someone", capitalised: the word opens the sentence (or stands alone) where it is used.
+  private static func someoneCapitalised(locale: String?) -> String {
+    let someone = localized("notif.mention.someone", locale: locale)
+    return someone.prefix(1).uppercased() + someone.dropFirst()
+  }
+
+  /// Who a salon banner names as its speaker (2026-11-01). Twins: Android `ChannelBannerAuthor` and
+  /// `canari_push.mm`'s `CanariSalonSpeaker` - the same three answers and reason codes.
+  enum SalonAuthor: Equatable {
+    /// Nothing was opened (a blind banner): no speaker, the "?" disc.
+    case unproven
+    /// The author a v2 open PROVED, named from the phone's own copy, never from the push.
+    case named(id: String, name: String)
+    /// Opened, but the author cannot be named: a v1 session (which proves no author), or a proven
+    /// author the phone has no name for. "Someone", the "?" disc, no face.
+    case unnamed(id: String, reason: String)
+  }
+
+  /// - Parameters:
+  ///   - showsMessage: whether the banner's body IS the decrypted text.
+  ///   - authorProven: the native open's `authorProven` - true only under a v2 session.
+  ///   - authorId: `channelBannerAttribution`'s author - the push's `senderId` once opened.
+  ///   - book: the phone's names, read only when an author must be named.
+  static func channelBannerAuthor(
+    showsMessage: Bool, authorProven: Bool, authorId: String?,
+    book: () -> (names: [String: Any]?, unusable: String?)
+  ) -> SalonAuthor {
+    guard showsMessage else { return .unproven }
+    let id = (authorId ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+    guard !id.isEmpty else { return .unnamed(id: "", reason: "no-sender-id") }
+    guard authorProven else { return .unnamed(id: id, reason: "v1-session") }
+    let read = book()
+    guard let names = read.names else { return .unnamed(id: id, reason: read.unusable ?? "no-names") }
+    let name = (names[id] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+    return name.isEmpty ? .unnamed(id: id, reason: "not-in-name-book") : .named(id: id, name: name)
+  }
+
+  /// Whether an unnamed reason is a FAULT (said with "WARN"): an unreadable name file, an opened push
+  /// naming nobody, no push context. The rest are states a banner ordinarily meets.
+  static func salonAuthorAccuses(_ reason: String) -> Bool {
+    ["unreadable", "no-sender-id", "no-account"].contains(reason)
+  }
+
+  /// The text the initials disc is drawn from: the speaker's name, else nothing (the "?" disc).
+  static func salonInitialsSource(_ author: SalonAuthor) -> String {
+    if case .named(_, let name) = author { return name }
+    return ""
+  }
+
+  /// Whether the banner may draw the speaker's photo: only a NAMED speaker has a face.
+  static func salonDrawsFace(_ author: SalonAuthor) -> Bool {
+    if case .named = author { return true }
+    return false
   }
 
   /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
@@ -2286,6 +2408,15 @@ class NotificationService: UNNotificationServiceExtension {
   /// Convenience for the channel path, which needs only the preview text.
   private static func parseDecryptedText(_ json: String?) -> String? {
     parseDecrypted(json)?.text
+  }
+
+  /// The salon open's `authorProven` (`background.rs` `open_graine_push`): true only under a v2
+  /// session. Absent - an older native library - reads as not proven, which names nobody.
+  private static func parseAuthorProven(_ json: String?) -> Bool {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return false }
+    return (dict["authorProven"] as? Bool) == true
   }
 
   /// Maps a media MIME type to a file extension so iOS infers the attachment type.

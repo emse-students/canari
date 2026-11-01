@@ -457,7 +457,7 @@ describe('Mention tokens in a native banner', () => {
     expect(objc).toMatch(
       /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook\);/
     );
-    expect(objc).toMatch(/shownMentionsMe, channelName, YES, NO\);/);
+    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO\);/);
     expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES\);/);
   });
 

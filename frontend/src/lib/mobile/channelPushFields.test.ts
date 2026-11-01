@@ -324,7 +324,7 @@ describe('channel push payload contract (social-service writer vs the three nati
     ]);
     onlyThrough(swiftChannelOnly, /\blet mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
       'let mentionsMe = attribution.mentionsMe',
-      'let authorId = attribution.authorId,\n      let avatarUrl = fetchAvatar(',
+      'let authorId = attribution.authorId, Self.salonDrawsFace(author),\n      let avatarUrl = fetchAvatar(',
       'if mentionsMe {\n      content.subtitle = Self.mentionAuthorLine(',
     ]);
 
@@ -337,7 +337,7 @@ describe('channel push payload contract (social-service writer vs the three nati
     // The salon caller decided the mention, so the shared builder must not re-derive it by scanning
     // a body whose blind form carries the server's salon name (the last `NO`).
     expect(objcHandler).toMatch(
-      /CanariShowMessageNotification\(displayName, @"", body, conversationId, shownSenderId, nil,\s*shownMentionsMe, channelName, YES, NO\);/
+      /CanariShowMessageNotification\(speaker \?: displayName, speaker != nil \? displayName : @"", body,\s*conversationId, speakerId, nil, shownMentionsMe,\s*initialsName, YES, NO\);/
     );
     expect(objcSource).toContain(
       'if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {'
