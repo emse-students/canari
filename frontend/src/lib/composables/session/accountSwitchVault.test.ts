@@ -63,14 +63,14 @@ function mlsBinIsAlices(): void {
     if (args?.deviceKeyB64 !== ALICES_KEY) {
       return Promise.reject({
         code: 'STATE_UNDECRYPTABLE',
-        message: 'STATE_UNDECRYPTABLE: aead::Error',
+        message: 'aead::Error',
       });
     }
     return currentUser === ALICE
       ? Promise.resolve(undefined)
       : Promise.reject({
           code: 'IDENTITY_MISMATCH',
-          message: `IDENTITY_MISMATCH: expected ${currentUser} but state contains ${ALICE}`,
+          message: `expected ${currentUser} but state contains ${ALICE}`,
         });
   });
 }

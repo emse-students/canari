@@ -28,10 +28,11 @@ import {
   wasmGraineSignatureEngine,
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
-  noPinOpensState,
+  recoveryOfStateLoadFailure,
   VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { MlsStateLoadUntypedError } from '$lib/mls-client/mlsStateLoadError';
 import {
   heldLastResortKeyPackage,
   mintKeyPackages,
@@ -913,17 +914,23 @@ export class WebMlsService extends BaseMlsService {
         throw new SavedStateUnopenedError('unreadable_now', e);
       }
 
-      if (noPinOpensState(cause) || state != null) {
-        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR - same
-        // reasoning as `TauriMlsService`, and the same reason it is written as a negation: `unknown`
-        // must not be rotated away. The browser keeps one state per account, so it has no owner
-        // record to consult.
-        if (opts?.noFreshStart && !noPinOpensState(cause)) {
-          throw new SavedStateUnopenedError(
-            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
-            e
-          );
-        }
+      // THE SAME ONE DECISION AS `TauriMlsService` (`recoveryOfStateLoadFailure`): `unknown` and an
+      // empty keystore are never rotated away, whatever the caller passed. The browser keeps one
+      // state per account, so it has no owner record to consult.
+      const recovery = recoveryOfStateLoadFailure(
+        cause,
+        state != null,
+        opts?.noFreshStart === true
+      );
+      if (recovery === 'pause') {
+        console.info(
+          `[MLS] The saved state did not open (${cause}) - nothing rotated, nothing written; the gate asks next`
+        );
+        throw new SavedStateUnopenedError(
+          cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
+          e
+        );
+      } else if (recovery === 'rotate') {
         if (cause === 'altered') {
           console.error(
             `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
@@ -936,7 +943,9 @@ export class WebMlsService extends BaseMlsService {
             : `loaded state unusable (${cause}): ${String(e).slice(0, 200)}`
         );
       } else {
-        console.error('[MLS] WASM init failed:', e);
+        // ONE LINE PER FAILURE: an untyped refusal was already accused at its boundary
+        // (`mlsStateLoadErrorOf`), and a second line here was the same failure logged twice.
+        if (!(e instanceof MlsStateLoadUntypedError)) console.error('[MLS] WASM init failed:', e);
         throw e;
       }
     }

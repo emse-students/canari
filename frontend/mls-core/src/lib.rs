@@ -274,7 +274,7 @@ impl MlsError {
     /// reads by TYPE; anything outside it is "unknown" there, accused and never guessed from text.
     pub fn state_load_code(&self) -> Option<&'static str> {
         match self {
-            MlsError::KeystoreKeyUnavailable(_) => Some("KEYSTORE_KEY_UNAVAILABLE"),
+            MlsError::KeystoreKeyUnavailable(_) => Some(KEYSTORE_KEY_UNAVAILABLE),
             other => other.state_verdict_code(),
         }
     }
@@ -299,6 +299,20 @@ pub struct StateLoadRefusal {
     /// so carrying it here too printed it twice (`STATE_ALTERED: STATE_ALTERED: ...`). An untyped
     /// refusal keeps the whole `Display`, the only text it has.
     pub message: String,
+}
+
+/// The code of [`MlsError::KeystoreKeyUnavailable`] across a boundary - one constant, so the code
+/// written ([`MlsError::state_load_code`]) and the code tested
+/// ([`StateLoadRefusal::is_keystore_key_unavailable`]) cannot drift apart.
+const KEYSTORE_KEY_UNAVAILABLE: &str = "KEYSTORE_KEY_UNAVAILABLE";
+
+impl StateLoadRefusal {
+    /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
+    /// wiped entry) - an EXPECTED outcome the caller answers with the PIN modal, read from the
+    /// `code` field, never from `message`.
+    pub fn is_keystore_key_unavailable(&self) -> bool {
+        self.code == Some(KEYSTORE_KEY_UNAVAILABLE)
+    }
 }
 
 impl From<MlsError> for StateLoadRefusal {

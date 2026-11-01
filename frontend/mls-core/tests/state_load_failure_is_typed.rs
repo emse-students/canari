@@ -346,6 +346,18 @@ fn a_state_load_refusal_carries_its_code_from_the_variant_and_never_from_the_tex
     let prose = MlsError::OpenMls("STATE_ALTERED: in a sentence".into());
     assert_eq!(prose.state_load_code(), None);
     assert_eq!(StateLoadRefusal::from(prose).code, None);
+    // The empty keystore is told apart by its CODE, never by text that names it.
+    assert!(
+        StateLoadRefusal::from(MlsError::KeystoreKeyUnavailable("x".into()))
+            .is_keystore_key_unavailable()
+    );
+    assert!(
+        !StateLoadRefusal::from(MlsError::StateAltered("x".into())).is_keystore_key_unavailable()
+    );
+    assert!(
+        !StateLoadRefusal::from("KEYSTORE_KEY_UNAVAILABLE: a String".to_string())
+            .is_keystore_key_unavailable()
+    );
     // An untyped refusal keeps its whole `Display`: it has no code field to lead its log line.
     let untyped = MlsError::OpenMls("a codec error".into());
     let shown = untyped.to_string();

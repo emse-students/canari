@@ -277,13 +277,15 @@ describe('loadAndInitWasm', () => {
     async (code) => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
       WasmMlsClient.mockImplementationOnce(function refused() {
-        throw { code, message: `${code}: from mls-core` };
+        // The real shape: the code is the field, the message its detail alone (`StateLoadRefusal`).
+        throw { code, message: 'from mls-core' };
       });
       const error = await loadAndInitWasm('u', 'd', new Uint8Array([1, 2, 3]), 'k', true).catch(
         (e: unknown) => e
       );
       expect(error).toBeInstanceOf(MlsStateVerdictError);
       expect((error as MlsStateVerdictError).code).toBe(code);
+      expect((error as Error).message).toBe(`${code}: from mls-core`);
     }
   );
 

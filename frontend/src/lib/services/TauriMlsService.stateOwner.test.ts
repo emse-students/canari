@@ -15,6 +15,7 @@ import {
   SavedStateUnopenedError,
 } from '$lib/mls-client';
 import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
+import { KeystoreKeyUnavailableError } from '$lib/mls-client/mlsStateLoadError';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -48,15 +49,15 @@ const PAUSE_FOR_PIN = { noFreshStart: true, stateOnDisk: true, legacyPin: '1234'
 type StateLoadRefusal = { code: string | null; message: string };
 const ALTERED: StateLoadRefusal = {
   code: 'STATE_ALTERED',
-  message: 'STATE_ALTERED: v1 tag did not verify under the key its header names',
+  message: 'v1 tag did not verify under the key its header names',
 };
 const ROTATED: StateLoadRefusal = {
   code: 'STATE_KEY_MISMATCH',
-  message: "STATE_KEY_MISMATCH: the state's header names a different device key",
+  message: "the state's header names a different device key",
 };
 const UNDECRYPTABLE: StateLoadRefusal = {
   code: 'STATE_UNDECRYPTABLE',
-  message: 'STATE_UNDECRYPTABLE: aead::Error',
+  message: 'aead::Error',
 };
 
 /** `initialiser_mls` refuses with `loadError`; `mls_state_owner` answers `owner`. */
@@ -162,6 +163,52 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     expect(rotate).not.toHaveBeenCalled();
     expect(calls('initialiser_mls')).toBe(1);
   });
+});
+
+/**
+ * A DESTRUCTIVE REPAIR IS GATED ON KNOWING THE STATE IS BROKEN, WHATEVER THE CALLER PASSES. With
+ * `mls.bin` on disk, a refused biometric sheet (`KEYSTORE_KEY_UNAVAILABLE`) and an untyped failure
+ * prove nothing about its bytes: nothing is rotated or written, with or without `noFreshStart` -
+ * before 2026-11-01 an `unknown` cause still rotated when the caller had not set it.
+ */
+describe('TauriMlsService init - a cause that proves nothing destroys nothing', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  it.each([{ stateOnDisk: true }, { stateOnDisk: true, noFreshStart: true }])(
+    'a keystore refusal with a state on disk reaches the PIN modal typed, nothing rotated (%o)',
+    async (opts) => {
+      disk({ code: 'KEYSTORE_KEY_UNAVAILABLE', message: 'the sheet was cancelled' }, BOB);
+      const { svc, rotate } = makeService();
+
+      const err = await settle(svc._initImpl(BOB, '', undefined, opts));
+
+      expect(err).toBeInstanceOf(KeystoreKeyUnavailableError);
+      expect(rotate).not.toHaveBeenCalled();
+      expect(calls('initialiser_mls')).toBe(1);
+      expect(calls('sauvegarder_mls_et_persister')).toBe(0);
+    }
+  );
+
+  it.each([{ stateOnDisk: true }, { stateOnDisk: true, noFreshStart: true }])(
+    'an untyped failure with a state on disk pauses as `unknown`, nothing rotated (%o)',
+    async (opts) => {
+      disk({ code: null, message: 'Failed to lock state' }, BOB);
+      const { svc, rotate } = makeService();
+
+      const err = await settle(svc._initImpl(BOB, KEY, undefined, opts));
+
+      expect(err).toBeInstanceOf(SavedStateUnopenedError);
+      expect((err as SavedStateUnopenedError).reason).toBe('unknown');
+      expect(rotate).not.toHaveBeenCalled();
+      expect(calls('sauvegarder_mls_et_persister')).toBe(0);
+    }
+  );
 });
 
 /**

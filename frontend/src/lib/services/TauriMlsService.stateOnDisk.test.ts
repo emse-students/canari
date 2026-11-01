@@ -92,7 +92,7 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
       cmd === 'initialiser_mls'
         ? Promise.reject({
             code: 'STATE_UNDECRYPTABLE',
-            message: 'STATE_UNDECRYPTABLE: aead::Error',
+            message: 'aead::Error',
           })
         : Promise.resolve(undefined)
     );
@@ -113,7 +113,7 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
       return attempts === 1
         ? Promise.reject({
             code: 'STATE_UNDECRYPTABLE',
-            message: 'STATE_UNDECRYPTABLE: aead::Error',
+            message: 'aead::Error',
           })
         : Promise.resolve(undefined);
     });
@@ -138,7 +138,7 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
       if (cmd !== 'initialiser_mls') return Promise.resolve(undefined);
       attempts += 1;
       return attempts === 1
-        ? Promise.reject({ code: 'IDENTITY_MISMATCH', message: 'IDENTITY_MISMATCH: u:a vs u:b' })
+        ? Promise.reject({ code: 'IDENTITY_MISMATCH', message: 'u:a vs u:b' })
         : Promise.resolve(undefined);
     });
 

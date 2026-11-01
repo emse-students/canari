@@ -77,6 +77,20 @@ describe('TauriMlsService - initialiser_mls refusals are typed at the invoke bou
     }
   );
 
+  it.each([
+    'STATE_ALTERED',
+    'STATE_KEY_MISMATCH',
+    'STATE_UNDECRYPTABLE',
+    'IDENTITY_MISMATCH',
+    'KEYSTORE_KEY_UNAVAILABLE',
+  ] as const)('the code %s appears ONCE in the typed error, leading it', async (code) => {
+    // The real wire shape: `mls-core` sends the variant's detail without its code.
+    initRejects({ code, message: 'the detail' });
+    const error = (await loadError(makeService())) as Error;
+    expect(error.message).toBe(`${code}: the detail`);
+    expect(error.message.split(code)).toHaveLength(2);
+  });
+
   it('maps KEYSTORE_KEY_UNAVAILABLE to its type, which the login reads', async () => {
     initRejects({ code: 'KEYSTORE_KEY_UNAVAILABLE', message: 'no key' });
     const svc = makeService();

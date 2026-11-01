@@ -10,7 +10,7 @@ import {
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
   SavedStateOfAnotherAccountError,
-  noPinOpensState,
+  recoveryOfStateLoadFailure,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   isMlsManagerAbsent,
@@ -786,17 +786,12 @@ export class TauriMlsService extends BaseMlsService {
         throw new VaultOwnerUnprovenError(refusal);
       }
 
-      // No key in the keystore (a cancelled or refused sheet, a wiped entry) says nothing about
-      // the saved state and is recoverable - the user just needs to enter their PIN. Do NOT
-      // destroy the device identity: let the error propagate to the PIN modal.
-      const isKeystoreEmpty = cause === 'keystore_unavailable';
-
       // A snapshot written before v0.11.0 sits in the Argon2id envelope and cannot decrypt with
       // the device key, which is indistinguishable here from a key rotated on another device.
       // Retry once letting Rust try that envelope: on success it re-seals and persists mls.bin.
       // Must not `return` on success - the push-context write below this block still has to run.
       let migrated = false;
-      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin && !isKeystoreEmpty) {
+      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin) {
         try {
           await this.invokeInit(deviceKeyB64, state, opts.legacyPin, opts.stateOnDisk);
           migrated = true;
@@ -814,24 +809,27 @@ export class TauriMlsService extends BaseMlsService {
         }
       }
 
-      if (migrated) {
+      // ONE DECISION FOR BOTH PLATFORMS (`recoveryOfStateLoadFailure`): anything no PIN can open
+      // is rotated; a PIN rotated elsewhere pauses under `noFreshStart`; and a cause that proves
+      // nothing about the bytes - `unknown`, or an empty keystore (a cancelled or refused sheet, a
+      // wiped entry: the PIN modal is the answer) - NEVER rotates, whatever the caller passed.
+      const recovery = migrated
+        ? 'recovered'
+        : recoveryOfStateLoadFailure(cause, savedStateExists, opts?.noFreshStart === true);
+      if (recovery === 'recovered') {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
-      } else if ((noPinOpensState(cause) || savedStateExists) && !isKeystoreEmpty) {
-        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR, and the test
-        // is written that way round deliberately. A `mismatch` decrypted fine and names another
-        // device; an `altered` state's header names THIS key and its tag fails (DE7, CORRUPT-2) -
-        // honouring noFreshStart for either strands the user on a gate asking for a PIN that cannot
-        // exist. Everything else - a PIN rotated elsewhere, a legacy blob that says nothing, a
-        // failure this classifier has never been taught about - is a reason to STOP rather than to
-        // rotate an identity and lose what the blob still holds. Never widened past the fingerprint:
-        // a rotation on every failed decrypt destroys the history of every real PIN rotation.
-        if (opts?.noFreshStart && !noPinOpensState(cause)) {
-          throw new SavedStateUnopenedError(
-            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
-            e
-          );
-        }
+      } else if (recovery === 'pause') {
+        console.info(
+          `[MLS] The saved state did not open (${cause}) - nothing rotated, nothing written; the gate asks next`
+        );
+        throw new SavedStateUnopenedError(
+          cause === 'rotated' || cause === 'undecryptable' || cause === 'unreadable_now'
+            ? cause
+            : 'unknown',
+          e
+        );
+      } else if (recovery === 'rotate') {
         if (cause === 'altered') {
           console.error(
             `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`

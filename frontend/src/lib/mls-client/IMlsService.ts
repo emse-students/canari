@@ -517,6 +517,33 @@ export function noPinOpensState(cause: StateLoadFailure): boolean {
   return cause === 'mismatch' || cause === 'altered';
 }
 
+/**
+ * What `init` does with a saved state that did not load - decided HERE, once, for both platforms:
+ * `rotate` the device identity (a write that loses whatever the blob still holds), `pause` at the
+ * gate with nothing written ({@link SavedStateUnopenedError}), or `rethrow` the failure as it is.
+ *
+ * **A DESTRUCTIVE REPAIR IS GATED ON KNOWING THE STATE IS BROKEN, WHATEVER THE CALLER PASSES.**
+ * `unknown` (a failure nothing typed), `unreadable_now` (nothing proved about the bytes) and
+ * `keystore_unavailable` (no key, so no bytes were even read) never rotate: before 2026-11-01 an
+ * `unknown` cause still rotated whenever the caller had not set `noFreshStart`, so the boundary's
+ * "nothing will be destroyed" held for one caller's options only. `noFreshStart` now chooses only
+ * between rotating and pausing for the two causes that may be a PIN rotated elsewhere (`rotated`,
+ * `undecryptable`); the two that no PIN opens ({@link noPinOpensState}) rotate in every case.
+ */
+export function recoveryOfStateLoadFailure(
+  cause: StateLoadFailure,
+  savedStateExists: boolean,
+  noFreshStart: boolean
+): 'rotate' | 'pause' | 'rethrow' {
+  if (noPinOpensState(cause)) return 'rotate';
+  // No state, no recovery: the failure is not the state's, and it propagates as itself.
+  if (!savedStateExists) return 'rethrow';
+  // Not a verdict on the state: the login hands the user to the PIN modal.
+  if (cause === 'keystore_unavailable') return 'rethrow';
+  if (cause === 'unknown' || cause === 'unreadable_now') return 'pause';
+  return noFreshStart ? 'pause' : 'rotate';
+}
+
 /** The answer of {@link IMlsService.openLocalStateWithKey}: opened, or refused with its cause. */
 export type LocalStateOpenResult = { opened: true } | { opened: false; cause: StateLoadFailure };
 

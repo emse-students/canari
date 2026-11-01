@@ -59,7 +59,7 @@ function mlsBinIsAlices(): void {
     if (cmd === 'initialiser_mls') {
       return Promise.reject({
         code: 'IDENTITY_MISMATCH',
-        message: 'IDENTITY_MISMATCH: expected bob:bob-device but state contains alice:alice-device',
+        message: 'expected bob:bob-device but state contains alice:alice-device',
       });
     }
     return Promise.resolve(undefined);
@@ -113,7 +113,7 @@ describe('TauriMlsService init - a vault key whose owner is not proven', () => {
       cmd === 'initialiser_mls'
         ? Promise.reject({
             code: 'STATE_UNDECRYPTABLE',
-            message: 'STATE_UNDECRYPTABLE: aead::Error',
+            message: 'aead::Error',
           })
         : Promise.resolve(undefined)
     );

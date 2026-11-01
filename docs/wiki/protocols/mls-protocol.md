@@ -2675,8 +2675,15 @@ migration's own failure and applied by the normal path below. Doing this from in
 | `rotated` | `MlsStateVerdictError` (`STATE_KEY_MISMATCH`) | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | `SavedStateUnopenedError('rotated')`; the gate (`auth_local_state_old_pin`) states it as a fact. The pre-v0.11.0 Argon2id retry must NOT fire. |
 | `altered` | `MlsStateVerdictError` (`STATE_ALTERED`) | A FRAMED blob's header names THE KEY IN HAND and the tag fails: the bytes were altered. | Rotate, like `mismatch`: no PIN ever opens it, so `noFreshStart` does NOT apply (DE7). |
 | `mismatch` | `MlsStateVerdictError` (`IDENTITY_MISMATCH`) | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
-| `keystore_unavailable` | `KeystoreKeyUnavailableError` (`KEYSTORE_KEY_UNAVAILABLE`) | The native keystore holds no key (a refused fingerprint). | The PIN modal. |
-| `unknown` | anything else, `MlsStateLoadUntypedError` included - even when its message names a code | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!noPinOpensState(cause)`. |
+| `keystore_unavailable` | `KeystoreKeyUnavailableError` (`KEYSTORE_KEY_UNAVAILABLE`) | The native keystore holds no key (a refused fingerprint). | The PIN modal, nothing rotated on either platform, with or without `noFreshStart`. The native install guard records the outcome as `NoKeystoreKey` (a typed `InstallOutcome`) and logs it at debug: a cancelled sheet is expected, not a failed install. |
+| `unknown` | anything else, `MlsStateLoadUntypedError` included - even when its message names a code | Not typed by `mls-core`. | Accused once, at its boundary, and pauses as `SavedStateUnopenedError('unknown')` - NEVER rotated, whatever the caller passes. |
+
+**ONE DECISION FOR BOTH PLATFORMS: `recoveryOfStateLoadFailure`** (`IMlsService.ts`) turns the
+verdict, whether a state exists and `noFreshStart` into `rotate`, `pause` or `rethrow`. A destructive
+repair is gated on KNOWING the state is broken: `mismatch` and `altered` rotate always; `rotated` and
+`undecryptable` rotate only without `noFreshStart`; `unknown`, `unreadable_now` and
+`keystore_unavailable` never rotate. Until 2026-11-01 an `unknown` cause still rotated when the caller
+had not set `noFreshStart`, and the web rotated a keystore refusal with a state present.
 
 **It used to branch on prose, with a default arm of `sealed`** - so every unrecognised failure,
 corruption included, told the user *"your PIN was changed on another device"*. Measured by CORRUPT-2

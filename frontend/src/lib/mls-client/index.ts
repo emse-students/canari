@@ -18,6 +18,7 @@ export {
   SavedStateUnopenedError,
   SavedStateOfAnotherAccountError,
   noPinOpensState,
+  recoveryOfStateLoadFailure,
   isKeystoreKeyUnavailable,
   isMlsManagerAbsent,
   MlsSessionVacantError,

@@ -1989,11 +1989,12 @@ docblock, which still calls the join's commit staged.
 **Owed after:** the tests in the design (red on main where today's seams allow); Mi 9T rows D1-D10;
 iOS rows after a manual iOS compile; a one-time reader for the old join files, with a removal date.
 
-## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28, amended 2026-10-29)
+## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
 
 Tauri can serialise an error object instead of a string: one `{ code, message }` type, decoded into
 typed errors at the one `invoke` boundary. The 2026-10-28 decision moved every code in one pull
-request; **the owner amended it on 2026-10-29: two steps, each separately reviewed.**
+request; **the owner amended it on 2026-10-29 (amended, the entry stays open): two steps, each
+separately reviewed.**
 
 - **Step 1 - PR #2596:** the `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE`, the ones that unblock
   CORRUPT-1/2 (a damaged state called a PIN rotation).

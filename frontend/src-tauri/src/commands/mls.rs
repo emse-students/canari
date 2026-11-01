@@ -82,42 +82,49 @@ pub(crate) async fn initialiser_mls(
         // FIRST, BEFORE ANYTHING CAN FAIL: every exit that does not reach `install` - an `Err`, a
         // panic - ends the native session when the guard drops, so a failed sign-in never leaves the
         // previous account's manager or key installed, nor this process marked warm over no manager.
-        let install = InstallGuard::new(manager_state, device_key_state);
-        // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when
-        // it did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller
-        // that does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
-        //
-        // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
-        // under the write lock: a background engine (a key-group join from a push, channel-encryption
-        // section 26) then either wrote before this read or sees the mark and gives up - never lands
-        // between the read and this manager's first persist, which would erase it.
-        let encrypted_state = match (encrypted_state, state_on_disk) {
-            (None, Some(true)) => {
-                let path = tauri::Manager::path(&app)
-                    .app_data_dir()
-                    .map_err(|e| e.to_string())?
-                    .join("mls.bin");
-                crate::concurrency::foreground_load_mls_bin(&path)?
-            }
-            (supplied, _) => {
-                crate::concurrency::mark_foreground_manager_loading();
-                supplied
-            }
-        };
-        // Resolve the key explicitly instead of letting the loader do it internally: the
-        // resolved key is cached below so later saves in this session (which arrive with an
-        // empty device_key_b64 in biometric mode) never have to prompt again.
-        let key = MlsManager::resolve_at_rest_key(
-            &user_id,
-            &device_id,
-            encrypted_state.as_deref(),
-            key_b64_opt,
-            &keystore,
-        )
-        .map_err(StateLoadRefusal::from)?;
+        let mut install = InstallGuard::new(manager_state, device_key_state);
+        // EVERY REFUSAL IS HANDED TO THE GUARD BEFORE IT PROPAGATES, so the guard knows WHY it did
+        // not install and an expected one (a cancelled biometric sheet) is not logged as a failure.
+        let attempt = || -> Result<(MlsManager, [u8; 32]), StateLoadRefusal> {
+            // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when
+            // it did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller
+            // that does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
+            //
+            // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
+            // under the write lock: a background engine (a key-group join from a push, channel-encryption
+            // section 26) then either wrote before this read or sees the mark and gives up - never lands
+            // between the read and this manager's first persist, which would erase it.
+            let encrypted_state = match (encrypted_state, state_on_disk) {
+                (None, Some(true)) => {
+                    let path = tauri::Manager::path(&app)
+                        .app_data_dir()
+                        .map_err(|e| e.to_string())?
+                        .join("mls.bin");
+                    crate::concurrency::foreground_load_mls_bin(&path)?
+                }
+                (supplied, _) => {
+                    crate::concurrency::mark_foreground_manager_loading();
+                    supplied
+                }
+            };
+            // Resolve the key explicitly instead of letting the loader do it internally: the
+            // resolved key is cached below so later saves in this session (which arrive with an
+            // empty device_key_b64 in biometric mode) never have to prompt again.
+            let key = MlsManager::resolve_at_rest_key(
+                &user_id,
+                &device_id,
+                encrypted_state.as_deref(),
+                key_b64_opt,
+                &keystore,
+            )
+            .map_err(StateLoadRefusal::from)?;
 
-        let manager =
-            match MlsManager::load_with_key(&user_id, &device_id, encrypted_state.clone(), &key) {
+            let manager = match MlsManager::load_with_key(
+                &user_id,
+                &device_id,
+                encrypted_state.clone(),
+                &key,
+            ) {
                 Ok(manager) => manager,
                 Err(e) => {
                     let migrated = match (&encrypted_state, &legacy_pin) {
@@ -135,27 +142,36 @@ pub(crate) async fn initialiser_mls(
                 }
             };
 
-        // THE STATE IS NOW PROVEN TO BE THIS ACCOUNT'S - `load_or_create` refused it otherwise - so
-        // this is the one place the record beside `mls.bin` may name it. A failure to write it costs
-        // only the gate's "another account's messages are here" for a later sign-in, so it is
-        // accused and the session goes on. It is written BEFORE this state is ever saved (a created
-        // one has no `mls.bin` yet): a crash in between leaves at worst a STALE record beside the
-        // previous file, never a state of this account recorded as another's.
-        if let Err(e) = crate::commands::storage::write_mls_state_owner(&app, &user_id) {
-            log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
-        }
-        // A stage a background Welcome left in mls.bin is reported against what was loaded.
-        match tauri::Manager::path(&app).app_data_dir() {
-            Ok(dir) => {
-                crate::commands::storage::report_background_stages(&dir, &manager);
+            // THE STATE IS NOW PROVEN TO BE THIS ACCOUNT'S - `load_or_create` refused it otherwise - so
+            // this is the one place the record beside `mls.bin` may name it. A failure to write it costs
+            // only the gate's "another account's messages are here" for a later sign-in, so it is
+            // accused and the session goes on. It is written BEFORE this state is ever saved (a created
+            // one has no `mls.bin` yet): a crash in between leaves at worst a STALE record beside the
+            // previous file, never a state of this account recorded as another's.
+            if let Err(e) = crate::commands::storage::write_mls_state_owner(&app, &user_id) {
+                log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
             }
-            Err(e) => {
-                log::warn!("[MLS] app_data_dir() failed ({e}) - background stages not reported")
+            // A stage a background Welcome left in mls.bin is reported against what was loaded.
+            match tauri::Manager::path(&app).app_data_dir() {
+                Ok(dir) => {
+                    crate::commands::storage::report_background_stages(&dir, &manager);
+                }
+                Err(e) => {
+                    log::warn!("[MLS] app_data_dir() failed ({e}) - background stages not reported")
+                }
+            }
+            Ok((manager, key))
+        };
+        match attempt() {
+            Ok((manager, key)) => {
+                install.install(manager, key)?;
+                Ok::<String, StateLoadRefusal>("MLS Initialized".into())
+            }
+            Err(refusal) => {
+                install.refused(&refusal);
+                Err(refusal)
             }
         }
-
-        install.install(manager, key)?;
-        Ok::<String, StateLoadRefusal>("MLS Initialized".into())
     })
     .await
     .map_err(|e| StateLoadRefusal::from(e.to_string()))?
@@ -172,7 +188,23 @@ pub(crate) async fn initialiser_mls(
 struct InstallGuard {
     manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
     device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
-    installed: bool,
+    outcome: InstallOutcome,
+}
+
+/// How an [`initialiser_mls`] attempt ended, as [`InstallGuard`] knows it when it drops - a TYPE, so
+/// the level of its line is decided on why the install did not happen, never on a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallOutcome {
+    /// Nothing was handed over: an `Err` that skipped [`InstallGuard::refused`], or a panic. A real
+    /// failure, accused.
+    Unreported,
+    /// The one success exit.
+    Installed,
+    /// Biometric mode found no key - a cancelled or refused sheet, a wiped entry. EXPECTED: the
+    /// frontend hands the user to the PIN modal, so it is no failure and does not warn.
+    NoKeystoreKey,
+    /// Any other refusal: a verdict on the saved bytes or an untyped failure. Accused.
+    Refused,
 }
 
 impl InstallGuard {
@@ -183,8 +215,18 @@ impl InstallGuard {
         Self {
             manager_state,
             device_key_state,
-            installed: false,
+            outcome: InstallOutcome::Unreported,
         }
+    }
+
+    /// Records why this attempt will not install, before its refusal propagates: the code decides
+    /// the drop's level ([`StateLoadRefusal::is_keystore_key_unavailable`]), never its message.
+    fn refused(&mut self, refusal: &StateLoadRefusal) {
+        self.outcome = if refusal.is_keystore_key_unavailable() {
+            InstallOutcome::NoKeystoreKey
+        } else {
+            InstallOutcome::Refused
+        };
     }
 
     /// Installs `manager` and its at-rest `key` - the one success exit. The key is written while the
@@ -201,7 +243,7 @@ impl InstallGuard {
                 .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
             *slot = Some(manager);
         }
-        self.installed = true;
+        self.outcome = InstallOutcome::Installed;
         log::debug!("[MLS] manager and at-rest key installed");
         Ok(())
     }
@@ -209,12 +251,16 @@ impl InstallGuard {
 
 impl Drop for InstallGuard {
     fn drop(&mut self) {
-        if self.installed {
-            return;
+        match self.outcome {
+            InstallOutcome::Installed => return,
+            InstallOutcome::NoKeystoreKey => log::debug!(
+                "[MLS] initialiser_mls found no keystore key (the PIN modal is next) - ending the native session so no previous one stays installed"
+            ),
+            InstallOutcome::Unreported | InstallOutcome::Refused => log::warn!(
+                "[MLS] initialiser_mls did not install a manager ({:?}) - ending the native session so no previous one stays installed",
+                self.outcome
+            ),
         }
-        log::warn!(
-            "[MLS] initialiser_mls did not install a manager - ending the native session so no previous one stays installed"
-        );
         if let Err(e) = crate::concurrency::end_native_session(
             &self.manager_state,
             &self.device_key_state,
@@ -1851,6 +1897,32 @@ mod tests {
             key.lock().unwrap().is_none(),
             "A's key outlived B's failed install"
         );
+    }
+
+    /// A REFUSED BIOMETRIC SHEET IS AN EXPECTED OUTCOME, AND THE GUARD KNOWS IT BY TYPE: the
+    /// refusal's code makes the outcome `NoKeystoreKey` (a debug line, not a warning), any other
+    /// refusal stays `Refused` - and either way the session is still ended.
+    #[test]
+    fn a_keystore_refusal_is_recorded_as_expected_and_still_ends_the_session() {
+        let _s = serialise();
+        let no_key = StateLoadRefusal::from(mls_core::MlsError::KeystoreKeyUnavailable(
+            "sheet cancelled".into(),
+        ));
+        let altered = StateLoadRefusal::from(mls_core::MlsError::StateAltered("tag".into()));
+        let untyped = StateLoadRefusal::from("KEYSTORE_KEY_UNAVAILABLE: a sentence".to_string());
+        for (refusal, expected) in [
+            (no_key, InstallOutcome::NoKeystoreKey),
+            (altered, InstallOutcome::Refused),
+            (untyped, InstallOutcome::Refused),
+        ] {
+            let (manager, key) = slot_of_account_a();
+            let mut install = InstallGuard::new(manager.clone(), key.clone());
+            install.refused(&refusal);
+            assert_eq!(install.outcome, expected, "{refusal:?}");
+            drop(install);
+            assert!(manager.lock().unwrap().is_none(), "{refusal:?}");
+            assert!(key.lock().unwrap().is_none(), "{refusal:?}");
+        }
     }
 
     /// A panic inside the install is a failed install too: the guard drops while unwinding.
