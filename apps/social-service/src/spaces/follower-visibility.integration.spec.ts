@@ -25,7 +25,6 @@ import { liveAudienceSql } from '../lives/live-announcer';
 import {
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   announceRecipientsSql,
-  followOpensAcrossSpacesSql,
   liveVisibleToViewerSql,
   newlyReachedByPersonalRepublicationSql,
   postVisibleToUserSql,
@@ -70,7 +69,10 @@ const EVERYONE = Object.keys(USERS);
 /** The follows of the author, by status. Every accepted one survives in the table on purpose. */
 const ACCEPTED = ['farFollower', 'personnel', 'blockedByAuthor', 'blockedTheAuthor'];
 const PENDING = ['farPending', 'staffAsked'];
-/** Of the accepted follows, the one migration 114 recorded: `acceptedAt = createdAt` (F1). */
+/**
+ * Of the accepted follows, the one migration 114 recorded (`acceptedAt = createdAt`, nobody
+ * answered it). It opens like any other: the owner's decision of 2026-11-01 (F1).
+ */
 const GRANDFATHERED = 'personnel';
 
 const A1 = '00000000-0000-4000-8000-0000000005a1'; // (ICM, saint-etienne), as migration 071 seeds
@@ -401,19 +403,14 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
     }
   });
 
-  it('F1, HELD: the switch that would open only follows accepted by an ANSWER, not by migration 114', async () => {
-    const openers = async (grandfathered: boolean) =>
-      ids(
-        (
-          await client.query(
-            `SELECT f."followerUserId" AS id FROM user_follows f
-              WHERE f."followedUserId" = 'author' AND ${followOpensAcrossSpacesSql('f', grandfathered)}`
-          )
-        ).rows
-      );
-    // Today (`GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES` true): every accepted follow.
-    expect(await openers(true)).toEqual([...ACCEPTED].sort());
-    // Flipped: the grandfathered follow (acceptedAt = createdAt) no longer opens; a pending one never did.
-    expect(await openers(false)).toEqual(ACCEPTED.filter((u) => u !== GRANDFATHERED).sort());
+  it('a follow made before follow requests existed opens like an answered one (F1, owner 2026-11-01)', async () => {
+    const { rows } = await client.query(
+      `SELECT "acceptedAt" = "createdAt" AS grandfathered FROM user_follows
+        WHERE "followerUserId" = $1 AND "followedUserId" = 'author'`,
+      [GRANDFATHERED]
+    );
+    expect(rows).toEqual([{ grandfathered: true }]);
+    expect(await seersOfPost(P_PERSONAL)).toContain(GRANDFATHERED);
+    expect(await seersOfLive(L_PERSONAL)).toContain(GRANDFATHERED);
   });
 });

@@ -1429,14 +1429,15 @@ nobody else.
   between - an ask and an acceptance are both refused across a block inside their own statement.
   After an unblock the two people follow each other only through a new request.
 - **The feed gate admits a follower (F3 of the review)**: `IN_FEED_AUDIENCE_SQL` also admits the
-  holder of one follow that opens across spaces, so a staff member with a campus, no cursus and no
+  holder of one accepted follow, so a staff member with a campus, no cursus and no
   membership is not pushed a post the gate then refuses (proved through `FeedAudienceGuard`).
-- **Grandfathered follows - held for the owner (F1 of the review)**: migration 114 recorded every
-  pre-request follow as accepted with `acceptedAt = createdAt`. Today they open like any accepted
-  follow. `GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES` (`reader-spaces.ts`) is the one switch: set to
-  `false`, only a follow accepted by an ANSWER (`acceptedAt > createdAt`) opens across spaces and
-  the feed gate. Both settings are proved in `follower-visibility.integration.spec.ts`; the owner
-  decides.
+- **Grandfathered follows open like any other (F1 of the review, owner 2026-11-01: "Ouvrir à tous
+  les abonnés")**: migration 114 recorded every pre-request follow as accepted with
+  `acceptedAt = createdAt`, though nobody answered it. The owner decided they open across spaces
+  exactly like an answered follow, so no predicate tells them apart (a switch prepared for the
+  other answer was deleted unflipped). The privacy policy says so, and each person may prune their
+  followers list; `follower-visibility.integration.spec.ts` proves such a follow opens a post and
+  a live.
 - **No one-time notice (owner, 2026-10-31: "Non, ouvrir directement")**: the backlog planned a
   notice to every person before the opening, so the grandfathered followers could be pruned first;
   the owner waived it. The opening ships as is; the followers list pages to its end (below).

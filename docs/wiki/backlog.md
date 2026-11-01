@@ -272,9 +272,9 @@ ordinary review.
   [as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
   the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
   WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
-  cursor; the security review's F2-F6 are fixed on the same pull request. **Still owed before it
-  arms**: the owner's answer on F1 (do grandfathered follows open across spaces? one constant,
-  `GRANDFATHERED_FOLLOWS_OPEN_ACROSS_SPACES`) and the review's re-read. The plan as written: Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
+  cursor; the security review's F2-F6 are fixed on the same pull request; F1 is DECIDED (owner,
+  2026-11-01: *"Ouvrir à tous les abonnés"*): follows made before follow requests existed open
+  across spaces like answered ones. **Still owed before it arms**: the review's re-read. The plan as written: Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
   (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
   someone must not unmask what they posted anonymously), never through a read grant, and monotone
   for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else
