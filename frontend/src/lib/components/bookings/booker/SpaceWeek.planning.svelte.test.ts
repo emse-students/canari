@@ -6,7 +6,7 @@
  * grid opens (the organiser's: the block sheet). From `md` up the grid stays.
  */
 import { it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { flushSync, mount, tick } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import type { BookerSpace, ResourceSlots } from '$lib/bookings/api';
 import { m } from '$lib/paraglide/messages';
 
@@ -105,8 +105,12 @@ afterEach(() => {
 });
 
 async function open(props: Record<string, unknown> = {}) {
-  mount(SpaceWeek, { target: document.body, props: { space: SPACE, nowMs: NOW, ...props } });
+  const app = mount(SpaceWeek, {
+    target: document.body,
+    props: { space: SPACE, nowMs: NOW, ...props },
+  });
   await settle();
+  return app;
 }
 const rows = (kind: string) => [
   ...document.querySelectorAll<HTMLButtonElement>(`[data-row="${kind}"]`),
@@ -114,7 +118,7 @@ const rows = (kind: string) => [
 const dialog = () => document.querySelector('[role="dialog"]');
 
 it('draws a list of rows on a phone, no grid, and the grid from md up', async () => {
-  await open();
+  const first = await open();
   expect(document.querySelector('[data-planning]')).not.toBeNull();
   expect(document.querySelector('[data-cell]')).toBeNull();
   expect(rows('free')).toHaveLength(2);
@@ -123,6 +127,7 @@ it('draws a list of rows on a phone, no grid, and the grid from md up', async ()
   expect(rows('booked')[0].textContent).toContain('Camille Test');
   expect(rows('booked')[0].textContent).toContain('13:00 - 14:00');
 
+  unmount(first);
   document.body.innerHTML = '';
   phone = false;
   await open();
@@ -188,4 +193,59 @@ it('the organiser gets the same "+", opening the block sheet', async () => {
     .click();
   await settle();
   expect(document.body.textContent).toContain(m.bookings_block_title());
+});
+
+it('block mode: the "+" offers no unit that has begun (the server freezes history)', async () => {
+  // NOW is 08:00 Paris on Wednesday; make a unit span that moment: 07:00-08:00 and 08:00-09:00 free.
+  const t = Date.parse('2026-11-04T06:00:00Z');
+  api.getSlots.mockResolvedValue([
+    {
+      resourceId: 'r1',
+      units: [0, 1, 2].map((i) => ({
+        date: '2026-11-04',
+        startMs: t + i * H,
+        endMs: t + (i + 1) * H,
+        state: 'free' as const,
+      })),
+    },
+  ]);
+  await open({ mode: 'block' });
+  document
+    .querySelector<HTMLButtonElement>(`button[aria-label="${m.bookings_planning_add_block()}"]`)!
+    .click();
+  await settle();
+  const text = dialog()!.textContent!;
+  // 07:00-08:00 is over and 08:00-09:00 has begun: only 09:00 may start a block.
+  expect(text).toContain('09:00');
+  expect(text).not.toContain('07:00');
+  expect(text).not.toContain('08:00 -');
+});
+
+it('a prefill follows the stretch after a column change, else falls back to the first choice', async () => {
+  const two = [
+    WEEK[0],
+    {
+      resourceId: 'r2',
+      units: [
+        {
+          date: '2026-11-06',
+          startMs: at10 + 24 * H,
+          endMs: at10 + 25 * H,
+          state: 'free' as const,
+        },
+      ],
+    },
+  ] as unknown as ResourceSlots[];
+  api.getSlots.mockResolvedValue(two);
+  const space = {
+    ...SPACE,
+    resources: [
+      { id: 'r1', name: 'Salle' },
+      { id: 'r2', name: 'Bureau' },
+    ],
+  };
+  await open({ space });
+  rows('free')[0].click();
+  await settle();
+  expect(dialog()!.textContent).toContain('10:00');
 });

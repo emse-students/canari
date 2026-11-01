@@ -50,7 +50,6 @@ async function open(units: SlotUnit[], onPick = vi.fn(), blockMode = false, days
       space,
       resource,
       layout: weekLayout(units, days, space, NOW),
-      mode: 'day',
       blockMode,
       nowMs: NOW,
       onPick,
@@ -89,9 +88,27 @@ describe('SpaceGrid - past and unavailable units', () => {
     expect(onPick).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps such a unit a control on the organiser's block grid", async () => {
-    const cells = await open([unit(2)], vi.fn(), true);
+  it("keeps a coming unit inside the notice a control on the organiser's block grid", async () => {
+    const cells = await open([unit(3)], vi.fn(), true);
     expect((cells[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('reads a unit inside the notice as free for the organiser, as it acts on it (one rule)', async () => {
+    // unit(3) is refused to a booker (24 h notice) but not to the organiser: the grid must not
+    // draw it closed while the tap works.
+    const booker = await open([unit(3)], vi.fn(), false);
+    expect(booker[0].getAttribute('aria-label')).toContain(m.bookings_cell_closed());
+    app && unmount(app, { outro: false });
+    document.body.innerHTML = '';
+    const organiser = await open([unit(3)], vi.fn(), true);
+    expect(organiser[0].getAttribute('aria-label')).not.toContain(m.bookings_cell_closed());
+    expect((organiser[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('offers the organiser no unit that has begun: the server freezes history', async () => {
+    // unit(2) starts at NOW exactly; it is not "to come", so no block may start on it.
+    const cells = await open([unit(2)], vi.fn(), true);
+    expect((cells[0] as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('still names the state of a past unit for a screen reader', async () => {
