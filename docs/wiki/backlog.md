@@ -1056,36 +1056,6 @@ merged. The design has to show that this fence covers every way a socket-close r
 an in-flight Add, including the Welcome loop after the accept. Needs an Opus design and security
 review.
 
-## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
-
-`processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
-It logs `console.error('[SYNC] processBulkAddition failed:', …)` and returns `not-added('failed')`,
-and `reportBulkAdditionRefusal` then toasts that the invitation added nobody. The commit is KEPT
-and resubmitted (`kept until a resubmission answers`). On `1.4.1-alpha.3` (NET-3, captive portal on
-the commit POST) it was ACCEPTED at the next settlement, about 26 s later. So an unknown outcome is
-logged as an error and shown to the member as a failure, and the member may retry an Add that is
-going to land. It wants its own outcome: an Add pending its answer, said as such, at `warn` at most.
-P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land.
-**#2426 (merged) covers the TYPED case**: a `CommitOutcomeUnknownError` now returns
-`outcome-unknown`, logs at `warn` and is said as a warning ("pending connection"), pinned by
-`conversationRefusalMessage.test.ts` and `lostInvitation.test.ts`. **What is left is the
-catch-all**: a no-answer NOT thrown as that type still reaches `console.error` and `failed`. Whether
-a portal on the commit POST always reaches the typed error is what the OFF-3 replay on the next build
-answers - if it falls through, the fix is at the throw, not at the toast.
-
-## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
-
-`processBulkAddition` (`groupCreation.ts`) asks `isBlockedWith` for each invitee before the Add. A
-check that THROWS (a captive portal, a dropped link) only logs `[ERROR] Could not check whether <id>
-can be added, skipping`, and the invitee leaves the batch. The user is told only when NOBODY is left
-(`nobody-reachable`, `chat_invite_error_nobody_reachable`). With several invitees and one that could
-not be checked, the others are added, the gesture reads as a success, and the dropped person is
-named nowhere on screen - the user silently loses part of an action. The same shape follows two
-steps later: an invitee whose device fetch comes back empty is skipped with `[WARN] Skipped: no
-devices found` and no notice. Found by reading while the campaign ran the portal row (NET-3) on
-`1.4.1-alpha.3`; the fix is to carry the skipped users in `BulkAdditionOutcome` and name them in
-the notice. A blocked invitee is skipped deliberately and stays out of this.
-
 ## P3 - A leave made while the link is down loses its `memberLeft` notice for good (RM-8, 2026-10-25)
 
 When a member leaves while every request fails, `leaveGroupAndBroadcast`'s notice send throws:
@@ -1211,21 +1181,6 @@ failed attempts in about eight seconds. Nothing is lost, and the order holds. Bu
 failing what a fact on the same client could have told it. The fix is to carry the group's
 unknown-outcome state to where the outbox decides to attempt a send, so that it waits for the
 settlement instead of trying and failing.
-
-## P3 - One failed Add is reported three times (TOK-2, 2026-10-25)
-
-When a bulk Add fails, the client says so three times within 3 ms. Read on `1.4.1-alpha.4`, TOK-2,
-where the token renewal behind the commit failed (`DeliveryRenewalFailedError`):
-
-- an untagged `Bulk invite error: <typed error>` at log level;
-- `[SYNC] processBulkAddition failed: <typed error>` at `console.error`, with a stack;
-- `[GROUP] an invitation added nobody (failed)`.
-
-All three carry the same fact. The rule is that a line is either expected and necessary, or the
-visible end of something upstream. So one failed Add should be ONE accusing line that carries the
-typed outcome: tagged, at the level the outcome deserves, with no stack for a typed and expected
-error. The cross-client rig forgives the three as TOK-2's provoked narration until this is fixed, and
-the needle's comment points here.
 
 ## P3 - A harness self-test run failed twice and could not be reproduced (2026-10-25)
 

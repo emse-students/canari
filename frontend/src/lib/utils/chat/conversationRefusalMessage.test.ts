@@ -1,10 +1,15 @@
 const showToast = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast }));
+// The people an Add left out are named by display name: resolved here from a fixed table.
+vi.mock('$lib/utils/users/displayName', () => ({
+  resolveDisplayNames: async () => (id: string) => ({ carol: 'Carol', dave: 'Dave' })[id] ?? id,
+}));
 
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { m } from '$lib/paraglide/messages';
 import {
   conversationRefusalMessage,
+  reportBulkAdditionOutcome,
   reportBulkAdditionRefusal,
   reportFollowerTabRefusal,
   reportLostInvitation,
@@ -101,6 +106,73 @@ describe('reportBulkAdditionRefusal', () => {
     reportBulkAdditionRefusal('commit-race-lost');
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_commit_race_lost());
   });
+
+  it('says an invitation that never started for want of an answer as a WARNING (NET-3)', () => {
+    reportBulkAdditionRefusal('unreachable');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_unreachable(), 'warning');
+    expect(m.chat_invite_error_unreachable()).not.toBe(m.chat_invite_error_failed());
+  });
+
+  it('says an add-lock request that got NO ANSWER as the same WARNING: nothing is known of another device', () => {
+    reportBulkAdditionRefusal('add-lock-unanswered');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_unreachable(), 'warning');
+  });
+
+  it('logs NOTHING: the outcome was logged once where it was decided (TOK-2)', () => {
+    const warn = vi.mocked(console.warn);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    reportBulkAdditionRefusal('failed');
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * AN ADD THAT LEFT SOMEONE OUT WHILE ADDING OTHERS NAMES THEM (1.4.1 dev campaign): the gesture
+ * reads as a success, so without this the member never learns a person was dropped.
+ */
+describe('reportBulkAdditionOutcome', () => {
+  beforeEach(() => showToast.mockReset());
+
+  it('names the people left out, by display name, one sentence per reason', async () => {
+    await reportBulkAdditionOutcome({
+      kind: 'added',
+      addedUsers: ['bob'],
+      leftOut: [
+        { userId: 'carol', why: 'unchecked' },
+        { userId: 'dave', why: 'no-device' },
+        { userId: 'erin', why: 'no-key-package' },
+      ],
+    });
+    expect(showToast.mock.calls).toEqual([
+      [m.chat_invite_left_out_unchecked({ names: 'Carol' }), 'warning'],
+      [m.chat_invite_left_out_no_device({ names: 'Dave' }), 'warning'],
+      [m.chat_invite_left_out_no_key_package({ names: 'erin' }), 'warning'],
+    ]);
+  });
+
+  it('says nothing for a full success', async () => {
+    await reportBulkAdditionOutcome({ kind: 'added', addedUsers: ['bob'] });
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('a refusal is the refusal sentence', async () => {
+    await reportBulkAdditionOutcome({ kind: 'not-added', reason: 'add-lock-busy' });
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_add_lock_busy());
+  });
+
+  it('a re-plan that completed but left someone out names them with the conversation', async () => {
+    reportLostInvitation(
+      { kind: 'completed', leftOut: [{ userId: 'carol', why: 'unchecked' }] },
+      'Team'
+    );
+    await vi.waitFor(() =>
+      expect(showToast).toHaveBeenCalledExactlyOnceWith(
+        m.chat_invite_resumed_left_out({ conversation: 'Team', names: 'Carol' }),
+        'warning'
+      )
+    );
+  });
 });
 
 /**
@@ -158,6 +230,7 @@ describe('reportLostInvitation and the kept invitation', () => {
     reportLostInvitation({ kind: 'completed' }, 'Team');
     reportLostInvitation({ kind: 'kept' }, 'Team');
     reportLostInvitation({ kind: 'waiting', on: 'add-lock' }, 'Team');
+    reportLostInvitation({ kind: 'waiting', on: 'connection' }, 'Team');
     expect(showToast).not.toHaveBeenCalled();
   });
 });

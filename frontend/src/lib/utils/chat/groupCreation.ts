@@ -23,7 +23,9 @@ import {
   PreviousCommitUnresolvedError,
 } from '$lib/mls-client/commitSubmission';
 import type { OwedInvitation } from '$lib/mls-client/owedInvitations';
-import { isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { CommitRefusedError, isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { AddAbortedError, addDevicesRebuildingOnRace } from './commitRace';
 import {
   MemberNotAdmittedError,
@@ -117,11 +119,37 @@ async function fetchDevicesWithRetry(
   attempts = 2,
   delayMs = 1500
 ) {
+  return (await readDevicesWithRetry(mlsService, userId, log, attempts, delayMs)).devices;
+}
+
+/**
+ * What {@link readDevicesWithRetry} learned of a user's devices: the list, and - when it is empty -
+ * whether the server SAID so. `unread` is the last error when NO attempt was answered: an empty list
+ * then means "not known", never "none", and an invitation names that person rather than call them
+ * deviceless.
+ */
+interface DeviceRead {
+  devices: any[];
+  unread?: unknown;
+}
+
+/** {@link fetchDevicesWithRetry}, keeping an unanswered read apart from an answered empty one. */
+async function readDevicesWithRetry(
+  mlsService: IMlsService,
+  userId: string,
+  log: (msg: string) => void,
+  attempts = 2,
+  delayMs = 1500
+): Promise<DeviceRead> {
+  let answered = false;
+  let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const devices = await mlsService.fetchUserDevices(userId);
-      if (devices.length > 0) return devices;
+      answered = true;
+      if (devices.length > 0) return { devices };
     } catch (err) {
+      lastError = err;
       log(
         `[RETRY] Network error for ${userId} (attempt ${attempt}/${attempts}): ${String(err).slice(0, 80)}`
       );
@@ -133,7 +161,7 @@ async function fetchDevicesWithRetry(
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  return [];
+  return answered ? { devices: [] } : { devices: [], unread: lastError };
 }
 
 /**
@@ -326,7 +354,10 @@ export async function createNewGroup(
 export type BulkAdditionRefusal =
   /** No user id was named. */
   | 'nobody-named'
-  /** A block stands between the inviter and every named user, or it could not be checked. */
+  /**
+   * A block stands between the inviter and every named user it could check (an unanswered check
+   * for every one of them is `unreachable` or `failed` instead, the read's own reasons).
+   */
   | 'nobody-reachable'
   /** No named user has a device to add. */
   | 'no-devices'
@@ -362,8 +393,34 @@ export type BulkAdditionRefusal =
    * (`PreviousCommitUnresolvedError`): nothing kept of it, the member retries once back online.
    */
   | 'previous-commit-unresolved'
-  /** Something threw before the commit merged (logged). */
+  /**
+   * A request the invitation needed BEFORE its commit left got no answer (`TransportFailureError`,
+   * typed at the throw - never a `CommitOutcomeUnknownError`, which is `outcome-unknown`): nothing
+   * was staged and nothing is kept, so the member retries once back online. A no-answer is not a
+   * failure of the invitation, and is not said as one.
+   */
+  | 'unreachable'
+  /** Something threw before the commit merged that is neither of the above (logged, with its cause). */
   | 'failed';
+
+/**
+ * A person the invitation named and did not invite while it added others - the member is told, by
+ * name ({@link BulkAdditionOutcome}). A person a BLOCK stands between is not one: that skip is
+ * deliberate, and logged as such.
+ *
+ * - `unchecked`: a read about them got no usable answer - whether a block stands between you, or
+ *   which devices they have. Inviting them again may work.
+ * - `no-device`: the server answered that they have no device to add.
+ */
+export interface InviteeLeftOut {
+  userId: string;
+  /**
+   * `unchecked`: a read about them got no answer. `no-device`: the server answered that they have
+   * none. `no-key-package`: every device of theirs was skipped by the Add (an expired, absent or
+   * untrusted KeyPackage, logged per device by `warnSkippedKeyPackages`).
+   */
+  why: 'unchecked' | 'no-device' | 'no-key-package';
+}
 
 /**
  * What an invitation did, read by a caller that must not report success it did not have - the
@@ -371,11 +428,80 @@ export type BulkAdditionRefusal =
  *
  * `added` means the Add COMMIT MERGED with at least one device of each user in `addedUsers`: they
  * are in the tree. A Welcome lost after that is the joiner's own recovery (`welcome_request`, now a
- * member's device), so it does not unmake the Add.
+ * member's device), so it does not unmake the Add. `leftOut` names whoever the gesture named and the
+ * Add did not reach ({@link InviteeLeftOut}) - present only when someone was: a success that drops
+ * a person without a word is a partial loss the member cannot see.
  */
 export type BulkAdditionOutcome =
-  | { kind: 'added'; addedUsers: string[] }
+  | { kind: 'added'; addedUsers: string[]; leftOut?: InviteeLeftOut[] }
   | { kind: 'not-added'; reason: BulkAdditionRefusal };
+
+/**
+ * The outcome of one pass of the Add, with the error that decided it when one did - kept beside the
+ * outcome rather than in it, so the ONE line that narrates the outcome can carry it
+ * ({@link narrateBulkAddition}) while callers compare outcomes as values.
+ */
+interface BulkAdditionAttempt {
+  outcome: BulkAdditionOutcome;
+  cause?: unknown;
+  /** What kept each `unchecked` person out - carried to the same line, never swallowed. */
+  leftOutCauses?: ReadonlyMap<string, unknown>;
+  /**
+   * The refusal is the DESIGNED end of a race the member lost on purpose (a Decline or a departure
+   * the gate dated by the seat generation the Add carried): said at info, never as a fault.
+   */
+  designed?: boolean;
+}
+
+/**
+ * Whether `e` is an error this code TYPED at its throw - an answer of the server
+ * (`ApiRefusalError`, a gate refusal included) or a request that got none (`TransportFailureError`).
+ * Such an outcome is expected and named, so its line carries no stack; anything else is the visible
+ * end of a defect and is reported as one.
+ */
+function isTypedFailure(e: unknown): boolean {
+  return e instanceof ApiRefusalError || e instanceof CommitRefusedError || isTransportFailure(e);
+}
+
+/**
+ * THE ONE LINE AN INVITATION'S OUTCOME IS LOGGED AS (TOK-2, 1.4.1 campaign: one failed Add was said
+ * three times in 3 ms - an untagged log line, an error with a stack, and the reporter's echo). Said
+ * here, once, for every caller - the gesture, a join ask's answer, a lost invitation's re-plan - and
+ * at the level the outcome deserves: `info` for the designed end of a lost race, `warn` for a refusal
+ * or a typed failure, `error` with its stack only for a cause nothing typed. A success that left someone out is a `warn` naming them. A plain
+ * success is narrated where it happens, as before.
+ */
+function narrateBulkAddition(
+  groupId: string,
+  { outcome, cause, leftOutCauses, designed }: BulkAdditionAttempt,
+  resumed: ResumedInvitation | undefined
+): void {
+  const where = `${groupId.slice(0, 8)}...${resumed ? ` (the invitation lost at epoch ${resumed.baseEpoch}, re-planned)` : ''}`;
+  if (outcome.kind === 'added') {
+    if (!outcome.leftOut?.length) return;
+    const named = outcome.leftOut.map((l) => {
+      const why = leftOutCauses?.get(l.userId);
+      return `${l.userId} (${l.why}${why === undefined ? '' : `: ${String(why).slice(0, 120)}`})`;
+    });
+    console.warn(
+      `[GROUP] an invitation in ${where} added ${outcome.addedUsers.length} person(s) and left out ${named.join(', ')}`
+    );
+    return;
+  }
+  const line = `[GROUP] an invitation added nobody (${outcome.reason}) in ${where}${cause === undefined ? '' : `: ${String(cause).slice(0, 240)}`}`;
+  if (outcome.reason === 'failed' && !isTypedFailure(cause)) console.error(line, cause);
+  else if (designed) console.info(line);
+  else console.warn(line);
+}
+
+/**
+ * The reason an invitation that found nobody to stage gives, when some device reads went UNANSWERED
+ * rather than answered empty: a no-answer is `unreachable` (try again once back online), anything
+ * else that kept the read from answering is `failed`.
+ */
+function unreadDevicesReason(unread: readonly unknown[]): BulkAdditionRefusal {
+  return unread.every(isTransportFailure) ? 'unreachable' : 'failed';
+}
 
 /**
  * Core helper that collects all devices for the given user IDs, adds them to
@@ -383,11 +509,12 @@ export type BulkAdditionOutcome =
  * and broadcasts a `memberAdded` system event to all existing members - writing the inviter's own
  * notice under the frame's id, since MLS never hands this device its own frame.
  *
- * Users whose devices cannot be fetched are skipped with a warning rather than
- * aborting the entire operation.
+ * A person the Add could not check, or who has no device, is left out while the others are added -
+ * and NAMED in the outcome (`leftOut`), so the member learns it.
  *
  * NEVER THROWS, AND SAYS WHAT HAPPENED INSTEAD ({@link BulkAdditionOutcome}): every early return
- * and the catch-all name their reason, so a caller can tell an Add from a refusal.
+ * and the catch-all name their reason, so a caller can tell an Add from a refusal - and the outcome
+ * is logged ONCE, here ({@link narrateBulkAddition}), whoever the caller is.
  *
  * `resumed` is set only by {@link replanLostInvitation}: the same invitation, made again after its
  * kept commit did not land. `answering` only by a member's answer to a join ask: the ask it answers.
@@ -406,10 +533,23 @@ async function processBulkAddition(
   resumed?: ResumedInvitation,
   answering?: AnsweredJoinAsk
 ): Promise<BulkAdditionOutcome> {
+  const attempt = await attemptBulkAddition(memberIds, conversation, deps, resumed, answering);
+  narrateBulkAddition(conversation.id, attempt, resumed);
+  return attempt.outcome;
+}
+
+/** The body of {@link processBulkAddition}: what it did, and the error that decided it - unlogged. */
+async function attemptBulkAddition(
+  memberIds: string[],
+  conversation: Conversation,
+  deps: InviteDeps,
+  resumed?: ResumedInvitation,
+  answering?: AnsweredJoinAsk
+): Promise<BulkAdditionAttempt> {
   const { mlsService, userId, deviceKeyB64, log } = deps;
-  const notAdded = (reason: BulkAdditionRefusal): BulkAdditionOutcome => ({
-    kind: 'not-added',
-    reason,
+  const notAdded = (reason: BulkAdditionRefusal, cause?: unknown): BulkAdditionAttempt => ({
+    outcome: { kind: 'not-added', reason },
+    ...(cause === undefined ? {} : { cause }),
   });
   if (memberIds.length === 0) return notAdded('nobody-named');
 
@@ -418,6 +558,11 @@ async function processBulkAddition(
 
   log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
 
+  // WHOEVER THE GESTURE NAMED AND THIS ADD DOES NOT REACH, while it adds others: told to the member
+  // with the outcome, by name - never a success that silently drops a person.
+  const leftOut: InviteeLeftOut[] = [];
+  const leftOutCauses = new Map<string, unknown>();
+
   // Whether this Add went out WITH a seat generation (see `rosterPremise`). Without one the server
   // cannot date the departures it checks, so its refusal is a client-side read failure and not a race.
   let seatGenerationCarried = false;
@@ -425,7 +570,8 @@ async function processBulkAddition(
   // Same reason as the 1-to-1 path: the server's refusal at `addGroupMember` is authoritative, but
   // it lands after the Welcomes have gone out. Anyone a block stands between is dropped from the
   // batch here, and the rest of the invitation proceeds - one blocked person must not cancel an
-  // invitation naming four others.
+  // invitation naming four others. A check that got no answer is NOT a block: that person is left
+  // out and named (`unchecked`), the block itself being the one deliberate silent skip.
   const reachable: string[] = [];
   for (const target of targetUsers) {
     try {
@@ -435,10 +581,19 @@ async function processBulkAddition(
       }
       reachable.push(target);
     } catch (e) {
-      log(`[ERROR] Could not check whether ${target} can be added, skipping: ${String(e)}`);
+      leftOut.push({ userId: target, why: 'unchecked' });
+      leftOutCauses.set(target, e);
     }
   }
-  if (reachable.length === 0) return notAdded('nobody-reachable');
+  if (reachable.length === 0) {
+    // NO CHECK ANSWERED, NOBODY BLOCKED: that is a read that failed, not a block - said with the
+    // reason a device read that got no answer gives (`unreachable` when nothing answered).
+    if (leftOutCauses.size === targetUsers.length) {
+      const causes = [...leftOutCauses.values()];
+      return notAdded(unreadDevicesReason(causes), causes[0]);
+    }
+    return notAdded('nobody-reachable', leftOutCauses.values().next().value);
+  }
   targetUsers = reachable;
 
   // Set once the Add commit has MERGED: from then on the users are in the tree whatever fails next.
@@ -457,43 +612,41 @@ async function processBulkAddition(
     const deviceFetches = await Promise.all(
       targetUsers.map(async (targetUser) => ({
         targetUser,
-        devices: await fetchDevicesWithRetry(mlsService, targetUser, log),
+        read: await readDevicesWithRetry(mlsService, targetUser, log),
       }))
     );
-    for (const { targetUser, devices } of deviceFetches) {
-      if (devices.length === 0) {
-        log(`[WARN] Skipped: no devices found for ${targetUser}.`);
-        console.warn(`[SYNC] No devices found for ${targetUser}, skipping`);
+    const unread: unknown[] = [];
+    for (const { targetUser, read } of deviceFetches) {
+      if (read.devices.length === 0) {
+        // An answered empty list is "no device"; a read nothing answered is "not known" - both are
+        // left out and named, and only the second is a reason to try again.
+        leftOut.push({ userId: targetUser, why: 'unread' in read ? 'unchecked' : 'no-device' });
+        if ('unread' in read) {
+          unread.push(read.unread);
+          leftOutCauses.set(targetUser, read.unread);
+        }
         continue;
       }
-      devices.forEach((d: any) => {
+      read.devices.forEach((d: any) => {
         allDevices.push({ ...d, userId: targetUser });
         userMap.set(d.deviceId, targetUser);
       });
     }
 
     if (allDevices.length === 0) {
-      log('[ERROR] No devices found for any of the requested users.');
-      console.error('[SYNC] No devices found for any requested user - aborting bulk add');
-      return notAdded('no-devices');
+      // Nobody to stage. Said as "no device" only when the server SAID so for everyone left.
+      if (unread.length === 0) return notAdded('no-devices');
+      return notAdded(unreadDevicesReason(unread), unread[0]);
     }
 
     const lock = await mlsService
       .acquireAddLockAnswer(conversation.id)
       .catch(() => 'unanswered' as const);
-    if (lock !== 'taken') {
-      // ONLY AN ANSWERED REFUSAL IS "ANOTHER DEVICE IS ADDING": a lock request that got no answer
-      // says nothing about anyone else, and is a failure the member may retry.
-      log(
-        lock === 'held'
-          ? `[WARN] Add-lock busy for ${conversation.id} - invite cancelled (another device is in progress).`
-          : `[WARN] Add-lock request for ${conversation.id} got no answer - invite cancelled.`
-      );
-      console.warn(
-        `[SYNC] Add-lock ${lock === 'held' ? 'busy' : 'unanswered'} for ${conversation.id}, aborting to avoid concurrent commits`
-      );
+    // ONLY AN ANSWERED REFUSAL IS "ANOTHER DEVICE IS ADDING": a lock request that got no answer says
+    // nothing about anyone else, and is a failure the member may retry. Said once, by the outcome's
+    // own line (`narrateBulkAddition`).
+    if (lock !== 'taken')
       return notAdded(lock === 'held' ? 'add-lock-busy' : 'add-lock-unanswered');
-    }
 
     // Users registered server-side AND whose Welcome was accepted: only those are announced.
     const announcedUsers = new Set<string>();
@@ -550,10 +703,19 @@ async function processBulkAddition(
         );
         if (addedUsers.size === 0) return notAdded('removed-meanwhile');
         log(`[SYNC] every invited device already holds a leaf - added by another member's commit`);
-        return { kind: 'added', addedUsers: [...addedUsers] };
+        return { outcome: addedOutcome(addedUsers, leftOut), leftOutCauses };
       }
       const bulk = raced;
+      // MERGED: the users are in the tree from here on, so whatever throws next cannot say "nobody
+      // added" - recorded BEFORE the first await that could throw.
+      const added = new Set(
+        bulk.addedDeviceIds.map((did) => userMap.get(did)).filter((u): u is string => !!u)
+      );
+      addedUsers = added;
       warnSkippedKeyPackages(bulk.skipped, conversation.id, '[SYNC]', log);
+      // A PERSON WHOSE EVERY DEVICE WAS SKIPPED is not in the commit while the others are: left out
+      // and named, never dropped in silence (the skip itself is logged per device just above).
+      leftOut.push(...everyDeviceSkipped(allDevices, bulk.skipped, added));
 
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
@@ -565,10 +727,6 @@ async function processBulkAddition(
       // registration fails gets no Welcome from here: a Welcome to an unregistered member is the
       // broken state itself, and the joiner recovers through its own welcome_request.
       log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
-      const added = new Set(
-        bulk.addedDeviceIds.map((did) => userMap.get(did)).filter((u): u is string => !!u)
-      );
-      addedUsers = added;
       const registeredUsers = new Set<string>();
       await Promise.all(
         [...added].map(async (tUser) => {
@@ -651,55 +809,84 @@ async function processBulkAddition(
     // the next settlement it is merged, refused it is re-planned (`owedInvitations.ts`) - so the
     // member is told it will finish, never to try again (OFF-3: "the invitation failed" was false).
     // Unless the commit kept is an EARLIER one and this invitation never staged: then it is theirs.
-    if (e instanceof PreviousCommitUnresolvedError) {
-      log(
-        `[SYNC] an earlier commit of the group is still unanswered - nothing staged, nobody added`
-      );
-      return notAdded('previous-commit-unresolved');
-    }
-    if (e instanceof CommitOutcomeUnknownError) {
-      log(
-        `[SYNC] the Add got no answer - kept with its invitation, settled at the next connection: ${String(e).slice(0, 120)}`
-      );
-      console.warn(`[SYNC] processBulkAddition: outcome unknown on ${conversation.id}`);
-      return notAdded('outcome-unknown');
-    }
+    // Every branch below is said ONCE, by the outcome's own line (`narrateBulkAddition`), with the
+    // error that decided it as its cause.
+    if (e instanceof PreviousCommitUnresolvedError)
+      return notAdded('previous-commit-unresolved', e);
+    if (e instanceof CommitOutcomeUnknownError) return notAdded('outcome-unknown', e);
     // ABANDONED BEFORE ANY STAGE (`AddAbortedError`): nothing was committed or registered. A premise
     // that could not be READ is a rebuild that could not be justified - retried like a lost race.
     if (e instanceof AddAbortedError) {
-      log(`[SYNC] the Add was abandoned before its stage (${e.why}) - nobody added`);
       // Refused to admit everyone it named: a Decline, a departure or a block came first. With a seat
-      // generation carried that is the designed outcome of a race the member lost on purpose: an info
-      // line with the same facts. WITHOUT one (the roster read failed, or an old resumed entry) the
-      // server's refusal of an undated departure is a client-side read failure, so it still warns.
+      // generation carried that is the designed outcome of a race the member lost on purpose, said at
+      // info by the outcome's own line. WITHOUT one (the roster read failed, or an old resumed entry)
+      // the server's refusal of an undated departure is a client-side read failure, so it still warns.
+      const refusedAdmission = e.why === 'removed-meanwhile' || e.why === 'not-admitted';
       const designed =
-        (e.why === 'removed-meanwhile' || e.why === 'not-admitted') &&
-        (seatGenerationCarried || e.seatGenerationKnown);
-      if (designed) console.info(`[SYNC] processBulkAddition: ${e.message}`);
-      else console.warn(`[SYNC] processBulkAddition: ${e.message}`);
-      if (e.why === 'removed-meanwhile' || e.why === 'not-admitted') {
-        return notAdded('removed-meanwhile');
-      }
-      if (e.why === 'tree-unconfirmed') return notAdded('tree-unconfirmed');
-      return notAdded('commit-race-lost');
+        refusedAdmission && (seatGenerationCarried || e.seatGenerationKnown === true);
+      const reason: BulkAdditionRefusal = refusedAdmission
+        ? 'removed-meanwhile'
+        : e.why === 'tree-unconfirmed'
+          ? 'tree-unconfirmed'
+          : 'commit-race-lost';
+      return { ...notAdded(reason, e), designed };
     }
+    const merged = addedUsers !== null && addedUsers.size > 0;
     // A RACE THAT PROVED NO PROGRESS (`rebuildableRefusal` declined it): another commit held or took
     // the epoch and this device could not see it land, so nothing was added and nothing may be
     // guessed. Its own reason, so the member is told to retry rather than that the Add broke.
-    if (isCommitRaceRefusal(e) && (addedUsers === null || addedUsers.size === 0)) {
-      log(
-        `[SYNC] the Add lost a commit race without proof of progress (${e.reason}) - nobody added`
-      );
-      console.warn(`[SYNC] processBulkAddition: race refusal ${e.reason} on ${conversation.id}`);
-      return notAdded('commit-race-lost');
-    }
-    log(`Bulk invite error: ${String(e)}`);
-    console.error('[SYNC] processBulkAddition failed:', e);
-    // A throw AFTER the commit merged does not unmake the Add: the users are in the tree.
-    if (addedUsers === null || addedUsers.size === 0) return notAdded('failed');
+    if (isCommitRaceRefusal(e) && !merged) return notAdded('commit-race-lost', e);
+    // NO ANSWER BEFORE THE COMMIT LEFT (NET-3): typed at the throw, a `TransportFailureError` that is
+    // not a `CommitOutcomeUnknownError` (handled above, as it subclasses it) means no stage was ever
+    // sent - so nothing was staged or kept, and the member retries once back online.
+    if (!merged && isTransportFailure(e)) return notAdded('unreachable', e);
+    if (!merged) return notAdded('failed', e);
+    // A throw AFTER the commit merged does not unmake the Add: the users are in the tree. It is the
+    // visible end of something upstream, and said so - once.
+    console.error(
+      `[GROUP] an invitation in ${conversation.id.slice(0, 8)}... merged, then threw:`,
+      e
+    );
   }
   if (addedUsers === null || addedUsers.size === 0) return notAdded('no-device-added');
-  return { kind: 'added', addedUsers: [...addedUsers] };
+  return { outcome: addedOutcome(addedUsers, leftOut), leftOutCauses };
+}
+
+/** An `added` outcome, naming whoever was left out only when someone was. */
+/**
+ * The people of an Add whose EVERY device the commit skipped ({@link InviteeLeftOut} `no-key-package`)
+ * and who were not added by another of their devices. A person with no device in `skipped` is not
+ * here: whatever kept them out has its own reason.
+ *
+ * @param devices Every device the Add offered, each with the `userId` it belongs to.
+ * @param skipped The devices the commit left out for their KeyPackage.
+ * @param added The people the merged commit added.
+ */
+export function everyDeviceSkipped(
+  devices: readonly { deviceId: string; userId: string }[],
+  skipped: readonly { deviceId: string }[],
+  added: ReadonlySet<string>
+): InviteeLeftOut[] {
+  if (skipped.length === 0) return [];
+  const skippedIds = new Set(skipped.map((s) => s.deviceId));
+  const byUser = new Map<string, boolean>();
+  for (const d of devices) {
+    byUser.set(d.userId, (byUser.get(d.userId) ?? true) && skippedIds.has(d.deviceId));
+  }
+  return [...byUser]
+    .filter(([userId, allSkipped]) => allSkipped && !added.has(userId))
+    .map(([userId]) => ({ userId, why: 'no-key-package' as const }));
+}
+
+function addedOutcome(
+  addedUsers: ReadonlySet<string>,
+  leftOut: readonly InviteeLeftOut[]
+): BulkAdditionOutcome {
+  return {
+    kind: 'added',
+    addedUsers: [...addedUsers],
+    ...(leftOut.length > 0 ? { leftOut: [...leftOut] } : {}),
+  };
 }
 
 /**
@@ -875,16 +1062,20 @@ export interface AnsweredJoinAsk {
 
 /** How a re-planned invitation ended - what the member is told, read by the caller. */
 export type LostInvitationOutcome =
-  /** Every invited person now holds a leaf - added by this re-plan, or already by someone else. */
-  | { kind: 'completed' }
+  /**
+   * Every invited person it could reach now holds a leaf - added by this re-plan, or already by
+   * someone else. `leftOut` names those it could not reach ({@link InviteeLeftOut}), told to the
+   * member.
+   */
+  | { kind: 'completed'; leftOut?: InviteeLeftOut[] }
   /** Its commit is kept in turn (no answer again): its own intent carries the invitation on. */
   | { kind: 'kept' }
   /**
-   * It cannot run YET - the add lock was refused, or the tree could not be confirmed at the server's
-   * epoch. Nothing staged, the entry stays for the next drain - never a word to the member, the
-   * invitation is not over.
+   * It cannot run YET - the add lock was refused, the tree could not be confirmed at the server's
+   * epoch, or a request it needed got no answer (`connection`). Nothing staged, the entry stays for
+   * the next drain - never a word to the member, the invitation is not over.
    */
-  | { kind: 'waiting'; on: 'add-lock' | 'tree-unconfirmed' }
+  | { kind: 'waiting'; on: 'add-lock' | 'tree-unconfirmed' | 'connection' }
   /**
    * The gate refused the lost commit for something other than a race - `reason` is its token
    * (`committer_not_member`, `welcome_target_not_member`, ...). Not re-planned: the same invitation
@@ -924,22 +1115,27 @@ export async function replanLostInvitation(
     );
     return { kind: 'refused', reason: owed.reason };
   }
+  // Its outcome is logged once, by `processBulkAddition`, which names it as this re-plan.
   const outcome = await processBulkAddition(owed.invitation.users, conversation, deps, {
     baseEpoch: owed.baseEpoch,
     rostered: owed.invitation.rostered,
     seatGeneration: owed.invitation.seatGeneration,
   });
-  deps.log(
-    `[INVITE_OWED] ${short}... the invitation lost at epoch ${owed.baseEpoch}: ${outcome.kind === 'added' ? 'completed' : outcome.reason}`
-  );
-  if (outcome.kind === 'added') return { kind: 'completed' };
+  if (outcome.kind === 'added') {
+    return outcome.leftOut
+      ? { kind: 'completed', leftOut: outcome.leftOut }
+      : { kind: 'completed' };
+  }
   if (outcome.reason === 'outcome-unknown') return { kind: 'kept' };
-  // NOTHING STAGED, AND NOTHING THAT ENDS THE INVITATION: the lock was refused, or the tree could not
+  // NOTHING STAGED, AND NOTHING THAT ENDS THE INVITATION: the lock was refused, the tree could not
   // be confirmed (a log that could not be read, a replay held behind frames refused for lack of a row
-  // whose pull is already asked, a catch-up that stopped short). Each lifts on an event - a commit
-  // applied in the group, the next connection - so the entry waits for it.
+  // whose pull is already asked, a catch-up that stopped short), or a request got no answer. Each
+  // lifts on an event - a commit applied in the group, the next connection - so the entry waits.
   if (outcome.reason === 'add-lock-busy') return { kind: 'waiting', on: 'add-lock' };
   if (outcome.reason === 'tree-unconfirmed') return { kind: 'waiting', on: 'tree-unconfirmed' };
+  if (outcome.reason === 'unreachable' || outcome.reason === 'add-lock-unanswered') {
+    return { kind: 'waiting', on: 'connection' };
+  }
   return { kind: 'not-completed', reason: outcome.reason };
 }
 

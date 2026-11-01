@@ -92,7 +92,7 @@ import {
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
-  reportBulkAdditionRefusal,
+  reportBulkAdditionOutcome,
   reportFollowerTabRefusal,
   reportLostInvitation,
   reportMemberRemovalFailure,
@@ -2213,8 +2213,13 @@ export function useConversations() {
         addMessageToChat: ctx.addMessageToChat,
         log: ctx.log,
       });
-      // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
-      if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
+      // NEVER A SILENT REFUSAL, NOR A SILENT PARTIAL ADD: the member is the only one who can retry an
+      // invitation, for everybody or for the people it left out.
+      void reportBulkAdditionOutcome(outcome).catch((e: unknown) =>
+        console.warn(
+          `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
+        )
+      );
       // FRESH: a roster read begun before the commit's write must not be joined (pre-Add roster).
       await loadGroupMembers(convo.id, ctx, { fresh: true });
     } catch (e) {
