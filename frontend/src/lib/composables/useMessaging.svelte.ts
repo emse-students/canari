@@ -2608,9 +2608,28 @@ export function useMessaging() {
     text: string,
     targetName: string,
     ctx: MessagingContext
-  ): Promise<{ outcome: OutboxSettlement | 'not-queued'; error?: string }> {
+  ): Promise<{ outcome: OutboxSettlement | 'not-queued' | 'gone'; error?: string }> {
     const convo = ctx.conversations.get(targetName);
-    if (!convo) return { outcome: 'not-queued', error: 'conversation not loaded' };
+    // A CONVERSATION THAT WILL NEVER TAKE IT is `gone`, read from the facts - the row in memory, else
+    // the stored row - never from a refusal's wording (round-4 review of #2843): removed, or unknown
+    // to this device. Only a conversation stored and not loaded yet is `not-queued`, which a later
+    // take retries; a `gone` one used to be put back for ever.
+    if (convo?.lifecycle === 'removed') return { outcome: 'gone', error: 'conversation removed' };
+    if (!convo) {
+      if (!ctx.storage) return { outcome: 'not-queued', error: 'no storage to look it up' };
+      let stored: Awaited<ReturnType<IStorage['getConversation']>>;
+      try {
+        stored = await ctx.storage.getConversation(targetName);
+      } catch (e) {
+        // Unreadable proves nothing: the reply waits for a take that can read it.
+        ctx.log(`[SEND] sendTextTo: the conversation row could not be read: ${String(e)}`);
+        return { outcome: 'not-queued', error: 'conversation row unreadable' };
+      }
+      if (!stored || stored.lifecycle === 'removed') {
+        return { outcome: 'gone', error: stored ? 'conversation removed' : 'conversation unknown' };
+      }
+      return { outcome: 'not-queued', error: 'conversation not loaded yet' };
+    }
     const result = await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
     if (!(result.success || result.echoed === true)) {
       return { outcome: 'not-queued', error: result.error };

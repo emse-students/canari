@@ -970,7 +970,11 @@ Notification Center over an open app was lost. The fix:
   -> `sendChatMessage`).
 - A line the page cannot queue (for example, its conversation is not loaded yet) is APPENDED BACK,
   sealed again (`return_pending_quick_replies`), and the page shows "your reply is waiting" once
-  (M2). The next take sends it.
+  (M2). The next take sends it. Only a conversation that is STORED and not loaded yet is that case:
+  one removed, or unknown to this device, will never take the reply, so `sendTextTo` answers `gone`
+  (read from the row in memory, else the stored row - never a refusal's wording) and the reply is
+  acknowledged LOST, which shows the "reply not sent" notice. It used to be put back for ever
+  (round 4).
 - **A send that throws AFTER its message was written is owned, never put back (review A3).** The
   classification is made where the write is KNOWN (M1). `addMessageToChat` REPORTS the pair write:
   `onPairWritten` once the echo and its outbox entry are on disk, `MessagePairWriteError` when that
@@ -988,7 +992,12 @@ Notification Center over an open app was lost. The fix:
   it, never merely that it queued it: `OutboxController.awaitSettled` answers `sent`, `failed` (a
   failed row the page shows) or `pending` (still queued, and no running flush can move it before a
   retry). It is decided by events - the attempt's outcome, the end of the last running flush - and by
-  the queue and the row as they stand when the caller asks; no clock.
+  the queue and the row as they stand when the caller asks; no clock. **It provably ends (round 4):**
+  everything that can be running when a waiter registers answers the waiters in a `finally` of its
+  own - a flush, a lane (which can outlive its flush when a sibling lane threw), the lane an exit
+  claims (`drainForExit`) - and the last to end answers them `pending`; `dispose()` (a sign-out)
+  answers every waiter left, and a waiter after it at once. The JSDoc of `awaitSettled` carries the
+  proof; `outbox.test.ts` holds a sign-out during a settle and a waiter behind an exit lane alone.
 - The acknowledgement (`acknowledge_quick_reply(replyId, outcome)` -> the registered native listener,
   a `QuickReplyOutcome` code: 0 sent, 1 failed, 2 pending, 3 returned, 4 lost) releases the hold, and
   the user is told on ONE surface (`CanariTellQuickReplyOutcome`): sent, nothing; pending, what the
@@ -1001,8 +1010,12 @@ Notification Center over an open app was lost. The fix:
   to the expiry.
 - **The expiry always ends its own task (L1).** The task is begun, its id stored in the hold, and the
   hold published in ONE block on the main thread, where iOS runs the expiration handler - so the
-  handler can never run before the id is stored. A task is ended once, by whoever takes the id from
-  the hold first, and the expiry ends it synchronously before it returns. The expiry is iOS's own end
+  handler can never run before the id is stored. The id is taken out of the hold, and the task ended,
+  ON THE MAIN THREAD ONLY (`CanariEndQuickReplyTaskOnMain`): a release off main queues a block that
+  takes it there. So the expiry handler, which calls that function synchronously, either takes the
+  id and ends the task before it returns, or finds it already ended by an earlier block on the same
+  thread - an end is never left queued behind a handler that saw the id gone (round 4). Each task is
+  ended exactly once. The expiry is iOS's own end
   of the background time, not a clock of ours: it logs an ERROR naming the reply and reads it as
   pending; the reply is in the page's queue or in its file. Whether a suspended WebView's JavaScript
   runs inside that background time is a reading owed on the iPhone.

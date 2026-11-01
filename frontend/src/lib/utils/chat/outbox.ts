@@ -496,6 +496,18 @@ export interface OutboxController {
    * outcome, the end of the last running flush - and by the queue and the row as they stand, never
    * by a clock. For a caller that must know a message LEFT, not only that it was queued (the iOS
    * quick reply holding its process, review of #2843, H1).
+   *
+   * IT ENDS, AND THIS IS WHY (round 4). A waiter is answered by the FIRST of:
+   * - its registration, when the controller is disposed (`pending`), the message is out of the
+   *   queue (read from its row), or nothing is running (`pending` - `releaseUnsettled`);
+   * - an attempt on it (`drainLane` settles with that attempt's outcome);
+   * - the end of whatever was running when it registered. Every thing that can be running answers
+   *   the waiters in a `finally` of its own: a flush (`runFlush`), a lane it started (which can
+   *   outlive it when a sibling lane threw), and the lane an exit claims (`drainForExit`). Each
+   *   calls `releaseUnsettled`, which answers them once NOTHING runs - so the last one to end does;
+   * - `dispose()` (a sign-out, a session swap), which answers every waiter left.
+   * The premise is that a running flush or lane ends: each awaits network calls that answer or fail
+   * on their own (the transport's), never a promise only a later flush would resolve.
    */
   awaitSettled: (messageId: string) => Promise<OutboxSettlement>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
@@ -2612,7 +2624,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         laneWake.get(conversationId)?.();
         continue;
       }
-      const lane = drainLane(conversationId).finally(() => lanes.delete(conversationId));
+      const lane = drainLane(conversationId).finally(() => {
+        lanes.delete(conversationId);
+        // A lane may outlive the flush that started it (a sibling lane threw first, and
+        // `Promise.all` rejected): its own end answers the waiters too.
+        releaseUnsettled('a lane ended');
+      });
       lanes.set(conversationId, lane);
       started.push(lane);
     }
@@ -3094,6 +3111,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     async awaitSettled(messageId: string): Promise<OutboxSettlement> {
+      if (disposed) return 'pending';
       const settled = new Promise<OutboxSettlement>((resolve) => {
         settleWaiters.set(messageId, [...(settleWaiters.get(messageId) ?? []), resolve]);
       });
@@ -3167,6 +3185,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         } finally {
           lanes.delete(conversationId);
           release();
+          // The exit's lane was the last thing that could settle a waiter: answer them now.
+          releaseUnsettled('the exit drain ended');
         }
       } finally {
         exiting.delete(conversationId);
@@ -3255,6 +3275,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       unsubscribeReconnect();
       if (typeof window !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisible);
+      }
+      // NOTHING OF THIS CONTROLLER WILL SETTLE ANYTHING AGAIN (a sign-out, a session swap): every
+      // waiter is answered now. Still queued, the row waits for the next session's queue.
+      for (const messageId of settleWaiters.keys()) {
+        log(`[OUTBOX] ${messageId.slice(0, 8)}… still queued at dispose - answered pending`);
+        settle(messageId, 'pending');
       }
     },
   };

@@ -2429,23 +2429,28 @@ static NSString *CanariQuickReplyOutcomeName(int32_t outcome) {
 /// The holds by `replyId`. A hold is released exactly once: whoever removes it from here first.
 static NSMutableDictionary<NSString *, CanariQuickReplyHold *> *g_quickReplyHolds = nil;
 
-/// Ends the background task of `hold`, once whoever calls first: synchronously on the main thread
-/// (the expiration handler's thread, which must end its task before it returns), else on the main
-/// queue.
-static void CanariEndQuickReplyTask(CanariQuickReplyHold *hold) {
-  UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
-  @synchronized(hold) {
-    task = hold.task;
-    hold.task = UIBackgroundTaskInvalid;
-  }
-  if (task == UIBackgroundTaskInvalid) {
-    return;
-  }
-  if ([NSThread isMainThread]) {
+/// Takes the task id out of `hold` and ends it - ON THE MAIN THREAD ONLY. Every end goes through
+/// here, so the id is taken exactly once and always on the thread the expiration handler runs on:
+/// the handler, calling this synchronously, either takes the id itself and ends it before it
+/// returns, or finds it already ended by an earlier block on the same thread. No end of this task is
+/// ever left queued behind a handler that returned (round-4 review of #2843, L1).
+static void CanariEndQuickReplyTaskOnMain(CanariQuickReplyHold *hold) {
+  UIBackgroundTaskIdentifier task = hold.task;
+  hold.task = UIBackgroundTaskInvalid;
+  if (task != UIBackgroundTaskInvalid) {
     [[UIApplication sharedApplication] endBackgroundTask:task];
+  }
+}
+
+/// Ends the background task of `hold` once: at once on the main thread, else by a block on the main
+/// queue that takes the id THERE - never an id taken off main and ended later, which the expiration
+/// handler would have seen as already gone and returned without ending.
+static void CanariEndQuickReplyTask(CanariQuickReplyHold *hold) {
+  if ([NSThread isMainThread]) {
+    CanariEndQuickReplyTaskOnMain(hold);
   } else {
     dispatch_async(dispatch_get_main_queue(), ^{
-      [[UIApplication sharedApplication] endBackgroundTask:task];
+      CanariEndQuickReplyTaskOnMain(hold);
     });
   }
 }
@@ -2540,13 +2545,12 @@ static void CanariHoldQuickReply(NSString *replyId, void (^completion)(void)) {
                           @"the page settled it - read as still pending",
                           replyId);
                     CanariReleaseQuickReplyHold(replyId, CanariQuickReplyPending, @"expired");
-                    // Released already by a settlement on another thread, whose end was queued:
-                    // this handler still ends its own task before it returns.
-                    CanariEndQuickReplyTask(hold);
+                    // On main, synchronously: if a settlement off main released the hold first, its
+                    // end is still queued, and the id is taken and ended HERE, before returning.
+                    CanariEndQuickReplyTaskOnMain(hold);
                   }];
-    @synchronized(hold) {
-      hold.task = task;
-    }
+    // Main thread: the handler above cannot run before this assignment.
+    hold.task = task;
     @synchronized(g_quickReplyHolds) {
       g_quickReplyHolds[replyId] = hold;
     }

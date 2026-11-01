@@ -5362,6 +5362,43 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     }
   });
 
+  it('ENDS on a sign-out during the settle: dispose answers every waiter pending', async () => {
+    const { outbox } = setUp(() => new Promise<void>(() => {}));
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+    let answer: string | null = null;
+    void outbox.awaitSettled('m1').then((s) => (answer = s));
+    await outboxIdle();
+    expect(answer).toBeNull();
+    outbox.dispose();
+    await outboxIdle();
+    expect(answer).toBe('pending');
+    // And a waiter arriving after the dispose is answered at once.
+    await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+  });
+
+  it('ENDS when the only thing running is an exit drain: its lane answers on release', async () => {
+    let deliver: () => void = () => {};
+    const storage = makeStorage([textEntry('x1', 'leaving', 100), textEntry('m2', 'g2', 200)]);
+    const mlsService = makeMls({ send: () => new Promise<void>((r) => (deliver = r)) });
+    const conversations = new SvelteMap<string, Conversation>([
+      ['leaving', convoWith('leaving', ['x1'])],
+      ['g2', convoWith('g2', ['m2'])],
+    ]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+    const exit = outbox.drainForExit('leaving', 'leave');
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    // Registered while ONLY the exit's lane runs: no flush, no other lane.
+    let answer: string | null = null;
+    void outbox.awaitSettled('m2').then((s) => (answer = s));
+    await outboxIdle();
+    expect(answer).toBeNull();
+    deliver();
+    await exit;
+    await outboxIdle();
+    expect(answer).toBe('pending');
+  });
+
   it('a waiter that arrives after the attempt reads what it left: the row', async () => {
     const { outbox, conversations } = setUp();
     await outbox.enqueue(textEntry('m1', 'g1', 100));

@@ -162,6 +162,23 @@ describe('a quick reply handed to the page is never lost, never sent twice, neve
     expect(store.acks.at(-1)).toEqual(['r-g1', 'sent']);
   });
 
+  it('a reply whose conversation is GONE is acknowledged lost, never put back (round 4)', async () => {
+    const send = vi.fn(async () => 'gone' as const);
+    const session = as(send);
+    setNativeQuickReplySender(session);
+    await settle();
+    store.append(line('removed-group', 'x'));
+    await drainNativeQuickReplies('event');
+    expect(store.putBack).not.toHaveBeenCalled();
+    expect(store.file()).toEqual([]);
+    expect(store.acks).toEqual([['r-removed-group', 'lost']]);
+    // The native side shows its "not sent" notice for a lost reply; the page adds nothing.
+    expect(session.told).toEqual([]);
+    // Never comes round again.
+    await drainNativeQuickReplies('again');
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it('puts back a reply whose send threw before any write', async () => {
     setNativeQuickReplySender(
       as(async () => {

@@ -271,7 +271,7 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     expect(release).toContain('CanariTellQuickReplyOutcome(outcome);');
     expect(release).toContain('hold.completion();');
     expect(release).toContain('CanariEndQuickReplyTask(hold);');
-    expect(body('static void CanariEndQuickReplyTask(')).toContain('endBackgroundTask:task');
+    expect(body('static void CanariEndQuickReplyTaskOnMain(')).toContain('endBackgroundTask:task');
   });
 
   it('stores the task id before the expiry can run, and the expiry ends its own task (L1)', () => {
@@ -285,10 +285,17 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     const stored = begin.indexOf('hold.task = task;');
     expect(stored).toBeGreaterThan(begin.indexOf('beginBackgroundTaskWithName'));
     expect(begin.indexOf('g_quickReplyHolds[replyId] = hold;')).toBeGreaterThan(stored);
-    // Whoever released first, the expiry ends its own task before it returns.
-    expect(h.slice(h.indexOf('expirationHandler:'))).toContain('CanariEndQuickReplyTask(hold);');
-    // And a task is ended once: whoever takes the id from the hold first.
-    expect(body('static void CanariEndQuickReplyTask(')).toContain(
+    // Whoever released first, the expiry ends its own task, synchronously, before it returns.
+    expect(h.slice(h.indexOf('expirationHandler:'))).toContain(
+      'CanariEndQuickReplyTaskOnMain(hold);'
+    );
+    // The id is taken from the hold ON MAIN only (round 4): off main, a block is queued that takes
+    // it there - never an id taken off main and ended later, behind a handler that saw it gone.
+    const end = body('static void CanariEndQuickReplyTask(CanariQuickReplyHold *hold) {');
+    expect(end).not.toContain('hold.task');
+    expect(end).toContain('dispatch_async(dispatch_get_main_queue(), ^{');
+    expect(end).toContain('CanariEndQuickReplyTaskOnMain(hold);');
+    expect(body('static void CanariEndQuickReplyTaskOnMain(')).toContain(
       'hold.task = UIBackgroundTaskInvalid;'
     );
   });
