@@ -49,7 +49,6 @@ async function draw(units: SlotUnit[]) {
       space,
       resource,
       layout: weekLayout(units, ['2026-11-02'], space, START - 3600_000),
-      mode: 'week',
       nowMs: START - 3600_000,
       onPick: vi.fn(),
     },
@@ -84,5 +83,16 @@ describe('a booked block in a narrow column', () => {
 describe('stackedLines', () => {
   it('says how much a narrow block can stack under its avatar, by height', () => {
     expect([2.5, 3, 4.5, 6].map(stackedLines)).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe('the scrolling box follows the visible viewport', () => {
+  it('is capped in dvh, so a phone toolbar never hides its bottom edge', async () => {
+    await draw([booked(0)]);
+    const box = [...document.querySelectorAll<HTMLElement>('div')].find((d) =>
+      d.className.includes('overflow-auto')
+    )!;
+    expect(box.className).toContain('max-h-[75dvh]');
+    expect(box.className).not.toMatch(/max-h-[d+vh]/);
   });
 });

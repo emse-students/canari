@@ -199,6 +199,19 @@
     }
   });
 
+  /**
+   * DESTROYED WITH `open` STILL TRUE. A sheet drawn as `{#if sheet}<Modal open .../>` is handed
+   * over by clearing `sheet`: `open` never turns false, so the effect above never releases the
+   * entry, and one Android Back later closed a layer nobody was looking at ("did nothing"). A
+   * teardown-only effect (no dependency) releases it when the component goes.
+   */
+  $effect(() => () => {
+    if (historyClose) {
+      releaseHistoryOverlay(historyClose);
+      historyClose = null;
+    }
+  });
+
   function dismiss() {
     if (historyClose) {
       closeHistoryOverlayFromUi(historyClose);
