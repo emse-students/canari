@@ -144,6 +144,17 @@ fn reload_into(
     device_id: &str,
     device_key_b64: &str,
 ) -> Result<ReloadOutcome, String> {
+    // A RESUME RELOAD REFRESHES A LIVE MANAGER AND NEVER INSTALLS ONE. With the slot empty - never
+    // initialised, or ended by a sign-out or a failed install (`end_native_session`) - installing the
+    // file here would bring a manager back without `initialiser_mls`: no cached key, no owner record,
+    // and after a sign-out the previous account's state. Refused with the typed code instead.
+    if live.is_none() {
+        log::warn!(
+            "[RESUME] reload refused - no MLS session is installed in this process ({})",
+            crate::state::MLS_MANAGER_ABSENT
+        );
+        return Err(crate::state::manager_absent_error());
+    }
     // THE LIVE MANAGER IS ASKED FIRST WHETHER IT IS AHEAD OF THE FILE, before the file is even read.
     //
     // A frame this process sent, burnt or decrypted since the last serialisation moved a ratchet
@@ -272,11 +283,12 @@ fn reload_into(
     Ok(ReloadOutcome::Reloaded)
 }
 
-/// Foreground heartbeat: refreshes the guard while the WebView is visible. As long as it stays
-/// fresh, background JNI engines give up their `mls.bin` writes (C1/FCM3).
+/// Foreground heartbeat: refreshes the guard while the WebView is visible AND a foreground manager
+/// is loaded (`heartbeat_foreground_guard`: at the PIN gate there is nothing to protect). As long as
+/// it stays fresh, background JNI engines give up their `mls.bin` writes (C1/FCM3).
 #[tauri::command]
 pub(crate) fn mls_foreground_heartbeat() {
-    mark_foreground_active();
+    crate::concurrency::heartbeat_foreground_guard();
 }
 
 /// Releases the foreground guard (moving to the background): immediately allows JNI engines to
@@ -285,14 +297,6 @@ pub(crate) fn mls_foreground_heartbeat() {
 #[tauri::command]
 pub(crate) fn pause_mls_foreground() {
     crate::concurrency::mark_foreground_inactive();
-}
-
-/// Deletes `mls.bin` and, with it, the record of whose state it was ([`MLS_STATE_OWNER_FILE`]) -
-/// an owner left beside no state would name an account this install no longer holds anything of.
-#[tauri::command]
-pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    remove_mls_state_in(&data_dir)
 }
 
 /// The memo of background Welcomes the server refused as stale, keyed by the digest of `mls.bin`
@@ -513,21 +517,23 @@ fn report_what_keeping_the_live_state_loses(
     erased
 }
 
-/// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
-/// `mls.bin`, its owner record, and the ledgers and push-join files built from it - no epoch secret
-/// outlives the state it belongs to.
-fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
+/// Removes `mls.bin`, its owner record ([`MLS_STATE_OWNER_FILE`] - an owner left beside no state would
+/// name an account this install no longer holds anything of), and the ledgers and push-join files
+/// built from it - no epoch secret outlives the state it belongs to.
+///
+/// **THE CALLER HOLDS [`mls_bin_write_lock`]**, and the one caller is the teardown
+/// ([`crate::concurrency::end_native_session`]), which empties the live manager in the SAME hold: a
+/// command waiting on the manager then finds `None`, never the previous account's manager over no file.
+pub(crate) fn remove_mls_state_held(data_dir: &std::path::Path) -> Result<(), String> {
     log::debug!("[MLS] removing mls.bin and what was built from it");
     // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged join and the ledgers describe it, so a
     // sweep that fails part-way leaves the state intact and the next reset finishes the job - never
     // staged epoch secrets, or a memo about a digest, beside no state...
     // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
     // record naming whose it is, never a state nobody is named for.
-    // UNDER THE `mls.bin` WRITE LOCK: a background Welcome writes its stage and notes it under one
-    // hold of that lock, so the sweep removes both or neither - never a ledger it re-creates after.
-    let _guard = mls_bin_write_lock()
-        .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    // UNDER THE `mls.bin` WRITE LOCK (the caller's): a background Welcome writes its stage and notes
+    // it under one hold of that lock, so the sweep removes both or neither - never a ledger it
+    // re-creates after.
     let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
     let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
     let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");
@@ -767,10 +773,44 @@ const OUR_PREFS_PREFIXES: &[&str] = &["canari_", "keystore_aliases"];
 /// that one owns the stores inside the engine. Both are best-effort by design, so a single
 /// unremovable entry must not abandon the rest - each failure is logged and carried, and the
 /// error returned at the end names how many there were.
+///
+/// THE MLS SESSION ENDS FIRST, IN THE SAME HOLD AS THE SWEEP OF ITS STATE
+/// ([`crate::concurrency::end_native_session`]): a wipe that removed `mls.bin` under a live manager
+/// would leave the next checkpoint free to write it back.
 #[tauri::command]
-pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn clear_app_data(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let wiped = wipe_app_data(&data_dir);
+    let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
+    // Off the async runtime: the teardown may wait for an in-flight checkpoint.
+    tauri::async_runtime::spawn_blocking(move || {
+        let ended = crate::concurrency::end_native_session(
+            &manager_state,
+            &device_key_state,
+            Some(&data_dir),
+            "clear_app_data",
+        )
+        .map(|_| ());
+        wipe_native_app_data(&data_dir, ended)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The file half of [`clear_app_data`], after the session ended (`ended` is that teardown's result,
+/// carried so a sweep failure is returned with the rest rather than abandoning it).
+fn wipe_native_app_data(
+    data_dir: &std::path::Path,
+    ended: Result<(), String>,
+) -> Result<(), String> {
+    let wiped = match (ended, wipe_app_data(data_dir)) {
+        (Ok(()), w) => w,
+        (Err(e), Ok(())) => Err(e),
+        (Err(e), Err(w)) => Err(format!("{e}; {w}")),
+    };
     // The mirrored names also live in the iOS App Group container, which the walk above never
     // reaches. Same policy as the account deletion: no container is logged at ERROR and returned,
     // after everything else was removed.
@@ -1175,6 +1215,13 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
+    /// [`remove_mls_state_held`] under the lock its one caller holds - what it removes, on a real
+    /// directory, without the process-wide teardown (`end_native_session` has its own tests).
+    fn sweep_held(dir: &Path) -> Result<(), String> {
+        let _guard = mls_bin_write_lock().lock().unwrap();
+        remove_mls_state_held(dir)
+    }
+
     /// Only a missing or empty file is "absent"; a file with bytes is not.
     #[test]
     fn state_file_absent_is_true_only_for_a_missing_or_empty_file() {
@@ -1251,6 +1298,35 @@ mod tests {
     /// wins. Move the read back into the command - reading first and passing bytes in, which is
     /// exactly how the defect was written - and the signature changes, this test stops compiling, and
     /// the regression is refused at the door rather than measured on a phone six weeks later.
+    /// A RESUME RELOAD NEVER INSTALLS A MANAGER INTO AN EMPTY SLOT. After a sign-out ended the session,
+    /// a resume used to load `mls.bin` straight into the slot - a manager with no `initialiser_mls`,
+    /// no cached key, and after a sign-out the previous account's state. It is the typed refusal now,
+    /// and the slot stays empty.
+    #[test]
+    fn a_resume_reload_into_an_empty_slot_is_refused_and_installs_nothing() {
+        let dir = temp_dir("resume-empty");
+        let path = dir.join("mls.bin");
+        persist(
+            &MlsManager::load_or_create("u-resume-empty", "d1", None).unwrap(),
+            &path,
+        );
+        let mut live: Option<MlsManager> = None;
+
+        let refused = reload_into(&mut live, &path, "u-resume-empty", "d1", DEV_KEY_B64)
+            .err()
+            .unwrap();
+
+        assert!(
+            refused.starts_with(crate::state::MLS_MANAGER_ABSENT),
+            "{refused}"
+        );
+        assert!(
+            live.is_none(),
+            "a resume brought a manager back without a sign-in"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn the_snapshot_is_read_when_the_call_is_made_so_a_completed_mint_cannot_be_overwritten() {
         let dir = temp_dir("resume-read");
@@ -1462,18 +1538,18 @@ mod tests {
         // a later reset over nothing.
         record_mls_state_owner(&dir, "user-a").unwrap();
         file(&dir, "mls.bin");
-        remove_mls_state_in(&dir).unwrap();
+        sweep_held(&dir).unwrap();
         assert!(!dir.join("mls.bin").exists());
         assert_eq!(read_mls_state_owner(&dir), None);
         // And it is idempotent on an install that holds neither.
-        remove_mls_state_in(&dir).unwrap();
+        sweep_held(&dir).unwrap();
 
         // A background Welcome's stale memo goes with the state it was built from.
         file(&dir, "mls.bin");
         file(&dir, "welcome_request_stale.json");
         file(&dir, "welcome_request_stale.json.tmp");
         file(&dir, "unrelated.json");
-        remove_mls_state_in(&dir).unwrap();
+        sweep_held(&dir).unwrap();
         assert!(!dir.join("welcome_request_stale.json").exists());
         assert!(
             !dir.join("welcome_request_stale.json.tmp").exists(),
@@ -1491,7 +1567,7 @@ mod tests {
         file(&dir, "mls.bin.keygroup-join.tmp");
         file(&dir, "key_group_push_joins.json");
         file(&dir, "key_group_push_joins.json.tmp");
-        remove_mls_state_in(&dir).unwrap();
+        sweep_held(&dir).unwrap();
         for gone in [
             "mls.bin",
             "mls.bin.keygroup-join",
@@ -1514,7 +1590,7 @@ mod tests {
         // A ledger name that cannot be removed as a file: the sweep fails on it.
         std::fs::create_dir_all(dir.join("welcome_request_stale.json")).unwrap();
 
-        assert!(remove_mls_state_in(&dir).is_err());
+        assert!(sweep_held(&dir).is_err());
         assert!(
             dir.join("mls.bin").exists(),
             "the state outlives a sweep that did not finish"
@@ -1533,7 +1609,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("mls.bin")).unwrap();
         file(&dir, "welcome_request_stale.json");
 
-        assert!(remove_mls_state_in(&dir).is_err());
+        assert!(sweep_held(&dir).is_err());
         assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
         assert!(
             !dir.join("welcome_request_stale.json").exists(),
@@ -1543,7 +1619,7 @@ mod tests {
         std::fs::remove_dir_all(dir.join("mls.bin")).unwrap();
         file(&dir, "mls.bin");
         file(&dir, &format!("{MLS_STATE_OWNER_FILE}.tmp"));
-        remove_mls_state_in(&dir).unwrap();
+        sweep_held(&dir).unwrap();
         assert_eq!(read_mls_state_owner(&dir), None);
         assert!(!dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists());
         std::fs::remove_dir_all(&dir).ok();

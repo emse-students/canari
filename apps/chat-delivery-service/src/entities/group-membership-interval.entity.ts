@@ -41,7 +41,12 @@ export class GroupMembershipInterval {
   @Column({ type: 'varchar', length: 255 })
   userId: string;
 
-  /** When the enrolment that opened this stretch was written. */
+  /**
+   * When the enrolment that opened this stretch was written - or, for an invitation link's seat,
+   * when the member's Add that answered the ask was accepted: the link opens the stretch when the
+   * person asks, and that commit re-dates it (`dateArrivalAtAdmission`), so the wait outside is never
+   * read as membership.
+   */
   @CreateDateColumn()
   joinedAt: Date;
 
@@ -63,7 +68,8 @@ export class GroupMembershipInterval {
    * It decides the before-arrival span and the start of the stretch for `for`, NEVER a gap: the
    * 2026-10-14 window still ends at `joinedAt`. Written by `ensureGroupMember` from the database's
    * clock (the device row's `CreateDateColumn`), the second of the two clocks `withheldWindows`
-   * bounds.
+   * bounds. Cleared when a member's Add answers an invitation link's ask: the rows it was copied
+   * from were written when the person asked, not when anybody admitted them.
    */
   @Column({ type: 'timestamp', nullable: true })
   admittedAt: Date | null;

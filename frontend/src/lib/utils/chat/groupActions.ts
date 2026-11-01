@@ -32,6 +32,7 @@ import {
   FollowerTabCommitError,
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
+import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
@@ -983,6 +984,13 @@ export async function sendFullHistoryBundle(
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
   }
+  // Not even the state-only frame (its floor and watermarks) goes to a withheld device.
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
+    log(
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history pushed to it until a member vouches for it`
+    );
+    return;
+  }
 
   let messages: StoredMessage[];
   try {
@@ -1001,6 +1009,15 @@ export async function sendFullHistoryBundle(
   // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
   // frame this was before step A, and it carries no message.
   const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+    if (
+      !addressed &&
+      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
+    ) {
+      log(
+        `[HISTORY_BUNDLE] Not broadcasting the state-only frame in ${groupId.slice(0, 8)}... - a device there is withheld (${why})`
+      );
+      return;
+    }
     const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
       await mlsService.sendMessage(
@@ -1057,6 +1074,27 @@ export async function sendFullHistoryBundle(
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
 }
 
+/**
+ * Whether `to` is withheld in `groupId`, read only AFTER every device event already merged has been
+ * decided (`settleDeviceEvents`): an answer scheduled in the drain that carried an unvouched entry
+ * must not read the record before that entry wrote it. Events that could not be decided withhold:
+ * fail closed, the next answer settles again.
+ */
+async function historyWithheldAfterSettling(
+  groupId: string,
+  to: string,
+  mlsService: IMlsService,
+  log: (msg: string) => void
+): Promise<boolean> {
+  if (!(await mlsService.settleDeviceEvents('history answer'))) {
+    log(
+      `[HISTORY_BUNDLE] device events not decided before answering in ${groupId.slice(0, 8)}... - nothing answered, withheld until they are`
+    );
+    return true;
+  }
+  return historyWithheldFrom(groupId, to);
+}
+
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
 type HistorySendDeps = { mlsService: IMlsService; log: (msg: string) => void };
 
@@ -1105,6 +1143,14 @@ async function sendBundleChunks(
     push?: boolean;
   }
 ): Promise<BundleOutcome> {
+  // HISTORY IS WITHHELD FROM AN UNVERIFIED DEVICE (`historyWithheld.ts`): whatever the answer path,
+  // nothing from before is given to a device that let itself in until a member vouches for it.
+  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
+    log(
+      `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history answered to it until a member vouches for it`
+    );
+    return { kind: 'refused' };
+  }
   // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
   // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
   // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read
@@ -1132,6 +1178,17 @@ async function sendBundleChunks(
     }
     read = true;
     addressed = chosen.mode === 'addressed';
+    // A BROADCAST IS READ BY EVERY LEAF, a withheld device's included (`historyWithheld.ts`): while
+    // one is withheld here, an answer that cannot be addressed is not sent at all.
+    if (
+      !addressed &&
+      (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
+    ) {
+      log(
+        `[HISTORY_BUNDLE] Not broadcasting history in ${groupId.slice(0, 8)}... - a device there is withheld, and a broadcast would reach it`
+      );
+      return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+    }
     if (addressed && !answer?.requestId && !answer?.join) {
       log(
         `[HISTORY_BUNDLE] Not answering ${to} in ${groupId.slice(0, 8)}… - its ask carries no request id (an older client), and an addressed answer to no ask is refused`

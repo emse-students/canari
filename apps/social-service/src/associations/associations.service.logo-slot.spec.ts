@@ -35,7 +35,7 @@ function makeService(seed: Partial<Association>) {
   };
   const redis = { deleteByPattern: jest.fn(() => Promise.resolve()) };
 
-  // POSITIONAL, AND THIRTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
+  // POSITIONAL, AND FOURTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
     undefined as never, // memberRepo
@@ -49,7 +49,8 @@ function makeService(seed: Partial<Association>) {
     redis as never, // redis
     undefined as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
 
   // The media round-trip and the best-effort delete are the parts that need a network; both are

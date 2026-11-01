@@ -1,9 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { LYDIA_REFUND_NO_KEY } from './lydia-refund';
 import axios from 'axios';
-import { LydiaPaymentProvider } from './lydia-payment-provider';
+import {
+  LydiaPaymentProvider,
+  type LydiaCashierRemoval,
+  type LydiaCashierRole,
+} from './lydia-payment-provider';
 import { verifyLydiaCallback, type LydiaCallbackVerdict } from './lydia-callback-verification';
 import { internalLydiaCallbackKeyUrl, internalSocialRequestConfig } from './social-internal-client';
 import { DisabledPaymentProvider } from './disabled-payment-provider';
+import {
+  verifyLydiaStateSignature,
+  type RequestStateVerification,
+} from './lydia-state-verification';
 import { PlatformService } from '../platform/platform.service';
 
 import type {
@@ -12,9 +21,11 @@ import type {
   CheckoutLineItem,
   CheckoutRequestLookup,
   CheckoutRequestState,
+  CheckoutRequestStateKind,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
+  OnboardingResult,
   PaymentProvider,
   PaymentProviderId,
   WireLineItem,
@@ -46,7 +57,53 @@ export class PaymentService {
     this.lydiaProvider = new LydiaPaymentProvider({
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
+      LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
     });
+  }
+
+  /**
+   * Adds the Responsable of an association's Business at Lydia with every right and reads them back
+   * (`LydiaPaymentProvider.addBusinessHolder`). Lydia-specific and independent of which provider is
+   * ACTIVE: enrolling is allowed while payments are switched off platform-wide.
+   */
+  async addLydiaBusinessHolder(
+    associationId: string,
+    vendorToken: string,
+    phone: string
+  ): Promise<void> {
+    return this.lydiaProvider.addBusinessHolder(associationId, vendorToken, phone);
+  }
+
+  /** Reads one cashier's rights at Lydia, read-only (`LydiaPaymentProvider.readCashierRights`). */
+  async readLydiaCashierRights(associationId: string, vendorToken: string, phone: string) {
+    return this.lydiaProvider.readCashierRights(associationId, vendorToken, phone);
+  }
+
+  /**
+   * Adds a cashier with exactly the rights of `role` and reads them back
+   * (`LydiaPaymentProvider.addCashier`, lot 3). Like the Responsable's add, independent of which
+   * provider is ACTIVE.
+   */
+  async addLydiaCashier(
+    associationId: string,
+    vendorToken: string,
+    phone: string,
+    role: LydiaCashierRole
+  ): Promise<void> {
+    return this.lydiaProvider.addCashier(associationId, vendorToken, phone, role);
+  }
+
+  /**
+   * Removes a cashier at Lydia, then re-reads its rights
+   * (`LydiaPaymentProvider.removeCashier`): `verified` only at 0 rights.
+   */
+  async removeLydiaCashier(
+    associationId: string,
+    vendorToken: string,
+    contextPhone: string,
+    cashierPhone: string
+  ): Promise<LydiaCashierRemoval> {
+    return this.lydiaProvider.removeCashier(associationId, vendorToken, contextPhone, cashierPhone);
   }
 
   /** Reads the admin-configured provider choice and returns the matching instance. */
@@ -106,7 +163,9 @@ export class PaymentService {
     existingAccountId?: string;
     /** Required by Lydia's business/create. */
     legalProfile?: BusinessLegalProfile;
-  }): Promise<{ url: string; accountId: string }> {
+    /** `OnboardingParams.onBusinessCreated`: the vendor token, before the key check and link. */
+    onBusinessCreated?: (vendorToken: string) => Promise<void>;
+  }): Promise<OnboardingResult> {
     return (await this.getProvider()).createOnboarding(params);
   }
 
@@ -150,6 +209,82 @@ export class PaymentService {
     connectAccountId: string
   ): Promise<CheckoutRequestState> {
     return (await this.getProvider()).getCheckoutRequestState(lookup, connectAccountId);
+  }
+
+  /**
+   * Reads a request's state AND verifies the answer's signature with the Business private token of
+   * `connectAccountId`, over `expectedAmountCents` and the id read (`verifyLydiaStateSignature`).
+   * The key is fetched FIRST: with none stored, nothing can be verified, so Lydia is not asked at
+   * all and the answer is `no-key` with no state. A failure to reach social-service for the key, or
+   * Lydia for the state, throws - neither is a verdict. The signature never leaves this method.
+   */
+  async getVerifiedCheckoutRequestState(
+    lookup: CheckoutRequestLookup,
+    connectAccountId: string,
+    expectedAmountCents: number
+  ): Promise<
+    | { verification: 'no-key' }
+    | {
+        verification: Exclude<RequestStateVerification, 'no-key'>;
+        state: CheckoutRequestStateKind;
+        raw: string;
+      }
+  > {
+    const named = 'orderRef' in lookup ? `order_ref ${lookup.orderRef}` : lookup.requestUuid;
+    const key = await this.fetchLydiaBusinessKey(connectAccountId);
+    if (!key) {
+      this.logger.log(`request ${named}: no Business key stored for its vendor token - not read`);
+      return { verification: 'no-key' };
+    }
+    const { state, raw, signature } = await this.getCheckoutRequestState(lookup, connectAccountId);
+    const verification = verifyLydiaStateSignature(lookup, expectedAmountCents, key, signature);
+    if (verification === 'verified') {
+      this.logger.debug(`request ${named}: ${state}, signature verified`);
+    } else {
+      // The caller (social-service) accuses the ROW at ERROR; this line is the provider's side.
+      this.logger.warn(
+        `request ${named}: ${state} (code ${raw}), signature ${verification} over ` +
+          `${expectedAmountCents} cents`
+      );
+    }
+    return { verification, state, raw };
+  }
+
+  /**
+   * Refunds `amountCents` of the Lydia transaction issued with `orderRef` on the Business
+   * `vendorToken` (`LydiaPaymentProvider.refundTransaction`), signed with that Business's private
+   * token. Lydia-specific and independent of the ACTIVE provider: money taken must stay refundable
+   * after payments are switched off. The key is read FIRST: none stored is the typed 409
+   * `LYDIA_REFUND_NO_KEY` and Lydia is not called; failing to READ it is a 503
+   * `PAYMENT_SERVICE_NOT_READY` - nothing was sent either way. The key never leaves this method.
+   */
+  async refundLydiaTransaction(
+    vendorToken: string,
+    orderRef: string,
+    amountCents: number
+  ): Promise<void> {
+    let key: string | null;
+    try {
+      key = await this.fetchLydiaBusinessKey(vendorToken);
+    } catch (err: unknown) {
+      this.logger.error(
+        `[LYDIA-REFUND] ${orderRef}: the Business key could not be read - nothing sent (${
+          err instanceof Error ? err.message : String(err)
+        })`
+      );
+      throw new ServiceUnavailableException({
+        code: 'PAYMENT_SERVICE_NOT_READY',
+        message: 'The refund could not be sent; nothing was refunded',
+      });
+    }
+    if (!key) {
+      this.logger.warn(`[LYDIA-REFUND] ${orderRef}: no Business key stored - nothing sent`);
+      throw new ConflictException({
+        code: LYDIA_REFUND_NO_KEY,
+        message: 'No Business key is stored for this payment; nothing was refunded',
+      });
+    }
+    await this.lydiaProvider.refundTransaction(vendorToken, orderRef, amountCents, key);
   }
 
   /** Retrieves the charges-enabled status for a Connect-style account. */

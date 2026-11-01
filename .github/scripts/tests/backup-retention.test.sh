@@ -69,14 +69,14 @@ run() {
   (
     [ -n "$1" ] && export LOCAL_RETENTION_DAYS="$1"
     [ -n "$2" ] && export BACKUP_RETENTION_DAYS="$2"
-    export SSH_LOG="$TMP/ssh.log" PATH="$TMP/bin:$PATH" TMPDIR="$TMP"
+    export BACKUP_SSH_HOST=offsite-stub SSH_LOG="$TMP/ssh.log" PATH="$TMP/bin:$PATH" TMPDIR="$TMP"
     bash "$TMP/repo/infrastructure/backup/backup.sh" >"$TMP/run.log" 2>&1
   ) || { cat "$TMP/run.log"; return 1; }
 }
 
 kept() { [ -f "$TMP/backups/canari-backup-old-${1}d.tar.gz" ]; }
 survivors() { find "$TMP/backups" -maxdepth 1 -type f -printf '%f '; }
-offsite_mtime() { grep -o -- '-mtime +[0-9]*' "$TMP/ssh.log" | head -1; }
+offsite_mtime() { grep -o -- '-mtime +[0-9]*' "$TMP/ssh.log" | sed -n 1p; }
 
 printf '\nthe defaults: 7 days on the host, 14 offsite\n'
 # ═════════════════════════════════════════════════════════════════════════════

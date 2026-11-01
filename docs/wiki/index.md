@@ -138,6 +138,7 @@
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
 - [Backlog](backlog.md) — the scheduled queue behind `CLAUDE.md`: the substance of every queue item, and the table of what only the user can do
+- [backlog.d](backlog.d/README.md) — the backlog entries written since 2026-10-30, one file each, read together with `backlog.md`
 - [Open questions](open-questions.md) — questions parked deliberately, with no code until they are answered; an answer becomes a backlog entry or closes the question
 - [Legacy compatibility](legacy-compatibility.md) — every shim kept alive for older clients, and the date or condition at which each may be removed
 - [The 2026-09-02 workflow migration](workflow-migration.md) — main-only, deploy at the bump, pull requests, local development, `-alpha.N` pre-releases: the decisions, the measurements, the ordered checklist
@@ -158,7 +159,7 @@
 - [Cross-client campaign](cross-client-campaign.md) — The campaign's design: the ladder, what it is allowed to contain, the standing rules, the preflight, and what does NOT exist
 - [The 1.4.1 campaign on dev](cross-client-campaign-1-4-1.md) - PLANNED: the verdict on the campaign documents, the rig gaps that block a dev run, the MLS core matrix that blocks the `1.4.1` stable (pathological cases included) and what runs after
 - [The 1.4.1 campaign - runners](cross-client-campaign-1-4-1-runners.md) - row by row, how each blocking row is run and recorded, the atom covering it, what is missing, who must be present, and the ten table-driven runners
-- [The LITHIUM board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
+- [The previous machine's board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
 - [The campaign on the iPhone](cross-client-ios.md) — Every board row classified for the iPhone 12 (runs with the adapter / needs a named observable / not an iOS row), the `phone-ios.mjs` adapter and what is still owed
 - [Resuming the cross-client campaign](cross-client-campaign-resume.md) — The delta since the 2026-08-30 pause and the ordered restart: what the dev estate and the dependency sweep do to a run, and what they do not
 - [Server migration & bootstrap](../../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup

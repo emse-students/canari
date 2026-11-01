@@ -23,6 +23,7 @@
  * anything nginx terminates before the app is out of scope.
  */
 import { pathToFileURL } from 'node:url';
+import { COMMIT_REPORT_TAG } from './commitreport.mjs';
 import { isForeign404, ownedPaths } from './ownedpaths.mjs';
 
 /** The application containers. Infrastructure (redis, postgres, garage) is deliberately out. */
@@ -257,7 +258,7 @@ const BENIGN = [
   /\[ChannelService\] \[CHANNEL_PUSH\] channel=\S+ message=\S+ recipients=\d+/,
   // NOT OURS, AND ATTRIBUTED RATHER THAN GUESSED. `[404] POST /inform` arrives on the SSR server
   // every ~18 seconds; nothing in the client bundle or the SSR output contains that path, and the
-  // nginx log names the caller: `"AirControl Agent v1.0"` from 10.0.0.47 - a Ubiquiti access point
+  // nginx log names the caller: `"AirControl Agent v1.0"` from a LAN address - a Ubiquiti access point
   // on the LAN looking for its UniFi controller, which answers `inform` on that path. It found this
   // host instead.
   //
@@ -708,16 +709,8 @@ const NOTABLE = [
   // and those lines are the entire reason the reports were written.
   /\[CRON\] reportStrandedDeviceMemberships: no pending membership older than /,
   /\[CRON\] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree/,
-  // THE FIFTH HOURLY REPORT (`reportCommitLogHealth`), same rule: match the lines that say "nothing
-  // to report" and never the tag. The rate line is a LOG carrying the distribution whatever the
-  // verdict, and the clean hole sentence is the other; the WARN (`were re-keyed`) and the ERROR
-  // (`HOLE in their commit log`) are the findings and stay unclassified on purpose.
-  // The rate line's last clause follows a `; `, never a `, ` (`app.controller.ts`): the rule spelt it
-  // with a comma from #1397 on and matched NO real line, so every hourly report that landed in a
-  // row's window read unexplained - CC-3 on alpha.4, 2026-10-25. `srvclassify-selftest` now holds
-  // the server's own spelling, and `1 group(s) at >= 8` stays a finding.
-  /\[CRON\] reportCommitLogHealth: commit rate over the last hour - (no group committed|\d+ commit\(s\) in \d+ group\(s\); .*; 0 group\(s\) at >= \d+ by one device)$/,
-  /\[CRON\] reportCommitLogHealth: every commit log is contiguous /,
+  // THE FIFTH HOURLY REPORT (`reportCommitLogHealth`) is not here: it is lifted out of every row's
+  // window before anything is classified, and judged once per run (`commitreport.mjs`).
   // THE TURN METER'S HOURLY READING (#2187, `calls.service.ts`, `turn-usage-meter.service.ts`), same
   // rule: the two spellings that say "under budget" and nothing else. `BUDGET REACHED` (an error),
   // the unreadable budget and the UNAVAILABLE meter (warns) are the findings and stay unmatched.
@@ -1178,6 +1171,9 @@ export function mintedDeviceSeating(line) {
 
 const ADM_JOIN = ['ADM-1', 'ADM-2', 'ADM-3', 'ADM-4', 'ADM-5', 'ADM-6', 'ADM-9', 'ADM-10'];
 const THROTTLED = String.raw`repeat=10*, said at 1, 10, 100\.\.\.`;
+/** BIG-3 and its played variants (`BIG-3-noI1`): the row kicks an account and admits a newcomer. */
+const BIG3 = ['BIG-3', 'BIG-3-*'];
+
 const ROW_RULES = [
   // ── #2358: a new person joins a group only through a member ───────────────────────────────────
   // A waiting seat calling a member route: WARN, said at the 1st, 10th, 100th refusal per route,
@@ -1240,11 +1236,134 @@ const ROW_RULES = [
   },
   // ADM-4's two call probes, the row's own (`memberRoutes`: `call initiate`, `call ring` with the
   // fixed id `adm4-probe`); the 409 they meet is the assertion.
+  // `initiateCall` IS EVERY CALL'S FIRST LINE, not ADM-4's alone: the CALL-WEB rows place real calls
+  // (the first reading filed it out of row, 2026-10-26). Its ring probe stays ADM-4's own.
   {
-    name: 'ADM-4 call probes',
-    tag: /\[calls\] initiateCall |\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
-    shape: /\[calls\] initiateCall user=\S+ group=\S+$|\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
+    name: 'a call initiated',
+    tag: /\[calls\] initiateCall /,
+    shape: /\[calls\] initiateCall user=\S+ group=\S+$/,
+    rows: ['ADM-4', 'CALL-WEB-*'],
+  },
+  {
+    name: 'ADM-4 ring probe',
+    tag: /\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
+    shape: /\[ring\] ringGroup caller=\S+ group=\S+ call=adm4-probe$/,
     rows: ['ADM-4'],
+  },
+  // ── a real call, CALL-WEB-1..8 (`callrows.mjs`) ─────────────────────────────────────────────────
+  // chat-delivery's half (`calls.service.ts`, `calls.controller.ts`): the invite, and the ICE servers
+  // each seat asks for. Copied from the first reading (2026-10-26, `1.4.1-alpha.6`).
+  {
+    name: 'call invite and ICE servers',
+    tag: /\[CallsService\] \[call\] invite |\[ICE\] (ice-servers request|getIceServers|Requesting Cloudflare TURN credentials|Cloudflare returned)/,
+    shape:
+      /\[CallsService\] \[call\] invite room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$|\[CallsController\] \[ICE\] ice-servers request user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] getIceServers user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ICE\] Requesting Cloudflare TURN credentials \(ttl=\d+\)$|\[CallsService\] \[ICE\] Cloudflare returned \d+ ICE server\(s\)$/,
+    rows: ['CALL-WEB-*'],
+  },
+  // THE RING AND THE ROOM TOKEN (`calls.service.ts`): each one's entry line and its decision, which
+  // the project's logging standard requires (CLAUDE.md, CODING STANDARDS: entry, decisions, error
+  // branches). `rang=R/N` is forgiven only when R equals N - every device holding a token was handed
+  // the ring; a ring that reached fewer than it tried is a finding and stays dirt.
+  {
+    name: 'call ring, presence and room token',
+    tag: /\[CallsService\] \[(ring|calls|call)\] (ringGroup|call=|presence active|requestRoomToken|join-token)/,
+    shape:
+      /\[CallsService\] \[ring\] ringGroup caller=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36}$|\[CallsService\] \[ring\] call=[0-9a-f-]{36} group=[0-9a-f-]{36} rang=(\d+)\/\1 devices$|\[CallsService\] \[calls\] presence active user=[0-9a-f]{64} device=\S+ call=[0-9a-f-]{36}$|\[CallsService\] \[calls\] requestRoomToken user=[0-9a-f]{64} group=[0-9a-f-]{36} room=[0-9a-f-]{36}$|\[CallsService\] \[call\] join-token room=[0-9a-f-]{36} user=[0-9a-f]{64} group=[0-9a-f-]{36}$/,
+    rows: ['CALL-WEB-*'],
+  },
+  // THE RING'S END AND THE PRESENCE CLEARED (`calls.service.ts` `endRing`, `reportCallPresence`;
+  // first read on `1.5.1-alpha.1`, 2026-10-27). The `reason` is pinned per row to what its scenario
+  // sends - an answered call `answered` then `ended`, a declined one `ended`, a cancelled or
+  // unanswered one `cancelled`, the busy row its answered call (`answered`, then `ended` at the hang-up,
+  // absent from the first reading's window, present in the second) and W5's busy one `cancelled` - so a ring
+  // ended for another reason is read by the rule of a row it is not, and stays dirt. `notified=R/N`
+  // is forgiven only when R equals N, as the ring's `rang=R/N` is.
+  //
+  // TWO LIMITS, stated. CALL-WEB-7's three reasons cannot be pinned per CALL: the server line carries
+  // only the user's and the call's hashes, which the rule cannot tie to "W2's call" or "W5's" - so in
+  // that row any of the three is forgiven for either call. CALL-WEB-3 (the callee hangs up) sends
+  // what 1 and 2 send; CALL-WEB-8 (a reload) sends `answered` only - the reloaded page never hangs up,
+  // so no `ended` comes (both read on `1.5.1-alpha.1`, 2026-10-28).
+  ...[
+    { name: 'call ring ended: answered, then hung up', reasons: 'answered|ended', rows: ['CALL-WEB-1', 'CALL-WEB-2', 'CALL-WEB-3'] },
+    { name: 'call ring ended: answered, then the peer reloaded', reasons: 'answered', rows: ['CALL-WEB-8'] },
+    { name: 'call ring ended: declined', reasons: 'ended', rows: ['CALL-WEB-4'] },
+    { name: 'call ring ended: cancelled or unanswered', reasons: 'cancelled', rows: ['CALL-WEB-5', 'CALL-WEB-6'] },
+    { name: 'call ring ended: one answered and hung up, one busy', reasons: 'answered|cancelled|ended', rows: ['CALL-WEB-7'] },
+  ].map(({ name, reasons, rows }) => ({
+    name,
+    tag: /\[CallsService\] \[(ring\] (endRing|ring-end) |calls\] cleared presence )/,
+    shape: new RegExp(
+      [
+        String.raw`\[CallsService\] \[ring\] endRing user=[0-9a-f]{64} group=[0-9a-f-]{36} call=[0-9a-f-]{36} reason=(${reasons})`,
+        String.raw`\[CallsService\] \[ring\] ring-end call=[0-9a-f-]{36} notified=(\d+)\/\2`,
+        String.raw`\[CallsService\] \[calls\] cleared presence for user=[0-9a-f]{64} device=\S+`,
+      ]
+        .map((s) => `${s}$`)
+        .join('|')
+    ),
+    rows,
+  })),
+  // call-service's half (Rust, `call_service`): a signalling socket per seat, its p2p pairing and
+  // relays, and its end. `disposition=client-close` is the only end forgiven: any other is a call
+  // the service ended, which is a finding.
+  {
+    name: 'call signalling session',
+    tag: /call_service: (Authenticated WebSocket upgrade for user |\[call\] )/,
+    shape:
+      /call_service: Authenticated WebSocket upgrade for user [0-9a-f]{64}$|call_service: \[call\] socket open peer=[0-9a-f]{64}:[0-9a-f-]{36}$|call_service: \[call\] session start room=[0-9a-f-]{36} peer=[0-9a-f]{64}:[0-9a-f-]{36} mode=p2p$|call_service: \[call\] p2p paired room=[0-9a-f-]{36} initiator=\S+ polite=\S+ resumed=(true|false)$|call_service: \[call\] p2p (offer|answer) relayed room=[0-9a-f-]{36} from=\S+ to=\S+$|call_service: \[call\] [0-9a-f]{64}:[0-9a-f-]{36} sent Close \((no payload|code=\d+ reason=)\)$|call_service: \[call\] session end room=[0-9a-f-]{36} peer=\S+ mode=p2p disposition=client-close duration_ms=\d+ paired_ms=(\d+|-) .*$|call_service: \[call\] p2p room [0-9a-f-]{36} removed - no peers remaining$/,
+    rows: ['CALL-WEB-*'],
+  },
+  // ── a live broadcast (`liverows.mjs`): its start, its segments, its seats and its end ─────────
+  // social-service's half (`lives.service.ts`, `live-seats.ts`, `live-segment-store.ts`,
+  // `live-announcer.ts`). Forgiven only in a LIVE row. Every refusal (`start refused`, `segment ...
+  // refused`, `out of order`, `FULL`) and every `max_duration` end stays dirt: a row that meets one
+  // is a finding. `seat released (held=true)` or `(held=1)` only - the seat count's Lua release
+  // (#2202) answers the number of seats it removed (read on LIVE-WEB-2, `1.5.1-alpha.8`): releasing a
+  // seat never held (`held=false`, `held=0`) is not the path.
+  {
+    name: 'live start, segments, seats and end',
+    // THE TAG NAMES THE STORE'S TWO PER-LIVE LINES ONLY: its `listing the live folders of the store`
+    // is the retention tick's, BENIGN in every window, and a tag that claimed it turned it into
+    // "a shape nobody has read" (LIVE-WEB-2, 2026-10-27). `[LIVE_GC] <live> deleted` is the end's
+    // purge, and `<live> kept: N viewer(s) still seated` its wait for them; the sweep's other `[LIVE_GC]`
+    // lines (kept for the next run, OPEN, orphan) stay outside this rule.
+    tag: /\[(LivesService|LiveSeats|InternalLivesModeController|LiveAnnouncer)\] \[(LIVE|LIVE_SEAT|LIVE_ANNOUNCE)\] |\[HttpLiveSegmentStore\] \[LIVE\] (storing segment|purging the segments) |\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} (deleted|kept: [1-9]\d* viewer\(s\)) /,
+    shape: new RegExp(
+      [
+        String.raw`\[LivesService\] \[LIVE\] start asked by [0-9a-f]{8}`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f]{8} accepted the live rules v\d+`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} started by [0-9a-f]{8}`,
+        String.raw`\[LivesService\] \[LIVE\] segment \d+ of [0-9a-f-]{36} reserved as [0-9a-f-]{36}`,
+        String.raw`\[LivesService\] \[LIVE\] segment \d+ of [0-9a-f-]{36} stored \(\d+ B\)`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} (claimed for its announcement|already announced)`,
+        String.raw`\[LivesService\] \[LIVE\] [0-9a-f-]{36} ended by its broadcaster`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat held, \d+ on this live, \d+\/\d+ seated`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: \d+ watching \(broadcaster's read\)`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: seat released \(held=(?:true|1)\)`,
+        String.raw`\[LiveSeats\] \[LIVE_SEAT\] [0-9a-f-]{36}: ended, \d+ seat\(s\) given back`,
+        String.raw`\[HttpLiveSegmentStore\] \[LIVE\] storing segment [0-9a-f-]{36} of live [0-9a-f-]{36} \(\d+ B\)`,
+        String.raw`\[HttpLiveSegmentStore\] \[LIVE\] purging the segments of live [0-9a-f-]{36}`,
+        String.raw`\[InternalLivesModeController\] \[LIVE\] lives_mode relayed to media-service: on`,
+        String.raw`\[LiveAnnouncer\] \[LIVE_ANNOUNCE\] [0-9a-f-]{36} by [0-9a-f]{8} kind=member followers=\d+`,
+        String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} deleted \(\d+ segment object\(s\)\)`,
+        // The end's purge WAITS for the viewers still seated (#2689, read on LIVE-WEB-2, `1.5.1-alpha.8`):
+        // a viewer keeps the segments its last manifest named. One or more seated; zero is another sentence.
+        String.raw`\[LivesService\] \[LIVE_GC\] [0-9a-f-]{36} kept: [1-9]\d* viewer\(s\) still seated, owed the segments their last manifest named`,
+      ]
+        .map((s) => `${s}$`)
+        .join('|')
+    ),
+    rows: ['LIVE-*'],
+  },
+  // media-service's half: a segment written to the store, and served once to the edge cache.
+  {
+    name: 'live segment stored and served',
+    // and the end's purge of the live's folder: `failed=0 remaining=0` IS THE ASSERTION, any other
+    // count stays dirt.
+    tag: /\[(LiveSegmentsService|MediaController)\] \[LIVE\] (storing live\/|segment )|\[LiveSegmentsService\] \[LIVE_GC\] live /,
+    shape: /\[LiveSegmentsService\] \[LIVE\] storing live\/[0-9a-f-]{36}\/[0-9a-f-]{36} \(\d+ B\)$|\[MediaController\] \[LIVE\] segment [0-9a-f-]{36}\/[0-9a-f-]{36} served to the edge cache \(\d+ B\)$|\[LiveSegmentsService\] \[LIVE_GC\] live [0-9a-f-]{36}: deleted=\d+ failed=0 remaining=0$/,
+    rows: ['LIVE-*'],
   },
   // A FRESHLY MINTED DEVICE'S FIRST MEMBERSHIP READ (`invitations.controller.ts`): every group its
   // owner is in is pending and nobody is adding it yet - the starting state of an enrolment, before
@@ -1364,17 +1483,6 @@ const ROW_RULES = [
     rows: [],
   },
 
-  // ── the hourly commit-rate report naming ONE busy group: KILL-1's own repeat ──────────────────
-  // KILL-1 kills W1 around its own commit twenty times in one group, so an hourly report landing in
-  // its window names exactly that group: `1 group(s) at >= 8 by one device` (alpha.4, 2026-10-25).
-  // ONE group only - two busy groups is not this row's burst - and dirt in every other row.
-  {
-    name: 'one busy group in the hourly commit rate',
-    tag: /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \d+ commit\(s\) in \d+ group\(s\);.*; [1-9]\d* group\(s\) at >= \d+ by one device$/,
-    shape: /\[CRON\] reportCommitLogHealth: commit rate over the last hour - \d+ commit\(s\) in \d+ group\(s\); per group p50=\d+ p90=\d+ max=\d+; busiest single committer per group p50=\d+ p90=\d+ max=\d+; 1 group\(s\) at >= \d+ by one device$/,
-    rows: ['KILL-1'],
-  },
-
   // ── #2287 (and #2329's server face): the background Welcome route ─────────────────────────────
   // A phone in the background answering a newcomer's join. DEV-7 arms it; anywhere else it means a
   // newcomer's external join failed for a reason no row named.
@@ -1442,6 +1550,67 @@ const ROW_RULES = [
     tag: /\[KEY_DISTRIBUTION\] departure (superseded|SUPERSEDED|CANCELLED|ABANDONED)/,
     shape: /\[KEY_DISTRIBUTION\] departure (CANCELLED before its roster write scope=\S+ user=\S+ departure=\S+ reason=\S+ - rolled back, retryable|ABANDONED reason=\S+ begun=\d+: .* - settling what it began)$/,
     rows: ['RM-1', 'RM-4', 'RM-5'],
+  },
+  // RM-5'S RACE, READ ON `1.4.1-alpha.6` (2026-10-26): W1 kicks the subject while W2 grants them the
+  // private salon, five cycles. When the kick lands first the grant is refused because the subject is no
+  // longer a member (cycles 3 and 4: `409 CHANNEL_GRANTEE_NOT_MEMBER`, `by=` the granter, `first=` the
+  // subject). Each kick names its target and cuts their private salons. The cycle's rejoin cancels the
+  // departure the kick began, on both services. The kicked subject's next salon read is refused as
+  // not a reader. Each rule takes only the outcome RM-5 plays: another outcome or reason stays dirt.
+  {
+    name: 'access rewrite refused, grantee not a member',
+    tag: /\[CHANNEL_ACCESS\] refused/,
+    shape: /\[CHANNEL_ACCESS\] refused - the rewrite grants 1 non-member\(s\) channel=\S+ by=\S+ first=\S+ revision=\d+ locked=true$/,
+    rows: ['RM-5'],
+  },
+  {
+    name: 'a member kicked',
+    tag: /\[WORKSPACE\] kick /,
+    shape: /\[ChannelService\] \[WORKSPACE\] kick workspace=\S+ target=\S+ by=\S+$/,
+    rows: ['RM-5', ...BIG3],
+  },
+  {
+    name: "a kick cuts the target's private salons",
+    tag: /\[CHANNEL_GRAINE\] private salons to cut /,
+    shape: /\[ChannelService\] \[CHANNEL_GRAINE\] private salons to cut workspace=\S+ user=\S+ reason=kicked salons=\d+\/\d+$/,
+    rows: ['RM-5', ...BIG3],
+  },
+  // BIG-3'S OWN SETTING AND ITS NEWCOMER'S FIRST READ (`archive/big.mjs`, read on `1.5.0-alpha.1`,
+  // 2026-10-27). The row sets the community's history to `joined` before it admits the newcomer
+  // (`setHistoryVisibility`), and the newcomer's first page of the row's young salon holds fewer bodies
+  // than it asked for, so the server includes the silent rows below the oldest one
+  // (`channel.service.ts`, "a short page is the end of the history"). Only BIG-3's own value is
+  // forgiven: `shared` set in this row would be a row that did not play its premise.
+  {
+    name: "BIG-3 sets its community's history to joined",
+    tag: /\[WORKSPACE\] historyVisibility=/,
+    shape: /\[ChannelService\] \[WORKSPACE\] historyVisibility=joined workspace=\S+ by=[0-9a-f]{8}$/,
+    rows: [...BIG3],
+  },
+  {
+    name: "a short history page of BIG-3's salon",
+    tag: /\[HISTORY\] channel=\S+ short page /,
+    shape: /\[ChannelService\] \[HISTORY\] channel=[0-9a-f-]{36} short page \(\d+\/\d+\): silent rows below the oldest body included$/,
+    rows: [...BIG3],
+  },
+  {
+    name: "a kick's departure cancelled by the rejoin",
+    tag: /\[KEY_DISTRIBUTION\] (departure outcome|abandoned departure settled) |\[DISTRIBUTION_GROUP\] (cancel|departure cancelled) /,
+    shape: new RegExp(
+      [
+        String.raw`\[ChannelService\] \[KEY_DISTRIBUTION\] departure outcome group=\S+ user=\S+ departure=\d+ outcome=cancelled$`,
+        String.raw`\[ChannelService\] \[KEY_DISTRIBUTION\] abandoned departure settled scope=workspace:\S+ user=\S+ departure=\d+ reason=kicked outcome=cancelled settled=true$`,
+        String.raw`\[DistributionGroup\] \[DISTRIBUTION_GROUP\] cancel workspace=\S+ user=\S+ departure=\d+ settled=true$`,
+        String.raw`\[MessagingService\] \[DISTRIBUTION_GROUP\] departure cancelled group=\S+ user=\S+ departure=\d+ settled=true$`,
+      ].join('|')
+    ),
+    rows: ['RM-5'],
+  },
+  {
+    name: 'the kicked member is not a reader of the salon',
+    tag: /\[DISTRIBUTION_GROUP\] entitlement channel=\S+ user=\S+ entitled=false/,
+    shape: /\[InternalDistributionEntitlementController\] \[DISTRIBUTION_GROUP\] entitlement channel=\S+ user=[0-9a-f]{8} entitled=false \(first evaluation\) - not a reader of the salon$/,
+    rows: ['RM-5'],
   },
   {
     name: 'salon grant refused',
@@ -1594,16 +1763,28 @@ export function settleFirstLooks(unexplained) {
   // saying so - the settling silently settled nothing, which is the failure mode a count-based rule
   // has and a per-line rule does not (a rule that matches nothing at least leaves its population
   // visible). `none` is what `published=false` always prints, so requiring it costs no coverage.
-  const FIRST_LOOK =
-    /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false base=none active=\d+ user=\S+ devices=0/;
+  // TWO SPELLINGS OF ONE LOOK, counted apart: chat-delivery's `read` and social-service's
+  // `[CHANNEL_GRAINE] served` twin for a salon. Each is a singleton per group or stays where it is;
+  // RM-4 of `1.4.1-alpha.6` left the served twin unexplained beside its settled `read`.
+  const FIRST_LOOKS = [
+    ['read', /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false base=none active=\d+ user=\S+ devices=0/],
+    ['served', /\[CHANNEL_GRAINE\] served channel=\S+ user=\S+ group=(\S+) published=false base=none active=\d+ devices=0$/],
+  ];
+  const keyOf = (l) => {
+    for (const [kind, re] of FIRST_LOOKS) {
+      const m = re.exec(l);
+      if (m) return `${kind}:${m[1]}`;
+    }
+    return null;
+  };
   const seen = new Map();
   for (const l of unexplained) {
-    const m = FIRST_LOOK.exec(l);
-    if (m) seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+    const k = keyOf(l);
+    if (k) seen.set(k, (seen.get(k) ?? 0) + 1);
   }
   return unexplained.filter((l) => {
-    const m = FIRST_LOOK.exec(l);
-    return !!m && seen.get(m[1]) === 1;
+    const k = keyOf(l);
+    return !!k && seen.get(k) === 1;
   });
 }
 
@@ -1678,6 +1859,12 @@ for (const service of SERVICES) {
     clean = false;
     continue;
   }
+
+  // THE HOURLY COMMIT REPORT IS NO ROW'S (`commitreport.mjs`): it describes the whole estate over the
+  // last hour, so the row the clock strikes in is not its subject (DEV-6, alpha.6, 2026-10-26). Lifted
+  // out before anything is judged, counted here, and judged once per run by `archive/hourlyread.mjs`.
+  const hourly = lines.filter((l) => COMMIT_REPORT_TAG.test(l));
+  lines = lines.filter((l) => !COMMIT_REPORT_TAG.test(l));
 
   // PARTITION BEFORE CLASSIFYING. `foreign` is kept whole and reported; only `lines` is judged.
   const foreign = lines.filter(isThirdParty);
@@ -1775,6 +1962,8 @@ for (const service of SERVICES) {
     // REPORTED, NEVER SILENT: a collapse that is not stated is indistinguishable from a window that
     // was quiet, and the whole point of the rule above is that a suppressed count misleads.
     ...(dumpLines && { dumpLinesCollapsed: dumpLines }),
+    // NOT GATING HERE, NEVER SILENT: the run's `hourlyread.mjs` is where these are judged.
+    ...(hourly.length && { hourlyCommitReportCount: hourly.length }),
     ...(severe.length && { severeCount: severe.length, severe: severe.slice(0, 40) }),
     ...(errors.length && { errorCount: errors.length, errors: errors.slice(0, 40) }),
     ...(warnings.length && { warningCount: warnings.length, warnings: warnings.slice(0, 20) }),

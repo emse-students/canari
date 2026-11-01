@@ -64,6 +64,7 @@ function makeServer() {
     }),
     fetchUserDevices: vi.fn(async (u: string) => [{ deviceId: `${u}-dev` }]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     getGroupMemberIdentities: vi.fn(async () => [...tree]),
     runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),

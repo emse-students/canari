@@ -15,6 +15,7 @@
  */
 import { BadRequestException } from '@nestjs/common';
 import {
+  sanitizeAccountUserId,
   sanitizeIdentityValue,
   sanitizeLogValue,
   sanitizeQueryValue,
@@ -95,5 +96,20 @@ describe('sanitizeLogValue', () => {
 
   it('lets the caller name what absence looks like', () => {
     expect(sanitizeLogValue(undefined, 'none')).toBe('none');
+  });
+});
+
+/**
+ * The account-erasure id check mirrors core-service's mint rule (`users/user-id.ts`) exactly: a
+ * stricter one would refuse an id core-service holds, and its retried erasure would be a 400 for ever.
+ */
+describe('sanitizeAccountUserId', () => {
+  it('accepts a long id the mint rule accepts - the rule has no length cap', () => {
+    const long = 'a'.repeat(300);
+    expect(sanitizeAccountUserId(long, 'userId')).toBe(long);
+  });
+
+  it.each(['', 'a:b', 'a b', 'é'])('refuses %p, which breaks the mint rule', (id) => {
+    expect(() => sanitizeAccountUserId(id, 'userId')).toThrow(BadRequestException);
   });
 });

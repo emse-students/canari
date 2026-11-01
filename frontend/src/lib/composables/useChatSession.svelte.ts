@@ -19,6 +19,11 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
+import {
+  markConnectionCaughtUp,
+  setPendingCallAcceptHandler,
+  setSessionCaughtUp,
+} from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
@@ -29,6 +34,7 @@ import {
   loginImpl,
   prefetchPinSaltImpl,
   endSessionImpl,
+  endLostSessionImpl,
   settleSessionEndByRevocationImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
@@ -51,6 +57,7 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 
@@ -76,10 +83,14 @@ export function useChatSession() {
 
   // ── Services ──────────────────────────────────────────────────────────────
   /** The MLS client and its retirement at a sign-out - see `mlsHolder.ts`. */
-  const mlsHolder = createMlsHolder(() => {
-    if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-    return createMlsService();
-  });
+  const mlsHolder = createMlsHolder(
+    () => {
+      if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
+      return createMlsService();
+    },
+    // A sign-out and an account switch keep `mls.bin` for the account's next sign-in.
+    (reason) => endNativeMlsSession(reason, { sweepState: false })
+  );
   /** The client the current `callService` was built over, so a retired one is never kept. */
   let callServiceMls: IMlsService | null = null;
   let storage: IStorage | null = $state(null);
@@ -168,7 +179,7 @@ export function useChatSession() {
     // Services
     ensureMls,
     resetMls: (only) => mlsHolder.reset(only),
-    retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
+    retireMls: (finalWrite, why) => mlsHolder.retire(finalWrite, why),
     whenMlsRetired: () => mlsHolder.whenRetired(),
     isMlsRetiring: () => mlsHolder.isRetiring(),
     getStorage: () => storage,
@@ -187,7 +198,10 @@ export function useChatSession() {
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {
       isWsConnected = v;
+      // A socket that closed has nothing caught up: a native answer waits for the next catch-up.
+      if (!v) setSessionCaughtUp(false);
     },
+    onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected),
     getLoginError: () => loginError,
     setLoginError: (v) => {
       loginError = v;
@@ -428,8 +442,15 @@ export function useChatSession() {
       if (callServiceMls === svc) return;
       callServiceMls = svc;
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
+      // The replaced service (an account switch) withdraws what it told the native ring, so its
+      // holder does not outlive it (`CallService.retireFromPageRing`).
+      callService?.retireFromPageRing();
       callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
+      // An answer given on the ring joins once the socket's catch-up is done, whichever of the two
+      // comes second (`pendingCallAccept.ts`; calls.md, "An answer from the ring joins on the
+      // ring's facts").
+      setPendingCallAcceptHandler((why) => callService?.answerFromSystemSurface(why));
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */
     ensureMls,
@@ -462,6 +483,9 @@ export function useChatSession() {
     /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
     endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       endSessionImpl(ctx, cb),
+    /** Stops the live session on this device only, its MLS session lost; the credential is kept. */
+    endLostSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
+      endLostSessionImpl(ctx, cb),
     /**
      * The session-expired reaction's half of a revocation: when the refresh refusal said the session
      * died because its owner revoked this device, returns the device to a fresh install (the one

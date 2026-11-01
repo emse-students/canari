@@ -53,6 +53,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
@@ -272,6 +273,17 @@
   }
 
   let showCreateModal = $state(false);
+  /** The broadcaster's screen is open, with who it broadcasts as; it replaced the composer. */
+  let liveTarget = $state<{ associationId: string | null; associationName: string | null } | null>(
+    null
+  );
+
+  /** "En direct" from the composer: it closes (by state, no history change) and the live takes over. */
+  function onGoLive(target: { associationId: string | null; associationName: string | null }) {
+    Log.d('POSTS', 'going live from the composer: the composer closes, the live replaces it');
+    showCreateModal = false;
+    liveTarget = target;
+  }
 
   /**
    * `?compose=1` AND `?search=1` ARE COMMANDS, NOT STATE MIRRORS.
@@ -297,21 +309,40 @@
     const search = params.get('search') === '1';
     if (!compose && !search) return;
 
-    if (compose) showCreateModal = true;
-    if (search) {
-      searchOpen = true;
-      // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
-      queueMicrotask(() => searchInput?.focus());
-    }
-
-    const u = new URL(page.url);
+    const u = new URL(page.url.href);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
-    void goto(resolve(internalPath(feedPath(u))), {
-      replaceState: true,
-      noScroll: true,
-      keepFocus: true,
-    });
+    // THE STRIP FIRST, THE COMMAND ONCE IT HAS LANDED. The strip is a navigation, and the root
+    // layout closes every open overlay before one (`drainHistoryOverlayStack`). SvelteKit 2 kept
+    // the arriving navigation open through two ticks after its commit, and skipped every hook
+    // while it was, so a strip fired by the arriving page ran no drain. SvelteKit 3 ends it as soon
+    // as the page has settled, so the strip runs the hooks, and a modal opened in this same tick
+    // was closed as it opened (Mi 9T, 2026-10-28). The command acts once the strip has landed.
+    // That a replace would also overwrite an overlay's own history entry is the second reason.
+    const perform = () => {
+      if (compose) showCreateModal = true;
+      if (search) {
+        searchOpen = true;
+        // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
+        queueMicrotask(() => searchInput?.focus());
+      }
+    };
+    // Whether the strip landed is read off the page, never off the error: kit rejects an overtaken
+    // navigation with an untyped `Error`, and the feed still on screen is the fact that decides.
+    const landed = () => page.url.pathname === u.pathname;
+    void goto(resolve(internalPath(feedPath(u))), { replace: true, reset: false }).then(
+      () => {
+        if (landed()) perform();
+        else Log.i('POSTS', 'feed command dropped: the strip was overtaken by another navigation');
+      },
+      (e: unknown) => {
+        if (!landed()) {
+          Log.i('POSTS', `feed command dropped: the strip was overtaken (${String(e)})`);
+          return;
+        }
+        console.error(`[POSTS] feed command not performed: its strip failed: ${String(e)}`);
+      }
+    );
   });
 
   /**
@@ -591,13 +622,13 @@
 
   /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
   function showFeed(feed: PostFeed) {
-    const u = new URL(page.url);
+    const u = new URL(page.url.href);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
     // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
     u.searchParams.delete('kind');
-    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
+    void goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
   }
 
   async function refreshPosts() {
@@ -903,11 +934,12 @@
        because a sticky box only sticks inside its parent. `inert` while hidden keeps it out of the
        tab order, and it never hides while focus is inside it (`tabsFocused`). `motion-reduce` drops
        the slide. While a search replaces the feed its content is hidden, so it is neither sticky
-       nor padded: an empty opaque band would sit over the results. -->
+       nor padded. THE WRAPPER HAS NO BACKGROUND (owner, 2026-10-31): the row is a floating glass
+       pill over the cards, and the gaps between its pieces are the feed's, so touches pass through. -->
   <div
-    class="-mx-1 mb-2 px-1 transition-transform duration-200 ease-out motion-reduce:transition-none {searchQuery
+    class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'bg-cn-bg sticky top-0 z-10 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 pt-2 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {
@@ -960,8 +992,21 @@
     phoneFullScreen
     onClose={() => (showCreateModal = false)}
   >
-    <CreatePostForm {onPostCreated} />
+    <CreatePostForm {onPostCreated} {onGoLive} />
   </Modal>
+
+  <!-- THE LIVE REPLACES THE COMPOSER (owner, 2026-10-31): hosted HERE, not inside the composer, so
+       the composer can close without ending it, and ending or closing the live leaves the feed. -->
+  {#if liveTarget}
+    <LiveOverlay
+      associationId={liveTarget.associationId}
+      associationName={liveTarget.associationName}
+      onclose={() => {
+        Log.d('POSTS', 'the live screen closed: back on the feed');
+        liveTarget = null;
+      }}
+    />
+  {/if}
 
   <section>
     {#if searchQuery}

@@ -1,5 +1,8 @@
 /** Vitest stub for `$app/navigation` (not available outside SvelteKit). */
-export async function goto(_href: string, _opts?: { replaceState?: boolean }): Promise<void> {}
+export async function goto(
+  _href: string,
+  _opts?: { replace?: boolean; shallow?: boolean; state?: unknown }
+): Promise<void> {}
 
 export async function invalidateAll(): Promise<void> {}
 
