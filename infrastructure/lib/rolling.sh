@@ -163,14 +163,31 @@ rotation_route() {
   printf '%s\n' "$ROTATION_ROUTES" | awk -v s="$1" '$1 == s { print $2, $3 }'
 }
 
-# rotation_block <service> <port> [<container name>...] - one `upstream` block: the replicas named,
-# or, with none, the service's DNS name (the resting form). The same text, byte for byte, as the
-# list baked in Dockerfile.frontend (deploy-replace.test.sh compares them).
+# The proxies whose list is included in a `stream {}` context (a TCP relay) rather than `http {}`.
+# deploy-replace.test.sh holds this to the include sites; deploy-rolling.test.sh runs `nginx -t` on
+# both real configurations with the lists rendered here.
+ROTATION_STREAM_PROXIES="edge"
+
+# rotation_block <proxy> <service> <port> [<container name>...] - one `upstream` block: the replicas
+# named, or, with none, the service's DNS name (the resting form). The same text, byte for byte, as
+# the list baked in Dockerfile.frontend (deploy-replace.test.sh compares them).
+#
+# `keepalive 0` IN EVERY http BLOCK, AND THE PAIRING CHECK IS ONLY SOUND WITH IT (2026-11-01). Since
+# nginx 1.29.7 an `upstream` block caches up to 32 idle connections per worker by default; an idle
+# cached connection is ESTABLISHED, holds nothing, and is indistinguishable in /proc from an upstream
+# a request has chosen - so it paired a request still in its auth_request (CI: 1 client against 13
+# idle upstreams, then a 502). A worker closes them when its graceful shutdown begins, which the
+# check would have to race. With no cache, every upstream connection of an old worker belongs to a
+# request in flight. A `stream` upstream caches nothing and does not know the directive.
 rotation_block() {
-  local service="$1" port="$2" name
-  shift 2
+  local proxy="$1" service="$2" port="$3" name
+  shift 3
   printf 'upstream %s {\n    zone %s 64k;\n    resolver 127.0.0.11 valid=%ss ipv6=off;\n' \
     "$service" "$service" "$ROLLING_RESOLVER_TTL_SECONDS"
+  case " $ROTATION_STREAM_PROXIES " in
+  *" $proxy "*) ;;
+  *) printf '    keepalive 0;\n' ;;
+  esac
   if [ $# -eq 0 ]; then
     printf '    server %s:%s resolve;\n' "$service" "$port"
   else
@@ -215,7 +232,7 @@ rotation_write() {
       if [ -n "$existing" ]; then
         printf '%s\n' "$existing"
       else
-        rotation_block "$svc" "$port"
+        rotation_block "$proxy" "$svc" "$port"
       fi
     done <<<"$ROTATION_ROUTES"
   } >"$tmp" || return 1
@@ -598,7 +615,7 @@ rotation_take_out() {
     return 1
   fi
   # shellcheck disable=SC2086 # deliberate word splitting: one name per word
-  rotation_write "$proxy" "$service" "$(rotation_block "$service" "$port" $names)" || return 1
+  rotation_write "$proxy" "$service" "$(rotation_block "$proxy" "$service" "$port" $names)" || return 1
   rotation_apply "$proxy" retiring
 }
 
@@ -609,7 +626,7 @@ rotation_restore() {
   route="$(rotation_route "$service")"
   [ -n "$route" ] || return 0
   proxy="${route%% *}"
-  rotation_write "$proxy" "$service" "$(rotation_block "$service" "${route#* }")" || return 1
+  rotation_write "$proxy" "$service" "$(rotation_block "$proxy" "$service" "${route#* }")" || return 1
   [ "$ROTATION_CHANGED" = yes ] || return 0
   rotation_apply "$proxy" plain
 }

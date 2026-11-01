@@ -234,6 +234,30 @@ else
   fail "infrastructure/edge/rotation is missing, or a written list would be tracked"
 fi
 
+# EVERY LIST IS RENDERED FOR THE CONTEXT IT IS INCLUDED IN: `keepalive 0` in an http list (without
+# it nginx >= 1.29.7 caches idle upstream connections and the pairing check counts them as chosen
+# requests), nothing in a stream list (which caches nothing, and refuses the directive). The stream
+# proxies rolling.sh declares are exactly the lists included inside `stream {`.
+stream_includes="$(awk '/^stream *\{/ { s = 1 } /^http *\{/ { s = 0 } s && $1 == "include" && $2 ~ /\/rotation\/[^\/]+\.conf;$/ { f = $2; sub(/.*\/rotation\//, "", f); sub(/\.conf;$/, "", f); print f }' "$REPO/infrastructure/edge/nginx.conf" "$FRONTEND_NGINX" | sort | tr '\n' ' ')"
+declared="$(sed -n 's/^ROTATION_STREAM_PROXIES="\(.*\)"$/\1/p' "$ROLLING" | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')"
+if [ -n "$stream_includes" ] && [ "$stream_includes" = "$declared" ]; then
+  ok "the lists included in a stream context ($stream_includes) are the ones rolling.sh renders as stream"
+else
+  fail "stream includes '$stream_includes' differ from ROTATION_STREAM_PROXIES '$declared'"
+fi
+blocks_of() {
+  (
+    # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
+    . "$ROLLING"
+    rotation_block "$1" svc 3000
+  )
+}
+if blocks_of frontend | grep -qx '    keepalive 0;' && ! blocks_of edge | grep -q keepalive; then
+  ok "an http list caches no upstream connection, a stream list says nothing of it"
+else
+  fail "the keepalive line is not rendered as each context needs"
+fi
+
 # THE RESTING FORM IS THE LIST THE FRONTEND IMAGE BAKES: between deploys a list names each service by
 # its DNS name, exactly as an estate with no such deploy reads it, so the seed and the image can never
 # disagree about what "no replacement in progress" looks like.
@@ -244,7 +268,7 @@ resting="$(
   . "$ROLLING"
   rotation_routes_set <<<"$PROD_PLAN"
   printf '%s\n' "$ROTATION_ROUTES" | while read -r svc via port; do
-    [ "$via" = frontend ] && rotation_block "$svc" "$port"
+    [ "$via" = frontend ] && rotation_block frontend "$svc" "$port"
   done
 )"
 missing=""
@@ -367,7 +391,7 @@ edge pinned yes -'
     '[ "$(block_of api)" = " server api:3000 resolve;|" ] && [ "$(block_of sib)" = " server sib:3001 resolve;|" ] && grep -qx "    server front:80 resolve;" "$ROT/edge.conf"'
 
   # The sibling as a deploy killed mid-replacement leaves it: named by a container.
-  rotation_write front sib "$(rotation_block sib 3001 p-sib-1)"
+  rotation_write front sib "$(rotation_block front sib 3001 p-sib-1)"
   rotation_take_out api api-new >/dev/null
   verdict "taking a replica out names the new one alone" '[ "$(block_of api)" = " server p-api-2:3000 resolve;|" ]'
   verdict "a sibling that is unhealthy is carried over as it was, never re-read and dropped" \

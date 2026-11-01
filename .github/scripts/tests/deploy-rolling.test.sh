@@ -193,12 +193,12 @@ done < <(
     exit 1
   }
   # A list mid-replacement: core-service named by a container, the rest at rest.
-  rotation_write frontend core-service "$(rotation_block core-service 3012 canari-core-service-2)" || {
+  rotation_write frontend core-service "$(rotation_block frontend core-service 3012 canari-core-service-2)" || {
     echo fail "rotation_write names core-service by a container"
     exit 1
   }
   token="$ROTATION_TOKEN"
-  rotation_write edge frontend "$(rotation_block frontend 80 canari-frontend-2)" || {
+  rotation_write edge frontend "$(rotation_block edge frontend 80 canari-frontend-2)" || {
     echo fail "rotation_write names the frontend by a container"
     exit 1
   }
@@ -347,18 +347,24 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 if [ "$(auth_held)" = 1 ]; then ok "the POST is held in its auth subrequest before the release starts"; else fail "the POST never reached its auth subrequest"; fi
-for svc in frontend api; do
-  for c in $(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=$svc"); do
-    printf '    %s %s (%s), port-3000 sockets before the release (local remote state tx:rx inode):\n' "$svc" "$c" \
-      "$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$c")"
-    docker exec "$c" cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$2 ~ /:0BB8$/ || $3 ~ /:0BB8$/ { print "      " $2, $3, $4, $5, $10 }'
-  done
+# NO IDLE CONNECTION TO THE API IS CACHED (2026-11-01). Eight POSTs answered one after the other, and
+# the one request left is in its auth subrequest, so an ESTABLISHED connection from the frontend to
+# :3000 now is an idle one nginx kept - which the pairing check cannot tell from a chosen request
+# (CI: 13 of them paired this POST, which then got a 502). `keepalive 0` in the lists forbids it. Read
+# right after the POSTs: the API's own keep-alive timeout would otherwise close them first, which is
+# why this went unseen on a slower machine.
+for _ in $(seq 1 8); do curl -s -o /dev/null -X POST "$URL"; done
+idle=0
+for c in $(containers_of frontend); do
+  # A table that cannot be read is not a clean one.
+  table="$(docker exec "$c" cat /proc/net/tcp 2>/dev/null)" || idle="?"
+  [ "$idle" = "?" ] || idle=$((idle + $(printf '%s\n' "$table" | awk '$3 ~ /:0BB8$/ && $4 == "01" { n++ } END { print n + 0 }')))
 done
-for c in $(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=frontend"); do
-  printf '    frontend %s processes and their sockets:\n' "$c"
-  # shellcheck disable=SC2016 # run inside the container
-  docker exec -u nginx "$c" sh -c 'for p in /proc/[0-9]*; do printf "      %s [%s] %s:" "${p#/proc/}" "$(awk "/^PPid/ {print \$2}" "$p/status")" "$(tr "\0" " " <"$p/cmdline")"; ls -l "$p/fd" 2>/dev/null | grep -o "socket:\[[0-9]*\]" | tr -d "socket:[]" | tr "\n" " "; echo; done' 2>&1
-done
+if [ "$idle" = 0 ]; then
+  ok "the frontend keeps no idle connection to the API between requests"
+else
+  fail "the frontend holds ${idle:-?} idle connection(s) to the API - an upstream cache the pairing check would count as chosen requests"
+fi
 deploy >"$TMP/auth.log" 2>&1 &
 DEPLOY_PID=$!
 # Released once the deploy either waits for it (the check is sound) or has moved on to retiring the
@@ -386,12 +392,6 @@ if [ "$waited" = yes ]; then
 else
   fail "the pairing check did not wait for the request in its auth_request"
   cat "$TMP/auth.log" >&2
-  # What the old workers' other sockets were: the proxies' own access lines, and each table.
-  dc logs --no-color --tail 60 frontend api >&2 2>&1 || true
-  for c in $(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=frontend"); do
-    printf -- '-- %s /proc/net/tcp\n' "$c" >&2
-    docker exec "$c" cat /proc/net/tcp >&2 || true
-  done
 fi
 if [ "$(cat "$TMP/hold-auth.code")" = 200 ]; then
   ok "the POST released from its auth_request was answered 200"

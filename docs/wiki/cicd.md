@@ -357,6 +357,20 @@ clock; the read count bounds only a request that never ends.
   An `auth_request` whose target it cannot place makes the deploy refuse rather than guess. The
   test holds a POST inside its `auth_request` across a release and asserts the check waits for it
   and the POST is answered `200` (without the exclusion it was a `502`).
+- **No idle upstream connection exists to be counted: every http list says `keepalive 0`**
+  (2026-11-01, found in CI after the review). Since nginx 1.29.7 an `upstream` block caches up to 32
+  idle connections per worker BY DEFAULT, and the frontend runs 1.30. An idle cached connection is
+  ESTABLISHED and carries nothing - in `/proc` it is a request that has chosen. CI caught 13 of them
+  pairing a POST still in its `auth_request`, which then answered `502`; it failed one run in two,
+  because the old worker closes them when its graceful shutdown begins and the read raced that close,
+  and because the API's own keep-alive timeout closes them first on a slower machine. Racing it is not
+  a proof, so the cache is switched off in the lists `rotation_block` renders (and in the list the
+  frontend image bakes): with none, every upstream connection of an old worker belongs to a request in
+  flight. The frontend's variable `proxy_pass` targets cache nothing (measured: no idle `:3001` in the
+  same dump). The edge's lists are `stream` (`ROTATION_STREAM_PROXIES`), which caches nothing and
+  refuses the directive. The cost is a connection per proxied request between the frontend and the
+  services - what every release before nginx 1.29.7 did. `deploy-rolling.test.sh` sends eight POSTs
+  and asserts the frontend then holds no idle connection to the API (without the line: one).
 - **What it does not prove.** A request whose upstream FAILS after it was paired may choose again
   from the old list: `proxy_next_upstream` (an idempotent method only, nginx's own rule) or an
   `error_page` that proxies elsewhere (the frontend's all answer from nginx itself). That needs a
