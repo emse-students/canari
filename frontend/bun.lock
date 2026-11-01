@@ -32,7 +32,7 @@
         "highlight.js": "^11.12.0",
         "jspdf": "^4.2.1",
         "jsqr": "^1.4.0",
-        "mediabunny": "^1.62.1",
+        "mediabunny": "^1.63.0",
         "pdfjs-dist": "^6.4.299",
         "qrcode": "^1.5.4",
         "simple-rnnoise-wasm": "1.1.0",
@@ -71,7 +71,6 @@
   },
   "patchedDependencies": {
     "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
-    "mediabunny@1.62.1": "patches/mediabunny@1.62.1.patch",
   },
   "overrides": {
     "brace-expansion": "^5.0.12",
@@ -758,7 +757,7 @@
 
     "mdurl": ["mdurl@2.1.0", "", {}, "sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg=="],
 
-    "mediabunny": ["mediabunny@1.62.1", "", { "dependencies": { "@types/dom-mediacapture-transform": "^0.1.11", "@types/dom-webcodecs": "0.1.13" } }, "sha512-lYzeerDwo9QLhBCipqQDXOSV7InvaIFplllZQviPO5rPwH+IUr8M1uvumk1olIUgMRGkPiInRriv25WFErUgMw=="],
+    "mediabunny": ["mediabunny@1.63.0", "", { "dependencies": { "@types/dom-mediacapture-transform": "^0.1.11", "@types/dom-webcodecs": "0.1.13" } }, "sha512-6958wlfDtass/zNcuSuGzUzFT9ciwEFd5AzDa02EQdPmifB4URcTcZoyQ//Ln5e47Z6EC3EJuKr3MM037w89OA=="],
 
     "minimatch": ["minimatch@11.0.3", "", { "dependencies": { "@isaacs/nonrecursive-glob-match": "^1.0.3", "brace-expansion": "^5.0.12" } }, "sha512-iny/40PEGkNJQ5/Pv6z3nm6FbRAby32GeZRjCUJk2WnNDbgPSTcdI+DDvLqsgBdD4cD5sMtMheqPPnehCCa8Nw=="],
 
