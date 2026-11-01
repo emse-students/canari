@@ -1417,3 +1417,8 @@ denser grid ("the hours shown") is taken the other way, below.
   opens once on the first hour a booker may take (`firstUsefulMin`).
 - The page uses the `grid` width shape (the grid is a fixed 7 columns, like the agenda month) and the
   poster is capped on a desktop.
+- **Review of #2882**: the box is capped at `75dvh`; a drag near its top or bottom edge scrolls it
+  (`EDGE_PX`), so a range can reach units beyond the visible part; the grid's scroll lives in
+  `SpaceWeek` (`gridScroll`) so a week with nothing offered, which unmounts the grid, does not lose
+  it; the opening hour follows the organiser's rule in block mode; the dashboard counters say "Sur
+  les 7 jours affichés". Pinned by `SpaceWeek.rolling.svelte.test.ts`.
