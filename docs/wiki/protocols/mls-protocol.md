@@ -1113,13 +1113,33 @@ that consumes them next.
   is closed learns of the device at the next message push or when the app opens). Each push-decrypt
   answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
   one marker file per key (`create_new`, atomic across the app and the extension), in the app data
-  directory on Android and the App Group on iOS. The app claims the keys it showed
+  directory on Android and the App Group on iOS. **A marker is named by the SHA-256 of its key, in
+  hex (64 characters), since 1.6.1.** From 1.4.1-alpha.2 to 1.6.0 it was named by the whole key in
+  hex: a production key (`userId:deviceId|fingerprint`, ~160 bytes) gave a ~320-byte name, over the
+  255-byte limit, so every claim failed with `File name too long (os error 36)`, logged at ERROR
+  five times a start on the Mi 9T, and NO background engine ever posted the alert. A marker an older
+  build did write (a key of at most 127 bytes) is still read as "already announced"
+  ([legacy-compatibility](../legacy-compatibility.md)). A marker that cannot be written is an ERROR
+  naming its path, and its key is NOT announced, since nothing would then stop a second post. The
+  app claims the keys it showed
   (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
   foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
   the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
   The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
   other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
-  never posted. The ledger is swept with the account's push files on deletion.
+  never posted. **That pre-claim is a precondition the engines check, not one they assume (1.6.1):**
+  `preclaim_device_notices` records the old keys and THEN writes the account's `preclaimed` marker
+  (never pruned) - but only when the pass read the key ages of EVERY listed device (`complete`): one
+  unanswered device may be old, so its pass records the keys it knows and withholds the marker. The
+  engines' door (`engine_claim_device_notices_json`, behind the JNI and C-FFI) posts and claims
+  nothing for an account without the marker, and answers `{"claimed": [...], "held": n}` so the
+  Android and iOS log lines say which reason left nothing to post (this crate's log reaches no
+  logger in a killed app). A store update runs the new build in the engines BEFORE the app's next
+  launch, and every pre-claim of 1.4.1-alpha.2 to 1.6.0 had failed, so without the gate a heal commit
+  pushed before the first open would post a false "new device" for an old laptop. **The ledger holds
+  one directory per account** (`device_notices/<sha256(userId)>/`: a marker per key, and
+  `preclaimed`); legacy markers sit in its root. An account's deletion removes its own directory and
+  its own legacy markers (`remove_device_notices_of`), never another account's on the install.
 - **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
   nobody, and announces nothing. Its events exist only in the STAGED post-add state
   (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
@@ -1131,8 +1151,12 @@ that consumes them next.
 processes the commit itself and so shows the in-app alert only, with no local notification; and a
 device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
 The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
-can still post for such a device when a heal brings it back; the app does not announce it. A
-contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+can still post for such a device when a heal brings it back; the app does not announce it. **After
+an update, until the app's first registration on it has pre-claimed the account, the engines post
+nothing at all: an account that never opens the app after the update gets NO background "new device"
+alert, even for a real attacker's device, until that first open.** The in-app alert still comes
+then, once the app drains the commit - a late notification, never a false one. A pass with an
+unanswered device extends that window to the next complete one. A contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
 the history began carry that date, not their device's enrolment.
 
 ### Who admits a new person (2026-10-23)
