@@ -44,8 +44,8 @@ The chat-delivery-service is the MLS API layer. It:
 
 **What it answers.** A device with no session and no push token keeps its active seats and its key
 package, so every fan-out queues a row for it. Four hand passes revoked that population through
-`DELETE /api/mls/devices/:userId/:deviceId` (2026-10-12 twice, 2026-10-24, 2026-11-01: 286
-devices), and it refilled each time
+`DELETE /api/mls/devices/:userId/:deviceId` (2026-10-12 twice, 2026-10-24, 2026-11-01: 285
+revoked of an allowlist of 286 - the other came back that day), and it refilled each time
 ([audit](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#fourth-pass-by-hand-and-the-reaper-that-replaces-the-passes---2026-11-01)).
 The owner decided on 2026-11-01 to build the fix at the source, OFF, and to validate each step of
 its activation.

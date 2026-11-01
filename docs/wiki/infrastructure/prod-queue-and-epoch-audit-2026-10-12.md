@@ -553,9 +553,27 @@ is the owner's decision.**
 ## Fourth pass, by hand, and the reaper that replaces the passes - 2026-11-01
 
 **The fourth pass.** On 2026-11-01 the owner had the population of the re-measure above revoked by
-hand, through the same `DELETE /api/mls/devices/:userId/:deviceId` route: **286 devices** with no
-session and no push token. It is the fourth time this population was revoked by hand, and every
-re-measure found it again.
+hand, through the same `DELETE /api/mls/devices/:userId/:deviceId` route, one device at a time. The
+allowlist held **286 devices** with no session and no push token, re-measured that day.
+
+| What | Count |
+| --- | --- |
+| Devices on the allowlist | 286 |
+| Revoked through the route, every call answered 200 | **285** |
+| Skipped by the per-device re-check, because its predicate no longer held (a session or a push token had appeared - it came back) | 1, which keeps its 3 queued rows, 5 seats and 1 key package |
+| Queued rows deleted, in total | **71 271** |
+| Pauses on the load guard (1-minute load above 6) | 1, after 84 devices; the run then resumed |
+| Re-count after the run, for the 285 | 0 queued rows, 0 seats, 0 key packages; 285 `revoked_device` rows written |
+
+A full-row backup of every affected table, filtered to the allowlist, was taken just before the run
+and is kept privately, outside the repository. It is the fourth time this population was revoked by
+hand, and every re-measure found it again.
+
+**The skipped device is evidence for the reaper's rule.** It had no session and no push token for
+days, was on a measured allowlist, and still came back the same day. "No session, no push token" is
+what any device not opened for a week looks like, which is why the reaper requires 90 days of
+silence and a proven replacement rather than those two facts
+([service page](../services/chat-delivery.md#the-retired-device-reaper-built-off-2026-11-01)).
 
 **The owner then decided (2026-11-01, "Oui, la construire") to build the fix at the source**: a
 scheduled reaper in `chat-delivery-service`, **built OFF**. The owner reads the rule and a dry run

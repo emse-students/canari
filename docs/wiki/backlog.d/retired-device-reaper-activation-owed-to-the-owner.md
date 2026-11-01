@@ -1,7 +1,8 @@
 ## P2 - the retired-device reaper is built OFF; its activation is owed to the owner (2026-11-01)
 
-Decided by the owner on 2026-11-01 ("Oui, la construire"), after the fourth hand pass revoked 286
-devices with no session and no push token that kept filling the queue. Built in
+Decided by the owner on 2026-11-01 ("Oui, la construire"), after the fourth hand pass revoked 285
+devices with no session and no push token that kept filling the queue (of an allowlist of 286: one
+came back that day, before its turn). Built in
 `chat-delivery-service`, daily, behind `RETIRED_DEVICE_REAPER`, `off` on both estates and set per
 estate in `infrastructure/deploy/render-env.sh`. The mechanism, what its predicate proves and what it
 does not, are on the [service page](../services/chat-delivery.md#the-retired-device-reaper-built-off-2026-11-01).
