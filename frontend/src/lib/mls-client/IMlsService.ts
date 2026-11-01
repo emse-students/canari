@@ -538,6 +538,9 @@ export function recoveryOfStateLoadFailure(
   savedStateExists: boolean,
   noFreshStart: boolean
 ): 'rotate' | 'pause' | 'rethrow' {
+  // `mismatch` / `altered` with NO saved state cannot happen: both are verdicts on bytes that were
+  // read, so a missing state never produces them. The row is kept (behaviour unchanged) and is
+  // unreachable by construction.
   if (noPinOpensState(cause)) return 'rotate';
   // No state, no recovery: the failure is not the state's, and it propagates as itself.
   if (!savedStateExists) return 'rethrow';

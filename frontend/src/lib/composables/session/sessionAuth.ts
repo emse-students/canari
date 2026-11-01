@@ -603,7 +603,9 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
  * `device_holds_other_account`, the gate withholding the reset. A framed state whose header names
  * another key (`rotated`) is a fact - the old PIN opens it - and says so without the "otherwise
  * damaged" branch, which the fingerprint has ruled out. A legacy blob or an untyped failure is
- * still only the observation, and keeps the sentence naming both remedies.
+ * still only the observation, and keeps the sentence naming both remedies. An `unknown` cause proves
+ * nothing and gets a retry-first sentence with no reset. `keystore_unavailable` never reaches here
+ * (`recoveryOfStateLoadFailure` rethrows it to the PIN modal).
  */
 export function savedStateFailure(
   reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError | MlsStateWriteRefusedError
@@ -622,6 +624,11 @@ export function savedStateFailure(
   }
   if (reason.reason === 'unreadable_now') {
     return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
+  }
+  // An untyped cause (IPC fault, disk read, panic, install lock) proves nothing about the bytes: it
+  // never earns the "damaged, only a reset helps" sentence, which pushes towards a destructive act.
+  if (reason.reason === 'unknown') {
+    return new LoginFailure('local_state_unknown', m.auth_local_state_unknown());
   }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
