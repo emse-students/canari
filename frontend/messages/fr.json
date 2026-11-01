@@ -4875,6 +4875,7 @@
   "notif_booking_added_text": "vous a inscrit à une réservation",
   "notif_booking_reminder_text": "Rappel : votre réservation commence bientôt",
   "notif_booking_word_quoted": "« {word} »",
+  "follow_list_more": "Voir plus",
   "follow_requests_title": "Demandes d'abonnement",
   "follow_requests_subtitle": "Les personnes qui demandent à vous suivre. Un refus n'est signalé à personne.",
   "follow_requests_empty": "Aucune demande en attente.",

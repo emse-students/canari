@@ -967,9 +967,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       ]);
     });
 
-    it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: a follower sharing none is not told and cannot watch", async () => {
+    it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: who shares none and does not follow is not told and cannot watch", async () => {
       await follow(BOB);
-      await follow(FRANK);
+      // FRANK shares no space with ALICE and only ASKED to follow her: a request opens nothing.
+      await follow(FRANK, ALICE, 'pending');
       const live = await start();
       await lives.ingest(ALICE, live.id, 0, segment(0));
       expect((await pushed()).map((n) => n.recipientIds)).toEqual([[BOB]]);
@@ -1000,6 +1001,34 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         code: 'LIVE_NOT_FOUND',
       });
       expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_ENDED');
+    });
+
+    it('AN ACCEPTED FOLLOWER WATCHES ACROSS SPACES (WP-F5): told, listed and let in - until a block or a removal', async () => {
+      // FRANK shares no space with ALICE, and ALICE accepted him.
+      await follow(FRANK);
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect((await pushed()).map((n) => n.recipientIds)).toEqual([[FRANK]]);
+      await expect(lives.get(FRANK, live.id)).resolves.toMatchObject({ key: KEY });
+      expect((await lives.listOpen(FRANK)).map((l) => l.id)).toEqual([live.id]);
+
+      // A block, whichever side asks, closes it at once - the follow row left behind or not.
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, FRANK]);
+      expect(await refusal(lives.get(FRANK, live.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(lives.listOpen(FRANK)).resolves.toEqual([]);
+      await q(`DELETE FROM user_blocks`);
+      await expect(lives.get(FRANK, live.id)).resolves.toMatchObject({ key: KEY });
+
+      // ALICE removes him from her followers: the row goes, and so does the live.
+      await q(`DELETE FROM user_follows WHERE "followerUserId" = $1`, [FRANK]);
+      expect(await refusal(lives.get(FRANK, live.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(lives.listOpen(FRANK)).resolves.toEqual([]);
     });
 
     it("AN ASSOCIATION'S LIVE REACHES WHOM ITS RULES OR ITS MEMBERSHIP REACH, and a read grant watches without a push", async () => {
