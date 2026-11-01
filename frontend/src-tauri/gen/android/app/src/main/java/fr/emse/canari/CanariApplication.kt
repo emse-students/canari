@@ -283,16 +283,33 @@ class CanariApplication : Application() {
             return null
         }
 
+        /** Whether the Do Not Disturb ask was shown in this process ([IncomingRing.dndAsk]). */
+        private val dndAskedThisLaunch = java.util.concurrent.atomic.AtomicBoolean(false)
+
         /**
-         * Whether the user must still be asked to grant the new calls channel "override Do Not
-         * Disturb" again. Reading it clears nothing: only the user's answer does
-         * ([dndRegrantAnswered]), so an ask the user never saw is asked again.
+         * Whether the page asks the user, now, to grant the new calls channel "override Do Not
+         * Disturb" again ([IncomingRing.dndAsk]). Only the user's answer clears the debt
+         * ([dndRegrantAnswered]) - or the channel already having it, granted by hand; an unanswered
+         * ask comes back at the next launch, never on every page load.
          */
         internal fun isDndRegrantOwed(context: Context): Boolean {
-            val owed = context.getSharedPreferences(CALLS_CHANNEL_PREFS, Context.MODE_PRIVATE)
-                .getBoolean(KEY_DND_REGRANT_OWED, false)
-            if (owed) Log.i(TAG, "isDndRegrantOwed: the user is still owed the calls channel Do Not Disturb ask")
-            return owed
+            val prefs = context.getSharedPreferences(CALLS_CHANNEL_PREFS, Context.MODE_PRIVATE)
+            val owed = prefs.getBoolean(KEY_DND_REGRANT_OWED, false)
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val granted = manager.getNotificationChannel(IncomingRing.CHANNEL_ID)?.canBypassDnd() == true
+            return when (IncomingRing.dndAsk(owed, granted, dndAskedThisLaunch.get())) {
+                IncomingRing.DndAsk.NONE -> false
+                IncomingRing.DndAsk.CLEAR -> {
+                    prefs.edit().remove(KEY_DND_REGRANT_OWED).apply()
+                    Log.i(TAG, "isDndRegrantOwed: ${IncomingRing.CHANNEL_ID} already overrides Do Not Disturb - the ask is dropped")
+                    false
+                }
+                IncomingRing.DndAsk.ASK -> {
+                    dndAskedThisLaunch.set(true)
+                    Log.i(TAG, "isDndRegrantOwed: the user is still owed the calls channel Do Not Disturb ask - asked once this launch")
+                    true
+                }
+            }
         }
 
         /** The user answered the ask - opened the settings, or closed it: it is not asked again. */

@@ -1126,6 +1126,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * app rings, one already posted, or one answered, ended or silenced is refused and logged;
          * and an in-app start cannot fall between the claim and `notify`, which is how a late post
          * used to leave two rings of one call.
+         *
+         * [silent]: the call was SILENCED by the power button while the app rang it
+         * ([RingSequencer.leftScreen]). The notice is posted with no sound, no vibration and no
+         * full-screen screen - only so a locked phone can still answer or decline it, as the system
+         * dialler leaves a silenced call.
          */
         internal fun showIncomingCallNotification(
             context: Context,
@@ -1133,6 +1138,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             callId: String,
             callerId: String,
             hasVideo: Boolean,
+            silent: Boolean = false,
         ) {
             // The switch is checked here, at the one ring: a system call UI for a call the webview
             // would refuse to join is worse than no ring at all.
@@ -1160,7 +1166,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             // Refused (and said so by the sequencer): a call the app rings, one already up, or one
             // that may not ring again.
-            val (answerP, declineP, fullScreenP) = CallRingPlayer.rings.claimNative(callId) {
+            val (answerP, declineP, fullScreenP) = CallRingPlayer.rings.claimNative(callId, silent) {
                 // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
                 // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
                 // pending accept from the facts recorded here. The webview joins on those facts once
@@ -1201,7 +1207,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // Without the grant the same notification rings as a heads-up - Android's own behaviour,
                 // not a path of ours - and the log says which one this phone got, so a reading of a
                 // locked phone that did not light up names its cause.
-                if (android.os.Build.VERSION.SDK_INT >= 34) {
+                if (!silent && android.os.Build.VERSION.SDK_INT >= 34) {
                     val fsi = manager.canUseFullScreenIntent()
                     if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
                     else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
@@ -1209,9 +1215,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
                 val notif = buildIncomingCallNotification(
                     context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
+                    silent = silent,
                 )
                 manager.notify(notifId, notif)
-                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
+                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo silent=$silent")
                 Triple(answerPending, declinePending, fullScreenPending)
             } ?: return
 
@@ -1240,7 +1247,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         manager.notify(
                             notifId,
                             buildIncomingCallNotification(
-                                context, title, body, hasVideo, answerP, declineP, fullScreenP, avatar, res,
+                                context, title, body, hasVideo, answerP, declineP, fullScreenP, avatar, res, silent,
                             ),
                         )
                     }
@@ -1257,6 +1264,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * The ring notification itself: CallStyle on API 31+ (the system call screen with Answer and
          * Decline), a classic high-priority notification with the same actions below. [avatar] is
          * the CallStyle person's icon and the large icon, null until fetched.
+         *
+         * [silent] (a call the power button silenced): no sound, no vibration, no loop, and NO
+         * full-screen intent - so not CallStyle either, which Android refuses without one (or a
+         * foreground service): the classic layout's Answer and Decline, on the lock screen.
          */
         private fun buildIncomingCallNotification(
             context: Context,
@@ -1268,6 +1279,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             fullScreen: PendingIntent,
             avatar: Bitmap?,
             res: Context,
+            silent: Boolean = false,
         ): android.app.Notification {
             val person = Person.Builder().setName(title).setImportant(true)
                 .apply { avatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
@@ -1282,9 +1294,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setTimeoutAfter(CALL_RING_TIMEOUT_MS)
-                .setFullScreenIntent(fullScreen, true)
                 .setContentIntent(fullScreen)
-            if (android.os.Build.VERSION.SDK_INT >= 31) {
+            if (silent) builder.setSilent(true) else builder.setFullScreenIntent(fullScreen, true)
+            if (!silent && android.os.Build.VERSION.SDK_INT >= 31) {
                 builder.setStyle(
                     NotificationCompat.CallStyle.forIncomingCall(person, declinePending, answerPending)
                         .setIsVideo(hasVideo)
@@ -1311,7 +1323,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             builder.setOnlyAlertOnce(true)
             val notif = builder.build()
             // Loop the ringtone until the ring is answered, declined, cancelled or times out.
-            notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
+            if (!silent) notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
             return notif
         }
 

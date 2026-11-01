@@ -179,7 +179,7 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
     const ring = between(
       push,
       'internal fun showIncomingCallNotification(',
-      'CallRingPlayer.rings.claimNative(callId)',
+      'CallRingPlayer.rings.claimNative(callId',
       'showIncomingCallNotification'
     );
     expect(ring).toMatch(/if \(foregroundPageRings\(\)\) \{[\s\S]*?return\s*\}/);

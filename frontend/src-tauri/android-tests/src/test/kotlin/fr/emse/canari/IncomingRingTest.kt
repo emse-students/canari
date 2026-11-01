@@ -65,6 +65,17 @@ class IncomingRingTest {
     }
 
     @Test
+    fun `the Do Not Disturb ask - once per launch, dropped once the user granted it by hand`() {
+        assertEquals(IncomingRing.DndAsk.NONE, IncomingRing.dndAsk(owed = false, granted = false, askedThisLaunch = false))
+        assertEquals(IncomingRing.DndAsk.ASK, IncomingRing.dndAsk(owed = true, granted = false, askedThisLaunch = false))
+        // Every later page load of the same launch: nothing.
+        assertEquals(IncomingRing.DndAsk.NONE, IncomingRing.dndAsk(owed = true, granted = false, askedThisLaunch = true))
+        // The user granted canari_calls_v2 by hand: the debt is paid, whatever this launch did.
+        assertEquals(IncomingRing.DndAsk.CLEAR, IncomingRing.dndAsk(owed = true, granted = true, askedThisLaunch = false))
+        assertEquals(IncomingRing.DndAsk.CLEAR, IncomingRing.dndAsk(owed = true, granted = true, askedThisLaunch = true))
+    }
+
+    @Test
     fun `no old channel, or an unspecified one - HIGH`() {
         assertEquals(IncomingRing.IMPORTANCE_HIGH, IncomingRing.inheritedImportance(null))
         assertEquals(IncomingRing.IMPORTANCE_HIGH, IncomingRing.inheritedImportance(IncomingRing.IMPORTANCE_UNSPECIFIED))

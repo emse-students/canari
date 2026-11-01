@@ -18,7 +18,11 @@ package fr.emse.canari.call
  * - **A closed call never rings again** ([RingClosed]): answered on the native ring, ended (the
  *   caller hung up, a decline, the timeout, the page left the incoming state), or silenced by the
  *   power button. The page restarting the ring on its return, a stale incoming state after Doze, a
- *   late FCM redelivery - each is refused and logged.
+ *   late FCM redelivery - each is refused and logged. A SILENCED call is still a call: it keeps a
+ *   SILENT native notification, so a locked phone can still answer it - as the system dialler does.
+ * - **Expected refusals are said at INFO, overlaps at WARN.** Restarting a call that was answered or
+ *   silenced, and a start off screen, are the design working; a native post for a call the app rings,
+ *   an ENDED call asked to ring, or a post that fails are not.
  * - **Nothing slow runs under the lock**: [RingOutput.postNative] hands the post to a worker, which
  *   comes back through [claimNative]; the player's own calls are a `MediaPlayer` and a vibrator.
  *
@@ -58,8 +62,12 @@ interface RingOutput {
     /** Takes the native ring of [callId] down (its notification and its call screen). */
     fun cancelNative(callId: String)
 
-    /** Posts the native ring of [ring] FROM A WORKER, which comes back through [RingSequencer.claimNative]. */
-    fun postNative(ring: RingFacts, why: String)
+    /**
+     * Posts the native ring of [ring] FROM A WORKER, which comes back through
+     * [RingSequencer.claimNative]. [silent]: the call was silenced - the notification is posted with
+     * no sound, no vibration and no full-screen screen, only to be answered from the lock screen.
+     */
+    fun postNative(ring: RingFacts, why: String, silent: Boolean)
 
     /** One log line; [accuse] is true for a refusal or a defect, false for an ordinary transition. */
     fun log(accuse: Boolean, message: String)
@@ -100,12 +108,14 @@ class RingSequencer(
      */
     fun startInApp(r: RingFacts) = synchronized(lock) {
         closed[r.callId]?.let {
-            output.log(true, "start REFUSED: call=${short(r.callId)} is $it - it never rings again")
+            // ANSWERED / SILENCED: the page's restart on the return those caused - expected. ENDED:
+            // the page still shows a call this phone knows is over - a discrepancy, said at WARN.
+            output.log(it == RingClosed.ENDED, "start refused: call=${short(r.callId)} is $it - it never rings again")
             return@synchronized
         }
         if (!onScreen()) {
-            output.log(true, "start REFUSED: call=${short(r.callId)} - the app is not on screen; the native ring rings it instead")
-            output.postNative(r, "the page asked while off screen")
+            output.log(false, "start refused: call=${short(r.callId)} - the app is not on screen; the native ring rings it instead")
+            output.postNative(r, "the page asked while off screen", silent = false)
             return@synchronized
         }
         if (inApp?.callId == r.callId) {
@@ -135,29 +145,34 @@ class RingSequencer(
 
     /**
      * The app left the screen with a call ringing in it. [screenOff] - the power button - silences
-     * it: the call is [RingClosed.SILENCED] and nothing rings on. Otherwise (Home, another app) the
-     * native ring takes it over, posted from a worker.
+     * the RINGER, as it does the system's own: the call is [RingClosed.SILENCED], never rings again,
+     * and keeps a SILENT native notification so the locked phone can still answer or decline it.
+     * Otherwise (Home, another app) the native ring takes it over. Both are posted from a worker.
      */
     fun leftScreen(screenOff: Boolean) = synchronized(lock) {
         val r = inApp ?: return@synchronized
         if (screenOff) {
             silenceLocked(r.callId, "the screen went off - the power button silences the ring")
             closed[r.callId] = RingClosed.SILENCED
+            output.postNative(r, "silenced by the power button - answerable from the lock screen", silent = true)
             return@synchronized
         }
         silenceLocked(r.callId, "the app left the screen - handed over to the native ring")
-        output.postNative(r, "the app left the screen")
+        output.postNative(r, "the app left the screen", silent = false)
     }
 
     /**
      * A native ring of [callId] is about to be posted: [post] runs UNDER THE LOCK when it may - the
      * claim and the notification are one critical section, so a [startInApp] cannot fall between
      * them. Refused, and logged, for a closed call, a call the player rings, or one already posted:
-     * the answer is then null, otherwise what [post] returned.
+     * the answer is then null, otherwise what [post] returned. A [silent] post is the one a
+     * [RingClosed.SILENCED] call is allowed: the notice of a call the user silenced, no ring.
      */
-    fun <T> claimNative(callId: String, post: () -> T): T? = synchronized(lock) {
-        closed[callId]?.let {
-            output.log(true, "native ring REFUSED: call=${short(callId)} is $it")
+    fun <T> claimNative(callId: String, silent: Boolean = false, post: () -> T): T? = synchronized(lock) {
+        val closedAs = closed[callId]
+        if (closedAs != null && !(silent && closedAs == RingClosed.SILENCED)) {
+            // A redelivery after an answer or a silence is expected; one after an END is late news.
+            output.log(closedAs == RingClosed.ENDED, "native ring refused: call=${short(callId)} is $closedAs")
             return@synchronized null
         }
         if (inApp?.callId == callId) {

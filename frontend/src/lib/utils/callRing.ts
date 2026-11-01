@@ -27,8 +27,9 @@ import { playTone } from '$lib/utils/toneOutput';
  * the platform:
  * - Android: `MainActivity.onStop` stops the player and posts the native CallStyle ring from the
  *   facts `ringStart` carried (`RingSequencer.leftScreen`) - it rings on, with Answer and Decline,
- *   until answered, declined or ended. The POWER BUTTON is not a hand-over: it silences the ring, as
- *   it does the system's own, and the call stays answerable on the page without ringing again;
+ *   until answered, declined or ended. The POWER BUTTON silences the ringer, as it does the system's
+ *   own: the call never rings again, and stays answerable from a SILENT native notice on the lock
+ *   screen and on the page;
  * - web, desktop and the iPhone's open app: the tone output closes, and `useNotifications` posts ONE
  *   OS notification (`notifyIncomingCall`'s deferred notice) - one sound, not a repeating ring;
  * its return, while the call still rings, starts the ring again (Android cancels its native ring

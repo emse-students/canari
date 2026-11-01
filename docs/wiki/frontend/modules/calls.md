@@ -2693,8 +2693,10 @@ Disturb" cannot be carried**: only the user grants it. When the old channel had 
 the ask; once the user is in (logged in and past the PIN - never on the login screen) the page reads
 it (`canariCall.isDndRegrantOwed()`) and shows a toast (`call_dnd_regrant_message`, fr+en) whose
 button opens the channel's settings (`openCallChannelSettings()`). Only the user's ANSWER clears it
-(`dndRegrantAnswered('settings' | 'dismissed')`, the button or the close button): a toast that only
-timed out may never have been seen, and is shown again at the next launch.
+(`dndRegrantAnswered('settings' | 'dismissed')`, the button or the close button) - or the new
+channel already overriding Do Not Disturb, granted by hand, which drops the ask unasked. A toast that
+only timed out may never have been seen, and is shown again at the next LAUNCH, never on every page
+load (`IncomingRing.dndAsk`, pinned by `IncomingRingTest.kt`).
 `IncomingRingTest.kt` holds the ids and the inheritance; `notificationChannels.test.ts`,
 `callsCompiled.test.ts` and `androidCallRing.test.ts` hold the Kotlin, the TypeScript twin and the
 file together.
@@ -2719,9 +2721,11 @@ by `ChatBackgroundService` from the incoming state:
 - **ONE ring per call, and a closed call never rings again: [RingSequencer](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/call/RingSequencer.kt).**
   The in-app player and the native CallStyle ring share ONE state, every transition under its lock
   (review of #2877, which found every defect between two states that used to be kept apart):
-  - a start is refused off screen (`start REFUSED`, which also refuses one that raced `onStop`) and
+  - a start is refused off screen (`start refused`, which also refuses one that raced `onStop`) and
     the native ring is posted instead, from a worker thread - the post reads the caller's name and
-    fetches the photo (Keystore, HTTP), so never on the main thread;
+    fetches the photo (Keystore, HTTP), so never on the main thread; a throw there is caught at the top
+    of the thread and logged at ERROR (the claim is already released), never a dead process
+    mid-ring;
   - the in-app start takes the call from a native ring IN THE SAME CRITICAL SECTION as the cancel,
     and the native post claims the call and calls `notify` in ONE critical section
     (`claimNative`): a `call_ring` post landing after the in-app ring started is refused (`native
@@ -2744,10 +2748,13 @@ by `ChatBackgroundService` from the incoming state:
     channel, with Answer, Decline and the lock-screen screen, until answered, declined or ended.
     Before this a Home press during the ring left the call SILENT with no notification at all:
     Android's WebView never reports `hidden`, so the page's deferred notice never posts there.
-  - **Android, the power button**: `onStop` finds the display not interactive
-    (`PowerManager.isInteractive`) and SILENCES the ring, as the power button silences the system's
-    own: no hand-over, no full-screen re-ring. The call stays on the page, answerable, and does not
-    ring again on the return (`SILENCED`).
+  - **Android, the power button** (decided in the third review of #2877, matching the system
+    dialler): `onStop` finds the display not interactive (`PowerManager.isInteractive`) and silences
+    the RINGER, not the call. The call is `SILENCED` - it never rings again, neither in the app nor
+    natively - and keeps a SILENT native notification (`setSilent`, no `FLAG_INSISTENT`, NO
+    full-screen intent, so the classic Answer / Decline layout rather than CallStyle, which Android
+    refuses without one): the locked phone shows the call and can answer or decline it from the lock
+    screen. Back on screen the page shows it, answerable, silent.
   - **iPhone (open app), web, desktop**: the tone output closes and `notifyIncomingCall`'s deferred
     notice posts ONE OS notification - ONE sound. A minimised desktop window or a background browser
     tab used to keep hearing the repeating 2.4 s beep (a `setInterval` re-opened the output); it now
@@ -2761,8 +2768,12 @@ by `ChatBackgroundService` from the incoming state:
   `... stops (<reason>)`, `... not restarted - it was answered on the native ring`.
 - Logged natively: `CallRingPlayer: start: call=... ringerMode=... audioMode=... -> sound=... vibrate=...`,
   `play: transient audio focus granted`, `play: the Canari ring plays on the ringtone stream, looped`,
-  `start REFUSED`, `native ring of call=... posted from a worker (...)`, `native ring REFUSED: call=...
-  is ANSWERED | rings in the app`, `closed: call=... ENDED - ...`, `stop: ... audio focus abandoned`;
+  `start refused`, `native ring of call=... posted from a worker (..., silent=...)`, `native ring
+  refused: call=... is ANSWERED`, `native ring REFUSED: ... rings in the app`, `closed: call=... ENDED
+  - ...`, `stop: ... audio focus abandoned`. **Levels**: the refusals the design expects - a start off
+  screen, the restart after a power-button silence or after an answer on the native ring, a
+  redelivery of either - are INFO; a native post overlapping the in-app ring, an ENDED call asked to
+  ring again, and a post that fails are WARN (ERROR for the failure itself);
   on the iPhone `[CanariCallKit] ringtone set to canari_ring_callkit.wav`. A photo fetch that fails
   on the network is a WARN; any other throw there (a fetch on the main thread) is an ERROR.
 - Pinned by `RingSequencerTest.kt` (the plain JVM, the screen injected and every effect recorded in
@@ -2794,8 +2805,8 @@ behind a bridge on iOS like Android's, or by CallKit for every call (owed,
 | RING-1, Mi 9T, app KILLED | a call rings with the Canari ring (not the system ringtone), looping until answered or the 60 s window |
 | RING-2, Mi 9T, app OPEN | the in-app screen rings with the Canari ring at the RINGER volume (media volume at 0 does not silence it), music pauses under it; silent mode rings nothing, vibrate mode vibrates repeatedly; during a phone call it only vibrates; logcat `CallRingPlayer: start` / `stop` |
 | RING-2b, Mi 9T, Home during the ring | the player stops and the CallStyle ring takes over at once (one ring, never two); back in the app the in-app ring resumes and the notification goes; Answer on the CallStyle ring joins with NO ring in the app (`native ring REFUSED`/`start REFUSED: ... is ANSWERED`) |
-| RING-2c, Mi 9T, power button during the ring | the ring stops, no full-screen re-ring; screen back on: the call is still on the page, answerable, silent |
-| RING-3, Mi 9T, settings | Settings -> Apps -> Canari -> Notifications: one calls channel, its sound "canari_ring", the old `canari_calls` entry gone, the importance the old one had; picking another sound there is honoured; with DND granted on the old channel before the upgrade, the toast appears after the PIN (not on the login screen) and its button opens the channel; closing it, it is not asked again |
+| RING-2c, Mi 9T, power button during the ring | the ring and the vibration stop, no full-screen re-ring; the LOCK SCREEN shows the call silently with Answer and Decline, and Answer joins; screen back on and unlocked: the call is on the page, answerable, silent |
+| RING-3, Mi 9T, settings | Settings -> Apps -> Canari -> Notifications: one calls channel, its sound "canari_ring", the old `canari_calls` entry gone, the importance the old one had; picking another sound there is honoured; with DND granted on the old channel before the upgrade, the toast appears after the PIN (not on the login screen) and its button opens the channel; closing it, it is not asked again; granting it by hand first, it is never shown |
 | RING-4, iPhone 12, CallKit | a VoIP-pushed call on a locked phone rings with the Canari ring, not the system tone; no `[CanariCallKit] ERROR canari_ring_callkit.wav is not in the bundle` in the device log |
 
 ### The app's other sounds during a call (2026-10-31)

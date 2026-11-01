@@ -63,4 +63,30 @@ object IncomingRing {
      */
     fun inheritedImportance(oldImportance: Int?): Int =
         if (oldImportance == null || oldImportance == IMPORTANCE_UNSPECIFIED) IMPORTANCE_HIGH else oldImportance
+
+    /** What to do about the "grant Do Not Disturb again" ask, decided by [dndAsk]. */
+    enum class DndAsk {
+        /** Nothing is owed, or it was already asked in this launch. */
+        NONE,
+
+        /** Ask the user (once in this launch). */
+        ASK,
+
+        /** The user already granted the new channel by hand: the debt is paid, forget it. */
+        CLEAR,
+    }
+
+    /**
+     * Whether the page asks the user to grant `canari_calls_v2` "override Do Not Disturb" again.
+     * [owed]: the old channel had it and the user has not answered the ask yet. [granted]: the new
+     * channel already has it - the user set it by hand, so asking would be noise. [askedThisLaunch]:
+     * the ask was shown in this process - an unanswered one comes back at the next LAUNCH, never on
+     * every page load.
+     */
+    fun dndAsk(owed: Boolean, granted: Boolean, askedThisLaunch: Boolean): DndAsk = when {
+        !owed -> DndAsk.NONE
+        granted -> DndAsk.CLEAR
+        askedThisLaunch -> DndAsk.NONE
+        else -> DndAsk.ASK
+    }
 }

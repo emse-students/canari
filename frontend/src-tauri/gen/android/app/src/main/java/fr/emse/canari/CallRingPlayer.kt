@@ -77,14 +77,20 @@ object CallRingPlayer {
         override fun cancelNative(callId: String) =
             CanariFirebaseMessagingService.takeDownRingNotification(context, callId)
 
-        override fun postNative(ring: RingFacts, why: String) {
-            Log.i(TAG, "native ring of call=${short(ring.callId)} posted from a worker ($why)")
+        override fun postNative(ring: RingFacts, why: String, silent: Boolean) {
+            Log.i(TAG, "native ring of call=${short(ring.callId)} posted from a worker ($why, silent=$silent)")
             // OFF the main thread and OFF the sequencer's lock: the post builds the caller's name and
             // fetches the photo (Keystore, HTTP), and comes back through `rings.claimNative` itself.
             Thread({
-                CanariFirebaseMessagingService.showIncomingCallNotification(
-                    context, ring.groupId, ring.callId, ring.callerId, ring.hasVideo,
-                )
+                // A throw here would kill the process mid-ring. `claimNative` has already released
+                // its claim; what is left is to say it, at the level of a defect.
+                try {
+                    CanariFirebaseMessagingService.showIncomingCallNotification(
+                        context, ring.groupId, ring.callId, ring.callerId, ring.hasVideo, silent,
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "native ring of call=${short(ring.callId)} could not be posted: ${e.javaClass.simpleName}: ${e.message}", e)
+                }
             }, "canari-ring-post").start()
         }
 

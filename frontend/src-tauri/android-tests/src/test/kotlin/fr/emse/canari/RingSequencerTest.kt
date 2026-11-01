@@ -21,6 +21,7 @@ import org.junit.Test
 class RingSequencerTest {
     private var onScreen = true
     private val effects = mutableListOf<String>()
+    private val warnings = mutableListOf<String>()
     private lateinit var rings: RingSequencer
 
     private val output = object : RingOutput {
@@ -37,23 +38,26 @@ class RingSequencerTest {
             effects += "cancelNative $callId"
         }
 
-        override fun postNative(ring: RingFacts, why: String) {
-            effects += "postNative ${ring.callId}"
+        override fun postNative(ring: RingFacts, why: String, silent: Boolean) {
+            effects += if (silent) "postNative ${ring.callId} silent" else "postNative ${ring.callId}"
         }
 
-        override fun log(accuse: Boolean, message: String) {}
+        override fun log(accuse: Boolean, message: String) {
+            if (accuse) warnings += message
+        }
     }
 
     private fun facts(callId: String) = RingFacts(callId, "group-$callId", "caller", hasVideo = false, appSounds = true)
 
     /** What the FCM service does: claim, and post under the claim. */
-    private fun nativePost(callId: String): Boolean =
-        rings.claimNative(callId) { effects += "notify $callId" } != null
+    private fun nativePost(callId: String, silent: Boolean = false): Boolean =
+        rings.claimNative(callId, silent) { effects += if (silent) "notify $callId silent" else "notify $callId" } != null
 
     @Before
     fun setUp() {
         onScreen = true
         effects.clear()
+        warnings.clear()
         rings = RingSequencer({ onScreen }, output)
     }
 
@@ -106,15 +110,49 @@ class RingSequencerTest {
     }
 
     @Test
-    fun `the power button silences the ring, and the return does not ring it again`() {
+    fun `the power button silences the ringer but keeps a SILENT notice, answerable from the lock screen`() {
         rings.startInApp(facts("a"))
         onScreen = false
         rings.leftScreen(screenOff = true)
+        // The worker's silent post is the one a silenced call is allowed; a ringing one is not.
+        assertTrue(nativePost("a", silent = true))
+        assertTrue(rings.nativeRinging("a"))
         onScreen = true
         rings.startInApp(facts("a"))
-        assertFalse(nativePost("a"))
-        assertEquals(listOf("play a", "silence a"), effects)
+        assertEquals(listOf("play a", "silence a", "postNative a silent", "notify a silent"), effects)
         assertEquals(RingClosed.SILENCED, rings.closedReason("a"))
+        // An answer from that notice closes it as any answer does.
+        rings.close("a", RingClosed.ANSWERED, "answered on the lock screen")
+        assertFalse(rings.nativeRinging("a"))
+    }
+
+    @Test
+    fun `a silenced call is never rung again by a redelivered call_ring`() {
+        rings.startInApp(facts("a"))
+        onScreen = false
+        rings.leftScreen(screenOff = true)
+        assertFalse(nativePost("a"))
+        assertTrue(nativePost("a", silent = true))
+    }
+
+    @Test
+    fun `the expected refusals are not accused - an overlap of two rings is`() {
+        onScreen = false
+        rings.startInApp(facts("off")) // a start off screen: the design working
+        onScreen = true
+        rings.startInApp(facts("a"))
+        rings.leftScreen(screenOff = true)
+        rings.startInApp(facts("a")) // the restart after a power-button silence
+        rings.close("b", RingClosed.ANSWERED, "answered on the native ring")
+        rings.startInApp(facts("b")) // the return after a native answer
+        assertEquals(emptyList<String>(), warnings)
+
+        rings.startInApp(facts("c"))
+        assertFalse(nativePost("c")) // a post overlapping the in-app ring
+        assertEquals(1, warnings.size)
+        rings.close("d", RingClosed.ENDED, "call_ring_end")
+        rings.startInApp(facts("d")) // the page still shows a call that ended
+        assertEquals(2, warnings.size)
     }
 
     @Test

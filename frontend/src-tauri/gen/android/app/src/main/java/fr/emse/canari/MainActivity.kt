@@ -458,6 +458,13 @@ class MainActivity : TauriActivity() {
         CookieManager.getInstance().flush()
     }
 
+    /** Keeps this window on while the in-app ring plays ([CallRingPlayer.screenHold]). */
+    private val ringScreenHold: (Boolean) -> Unit = { on ->
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Log.i("MainActivity", "screen held on for the ring: $on")
+    }
+
     /**
      * THE WEBVIEW DIES WITH THE ACTIVITY THAT OWNS IT, BECAUSE NOTHING ELSE KILLS IT.
      *
@@ -483,13 +490,6 @@ class MainActivity : TauriActivity() {
      * its parent first, because `WebView.destroy()` must be called on a WebView outside the view
      * system.
      */
-    /** Keeps this window on while the in-app ring plays ([CallRingPlayer.screenHold]). */
-    private val ringScreenHold: (Boolean) -> Unit = { on ->
-        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        Log.i("MainActivity", "screen held on for the ring: $on")
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         if (CallRingPlayer.screenHold === ringScreenHold) CallRingPlayer.screenHold = null

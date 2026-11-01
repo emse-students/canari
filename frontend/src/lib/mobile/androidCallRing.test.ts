@@ -45,13 +45,27 @@ describe('the Android ring reaches its one sequencer', () => {
     expect(onStop).toContain('CallRingPlayer.leftScreen(screenOff)');
   });
 
-  it('the native ring is posted from a worker, never the main thread', () => {
-    expect(body(player, 'postNative')).toContain('Thread(');
+  it('the native ring is posted from a worker, never the main thread, and a throw there is caught', () => {
+    const post = body(player, 'postNative');
+    expect(post).toContain('Thread(');
+    expect(post).toMatch(/try \{\s*CanariFirebaseMessagingService\.showIncomingCallNotification\(/);
+    expect(post).toMatch(/catch \(e: Exception\) \{\s*Log\.e\(/);
+  });
+
+  it('a silenced call is noticed with no sound, no loop and no full-screen screen', () => {
+    const build = body(fcm, 'buildIncomingCallNotification');
+    expect(build).toContain(
+      'if (silent) builder.setSilent(true) else builder.setFullScreenIntent(fullScreen, true)'
+    );
+    expect(build).toContain('if (!silent && android.os.Build.VERSION.SDK_INT >= 31)');
+    expect(build).toContain(
+      'if (!silent) notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT'
+    );
   });
 
   it('the native post and its claim are one critical section', () => {
     const show = body(fcm, 'showIncomingCallNotification');
-    const claim = show.indexOf('CallRingPlayer.rings.claimNative(callId) {');
+    const claim = show.indexOf('CallRingPlayer.rings.claimNative(callId, silent) {');
     expect(claim).toBeGreaterThan(-1);
     expect(show.indexOf('manager.notify(notifId, notif)')).toBeGreaterThan(claim);
   });
@@ -111,7 +125,10 @@ describe('canari_calls_v2 inherits canari_calls', () => {
     expect(old).toContain('canBypassDnd()');
     expect(old).toContain('shouldVibrate()');
     expect(old).toContain('putBoolean(KEY_DND_REGRANT_OWED, true)');
-    expect(body(application, 'isDndRegrantOwed')).not.toContain('remove(');
+    // Cleared only when the new channel already overrides DND (granted by hand), never by reading.
+    expect(body(application, 'isDndRegrantOwed')).toMatch(
+      /DndAsk\.CLEAR -> \{\s*prefs\.edit\(\)\.remove\(KEY_DND_REGRANT_OWED\)/
+    );
     expect(body(application, 'dndRegrantAnswered')).toContain('remove(KEY_DND_REGRANT_OWED)');
   });
 });
