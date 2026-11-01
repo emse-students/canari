@@ -146,9 +146,13 @@ preselection, never a destination by itself.
   evict the DMs' shortcuts and these suggestions, and the sheet offers conversations, not salons.
   `showMessageNotification` skips `publishConversationShortcut` for a `channel_` id and keeps the
   large icon (the speaker's face or initials). The `chat_channel_*` shortcuts the WebSocket trigger
-  published before that are retired once per process start: `CanariApplication` calls
+  published before that are retired ONCE PER INSTALL: `CanariApplication` calls
   `ConversationShortcuts.removeRecordedWithPrefix` (`removeLongLivedShortcuts`, the record rewritten,
-  the count logged at INFO); with none left it removes nothing and logs nothing.
+  the count logged at INFO) and then writes the done flag `salon_shortcuts_retired`
+  (SharedPreferences `canari_one_time_steps`) - only after a removal that did not fail, so a failure
+  is tried again at the next start. **A salon shortcut the user pinned to the home screen is disabled
+  too** (`disablePinnedShortcuts`): it stays on the launcher, greyed out, and says it is no longer
+  available.
 - **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch
   included, the user's rule for the pending share too: nothing of an account stays for the next
   one). `clearAuthUnderway` calls `eraseAccountShortcuts` beside `discardSharedOut`, for

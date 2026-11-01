@@ -83,7 +83,6 @@ const CASES = [
   [line('D', 'CanariFCM', 'handleChannelMessage: notification posted showsMessage=true bodyChars=15 mentionsMe=false'), 'unexplained'],
   // A salon speaker that could not be named: the ordinary reasons are explained...
   [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=v1-session author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
-  [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=socket-unproven author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
   [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=not-in-name-book author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
   [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=no-name-file author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
   [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=other-account author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],

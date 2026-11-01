@@ -2057,6 +2057,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param covers how many inbound messages this ONE banner stands for (a catch-up flush
          *   raises a single banner for N). [GenericBannerLedger] answers up to that many refused
          *   pushes with it.
+         * @param authorProven whether the WebView's open PROVED the author - a salon row under a
+         *   Graine v2 session (`openChannelMessageProving`). Read for a salon only, through the same
+         *   rule the push applies to its own open ([ChannelBannerAuthor.of]).
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -2069,28 +2072,43 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             sentAt: Long,
             serverAt: Long,
             covers: Int,
+            authorProven: Boolean,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven")
             WS_NOTIF_LANE.execute {
                 try {
-                    // A SALON FRAME TAKES THE PUSH'S RULE AND KEYS (`ChannelBannerAuthor`), so the two
-                    // triggers draw one shape. The WebView does not hand over whether its reader
-                    // PROVED the author (a v2 row) or took the server's word (v1), so this trigger
-                    // names nobody: "Someone", the "?" disc, no face - never a name it cannot vouch for.
-                    val salonAuthor = if (groupId.startsWith("channel_")) ChannelBannerAuthor.ofSocketFrame(senderId) else null
+                    // ONE ANSWER PER MESSAGE, WHICHEVER TRIGGER ARRIVES FIRST. A salon frame takes the
+                    // push's rule ([ChannelBannerAuthor.of]) with the same three inputs: the message
+                    // is shown, the open's proof (the WebView's v2 open, the push's native one), and
+                    // the author the server named - and the same name file. So both triggers name
+                    // the same speaker, or nobody, with the same Person key and the same face rule.
+                    val salonAuthor = if (groupId.startsWith("channel_")) {
+                        val me = MlsContextLoader.loadPushContext(context)?.userId?.lowercase()
+                        ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId) {
+                            nameBookOf(readDisplayNames(context, me))
+                        }
+                    } else null
                     salonAuthor?.let { logUnnamedSalonAuthor(it, groupId.removePrefix("channel_")) }
+                    // THE TITLE IS NOT THE PUSH'S. The push titles a salon `<Communaute> - #<salon>`
+                    // ([buildChannelPushTitle], from its payload's workspace name); the WebView's salon
+                    // row carries no community name, so this trigger titles it with the salon alone
+                    // (`notificationGroupName`). The line, its speaker and its face are one answer;
+                    // the title is the last trigger's wording.
                     val salonLine = salonAuthor?.let {
                         ChannelBannerAuthor.line(
                             it, groupName,
                             appLocaleContext(context).getString(R.string.notif_mention_someone).replaceFirstChar { c -> c.titlecase() },
                         )
                     }
-                    val avatar = if (salonAuthor == null && senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
+                    // A FACE ONLY FOR A NAMED SPEAKER, as on the push: beside "Someone" it would name
+                    // them by the back door.
+                    val drawsFace = salonAuthor == null || ChannelBannerAuthor.drawsFace(salonAuthor)
+                    val avatar = if (drawsFace && senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
                     synchronized(GENERIC_BANNERS_LOCK) {
                         // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
                         val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
@@ -2717,7 +2735,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // header circle was the app's bird while the sender's face sat beside the line, two
                 // round pictures one above the other (user, 2026-10-05). The large icon is therefore
                 // set only where the old, shortcut-less shape is kept (reaction, blind salon banner).
-                .apply { if (conversationShortcutId != null) setShortcutId(conversationShortcutId) else setLargeIcon(largeIcon) }
+                .apply {
+                    if (conversationShortcutId != null) {
+                        setShortcutId(conversationShortcutId)
+                    } else if (alreadyPosted) {
+                        // NEVER A BORROWED FACE. This call's line was NOT added - the other trigger
+                        // posted the same message first - so its icon describes nothing shown. The
+                        // face is the one of the line the shade shows last.
+                        val shownFace = style.messages.lastOrNull()?.person?.icon?.toIcon(this@showMessageNotification)
+                        if (shownFace != null) {
+                            setLargeIcon(shownFace)
+                        } else {
+                            // Our own reply with no avatar of ours cached: an ordinary state, no face.
+                            Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
+                        }
+                    } else {
+                        setLargeIcon(largeIcon)
+                    }
+                }
                 // The second trigger for a message already in the shade re-posts the same content,
                 // so it must not sound or vibrate a second time - which is the whole of what the
                 // user saw as "the same notification twice".

@@ -73,7 +73,7 @@ class ChannelBannerAuthorTest {
     @Test
     fun `only a fault is logged at warn, an ordinary state at debug`() {
         listOf("unreadable", "no-names", "no-sender-id", "no-account").forEach { assertTrue(it, ChannelBannerAuthor.accuses(it)) }
-        listOf("v1-session", "socket-unproven", "not-in-name-book", "no-name-file", "other-account")
+        listOf("v1-session", "not-in-name-book", "no-name-file", "other-account")
             .forEach { assertFalse(it, ChannelBannerAuthor.accuses(it)) }
     }
 
@@ -126,12 +126,28 @@ class ChannelBannerAuthorTest {
     }
 
     @Test
-    fun `a socket frame vouches for nobody, keyed like the push's unnamed line`() {
-        val socket = ChannelBannerAuthor.ofSocketFrame(bob.uppercase())
-        assertEquals(Author.Unnamed(bob, "socket-unproven"), socket)
-        assertEquals(opened(bob).personKey, socket.personKey)
-        assertFalse(ChannelBannerAuthor.drawsFace(socket))
-        assertEquals(Author.Unnamed("", "no-sender-id"), ChannelBannerAuthor.ofSocketFrame(""))
+    fun `both triggers of one message name the same speaker, whichever arrives first`() {
+        // The push hands the rule its native open's proof; the WebSocket trigger the WebView's open's
+        // (`notifyMessageFromWebSocket`), with the same author and the same name file. One message,
+        // one answer: a v2 author is NAMED by both, a v1 author by neither (review of #2881, HIGH-1).
+        val names = NameBook.Held { id -> mapOf(alice.lowercase() to "Alice Martin")[id] }
+        fun push(proven: Boolean) = ChannelBannerAuthor.of(true, ChannelBannerAuthor.authorProvenOf(proven), alice) { names }
+        fun socket(proven: Boolean) = ChannelBannerAuthor.of(showsMessage = true, authorProven = proven, authorId = alice) { names }
+
+        val v2 = listOf(push(true), socket(true))
+        val v1 = listOf(push(false), socket(false))
+        assertEquals(Author.Named(alice.lowercase(), "Alice Martin"), v2[0])
+        assertEquals(v2[0], v2[1])
+        assertEquals(Author.Unnamed(alice.lowercase(), "v1-session"), v1[0])
+        assertEquals(v1[0], v1[1])
+        // In either order the line, its key and its face rule are the same.
+        for (pair in listOf(v2, v1)) {
+            val (first, second) = pair
+            assertEquals(ChannelBannerAuthor.line(first, title, someone), ChannelBannerAuthor.line(second, title, someone))
+            assertEquals(ChannelBannerAuthor.drawsFace(first), ChannelBannerAuthor.drawsFace(second))
+        }
+        assertTrue(ChannelBannerAuthor.drawsFace(v2[0]))
+        assertFalse(ChannelBannerAuthor.drawsFace(v1[0]))
     }
 
     @Test

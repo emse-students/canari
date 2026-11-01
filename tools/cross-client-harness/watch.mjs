@@ -3297,12 +3297,12 @@ export function logcatReport(lines, label = 'A1') {
       /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false) speaker=(Named|Unnamed|Unproven) hasAvatar=(true|false)$/,
     ],
     // The salon line's speaker could not be NAMED, for a reason a banner ordinarily meets: a v1 row
-    // (which proves no author), a socket frame (which cannot say), a name the app has not resolved
+    // (which proves no author), a name the app has not resolved
     // yet, no name file yet, another account's file. The FAULTS (`unreadable`, `no-names`,
     // `no-sender-id`, `no-account`) are WARN on the phone and deliberately match nothing here.
     [
       'fcm-channel-speaker-unnamed',
-      /^\[SALON_AUTHOR\] author UNNAMED reason=(v1-session|socket-unproven|not-in-name-book|no-name-file|other-account) author=\S* channel=\S+ -> 'someone' and a '\?' disc$/,
+      /^\[SALON_AUTHOR\] author UNNAMED reason=(v1-session|not-in-name-book|no-name-file|other-account) author=\S* channel=\S+ -> 'someone' and a '\?' disc$/,
     ],
     [
       'fcm-channel-names-unread',

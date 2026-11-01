@@ -66,6 +66,12 @@ describe('channel push payload contract (social-service writer vs the three nati
   const kotlinSource = readFileSync(CANARI_FIREBASE_SERVICE_KT, 'utf8');
   const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
   const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
+  const rustCommand = readFileSync(NOTIFICATIONS_RS, 'utf8');
+  const channelHandler = readFileSync(
+    resolve(here, '../mls-client/messagePipeline/channelEventHandler.ts'),
+    'utf8'
+  );
+  const channelSeal = readFileSync(resolve(here, '../utils/graine/channelSeal.ts'), 'utf8');
 
   const fanOutBody = functionBody(
     serviceSource,
@@ -286,9 +292,22 @@ describe('channel push payload contract (social-service writer vs the three nati
       'authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))'
     );
     expect(kotlinSource).toContain('.apply { senderKey?.let { setKey(it) } }');
-    // The socket trigger takes the same rule and keys for a salon, and vouches for nobody.
-    expect(kotlinSource).toContain('ChannelBannerAuthor.ofSocketFrame(senderId)');
+    // The socket trigger takes the same rule, with the WebView's proof, and the same keys for a
+    // salon - one answer per message, whichever trigger arrives first (review of #2881, HIGH-1).
+    expect(kotlinSource).toContain(
+      'ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId)'
+    );
     expect(kotlinSource).toContain('senderKey = salonLine?.personKey,');
+    expect(kotlinSource).not.toContain('ofSocketFrame');
+    // The proof comes from the WebView's own open, through the Rust command, unchanged.
+    expect(rustCommand).toMatch(/covers: i32,\s*author_proven: bool,/);
+    expect(rustCommand).toContain('ZJJIZ)Z');
+    expect(channelHandler).toContain('authorProven = opening.authorProven;');
+    expect(channelSeal).toContain("authorProven: prepared.kind === 'v2',");
+    // NEVER A BORROWED FACE: a line not added (the other trigger posted it first) lends no icon.
+    expect(kotlinSource).toMatch(
+      /\} else if \(alreadyPosted\) \{[\s\S]{0,400}style\.messages\.lastOrNull\(\)\?\.person\?\.icon/
+    );
 
     // The NSE handler ALONE: the shared slice runs on past it, into the rule's own definition.
     const swiftChannelOnly = functionBody(

@@ -44,6 +44,9 @@
 /// the shade's "mark as read" and quick reply so their mark lands on the clock the conversation is
 /// ordered by (readState.ts). `covers` is how many inbound messages this one banner stands for (a catch-up flush raises one
 /// banner for N), which the Kotlin `GenericBannerLedger` credits against refused pushes.
+/// `author_proven` is whether the WebView's open PROVED the author (a salon row under a Graine v2
+/// session): a salon banner names its speaker only then, the same rule the push trigger applies to
+/// its own native open (`ChannelBannerAuthor`), so the two triggers of one message agree.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn notifier_message_natif(
@@ -56,6 +59,7 @@ pub(crate) fn notifier_message_natif(
     sent_at: i64,
     server_at: i64,
     covers: i32,
+    author_proven: bool,
 ) -> bool {
     #[cfg(target_os = "android")]
     {
@@ -106,7 +110,7 @@ pub(crate) fn notifier_message_natif(
             .call_static_method(
                 &class,
                 "notifyMessageFromWebSocket",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJI)Z",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZ)Z",
                 &[
                     (&args[0]).into(),
                     (&args[1]).into(),
@@ -117,6 +121,7 @@ pub(crate) fn notifier_message_natif(
                     JValue::Long(sent_at),
                     JValue::Long(server_at),
                     JValue::Int(covers),
+                    JValue::Bool(u8::from(author_proven)),
                 ],
             )
             .and_then(|v| v.z())
@@ -147,6 +152,7 @@ pub(crate) fn notifier_message_natif(
             sent_at,
             server_at,
             covers,
+            author_proven,
         );
         false
     }

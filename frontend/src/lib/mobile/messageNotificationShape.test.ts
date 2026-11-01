@@ -102,6 +102,14 @@ describe('a conversation notification shows one identity (user, 2026-10-05)', ()
   });
 
   it('keeps the plain large icon only where the shortcut-less shape is kept', () => {
-    expect(kotlin).toContain('else setLargeIcon(largeIcon)');
+    expect(kotlin).toMatch(/\} else \{\s*setLargeIcon\(largeIcon\)\s*\}/);
+  });
+
+  it('never lends a face from a line it did not add (review of #2881, HIGH-1)', () => {
+    // The second trigger of one message adds no line; its own icon then describes nothing shown,
+    // so the large icon is the face of the line the shade shows last.
+    expect(kotlin).toMatch(
+      /\} else if \(alreadyPosted\) \{[\s\S]{0,400}val shownFace = style\.messages\.lastOrNull\(\)\?\.person\?\.icon\?\.toIcon\(/
+    );
   });
 });

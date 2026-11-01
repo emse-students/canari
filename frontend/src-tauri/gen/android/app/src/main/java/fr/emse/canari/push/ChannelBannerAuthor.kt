@@ -68,7 +68,7 @@ object ChannelBannerAuthor {
         /**
          * An opened line whose author cannot be named.
          *
-         * @property reason `v1-session`, `socket-unproven`, `no-sender-id`, `not-in-name-book`, or a
+         * @property reason `v1-session`, `no-sender-id`, `not-in-name-book`, or a
          *   [NameBook.Unusable.reason].
          */
         data class Unnamed(val id: String, val reason: String) : Author {
@@ -104,22 +104,11 @@ object ChannelBannerAuthor {
     fun authorProvenOf(raw: Any?): Boolean = raw == true
 
     /**
-     * The speaker of a salon line the WEBSOCKET trigger posts (`notifyMessageFromWebSocket`). The
-     * WebView does not say whether its reader proved the author (v2) or took the server's word (v1),
-     * so that trigger can vouch for nobody: [Author.Unnamed] with `socket-unproven`, keyed per author
-     * like the push's unnamed lines.
-     */
-    fun ofSocketFrame(senderId: String): Author {
-        val id = senderId.trim().lowercase()
-        return Author.Unnamed(id, if (id.isEmpty()) "no-sender-id" else "socket-unproven")
-    }
-
-    /**
      * Whether an [Author.Unnamed.reason] is a FAULT, logged at WARN: a name file a writer left
      * unreadable or malformed (`no-names`: this account's file with no map in it), an opened push
-     * that named nobody, a push context that could not be read. The rest - a v1 session, a socket
-     * frame, a name the app has not resolved yet, no file yet, another account's file - are states a
-     * banner ordinarily meets, logged at DEBUG.
+     * that named nobody, a push context that could not be read. The rest - a v1 session, a name the
+     * app has not resolved yet, no file yet, another account's file - are states a banner ordinarily
+     * meets, logged at DEBUG.
      */
     fun accuses(reason: String): Boolean = reason in setOf("unreadable", "no-names", "no-sender-id", "no-account")
 

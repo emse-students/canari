@@ -2458,16 +2458,29 @@ them. The name never rides the push and is never fetched on the push path (user 
     speaker is above the line and the body says "@vous".
   - **One line, `[SALON_AUTHOR] author UNNAMED reason=...`**, at WARN for a fault (`unreadable`,
     `no-sender-id`, `no-account`, `no-names` - a file that exists for this account and names
-    nobody) and DEBUG for an ordinary state (`v1-session`, `socket-unproven`, `not-in-name-book`,
-    `no-name-file`, `other-account`) - `ChannelBannerAuthor.accuses`, the one list.
+    nobody) and DEBUG for an ordinary state (`v1-session`, `not-in-name-book`, `no-name-file`,
+    `other-account`) - `ChannelBannerAuthor.accuses`, the one list.
   - **The name file's reason is said ONCE per banner**, by whichever reader reads it first: the
     speaker rule's line above carries it; when the rule did not read the file (a v1 row, a push
     naming nobody), the mention tokens read it and say
     `[SALON_AUTHOR] display_names.json names nobody reason=...` at the same levels.
-  - **The WebSocket trigger takes the same rule and keys** (`ChannelBannerAuthor.ofSocketFrame`) for
-    a `channel_` conversation, but it always draws **Unnamed** (`socket-unproven`, DEBUG): the
-    WebView does not hand over whether its reader proved the author, so this trigger names nobody
-    rather than a name it cannot vouch for, and fetches no face.
+  - **One answer per message, whichever trigger arrives first.** A backgrounded phone with a live
+    socket gets BOTH triggers for one salon message (the server pushes every salon message), and
+    the first one's line is the one the shade keeps (`alreadyPosted`). So the WebSocket trigger
+    (`notifyMessageFromWebSocket`) applies the same rule, `ChannelBannerAuthor.of`, to the same
+    inputs: the WebView's own open says whether it proved the author (`openChannelMessageProving`:
+    a v2 session), that fact rides `notifier_message_natif` as `authorProven`, and the name comes
+    from the same `display_names.json`. A v2 author is named by both triggers, a v1 author by
+    neither (review of #2881, which caught a first version naming nobody on the socket path while
+    the push named the author).
+  - **Never a borrowed face.** The second trigger adds no line, so its large icon describes nothing
+    shown: a shortcut-less post (a salon) takes the face of the line the shade shows LAST
+    (`style.messages.lastOrNull()?.person?.icon`), never the icon the second call brought.
+  - **The title is the last trigger's wording.** The push titles a salon `<Communaute> - #<salon>`
+    (`buildChannelPushTitle`, from its payload's workspace name); the WebView's salon row carries no
+    community name, so the socket trigger titles it with the salon alone (`notificationGroupName`).
+    The line, its speaker and its face are one answer; the title may change wording on the second
+    trigger.
   The name never rides the push.
 - **The mentioned person, inside the text, comes from the same file**: a body carries
   `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's
