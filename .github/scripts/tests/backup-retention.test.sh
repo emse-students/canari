@@ -9,7 +9,7 @@
 # until a restore needed day 10 - so this runs the real script, against stubs, and reads what each
 # purge did.
 #
-# HOW. A sandbox checkout holds backup.sh and backup-config.sh beside a fabricated
+# HOW. A sandbox checkout holds backup.sh, backup-config.sh and dump-auth-db.sh beside a fabricated
 # infrastructure/.env; `docker`, `ssh` and `rsync` are stubs on PATH. The local purge is the real
 # `find` over archives aged with `touch -d`; the offsite purge is the command line the ssh stub
 # received.
@@ -30,7 +30,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/repo/infrastructure/backup" "$TMP/bin"
-cp "$SRC/backup.sh" "$SRC/backup-config.sh" "$TMP/repo/infrastructure/backup/"
+cp "$SRC/backup.sh" "$SRC/backup-config.sh" "$SRC/dump-auth-db.sh" "$TMP/repo/infrastructure/backup/"
 
 # `docker compose version` answers, `exec` prints a dump, `run` writes the media_meta member into
 # the stage it was handed as `<stage>:/out`.

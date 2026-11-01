@@ -131,6 +131,7 @@ fixtures() {
          {\"filename\": \"frontend/src-tauri/Cargo.lock\", \"patch\": \"$LOCK_TAURI\"}]" >"$F/pulls_5_files_per_page_100.json"
   for j in "$F"/*.json; do jq -e . "$j" >/dev/null || echo "FIXTURE BROKEN: $j"; done
   echo '{"autoMergeRequest": null}' >"$F/armed.json"
+  echo "{\"head\": {\"sha\": \"$M2\"}}" >"$F/pulls_5.json"
 }
 edit() { # <fixture> <jq filter> - break the well-formed case in one place
   jq "$2" "$work/fix/$1.json" >"$work/fix/tmp" && mv "$work/fix/tmp" "$work/fix/$1.json"
@@ -142,7 +143,7 @@ run_case() {
   : >"$work/output"
   : >"$work/gh.log"
   out="$(cd "$work" && PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/output" REPO=o/r PR=5 AUTHOR="$2" HEAD_REF="$3" GH_TOKEN=x \
-    HEAD_SHA="${CASE_HEAD:-$M2}" FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
+    HEAD_SHA="${CASE_HEAD:-$M2}" EVENT_ACTION="${CASE_ACTION:-synchronize}" FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
   st=$?
 }
 # Armed: by the shared step (`armable=true`), or - the App's path - by the step itself, bound to the
@@ -166,8 +167,12 @@ not_armed "B2 the App from any other branch is not armed"
 for ref in 'deps/lock-refresh/cargo/dependabot-12;touch PWNED' 'deps/lock-refresh/cargo/dependabot-$(touch PWNED)' \
   $'deps/lock-refresh/cargo/dependabot-12\nx' 'deps/lock-refresh/cargo/dependabot-012' 'deps/lock-refresh/npm/dependabot-12'; do
   run_case false "$APP" "$ref"
-  if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep -q '^api' "$work/gh.log"; then
-    pass "B3 a hostile or foreign refresh branch is refused before any API call: $(printf '%q' "$ref")"
+  # The TWO calls before the branch is read are the owner's-files check and the head it describes,
+  # by pull request number only (B32); nothing derived from the branch name reaches the API.
+  if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep '^api' "$work/gh.log" |
+    grep -vxF -e 'api repos/o/r/pulls/5/files?per_page=100 --paginate --jq .[] | [.filename, (.previous_filename // "")] | @tsv' \
+      -e 'api repos/o/r/pulls/5 --jq .head.sha' | grep -q .; then
+    pass "B3 a hostile or foreign refresh branch is refused before any API call it names: $(printf '%q' "$ref")"
   else
     fail "B3 the branch $(printf '%q' "$ref") was not refused cleanly (exit $st)" "$out"
   fi
@@ -362,6 +367,145 @@ not_armed "B19 a login without write access is not armed"
 # shellcheck disable=SC2209 # a per-call variable for a shell function
 FAKE_PERMISSION=read run_case false 'some-other-app[bot]' "$REF"
 not_armed "B19 another bot on the refresh branch name is not armed"
+
+# ── B32: a pull request that approves a held migration is merged by the owner's hand, never armed ─
+# infrastructure/migration-approvals.txt is the owner's yes to a migration the deploy would otherwise
+# refuse; armed, it would merge itself on a green CI and the yes would be anybody's (review of #2873).
+APPROVALS='infrastructure/migration-approvals.txt'
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+run_case true 'dependabot[bot]' 'dependabot/cargo/x'
+if [ "$st" = 0 ] && ! armed && grep -q 'merged by the OWNER' <<<"$out"; then pass "B32 Dependabot touching the approvals file is not armed, and the run says why"; else fail "B32 Dependabot touching the approvals file was armed (exit $st)" "$out"; fi
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=admin run_case false 'an-admin' 'chore/approve-042'
+not_armed "B32 even an admin's pull request touching the approvals file is not armed"
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+run_case false "$APP" "$REF"
+not_armed "B32 the App's refresh touching the approvals file is not armed"
+fixtures
+edit pulls_5_files_per_page_100 ". += [{filename: \"elsewhere.txt\", previous_filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+not_armed "B32 a pull request that RENAMES the approvals file away is not armed either"
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B32 a push that adds the approvals file to an ARMED pull request DISARMS it"
+else
+  fail "B32 an armed pull request kept its arming after the approvals file was added (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_API_FAIL=1 FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" != 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B32 an unreadable file list fails the run, arms nothing and disarms"
+else
+  fail "B32 an unreadable file list armed or passed (exit $st)" "$out"
+fi
+
+# The judge and everything that decides what an approval means are the owner's files too (second
+# review of #2873): a pull request weakening the classifier would otherwise merge itself.
+for owned in infrastructure/lib/migration-hold.sh infrastructure/lib/migrations.sh infrastructure/deploy/deploy-environment.sh infrastructure/backup/dump-auth-db.sh .github/scripts/release-preflight.sh .github/scripts/lib/release-preconditions.sh .github/workflows/arm-auto-merge.yml CODEOWNERS .github/CODEOWNERS docs/CODEOWNERS; do
+  fixtures
+  edit pulls_5_files_per_page_100 ". += [{filename: \"$owned\"}]"
+  # shellcheck disable=SC2209 # a per-call variable for a shell function
+  FAKE_PERMISSION=admin run_case false 'an-admin' 'fix/x'
+  if [ "$st" = 0 ] && ! armed && grep -qF "changes $owned" <<<"$out"; then pass "B32 a pull request touching $owned is not armed"; else fail "B32 a pull request touching $owned was armed (exit $st)" "$out"; fi
+done
+# AN ARMING MADE BY HAND is an event now (auto_merge_enabled): on the owner's files it is undone,
+# anywhere else it is left alone and not repeated.
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+edit pulls_5_files_per_page_100 ". += [{filename: \"$APPROVALS\"}]"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+CASE_ACTION=auto_merge_enabled FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B32 a hand-made arming (auto_merge_enabled) of a pull request touching the approvals file is DISARMED"
+else
+  fail "B32 a hand-made arming of an approvals pull request stayed (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+CASE_ACTION=auto_merge_enabled FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && ! grep -q '^pr merge' "$work/gh.log" && ! grep -q 'permission' "$work/gh.log"; then
+  pass "B32 a hand-made arming elsewhere is neither undone nor repeated, and asks nothing more"
+else
+  fail "B32 auto_merge_enabled on an ordinary pull request did something (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+# GITHUB LISTS AT MOST 3000 FILES: a list at the cap may have cut the owner's file off.
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+jq -n '[range(3000) | {filename: "f\(.).txt"}]' >"$work/fix/pulls_5_files_per_page_100.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" != 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log" && grep -q 'its cap' <<<"$out"; then
+  pass "B32 a file list at GitHub's 3000 cap refuses, arms nothing and disarms"
+else
+  fail "B32 a file list at the cap was trusted (exit $st)" "$out"
+fi
+fixtures
+jq -n '[range(2999) | {filename: "f\(.).txt"}]' >"$work/fix/pulls_5_files_per_page_100.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && armed; then pass "B32 2999 files, none the owner's, is armed as before"; else fail "B32 a 2999-file pull request was not armed (exit $st)" "$out"; fi
+# THE PROTECTED LIST IS EXACTLY THESE ELEVEN PATHS, as the workflow ships it - a path dropped from it
+# would silently become armable again. The final review of #2873 added the deploy, the dump, the
+# release gate and the two other places GitHub reads a CODEOWNERS from.
+wf_list="$(awk -v q="'" '$0 ~ "^owner_files=" q { inside = 1; sub("^owner_files=" q, "") } inside { line = $0; done = sub(q "$", "", line); sub(/^[ \t]+/, "", line); print line; if (done) exit }' "$work/step.raw" | sort)"
+want_list="$(printf '%s\n' infrastructure/migration-approvals.txt infrastructure/lib/migration-hold.sh infrastructure/lib/migrations.sh \
+  infrastructure/deploy/deploy-environment.sh infrastructure/backup/dump-auth-db.sh .github/scripts/release-preflight.sh \
+  .github/scripts/lib/release-preconditions.sh .github/workflows/arm-auto-merge.yml CODEOWNERS .github/CODEOWNERS docs/CODEOWNERS | sort)"
+if [ "$wf_list" = "$want_list" ]; then
+  pass "B32 the workflow protects exactly the 11 owner's paths"
+else
+  fail "B32 the workflow's protected list is not the 11 owner's paths" "workflow: $wf_list"
+fi
+# THE LIST DESCRIBES THE HEAD THAT IS ARMED: a head that moved after the event is not armed here.
+fixtures
+echo "{\"head\": {\"sha\": \"$O1\"}}" >"$work/fix/pulls_5.json"
+# shellcheck disable=SC2209 # a per-call variable for a shell function
+FAKE_PERMISSION=write run_case false 'a-collaborator' 'fix/x'
+if [ "$st" = 0 ] && ! armed && grep -q 'its head moved since this event' <<<"$out"; then
+  pass "B32 a head that moved since the event is not armed - the run for the new head decides"
+else
+  fail "B32 a pull request whose head moved was armed on a file list of another head (exit $st)" "$out"
+fi
+# THE auto_merge_enabled RUN HAS ITS OWN CONCURRENCY GROUP: the arming this workflow makes raises that
+# event, and a shared group would let the run it starts cancel the run that armed.
+if grep -qE "^  group: arm-auto-merge-\\$\\{\\{ github.event.pull_request.number \\}\\}-\\$\\{\\{ github.event.pull_request.draft \\}\\}-\\$\\{\\{ github.event.action == 'auto_merge_enabled' \\}\\}$" "$wf" &&
+  grep -qE '^  cancel-in-progress: true$' "$wf"; then
+  pass "B32 the auto_merge_enabled run has a concurrency group of its own"
+else
+  fail "B32 the auto_merge_enabled run shares the arming run's concurrency group - it would cancel the run that armed"
+fi
+if grep -qE '^ +types: \[[a-z_, ]*auto_merge_enabled\]' "$wf"; then
+  pass "B32 the workflow listens to auto_merge_enabled, so an arming made by hand is judged too"
+else
+  fail "B32 arm-auto-merge.yml does not listen to auto_merge_enabled"
+fi
+# THE ARMING NAMES THE HEAD THE GUARD JUDGED: without `--match-head-commit`, a push between the guard
+# and the merge step would be armed on a file list read of another head. Every `--auto` arming in
+# the file must carry it, and the step that arms an ordinary pull request must be given HEAD_SHA.
+# shellcheck disable=SC2016 # the dollar signs are the workflow's own shell text, matched literally
+{
+  arm_lines="$(grep -E '^ +(if )?gh pr merge "\$PR" --auto ' "$wf")"
+  merge_step="$(awk '/^      - name: /{ step = $0 } step ~ /Ask GitHub to merge it/' "$wf")"
+  if [ -n "$arm_lines" ] && ! grep -vqF -- '--match-head-commit "$HEAD_SHA"' <<<"$arm_lines" &&
+    grep -qE '^          HEAD_SHA: \$\{\{ github.event.pull_request.head.sha \}\}$' <<<"$merge_step" &&
+    grep -qF 'gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"' <<<"$merge_step"; then
+    pass "B32 every arming names the head the guard judged (--match-head-commit), the ordinary one included"
+  else
+    fail "B32 an arming does not pin the judged head with --match-head-commit" "$arm_lines"
+  fi
+}
 
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────
 if grep -qE '^\s*-?\s*uses:\s*actions/checkout' "$wf"; then

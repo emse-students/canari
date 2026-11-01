@@ -20,7 +20,7 @@
 #   prereleased -> dev.canari-emse.fr + Play `internal` + TestFlight
 #   released    -> canari-emse.fr     + Play `production` + App Store REVIEW
 #
-# and everything before that fork - the five gates and the version bump - is shared, because it
+# and everything before that fork - the six gates and the version bump - is shared, because it
 # must be identical for both.
 #
 # WHY THIS FILE EXISTS AT ALL. Until 2026-09-03 those two publications drove FOUR workflows chained
@@ -85,7 +85,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # MAY THIS RELEASE START?
   #
-  # Five questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
+  # Six questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
   # inputs the API will not produce on demand, and replayed against a release that already happened.
   # The one that matters most is the fourth: a stable may only be published from a commit the dev
   # estate has already served, which is what makes production being ahead of dev IMPOSSIBLE rather

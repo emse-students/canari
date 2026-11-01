@@ -206,3 +206,50 @@ classify_prerelease_currency() {
     printf 'current\n'
   fi
 }
+
+# Gate 6: does this release add a migration the owner must approve, without the approval?
+#
+# THE DEPLOY REFUSES SUCH A FILE ANYWAY (`apply_migrations`), but only after the bump has pushed, the
+# images are built and a store has taken the build - a refusal that lands at the end of a release.
+# The same question asked of the TREE, before anything moves, costs a second. It is pure repository:
+# the files `git diff` names between the commit production serves (`prod-released`, the caller's
+# $1) and the released commit, ADDED, COPIED or RENAMED under `apps/*/src/migrations/` - the paths
+# production's ledger has no row for, which are exactly the files the deploy will judge and apply.
+# A file only MODIFIED since then is already in that ledger: the deploy never re-applies it (the
+# changed checksum only warns), so judging it here would refuse a release for a file nothing runs
+# (final review of #2873 - the first version asked AMR). Each file is judged by
+# `migration_gate_verdict` (infrastructure/lib/migration-hold.sh, the deploy's own judge) against the
+# approvals file of the working tree, which IS the released commit. The caller sources that library.
+#
+# Prints one line per examined file - `plain <file>`, `approved <file>`, `refused <file> <sha256>
+# <reason>` - and returns 0 when nothing is refused, 1 when something is, 2 when it cannot decide
+# (`undecidable <why>` is printed): a comparison or a file it cannot read is never permission.
+held_migrations_since() {
+  local base="$1" target="$2" files file verdict kind rest refused=0
+  if ! declare -F migration_gate_verdict >/dev/null; then
+    printf 'undecidable the hold library (infrastructure/lib/migration-hold.sh) is not loaded\n'
+    return 2
+  fi
+  if ! files="$(git diff --name-only --diff-filter=ACR "$base" "$target" -- 'apps/*/src/migrations/*.sql')"; then
+    printf 'undecidable git could not compare %s with %s\n' "$base" "$target"
+    return 2
+  fi
+  while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    if ! verdict="$(migration_gate_verdict "$file")"; then
+      printf 'undecidable %s could not be judged\n' "$file"
+      return 2
+    fi
+    kind="${verdict%%|*}"
+    rest="${verdict#*|}"
+    case "$kind" in
+      plain) printf 'plain %s\n' "$file" ;;
+      approved) printf 'approved %s\n' "$file" ;;
+      *)
+        refused=1
+        printf 'refused %s %s %s\n' "$file" "${rest%%|*}" "${verdict##*|}"
+        ;;
+    esac
+  done <<<"$files"
+  return "$refused"
+}

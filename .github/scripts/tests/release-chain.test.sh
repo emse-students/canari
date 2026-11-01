@@ -478,10 +478,16 @@ fi
 # PR etc, je ne veux plus recevoir les mails"*). CODEOWNERS requested a review from two humans on
 # every pull request, in a repository whose written model is that no approval is required - a
 # mention per pull request, per push, for a queue nobody was ever meant to drain.
-if [ -e "$HERE/../../CODEOWNERS" ]; then
-  fail 'CODEOWNERS is back - it requests a review from a human on every pull request, and this repository requires no approval, so every one of those is a notification about a decision nobody makes'
+# GitHub reads the file from THREE places - `.github/`, the root and `docs/` - so all three are
+# checked (final review of #2873): a ban on one name is a ban the other two walk past.
+codeowners_found=""
+for codeowners in "$HERE/../../CODEOWNERS" "$HERE/../../../CODEOWNERS" "$HERE/../../../docs/CODEOWNERS"; do
+  [ -e "$codeowners" ] && codeowners_found="$codeowners_found $codeowners"
+done
+if [ -n "$codeowners_found" ]; then
+  fail "CODEOWNERS is back ($codeowners_found) - it requests a review from a human on every pull request, and this repository requires no approval, so every one of those is a notification about a decision nobody makes"
 else
-  pass 'no CODEOWNERS - nobody is assigned to a pull request that merges itself'
+  pass 'no CODEOWNERS in any of the three places GitHub reads one - nobody is assigned to a pull request that merges itself'
 fi
 
 printf '\nthe release package tells a pre-release from a stable by the EVENT, and refuses a mismatch\n'

@@ -49,6 +49,9 @@ ENV_FILE="$INFRA_DIR/.env"
 # Commune aux scripts de sauvegarde, et commentee la-bas : backup-config.sh.
 # shellcheck source=backup-config.sh
 . "$SCRIPT_DIR/backup-config.sh"
+# Le dump de auth_db, partage avec le deploiement (sauvegarde juste avant une migration approuvee).
+# shellcheck source=dump-auth-db.sh
+. "$SCRIPT_DIR/dump-auth-db.sh"
 # Offsite : 14 jours, la duree que la politique de confidentialite annonce.
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 # Local : 7 jours, parce que le disque est partage ; jamais plus que l offsite.
@@ -96,8 +99,10 @@ log "Demarrage de la sauvegarde -> $ARCHIVE_PATH"
 # ── 1. PostgreSQL Canari (auth_db) ────────────────────────────────────────────
 # Dump logique coherent via le conteneur (auth socket trust, pas de mot de passe).
 log "Dump PostgreSQL auth_db…"
-"${DC[@]}" exec -T postgres sh -c "pg_dump -U \"$POSTGRES_USER\" -d auth_db --clean --if-exists" \
-  | gzip > "$STAGE/postgres_auth_db.sql.gz"
+# La recette est dans dump-auth-db.sh, partagee avec le deploiement (sauvegarde juste avant une
+# migration approuvee par le proprietaire) ; elle verifie aussi le flux avec gzip -t.
+dump_auth_db "$STAGE/postgres_auth_db.sql.gz" "${DC[@]}" ||
+  fail "dump PostgreSQL auth_db impossible ou tronque"
 
 # ── 2. Metadonnees media-service ──────────────────────────────────────────────
 log "Archivage du volume media_meta…"

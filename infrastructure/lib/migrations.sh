@@ -15,9 +15,17 @@
 # since the ledger is keyed by repo-relative path. The allowlist of what may be written stays in the
 # script that owns the target.
 #
+# A caller that may apply a migration the owner approved also defines `migration_backup <file>`,
+# which takes a backup of ITS database and fails loudly when it cannot (the owner's rule: a backup
+# right before). Without it, an approved held migration is refused, never applied unprotected.
+#
 # Usage:
 #   . "$ROOT/infrastructure/lib/migrations.sh"
 #   apply_migrations
+
+# The owner's hold, shared with the release preflight.
+# shellcheck source-path=SCRIPTDIR source=migration-hold.sh
+. "$(dirname "${BASH_SOURCE[0]}")/migration-hold.sh"
 
 # The ledger, keyed by repo-relative path. Without it every file replays on every deploy, which
 # silently reverts admin changes made after a one-shot data backfill - migrations 004 and 016 are
@@ -74,16 +82,101 @@ require_orm_schema() {
   return 1
 }
 
-apply_migrations() {
-  psql -q -c "CREATE TABLE IF NOT EXISTS ${MIGRATION_LEDGER_TABLE} (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-  require_orm_schema || return 1
+# THE OWNER'S HOLD, applied to the files this database has not recorded. What holds a file, what
+# approves it and why it is a committed line are in `migration-hold.sh`, shared with the release
+# preflight. Only UNRECORDED files are examined: an applied migration is history, not a request.
+#
+# Refuses, before ANYTHING is applied, every unrecorded file that is held and not approved for its
+# current content, and logs the decision on every one it examined. Sets MIGRATIONS_APPROVED_HELD to
+# the files it let through on an approval, so the loop takes a backup right before each.
+# $1 is the sorted file list, $2 the ledger's filenames. Relies on no errexit: every failure is
+# checked where it happens.
+MIGRATIONS_APPROVED_HELD=""
+require_owner_approvals() {
+  local migrations="$1" ledger="$2" migration verdict kind checksum rest reason sums
+  local examined=0 held=0 approved=0 refused=0
+  MIGRATIONS_APPROVED_HELD=""
+  while IFS= read -r migration; do
+    [ -z "$migration" ] && continue
+    grep -qxF "$migration" <<<"$ledger" && continue
+    examined=$((examined + 1))
+    if ! verdict="$(migration_gate_verdict "$migration")"; then
+      printf '::error::the hold could not be decided for %s - refusing, NOTHING was applied to the %s database.\n' \
+        "$migration" "$ENVIRONMENT"
+      return 1
+    fi
+    kind="${verdict%%|*}"
+    [ "$kind" = plain ] && continue
+    held=$((held + 1))
+    rest="${verdict#*|}"
+    checksum="${rest%%|*}"
+    rest="${rest#*|}"
+    case "$kind" in
+    approved)
+      approved=$((approved + 1))
+      MIGRATIONS_APPROVED_HELD="${MIGRATIONS_APPROVED_HELD}${migration}"$'\n'
+      printf 'migration %s is held because %s - APPROVED for this content (%s) in %s; a backup is taken right before it.\n' \
+        "$migration" "$rest" "$checksum" "$MIGRATION_APPROVALS_FILE"
+      ;;
+    stale)
+      refused=$((refused + 1))
+      sums="${rest%%|*}"
+      reason="${rest#*|}"
+      printf '::error::%s is HELD: %s, and %s approves another content of it (%s), not this one (%s). It changed after the owner approved it.\n' \
+        "$migration" "$reason" "$MIGRATION_APPROVALS_FILE" "$sums" "$checksum"
+      migration_hold_remedy "$migration" "$checksum"
+      ;;
+    *)
+      refused=$((refused + 1))
+      printf '::error::%s is HELD for the owner: %s, and %s does not approve it.\n' \
+        "$migration" "$rest" "$MIGRATION_APPROVALS_FILE"
+      migration_hold_remedy "$migration" "$checksum"
+      ;;
+    esac
+  done <<<"$migrations"
 
-  local migrations applied skipped migration checksum recorded
+  printf 'owner hold: %s unrecorded file(s) examined, %s held, %s approved, %s refused\n' \
+    "$examined" "$held" "$approved" "$refused"
+  if [ "$refused" -gt 0 ]; then
+    printf '::error::%s migration(s) held for the owner - NOTHING was applied, the %s database is unchanged.\n' \
+      "$refused" "$ENVIRONMENT"
+    return 1
+  fi
+  if [ "$approved" -gt 0 ] && ! declare -F migration_backup >/dev/null; then
+    printf '::error::%s approved held migration(s) are due, and this caller defines no migration_backup - the owner'"'"'s rule is a backup right before, so NOTHING was applied to the %s database.\n' \
+      "$approved" "$ENVIRONMENT"
+    return 1
+  fi
+  return 0
+}
+
+# CALLED BARE, and every gate inside it checked with an explicit `if`: bash suspends errexit inside a
+# function called under `||`, so `require_x || return 1` would let a failing command inside `require_x`
+# pass unnoticed. Bare, a deploy under `set -e` stops on the first failure; a caller without errexit
+# reads the status on the next line.
+apply_migrations() {
+  local migrations applied skipped migration checksum recorded ledger status
+  psql -q -c "CREATE TABLE IF NOT EXISTS ${MIGRATION_LEDGER_TABLE} (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+  require_orm_schema
+  status=$?
+  [ "$status" -eq 0 ] || return 1
+
   migrations="$(find apps/*/src/migrations -name '*.sql' 2>/dev/null | sort || true)"
   if [ -z "$migrations" ]; then
     printf 'no migration files found\n'
     return 0
   fi
+
+  # THE LEDGER IS READ ONCE, AND AN UNREADABLE LEDGER IS A REFUSAL. Read as empty, it would make
+  # every historic DROP a request - a refusal for the wrong reason, naming eighty files.
+  if ! ledger="$(psql -At -c "SELECT filename FROM ${MIGRATION_LEDGER_TABLE}" </dev/null)"; then
+    printf '::error::the %s ledger of the %s database could not be read, so nobody can say which migrations are new - refusing, NOTHING was applied.\n' \
+      "$MIGRATION_LEDGER_TABLE" "$ENVIRONMENT"
+    return 1
+  fi
+  require_owner_approvals "$migrations" "$ledger"
+  status=$?
+  [ "$status" -eq 0 ] || return 1
 
   applied=0
   skipped=0
@@ -100,6 +193,18 @@ apply_migrations() {
       fi
       skipped=$((skipped + 1))
       continue
+    fi
+
+    # THE OWNER'S RULE, LAST HALF: a backup taken just before. The caller's `migration_backup` takes
+    # it (the deploy reuses the nightly backup's own dump); a failed backup applies nothing more.
+    if grep -qxF "$migration" <<<"$MIGRATIONS_APPROVED_HELD"; then
+      printf 'taking a backup of the %s database right before %s\n' "$ENVIRONMENT" "$migration"
+      migration_backup "$migration" </dev/null
+      status=$?
+      if [ "$status" -ne 0 ]; then
+        printf '::error::the backup before %s failed - it is NOT applied, and nothing after it is.\n' "$migration"
+        return 1
+      fi
     fi
 
     printf 'applying %s\n' "$migration"

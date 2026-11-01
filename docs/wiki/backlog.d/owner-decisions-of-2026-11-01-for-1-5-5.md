@@ -13,7 +13,8 @@ last one ships.
   full screen, with the same design (#2835); the live end keeps the red X, since a confirmation modal
   exists. RNNoise ships OFF with an in-call switch
   ([entry](call-noise-suppression-clean-speech-gate-fails-and-readings-owed.md)).
-- **Migrations**: applied only if additive, reviewed, and with a backup just before
-  ([the missing gate](a-migration-the-owner-must-approve-has-no-gate-2026-11-01.md)).
+- **Migrations**: applied only if additive, reviewed, and with a backup just before - a held
+  migration now fails the deploy until the owner approves it
+  ([the gate](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
 - **After `1.5.5`**: the next big chantier is opening a community, the 200 ms budget measurement
   ([community-open-budget](../frontend/community-open-budget.md)).
