@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
+import { getSavedUserId, noteReaderSpaces } from '$lib/stores/user';
 import { m } from '$lib/paraglide/messages';
 import type { Campus, CursusEntry, Post } from './miconnectProfile';
 
@@ -121,7 +122,11 @@ export async function saveProfile(
     method: 'PUT',
     body: JSON.stringify(requestId ? { ...input, requestId } : input),
   });
-  return json(res);
+  const saved = await json<{ changed: boolean }>(res);
+  // An admin correcting THEIR OWN profile changes their own spaces: what is held about them as a
+  // reader is forgotten when the campus or cursus written differs (`noteReaderSpaces`).
+  if (userId === getSavedUserId()) noteReaderSpaces(input);
+  return saved;
 }
 
 /** The caller's open correction request, else their latest answered one, else `null`. */

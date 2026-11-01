@@ -761,7 +761,9 @@ box no longer defines anything.
 | Association map | filters to show or hide associations and to select them by campus, formation | server filter built, map next |
 | Feed (the gate) | admin, or one space, or one membership | built |
 | Admin browsing (D41) | exactly like an ordinary reader; opens one post by id for moderation | built |
-| Messaging, forms, people directory | any valid profile, no border | built |
+| Messaging, forms, people directory | any valid profile, no border (forms: the link is enough, owner 2026-10-31) | built |
+| Shop, partnerships | `/shop` lists the products and cards of an association VISIBLE to the reader (D37's predicate); a card claimed by id outside it is a 404; a product stays PAYABLE by anyone holding its association page's link | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
+| Booking spaces | an association's space: as its association; a personal space: those on its owner's CAMPUS (staff included); by id, a 404 outside it | built ([as built](#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) |
 
 ### Filters and rights
 
@@ -836,6 +838,49 @@ them. `associations.service.create-default-audience.spec.ts` holds the transacti
 frontend's two requests and their separate cache keys. `AssociationsService.list` and `create` were
 also run through TypeORM against a copy of a local estate (directory per reader, a membership
 adding one, the map filter, creation with and without a space).
+
+### The shop, the partnerships and the bookings follow the campus (owner, 2026-10-31)
+
+An audit found that a product, a partnership card and a booking space were listed to, and could be
+bought, claimed or booked by, every signed-in account, whatever its campus. The listings and the
+claim now ask the directory's predicate (D37) of the row's OWNING association, and a personal
+booking space its owner's campus - no new column, no migration:
+
+| Surface | Rule | Where |
+| --- | --- | --- |
+| Shop (`/shop`) | `listAllActive` keeps the products whose association is visible to the reader (`associationVisibleToViewerSql`: a member of it, D21, or its rules reach one of their spaces) | `products.service.ts` |
+| A purchase by id | NOT scoped (owner, 2026-10-31: buying by link is allowed, as with forms): whoever holds the association page's link may pay for what it lists | `products.service.ts` (`preparePurchase` asks no campus) |
+| Partnerships | `listAllActive` and `listActiveByAssoc` keep the cards whose association is visible; `claimCard` answers 404 `PARTNERSHIP_NOT_FOUND` outside it | `partnerships.service.ts` |
+| Booking spaces | an ASSOCIATION space follows its association (listing and every use by id); a PERSONAL space opens only to those whose `users.campus` is its owner's (`sameCampusAsViewerSql`: the campus, NOT a formation x campus space - owner, 2026-10-31: *"people without a formation still have a campus"*; the review cohort matches only itself) - outside it, 404 `space-not-found` on read and on booking; the account linked to one of its resources (D10) passes the campus check on a READ by id only (`getSpace`, `spaceSlots`; the audience still holds), never to book or upload | `bookings.service.ts` (`listedSpaces`, `assertSpaceVisible`) |
+
+**Unchanged on purpose:** the association's page reached by its link (D37) keeps listing its
+products (`listByAssoc`); the manager paths (`grantProductPurchase`, `quoteCashSale`, the space
+organiser) are not scoped; forms are not (the link is enough); a personal booking space is still
+LISTED to its owner alone (D43). A global admin is an ordinary reader here (D41), and the review
+cohort's narrowing (`review-cohort-reach.ts`) still runs - it composes, since a review account has no
+real space and the predicate is membership alone for it. A refusal by id is a 404, asked AFTER the
+cohort's typed 403, so the cohort keeps its own answer.
+
+**Two decisions the owner took on review (2026-10-31).** A personal booking space follows its owner's
+CAMPUS, not a space, so staff (a campus, an empty cursus) can offer one to their campus - the school
+psychologist case; an owner with no campus opens theirs to nobody else. And a product of another
+campus is not on /shop, yet whoever holds the association page's link may BUY it: the campus decides
+what the shop offers, not who may pay. A partnership card stays hidden and unclaimable outside the
+audience.
+
+**Client cache.** Every per-reader cache (the directory, the profile, the memberships) is forgotten
+when the reader's own campus or cursus changes - `noteReaderSpaces` (`stores/user.ts`) compares the
+profile `GET /api/users/me` returns with the one last recorded (durable state, never a clock); the
+access token carries neither. Saving an association's audience rules or a space's BDE drops the held
+directory (`setAssociationAudiences`, `setSpaceBde`).
+
+**Proof.** `shop-partnership-visibility.integration.spec.ts` and the `the campus` block of
+`bookings.service.integration.spec.ts`, against a real PostgreSQL: another campus is not listed and
+gets a 404 on a claim or a booking by id, the same campus is served, a member of the association
+from the other campus is served (D21), a purchase by link from another campus goes through, a staff
+owner's space is booked by a student of its campus and refused to the other one, and the same
+campus is no bridge across the review cohort. A control that opened personal spaces to everyone made
+the three personal-space cases fail.
 
 ### D38 republication as built (2026-10-04)
 

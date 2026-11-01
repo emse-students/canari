@@ -1104,6 +1104,20 @@ the blocks it created). Nobody else is sent it.
   its link or QR code (the psychologist case). **A PERSONAL space is listed to its owner alone
   (D43), and an ARCHIVED association's to nobody.** The audience is judged per space with that
   space's own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
+- **A SPACE FOLLOWS THE CAMPUS (owner, 2026-10-31)**: an association space is listed only when its
+  association is visible to the reader (D37's predicate: a member of it, or its rules reach one of
+  their spaces), and a personal space opens only to those on its owner's CAMPUS
+  (`sameCampusAsViewerSql` - the campus, never a formation, so staff with an empty cursus offer
+  theirs to their campus: the psychologist case; the review cohort matches only itself). By its id,
+  outside that, every read and the booking answer 404 `space-not-found` (`assertSpaceVisible`, asked
+  by `assertMayUse` before the audience; a manager never reaches it). **The account linked to one of
+  the space's resources (D10) passes the campus check on a READ only** (`getSpace`, `spaceSlots`):
+  the audience (D6) is still asked after it, so outside the audience it reads nothing; it is not
+  listed the space; and from another campus it may neither book (`book`, its own column or any
+  other) nor upload a file (`uploadFile`) - those answer 404 like any reader outside. A participant
+  keeps only `mine`. **A personal
+  space whose owner has no campus is reachable only by its owner** (`sameCampusAsOwnerSql` matches
+  nobody against a NULL campus) ([profiles-and-access](profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)).
 - **THE LISTING COSTS A FIXED NUMBER OF QUERIES, NOT ONE PER SPACE**: the rows (limit in SQL), the
   manage rights in one `mayActOnAny`, the cotisations of every association in one
   `cotisationTiersByAssociation`, and the profile (core-service) ONCE, only when some audience needs

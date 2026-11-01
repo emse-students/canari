@@ -756,7 +756,21 @@ export class AssociationsService {
       patch.cotisationExpiresAt =
         dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
-    await this.assoRepo.update(id, patch);
+    if (dto.archived !== undefined) {
+      // Archiving is ordered against a purchase on the association ROW: `decidePurchase` reads it
+      // FOR SHARE under the buyer's lock, so this write waits for a checkout already deciding, and a
+      // checkout deciding after it reads `archived` committed (docs/wiki/cotisations.md).
+      await this.assoRepo.manager.transaction(async (manager) => {
+        await manager.findOne(Association, {
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        await manager.update(Association, id, patch);
+      });
+      this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+    } else {
+      await this.assoRepo.update(id, patch);
+    }
     await this.invalidatePostListCaches();
     return this.findById(id);
   }

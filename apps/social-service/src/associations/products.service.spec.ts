@@ -154,8 +154,14 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // The distinct-association query of the provider-activation sweep.
       createQueryBuilder: jest.fn(() => {
         const qb: any = {};
-        for (const method of ['select', 'where']) qb[method] = jest.fn(() => qb);
+        for (const method of ['select', 'where', 'andWhere', 'orderBy', 'addOrderBy']) {
+          qb[method] = jest.fn(() => qb);
+        }
         qb.getRawMany = jest.fn(() => Promise.resolve(withheldRows));
+        // The shop listing (`listAllActive`): answered by `find`, so each test states its rows in
+        // one place. Which association is VISIBLE is SQL, proven against PostgreSQL in
+        // `shop-partnership-visibility.integration.spec.ts`.
+        qb.getMany = jest.fn(() => (productRepo.find as jest.Mock)({ where: { isActive: true } }));
         return qb;
       }),
       __setWithheld: (ids: string[]) => {
@@ -1025,6 +1031,70 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(
         service.update('asso1', 'prod1', { name: 'New name' }, false)
       ).resolves.toBeDefined();
+    });
+
+    describe('members-only needs a cotisation to be held', () => {
+      const refusal = (err: unknown) => {
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'MEMBERS_ONLY_WITHOUT_COTISATION',
+        });
+      };
+
+      it('refuses creating a members-only product when the association has no cotisation mode', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        refusal(
+          await service
+            .create('asso1', { name: 'Recharge', type: 'balance_topup', membersOnly: true }, true)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses ticking it on an existing product, and stores nothing', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        refusal(
+          await service
+            .update('asso1', 'prod1', { membersOnly: true }, true)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: an association with a cotisation mode may reserve it', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso());
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        const saved = await service.update('asso1', 'prod1', { membersOnly: true }, true);
+        expect(saved.membersOnly).toBe(true);
+      });
+
+      it('CONTROL: requiredTags take precedence, so a tag-gated product needs no mode', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        await service.create(
+          'asso1',
+          { name: 'Soiree', type: 'other', membersOnly: true, requiredTags: ['vip:bde'] },
+          false
+        );
+        expect(productRepo.save).toHaveBeenCalled();
+      });
+
+      it('CONTROL: an edit that leaves the gate alone is not asked, so the product can be withdrawn', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(product({ type: 'other', membersOnly: true }));
+        await expect(
+          service.update('asso1', 'prod1', { isActive: false }, false)
+        ).resolves.toBeDefined();
+      });
     });
 
     it('persists badgeText on update, and clears it with null', async () => {
@@ -3900,6 +3970,103 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       row.createdAt = new Date(row.createdAt.getTime() - ms);
       row.expiresAt = new Date(row.expiresAt.getTime() - ms);
     };
+
+    /**
+     * THE CERCLE TOP-UP'S "RESERVE AUX COTISANTS" BOX (owner, 2026-10-31) is `membersOnly` on the
+     * `balance_topup` product, and `membersOnly` means a COTISANT of the association - an active
+     * tier tag of it (`isCotisant`), never a mere member row. Refused with a CODE the shop maps to
+     * its own sentence, before any payment request is issued.
+     */
+    describe('the Cercle top-up reserved to cotisants', () => {
+      const topup = {
+        type: 'balance_topup' as const,
+        membersOnly: true,
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: null,
+      };
+
+      it('refuses a non-cotisant at checkout with PRODUCT_COTISANTS_ONLY, and issues nothing', async () => {
+        const t = setup(topup);
+        t.userTagService.hasActiveTag.mockResolvedValue(false);
+        const err = await t.service
+          .createCheckoutSession('asso1', 'prod1', 'user1', 500)
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'PRODUCT_COTISANTS_ONLY',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+        expect(t.checkouts.rows).toHaveLength(0);
+      });
+
+      it('CONTROL: opens the checkout of a cotisant, at the amount they chose', async () => {
+        const t = setup(topup);
+        t.userTagService.hasActiveTag.mockResolvedValue(true);
+        const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
+        expect(opened.amountCents).toBe(500);
+        expect(orderRefs(t.calls)).toHaveLength(1);
+      });
+
+      it('CONTROL: the box unticked (the default) opens it to a non-cotisant', async () => {
+        const t = setup({ ...topup, membersOnly: false });
+        t.userTagService.hasActiveTag.mockResolvedValue(false);
+        const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
+        expect(opened.amountCents).toBe(500);
+      });
+    });
+
+    /**
+     * Buying by the page's link is open (owner, 2026-10-31), and an archived association's page
+     * stays reachable with whatever products it left active - so the purchase itself refuses it,
+     * before the lock and again under it, and no payment request is ever issued.
+     */
+    describe('an archived association sells nothing', () => {
+      it('refuses the checkout with ASSOCIATION_ARCHIVED before routing, and issues nothing', async () => {
+        const t = setup();
+        t.assoRepo.findOne.mockResolvedValue(asso({ archived: true }));
+        // The pre-lock check is what refuses it: the provider is never asked, nothing is routed.
+        const provider = jest.spyOn(t.service as any, 'activePaymentProvider');
+        const route = jest.spyOn(t.service as any, 'routeWith');
+        const err = await t.checkout().catch((e: unknown) => e);
+        expect(provider).not.toHaveBeenCalled();
+        expect(route).not.toHaveBeenCalled();
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'ASSOCIATION_ARCHIVED',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+        expect(t.checkouts.rows).toHaveLength(0);
+      });
+
+      it('refuses it under the lock too, when the archive lands while the purchase is prepared', async () => {
+        const t = setup();
+        t.assoRepo.findOne
+          .mockResolvedValueOnce(asso())
+          .mockResolvedValue(asso({ archived: true }));
+        const err = await t.checkout().catch((e: unknown) => e);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'ASSOCIATION_ARCHIVED',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+      });
+
+      it('CONTROL: the same product of a live association opens its checkout', async () => {
+        const t = setup();
+        await t.checkout();
+        expect(orderRefs(t.calls)).toHaveLength(1);
+      });
+
+      it('reads the association FOR SHARE under the lock, the row the archive writes FOR UPDATE', async () => {
+        const t = setup();
+        await t.checkout();
+        // The transaction's manager hands an Association read to the association repository.
+        expect(t.assoRepo.findOne).toHaveBeenCalledWith(
+          expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+        );
+      });
+    });
 
     it('gives every attempt its own order_ref, so a retry after a DECLINED one is issued', async () => {
       const t = setup();

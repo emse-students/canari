@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import { amountBoundsOf, holderCountOf, SocialApiError, socialRefusal } from './api';
-import { providerRefusalMessage } from './paymentRefusal';
+import { membersOnlySaveRefusalMessage, providerRefusalMessage } from './paymentRefusal';
 import { formatAmount } from '$lib/forms/fillAnswers';
 import { setLocale } from '$lib/paraglide/runtime';
 
@@ -191,6 +191,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          "This product is reserved to the association's cotisants",
+          'PRODUCT_COTISANTS_ONLY',
+          403
+        )
+      )
+    ).toBe(m.shop_members_only_hint());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           'The payment account of this association changed while the purchase was opened.',
           'PAYMENT_ROUTING_CHANGED',
           409
@@ -256,5 +265,28 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();
     expect(providerRefusalMessage(new Error('PAYMENT_PROVIDER_REFUSED'))).toBeNull();
+  });
+});
+
+describe('the archived association and the members-only save', () => {
+  it('words a purchase from an archived association from its code', () => {
+    expect(
+      providerRefusalMessage(
+        new SocialApiError('This association is archived.', 'ASSOCIATION_ARCHIVED', 409)
+      )
+    ).toBe(m.shop_association_archived());
+  });
+
+  it('words a members-only save with no cotisation mode from its code', () => {
+    expect(
+      membersOnlySaveRefusalMessage(
+        new SocialApiError('Enable the cotisation.', 'MEMBERS_ONLY_WITHOUT_COTISATION', 400)
+      )
+    ).toBe(m.admin_members_only_without_cotisation());
+  });
+
+  it('CONTROL: any other save failure is left to the caller generic line', () => {
+    expect(membersOnlySaveRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();
+    expect(membersOnlySaveRefusalMessage(new Error('MEMBERS_ONLY_WITHOUT_COTISATION'))).toBeNull();
   });
 });

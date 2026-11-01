@@ -450,6 +450,30 @@ export function associationVisibleToViewerSql(association: string, viewer: strin
 }
 
 /**
+ * User row `user` is on the same CAMPUS as the person whose id is the expression `owner` - what
+ * opens a PERSONAL booking space to someone who is not its owner (owner, 2026-10-31: "we restricted
+ * to the campus, not to the formation, and people without a formation still have a campus"). The
+ * campus alone, NOT a space: staff (a campus and an empty cursus) have no space, and their personal
+ * booking space is still offered to their campus. No campus on either side matches nothing.
+ *
+ * The review cohort stays a world of its own, as in {@link sharesSpaceWithAuthorSql}: a review
+ * account matches review accounts only, and nobody else matches one, whatever the profiles say.
+ */
+export function sameCampusAsOwnerSql(owner: string, user: string): string {
+  const ownerInCohort = inReviewCohortSql(owner);
+  const userInCohort = inReviewCohortSql(`${user}.id`);
+  return `((NOT ${ownerInCohort} AND NOT ${userInCohort} AND EXISTS (
+      SELECT 1 FROM users vis_owner WHERE vis_owner.id = ${owner}
+        AND vis_owner.campus IS NOT NULL AND vis_owner.campus = ${user}.campus))
+    OR (${ownerInCohort} AND ${userInCohort}))`;
+}
+
+/** The viewer whose id is the placeholder `viewer` is on the campus of `owner` ({@link sameCampusAsOwnerSql}). */
+export function sameCampusAsViewerSql(owner: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${sameCampusAsOwnerSql(owner, 'vis_viewer')})`;
+}
+
+/**
  * Calendar event row `event` (an `association_calendar_events` row) is visible to user row `user`
  * (D39): its ORGANISER is visible to them, or an ACCEPTED co-organiser is - the same association
  * predicate for each, membership (D21) included. An event has no space rules of its own, so its
