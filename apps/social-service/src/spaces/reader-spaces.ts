@@ -515,13 +515,19 @@ export const READER_PROFILE_SQL = `SELECT id, campus, cursus FROM users WHERE id
 /**
  * Who is told about post `$1`: everyone who can SEE it, minus its author. The scheduler narrows a
  * personal post further to its author's ACCEPTED followers (`followersOnly`): a pending request is
- * not a follow (WP-F1).
+ * not a follow (WP-F1). A block either way excludes the follower even when the block's severing
+ * missed the follow row: a reader who shares the author's space SEES the post by the space rule, so
+ * the visibility term alone would let the left-over row ring their bell and push them - the same
+ * term as `newlyReachedByPersonalRepublicationSql` and the live push (`liveAudienceSql`).
  */
 export function announceRecipientsSql(followersOnly: boolean): string {
   const follows = followersOnly
     ? `AND EXISTS (SELECT 1 FROM user_follows ann_follow
          WHERE ann_follow."followedUserId" = ann_post."authorId" AND ann_follow."followerUserId" = ann_user.id
-           AND ${acceptedFollowSql('ann_follow')})`
+           AND ${acceptedFollowSql('ann_follow')})
+      AND NOT EXISTS (SELECT 1 FROM user_blocks ann_block
+         WHERE (ann_block."blockerId" = ann_user.id AND ann_block."blockedId" = ann_post."authorId")
+            OR (ann_block."blockerId" = ann_post."authorId" AND ann_block."blockedId" = ann_user.id))`
     : '';
   return `SELECT ann_user.id FROM users ann_user JOIN posts ann_post ON ann_post.id = $1
     WHERE ann_user.id <> ann_post."authorId" ${follows}

@@ -289,6 +289,38 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
     }
   });
 
+  it('a block either way keeps a SAME-SPACE follower out of the announcement, left-over follow row or not', async () => {
+    // sameSpace sees the post by the space rule, so only the announce's own block term can stop the
+    // bell and the push when the block's severing missed the follow row.
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status, "acceptedAt")
+           VALUES ('sameSpace', 'author', 'accepted', now())`
+      );
+      const announced = async () =>
+        ids((await client.query(announceRecipientsSql(true), [P_PERSONAL])).rows);
+      expect(await announced()).toContain('sameSpace');
+      for (const [blocker, blocked] of [
+        ['author', 'sameSpace'],
+        ['sameSpace', 'author'],
+      ]) {
+        await client.query('SAVEPOINT one_block');
+        await client.query(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [
+          blocker,
+          blocked,
+        ]);
+        expect({ blocker, announced: await announced() }).toEqual({
+          blocker,
+          announced: ['farFollower', 'personnel'],
+        });
+        await client.query('ROLLBACK TO SAVEPOINT one_block');
+      }
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
   it('a REMOVED follower loses the post, the live, the announcement and the push at once', async () => {
     await client.query('BEGIN');
     try {
