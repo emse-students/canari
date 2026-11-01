@@ -71,7 +71,12 @@ export type MlsMetricEvent =
         | 'blocked'
         | 'refused'
         /** A queued chat-reel take its preparer refused for good (RC-5). */
-        | 'unpreparable';
+        | 'unpreparable'
+        /**
+         * The row was already retired by the recovery's own proof (no seat left, `stopRecovering`)
+         * while the entry waited for the group - a re-admission whose Welcome never came, among others.
+         */
+        | 'removed';
     };
 
 function isMetricsVerbose(): boolean {

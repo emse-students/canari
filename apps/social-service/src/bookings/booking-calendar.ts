@@ -59,6 +59,15 @@ export function bookingCalendarSignatureMatches(
 }
 
 /**
+ * Where a booking is: the space, then its column - or the space alone when the column bears the
+ * space's name (D44's hidden column), so a calendar never reads "Salle - Salle". The client names
+ * a place by the same rule (`bookingPlace` in `frontend/src/lib/bookings/columns.ts`).
+ */
+export function bookingPlace(spaceName: string, resourceName: string): string {
+  return resourceName === spaceName ? spaceName : `${spaceName} - ${resourceName}`;
+}
+
+/**
  * The one-event calendar of a booking: the names of the place (which may be a person's, D10), the
  * range, a link back. Nothing else.
  */
@@ -75,7 +84,7 @@ export function bookingIcs(input: {
   return buildIcsDocument([
     {
       uid: `booking-${input.bookingId}`,
-      summary: `${input.spaceName} - ${input.resourceName}`,
+      summary: bookingPlace(input.spaceName, input.resourceName),
       startsAt: input.startsAt,
       endsAt: input.endsAt,
       url: `${base}/bookings/spaces/${input.spaceId}`,

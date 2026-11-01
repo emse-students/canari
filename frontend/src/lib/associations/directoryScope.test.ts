@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * THE DIRECTORY AND THE CATALOGUE ARE TWO QUESTIONS, AND NEITHER MAY ANSWER FOR THE OTHER (D37).
@@ -38,6 +38,12 @@ async function freshApi() {
 const paths = () =>
   request.mock.calls.map((c) => String(c[0]).slice(String(c[0]).indexOf('/api/')));
 
+// The module graph's first transform is paid here, once, not inside the first case - under a
+// whole-folder run it exceeded the 5 s case timeout (see membershipProbe.test.ts).
+beforeAll(async () => {
+  await import('./api');
+}, 60_000);
+
 beforeEach(() => {
   request.mockReset();
   request.mockImplementation(async () => ok([]));
@@ -66,5 +72,44 @@ describe('association listing scopes', () => {
     await listAssociationDirectory();
     await listAssociations();
     expect(paths()).toEqual(['/api/associations?scope=all', '/api/associations?scope=directory']);
+  });
+});
+
+/**
+ * EVERY WRITE THAT CHANGES WHAT THE DIRECTORY ANSWERS DROPS IT (the comment on
+ * `associationDirectory`): an association's audience rules ARE the directory, and designating a BDE
+ * can add the rule that makes it reach its space. Without the drop, the directory stayed stale for
+ * five minutes after the admin grid saved.
+ */
+describe('writes that change the directory drop it', () => {
+  it('asks the directory again after an association audience is saved', async () => {
+    const { listAssociationDirectory, setAssociationAudiences } = await freshApi();
+    await listAssociationDirectory();
+    await setAssociationAudiences('a1', [{ formation: null, campus: 'gardanne' }]);
+    await listAssociationDirectory();
+    expect(paths()).toEqual([
+      '/api/associations?scope=directory',
+      '/api/associations/a1/audiences',
+      '/api/associations?scope=directory',
+    ]);
+  });
+
+  it('asks the directory again after a space BDE is designated', async () => {
+    const { listAssociationDirectory, setSpaceBde } = await freshApi();
+    await listAssociationDirectory();
+    await setSpaceBde('s1', 'a1');
+    await listAssociationDirectory();
+    expect(paths()).toEqual([
+      '/api/associations?scope=directory',
+      '/api/associations/spaces/s1/bde',
+      '/api/associations?scope=directory',
+    ]);
+  });
+
+  it('CONTROL: a read alone does not drop it', async () => {
+    const { listAssociationDirectory } = await freshApi();
+    await listAssociationDirectory();
+    await listAssociationDirectory();
+    expect(paths()).toEqual(['/api/associations?scope=directory']);
   });
 });

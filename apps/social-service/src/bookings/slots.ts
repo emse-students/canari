@@ -10,12 +10,14 @@
  *    PIECE `[start, end)` in UTC, read in the space's zone (`zoned-time.ts`, D25).
  * 2. In a `step` space the pieces of ONE DATE are UNITED into a window (overlapping or touching
  *    pieces become one), cut into steps of `stepMinutes` of ELAPSED time from its start; a booking
- *    is 1..`maxSteps` consecutive steps of ONE window (D3).
+ *    is 1..`maxSteps` consecutive steps, each starting where the previous ends (D3) - so it may run
+ *    from one window into the next one that TOUCHES it ({@link checkRangeShape}).
  * 3. In a `slots` space each distinct piece IS one slot (D3).
  * 4. A window CROSSES AT MOST ONE MIDNIGHT ({@link availabilityWindows}): one ending at 24:00 takes
  *    in the next date's TAIL (00:00 to before 24:00), so a window written as two lines - 22:00-24:00
  *    and 00:00-02:00 the next day, since `startTime < endTime` is a CHECK - is one window again, in
- *    both modes. It belongs to the local date it STARTS on.
+ *    both modes. It belongs to the local date it STARTS on. That bounds what the GRID lists per
+ *    date; it does not bound a booking: two whole days in a row are one continuous opening.
  */
 import type { BookingSlotMode } from './entities/booking-space.entity';
 import { addDays, datesBetween, isoWeekday, localDate, zonedToUtcMs } from './zoned-time';
@@ -202,31 +204,85 @@ export function slotUnits(config: SlotConfig, windows: readonly Window[]): Windo
 export type RangeRefusal = 'outside-availability' | 'misaligned' | 'too-many-steps';
 
 /**
- * Whether `range` is a bookable shape: one slot exactly, or 1..maxSteps consecutive steps of one
- * window. It does NOT look at bookings, blocks or the booking window: those are separate checks.
+ * Whether `range` lies inside ONE continuous opening: a run of windows, each starting no later than
+ * where the previous one ends. Two whole days in a row (00:00-24:00 each), Sunday into Monday, or a
+ * weekly day into a dated one are one opening; an exception (a closed day) or any gap cuts it.
+ */
+function insideOneOpening(windows: readonly Window[], range: Range): boolean {
+  const sorted = [...windows].sort((x, y) => x.startMs - y.startMs || x.endMs - y.endMs);
+  let reach: number | null = null;
+  for (const w of sorted) {
+    if (reach === null) {
+      if (w.startMs <= range.startMs && range.startMs < w.endMs) reach = w.endMs;
+    } else if (w.startMs <= reach && w.endMs > reach) {
+      reach = w.endMs;
+    }
+    if (reach !== null && range.endMs <= reach) return true;
+  }
+  return false;
+}
+
+/**
+ * The longest a predefined slot can last: a slot crosses at most one midnight (see
+ * {@link availabilityWindows}), so it is under two local days, plus the hour a fall-back night adds.
+ */
+const LONGEST_SLOT_MS = 49 * 60 * MINUTE_MS;
+
+/**
+ * THE LENGTH BOUND, read from the settings alone: an over-long range is refused before any window
+ * is built, so the work a range costs never grows with its length. A step space takes at most
+ * `maxSteps` x `stepMinutes`; a slots space at most {@link LONGEST_SLOT_MS}. An empty or reversed
+ * range is `misaligned`, a step space without a step too.
+ */
+export function rangeLengthRefusal(config: SlotConfig, range: Range): RangeRefusal | null {
+  const length = range.endMs - range.startMs;
+  if (!(length > 0)) return 'misaligned';
+  if (config.slotMode === 'slots') {
+    return length > LONGEST_SLOT_MS ? 'outside-availability' : null;
+  }
+  const step = (config.stepMinutes ?? 0) * MINUTE_MS;
+  if (step <= 0) return 'misaligned';
+  return length > (config.maxSteps ?? 1) * step ? 'too-many-steps' : null;
+}
+
+/**
+ * Whether `range` is a bookable shape: one slot exactly, or 1..maxSteps consecutive steps, each
+ * starting where the previous one ends. Consecutive steps may belong to two windows that TOUCH - a
+ * booking from 23:00 to 01:00 between two whole days, or a several-day booking when `maxSteps`
+ * allows it - which is the rule the booker's screen applies when it offers a run of free units
+ * (`freeRunFrom` in the frontend's `grid.ts`). It does NOT look at bookings, blocks or the booking
+ * window: those are separate checks, and a block refuses the booking it overlaps.
  */
 export function checkRangeShape(
   config: SlotConfig,
   windows: readonly Window[],
   range: Range
 ): RangeRefusal | null {
-  if (range.endMs <= range.startMs) return 'misaligned';
+  const bound = rangeLengthRefusal(config, range);
+  if (bound) return bound;
   if (config.slotMode === 'slots') {
     return windows.some((w) => w.startMs === range.startMs && w.endMs === range.endMs)
       ? null
       : 'outside-availability';
   }
-  const window = windows.find((w) => w.startMs <= range.startMs && range.endMs <= w.endMs);
-  if (!window) return 'outside-availability';
+  if (!insideOneOpening(windows, range)) return 'outside-availability';
   const step = (config.stepMinutes ?? 0) * MINUTE_MS;
   if (step <= 0) return 'misaligned';
-  if ((range.startMs - window.startMs) % step !== 0 || (range.endMs - range.startMs) % step !== 0) {
-    return 'misaligned';
+  // Walk the range one step at a time: every step must be a step of a window. A window whose length
+  // is not a multiple of the step ends on a piece that is no step, so no booking runs past it.
+  const starts = new Set(slotUnits(config, windows).map((u) => u.startMs));
+  if (!starts.has(range.startMs) || (range.endMs - range.startMs) % step !== 0) return 'misaligned';
+  for (let s = range.startMs + step; s < range.endMs; s += step) {
+    if (!starts.has(s)) return 'misaligned';
   }
-  return (range.endMs - range.startMs) / step > (config.maxSteps ?? 1) ? 'too-many-steps' : null;
+  return null;
 }
 
-/** The local dates a range may belong to: a window starts at most one day before the range. */
+/**
+ * The local dates whose windows a range may need: from the day before it starts (a window starts at
+ * most one day before the range) to the day it ends, every date between included - a booking across
+ * several whole days runs through each of their windows.
+ */
 export function datesAround(range: Range, timeZone: string): [string, string] {
   return [addDays(localDate(range.startMs, timeZone), -1), localDate(range.endMs, timeZone)];
 }
@@ -275,6 +331,8 @@ export function bookingsOutsideAvailability<T extends Occupation>(
   bookings: readonly T[]
 ): T[] {
   return bookings.filter((b) => {
+    // Longer than the new settings allow: named before any window is built.
+    if (rangeLengthRefusal(config, b)) return true;
     const [from, to] = datesAround(b, config.timeZone);
     const windows = availabilityWindows(config, lines, exceptions, from, to);
     // A booking longer than maxSteps under the NEW settings is outside them too.

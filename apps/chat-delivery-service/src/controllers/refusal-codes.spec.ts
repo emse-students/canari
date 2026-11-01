@@ -7,6 +7,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { InvitationsController } from './invitations.controller';
 import { MembersController } from './members.controller';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { NotificationPreferencesController } from './notification-preferences.controller';
 import { SecurityController } from './security.controller';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -18,6 +19,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
@@ -54,7 +56,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
   describe('InvitationsController', () => {
     const groupRepo = { findOne: jest.fn(), find: jest.fn(), create: jest.fn(), save: jest.fn() };
     const groupInviteRepo = { findOne: jest.fn(), create: jest.fn(), save: jest.fn() };
-    const groupMemberRepo = { findOne: jest.fn() };
+    const groupMemberRepo = { findOne: jest.fn(), manager: { query: jest.fn() } };
     const keyPackageRepo = { find: jest.fn() };
     const revokedRepo = { find: jest.fn() };
     let controller: InvitationsController;
@@ -70,11 +72,14 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: getRepositoryToken(GroupInvite), useValue: groupInviteRepo },
           { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
           { provide: getRepositoryToken(RevokedDevice), useValue: revokedRepo },
+          { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
           { provide: getRepositoryToken(QueuedMessage), useValue: {} },
           { provide: 'REDIS_CLIENT', useValue: {} },
           { provide: MessagingService, useValue: {} },
         ],
       })
+        .overrideGuard(UserThrottlerGuard)
+        .useValue({ canActivate: () => true })
         .overrideGuard(HeaderAuthGuard)
         .useValue({ canActivate: () => true })
         .compile();
@@ -120,6 +125,38 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
       const e = await controller.acceptGroupInvite('t', 'alice').catch((x: unknown) => x);
       expect(codeOf(e)).toBe('NO_ACTIVE_DEVICE');
     });
+
+    // The review cohort (review-cohort.ts): a link never seats a review account among members, nor
+    // a member among review accounts. The query answers whether the group holds the other side.
+    it.each([
+      ['a member joining a group holding a review account', 'reviewer', 'alice'],
+      ['a review account joining a group of members', 'alice', 'alice'],
+    ])('REVIEW_COHORT_BOUNDARY: %s', async (_case, cohort, joiner) => {
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = cohort;
+      try {
+        groupInviteRepo.findOne.mockResolvedValue({
+          groupId: 'g1',
+          token: 't',
+          revoked: false,
+          expiresAt: null,
+          maxUses: null,
+          uses: 0,
+        });
+        groupRepo.findOne.mockResolvedValue({ id: 'g1', isGroup: true });
+        groupMemberRepo.findOne.mockResolvedValue(null);
+        groupMemberRepo.manager.query.mockResolvedValue([{ '?column?': 1 }]);
+        const e = await controller.acceptGroupInvite('t', joiner).catch((x: unknown) => x);
+        expect(codeOf(e)).toBe('REVIEW_COHORT_BOUNDARY');
+        expect(keyPackageRepo.find).not.toHaveBeenCalled();
+        const [sql, params] = groupMemberRepo.manager.query.mock.calls[0] as [string, unknown[]];
+        expect(sql.includes('NOT (')).toBe(cohort === joiner);
+        expect(params).toEqual(['g1', [cohort]]);
+      } finally {
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
   });
 
   describe('MembersController', () => {
@@ -143,11 +180,14 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
           { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
           { provide: getRepositoryToken(QueuedMessage), useValue: {} },
           { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+          { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
           { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
           { provide: 'REDIS_CLIENT', useValue: {} },
           { provide: DataSource, useValue: { manager: { query: jest.fn() } } },
         ],
       })
+        .overrideGuard(UserThrottlerGuard)
+        .useValue({ canActivate: () => true })
         .overrideGuard(HeaderAuthGuard)
         .useValue({ canActivate: () => true })
         .compile();
@@ -200,11 +240,14 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
         providers: [
           { provide: getRepositoryToken(PinVerifier), useValue: pinRepo },
           { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+          { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
           { provide: getRepositoryToken(KeyPackage), useValue: {} },
           { provide: MessagingService, useValue: {} },
         ],
       })
         .overrideGuard(ThrottlerGuard)
+        .useValue({ canActivate: () => true })
+        .overrideGuard(UserThrottlerGuard)
         .useValue({ canActivate: () => true })
         .overrideGuard(HeaderAuthGuard)
         .useValue({ canActivate: () => true })

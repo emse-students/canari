@@ -64,6 +64,7 @@ function makeServer() {
     }),
     fetchUserDevices: vi.fn(async (u: string) => [{ deviceId: `${u}-dev` }]),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     getGroupMemberIdentities: vi.fn(async () => [...tree]),
     runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
@@ -90,6 +91,10 @@ function makeServer() {
         .map(([deviceId, row]) => ({ userId: row.userId, deviceId }))
     ),
     getGroupUserMembers: vi.fn(async () => [...roster].map((userId) => ({ userId }))),
+    getGroupRosterAtGeneration: vi.fn(async () => ({
+      members: [...roster].map((userId) => ({ userId })),
+      seatGeneration: 0,
+    })),
   };
   return { mls, roster };
 }

@@ -453,7 +453,7 @@ function notifySessionExpired(): void {
   // No handler wired is exactly the silent failure this exists to prevent - say so, and redirect
   // anyway rather than leave the user on a shell that can no longer load anything.
   awarn('no session-expired handler registered - redirecting directly');
-  void import('$app/navigation').then(({ goto }) => goto('/login', { replaceState: true }));
+  void import('$app/navigation').then(({ goto }) => goto('/login', { replace: true }));
 }
 
 /**
@@ -979,7 +979,7 @@ export async function leaveSignedOut(): Promise<void> {
       );
     }
   }
-  await goto(loginPath, { replaceState: true });
+  await goto(loginPath, { replace: true });
 }
 
 /**
@@ -1010,8 +1010,11 @@ export async function signOutByChoice(): Promise<void> {
  * Both of the warning's reasons are moot here (`ssr = false`), so this buys nothing but the silence -
  * which is the point. Every other caller uses the global `fetch`. A refresh already in flight is
  * joined whatever `fetch` the joiner brought, since the question and its answer are the same.
+ *
+ * `why` is what made the caller ask (`getToken`: no token, or one about to expire), printed on the
+ * `refresh→` line only when a request actually leaves - a joiner or a held caller logs nothing.
  */
-export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> {
+export async function refresh(fetchImpl: typeof fetch = fetch, why?: string): Promise<string> {
   // A SIGN-OUT IS REVOKING THIS CREDENTIAL RIGHT NOW: the answer is known, and a 200 racing the
   // revocation would rotate the very session being ended. Nothing is announced - the sign-out IS the
   // outcome - and the caller gets a type of its own, never a dead-session verdict it would act on.
@@ -1060,13 +1063,13 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
     throw _noNetworkSpellFailure;
   }
   if (_pendingRefresh) return _pendingRefresh;
-  _pendingRefresh = _doRefresh(fetchImpl).finally(() => {
+  _pendingRefresh = _doRefresh(fetchImpl, why).finally(() => {
     _pendingRefresh = null;
   });
   return _pendingRefresh;
 }
 
-async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
+async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string> {
   // The build doing the asking, carried the way `users/me/announcement` already carries it: as a
   // query parameter, because nothing in a request states a client's version. It is here for the
   // server's REPORT, not for any decision. A refused refresh has causes that only the version tells
@@ -1076,7 +1079,7 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // four services, and this needs none.
   const endpoint =
     `${coreUrl()}/api/auth/refresh` + `?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
-  alog(`refresh→ ${endpoint}`);
+  alog(`refresh→ ${endpoint}${why ? ` (${why})` : ''}`);
   const t0 = Date.now();
   // WHO WAS SIGNED IN WHEN THIS ASKED: a sign-in completing while the request is in flight changes
   // the local identity under it, and the answer is then about the PREVIOUS credential, not a split.
@@ -1286,16 +1289,20 @@ function jwtExpiresAt(token: string): number | null {
  * the next 60 seconds.
  */
 export async function getToken(): Promise<string> {
+  // THE REASON TRAVELS WITH THE REQUEST, NOT WITH EVERY CALLER. Each caller that found no token used
+  // to log `token→refresh` before `refresh()` decided anything - joined the refresh in flight,
+  // answered from the no-network spell, refused on a latch - so the line counted callers: 653 of it
+  // for 51 refreshes actually sent (production 1.5.1, one phone). Only the request leaving says it
+  // (`refresh→ <endpoint> (<why>)`), and every other outcome of `refresh()` already has its own line.
+  let why = 'no token in memory';
   if (_accessToken) {
     const exp = jwtExpiresAt(_accessToken);
     const remaining = exp !== null ? exp - Math.floor(Date.now() / 1000) : null;
     if (remaining === null || remaining >= 60) return _accessToken;
-    alog(`token exp=${remaining}s→refresh`);
+    why = `token exp=${remaining}s`;
     _accessToken = null;
-  } else {
-    alog('token→refresh');
   }
-  return await refresh();
+  return await refresh(fetch, why);
 }
 
 /** Override the in-memory token (used when a token is received externally). */

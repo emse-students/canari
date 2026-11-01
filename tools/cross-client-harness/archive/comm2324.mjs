@@ -23,7 +23,7 @@
  * The third was missing until 2026-08-20 - a tombstone still occupying its scope was handed straight
  * back to the salon the next time it went private, dead row, stale tree and all.
  */
-import { client, realClick } from '../chat.mjs';
+import { clearOverlays, client, realClick } from '../chat.mjs';
 import {
   channelAccessState,
   createChannel,
@@ -109,6 +109,13 @@ await step('flip the visibility', async () => {
   // The owner is not granted here any more: since 2026-09-27 the SERVER grants whoever makes a salon
   // private, as it grants whoever creates one private, and the panel offers no allowlist until then.
   // THE TOGGLE IS THE WRITE since #1171: there is no save to press after it.
+  //
+  // AND THE PANEL IS CLOSED HERE, because nothing after it closes it on COMM-24's arm. COMM-23's
+  // routing step re-enters the community, which sweeps it; COMM-24 has no routing step, so the
+  // read-back below clicked the salon gear with the old drawer still open. Below `xl` that drawer's
+  // scrim takes the click and closes it, the settings title is still in the DOM as it fades, and the
+  // radiogroup never mounts - no request follows the PATCH at all (1.5.0-alpha.1, 2026-10-27).
+  await clearOverlays(w1);
   return landed;
 });
 

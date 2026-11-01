@@ -2,6 +2,8 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import Avatar from '../shared/Avatar.svelte';
+  import ProfileLink from '../shared/ProfileLink.svelte';
+  import { profileHref } from '$lib/utils/users/profileHref';
   import MessageBubble from '../messages/MessageBubble.svelte';
   import SeenByHeads from '../messages/SeenByHeads.svelte';
   import type { ChatMessage, MessageReaction, ReadWatermarks } from '$lib/types';
@@ -17,6 +19,7 @@
     resolveUserDisplayName,
   } from '$lib/utils/users/displayName';
   import { LoaderCircle } from '@lucide/svelte';
+  import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import { m } from '$lib/paraglide/messages';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
 
@@ -276,7 +279,9 @@
           {#if !msg.isOwn}
             <div class="flex w-8 shrink-0 flex-col justify-end pb-1">
               {#if groupPosition === 'end' || groupPosition === 'single'}
-                <Avatar userId={msg.senderId} size="sm" />
+                <ProfileLink userId={msg.senderId} class="flex">
+                  <Avatar userId={msg.senderId} size="sm" />
+                </ProfileLink>
               {/if}
             </div>
           {/if}
@@ -290,18 +295,26 @@
             <!-- Sender name. -->
             {#if showSender && !msg.isSystem}
               <div class="text-text-muted text-2xs mb-1 px-1 font-bold tracking-wide">
-                <a
-                  href="/profile/{encodeURIComponent(msg.senderId)}"
-                  class="hover:text-text-main transition-colors"
-                  onclick={(e) => e.stopPropagation()}
-                >
+                {#snippet senderName()}
                   <EmojiText
                     text={getUserFirstNameSync(
                       msg.senderId,
                       resolvedSenderNames[msg.senderId] || m.user_unknown_label()
                     )}
                   />
-                </a>
+                {/snippet}
+                {#if isAbsentUser(msg.senderId)}
+                  {@render senderName()}
+                {:else}
+                  <a
+                    href={profileHref(msg.senderId)}
+                    class="hover:text-text-main rounded-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    data-sender-profile-link={msg.senderId}
+                    onclick={(e) => e.stopPropagation()}
+                  >
+                    {@render senderName()}
+                  </a>
+                {/if}
               </div>
             {/if}
 

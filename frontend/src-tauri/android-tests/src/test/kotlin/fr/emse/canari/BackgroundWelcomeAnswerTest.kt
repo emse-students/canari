@@ -112,6 +112,35 @@ class BackgroundWelcomeAnswerTest {
         )
     }
 
+    /**
+     * A LINK'S ASK IS NEVER ANSWERED BY A PUSH (2026-10-31): the server refuses a target whose seat
+     * awaits a member's admission, and the phone clears its stage and records the target, so the
+     * requester's re-ask every 60 s is not answered again from the same mls.bin.
+     */
+    @Test
+    fun aSeatAwaitingAdmissionClearsTheStageAndRecordsTheTarget() {
+        val outcome = BackgroundWelcomeAnswer.classify(409, "rejected", "awaiting_admission", null)
+        assertEquals(Outcome.Refused(Refusal.AWAITING_ADMISSION, "awaiting_admission", null), outcome)
+        assertEquals(Settlement.Clear(null, null, targetRefused = true), BackgroundWelcomeAnswer.settle(outcome, 1))
+
+        val staged = FakeStaged(report = SettleReport(ok = true, reason = null))
+        assertEquals(Applied.Cleared, BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, 1), staged))
+        assertEquals(listOf("clear(target)"), staged.calls)
+        val line = BackgroundWelcomeAnswer.describe(outcome, 1)
+        assertTrue(line, line.startsWith("REFUSED awaiting_admission"))
+    }
+
+    /** The ordinary refusals of the native prepare are said quietly; anything else accuses. */
+    @Test
+    fun onlyAnUnexpectedPrepareRefusalIsAWarning() {
+        listOf("newcomer", "foreground-active", "warm-process", "commit-pending").forEach { token ->
+            assertEquals(token, Level.DEBUG, BackgroundWelcomeAnswer.prepareRefusalLevel(token))
+        }
+        listOf("identity-mismatch", "state-unreadable", "add-failed", "something-new", null).forEach { token ->
+            assertEquals("$token", Level.WARN, BackgroundWelcomeAnswer.prepareRefusalLevel(token))
+        }
+    }
+
     @Test
     fun theLogLineNeverSaysSentForARefusal() {
         val line = BackgroundWelcomeAnswer.describe(

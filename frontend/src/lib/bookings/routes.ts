@@ -14,3 +14,8 @@ export function spaceHref(spaceId: string): `/bookings/spaces/${string}` {
 export function spaceEditorHref(spaceId: string): `/bookings/spaces/${string}/edit` {
   return `/bookings/spaces/${encodeURIComponent(spaceId)}/edit`;
 }
+
+/** The organiser's dashboard of one space: what is coming, who booked, block by drag (WP-R5, D50). */
+export function spaceDashboardHref(spaceId: string): `/bookings/spaces/${string}/manage` {
+  return `/bookings/spaces/${encodeURIComponent(spaceId)}/manage`;
+}

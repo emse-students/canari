@@ -18,7 +18,7 @@ document's navigation started - so nothing below is inferred.**
 
 | milestone | boot 1 (first load of `0.18.8`) | boot 2 (reload) |
 | --- | ---: | ---: |
-| the application's first word (`[A] token->refresh`) | 923 | **534** |
+| the application's first word (`[A] token->refresh`; from 2026-10-30 `[A] refresh→ ... (no token in memory)`) | 923 | **534** |
 | `Initialised in WEB mode (WASM)` | 1089 | **695** |
 | `MLS state loaded from IndexedDB` | 1255 | 856 |
 | `load_or_create` returns (7 617 611 B of state) | 1482 | 1092 |
@@ -293,7 +293,7 @@ for the file to EXIST, not for it to be rewritten with bytes it already holds. A
 someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
 established it, and it must not be assumed.**
 
-## A COLD LOAD IS THE PRUNE - 89% OF IT - SO THE NEXT COLD-START QUESTION IS QUEUE ITEM 5 (OXYGEN, 2026-09-17)
+## A COLD LOAD IS THE PRUNE - 89% OF IT - SO THE NEXT COLD-START QUESTION IS QUEUE ITEM 5 (WORKSTATION, 2026-09-17)
 
 The entry below ends by saying the next question is inside Rust. `load_phases` answers WHERE inside:
 it benches `from_reader::<PersistedState>` - the one thing a load does over every BYTE - against the
@@ -347,7 +347,7 @@ The three facts the entry above says must not be assumed, established by reading
 **AND A THIRD COST WAS FOUND THAT IS NEITHER OF THOSE, AND IS PURE WASTE**: the command returned the
 whole encrypted snapshot to JavaScript, which Tauri serialises as a JSON array of one number per
 byte - 27.8 MB of JSON for a 7.8 MB blob - for four native call sites that all discarded it. Shipped;
-see the CHANGELOG entry. Measured on OXYGEN (desktop, release, a FLOOR for a handset): 95 ms of
+see the CHANGELOG entry. Measured on the workstation (desktop, release, a FLOOR for a handset): 95 ms of
 `serde_json` encoding plus 220 ms of `JSON.parse` + `Uint8Array.from`, ~315 ms excluding the transport
 copy itself.
 
@@ -361,7 +361,7 @@ save still rebuilds it), but it does make the moment the migrated bytes reach DI
 user does next, which is exactly what that comment was written to prevent. **That is a decision about
 migration policy, not an optimisation, and it should be taken as one.**
 
-## THE FIRST MEASUREMENT INSIDE RUST: HALF OF A COLD LOAD IS TWO DIAGNOSTIC LOG LINES (OXYGEN, 2026-09-17)
+## THE FIRST MEASUREMENT INSIDE RUST: HALF OF A COLD LOAD IS TWO DIAGNOSTIC LOG LINES (WORKSTATION, 2026-09-17)
 
 The entry above ends by saying the next question is inside Rust. `mls-core` had **no load benchmark
 at all** - every bench in `mls_perf.rs` measured SAVING - so `benches/mls_perf.rs` gained
@@ -378,7 +378,7 @@ substring scan over its key. A device installs `tauri-plugin-log` at info and pa
 every test and bench in this repository was blind to it. The benches now install a discarding logger
 and run each load TWICE, so the gap is a number in the output rather than a claim in a comment.
 
-Criterion, 20 samples, OXYGEN, 5 groups, release:
+Criterion, 20 samples, workstation, 5 groups, release:
 
 | key-package pool | load, logger at INFO | load, logger OFF | what the two log lines cost |
 | --- | --- | --- | --- |
@@ -399,7 +399,7 @@ A DIAGNOSTIC NOBODY READ.** All three are O(pool), none of them is needed before
 and the comment on the census already says in as many words that "the web start-up is not where an
 O(n) diagnostic belongs" - while leaving it on the native one.
 
-**WHAT THIS DOES AND DOES NOT SETTLE.** It does not explain 1644 ms: OXYGEN is not a Mi 9T and its
+**WHAT THIS DOES AND DOES NOT SETTLE.** It does not explain 1644 ms: The workstation is not a Mi 9T and its
 pool is a fixture. It settles the SHAPE - the cost is linear in a pool nothing reclaims, and about
 half of it is work the load does not need to do - and it gives the first reproducible number anyone
 can re-run. **The next measurement is the same sweep at the pool a real device carries**, which
@@ -407,7 +407,7 @@ queue item 2 is already about, and the fix it argues for is moving both O(pool) 
 awaited path rather than deleting either: the report is why the leak was found at all. That is a
 change in the Tauri command layer, not in `mls-core`, and it is not made here.
 
-## THE PRUNE'S COST IS THE DECODE, NOT THE PROOF - MEASURED, AND IT REFUTED THE FIX THAT ARGUED FOR IT (OXYGEN, 2026-09-17)
+## THE PRUNE'S COST IS THE DECODE, NOT THE PROOF - MEASURED, AND IT REFUTED THE FIX THAT ARGUED FOR IT (WORKSTATION, 2026-09-17)
 
 `prune_expired_key_packages` is the other O(pool) pass on the awaited cold load, 11.39 ms at a
 1000-package pool. It shared a walk with the census that PROVES every row - a `hash_ref` recomputed
@@ -591,7 +591,7 @@ fix is present.**
 ## HALF OF A COLD LOAD LEFT THE CRITICAL PATH; THE OTHER HALF IS MAINTENANCE AND NEEDS A TRIGGER (2026-09-17)
 
 The criterion benches added the same day say a cold `load_or_create` costs **24.5 ms with a logger
-installed and 12.9 ms without**, at a 1000-key-package pool, 5 groups, on OXYGEN. The gap is the
+installed and 12.9 ms without**, at a 1000-key-package pool, 5 groups, on the workstation. The gap is the
 argument of a `log::info!`: `key_package_census_summary()`, which deserialises every stored bundle,
 recomputes its `hash_ref` and scans its key. A phone runs `tauri-plugin-log` at info and pays it, on
 the awaited path of `initialiser_mls`, in front of the first screen.
@@ -611,7 +611,7 @@ last changed", carried in the state blob rather than inferred, and prune when th
 Until such a fact exists this pass stays where it is, because a pool that silently stops being pruned
 is item 2 of the queue getting worse, and item 2 is a P1.
 
-**NONE OF THIS EXPLAINS THE 1644 ms.** OXYGEN is not a Mi 9T and a fixture pool is not a field pool.
+**NONE OF THIS EXPLAINS THE 1644 ms.** The workstation is not a Mi 9T and a fixture pool is not a field pool.
 What is established is the SHAPE - the cost is linear in a pool nothing reclaims - plus a
 reproducible first number.
 
@@ -624,7 +624,7 @@ produced the prediction this section answers.
 
 | milestone (offset from navigation) | 2026-09-17, `v0.18.9`, cache DISABLED | 2026-09-18, `v0.18.12` |
 | --- | ---: | ---: |
-| the application's first word (`[A] token->refresh`) | 600 | 696 |
+| the application's first word (`[A] token->refresh`; from 2026-10-30 `[A] refresh→ ... (no token in memory)`) | 600 | 696 |
 | `MLS ready - syncing messages in background` | 1180 | **1015** |
 | **`[WS] Connected to Chat Gateway`** | **1342** | **1092** |
 | of which: first word -> `MLS ready` | **580** | **319** |
@@ -675,9 +675,9 @@ nothing after it, so the offset cannot come back unnoticed. **The millisecond wa
 is what lines a console export up with a network waterfall, a server log or a second device's
 export, it is not cold-start machinery, and removing it would need the user to say so.
 
-## THE OBVIOUS SUSPECT IS REFUTED: 163 MODULE REQUESTS COST 178 ms, NOT TWO SECONDS (OXYGEN, 2026-09-18)
+## THE OBVIOUS SUSPECT IS REFUTED: 163 MODULE REQUESTS COST 178 ms, NOT TWO SECONDS (WORKSTATION, 2026-09-18)
 
-Production, `v0.18.12`, Chrome on OXYGEN, a browser context created for the measurement so its cache
+Production, `v0.18.12`, Chrome on the workstation, a browser context created for the measurement so its cache
 and connection start empty. **This is not the user's Firefox and it does not answer the 696 ms
 above** - it answers a different question, asked because the shape of the build makes one hypothesis
 look obvious enough to act on without measuring.
@@ -922,7 +922,7 @@ CONCLUSION**: the document declares 161 `modulepreload`s, the MEDIAN module is 3
 are under 2 KB, which reads as a chunking defect. It is not one - 104 of them fetched in parallel on
 a warm connection take **178 ms**, and the 126 KB chunk that takes 1925 ms inside a cold page load
 takes **27-35 ms** alone. Merging chunks would change the count and not the time.
-[cold-start](#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-oxygen-2026-09-18).
+[cold-start](#the-obvious-suspect-is-refuted-163-module-requests-cost-178-ms-not-two-seconds-workstation-2026-09-18).
 
 **WHAT IS LEFT IS THE JAVASCRIPT ITSELF.** 1.62 MB of it is parsed and compiled on the main thread
 before the app runs, on the same thread that then decrypts twenty-four avatars and initialises MLS.

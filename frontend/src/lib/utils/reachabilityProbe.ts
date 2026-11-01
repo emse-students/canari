@@ -18,6 +18,7 @@
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 
 /** One probe. Resolves true when the server answered (whatever it said), false when nothing did. */
 export async function probeReachability(): Promise<boolean> {
@@ -42,4 +43,6 @@ export async function probeReachability(): Promise<boolean> {
  */
 export function installReachabilityProbe(): void {
   connectivity.setReachabilityProbe(probeReachability);
+  // Only a phone pauses an app off screen and starves its requests; a background tab keeps probing.
+  connectivity.setProbePausesOffScreen(isMobileTauriRuntime());
 }

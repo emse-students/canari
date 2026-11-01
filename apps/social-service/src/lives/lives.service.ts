@@ -10,7 +10,6 @@ import {
   Logger,
   NotFoundException,
   type OnModuleDestroy,
-  PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -26,7 +25,6 @@ import { PostNotificationsService } from '../posts/post-notifications.service';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import {
-  LIVE_BYTE_BUDGET,
   LIVE_CHAT_REPORT_MAX_KEEP_MS,
   LIVE_CUT_DETAILS_MAX,
   LIVE_CUT_REASONS,
@@ -34,10 +32,12 @@ import {
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_KEY_HEX_RE,
   LIVE_MANIFEST_WINDOW,
-  LIVE_MAX_DURATION_MS,
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
+  LIVE_RETAINED_SEGMENTS,
+  LIVE_TRIM_BATCH,
   LIVE_RULES_VERSION,
+  LIVE_SEAT_LEASE_MS,
   LIVE_SEGMENT_BURST,
   LIVE_SEGMENT_MIN_DURATION_MS,
   LIVE_START_WINDOW_MS,
@@ -235,6 +235,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * So no segment is recorded after its live's end, and none is stored after its purge - except a
  * write that outlives the store's own timeout, which the orphan reaper takes.
  */
+/**
+ * The key and the manifest of a live: the one read a platform admin may make of a review account's
+ * live, by its id, to judge a report (`liveVisibleToUserSql`'s `adminSeesCohort`). Never a write.
+ */
+const WATCH_ONLY = { adminSeesCohort: true } as const;
+
 @Injectable()
 export class LivesService implements OnModuleDestroy {
   private readonly logger = new Logger(LivesService.name);
@@ -242,6 +248,8 @@ export class LivesService implements OnModuleDestroy {
   private ingestsInFlight = 0;
   /** Announcements started after a segment 0's commit and not yet settled (WP-L7). */
   private readonly announcements = new Set<Promise<void>>();
+  /** The trim running for each live right now: at most ONE per live in this process. */
+  private readonly trimming = new Map<string, Promise<void>>();
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -435,7 +443,7 @@ export class LivesService implements OnModuleDestroy {
 
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
   async get(viewerId: string, liveId: string): Promise<LiveView> {
-    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
     // Opened before the seat is taken: a key that cannot be read (503) seats nobody.
     const key = openLiveKeyOr503(row.id, row);
     await this.takeSeat(row, viewerId);
@@ -448,7 +456,7 @@ export class LivesService implements OnModuleDestroy {
    * 410 from the moment the live has ended: the manifest stops at `endedAt`.
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
-    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
     const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
@@ -477,11 +485,11 @@ export class LivesService implements OnModuleDestroy {
    *   retried); different bytes are a 409, never a replacement.
    * - `index > nextIndex`: out of order, 409 - the manifest is a gapless sequence.
    * - `nextIndex` reserved by an ingest still storing: 409 `LIVE_SEGMENT_IN_PROGRESS`.
-   * - past the live's rate (`LIVE_SEGMENT_BURST`): 429 `LIVE_SEGMENT_TOO_FAST`; past its byte budget:
-   *   413 `LIVE_BUDGET_EXHAUSTED`; {@link LIVE_INGEST_MAX_CONCURRENT} ingests already running here:
-   *   503 `LIVE_INGEST_BUSY`.
+   * - past the live's rate (`LIVE_SEGMENT_BURST`): 429 `LIVE_SEGMENT_TOO_FAST`;
+   *   {@link LIVE_INGEST_MAX_CONCURRENT} ingests already running here: 503 `LIVE_INGEST_BUSY`.
    *
-   * After `endedAt`, or once the hour is up (which this call then writes as the end), 410. The
+   * A live has no duration cap and no total byte budget (owner, 2026-10-31); the 4 MiB segment cap
+   * and the rate above bound what it can take. After `endedAt`, 410. The
    * three steps - reserve, store, confirm - are in the class comment.
    */
   async ingest(
@@ -512,7 +520,7 @@ export class LivesService implements OnModuleDestroy {
     data: Buffer
   ): Promise<LiveIngestResult> {
     const sha256 = createHash('sha256').update(data).digest('hex');
-    const step = await this.reserve(broadcasterId, liveId, index, data.length, sha256);
+    const step = await this.reserve(broadcasterId, liveId, index, sha256);
     if (step.kind === 'repeat') return step.result;
     if (step.kind === 'ended') throw liveEnded(step.endedAt, step.endReason);
 
@@ -538,7 +546,93 @@ export class LivesService implements OnModuleDestroy {
     // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
     // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
     if (outcome.claimed) this.announceInBackground(liveId, outcome.claimed);
+    this.trimInBackground(liveId);
     return outcome.result;
+  }
+
+  /**
+   * Starts the trim of a live AFTER the segment that asked for it has been answered: the ingest's
+   * slot (`LIVE_INGEST_MAX_CONCURRENT`) and its latency never wait for a store delete of up to
+   * {@link LIVE_TRIM_BATCH} objects. AT MOST ONE PER LIVE AT A TIME, in this process: a second ask
+   * while one runs is dropped, which loses nothing - the rows to trim are re-selected from durable
+   * state, so the very next segment (or the running pass's own next batch) finds whatever is left.
+   * Two passes over the same rows would only race to delete the same objects.
+   */
+  private trimInBackground(liveId: string): void {
+    if (this.trimming.has(liveId)) {
+      this.logger.debug(
+        `[LIVE_TRIM] ${liveId}: a trim is already running, the next segment asks again`
+      );
+      return;
+    }
+    const pending = this.trim(liveId).finally(() => this.trimming.delete(liveId));
+    this.trimming.set(liveId, pending);
+  }
+
+  /** Resolves once every trim started so far has settled - a PROOF of completion for tests and shutdown. */
+  async trimsSettled(): Promise<void> {
+    while (this.trimming.size > 0) await Promise.all(this.trimming.values());
+  }
+
+  /**
+   * THE TRIM: a running live keeps only its newest {@link LIVE_RETAINED_SEGMENTS} segments, so what
+   * it stores never depends on how long it lasts (owner, 2026-10-31). Run after each confirmed
+   * segment, AFTER its answer (see {@link trimInBackground}).
+   *
+   * IDEMPOTENT FROM DURABLE STATE, NOT FROM A CLOCK: the segments to trim are the `live_segments`
+   * rows with `index < nextIndex - retained`, and a row is deleted only AFTER the store proved its
+   * object gone. A crash between the store's delete and the row's, a refused delete or a media
+   * outage leave the row, so the next pass finds it again (an absent object deletes without error).
+   * `storedBytes` falls by exactly the bytes of the rows deleted, inside the same transaction.
+   *
+   * BEST EFFORT FOR THE INGEST: a failure is logged at `warn` and never fails the segment that was
+   * just stored - the end's purge deletes the whole prefix whatever this left, so correctness never
+   * rests on this pass; only the bound does, and it is re-asked by every segment.
+   */
+  private async trim(liveId: string): Promise<void> {
+    try {
+      const rows: { index: number; name: string }[] = await this.db.query(
+        `SELECT s."index", s.name
+           FROM live_segments s JOIN lives l ON l.id = s."liveId"
+          WHERE s."liveId" = $1 AND s."index" < l."nextIndex" - $2
+          ORDER BY s."index" ASC LIMIT $3`,
+        [liveId, LIVE_RETAINED_SEGMENTS, LIVE_TRIM_BATCH]
+      );
+      if (rows.length === 0) return;
+      const answer = await this.store.deleteSegments(
+        liveId,
+        rows.map((r) => r.name)
+      );
+      const gone = new Set(answer.deleted);
+      const indexes = rows.filter((r) => gone.has(r.name)).map((r) => r.index);
+      if (answer.failed.length > 0) {
+        this.logger.warn(
+          `[LIVE_TRIM] ${liveId}: the store refused ${answer.failed.length} of ${rows.length} segment(s) - asked again by the next segment`
+        );
+      }
+      if (indexes.length === 0) return;
+      const freed = await this.db.transaction(async (tx): Promise<number> => {
+        const [deleted] = (await tx.query(
+          `DELETE FROM live_segments WHERE "liveId" = $1 AND "index" = ANY($2::int[]) RETURNING bytes`,
+          [liveId, indexes]
+        )) as [{ bytes: number }[], number];
+        const bytes = deleted.reduce((sum, r) => sum + Number(r.bytes), 0);
+        if (bytes > 0) {
+          await tx.query(
+            `UPDATE lives SET "storedBytes" = GREATEST(0, "storedBytes" - $2::bigint) WHERE id = $1`,
+            [liveId, bytes]
+          );
+        }
+        return bytes;
+      });
+      this.logger.log(
+        `[LIVE_TRIM] ${liveId}: trimmed ${indexes.length} segment(s) behind the window (${indexes[0]}..${indexes[indexes.length - 1]}), ${freed} B`
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_TRIM] ${liveId}: the trim failed, asked again by the next segment: ${causeOf(e)}`
+      );
+    }
   }
 
   /**
@@ -565,9 +659,10 @@ export class LivesService implements OnModuleDestroy {
     while (this.announcements.size > 0) await Promise.all(this.announcements);
   }
 
-  /** Waits for the announcements in flight before the module goes away. */
+  /** Waits for the announcements and trims in flight before the module goes away. */
   async onModuleDestroy(): Promise<void> {
     await this.announcementsSettled();
+    await this.trimsSettled();
   }
 
   /**
@@ -580,33 +675,20 @@ export class LivesService implements OnModuleDestroy {
     broadcasterId: string,
     liveId: string,
     index: number,
-    bytes: number,
     sha256: string
   ): Promise<IngestStep> {
     return this.db.transaction(async (tx): Promise<IngestStep> => {
       const rows: (LiveRow & {
         pendingName: string | null;
-        overDuration: boolean;
         reservationLive: boolean | null;
         allowance: number;
-        overBudget: boolean;
       })[] = await tx.query(
         `SELECT ${LIVE_COLUMNS}, "pendingName",
-                "startedAt" + $2 * interval '1 millisecond' <= now() AS "overDuration",
-                "pendingAt" + $3 * interval '1 millisecond' > now() AS "reservationLive",
-                ($4::int + floor(extract(epoch FROM now() - "startedAt") * 1000 / $5::int))::int
-                  AS "allowance",
-                "storedBytes" + $6::bigint > $7::bigint AS "overBudget"
+                "pendingAt" + $2 * interval '1 millisecond' > now() AS "reservationLive",
+                ($3::int + floor(extract(epoch FROM now() - "startedAt") * 1000 / $4::int))::int
+                  AS "allowance"
            FROM lives WHERE id = $1 FOR UPDATE`,
-        [
-          liveId,
-          LIVE_MAX_DURATION_MS,
-          LIVE_RESERVATION_TTL_MS,
-          LIVE_SEGMENT_BURST,
-          LIVE_SEGMENT_MIN_DURATION_MS,
-          bytes,
-          LIVE_BYTE_BUDGET,
-        ]
+        [liveId, LIVE_RESERVATION_TTL_MS, LIVE_SEGMENT_BURST, LIVE_SEGMENT_MIN_DURATION_MS]
       );
       const row = rows[0];
       if (!row) {
@@ -623,17 +705,6 @@ export class LivesService implements OnModuleDestroy {
         this.logger.debug(`[LIVE] segment ${index} refused: ${liveId} ended (${row.endReason})`);
         throw liveEnded(row.endedAt, row.endReason);
       }
-      if (row.overDuration) {
-        const [ended] = (await tx.query(
-          `UPDATE lives SET "endedAt" = now(), "endReason" = 'max_duration'
-            WHERE id = $1 AND "endedAt" IS NULL
-            RETURNING "endedAt"`,
-          [liveId]
-        )) as [{ endedAt: Date }[], number];
-        this.logger.log(`[LIVE] ${liveId} ended: max_duration (reached at segment ${index})`);
-        // Returned, not thrown: the end must COMMIT, and it is the state the 410 reports.
-        return { kind: 'ended', endedAt: ended[0]?.endedAt ?? null, endReason: 'max_duration' };
-      }
       if (index < row.nextIndex) {
         const prior: { name: string; sha256: string }[] = await tx.query(
           `SELECT name, sha256 FROM live_segments WHERE "liveId" = $1 AND "index" = $2`,
@@ -646,7 +717,15 @@ export class LivesService implements OnModuleDestroy {
             result: { index, name: prior[0].name, nextIndex: row.nextIndex },
           };
         }
-        this.logger.warn(`[LIVE] segment ${index} of ${liveId} repeated with DIFFERENT bytes`);
+        if (!prior[0]) {
+          // The row was trimmed behind the window: a retry of an index that is gone, never a conflict
+          // about bytes. The answer stays the conflict (the segment cannot be stored again).
+          this.logger.debug(
+            `[LIVE] segment ${index} of ${liveId} already trimmed (index below the window)`
+          );
+        } else {
+          this.logger.warn(`[LIVE] segment ${index} of ${liveId} repeated with DIFFERENT bytes`);
+        }
         throw new ConflictException({ code: 'LIVE_SEGMENT_CONFLICT', nextIndex: row.nextIndex });
       }
       if (index > row.nextIndex) {
@@ -678,15 +757,6 @@ export class LivesService implements OnModuleDestroy {
           { code: 'LIVE_SEGMENT_TOO_FAST', nextIndex: row.nextIndex },
           HttpStatus.TOO_MANY_REQUESTS
         );
-      }
-      if (row.overBudget) {
-        this.logger.warn(
-          `[LIVE] segment ${index} of ${liveId} refused: the live's byte budget is spent`
-        );
-        throw new PayloadTooLargeException({
-          code: 'LIVE_BUDGET_EXHAUSTED',
-          budget: LIVE_BYTE_BUDGET,
-        });
       }
       const name = randomUUID();
       await tx.query(
@@ -812,8 +882,9 @@ export class LivesService implements OnModuleDestroy {
 
   /**
    * Ends a live, by its broadcaster. Idempotent WHILE THE ROW EXISTS: an ended live answers its end
-   * again. The segments and the row are deleted at once (L3) - a store that refuses, or a segment
-   * still storing, leaves them to the sweep - and once the row is gone a repeated end is a
+   * again. The segments and the row are deleted at once (L3) - a viewer still seated (owed the
+   * segments its last manifest named), a store that refuses, or a segment still storing, leaves them
+   * to the sweep ({@link purgeEnded}) - and once the row is gone a repeated end is a
    * 404 `LIVE_NOT_FOUND`, which the broadcaster's client reads as "ended and deleted": nothing keeps a
    * deleted live's end (no replay, L3), so there is nothing to answer it with.
    */
@@ -1296,7 +1367,7 @@ export class LivesService implements OnModuleDestroy {
 
   /**
    * Ends every open live whose broadcaster stopped sending for {@link LIVE_RECONNECT_WINDOW_MS}
-   * (`dropped`, Q5) or whose hour is up (`max_duration`). The predicate reads `lastSegmentAt`, which
+   * (`dropped`, Q5) - the ONLY way a live ends by itself: it has no longest duration. The predicate reads `lastSegmentAt`, which
    * only the broadcaster's ingest writes - the broadcaster's own liveness. An `UPDATE` waits for an
    * ingest holding the row and re-reads the predicate after it, so a live that just took a segment
    * is never ended by a sweep that started before it.
@@ -1305,13 +1376,11 @@ export class LivesService implements OnModuleDestroy {
     const [rows] = (await this.db.query(
       `UPDATE lives
           SET "endedAt" = now(),
-              "endReason" = CASE WHEN "startedAt" + $1 * interval '1 millisecond' <= now()
-                                 THEN 'max_duration' ELSE 'dropped' END
+              "endReason" = 'dropped'
         WHERE "endedAt" IS NULL
-          AND ("startedAt" + $1 * interval '1 millisecond' <= now()
-               OR COALESCE("lastSegmentAt", "startedAt") + $2 * interval '1 millisecond' <= now())
+          AND COALESCE("lastSegmentAt", "startedAt") + $1 * interval '1 millisecond' <= now()
         RETURNING id, "endReason"`,
-      [LIVE_MAX_DURATION_MS, LIVE_RECONNECT_WINDOW_MS]
+      [LIVE_RECONNECT_WINDOW_MS]
     )) as [{ id: string; endReason: LiveEndReason }[], number];
     for (const r of rows) this.logger.log(`[LIVE] ${r.id} ended by the sweep: ${r.endReason}`);
     return rows;
@@ -1400,28 +1469,65 @@ export class LivesService implements OnModuleDestroy {
    * No reservation can be taken after the end, so once this read finds none, no store of this live
    * is in flight but one past its own timeout. An OPEN live is never touched (`'kept'`, with a warn),
    * and an id with NO ROW is purged in the store alone - the orphan reaper's case.
+   *
+   * NOT WHILE A VIEWER STILL HOLDS A SEAT ON A LIVE THAT ENDED BY ITSELF: a seat is renewed by every
+   * manifest read and nothing else, so a held seat is a viewer that was told of segments within the
+   * lease and has not said it left - the segments its last manifest named are still its to fetch
+   * (LIVE-WEB-2, `1.5.1-alpha.7`: the end's purge deleted segments 5 and 6 between the manifest that
+   * named them and their download, a `404` on both viewers). A viewer gives its seat back on the
+   * end's `410`; one that never does lets it lapse within {@link LIVE_SEAT_LEASE_MS}.
+   *
+   * The drain is decided from FACTS this read takes, never from `endReason` (a cut of a live already
+   * ended keeps its earlier reason, an erasure keeps one already written):
+   * - a `live_cuts` row, or a broadcaster that is {@link DELETED_ACCOUNT}: moderation or the account's
+   *   deletion removed it, so it is removed NOW, every seat with it;
+   * - `endedAt` older than the lease: `assertMayWatch` answers `410` from `endedAt` on, so no seat
+   *   can have been renewed since, and every one has lapsed - the database's clock says so and Redis
+   *   is not asked (an outage of it never holds media past the lease);
+   * - otherwise the seats are read; one held, or a count that cannot be read, keeps the live.
    * THROWS on a transport failure, which the callers log and leave to the next sweep.
    */
   async purgeEnded(liveId: string): Promise<LivePurgeOutcome> {
-    const rows: { ended: boolean; storeInFlight: boolean | null }[] = await this.db.query(
-      `SELECT "endedAt" IS NOT NULL AS ended,
-              "pendingAt" + $2 * interval '1 millisecond' > now() AS "storeInFlight"
-         FROM lives WHERE id = $1`,
-      [liveId, LIVE_RESERVATION_TTL_MS]
+    const rows: {
+      ended: boolean;
+      removed: boolean;
+      withinLease: boolean | null;
+      storeInFlight: boolean | null;
+    }[] = await this.db.query(
+      `SELECT l."endedAt" IS NOT NULL AS ended,
+              (l."broadcasterId" = $4
+                 OR EXISTS (SELECT 1 FROM live_cuts c WHERE c."liveId" = l.id)) AS removed,
+              l."endedAt" + $3 * interval '1 millisecond' > now() AS "withinLease",
+              l."pendingAt" + $2 * interval '1 millisecond' > now() AS "storeInFlight"
+         FROM lives l WHERE l.id = $1`,
+      [liveId, LIVE_RESERVATION_TTL_MS, LIVE_SEAT_LEASE_MS, DELETED_ACCOUNT]
     );
     const row = rows[0];
     if (row && !row.ended) {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
       return 'kept';
     }
-    // AN ENDED LIVE SEATS NOBODY: its viewers' next poll is a 410 that renews nothing, so the seats
-    // would lapse within a lease anyway - freed here, on every path that ends a live (they all
-    // purge), so the next live's viewers do not wait for them. Best-effort: a failure is the lease.
-    await this.seats.releaseLive(liveId).catch((e: unknown) => {
-      this.logger.warn(
-        `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
-      );
-    });
+    if (row && !row.removed && row.withinLease) {
+      // `null` was logged by `watching` as the error it is: whether a viewer is owed a segment is
+      // unknown, so nothing is deleted under it - for at most the lease, after which this read is
+      // not taken at all.
+      const seated = await this.seats.watching(liveId, 'purge');
+      if (seated === null) return 'kept';
+      if (seated > 0) {
+        this.logger.debug(
+          `[LIVE_GC] ${liveId} kept: ${seated} viewer(s) still seated, owed the segments their last manifest named`
+        );
+        return 'kept';
+      }
+    } else if (!row || row.removed) {
+      // A cut, an erasure or a row-less folder: nothing is owed to anybody, so every seat goes now
+      // and the next live's viewers do not wait a lease for them. Best-effort: a failure is the lease.
+      await this.seats.releaseLive(liveId).catch((e: unknown) => {
+        this.logger.warn(
+          `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
+        );
+      });
+    }
     if (row?.storeInFlight) {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment is still storing`);
       return 'kept';
@@ -1526,7 +1632,9 @@ export class LivesService implements OnModuleDestroy {
    * writes (WP-L6), which are refused exactly as the key is. Throws the same typed refusals.
    */
   async mayWatch(viewerId: string, liveId: string): Promise<void> {
-    await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    // A WRITE to the live (a chat line, a burst): never by an admin across the review cohort's
+    // boundary - `adminSeesCohort` opens the key and the manifest to judge a report, nothing more.
+    await this.assertMayWatch(this.db.manager, viewerId, liveId, { adminSeesCohort: false });
   }
 
   /**
@@ -1542,12 +1650,13 @@ export class LivesService implements OnModuleDestroy {
   private async assertMayWatch(
     manager: EntityManager,
     viewerId: string,
-    liveId: string
+    liveId: string,
+    opts: { adminSeesCohort: boolean }
   ): Promise<LiveRow & { serverNow: Date }> {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
     const rows: (LiveRow & { serverNow: Date; visible: boolean })[] = await manager.query(
       `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
-              ${liveVisibleToViewerSql('lives', '$2')} AS visible
+              ${liveVisibleToViewerSql('lives', '$2', opts)} AS visible
          FROM lives WHERE id = $1`,
       [liveId, viewerId]
     );

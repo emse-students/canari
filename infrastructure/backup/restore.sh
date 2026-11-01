@@ -41,6 +41,9 @@ ENV_FILE="$INFRA_DIR/.env"
 
 # La configuration commune a backup.sh et backup-objects.sh : un chemin qui diverge
 # ne casse pas la sauvegarde, il casse la restauration. Commentee dans backup-config.sh.
+# Only --latest-from-mitv needs the offsite host: a restore of a LOCAL archive on a rebuilt box (no
+# crontab yet) must not stop on a variable it never reads. The branch below refuses an empty one.
+: "${BACKUP_SSH_HOST=}"
 # shellcheck source=backup-config.sh
 . "$SCRIPT_DIR/backup-config.sh"
 # Par defaut le dernier instantane. Surchargeable pour remonter avant une corruption :
@@ -79,6 +82,7 @@ fi
 
 # Recuperation de la derniere archive depuis mitv si demande.
 if [ "$FROM_MITV" = "yes" ]; then
+  [ -n "$BACKUP_SSH_HOST" ] || fail "--latest-from-mitv needs BACKUP_SSH_HOST (<user>@<offsite-host>) exported"
   log "Recuperation de la derniere archive depuis ${BACKUP_SSH_HOST}…"
   LATEST="$(ssh -o BatchMode=yes "$BACKUP_SSH_HOST" \
     "ls -1t '$BACKUP_SSH_PATH'/canari-backup-*.tar.gz 2>/dev/null | head -1")"

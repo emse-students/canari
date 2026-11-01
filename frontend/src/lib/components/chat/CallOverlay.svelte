@@ -29,6 +29,8 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
   import {
+    AudioLines,
+    AudioLinesOff,
     ChevronDown,
     Mic,
     MicOff,
@@ -48,19 +50,24 @@
   import { m } from '$lib/paraglide/messages';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
+    nextSpeakerDefault,
     hasAndroidCallService,
     ongoingCallSpec,
     openAndroidCallSession,
   } from '$lib/mobile/androidCallService';
+  import { callHoldsProximity, setIosProximityMonitoring } from '$lib/mobile/iosCallProximity';
   import { callVideoAvailable } from '$lib/utils/callsAvailability';
   import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
-  import { callMicNotice, callStatusText } from '$lib/utils/callStatusText';
+  import { callE2eLine, callMicNotice, callStatusText } from '$lib/utils/callStatusText';
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
-  import { startCallVoice } from '$lib/utils/callVoice';
+  import { createSpeakerRouter, type RoutableSink } from '$lib/utils/callAudioRoute';
+  import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
+  import { CallRingback } from '$lib/utils/callRingback';
+  import { untrack } from 'svelte';
   import { ScreenWakeLock } from '$lib/live/liveDevice';
 
   let {
@@ -97,14 +104,23 @@
   $effect(() => () => callView.reset());
 
   let primary = $derived(participants[0]);
+  /**
+   * The peer's name and id as STRINGS, for the effects that hand them to the OS. `participants` is
+   * re-derived by the parent on every change of the conversations map, so `primary` is a NEW object
+   * many times a second while nothing about the peer changed: an effect reading it re-ran ~20 times
+   * a second (313 "no Media Session API" lines in 46 s of a video ring, 2026-10-31). A string that
+   * did not change notifies nobody.
+   */
+  let peerTitle = $derived(primary?.displayName || m.call_label());
+  let peerUserId = $derived(primary?.userId ?? null);
   let isIncoming = $derived(call.callState === 'incoming');
-  // The ring says WHICH call rings: a video call is answered with the camera on.
-  let statusText = $derived(
-    isIncoming && callService.incomingHasVideo
-      ? m.call_incoming_video_label()
-      : callStatusText(call.kind, call.duration)
-  );
+  // The ring says WHICH call rings in its own subtitle (`ringHasVideo`), so the status is the rest.
+  let statusText = $derived(callStatusText(call.kind, call.duration));
+  /** A VIDEO call rings: the subtitle says so and Accept carries a camera, as it answers with one. */
+  let ringHasVideo = $derived(isIncoming && callService.incomingHasVideo);
   let isEnded = $derived(call.callState === 'ended');
+  /** The encryption line: none while ringing, the check from `connecting`, the shield once proven. */
+  let e2eLine = $derived(callE2eLine(call.kind, call.e2eProven));
 
   /** The remote stream carrying the peer's picture (`call.remoteVideoTrack`), if any. */
   let remoteVideoStream = $derived.by(() => {
@@ -163,8 +179,9 @@
       return;
     }
     // No stream yet: an empty play() inside the gesture is what lets the later one through on
-    // WebKit. Its own rejection (no source) is expected and only logged.
-    sink.play().catch((e: unknown) => appendLog(`[Call] voice primed (${why}): ${String(e)}`));
+    // WebKit. The stream (or the surface going) aborts it, which `primeCallVoice` reads as a
+    // handover, not a refusal.
+    void primeCallVoice(sink, why);
   }
 
   $effect(() => {
@@ -174,6 +191,29 @@
     if (activation?.isActive) primeVoice('mounted within the dialling tap');
   });
 
+  // -- The caller's ringback: plays exactly while `CallService.ringingOut` says so -------------
+  let ringbackSink: HTMLAudioElement | undefined = $state();
+  let ringback = $derived(ringbackSink ? new CallRingback(ringbackSink) : null);
+  $effect(() => {
+    if (!ringback) return;
+    const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+      .userActivation;
+    // Only the caller rings out, and only the dialling tap can unlock the element for it. NOT on
+    // Android: its WebView needs no gesture to play, and a muted play there before the microphone
+    // is held would open a MEDIA-usage stream - the ringback would then sound at media volume
+    // through the loudspeaker instead of in the call's communication route.
+    if (activation?.isActive && call.callState === 'calling' && !isAndroidTauriRuntime()) {
+      untrack(() => ringback.prime('mounted within the dialling tap'));
+    }
+  });
+  $effect(() => {
+    if (!ringback) return;
+    if (call.ringingOut) ringback.start('the other phone rings');
+    else ringback.stop('the ring is over');
+  });
+  // The overlay unmounts with the call: nothing may keep looping after it.
+  $effect(() => () => ringback?.stop('the call surface closed'));
+
   $effect(() => {
     // While ringing too: the Accept tap may land on the BANNER, which cannot reach this element.
     if (!callView.audioBlocked && !isIncoming) return;
@@ -182,8 +222,35 @@
     return () => window.removeEventListener('pointerdown', retry, { capture: true });
   });
 
-  /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
-  let isSpeakerOn = $state(true);
+  /**
+   * Where the voice goes BY DEFAULT ({@link nextSpeakerDefault}): decided when the call first holds
+   * the microphone - `CallService.hasVideo` is set before the stream is published - and moved to the
+   * loudspeaker when video shows later. Null until the microphone is held.
+   */
+  let speakerDefault = $state<boolean | null>(null);
+  /** The user's own choice on the toggle, which wins over the default for the rest of the call. */
+  let speakerChoice = $state<boolean | null>(null);
+  $effect(() => {
+    if (!call.localStream) return;
+    const video = callService.hasVideo || videoShowing;
+    const next = nextSpeakerDefault(speakerDefault, video);
+    if (next === speakerDefault) return;
+    const first = speakerDefault === null;
+    speakerDefault = next;
+    appendLog(
+      first
+        ? `[Call] voice starts on the ${next ? 'loudspeaker' : 'earpiece or a headset'} (${video ? 'video' : 'audio'} call)`
+        : `[Call] video showed - the default moves to the loudspeaker (user choice=${speakerChoice ?? 'none'})`
+    );
+  });
+  /** Where the page ASKS the voice to go: the loudspeaker (true) or the earpiece (false). */
+  let isSpeakerOn = $derived(speakerChoice ?? speakerDefault ?? false);
+  /**
+   * Android: the output the service APPLIED (true = loudspeaker), null until it says or when the
+   * platform routes. A loudspeaker DEFAULT yields to a headset natively, so the asked route alone
+   * would read "speaker on" over a headset and the first tap would change nothing audible.
+   */
+  let routedSpeaker = $state<boolean | null>(null);
   let speakerSupported = $derived(
     typeof navigator !== 'undefined' &&
       'mediaDevices' in navigator &&
@@ -203,6 +270,10 @@
    */
   let androidRouteAvailable = $state(true);
   let speakerDisabled = $derived(isAndroidTauriRuntime() && !androidRouteAvailable);
+  /** What the toggle shows and inverts: the applied route when known, else the asked one. */
+  let speakerShown = $derived(
+    androidRouteAvailable && routedSpeaker !== null ? routedSpeaker : isSpeakerOn
+  );
 
   /**
    * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
@@ -210,24 +281,12 @@
    * native call (`AVAudioSession`, WP-C-BG-I) - calls.md, "the call in the background". On Android
    * the route is the ongoing-call service's (`AudioManager.setCommunicationDevice`, below).
    */
-  async function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const kind = speaker ? 'speaker' : 'earpiece';
-      const target = devices.find(
-        (d) => d.kind === 'audiooutput' && d.label.toLowerCase().includes(kind)
-      );
-      if (!target || !('setSinkId' in sink)) {
-        appendLog(`[Call] no '${kind}' output to route to on this engine - route unchanged`);
-        return;
-      }
-      await (sink as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(
-        target.deviceId
-      );
-      appendLog(`[Call] audio routed to ${kind}`);
-    } catch (e) {
-      appendLog(`[Call] audio routing failed: ${String(e)}`);
-    }
+  const routeSpeaker = createSpeakerRouter({
+    enumerate: () => navigator.mediaDevices.enumerateDevices(),
+    log: appendLog,
+  });
+  function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
+    return routeSpeaker(sink as HTMLAudioElement & RoutableSink, speaker);
   }
 
   $effect(() => {
@@ -235,13 +294,18 @@
     if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
     void applySpeakerRouting(sink, isSpeakerOn);
   });
+  // The ringback takes the voice's route: the earpiece unless the speaker is asked.
+  $effect(() => {
+    const sink = ringbackSink;
+    if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
+    void applySpeakerRouting(sink, isSpeakerOn);
+  });
 
   // -- The call in the background: told to the OS, and every transition logged ----------------
   $effect(() => {
     if (isIncoming || isEnded) return;
-    const title = primary?.displayName || m.call_label();
     applyCallMediaSession(navigator, {
-      title,
+      title: peerTitle,
       artist: videoShowing ? m.chat_video_call_label() : m.call_audio_only_label(),
       muted: call.isMuted,
       onHangup: () => {
@@ -261,20 +325,39 @@
   // notification and owns the audio route. Opened once per call (this component lives exactly as
   // long as one call); its hang-up ends the call like the in-app button.
   const androidCall = isAndroidTauriRuntime()
-    ? openAndroidCallSession(
-        window,
-        () => callService.endCall(),
-        (available) => (androidRouteAvailable = available)
-      )
+    ? openAndroidCallSession(window, {
+        onHangUp: () => callService.endCall(),
+        onMute: () => callService.toggleMute(),
+        onRoute: (available) => (androidRouteAvailable = available),
+        onOutput: (speaker) => (routedSpeaker = speaker),
+      })
     : null;
   $effect(() => () => androidCall?.dispose());
   $effect(() => {
     if (!androidCall) return;
-    const title = primary?.displayName || m.call_label();
     androidCall.publish(
-      ongoingCallSpec(call.kind, !!call.localStream, title, call.connectedAt, isSpeakerOn),
+      ongoingCallSpec(call.kind, !!call.localStream, {
+        title: peerTitle,
+        peerUserId,
+        connectedAtMs: call.connectedAt,
+        speaker: isSpeakerOn,
+        // A default yields to a connected headset natively; the user's tap does not.
+        speakerChosen: speakerChoice !== null,
+        muted: call.isMuted,
+      }),
       `kind=${call.kind}`
     );
+  });
+
+  // -- iOS: the screen goes dark against the cheek while the voice is on the receiver ---------
+  // Android holds its proximity lock natively, from the output its service applied.
+  $effect(() => {
+    if (!isIosTauriRuntime()) return;
+    const held = callHoldsProximity(call.kind, !!call.localStream, isSpeakerOn);
+    setIosProximityMonitoring(held, `kind=${call.kind} speaker=${isSpeakerOn}`);
+  });
+  $effect(() => () => {
+    if (isIosTauriRuntime()) setIosProximityMonitoring(false, 'the call surface closed');
   });
 
   /**
@@ -421,6 +504,19 @@
 
   let showSwitch = $derived(cameraOn && call.canSwitchCamera && !isEnded);
 
+  // The noise-suppression switch (owner decision D-B): offered for the whole call except where
+  // this engine could not build the pipeline - a switch that changes nothing is not offered.
+  let showNoiseSwitch = $derived(
+    !isIncoming && !isEnded && call.noiseSuppression.state !== 'unavailable'
+  );
+
+  function toggleNoiseSuppression() {
+    appendLog(
+      `[Call] noise suppression switch tapped (was ${call.noiseSuppression.enabled ? 'on' : 'off'})`
+    );
+    callService.toggleNoiseSuppression();
+  }
+
   function switchCamera() {
     appendLog('[Call] switch camera tapped');
     void callService.switchCamera();
@@ -484,9 +580,9 @@
       {disabled}
       class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 disabled:active:scale-100 {tone ===
       'danger'
-        ? 'bg-call-decline text-white hover:brightness-110'
+        ? 'bg-call-decline shadow-call-decline/40 text-white shadow-lg hover:brightness-110'
         : tone === 'accept'
-          ? 'bg-call-accept text-white hover:brightness-110'
+          ? 'bg-call-accept shadow-call-accept/40 text-white shadow-lg hover:brightness-110'
           : tone === 'on'
             ? 'text-cn-ink bg-white'
             : 'bg-white/15 text-white hover:bg-white/25'}"
@@ -504,6 +600,8 @@
 
 <!-- The voice: hidden, mounted for the whole call, in either shape. -->
 <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
+<!-- The caller's ringback (`utils/callRingback.ts`): beside the voice, on the same output. -->
+<audio bind:this={ringbackSink} preload="auto" class="hidden"></audio>
 <!-- ONE live region for both shapes, so a minimised call still announces "Reconnexion...". -->
 <span class="sr-only" role="status" data-testid="call-announcer">{announcement}</span>
 
@@ -521,20 +619,32 @@
     style="padding: var(--safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) var(--safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);"
     transition:fade={{ duration: 150 }}
   >
-    {#if !videoShowing && primary}
+    {#if !videoShowing}
       <!-- Messenger's and WhatsApp's backdrop: the other person's own photo, blown up, blurred and
-           dimmed behind the call. The SAME Avatar component (one cache, one fallback), never a
+           dimmed behind the call, over Canari's night gradient (ink to scrim) - the gradient alone
+           when nobody is named yet. The SAME Avatar component (one cache, one fallback), never a
            second fetch path; decorative, so hidden from assistive tech. A reader without a photo
-           gets the blurred initials tile, which is just a colour field. -->
+           gets the blurred initials tile, which is just a colour field. A ring adds the brand's
+           yellow glow behind the photo: the screen that asks is the warm one. -->
       <div
-        class="pointer-events-none absolute inset-0 overflow-hidden"
+        class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 overflow-hidden bg-linear-to-b"
         aria-hidden="true"
         data-testid="call-backdrop"
       >
-        <div class="absolute inset-0 scale-150 opacity-60 blur-3xl">
-          <Avatar userId={primary.userId} fill shape="soft" fallbackLabel={primary.displayName} />
-        </div>
-        <div class="bg-cn-scrim/55 absolute inset-0"></div>
+        {#if primary}
+          <div class="absolute inset-0 scale-150 opacity-60 blur-3xl">
+            <Avatar userId={primary.userId} fill shape="soft" fallbackLabel={primary.displayName} />
+          </div>
+        {/if}
+        <div
+          class="from-cn-ink/40 via-cn-scrim/55 to-cn-scrim/90 absolute inset-0 bg-linear-to-b"
+        ></div>
+        {#if isIncoming}
+          <div
+            class="bg-cn-yellow/15 absolute top-1/3 left-1/2 size-80 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl"
+            data-testid="call-ring-glow"
+          ></div>
+        {/if}
       </div>
     {/if}
     {#if remoteVideoStream}
@@ -578,21 +688,46 @@
         <ChevronDown size={26} />
       </button>
       <!-- Claimed on EVIDENCE only (CallService.e2eProven): a frame encrypted and one decrypted
-           by this call's worker. A transform merely attached proved nothing on Chromium. -->
-      <span
-        class="inline-flex min-w-0 items-center gap-1.5 truncate text-xs text-white/70"
-        title={call.e2eProven ? m.call_e2e_encrypted_title() : m.call_e2e_verifying()}
-        data-testid="call-e2e-line"
-      >
-        {#if call.e2eProven}
-          <ShieldCheck size={14} class="shrink-0" />
-          <span class="truncate">{m.call_e2e_encrypted_title()}</span>
-        {:else}
-          <Shield size={14} class="shrink-0" />
-          <span class="truncate">{m.call_e2e_verifying()}</span>
-        {/if}
-      </span>
+           by this call's worker. A transform merely attached proved nothing on Chromium. A ring
+           shows none: nothing is encrypted before the media exists (`callE2eLine`). -->
+      {#if e2eLine !== 'none'}
+        <span
+          class="inline-flex min-w-0 items-center gap-1.5 truncate text-xs text-white/70"
+          title={e2eLine === 'proven' ? m.call_e2e_encrypted_title() : m.call_e2e_verifying()}
+          data-testid="call-e2e-line"
+        >
+          {#if e2eLine === 'proven'}
+            <ShieldCheck size={14} class="shrink-0" />
+            <span class="truncate">{m.call_e2e_encrypted_title()}</span>
+          {:else}
+            <Shield size={14} class="shrink-0" />
+            <span class="truncate">{m.call_e2e_verifying()}</span>
+          {/if}
+        </span>
+      {/if}
       <div class="flex shrink-0 items-center">
+        {#if showNoiseSwitch}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full text-white hover:bg-white/10 {call.noiseSuppression
+              .enabled
+              ? ''
+              : 'bg-white/15'}"
+            aria-pressed={call.noiseSuppression.enabled}
+            aria-label={call.noiseSuppression.enabled
+              ? m.call_noise_suppression_disable_label()
+              : m.call_noise_suppression_enable_label()}
+            title={call.noiseSuppression.enabled
+              ? m.call_noise_suppression_disable_label()
+              : m.call_noise_suppression_enable_label()}
+            data-testid="call-noise-suppression"
+            onclick={toggleNoiseSuppression}
+          >
+            {#if call.noiseSuppression.enabled}<AudioLines size={22} />{:else}<AudioLinesOff
+                size={22}
+              />{/if}
+          </button>
+        {/if}
         {#if showSwitch}
           <button
             type="button"
@@ -616,7 +751,7 @@
             <PictureInPicture2 size={22} />
           </button>
         {/if}
-        {#if !showSwitch && !showPip}
+        {#if !showSwitch && !showPip && !showNoiseSwitch}
           <!-- Keeps the encryption line centred against the chevron. -->
           <span class="ui-icon-button" aria-hidden="true"></span>
         {/if}
@@ -631,13 +766,24 @@
         : 'justify-center'}"
     >
       {#if !videoShowing}
-        <div class="relative size-32 md:size-44">
+        <div class="relative {isIncoming ? 'size-36 md:size-48' : 'size-32 md:size-44'}">
           {#if isIncoming || call.kind === 'ringing'}
-            <!-- The ring: a halo that breathes while the call rings, on either side. -->
-            <div class="absolute inset-0 rounded-full bg-white/15 motion-safe:animate-ping"></div>
+            <!-- The ring: two soft yellow halos breathing out of the photo, half a beat apart, while
+                 the call rings on either side. `motion-safe` only: under reduced motion they stay
+                 behind the photo, unseen, and the accent ring alone says "ringing". -->
+            <div
+              class="bg-cn-yellow/30 motion-safe:animate-call-halo absolute inset-0 rounded-full"
+              data-testid="call-halo"
+            ></div>
+            <div
+              class="bg-cn-yellow/20 motion-safe:animate-call-halo-late absolute inset-0 rounded-full"
+            ></div>
           {/if}
           <div
-            class="relative h-full w-full overflow-hidden rounded-full shadow-xl ring-4 ring-white/10"
+            class="relative h-full w-full overflow-hidden rounded-full shadow-xl ring-4 {isIncoming
+              ? 'ring-cn-yellow/60'
+              : 'ring-white/10'}"
+            data-testid="call-avatar"
           >
             {#if primary}
               <Avatar
@@ -661,15 +807,30 @@
         {:else}
           <p class="font-bold {videoShowing ? 'text-lg' : 'text-3xl'}">{m.call_label()}</p>
         {/if}
-        <p
-          class="text-white/75 tabular-nums {videoShowing ? 'text-sm' : 'text-base'} {call.kind ===
-          'live'
-            ? ''
-            : 'animate-pulse'}"
-          data-testid="call-status"
-        >
-          {statusText}
-        </p>
+        {#if isIncoming}
+          <!-- WHICH call rings, as every phone says it: "Appel audio" or "Appel vidéo", with its glyph. -->
+          <p
+            class="mt-1 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-sm font-medium text-white/90 ring-1 ring-white/15"
+            data-testid="call-ring-kind"
+          >
+            {#if ringHasVideo}
+              <Video size={16} class="shrink-0" />
+              <span>{m.chat_video_call_label()}</span>
+            {:else}
+              <Phone size={16} class="shrink-0" />
+              <span>{m.call_audio_only_label()}</span>
+            {/if}
+          </p>
+        {:else}
+          <p
+            class="text-white/75 tabular-nums {videoShowing
+              ? 'text-sm'
+              : 'text-base'} {call.kind === 'live' ? '' : 'animate-pulse'}"
+            data-testid="call-status"
+          >
+            {statusText}
+          </p>
+        {/if}
         {#if micNotice}
           <p
             class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
@@ -708,7 +869,12 @@
       {#if isIncoming}
         <div class="flex w-full max-w-xs items-start justify-between">
           {#snippet declineIcon()}<PhoneOff size={28} />{/snippet}
-          {#snippet acceptIcon()}<Phone size={28} class="fill-current" />{/snippet}
+          {#snippet acceptIcon()}
+            {#if ringHasVideo}<Video size={28} class="fill-current" />{:else}<Phone
+                size={28}
+                class="fill-current"
+              />{/if}
+          {/snippet}
           {@render control(
             'call-decline',
             m.call_decline_incoming_label(),
@@ -731,18 +897,18 @@
         <div class="flex items-start justify-center gap-2 sm:gap-6">
           {#if speakerRoutable && speakerSupported}
             {#snippet speakerIcon()}
-              {#if isSpeakerOn}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
+              {#if speakerShown}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
             {/snippet}
             {@render control(
               'call-speaker',
               speakerDisabled
                 ? m.call_route_unavailable_label()
-                : isSpeakerOn
+                : speakerShown
                   ? m.call_speaker_label()
                   : m.call_earpiece_label(),
-              isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
-              () => (isSpeakerOn = !isSpeakerOn),
-              isSpeakerOn ? 'on' : 'neutral',
+              speakerShown ? m.call_speaker_label() : m.call_earpiece_label(),
+              () => (speakerChoice = !speakerShown),
+              speakerShown ? 'on' : 'neutral',
               speakerIcon,
               speakerDisabled
             )}

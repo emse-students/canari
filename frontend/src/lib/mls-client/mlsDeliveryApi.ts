@@ -9,6 +9,7 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import {
   assertAnsweredByApi,
@@ -19,7 +20,7 @@ import {
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
-import { DEVICE_REVOKED_BY_OWNER } from '$lib/utils/refusalCodes';
+import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -73,16 +74,30 @@ export type GroupUserMemberRow = {
   askId?: string | null;
 };
 
+/**
+ * A group's roster as a member's invitation reads it (`GET .../user-members?withSeatGeneration=1`):
+ * the rows, and the group's seat generation the server read BEFORE them - the number the invitation's
+ * Add carries (`invitationSeatGeneration`), which the commit gate orders every Decline and removal
+ * against. `null` from a server older than the parameter (it answers the bare rows): that server's
+ * gate reads no such number, so nothing is lost by not sending one.
+ */
+export interface GroupRosterAtGeneration {
+  members: GroupUserMemberRow[];
+  seatGeneration: number | null;
+}
+
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
  * What the add-lock acquire answered (`apps/chat-delivery-service/src/utils/add-lock.ts`): taken,
  * with the token its release names; or refused, with how long the holder's lock has left. Either
  * field is absent from a server that predates it, and `retryAfterMs` also when nothing answered.
+ * `answered` tells a refusal the server GAVE (the lock is held) from one that is only the lack of an
+ * answer (a transport error, a non-2xx): only the first means another device is adding.
  */
 export type AddLockAnswer =
   | { acquired: true; token: string | undefined }
-  | { acquired: false; retryAfterMs: number | undefined };
+  | { acquired: false; retryAfterMs: number | undefined; answered: boolean };
 
 /**
  * The longest wait a refused acquire may state: the server's `ADD_LOCK_TTL_SEC` (30 s) plus 1 s.
@@ -132,6 +147,13 @@ export const HISTORY_BATCH_MAX_GROUPS = 50;
  */
 export const GROUP_ROSTERS_MAX_GROUPS = 200;
 
+/**
+ * MIRRORS `REVOKED_LEAVES_MAX_IDENTITIES` in chat-delivery-service's `members.controller.ts`: the
+ * most leaf identities one `POST /api/mls/groups/:groupId/revoked-leaves` carries. Chunked by it,
+ * so the limit is never learnt by being refused.
+ */
+export const REVOKED_LEAVES_MAX_IDENTITIES = 1000;
+
 /** What one {@link MlsDeliveryApi.fetchGroupRosters} read answered. */
 export interface GroupRosterBatch {
   /** Roster user ids by group, for every group the server answered. */
@@ -144,6 +166,13 @@ export interface GroupRosterBatch {
    * empty against a server that predates the field: nothing known revoked is nothing removed.
    */
   revoked: Map<string, string[]>;
+  /**
+   * The people of an answered group's roster whose seat still AWAITS a member's admission, by group:
+   * a leaf of theirs is one no accepted commit admitted (the commit that admits a person lifts the
+   * flag in the transaction that accepts it), so `removeStrayLeaves` reads them as off the roster.
+   * Absent for a group with none, and empty against a server that predates the field.
+   */
+  awaiting: Map<string, string[]>;
 }
 
 /**
@@ -658,6 +687,40 @@ export class UserBlockedError extends Error {
 }
 
 /**
+ * The server refused a membership mutation across the review cohort's boundary (the store
+ * reviewers' accounts and the members never share a conversation): `REVIEW_COHORT_BOUNDARY`.
+ * Typed like {@link UserBlockedError} and for the same reason - the flow stops on it, cleanly, and
+ * nothing reads the server's sentence. Neutral: it never says the other account is a review account.
+ */
+export class ReviewCohortBoundaryError extends Error {
+  constructor(readonly userId: string) {
+    super(`${userId} cannot be added from this account`);
+    this.name = 'ReviewCohortBoundaryError';
+  }
+}
+
+/**
+ * The member-add call named a person NO ACCEPTED COMMIT ADMITTED (`409 MEMBER_NOT_ADMITTED`, `POST
+ * /api/mls/groups/:id/members`): the commit gate enrols the people an Add admits in the transaction
+ * that accepts it, and refused this one - a member's Decline of their ask, or their departure, was
+ * recorded after the Add was decided. Typed so the adder withholds the Welcome (the server would
+ * refuse it anyway) and reports the person not added; the leaf the merged commit put in the tree has
+ * no seat, and the stray sweep removes it. Terminal for this Add: the person needs a new one.
+ */
+export class MemberNotAdmittedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly userId: string
+  ) {
+    super(
+      `${userId} was not admitted to ${groupId.slice(0, 8)}... by the accepted commit - a Decline ` +
+        'or a departure came before the Add was decided'
+    );
+    this.name = 'MemberNotAdmittedError';
+  }
+}
+
+/**
  * The server refused a Welcome because the conversation's roster does not name its target
  * (`403 WELCOME_TARGET_NOT_MEMBER`, `POST /api/mls/welcome`).
  *
@@ -1105,6 +1168,18 @@ export class MlsDeliveryApi {
         }
         throw e;
       }
+      // THE GATEWAY'S ANSWER, WHATEVER ITS STATUS, PROVES THE SERVER REACHABLE - and this route is the
+      // one that tells the store when it got none (`BaseMlsService.fetchPendingMessages`), so it must
+      // also be the one that clears it: the raw fetch reaches no `trackedFetch`, and a flag only ever
+      // set would hold every later barrier, and demote every later gateway fault, after a long outage.
+      //
+      // WHO ANSWERED FIRST: an edge page (a captive portal's `511`, a WAF's HTML `403`) proves nothing
+      // about the server, so it does not clear the flag. Nor does it SET it: a non-2xx edge page is
+      // an answer of the edge, typed as such everywhere else (`SendEdgeRefusedError`, the origin a
+      // `SendServerError` carries) and never a transport failure - only a 2xx that is not the API's
+      // JSON is (`NotFromApiError`, thrown above), because only that one could be misread as data.
+      // A 2xx page reaching this line is the gateway's by construction.
+      if (page.ok || page.origin === 'gateway') connectivity.notifyServerReachable();
       // THE 401 RULE, OUTSIDE THE LADDER: whatever the renewal or the resend throws (a dead cookie, a
       // refresh nobody answered, a renewed token refused) is thrown as itself, never read as a page
       // too big, and the resend has its own stall timer.
@@ -1115,7 +1190,13 @@ export class MlsDeliveryApi {
           where: 'GET /api/mls/messages',
         });
       }
-      if (!page.ok) break;
+      if (!page.ok) {
+        // Every swallowed branch logs: the pull stops here and keeps the pages already handed on.
+        console.warn(
+          `[PENDING] page answered ${page.status} by the ${page.origin} - the pull stops here, the next one asks again`
+        );
+        break;
+      }
       const batch = page.body;
       if (!Array.isArray(batch) || batch.length === 0) break;
 
@@ -1390,14 +1471,15 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Adds `userId` to the server-side member list of `groupId` (idempotent).
+   * Writes the device seats of `userId` in `groupId` once an accepted commit admitted them (and, for
+   * a new group's creator, enrols them into its empty roster). Idempotent.
    *
-   * ONE refusal is raised and the rest are logged. A 403 carrying `USER_BLOCKED` is the server
-   * stating a fact the caller has to act on - the person may not be added, and a group that
-   * pretended otherwise would show a member the server does not have. Every other non-2xx keeps the
-   * historical tolerance of this call, which callers up and down the invite path rely on, but it no
-   * longer passes in silence: an HTTP failure was swallowed here without so much as a line, since
-   * `f` resolves rather than throwing on a bad status and only transport errors reached the catch.
+   * THREE refusals are raised, typed by the server's code, and the rest are logged. `USER_BLOCKED`
+   * and `REVIEW_COHORT_BOUNDARY` ({@link ReviewCohortBoundaryError}): the person may not be added, and
+   * a group that pretended otherwise would show a member the server does not have. `MEMBER_NOT_ADMITTED` ({@link MemberNotAdmittedError}): no accepted commit admitted
+   * them - a Decline or a departure came before the Add was decided - so the caller withholds the
+   * Welcome. Every other non-2xx keeps the historical tolerance of this call, which callers up and
+   * down the invite path rely on, logged: `f` resolves rather than throwing on a bad status.
    */
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
@@ -1407,13 +1489,19 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ userId }),
       });
       if (res.ok) return;
-      const body = await res.text().catch(() => '');
-      if (res.status === 403 && body.includes('USER_BLOCKED')) {
-        throw new UserBlockedError(userId);
-      }
+      const refusal = await refusalFromResponse(res, 'registerMember refused');
+      if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
+      if (refusal.code === REVIEW_COHORT_BOUNDARY_CODE) throw new ReviewCohortBoundaryError(userId);
+      if (refusal.code === 'MEMBER_NOT_ADMITTED') throw new MemberNotAdmittedError(groupId, userId);
       console.error(`registerMember refused: group=${groupId} user=${userId} status=${res.status}`);
     } catch (e) {
-      if (e instanceof UserBlockedError) throw e;
+      if (
+        e instanceof UserBlockedError ||
+        e instanceof ReviewCohortBoundaryError ||
+        e instanceof MemberNotAdmittedError
+      ) {
+        throw e;
+      }
       console.error('Failed to register member', e);
     }
   }
@@ -1618,6 +1706,11 @@ export class MlsDeliveryApi {
    * were deleted by the server's half of the removal, which ran first, so the server queues the
    * commit to the devices it parted for exactly these (`partingKey`, server side): the removed
    * devices receive the commit that removes them. Only a staged Remove has any.
+   *
+   * `invitationSeatGeneration` is the seat generation a member's invitation read with its roster
+   * baseline ({@link getGroupRosterAtGeneration}): the gate orders every Decline and removal of the
+   * people this Add admits against it, so one made after the member decided holds and one made
+   * before does not. Only the Add of a member's invitation has one.
    */
   async submitCommit(
     groupId: string,
@@ -1626,7 +1719,8 @@ export class MlsDeliveryApi {
     excludeDeviceIds?: string[],
     groupInfoBase64?: string,
     admits?: Array<{ userId: string; deviceId: string }>,
-    removes?: CommitRemoval[]
+    removes?: CommitRemoval[],
+    invitationSeatGeneration?: number
   ): Promise<{
     accepted: boolean;
     reason?: string;
@@ -1636,6 +1730,8 @@ export class MlsDeliveryApi {
     duplicate?: boolean;
     /** The declared admits an ACCEPTED commit did not record, each with why ({@link RefusedAdmit}). */
     refusedAdmits?: RefusedAdmit[];
+    /** A refusal `admit_refused` only: the people the gate may not admit (`refusedAdmits`). */
+    userIds?: string[];
   }> {
     // UNDER THE `write` HEAD DEADLINE (`requestDeadline.ts`: 30 s plus the time the body needs to
     // leave), because a commit transaction awaits this while it HOLDS THE MLS MUTEX, from its stage to
@@ -1665,6 +1761,7 @@ export class MlsDeliveryApi {
           ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
           ...(admits?.length ? { admits } : {}),
           ...(removes?.length ? { removes } : {}),
+          ...(invitationSeatGeneration !== undefined ? { invitationSeatGeneration } : {}),
         }),
       },
       { requestClass: 'write' }
@@ -1682,6 +1779,7 @@ export class MlsDeliveryApi {
       newEpoch?: number;
       duplicate?: boolean;
       refusedAdmits?: RefusedAdmit[];
+      userIds?: string[];
     };
   }
 
@@ -1817,7 +1915,7 @@ export class MlsDeliveryApi {
         console.warn(
           `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire was answered ${res.status} - not taken, and not known to be held`
         );
-        return { acquired: false, retryAfterMs: undefined };
+        return { acquired: false, retryAfterMs: undefined, answered: false };
       }
       const data = (await res.json()) as {
         acquired?: unknown;
@@ -1829,6 +1927,7 @@ export class MlsDeliveryApi {
       }
       return {
         acquired: false,
+        answered: true,
         retryAfterMs: typeof data.retryAfterMs === 'number' ? data.retryAfterMs : undefined,
       };
     } catch (e) {
@@ -1838,7 +1937,7 @@ export class MlsDeliveryApi {
       console.warn(
         `[ADD_LOCK] ${groupId.slice(0, 8)}... the acquire got no answer - not taken, and not known to be held: ${String(e).slice(0, 120)}`
       );
-      return { acquired: false, retryAfterMs: undefined };
+      return { acquired: false, retryAfterMs: undefined, answered: false };
     }
   }
 
@@ -2210,6 +2309,16 @@ export class MlsDeliveryApi {
    * There is no second way to fetch a page here: an absent group simply arrives at
    * `replayConversationHistory` unprimed and that replay reads its own first page, which is the
    * ordinary path every group took before any of this existed.
+   *
+   * A CHUNK NOBODY ANSWERED IS NOT A REFUSED CHUNK, AND IT THROWS. A refusal is an answer about
+   * THOSE groups; a transport failure is a fact about the LINK, and every page a replay would then
+   * read goes to the same unreachable server. Leaving the groups out sent each one to its own
+   * replay: on production (`1.5.1`, a phone at a cold start with no network) three chunks of
+   * 50/50/25 got no answer, then 125 per-group history reads and 125 mailbox pulls left within one
+   * second, every one of them failing. So the failure is rethrown as it came (typed at the throw,
+   * `isTransportFailure`), the chunks after it are not sent, and the caller stops its catch-up.
+   *
+   * @throws a transport failure (`isTransportFailure`) - never a refusal, which is logged and skipped
    */
   async fetchHistoryBatch(
     groups: Array<{ groupId: string; afterStreamId?: string }>
@@ -2224,9 +2333,10 @@ export class MlsDeliveryApi {
   /**
    * One `POST /api/mls/history/batch`, writing what it gets into `out`.
    *
-   * Never throws: a chunk that fails is a defect to READ, not a branch for the caller to take, so
-   * it is logged with the status AND the server's own words - a status alone cannot tell a refused
-   * request from an unreachable one, and it was a bare status that let the cap go unnoticed.
+   * A chunk the server REFUSES is a defect to READ, not a branch for the caller to take, so it is
+   * logged with the status AND the server's own words - it was a bare status that let the cap go
+   * unnoticed. A chunk that got NO answer is rethrown unlogged: the caller says it once, with what
+   * it does about it (see {@link fetchHistoryBatch}).
    */
   private async fetchHistoryBatchChunk(
     chunk: Array<{ groupId: string; afterStreamId?: string }>,
@@ -2243,6 +2353,11 @@ export class MlsDeliveryApi {
           })),
         }),
       });
+      // THE GATEWAY'S answer, whatever its status, proves the link up (this route reaches no
+      // `trackedFetch`). WHO ANSWERED is read from the head first: a captive portal's 2xx HTML page
+      // is an answer from the wrong party, and clearing `isOffline` on it would un-hold every barrier
+      // while the server is still out of reach.
+      if (responseOrigin(res) === 'gateway') connectivity.notifyServerReachable();
       const contentType = res.headers.get('content-type') ?? '';
       if (!res.ok || !contentType.toLowerCase().includes('application/json')) {
         console.error(
@@ -2259,13 +2374,13 @@ export class MlsDeliveryApi {
         out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
       }
     } catch (e) {
-      if (isTransportFailure(e)) {
-        console.warn(
-          `[History] batch of ${chunk.length} group(s) got no answer - each replays its own page: ${String(e)}`
-        );
-      } else {
-        console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
-      }
+      // Not logged here: the caller's line names the consequence (the catch-up stops), one line for
+      // the whole batch rather than one per chunk. NO ANSWER is told to the connectivity store, which
+      // the caller reads to decide whether the link is known down; a deadline is not - one expiry
+      // is a slow moment (`STALLS_BEFORE_UNREACHABLE` counts those where they are tracked).
+      if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
+      if (isTransportFailure(e)) throw e;
+      console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
   }
 
@@ -2392,6 +2507,37 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * The roster of `groupId` WITH the seat generation the server read before it - the baseline of a
+   * member's invitation ({@link GroupRosterAtGeneration}). Never joined to a read in flight: the
+   * number must be read after the member decided. Failures classified as
+   * {@link getGroupUserMembers}'s. A server older than the parameter answers the bare rows, read as
+   * `seatGeneration: null` - what that server said, not a guess.
+   */
+  async getGroupRosterAtGeneration(groupId: string): Promise<GroupRosterAtGeneration> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${groupId}/user-members?withSeatGeneration=1`,
+      { headers: await this.auth() }
+    );
+    const awaiting = await awaitingAdmissionFrom(res, groupId);
+    if (awaiting) throw awaiting;
+    if (!res.ok) throw await refusalFromResponse(res, 'getGroupRosterAtGeneration failed');
+    const body = (await readApiJson(
+      res,
+      `GET /api/mls/groups/user-members (group ${groupId.slice(0, 8)})`
+    )) as GroupUserMemberRow[] | { seatGeneration?: unknown; members?: unknown };
+    if (Array.isArray(body)) return { members: body, seatGeneration: null };
+    if (
+      !Array.isArray(body.members) ||
+      typeof body.seatGeneration !== 'number' ||
+      !Number.isInteger(body.seatGeneration) ||
+      body.seatGeneration < 0
+    ) {
+      throw new Error(`getGroupRosterAtGeneration: malformed answer for ${groupId.slice(0, 8)}...`);
+    }
+    return { members: body.members as GroupUserMemberRow[], seatGeneration: body.seatGeneration };
+  }
+
+  /**
    * The windows during which each current member of `groupId` was out of it - what a history answer
    * must withhold (user, 2026-10-14: a Remove holds against a later re-add).
    *
@@ -2483,6 +2629,51 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * Which of `identities` - leaves of `groupId`'s tree, as `userId:deviceId` - belong to a revoked
+   * device, `REVOKED_LEAVES_MAX_IDENTITIES` per `POST /api/mls/groups/:groupId/revoked-leaves`. The
+   * one revocation read a KEY group has: `group-rosters` never answers one.
+   *
+   * THROWS on any answer that is not one (a refusal, a 404 from a server that predates the route, a
+   * transport failure): the caller then removes nobody, and an unanswered question must not reach
+   * it looking like "none revoked". AN ALLOWLIST: only an identity this call SENT can come back.
+   *
+   * Under the `read` head deadline (`DEADLINE_MS.read`, `requestDeadline.ts`), though it is a POST:
+   * it changes nothing, and it runs inside a scope's serialised roster pass, whose termination rests
+   * on every read in it ending - a hang is a `RequestDeadlineError`, which the pass reports and ends
+   * on, releasing the lane.
+   */
+  async fetchRevokedLeaves(groupId: string, identities: string[]): Promise<string[]> {
+    const sent = new Set(identities);
+    const revoked: string[] = [];
+    for (let i = 0; i < identities.length; i += REVOKED_LEAVES_MAX_IDENTITIES) {
+      const chunk = identities.slice(i, i + REVOKED_LEAVES_MAX_IDENTITIES);
+      const res = await trackedFetch(
+        this.f,
+        `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/revoked-leaves`,
+        {
+          method: 'POST',
+          headers: await this.auth({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ identities: chunk }),
+        },
+        { requestClass: 'read' }
+      );
+      if (!res.ok) {
+        throw new Error(
+          `revoked-leaves of ${groupId.slice(0, 8)}... not answered: ${res.status} body=${(await res.text()).slice(0, 200)}`
+        );
+      }
+      const data = (await res.json()) as { revoked?: unknown };
+      if (!Array.isArray(data.revoked)) {
+        throw new Error(`revoked-leaves of ${groupId.slice(0, 8)}... answered no list`);
+      }
+      for (const id of data.revoked) {
+        if (typeof id === 'string' && sent.has(id)) revoked.push(id);
+      }
+    }
+    return revoked;
+  }
+
+  /**
    * The user-level rosters of many groups, `GROUP_ROSTERS_MAX_GROUPS` per `POST /api/mls/group-rosters`.
    *
    * Never throws, like {@link fetchHistoryBatch}: a group this read did not answer is simply absent
@@ -2494,7 +2685,12 @@ export class MlsDeliveryApi {
    * per group - so the caller knows it without asking again.
    */
   async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
-    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set(), revoked: new Map() };
+    const out: GroupRosterBatch = {
+      rosters: new Map(),
+      refused: new Set(),
+      revoked: new Map(),
+      awaiting: new Map(),
+    };
     for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
       const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
       try {
@@ -2514,6 +2710,7 @@ export class MlsDeliveryApi {
           rosters?: Record<string, string[]>;
           refused?: string[];
           revoked?: Record<string, unknown>;
+          awaiting?: Record<string, unknown>;
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
           // A roster that is not a list is not an empty roster: an empty one names every leaf as a
@@ -2529,6 +2726,15 @@ export class MlsDeliveryApi {
             (id): id is string => typeof id === 'string' && id.length > 0
           );
           if (named.length > 0) out.revoked.set(groupId, named);
+        }
+        // THE SAME ALLOWLIST: an awaiting person becomes a removal candidate, so a malformed entry
+        // names nobody, and only a group whose roster was answered is read.
+        for (const [groupId, userIds] of Object.entries(data.awaiting ?? {})) {
+          if (!out.rosters.has(groupId) || !Array.isArray(userIds)) continue;
+          const named = userIds.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          );
+          if (named.length > 0) out.awaiting.set(groupId, named);
         }
       } catch (e) {
         console.warn(

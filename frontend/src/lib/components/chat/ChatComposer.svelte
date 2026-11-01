@@ -43,6 +43,7 @@
   import ReplyGifThumb from '$lib/components/messages/ReplyGifThumb.svelte';
   import {
     gifPanelHeight,
+    menuPressKeepsFocus,
     nextComposerSurface,
     panelSpacerPx,
     surfaceReservesPanel,
@@ -1209,7 +1210,7 @@
               items={addMenuItems}
               open={surface === 'menu'}
               onOpenChange={onMenuOpenChange}
-              keepsFocus
+              keepsFocus={menuPressKeepsFocus(keyboardOpen)}
             />
           </span>
         {/if}
@@ -1229,7 +1230,7 @@
             items={attachMenuItems}
             open={surface === 'menu'}
             onOpenChange={onMenuOpenChange}
-            keepsFocus
+            keepsFocus={menuPressKeepsFocus(keyboardOpen)}
           />
         {:else}
           <label class="ui-icon-button chat-composer-icon-button relative shrink-0 cursor-pointer">

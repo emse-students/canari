@@ -38,7 +38,7 @@
   const overflow = $derived(Math.max(0, userIds.length - MAX_AVATARS));
 </script>
 
-<div class="flex w-full justify-start gap-2.5">
+<div class="relative flex w-full justify-start gap-2.5">
   <!-- `min-w-8` IS THE ALIGNMENT, and it is measured, not guessed. `ChatMessageGroups` gives a
        received message a FIXED 2rem column holding a 1.5rem avatar, so its bubble starts 42px from
        the row's left edge. Sized to its own avatar this column was 24px and the bubble landed at

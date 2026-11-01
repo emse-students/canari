@@ -8,14 +8,14 @@
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { isWebKitAgent } from './webkit-console.mjs';
 import { contentTypeOf, fileInjectionExpression } from './webkit-files.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, parkPointer, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
-import { PORTS, VENUE } from './names.mjs';
+import { PORTS, STATE_DIR, VENUE } from './names.mjs';
 import { SITE } from './site.mjs';
 
 /**
@@ -36,7 +36,7 @@ export const APP_TAB = new URL(SITE).host;
 
 /** The app's hostname, without a port: what a cookie's `domain` can be compared against. */
 export const APP_HOST = new URL(SITE).hostname;
-import { OVERLAYS } from './overlay-probe.mjs';
+import { IS_BACKDROP_FN, OVERLAYS } from './overlay-probe.mjs';
 import { serial } from './serial.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
@@ -806,18 +806,34 @@ export async function clearOverlays(cx) {
       // Tag then click the tagged element, so the click addresses exactly what the predicate chose -
       // the same rule `openConversation` learnt the hard way. The tag is always removed: a stray one
       // would be picked up by the next call, which is how a harness fix becomes a harness fault.
-      const tagged = await evaluate(
-        cx,
-        `(function () {
-          var area = window.innerWidth * window.innerHeight;
-          var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
-            var r = e.getBoundingClientRect();
-            return r.width * r.height >= 0.8 * area;
-          })[0];
-          if (b) b.setAttribute('${TAG}', '1');
-          return b ? 'tagged' : 'gone';
-        })()`,
+      //
+      // CLICKED AT A POINT IT OWNS, NOT AT ITS CENTRE. A SidePanel scrim sits UNDER its own drawer, and
+      // on a ~958 px seat the drawer covers the scrim's centre - so a centre click either refused
+      // ('not on top at own centre') or landed inside the panel and closed nothing. The point is the
+      // first on a coarse grid where the hit-test returns the backdrop itself.
+      const target = JSON.parse(
+        await evaluate(
+          cx,
+          `JSON.stringify((function () {
+            var isBackdrop = ${IS_BACKDROP_FN};
+            var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
+              var r = e.getBoundingClientRect();
+              return r.width > 0 && r.height > 0 && isBackdrop(e, r);
+            })[0];
+            if (!b) return { state: 'gone' };
+            b.setAttribute('${TAG}', '1');
+            var r = b.getBoundingClientRect();
+            for (var fy = 0.1; fy < 1; fy += 0.2) {
+              for (var fx = 0.05; fx < 1; fx += 0.15) {
+                var x = r.left + r.width * fx, y = r.top + r.height * fy;
+                if (document.elementFromPoint(x, y) === b) return { state: 'tagged', x: x, y: y };
+              }
+            }
+            return { state: 'tagged' };
+          })())`,
+        ),
       );
+      const tagged = target.state;
       // GONE BETWEEN THE READ AND THE TAG IS PROGRESS, NOT A TARGET. The probe counts a backdrop
       // still fading out (its opacity is animating), so the one a confirmation just dismissed can be
       // read here and be gone a frame later - and a click aimed at no element threw `no stable
@@ -829,7 +845,8 @@ export async function clearOverlays(cx) {
       // element still there - never from the click's message; one still standing re-throws.
       try {
         if (tagged === 'tagged') {
-          await realClick(cx, `[${TAG}]`).catch(async (e) => {
+          const click = target.x === undefined ? realClick(cx, `[${TAG}]`) : clickAtPoint(cx, target.x, target.y);
+          await click.catch(async (e) => {
             const still = await evaluate(cx, `document.querySelector('[${TAG}]') ? 'present' : 'gone'`);
             if (still !== 'gone') throw e;
           });
@@ -1594,9 +1611,31 @@ export async function awaitMessage(cx, marker, timeoutMs = 20000) {
     // whether the message was missing, late, or simply BELOW the render window - `ChatArea` keeps a
     // sliding window and a pane scrolled up genuinely does not render what arrives under it
     // (`hiddenBelowCount`). Those are three different defects, one of which is not a defect at all.
+    const shot = await missShot(cx, marker);
     throw new Error(
-      `${marker} never appeared in ${timeoutMs}ms - ${JSON.stringify(await paneState(cx, marker))}`
+      `${marker} never appeared in ${timeoutMs}ms - ${JSON.stringify({ ...(await paneState(cx, marker)), shot })}`
     );
+  }
+}
+
+/**
+ * A screenshot of the page at the moment a miss is declared, under `STATE_DIR/logs/shots/`: the one
+ * record that shows what a person would have seen, which no DOM summary can stand in for. Best
+ * effort - a page that cannot be captured says why in the path's place.
+ *
+ * @returns {Promise<string>} the PNG's path, or the reason there is none
+ */
+async function missShot(cx, marker) {
+  try {
+    const { data } = await cx.send('Page.captureScreenshot', { format: 'png' });
+    const dir = join(STATE_DIR, 'logs', 'shots');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `miss-${marker}-${Date.now()}.png`);
+    writeFileSync(file, Buffer.from(data, 'base64'));
+    return file;
+  } catch (e) {
+    console.log(`[chat] the miss of ${marker} could not be captured: ${String(e?.message ?? e)}`);
+    return `no screenshot: ${String(e?.message ?? e).slice(0, 80)}`;
   }
 }
 
@@ -1628,6 +1667,15 @@ export async function paneState(cx, marker) {
         inPane: pane.innerText.indexOf(${JSON.stringify(marker)}) !== -1,
         inBody: document.body.innerText.indexOf(${JSON.stringify(marker)}) !== -1,
         lastRendered: ps.slice(-3).map(function (e) { return (e.textContent || '').slice(0, 40); }),
+        // WHAT THE PANE SHOWS INSTEAD, when it shows no paragraph: the route, its own heading, the
+        // first of its text, and its element outline two levels down - so a miss says whether the
+        // pane is another conversation, a placeholder, or an empty list (TOK-3 / OFF-2, 2026-10-27).
+        path: location.pathname,
+        heading: (function () { var h = pane.querySelector('h1, h2, header'); return h ? (h.innerText || '').slice(0, 80) : null; })(),
+        paneText: (pane.innerText || '').slice(0, 400),
+        outline: [].slice.call(pane.children).map(function (c) {
+          return c.tagName + '.' + String(c.className || '').slice(0, 40) + '[' + [].slice.call(c.children).map(function (g) { return g.tagName + '(' + g.children.length + ')'; }).join(' ') + ']';
+        }),
         scroll: sc
           ? {
               fromBottomPx: Math.round(sc.scrollHeight - sc.clientHeight - sc.scrollTop),

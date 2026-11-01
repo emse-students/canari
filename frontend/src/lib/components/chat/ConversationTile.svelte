@@ -10,6 +10,7 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
+  import { canAnswerJoinRequests, pendingJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 
   interface Props {
     /**
@@ -73,6 +74,18 @@
     onClick,
   }: Props = $props();
 
+  /**
+   * HOW MANY PEOPLE ASK TO JOIN THIS CONVERSATION, for the member who can answer. Derived from the
+   * asks store - the same one the card in the thread is drawn from - so the dot and the card agree
+   * and both leave with the ask. Client-only; the preview stays the last message. Counted only while
+   * something can answer (`canAnswerJoinRequests`), like the card.
+   */
+  const pendingAsks = $derived(
+    canAnswerJoinRequests()
+      ? pendingJoinRequests().filter((r) => r.groupId === conversationId).length
+      : 0
+  );
+
   // Only direct conversations have a real peer user ID - group/channel names are
   // display names, not user IDs, so we must not use them for presence or avatars.
   const isDirect = $derived(conversationType === 'direct');
@@ -92,9 +105,12 @@
 
   onMount(() => {
     // Only poll presence for real user IDs (direct conversations).
+    // The teardown names the peer it watched, captured here: a prop read in a teardown can re-run a
+    // parent derived with stale values and rewire it (frontend/architecture, on teardowns).
     if (isDirect) {
-      watchUsers([contactName]);
-      return () => unwatchUsers([contactName]);
+      const watched = contactName;
+      watchUsers([watched]);
+      return () => unwatchUsers([watched]);
     }
   });
 
@@ -183,7 +199,7 @@
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else}
-      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
+      <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="lg" />
     {/if}
   </div>
 
@@ -213,6 +229,16 @@
           reader and are what the cross-client rig has always measured, having been told from the
           start never to read this badge.
         -->
+        {#if pendingAsks > 0}
+          <span
+            class="text-2xs bg-cn-yellow text-cn-ink inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 font-bold shadow-sm"
+            data-join-asks={pendingAsks}
+            role="img"
+            aria-label={m.join_request_pending_badge_label({ count: pendingAsks })}
+          >
+            {pendingAsks > 9 ? '9+' : pendingAsks}
+          </span>
+        {/if}
         {#if unreadCount > 0}
           <span
             class="text-2xs inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 font-bold text-white shadow-sm shadow-red-500/20"

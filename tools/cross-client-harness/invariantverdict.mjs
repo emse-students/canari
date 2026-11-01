@@ -124,6 +124,24 @@ export function settledRounds(rounds) {
 }
 
 /**
+ * WHETHER THE GROUP MOVED UNDER THE JUDGE: settled at one server epoch, and the server at another
+ * once the judge had read every client. A settlement is two agreeing rounds, but the judge's own reads
+ * come AFTER them and take seconds - a commit landing in between is read half before (a client) and
+ * half after (the server), and the pass records a client "behind" that applied it milliseconds later.
+ * DEV-2 on alpha.5 (2026-10-26): the reload's own stray-leaf sweep committed 5 s after the page
+ * loaded, after the two settled rounds and during the judge - W1 and W2 "at epoch 3, the server at
+ * 4", both at 4 within 70 ms. Such a pass judged no state at all, so it is settled and judged again.
+ *
+ * Pure, pinned by `archive/invariant-selftest.mjs`.
+ *
+ * @param {{settled: boolean, rounds: {serverEpoch: number|null}[]}} settled
+ * @param {number|null} serverEpochAfterJudge
+ */
+export function movedUnderJudge(settled, serverEpochAfterJudge) {
+  return settled.settled && settled.rounds.at(-1)?.serverEpoch !== serverEpochAfterJudge;
+}
+
+/**
  * WHAT A PASS DOES WITH ITS SETTLEMENT (`awaitSettled`'s answer): whether it is judged, the pass that
  * stands in for it when it is not, and the approximation the pass must carry when it is.
  *

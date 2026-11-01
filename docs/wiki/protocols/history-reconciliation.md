@@ -805,6 +805,34 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   `CREATION_ARRIVAL_BOUND_MS` (1 s, either side) of the group row's `createdAt` is the creation, and
   gets its gaps only. Measured on the local estate: the creator's interval 4 ms after the group row,
   the next member 13.5 s. A joiner's span is unchanged.
+- **A link joiner arrives at the member's Add, not at their ask (2026-10-31).** The invitation link
+  writes the seat when the person ASKS (`acceptGroupInvite`: the roster row awaiting admission, its
+  open interval and `pending` device rows), possibly days before a member answers, and those are the
+  very records the arrival above is read from. Dated at the ask, every answer and the stream handed
+  the person what was sent while they waited outside, though they were never a member then (a
+  Decline deletes that interval for the same reason). The commit that lifts `awaitingAdmission`
+  (`liftAwaitingAdmission`, the one door) now re-dates both in its own transaction
+  (`dateArrivalAtAdmission`, `utils/group-membership.ts`): the open interval's `joinedAt` becomes the
+  lift's instant and its `admittedAt` is cleared, and the person's device rows are dated the SAME
+  instant - one value for both, never `now()` for one of them: both columns are `timestamp WITHOUT
+  time zone`, and a `now()` beside a `new Date()` read an hour early under `TZ=Europe/Paris` against
+  a UTC database, an hour of the past handed to the newcomer. Every boot asserts the two clocks agree
+  (`checkDatabaseClockAgreement`, ERROR above a minute, never fatal); `ensureGroupMember` is the other
+  place that compares them. A former member coming back through a link keeps their first
+  stretch; the gap since their departure now runs to the Add. Not retroactive: a link joiner admitted
+  before this keeps the arrival recorded at their ask.
+- **The server's own stream is held to the same span (2026-10-31).** `GET /history` and
+  `/history/batch` drop every row inside the READER's `withheld` windows in a group conversation -
+  the gaps AND the span before their arrival (`ownWithheldWindows`, `withholdsArrivalSpan`, the one
+  predicate the exclusions route reads too). Before, they dropped the gaps only, so a newcomer walking
+  the stream was served the ciphertexts of the whole past and only their client discarded them
+  (`dropOwnExcludedMessages`); a newcomer's state cannot open frames sealed before its Welcome, but
+  their absence no longer rests on the client. A new device of a continuous member is unchanged: the
+  span is the PERSON's. A 1:1 and a key group are unchanged. A global admin - named by its
+  `x-global-admin` header, never inferred from a missing interval - reading a group it holds no
+  interval in is not narrowed, as before; any other caller holding no interval is a roster member the
+  enrolment failed to record, repaired by `openMissingIntervals` as the exclusions route does, and
+  served nothing at all (one window over everything, at ERROR) when nothing could be opened.
 - Against a server that predates addressed answers, `sendFullHistoryBundle` still passes the invitee
   (`userIdOfLeaf(to)`) to `entitledHistorySelection`, whose filter is the union of gaps plus that one
   person's withheld windows.
@@ -824,6 +852,22 @@ GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 `minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
 received cannot be taken back. Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
+
+**Every road to a newcomer, read on 2026-10-31** (with #2791, which adds a member's new device by
+itself and asks only about a new person):
+
+| Road | What holds it |
+| --- | --- |
+| The push, the diff, the scrollback | addressed to the asking device and filtered on its PERSON's `withheld` windows (step A); the arrival is the Add, link joins included (above) |
+| The history stream (`/history`, `/history/batch`) | the server drops the reader's `withheld` windows, the span before arrival included (above) |
+| The delivery queue | a `pending` device is queued only frames sealed at or after the epoch its admitting commit recorded (`admittedAtEpoch`); a link joiner's seat records none until a member's Add |
+| A link joiner still waiting | holds no leaf, reads no history, exclusions or base (409 `awaiting_admission`) |
+| Graine seeds and checkpoints | communities only - their own recorded decision (`shared`, past only to a proven admission); a checkpoint is the device's own local state |
+| A 1:1 | nobody is added to one (no add path: the panel offers it in a group conversation only, and `isGroup` is fixed at creation), so the span does not apply |
+| A member's own new device | everything since its person's arrival, gaps withheld - the same windows, read per user |
+| Pins and read marks (the bundle's `state`) | METADATA only, accepted: the pin register (ids, pinned or not, a date) and the read watermarks travel even when every message is withheld; no content, and a pin naming a message the newcomer never received points at nothing |
+| A reply, a reaction or an edit sent AFTER the arrival about an earlier message | a reply carries its quoted `preview`, ACCEPTED as on WhatsApp (review of #2800, 2026-10-31); a reaction carries an id only; an edit of a message the receiver does not hold is refused (`mutationIsAuthorised`, no owner) |
+| Media by id | the blob is ciphertext; its key (CEK) travels only inside the message that carries it |
 
 ### A Remove holds against a later re-add - the answering peer withholds the window (decided by the user, 2026-10-14)
 
@@ -910,6 +954,16 @@ answer path can forget it.
   held-back message is served by any member holding it dated - so the margin errs wide. One with no
   usable timestamp at all is held back. When no current member has a window nothing is filtered, and
   every answer is byte-for-byte what it was.
+  **The margin stays SYMMETRIC (decided by the user 2026-10-22, review of #2251; moved from the
+  backlog 2026-10-24).** A joiner's before-arrival span `[0, arrival)` thus also withholds their undated
+  history from the hour AFTER they arrived; a device already holding a message is never filtered, so the
+  loss is that member's NEXT device restoring history, unless a member holding it dated serves it.
+  Widening only the pre-arrival side would leak a message received before the arrival whose sender's
+  clock ran ahead - exactly the case the margin exists for. The cost (a few undated messages just after
+  arrival) is accepted; nothing is owed, and it is not reopened without a new measurement of that cost.
+  That count cannot be read on the server (undated copies live in client stores, bundles are
+  ciphertext): the only reading is the client's `[HISTORY_ENTITLEMENT] ... N undated within 60 min`
+  line on a device that receives a filtered push.
 - **An unreadable window set carries no message**, logged `[HISTORY_ENTITLEMENT]`: the same silence
   an unreadable store produces, so another member or the next connection answers. Never an
   unfiltered answer. **The FULL bundle still sends one frame carrying the conversation state** (floor,
@@ -1052,6 +1106,8 @@ its next refused send, exactly as before.
 What closes a failure in the middle (a server record with no commit, then a re-add) is the SERVER,
 not the tree: **`GET /history` and `/history/batch` DROP every row inside the READER's own windows,
 and keep reading so the page stays full** (`withholdExcludedHistoryRows`, `readHistoryStreamPage`).
+In a group conversation those windows also hold the span before the reader's arrival, since
+2026-10-31 ([above](#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
 So a stale leaf left by a failed commit - its device decrypts every frame at the old epoch - finds
 nothing to decrypt in the stream for the gap, and live delivery never queued it a copy while it had
 no device membership. **Dropped, never marked**: the second shape answered such a row as

@@ -27,7 +27,7 @@ import {
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
-import { handleDistributionFrame } from './frameHandler';
+import { handleDistributionFrame, resetAnswerDecisionsSaid } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
@@ -110,6 +110,8 @@ function member(
 }
 
 beforeEach(() => {
+  // Each test's first decision is said: what an earlier test said is not this test's.
+  resetAnswerDecisionsSaid();
   // Every member admitted before the proof existed, so every row that is not about admission sees
   // the past handed over exactly as before. The roots a device records are per account, durable.
   localStorage.clear();
@@ -1654,6 +1656,17 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     await handleDistributionFrame(holdsNothingFrame());
 
     expect(noteHistoryHeldNothingSpy).toHaveBeenCalledWith('ws-1', 'Bob', 'r-h', 'web-bob');
+  });
+
+  it('says no `absorbed` line for a bundle that carried no seed - it reaches every member, and what it decides is said where it is decided', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(holdsNothingFrame());
+
+    expect(debug.mock.calls.flat().join(' ')).not.toContain('absorbed');
+    debug.mockRestore();
   });
 
   it('ignores the claim, out loud, when the same bundle carries seeds', async () => {
@@ -3230,6 +3243,53 @@ describe('the salon scope of an answer', () => {
     // The public seed is unlisted and the private one is another roster's: nothing may travel, and
     // "I hold nothing" would be false - this device holds rows of the community.
     expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('says a withheld answer ONCE per decision: a repeat of the same ask is silent, a changed roster speaks again', async () => {
+    // DEVREVOKE-KEYGROUP (2026-10-29): a minted device asked three times in 27 s and every ask
+    // printed the same pair of lines against the same roster.
+    const sendMessage = wireAnswerer([{ channelId: PRIVATE, isPrivate: true }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const said = (needle: string) =>
+      info.mock.calls.map((c) => c.join(' ')).filter((l) => l.includes(needle)).length;
+    const ask = (requestId: string) =>
+      handleDistributionFrame(
+        askOn(workspaceScope('ws-1'), {
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+          requestId,
+        })
+      );
+
+    await ask('r-1');
+    await ask('r-2');
+    await ask('r-3');
+    expect(said('withholding 2 seed(s)')).toBe(1);
+    expect(said("withheld for their salon's roster")).toBe(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // The public salon is listed now: a different decision, said once.
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    await ask('r-4');
+    await ask('r-5');
+    expect(said('withholding 1 seed(s)')).toBe(1);
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    info.mockRestore();
+  });
+
+  it('another asking DEVICE is another decision, said for it', async () => {
+    wireAnswerer([{ channelId: PRIVATE, isPrivate: true }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const history = { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY };
+
+    await handleDistributionFrame(askOn(workspaceScope('ws-1'), history));
+    await handleDistributionFrame({
+      ...askOn(workspaceScope('ws-1'), { ...history, requestId: 'r-other' }),
+      senderDeviceId: 'mallory-phone',
+    });
+
+    const lines = info.mock.calls.map((c) => c.join(' '));
+    expect(lines.filter((l) => l.includes('withholding 2 seed(s)'))).toHaveLength(2);
     info.mockRestore();
   });
 

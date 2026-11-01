@@ -283,6 +283,22 @@ export function messageCount(channelId) {
 }
 
 /**
+ * A salon's messages as the server holds them: its own id and the id the sending client minted
+ * (`clientMessageId`, empty when none was sent), oldest first. A removal row reads its one message
+ * here so the sender's echo lines are forgiven for THAT message only (`removalNarration`).
+ *
+ * @returns {{id: string, clientId: string}[]}
+ */
+export function channelMessages(channelId) {
+  return rows(
+    psql(
+      `SELECT id, coalesce("clientMessageId",'') FROM channel_messages ` +
+        `WHERE "channelId" = '${channelId}' ORDER BY "createdAt"`
+    )
+  ).map(([id, clientId]) => ({ id, clientId }));
+}
+
+/**
  * The Graine SESSIONS a salon's transcript was sealed under, and how many rows each one holds.
  *
  * A SESSION IS THE UNIT THAT ROTATES, AND A MESSAGE COUNT CANNOT SEE IT. `messageCount` answers how
@@ -655,4 +671,36 @@ export function workspaceOrderOf(userId) {
     sortOrder: Number(sortOrder),
     name,
   }));
+}
+
+/**
+ * Every live KEY GROUP a device is routed on - a community's or a private salon's own distribution
+ * group - with its epoch. Read BEFORE a device is revoked: the revoke deletes these routing rows, so
+ * afterwards nothing would say which groups the device's leaf was in.
+ *
+ * @param {string} deviceId
+ * @returns {{ groupId: string, scope: 'community'|'salon', epoch: number }[]}
+ */
+export function keyGroupsOfDevice(deviceId) {
+  return rows(
+    psql(
+      `SELECT g.id, CASE WHEN g."distributionWorkspaceId" IS NOT NULL THEN 'community' ELSE 'salon' END, g."activeEpoch" ` +
+        `FROM dm_device_group_memberships m JOIN dm_groups g ON g.id = m."groupId" ` +
+        `WHERE m."deviceId" = '${deviceId}' AND g."deletedAt" IS NULL ` +
+        `AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL) ORDER BY g.id`
+    )
+  ).map(([groupId, scope, epoch]) => ({ groupId, scope, epoch: Number(epoch) }));
+}
+
+/**
+ * A group's server epoch and the devices routed on it, read together, or null for no such group.
+ *
+ * @param {string} groupId
+ * @returns {{ epoch: number, devices: string[] } | null}
+ */
+export function groupEpochAndRoster(groupId) {
+  const found = rows(psql(`SELECT "activeEpoch" FROM dm_groups WHERE id = '${groupId}'`));
+  if (found.length !== 1) return null;
+  const devices = rows(psql(`SELECT "deviceId" FROM dm_device_group_memberships WHERE "groupId" = '${groupId}'`)).map(([d]) => d);
+  return { epoch: Number(found[0][0]), devices };
 }

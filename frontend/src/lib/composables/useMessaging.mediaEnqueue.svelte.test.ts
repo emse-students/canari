@@ -17,6 +17,13 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+// The sign-out counter, moved by hand: a sign-out begins by bumping it (`clearAuthCounted`).
+const signOut = vi.hoisted(() => ({ count: 0 }));
+vi.mock('$lib/stores/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/auth')>()),
+  signOutGeneration: () => signOut.count,
+}));
+
 const enqueueMock = vi.fn();
 vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/outbox')>();
@@ -50,6 +57,10 @@ function makeContext() {
     conversations,
     userId: 'me',
     selectedContact: CONVO,
+    // Live, like the page's: a test that moves the selection moves what is on screen.
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     setSendError: vi.fn(),
     log: vi.fn(),
     ensureMls: () => ({ waitForMessageQueueIdle: async () => {} }),
@@ -108,6 +119,50 @@ describe('an attachment the queue cannot take', () => {
       files: [entryOf(async () => new ArrayBuffer(3))],
     });
     expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(1);
+  });
+});
+
+/**
+ * A FILE IS NOT QUEUED INTO A GROUP THAT CANNOT TAKE IT YET - a row awaiting (re-)admission, or a
+ * member check answering no. Refused with the "session establishing" sentence, nothing enqueued and
+ * no placeholder written (`useMessaging.svelte.ts`, the media branch of `handleSendChat`).
+ */
+describe('the media refusal before the queue', () => {
+  beforeEach(() => enqueueMock.mockReset());
+
+  it('refuses a file for a row awaiting re-admission, writing no placeholder', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    ctx.conversations.set(CONVO, { ...ctx.conversations.get(CONVO)!, lifecycle: 'pending' });
+    // Out of the group, awaiting the Welcome: `verifyCurrentUserMembership` answers no.
+    ctx.verifyCurrentUserMembership = async () => false;
+    const file = entryOf(async () => new ArrayBuffer(3));
+    await messaging.handleSendChat(ctx, '', { files: [file] });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_send_session_establishing());
+    expect(vi.mocked(ctx.log).mock.calls.some(([l]) => String(l).includes('media refused'))).toBe(
+      true
+    );
+  });
+
+  it('reads the row AFTER the barrier: a Remove merged during it refuses the file', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    // The member check still answers yes (its cache), but the Remove half of a re-admission merged
+    // while the send waited for the inbound queue, and wrote the row `pending`.
+    ctx.ensureMls = (() => ({
+      waitForMessageQueueIdle: async () => {
+        ctx.conversations.set(CONVO, { ...ctx.conversations.get(CONVO)!, lifecycle: 'pending' });
+      },
+    })) as never;
+    await messaging.handleSendChat(ctx, '', { files: [entryOf(async () => new ArrayBuffer(3))] });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_send_session_establishing());
   });
 });
 
@@ -174,6 +229,213 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     await sending;
 
     expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['second.pdf']);
+  });
+
+  // REPRO 2026-10-31: one staged video, Send tapped 13 times while the membership round trip of the
+  // first tap hung for 18 s on a stalled link - 13 copies went out, each under a new message id.
+  it('Send tapped again during the barrier queues the staged file ONCE', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    enqueueMock.mockResolvedValue(undefined);
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(1);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const taps = [1, 2, 3].map(() => messaging.handleSendChat(ctx, ''));
+    await flushMacrotask();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(0);
+    admit(true);
+    await Promise.all(taps);
+
+    const media = enqueueMock.mock.calls.filter(([e]) => (e as { kind: string }).kind === 'media');
+    expect(media).toHaveLength(1);
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(1);
+    expect(
+      vi.mocked(ctx.log).mock.calls.filter(([l]) => l === '[SEND] Abort: no text and no file')
+    ).toHaveLength(2);
+  });
+
+  const logLines = (ctx: MessagingContext) => vi.mocked(ctx.log).mock.calls.map(([l]) => String(l));
+
+  it('a refusal after the barrier gives the claimed file back, answers false and says so', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    ctx.verifyCurrentUserMembership = async () => false;
+
+    // FALSE: the composer gives back the caption it cleared at the tap (MainChatPage).
+    expect(await messaging.handleSendChat(ctx, 'the caption')).toBe(false);
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_send_session_establishing());
+    expect(logLines(ctx).some((l) => l.startsWith('[SEND] 1 file(s) back in the staging'))).toBe(
+      true
+    );
+  });
+
+  it('a refused file goes back to ITS place: before a file staged during the barrier', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('first.pdf')], ctx);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const sending = messaging.handleSendChat(ctx, '');
+    await flushMacrotask();
+    await messaging.handleFilesSelected([pdf('second.pdf')], ctx);
+    admit(false);
+    await sending;
+
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual([
+      'first.pdf',
+      'second.pdf',
+    ]);
+  });
+
+  it('two refused sends leave the staging in staging order', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    const answers: ((v: boolean) => void)[] = [];
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => answers.push(r));
+    await messaging.handleFilesSelected([pdf('first.pdf')], ctx);
+    const one = messaging.handleSendChat(ctx, '');
+    await flushMacrotask();
+    await messaging.handleFilesSelected([pdf('second.pdf')], ctx);
+    const two = messaging.handleSendChat(ctx, '');
+    await flushMacrotask();
+
+    // The first send's refusal lands first, so the second send's file returns to a staging that
+    // already holds an OLDER file: prepending it would put second.pdf ahead of first.pdf.
+    answers[0](false);
+    await one;
+    answers[1](false);
+    await two;
+
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual([
+      'first.pdf',
+      'second.pdf',
+    ]);
+  });
+
+  it('a refusal says nothing on a conversation the member moved to; the file waits in its own', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const sending = messaging.handleSendChat(ctx, '');
+    await flushMacrotask();
+    (ctx as { selectedContact: string | null }).selectedContact = 'conversation-b';
+    admit(false);
+
+    expect(await sending).toBe(false);
+    expect(ctx.setSendError).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
+  });
+
+  it('a refused voice note is NOT re-staged, and the member is told it did not go', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    ctx.verifyCurrentUserMembership = async () => false;
+    const note = entryOf(async () => new ArrayBuffer(3));
+
+    expect(await messaging.handleSendChat(ctx, '', { files: [note] })).toBe(false);
+
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_send_session_establishing());
+    const lines = logLines(ctx);
+    expect(lines.some((l) => l.includes('NOT re-staged after the refusal: a voice note'))).toBe(
+      true
+    );
+    expect(lines.some((l) => l.includes('back in the staging'))).toBe(false);
+  });
+
+  it('a voice note refused after the member moved on is said there as dropped', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const sending = messaging.handleSendChat(ctx, '', {
+      files: [entryOf(async () => new ArrayBuffer(3))],
+    });
+    await flushMacrotask();
+    (ctx as { selectedContact: string | null }).selectedContact = 'conversation-b';
+    admit(false);
+    await sending;
+
+    expect(ctx.setSendError).toHaveBeenCalledWith(
+      m.chat_media_dropped_other_conversation({ cause: m.chat_send_session_establishing() })
+    );
+  });
+
+  it('a membership check that throws gives the claimed file back before the throw', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    ctx.verifyCurrentUserMembership = async () => {
+      throw new Error('local state unreadable');
+    };
+
+    await expect(messaging.handleSendChat(ctx, '')).rejects.toThrow('local state unreadable');
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
+  });
+
+  it('an MLS service that throws SYNCHRONOUSLY gives the claimed file back before the throw', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    ctx.ensureMls = () => {
+      throw new Error('no MLS service');
+    };
+
+    await expect(messaging.handleSendChat(ctx, '')).rejects.toThrow('no MLS service');
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['a.pdf']);
+  });
+
+  it('a sign-out during the barrier neither queues nor re-stages, even when the group says yes', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const sending = messaging.handleSendChat(ctx, '');
+    await flushMacrotask();
+    signOut.count++;
+    messaging.forgetAccount(vi.fn());
+    // YES: without the sign-out check the send would go on, queue the file and clear the banner.
+    admit(true);
+    await sending;
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.setSendError).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+  });
+
+  it('logs the start and the end of the media barrier', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    enqueueMock.mockResolvedValue(undefined);
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+
+    await messaging.handleSendChat(ctx, '');
+
+    const lines = vi.mocked(ctx.log).mock.calls.map(([l]) => String(l));
+    expect(lines.some((l) => l.startsWith('[SEND] media barrier: waiting'))).toBe(true);
+    expect(
+      lines.some((l) => /^\[SEND\] media barrier: done after \d+ ms \(member=true/.test(l))
+    ).toBe(true);
   });
 
   it('a sign-out forgets every staged file and armed reply', async () => {

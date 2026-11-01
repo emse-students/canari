@@ -268,7 +268,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
-        "followedUserId" varchar(255) NOT NULL);
+        "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
       CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar NOT NULL,
         type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar);
     `);
@@ -335,7 +335,11 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     );
     await q(`INSERT INTO user_moderation ("userId", "isMuted") VALUES ('mu', true)`);
     await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ('gb', 'au'), ('pr', 'bl')`);
-    await q(`INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ('gf', 'au')`);
+    // gf follows au; gr only ASKED to (WP-F1), and a request is not a follow.
+    await q(
+      `INSERT INTO user_follows ("followerUserId", "followedUserId", status)
+         VALUES ('gf', 'au', 'accepted'), ('gr', 'au', 'pending')`
+    );
     for (const p of POSTS) {
       await q(
         `INSERT INTO posts (id, "authorId", "associationId", anonymous, "hiddenByModeration", markdown, "feedNotifiedAt")
@@ -555,9 +559,10 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         subjectId: P(1),
         from: { id: AG, name: 'AG' },
         proposedBy: { id: 'pr', name: 'Paul Proposer' },
-        // gr, gf, gb and outsider see AG and not the post (pr already does: shared space).
-        // EXACTLY whom acceptance would tell: gr, gf and outsider - never gb, who blocked au.
-        details: { preview: 'post 01', newlyReached: 3 },
+        // gr, gb and outsider see AG and not the post (pr already does: shared space; gf too, as
+        // au's ACCEPTED follower, WP-F5). EXACTLY whom acceptance would tell: gr and outsider -
+        // never gb, who blocked au, and never gf, who reads it already.
+        details: { preview: 'post 01', newlyReached: 2 },
       });
       // Nobody else reads it.
       expect((await personal.inbox('pr')).incoming).toEqual([]);
@@ -617,11 +622,12 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       );
       expect(rows).toEqual([{ republishedBy: 'pr' }]);
       expect(told).toEqual([
-        // Announced already: every newly reached reader but the one who blocked the author.
+        // Announced already: every newly reached reader but the one who blocked the author - and
+        // not gf, au's accepted follower, who saw the post before it was carried (WP-F5).
         expect.objectContaining({
           type: 'association_repost',
           postId: P(1),
-          recipientIds: ['gf', 'gr', 'outsider'],
+          recipientIds: ['gr', 'outsider'],
         }),
         expect.objectContaining({
           type: 'repost_personal_accepted',
@@ -821,7 +827,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       const proposal = await personal.request(P(4), AG, 'pr');
       told.length = 0;
       await proposals.accept(proposal.id, 'au', false);
-      // gf follows au: the sweep will tell them. gb blocked au: nobody tells them.
+      // gf follows au: they see the post already (WP-F5), and the sweep tells them. gb blocked au:
+      // nobody tells them. gr's request is still pending, so the sweep does not count gr: told here.
       expect(told[0]).toMatchObject({
         type: 'association_repost',
         recipientIds: ['gr', 'outsider'],

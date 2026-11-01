@@ -67,6 +67,23 @@
      */
     paused?: boolean;
     /**
+     * Holds a STOPPED camera stopped, without closing a live one: the owner has handed the screen to
+     * something that will decide what comes next (the gallery picker, whose answer may be a review
+     * that needs no camera). On Android the picker backgrounds the app, so its return would reopen
+     * the camera for the fraction of a second before the pick lands in a review (Mi 9T, 2026-10-28).
+     * A live camera is left alone: a picker that does not hide the page (a desktop browser) keeps
+     * its preview. Turning it false opens a stopped camera again, as `paused` does.
+     */
+    deferOpen?: boolean;
+    /**
+     * THE WAY OUT OF A DEFERRAL NOBODY ENDS. The owner lifts `deferOpen` when the picker answers, and
+     * some pickers never do: an engine with no `cancel` event on a file input (Chromium < 113, Safari
+     * < 16.4) or a native dismissal its plugin never settles. So while the camera is stopped, the
+     * open deferred and the page on screen, the stand-in offers to open the camera, and this is the
+     * member's tap on it: the owner lifts the deferral. A gesture, never a clock.
+     */
+    onreopen?: () => void;
+    /**
      * Called just before the app's going to the background takes the camera away, so a take in
      * progress can be ended - and kept - while its tracks still flow.
      */
@@ -91,6 +108,8 @@
     controls,
     faultActions,
     paused = false,
+    deferOpen = false,
+    onreopen,
     onBeforeRelease,
     onclose,
     microphoneAsked = true,
@@ -111,6 +130,23 @@
   const standInShown = $derived(
     session.phase !== 'error' && !(session.phase === 'live' && frameReady)
   );
+
+  /** The page is on screen: the member can see, and tap, what the stand-in offers. */
+  let onScreen = $state(typeof document === 'undefined' || document.visibilityState !== 'hidden');
+
+  /**
+   * The camera is stopped because the owner deferred its open, and the member is looking at it: the
+   * stand-in's "opening" would be a lie, so it offers the open instead (`onreopen`).
+   */
+  const reopenOffered = $derived(
+    !!onreopen && deferOpen && !paused && onScreen && session.phase === 'stopped'
+  );
+
+  /** The member asked for the camera while its open was deferred: the owner lifts the deferral. */
+  function reopen() {
+    console.debug('[camera] reopen tapped while the open was deferred: the owner lifts it');
+    onreopen?.();
+  }
 
   function onFrame() {
     if (!video || video.videoWidth === 0 || frameReady) return;
@@ -141,8 +177,8 @@
    * replaced and the microphone and the recorder run on (`flipDuringTake`). The flip resets the zoom.
    */
   function flip() {
-    if (!flipAllowed) {
-      console.debug('[camera] flip asked while the capture forbids it - ignored');
+    if (!flipAllowed || !session.canSwitch) {
+      console.debug('[camera] flip asked while it is forbidden or there is one camera - ignored');
       return;
     }
     console.debug(`[camera] flip ${recording ? 'during a take' : 'outside a take'}`);
@@ -187,7 +223,10 @@
 
   /** The tab this camera was opened from (see {@link cameraOriginFrom}). */
   let origin = CAMERA_DEFAULT_ORIGIN;
-  afterNavigate(({ from }) => {
+  afterNavigate(({ from, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     origin = cameraOriginFrom(from?.url);
   });
 
@@ -204,7 +243,7 @@
       return;
     }
     console.debug(`[camera] close, back to ${origin}`);
-    void goto(resolve(origin as '/'), { replaceState: true });
+    void goto(resolve(origin as '/'), { replace: true });
   }
 
   // The element follows the session's stream; `srcObject` is a property, not an attribute.
@@ -223,25 +262,36 @@
    * Android takes the device from a backgrounded holder anyway.
    */
   function onVisibility() {
-    if (document.visibilityState === 'hidden') {
+    onScreen = document.visibilityState !== 'hidden';
+    if (!onScreen) {
       console.debug('[camera] app hidden - releasing the camera');
       onBeforeRelease?.();
       // `suspend`, not `stop`: the permission dialog backgrounds the app, and its answer is awaited.
       session.suspend();
-    } else if (!paused) {
+    } else if (paused || deferOpen) {
+      // The owner holds the camera off (a review, a screen being left, a pick in flight): the
+      // return is not a reason to open it.
+      console.debug(`[camera] app visible, ${paused ? 'paused' : 'open deferred'} - not reopened`);
+    } else {
       console.debug('[camera] app visible');
       session.resume();
     }
   }
 
-  // Opens the camera on arrival and after a pause, and closes it for one. Only `paused` is read
-  // here: the session's own state is read untracked, or every phase change would re-run this.
+  // Opens the camera on arrival and after a pause, and closes it for one. Only `paused` and
+  // `deferOpen` are read here: the session's own state is read untracked, or every phase change
+  // would re-run this.
   $effect(() => {
     const hold = paused;
+    const defer = deferOpen;
     untrack(() => {
       if (hold) {
         if (session.phase !== 'stopped') session.stop();
-      } else if (session.phase === 'stopped' && document.visibilityState !== 'hidden') {
+      } else if (session.phase !== 'stopped' || document.visibilityState === 'hidden') {
+        return;
+      } else if (defer) {
+        console.debug('[camera] stopped with the open deferred by the owner - not started');
+      } else {
         void session.start();
       }
     });
@@ -293,7 +343,10 @@
      while the capture forbids it (`flipAllowed`). -->
 <section
   class="relative h-full w-full overflow-hidden bg-black text-white"
-  use:previewDoubleTap={{ onDoubleTap: flip, enabled: session.phase === 'live' && flipAllowed }}
+  use:previewDoubleTap={{
+    onDoubleTap: flip,
+    enabled: session.phase === 'live' && flipAllowed && session.canSwitch,
+  }}
   aria-label={m.reels_camera_title()}
   data-camera-phase={session.phase}
   data-camera-fault={session.fault ?? undefined}
@@ -335,13 +388,31 @@
     class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-linear-to-b text-white/70 transition-opacity duration-200 motion-reduce:transition-none {standInShown
       ? 'opacity-100'
       : 'opacity-0'}"
-    role={standInShown ? 'status' : undefined}
-    aria-hidden={!standInShown}
+    role={standInShown && !reopenOffered ? 'status' : undefined}
+    aria-hidden={!standInShown || reopenOffered}
     data-camera-standin={standInShown ? 'shown' : 'gone'}
   >
-    <Camera size={40} strokeWidth={1.5} class="motion-safe:animate-pulse" />
-    <p class="text-sm">{m.reels_camera_starting()}</p>
+    {#if !reopenOffered}
+      <Camera size={40} strokeWidth={1.5} class="motion-safe:animate-pulse" />
+      <p class="text-sm">{m.reels_camera_starting()}</p>
+    {/if}
   </div>
+
+  <!-- A deferred open that nothing ended (a picker that never said it closed): the member's tap is
+       the way back, on the stand-in's own surface. -->
+  {#if reopenOffered}
+    <div class="absolute inset-0 flex items-center justify-center">
+      <button
+        type="button"
+        class="inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-500"
+        data-camera-reopen
+        onclick={reopen}
+      >
+        <Camera size={40} strokeWidth={1.5} />
+        {m.reels_camera_reopen()}
+      </button>
+    </div>
+  {/if}
 
   {#if session.phase === 'error' && session.fault}
     {@const text = FAULT_TEXT[session.fault]}
@@ -399,16 +470,18 @@
 
     {#if session.phase === 'live'}
       <div class="flex flex-col gap-3">
-        <button
-          type="button"
-          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
-          aria-label={m.reels_camera_switch()}
-          title={m.reels_camera_switch()}
-          disabled={session.flipping || !flipAllowed}
-          onclick={flip}
-        >
-          <SwitchCamera size={22} strokeWidth={2.25} />
-        </button>
+        {#if session.canSwitch}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+            aria-label={m.reels_camera_switch()}
+            title={m.reels_camera_switch()}
+            disabled={session.flipping || !flipAllowed}
+            onclick={flip}
+          >
+            <SwitchCamera size={22} strokeWidth={2.25} />
+          </button>
+        {/if}
         {#if session.torchAvailable}
           <button
             type="button"

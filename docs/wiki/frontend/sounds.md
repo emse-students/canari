@@ -31,15 +31,21 @@ on Android. `onAppScreenChange` subscribes to both, and every release below uses
 | "Message" trill (palette A; the "mention" one when it names the reader) | A message from someone else lands where the reader can see it (`canSeeArrival`); otherwise the OS notification sounds instead | the shared tone context ([toneOutput.ts](../../../frontend/src/lib/utils/toneOutput.ts)) | suspended when its oscillator ends |
 | "Send" trill (palette A) | The reader sends a message | same | same |
 | "Read" trill (palette A) | Messages the reader wrote are marked read | same | same |
-| Incoming-call ring (440 + 480 Hz bursts, every 2.4 s) | An incoming call, while calls are enabled ([calls](modules/calls.md); `CALLS_ENABLED = false`)                                | same                                                                                                | suspended after each burst                                                                 |
+| Incoming-call ring (440 + 480 Hz bursts, every 2.4 s) | An incoming call rings in the open app ([calls](modules/calls.md)) | same, as a `call` tone (exempt from the call gate) | suspended after each burst |
+| The caller's ringback (a canary roll and two falling whistles, 4 s loop) | The caller's invite has left and nobody answered yet (`CallService.ringingOut`) | a looping `<audio>` beside the call's voice in `CallOverlay` ([callRingback.ts](../../../frontend/src/lib/utils/callRingback.ts)), the file `static/sounds/canari_ringback.wav` | paused at the transition that ends the ring, and with the overlay |
 | Voice notes, audio attachments                        | The reader presses play                                                                                                       | an `<audio>` element, under [playbackArbiter](../../../frontend/src/lib/actions/playbackArbiter.ts) | paused by another media starting, and on leaving the screen on a native phone              |
-| Post, reel and conversation videos                    | Scrolled into view (muted, ambient) or opened (audible)                                                                       | `<video>` elements, same arbiter                                                                    | ambient ones paused on leaving the screen everywhere                                       |
+| Post, reel, live and conversation videos; the reel review | Scrolled into view (muted, ambient) or opened (audible)                                                                       | `<video>` elements, same arbiter                                                                    | ambient ones paused on leaving the screen everywhere                                       |
 | A call's remote audio                                 | A call in progress                                                                                                            | the hidden sink in `CallOverlay`                                                                    | unbound (`srcObject = null`) when it stops carrying the stream                             |
 | None: the voice-note waveform decode                  | A voice note is drawn                                                                                                         | an `OfflineAudioContext` - renders to memory, opens no device                                       | -                                                                                          |
 | None: the reel editor's render                        | Publishing an edited video reel                                                                                               | a muted `<video>` captured into a recorder                                                          | element unloaded and both capture streams stopped when the render ends, success or failure |
 
 The OS notification sounds (channels `canari_messages_v2`, `canari_mentions_v2`,
 `canari_reactions_v2`, `canari_calls`) are posted by the platform and are not the app's output.
+
+**During a call every sound above but the call's own is silenced** (2026-10-31): one gate,
+[callSoundGate.ts](../../../frontend/src/lib/utils/callSoundGate.ts), held from the ring (out or in)
+to the end - see [calls](modules/calls.md#the-apps-other-sounds-during-a-call-2026-10-31), which also
+covers the native notifications.
 
 ## The palette - "A - Gazouillis" (user's choice, 2026-10-09)
 

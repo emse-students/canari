@@ -1,4 +1,5 @@
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -604,11 +605,11 @@ export async function removeMlsState(userId: string): Promise<void> {
   }
 
   if (isTauriRuntime()) {
+    // The native session ends in the same hold as the sweep, so no manager outlives its files.
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('delete_mls_state');
+      await endNativeMlsSession('state reset', { sweepState: true });
     } catch (e) {
-      console.warn('[MLS] delete_mls_state failed:', e);
+      console.warn('[MLS] ending the native MLS session with its state failed:', e);
     }
     return;
   }

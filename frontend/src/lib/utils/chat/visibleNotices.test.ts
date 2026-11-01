@@ -84,6 +84,7 @@ function inviteDeps(addMessageToChat: Mock<NoticeWriter>) {
   const mlsService = createMlsServiceStub();
   vi.mocked(mlsService.fetchUserDevices).mockResolvedValue([{ deviceId: 'bob-dev' }] as never);
   vi.mocked(mlsService.acquireAddLock).mockResolvedValue(true);
+  vi.mocked(mlsService.acquireAddLockAnswer).mockResolvedValue('taken');
   vi.mocked(mlsService.addMembersBulk).mockResolvedValue({
     addedDeviceIds: ['bob-dev'],
     skipped: [],
