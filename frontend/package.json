@@ -1,6 +1,6 @@
 {
   "name": "canari",
-  "version": "1.5.3-alpha.2",
+  "version": "1.5.4-alpha.1",
   "private": true,
   "description": "",
   "license": "SEE LICENSE IN ../LICENSE",
@@ -66,6 +66,7 @@
     "mediabunny": "^1.62.1",
     "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
+    "simple-rnnoise-wasm": "1.1.0",
     "svelte-dnd-action": "^0.9.80",
     "thumbhash": "^0.1.1"
   },

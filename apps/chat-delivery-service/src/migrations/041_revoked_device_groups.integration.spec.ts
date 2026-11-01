@@ -34,6 +34,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { deleteGroupOwnedRows } from '../utils/group-purge';
@@ -59,6 +60,7 @@ const BEFORE_041 = [
   GroupInvite,
   GroupMembershipInterval,
   SeatEviction,
+  JoinAskPush,
   UserDismissedGroup,
 ];
 

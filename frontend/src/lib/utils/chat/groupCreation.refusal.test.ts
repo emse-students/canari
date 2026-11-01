@@ -75,6 +75,7 @@ function dmDeps() {
     }),
     getLocalGroups: vi.fn(() => Array.from(local)),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
     getGroupMemberIdentities: vi.fn(async () => [] as string[]),
@@ -145,6 +146,7 @@ describe('createNewGroup names its refusal', () => {
     Object.assign(d.mlsService, {
       fetchUserDevices: vi.fn(async () => [{ deviceId: 'dev-2' }]),
       acquireAddLock: vi.fn(async () => true),
+      acquireAddLockAnswer: vi.fn(async () => 'taken'),
       releaseAddLock: vi.fn(async () => {}),
       // The tree the Add reads first (`addDevicesRebuildingOnRace`): nobody invited holds a leaf yet.
       getGroupMemberIdentities: vi.fn(async () => [] as string[]),

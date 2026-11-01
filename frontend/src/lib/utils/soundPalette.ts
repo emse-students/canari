@@ -167,6 +167,53 @@ export function soundDuration(name: SoundName): number {
 }
 
 /**
+ * THE CALLER'S RINGBACK - "it is ringing at the other end", sung by a canary (owner, 2026-10-31:
+ * *"mieux qu'une tonalite de telephone, dans le style d'un canari qui chante"*).
+ *
+ * ONE PHRASE, LOOPED WITH A PAUSE, like a phone's ringback (France: 1.5 s on, 3.5 s off): a soft
+ * roll of six quick rising syllables - the canary's "tour" - then two slower falling whistles that
+ * read as a question asked twice. It sits BELOW the notification trills (1350 to 2150 Hz, a soft
+ * octave partial on the whistles only): it plays for up to the whole ring window against the ear,
+ * so it must not be shrill, and the earpiece band carries it whole.
+ *
+ * NOT played by Web Audio: it is rendered offline by `tools/notification-sounds/render.mjs` into ONE
+ * file of exactly {@link RINGBACK_PERIOD_S} seconds - the phrase, its small room, then silence - which
+ * `utils/callRingback.ts` loops on an `<audio>` element. The loop is the element's own (`loop`), so no
+ * timer paces it, and the pause is part of the file.
+ */
+export const RINGBACK_PHRASE: VoiceSpec[] = [
+  ...[0, 0.075, 0.15, 0.225, 0.3, 0.375].flatMap((d, i) =>
+    voice(d, {
+      path: [
+        [0, 1350 + (i % 2) * 60],
+        [0.045, 1750 + (i % 2) * 60],
+      ],
+      dur: 0.065,
+      vib: 18,
+      vibHz: 28,
+      peak: 0.1 + i * 0.006,
+      send: 0.8,
+    })
+  ),
+  ...[0.62, 0.95].flatMap((d) =>
+    voice(d, {
+      path: [
+        [0, 2150],
+        [0.24, 1600],
+      ],
+      dur: 0.28,
+      vib: 22,
+      vibHz: 24,
+      peak: 0.13,
+      partial: 2,
+    })
+  ),
+];
+
+/** One loop of the ringback, phrase and pause together, in seconds: the rendered file's length. */
+export const RINGBACK_PERIOD_S = 4;
+
+/**
  * Schedules one palette sound on `ctx` (dry) and returns EVERY oscillator it started - the vibrato
  * ones included, because `toneOutput` suspends the output on the `ended` of the last one counted.
  */

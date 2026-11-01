@@ -38,6 +38,7 @@ import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { categoryOfDataPush } from './push-category';
+import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
 import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
@@ -7003,6 +7004,37 @@ export class MessagingService {
   }
 
   /**
+   * Drops the tokens of devices KNOWN to run a build older than `minAppVersion` (the device registry's
+   * `deviceAppVersion`, keyed by the same user and device id as the token): a push that names a
+   * screen an older build answers with a 404 is not worth ringing it. A device whose build was never
+   * reported is KEPT and counted in the log - dropping on "unknown" would silence a device nobody
+   * proved unable. Without a floor this is the identity and reads nothing.
+   */
+  private async tokensAbleToOpen(
+    tokens: PushToken[],
+    userId: string,
+    minAppVersion: string | undefined,
+    traceId: string
+  ): Promise<PushToken[]> {
+    if (!minAppVersion || tokens.length === 0) return tokens;
+    const rows = await this.keyPackageRepo.find({
+      where: { userId, deviceId: In(tokens.map((t) => t.deviceId)) },
+      select: { userId: true, deviceId: true, deviceAppVersion: true },
+    });
+    const versionOf = new Map(rows.map((r) => [r.deviceId, r.deviceAppVersion]));
+    let unknown = 0;
+    const kept = tokens.filter((t) => {
+      const able = appVersionAtLeast(versionOf.get(t.deviceId), minAppVersion);
+      if (able === null) unknown++;
+      return able !== false;
+    });
+    this.logger.log(
+      `[SOCIAL_PUSH][${traceId}] floor=${minAppVersion} user=${userId}: ${tokens.length - kept.length} device(s) below it skipped, ${unknown} of unknown build kept`
+    );
+    return kept;
+  }
+
+  /**
    * Sends a non-MLS push to every registered device of a user - the side-channel signals where the
    * server never sees the MLS plaintext: reactions, community channel messages and their silent
    * `channel_read` frames, posts, form reminders.
@@ -7021,9 +7053,12 @@ export class MessagingService {
     userId: string,
     title: string,
     body: string,
-    data: Record<string, string>,
+    rawData: Record<string, string>,
     inline: Record<string, string> = {}
   ): Promise<{ sent: number; failed: number }> {
+    // The floor is read here and NEVER forwarded: it is an instruction to the server, not a field a
+    // device should see.
+    const { [MIN_APP_VERSION_DATA_KEY]: minAppVersion, ...data } = rawData;
     if (getApps().length === 0) {
       // Not a quiet no-op: with Firebase uninitialised NOTHING notifies, on any platform, and the
       // caller's own log would still read as a success.
@@ -7066,7 +7101,8 @@ export class MessagingService {
       }
     }
 
-    const pushTokens = await this.pushTokenRepo.find({ where: { userId } });
+    const allTokens = await this.pushTokenRepo.find({ where: { userId } });
+    const pushTokens = await this.tokensAbleToOpen(allTokens, userId, minAppVersion, traceId);
 
     if (pushTokens.length === 0) {
       this.logger.log(`[SOCIAL_PUSH][${traceId}] No token for user=${userId}`);

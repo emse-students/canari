@@ -93,9 +93,7 @@ export class FakeUploader {
 export const LIMITS: LiveLimits = {
   segmentMaxBytes: 4 * 1024 * 1024,
   reconnectWindowMs: 60_000,
-  maxDurationMs: 3_600_000,
   manifestWindow: 10,
-  byteBudget: 1_687_500_000,
   segmentMinDurationMs: 1000,
   segmentBurst: 15,
   startsPerHour: 6,
@@ -174,6 +172,9 @@ export function fakeDeps() {
     now: () => clock.t,
     sleep: vi.fn((ms: number) => new Promise<void>((fire) => timers.push({ ms, fire }))),
     isHidden: () => hidden,
+    screenShareAvailable: vi.fn(() => false),
+    openScreen: vi.fn(async (_context: AudioContext | null) => fakeStream().stream),
+    createAudioContext: vi.fn((): AudioContext | null => null),
   } satisfies LiveBroadcastDeps;
   return {
     deps,

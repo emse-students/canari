@@ -363,19 +363,26 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
   // could not send or read anything after this Remove; the past it opened is stored decrypted
   // locally, and the Welcome installs on nothing, as a fresh join does.
   //
-  // DROPPED BEFORE THE ROW IS MARKED, so a kill between the two leaves an `active` row over no
-  // state - which the restore demotes to `pending`, the same end - and never a `pending` row over
-  // the evicted one. `deferred`: the commit path holds the MLS client mutex.
+  // NO ORDER HERE IS WHAT MAKES A KILL SAFE, and none could be. The merged Remove can reach disk
+  // before this row does by a path this function does not own - the commit path's own `persistNow`,
+  // a flush on backgrounding, another group's structural checkpoint, one already running: a
+  // checkpoint takes no lock against the commit path, and the row lives in another store. So any
+  // pair of (row, state) can survive a kill, `active` over the evicted state included, and the
+  // RESTORE is what is total over them (`reconcileRestoredLifecycles`): a row over a held group this
+  // device is out of has that state dropped and is left `pending` for the server to answer, never
+  // read as an eviction. The row is marked first only so the in-memory readers see `pending` the
+  // moment the state is gone. `deferred`: the commit path holds the MLS client mutex.
   if (reAddInFlight) {
     const key = findConversationKeyByGroupId(rest.conversations, groupId);
     const row = key ? rest.conversations.get(key) : undefined;
     if (key && row && row.lifecycle !== 'removed') {
+      const marked = markAwaitingReAdmission({ ...rest, key });
       await dropGroupState(mlsService, groupId, {
         reason: "the Remove half of this device's own re-admission - awaiting the Welcome",
         checkpoint: 'deferred',
         log,
       });
-      await markAwaitingReAdmission({ ...rest, key });
+      await marked;
     }
     log(
       `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, state dropped, awaiting the Welcome`

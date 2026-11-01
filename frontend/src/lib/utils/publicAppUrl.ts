@@ -31,7 +31,7 @@ export const PUBLIC_APP_HOSTS = ['canari-emse.fr', 'www.canari-emse.fr', 'canari
  * {@link NON_SPA_PATH_RE}. Keep in sync with the mobile universal-link paths.
  */
 export const IN_APP_ROUTE_RE =
-  /^\/(posts|forms|associations|profile|chat|shop|calendar|bookings|communities|notifications|dashboard|admin|events|account|dev|c|g)(\/|$)/;
+  /^\/(posts|forms|associations|profile|chat|shop|calendar|bookings|lives|communities|notifications|dashboard|admin|events|account|dev|c|g)(\/|$)/;
 
 /**
  * Path prefixes on the Canari host served by the backend, not the SvelteKit SPA.

@@ -38,13 +38,21 @@ export class ReelPreload {
   #held = false;
   #stopped = false;
 
-  constructor(ref: MediaRef, cache: ReelPreloadCache = defaultCache) {
+  /**
+   * @param onReady called with the decrypted URL once the video is in the cache - the slide decodes
+   *   its first frame from it (`reelPosters.svelte.ts`), so the swipe lands on that frame.
+   */
+  constructor(
+    ref: MediaRef,
+    cache: ReelPreloadCache = defaultCache,
+    onReady?: (url: string) => void
+  ) {
     this.#ref = ref;
     this.#cache = cache;
     console.debug(`[reel-preload] ${ref.mediaId}: start`);
     cache
       .acquire(ref, mediaUrl(), this.#abort.signal)
-      .then(() => {
+      .then((url) => {
         if (this.#stopped) {
           // Finished in the same turn it was stopped: give the hold straight back.
           cache.release(ref);
@@ -52,6 +60,7 @@ export class ReelPreload {
         }
         this.#held = true;
         console.debug(`[reel-preload] ${ref.mediaId}: ready`);
+        onReady?.(url);
       })
       .catch((err: unknown) => {
         if (this.#abort.signal.aborted) {

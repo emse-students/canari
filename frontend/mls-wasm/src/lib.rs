@@ -876,6 +876,21 @@ impl WasmMlsClient {
             .collect())
     }
 
+    /// Classifies `group_id` for the admission rule (`mls_core::admission`): `"closed"` for a
+    /// conversation, `"open"` for a community or salon key group, whose members enter by external
+    /// commit by design. Any other name is rejected. The caller checkpoints the state after it.
+    #[wasm_bindgen]
+    pub fn set_admission_policy(
+        &mut self,
+        group_id: String,
+        policy: String,
+    ) -> Result<(), JsValue> {
+        let policy = mls_core::AdmissionPolicy::parse(&policy)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown admission policy '{policy}'")))?;
+        self.manager.set_admission_policy(&group_id, policy);
+        Ok(())
+    }
+
     /// Remove all devices of one or more users from a group.
     /// `user_ids` is a JS Array of strings (usernames/identities).
     /// Returns [commit: Uint8Array, group_info: Uint8Array]: the commit to broadcast to remaining

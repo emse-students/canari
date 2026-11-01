@@ -81,7 +81,7 @@ import {
   makeUnrecordedInvitationTeller,
 } from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
-import { announceGroupReadyToSession } from '$lib/utils/chat/groupReadyAnnouncer';
+import { captureGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
   loadExistingConversations,
@@ -741,7 +741,13 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
+    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
+    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
+    // of a salon this device meets for the first time is not on disk yet when its first page lands
+    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
+    // device's placeholder).
     try {
+      await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
     } catch (e) {
@@ -1968,7 +1974,7 @@ export function useConversations() {
               if (id) selectConversationWithCtx(id, ctx);
             },
             saveConversation: (name: string) => saveConversation(name, ctx),
-            onGroupReady: announceGroupReadyToSession,
+            onGroupReady: captureGroupReadyAnnouncer(),
             log: ctx.log,
           });
           console.log(`[VERIFY] Direct conversation ${convo.id} recovery triggered`);

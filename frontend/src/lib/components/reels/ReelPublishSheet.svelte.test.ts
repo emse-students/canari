@@ -47,6 +47,7 @@ function deps(): PublishReelDeps {
       sourceBytes: 8,
       outputBytes: 4,
     })),
+    placeholder: vi.fn(async () => null),
     upload: vi.fn(async () => ({
       type: 'video' as const,
       mediaId: 'm-1',

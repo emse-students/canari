@@ -196,6 +196,25 @@ export function postCameraOpener(): (
   };
 }
 
+/**
+ * How many cameras this device has: its `videoinput` devices. READ AFTER A CAMERA IS OPEN - before
+ * the grant a browser may list none, or hide the labels - and again on `devicechange`. THROWS when
+ * the device list cannot be read; the caller decides (and logs) what a missing answer means.
+ */
+export async function countVideoInputs(): Promise<number> {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices.filter((d) => d.kind === 'videoinput').length;
+}
+
+/**
+ * Whether this browser understands the `facingMode` constraint - a phone's front/back choice. Read
+ * for the `[CAMERA_COUNT]` line, which is how the real count is compared with the device's kind.
+ */
+export function facingModeSupported(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.mediaDevices?.getSupportedConstraints?.().facingMode === true;
+}
+
 /** Hands the camera and the microphone back. Safe on a stream already stopped. */
 export function releaseCamera(stream: MediaStream | null): void {
   if (!stream) return;

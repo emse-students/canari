@@ -145,11 +145,24 @@
           votre nom, puis l'accepte ou la refuse ; un refus n'est signalé à personne. Si elle
           accepte, vous en êtes notifié. Sont conservées la demande et sa date, puis, si elle est
           acceptée, la date d'acceptation ; un refus supprime la demande. Vous pouvez consulter la
-          liste de vos abonnés et en retirer quelqu'un. Pour ne jamais notifier deux fois la même
-          personne et limiter le nombre de nouvelles demandes par jour, le serveur garde aussi le
-          fait qu'une demande (ou son acceptation) a déjà été notifiée entre deux comptes, et sa
-          date, même après un retrait, un refus ou un blocage. Suivre une association ne demande
-          rien à personne.
+          liste de vos abonnés et en retirer quelqu'un. Une personne dont vous avez accepté la
+          demande, comme une personne qui vous suivait déjà avant l'arrivée des demandes
+          d'abonnement, voit vos publications personnelles et vos directs, quels que soient son
+          campus, sa formation ou son espace, y compris un membre du personnel, et y compris les
+          publications parues avant votre acceptation ; elle est notifiée quand vous publiez ou
+          lancez un direct. Elle trouve vos publications dans son onglet « Suivis » et dans la
+          recherche, pas dans « Tout », qui reste limité aux espaces ; un direct en cours lui est
+          montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages et
+          les messages du chat d'un direct sur une de vos publications personnelles sont lus par
+          tout son public, qui comprend donc ces abonnés. Elle ne voit jamais ce que vous publiez de
+          façon anonyme. La retirer de vos abonnés ou se désabonner lui retire aussitôt cet accès ;
+          un blocage, dans un sens ou dans l'autre, le lui retire aussitôt et supprime l'abonnement,
+          qui ne revient pas quand le blocage est levé : il faut une nouvelle demande. Les aperçus
+          déjà reçus dans ses notifications restent visibles jusqu'à leur effacement, au bout de 90
+          jours. Pour ne jamais notifier deux fois la même personne et limiter le nombre de
+          nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande (ou son
+          acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un retrait, un
+          refus ou un blocage. Suivre une association ne demande rien à personne.
         </dd>
       </div>
       <div>
@@ -172,18 +185,24 @@
         </dd>
       </div>
       <div>
-        <dt>Responsable du compte de paiement Lydia d'une association</dt>
+        <dt>Caissiers du compte de paiement Lydia d'une association</dt>
         <dd>
-          Quand un trésorier désigne un membre de son association comme Responsable du compte Lydia
-          de cette association, Canari transmet à Lydia le numéro de téléphone de ce membre, qui
-          reçoit un SMS de Lydia et devient caissier de ce compte. Le numéro est saisi par le
-          trésorier : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
-          accepte ce rôle. Canari garde l'identifiant du membre, celui du trésorier qui l'a désigné,
-          la date, et le numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers
-          chiffres sont affichés. Le numéro chiffré et ses deux derniers chiffres sont effacés quand
-          le compte Lydia est délié de l'association ; les deux identifiants restent jusqu'à la
-          suppression de votre compte Canari, avec laquelle la ligne est supprimée. Lydia conserve
-          ses propres données selon sa politique.
+          Quand un responsable des paiements de son association désigne un membre comme caissier du
+          compte Lydia de cette association (Responsable, trésorier ou vendeur), Canari transmet à
+          Lydia le numéro de téléphone de ce membre, qui reçoit un SMS de Lydia et peut alors
+          utiliser l'application Lydia Pro pour l'association. Le numéro est saisi par le
+          responsable : le membre n'est pas consulté dans Canari, et c'est par le SMS de Lydia qu'il
+          accepte ce rôle ; Canari peut aussi l'en avertir par une notification. Canari garde
+          l'identifiant du membre, celui de la personne qui l'a ajouté, son rôle, les dates, et le
+          numéro chiffré (illisible sans la clé du serveur) ; seuls ses deux derniers chiffres sont
+          affichés. Quand le Responsable change de numéro, l'autre numéro (l'ancien, ou le nouveau
+          tant que Lydia ne l'a pas confirmé) est gardé chiffré de la même façon, jusqu'à ce que
+          Lydia confirme qu'il a été retiré. Quand un caissier est retiré, Canari demande à Lydia de
+          lui ôter ses droits et vérifie auprès de Lydia qu'il n'en a plus ; ses numéros sont alors
+          effacés. Ils le sont aussi quand le compte Lydia est délié de l'association. Les deux
+          identifiants restent jusqu'à la suppression de votre compte Canari : avant de supprimer la
+          ligne, Canari demande à Lydia de retirer vos numéros de caissier. Lydia conserve ses
+          propres données selon sa politique.
         </dd>
       </div>
       <div>

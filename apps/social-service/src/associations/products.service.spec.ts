@@ -117,6 +117,28 @@ function makeCheckoutStore(
   return { repo, rows, tx, records };
 }
 
+/**
+ * A purchase decision as the checkout takes it (`ProductsService.checkout`): `preparePurchase`, then
+ * `decidePurchase` on a TRANSACTION's manager - it takes a `FOR SHARE` read of the association that
+ * a database refuses outside one.
+ */
+function resolvePurchase(
+  service: unknown,
+  associationId: string,
+  productId: string,
+  userId: string,
+  customAmountCents?: number
+): Promise<any> {
+  const svc = service as any;
+  return svc
+    .preparePurchase(associationId, productId, userId)
+    .then((prepared: unknown) =>
+      svc.productRepo.manager.transaction((manager: unknown) =>
+        svc.decidePurchase(prepared, userId, customAmountCents, manager)
+      )
+    );
+}
+
 describe('ProductsService cotisation gating/pricing and Cercle re-gating', () => {
   function makeService() {
     const manager: any = {
@@ -154,8 +176,14 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // The distinct-association query of the provider-activation sweep.
       createQueryBuilder: jest.fn(() => {
         const qb: any = {};
-        for (const method of ['select', 'where']) qb[method] = jest.fn(() => qb);
+        for (const method of ['select', 'where', 'andWhere', 'orderBy', 'addOrderBy']) {
+          qb[method] = jest.fn(() => qb);
+        }
         qb.getRawMany = jest.fn(() => Promise.resolve(withheldRows));
+        // The shop listing (`listAllActive`): answered by `find`, so each test states its rows in
+        // one place. Which association is VISIBLE is SQL, proven against PostgreSQL in
+        // `shop-partnership-visibility.integration.spec.ts`.
+        qb.getMany = jest.fn(() => (productRepo.find as jest.Mock)({ where: { isActive: true } }));
         return qb;
       }),
       __setWithheld: (ids: string[]) => {
@@ -282,6 +310,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     ({
       id: 'asso1',
       slug: 'bde',
+      type: 'association',
       lydiaOnboardingComplete: true,
       lydiaAccountId: 'acct_1',
       cotisationEnabled: true,
@@ -317,7 +346,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     productRepo.findOne.mockResolvedValue(product({ membersOnly: true }));
     userTagService.hasActiveTag.mockResolvedValue(false);
 
-    await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
+    await expect(resolvePurchase(service, 'asso1', 'prod1', 'user1')).rejects.toThrow(
       ForbiddenException
     );
     expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
@@ -334,7 +363,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     productRepo.findOne.mockResolvedValue(product({ membersOnly: true }));
     userTagService.hasActiveTag.mockResolvedValue(true);
 
-    const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
     expect(result.amountCents).toBe(1000);
   });
 
@@ -344,7 +373,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     productRepo.findOne.mockResolvedValue(product({ amountCentsMember: 500 }));
     userTagService.hasActiveTag.mockResolvedValue(true);
 
-    const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
     expect(result.amountCents).toBe(500);
   });
 
@@ -354,8 +383,62 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     productRepo.findOne.mockResolvedValue(product({ amountCentsMember: 500 }));
     userTagService.hasActiveTag.mockResolvedValue(false);
 
-    const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
     expect(result.amountCents).toBe(1000);
+  });
+
+  describe('a list or an institution sells nothing (owner, 2026-10-31)', () => {
+    it.each(['list', 'institution'] as const)(
+      'refuses to create a product on a %s, typed 403',
+      async (type) => {
+        const { service, assoRepo, productRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ type }));
+
+        const attempt = service.create(
+          'asso1',
+          { name: 'Sweat', type: 'other', amountCents: 2500 } as any,
+          false
+        );
+        await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+        await expect(attempt).rejects.toMatchObject({
+          response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+        });
+        expect(productRepo.save).not.toHaveBeenCalled();
+      }
+    );
+
+    it('lets an existing product of a list be taken OFF sale, never put back on or repriced', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product());
+      await expect(
+        service.update('asso1', 'prod1', { isActive: true } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('asso1', 'prod1', { isActive: false, amountCents: 1 } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('asso1', 'prod1', { isActive: false } as any, false)
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses to provision a cotisation product for a list', async () => {
+      const { service } = makeService();
+      await expect(
+        service.provisionCotisationProduct(asso({ type: 'list', cotisationMode: 'lifetime' }))
+      ).rejects.toMatchObject({ response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' } });
+    });
+
+    it('refuses to update a product of a list, and writes nothing', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product());
+
+      await expect(
+        service.update('asso1', 'prod1', { amountCents: 100 } as any, false)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(productRepo.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('a free amount outside the product bounds', () => {
@@ -373,9 +456,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(bounded());
       const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
 
-      const err = await (service as any)
-        .resolvePurchase('asso1', 'prod1', 'user1', 6000)
-        .catch((e: unknown) => e);
+      const err = await resolvePurchase(service, 'asso1', 'prod1', 'user1', 6000).catch(
+        (e: unknown) => e
+      );
       expect(err.getResponse()).toMatchObject({
         code: 'AMOUNT_OUT_OF_RANGE',
         minCents: 100,
@@ -390,7 +473,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(bounded());
       const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1', 3000);
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1', 3000);
       expect(result.amountCents).toBe(3000);
       expect(warn).not.toHaveBeenCalled();
     });
@@ -408,9 +491,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
 
-      const err = await (service as any)
-        .resolvePurchase('asso1', 'prod1', 'user1', 50)
-        .catch((e: unknown) => e);
+      const err = await resolvePurchase(service, 'asso1', 'prod1', 'user1', 50).catch(
+        (e: unknown) => e
+      );
       expect(err.getResponse()).toMatchObject({ minCents: 100, maxCents: null });
     });
   });
@@ -421,7 +504,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     productRepo.findOne.mockResolvedValue(product({ membersOnly: true }));
     userTagService.hasActiveTag.mockResolvedValue(true);
 
-    await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    await resolvePurchase(service, 'asso1', 'prod1', 'user1');
     const [, tagName] = userTagService.hasActiveTag.mock.calls[0];
     expect(tagName).toMatch(/^cotisant:bde-\d{4}-\d{4}$/);
   });
@@ -447,7 +530,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
       userTagService.hasActiveTag.mockResolvedValue(false);
 
-      const result = await (service as any).resolvePurchase('club1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'club1', 'prod1', 'user1');
       expect(result.paymentTarget.connectAccountId).toBe('acct_parent');
       expect(result.paymentTarget.delegated).toBe(true);
     });
@@ -472,9 +555,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
 
       // The typed 409 (lot 2), the delegation carried for the payer's sentence.
-      await expect(
-        (service as any).resolvePurchase('club1', 'prod1', 'user1')
-      ).rejects.toMatchObject({
+      await expect(resolvePurchase(service, 'club1', 'prod1', 'user1')).rejects.toMatchObject({
         status: 409,
         response: { code: 'PAYMENTS_NOT_ACTIVATED', delegated: true },
       });
@@ -493,7 +574,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
       userTagService.hasActiveTag.mockResolvedValue(false);
 
-      const result = await (service as any).resolvePurchase('club1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'club1', 'prod1', 'user1');
       expect(result.paymentTarget.connectAccountId).toBe('acct_club');
       expect(result.paymentTarget.delegated).toBe(false);
     });
@@ -970,6 +1051,106 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(
         service.update('asso1', 'prod1', { name: 'New name' }, false)
       ).resolves.toBeDefined();
+    });
+
+    describe('members-only needs a cotisation to be held', () => {
+      const refusal = (err: unknown) => {
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'MEMBERS_ONLY_WITHOUT_COTISATION',
+        });
+      };
+
+      it('refuses creating a members-only product when the association has no cotisation mode', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        refusal(
+          await service
+            .create('asso1', { name: 'Recharge', type: 'balance_topup', membersOnly: true }, true)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses ticking it on an existing product, and stores nothing', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        refusal(
+          await service
+            .update('asso1', 'prod1', { membersOnly: true }, true)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: an association with a cotisation mode may reserve it', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso());
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'balance_topup', membersOnly: false })
+        );
+        const saved = await service.update('asso1', 'prod1', { membersOnly: true }, true);
+        expect(saved.membersOnly).toBe(true);
+      });
+
+      it('CONTROL: requiredTags take precedence, so a tag-gated product needs no mode', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        await service.create(
+          'asso1',
+          { name: 'Soiree', type: 'other', membersOnly: true, requiredTags: ['vip:bde'] },
+          false
+        );
+        expect(productRepo.save).toHaveBeenCalled();
+      });
+
+      it('CONTROL: the settings panel repeats membersOnly on every save, and a product already ticked is not asked', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(product({ type: 'other', membersOnly: true }));
+        // EditBoutiqueTab's real body: the whole settings form, membersOnly included.
+        await expect(
+          service.update(
+            'asso1',
+            'prod1',
+            {
+              allowRepeatPurchase: true,
+              maxPurchasesPerUser: null,
+              maxPurchasesTotal: null,
+              membersOnly: true,
+              amountCentsMember: null,
+              badgeText: null,
+            } as any,
+            false
+          )
+        ).resolves.toBeDefined();
+      });
+
+      it('refuses clearing the tags of a ticked product when there is no mode, since it becomes gated by membership', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(
+          product({ type: 'other', membersOnly: true, requiredTags: ['vip:bde'] })
+        );
+        refusal(
+          await service
+            .update('asso1', 'prod1', { requiredTags: [] } as any, false)
+            .catch((e: unknown) => e)
+        );
+        expect(productRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('CONTROL: an edit that leaves the gate alone is not asked, so the product can be withdrawn', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+        productRepo.findOne.mockResolvedValue(product({ type: 'other', membersOnly: true }));
+        await expect(
+          service.update('asso1', 'prod1', { isActive: false }, false)
+        ).resolves.toBeDefined();
+      });
     });
 
     it('persists badgeText on update, and clears it with null', async () => {
@@ -2066,7 +2247,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         Promise.resolve(tagName === 'cotisant:cercle-sans-alcool')
       );
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(300);
       expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
         'user1',
@@ -2087,7 +2268,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         Promise.resolve(tagName === 'cotisant:cercle')
       );
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(1000);
     });
   });
@@ -2244,7 +2425,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(product({ requiredTags: ['tag:a', 'tag:b'] }));
       userTagService.hasActiveTagFromAnyIssuer.mockResolvedValue(false);
 
-      await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
+      await expect(resolvePurchase(service, 'asso1', 'prod1', 'user1')).rejects.toThrow(
         ForbiddenException
       );
     });
@@ -2257,7 +2438,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         (_userId: string, tagName: string) => Promise.resolve(tagName === 'tag:b')
       );
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(1000);
     });
 
@@ -2272,7 +2453,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         (_userId: string, tagName: string) => Promise.resolve(tagName === 'tag:vip')
       );
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(1000);
     });
   });
@@ -2299,7 +2480,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         Promise.resolve(tagName === 'cotisant:cercle-sans-alcool')
       );
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod-goodies', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod-goodies', 'user1');
       expect(result.amountCents).toBe(1000);
     });
 
@@ -2321,9 +2502,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       productRepo.findOne.mockResolvedValue(goodies);
       userTagService.hasActiveTag.mockResolvedValue(false);
 
-      await expect(
-        (service as any).resolvePurchase('asso1', 'prod-goodies', 'user1')
-      ).rejects.toThrow(ForbiddenException);
+      await expect(resolvePurchase(service, 'asso1', 'prod-goodies', 'user1')).rejects.toThrow(
+        ForbiddenException
+      );
     });
   });
 
@@ -2473,7 +2654,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         [sansAlcool(), avecAlcool()],
         ['cotisant:cercle-sans-alcool']
       );
-      const result = await (service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod-avec', 'user1');
       expect(result.amountCents).toBe(1500);
     });
 
@@ -2484,13 +2665,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         [sansAlcool(), avecAlcool()],
         ['cotisant:cercle-sans-alcool']
       );
-      const result = await (service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod-avec', 'user1');
       expect(result.amountCents).toBe(3000);
     });
 
     it('charges the full price to a buyer holding no tier', async () => {
       const { service } = buyer(avecAlcool(), [sansAlcool(), avecAlcool()], []);
-      const result = await (service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod-avec', 'user1');
       expect(result.amountCents).toBe(3000);
     });
 
@@ -2500,9 +2681,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         [sansAlcool(), avecAlcool()],
         ['cotisant:cercle-avec-alcool']
       );
-      expect(
-        await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
-      ).toBe('TIER_NOT_A_RISE');
+      expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-sans', 'user1'))).toBe(
+        'TIER_NOT_A_RISE'
+      );
       expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
     });
 
@@ -2520,9 +2701,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         [sansAlcool(), avecAlcool(), top],
         ['cotisant:cercle-sans-alcool', 'cotisant:cercle-avec-alcool']
       );
-      expect(
-        await conflictCode((service as any).resolvePurchase('asso1', 'prod-top', 'user1'))
-      ).toBe('TIER_NOT_RANKABLE');
+      expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-top', 'user1'))).toBe(
+        'TIER_NOT_RANKABLE'
+      );
       expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
     });
 
@@ -2534,9 +2715,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         amountCents: 1500,
       });
       const { service } = buyer(other, [sansAlcool(), other], ['cotisant:cercle-sans-alcool']);
-      expect(
-        await conflictCode((service as any).resolvePurchase('asso1', 'prod-other', 'user1'))
-      ).toBe('TIER_NOT_A_RISE');
+      expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-other', 'user1'))).toBe(
+        'TIER_NOT_A_RISE'
+      );
     });
 
     it('refuses the tier already held with PRODUCT_ALREADY_PURCHASED, even with no purchase record', async () => {
@@ -2547,9 +2728,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         ['cotisant:cercle-sans-alcool']
       );
       purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(0);
-      expect(
-        await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
-      ).toBe('PRODUCT_ALREADY_PURCHASED');
+      expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-sans', 'user1'))).toBe(
+        'PRODUCT_ALREADY_PURCHASED'
+      );
     });
 
     // A tier deleted while people still held it: its tag names no product, so no price. Read as
@@ -2560,9 +2741,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         made.userTagService.heldOrphanTierTags.mockResolvedValue([
           { tagName: 'cotisant:cercle-premium', variantKey: 'premium' },
         ]);
-        expect(
-          await conflictCode((made.service as any).resolvePurchase('asso1', target.id, 'user1'))
-        ).toBe('TIER_NOT_RANKABLE');
+        expect(await conflictCode(resolvePurchase(made.service, 'asso1', target.id, 'user1'))).toBe(
+          'TIER_NOT_RANKABLE'
+        );
       }
     });
 
@@ -2651,7 +2832,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
       const made = buyer(gridded, [avecAlcool(), gridded], []);
       jest.spyOn(made.service as any, 'resolveGridPrice').mockReturnValue(700);
-      const result = await (made.service as any).resolvePurchase('asso1', 'prod-grid', 'user1');
+      const result = await resolvePurchase(made.service, 'asso1', 'prod-grid', 'user1');
       expect(result.amountCents).toBe(700);
     });
 
@@ -2679,16 +2860,16 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           [avecAlcool(), gridded()],
           ['cotisant:cercle-grille']
         );
-        expect(
-          await conflictCode((service as any).resolvePurchase('asso1', 'prod-avec', 'user1'))
-        ).toBe('TIER_NOT_RANKABLE');
+        expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-avec', 'user1'))).toBe(
+          'TIER_NOT_RANKABLE'
+        );
       });
 
       it('while the HELD tier is a free amount', async () => {
         const { service } = buyer(sansAlcool(), [sansAlcool(), free()], ['cotisant:cercle-libre']);
-        expect(
-          await conflictCode((service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
-        ).toBe('TIER_NOT_RANKABLE');
+        expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-sans', 'user1'))).toBe(
+          'TIER_NOT_RANKABLE'
+        );
       });
 
       it('when the TARGET is gridded and a fixed tier is held', async () => {
@@ -2697,9 +2878,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           [sansAlcool(), gridded()],
           ['cotisant:cercle-sans-alcool']
         );
-        expect(
-          await conflictCode((service as any).resolvePurchase('asso1', 'prod-grid', 'user1'))
-        ).toBe('TIER_NOT_RANKABLE');
+        expect(await conflictCode(resolvePurchase(service, 'asso1', 'prod-grid', 'user1'))).toBe(
+          'TIER_NOT_RANKABLE'
+        );
       });
     });
 
@@ -2713,7 +2894,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           );
           made.purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(paid);
           expect(
-            await conflictCode((made.service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
+            await conflictCode(resolvePurchase(made.service, 'asso1', 'prod-sans', 'user1'))
           ).toBe('PRODUCT_ALREADY_PURCHASED');
         }
       });
@@ -2727,7 +2908,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         );
         made.purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(1);
         expect(
-          await conflictCode((made.service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
+          await conflictCode(resolvePurchase(made.service, 'asso1', 'prod-sans', 'user1'))
         ).toBe('TIER_NOT_A_RISE');
       });
     });
@@ -2741,11 +2922,11 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         // The cheaper of the two is HELD, not "not a rise": the answer names what is true.
         const cheap = buyer(sansAlcool(), tiers, both);
         expect(
-          await conflictCode((cheap.service as any).resolvePurchase('asso1', 'prod-sans', 'user1'))
+          await conflictCode(resolvePurchase(cheap.service, 'asso1', 'prod-sans', 'user1'))
         ).toBe('PRODUCT_ALREADY_PURCHASED');
         const dear = buyer(avecAlcool(), tiers, both);
         expect(
-          await conflictCode((dear.service as any).resolvePurchase('asso1', 'prod-avec', 'user1'))
+          await conflictCode(resolvePurchase(dear.service, 'asso1', 'prod-avec', 'user1'))
         ).toBe('PRODUCT_ALREADY_PURCHASED');
       }
     });
@@ -2764,7 +2945,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         made.assoRepo.findOne.mockResolvedValue(
           asso({ id: 'asso1', slug: 'cercle', cotisationMode: 'dated' })
         );
-        const result = await (made.service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+        const result = await resolvePurchase(made.service, 'asso1', 'prod-avec', 'user1');
         expect(result.amountCents).toBe(1500);
       });
 
@@ -2778,7 +2959,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         made.assoRepo.findOne.mockResolvedValue(
           asso({ id: 'asso1', slug: 'cercle', cotisationMode: 'dated' })
         );
-        const result = await (made.service as any).resolvePurchase('asso1', 'prod-avec', 'user1');
+        const result = await resolvePurchase(made.service, 'asso1', 'prod-avec', 'user1');
         expect(result.amountCents).toBe(3000);
       });
     });
@@ -3323,7 +3504,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // The profile is fetched before the tier lock, the cotisation half under it.
       pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: 'ICM' });
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(9000);
     });
 
@@ -3336,7 +3517,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         .mockResolvedValueOnce(product({ amountCents: 1000 }))
         .mockResolvedValue(product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 1 }) }));
 
-      const err = await (service as any).resolvePurchase('asso1', 'prod1', 'user1').then(
+      const err = await resolvePurchase(service, 'asso1', 'prod1', 'user1').then(
         () => null,
         (e: unknown) => e
       );
@@ -3355,7 +3536,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       pricingFacts.profileFor.mockResolvedValue({ promo: 2025, formation: null });
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(7000);
     });
 
@@ -3418,7 +3599,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         answers: {},
       });
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(12000);
     });
 
@@ -3435,7 +3616,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       );
       pricingFacts.profileFor.mockResolvedValue({ promo: 2024, formation: null });
 
-      await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
+      await expect(resolvePurchase(service, 'asso1', 'prod1', 'user1')).rejects.toThrow(
         BadRequestException
       );
     });
@@ -3461,7 +3642,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         })
       );
 
-      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      const result = await resolvePurchase(service, 'asso1', 'prod1', 'user1');
       expect(result.amountCents).toBe(500);
       // The point of the flag: a grid resting only on cotisation must not be blocked by, or wait
       // on, a service it does not need.
@@ -3845,6 +4026,103 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       row.createdAt = new Date(row.createdAt.getTime() - ms);
       row.expiresAt = new Date(row.expiresAt.getTime() - ms);
     };
+
+    /**
+     * THE CERCLE TOP-UP'S "RESERVE AUX COTISANTS" BOX (owner, 2026-10-31) is `membersOnly` on the
+     * `balance_topup` product, and `membersOnly` means a COTISANT of the association - an active
+     * tier tag of it (`isCotisant`), never a mere member row. Refused with a CODE the shop maps to
+     * its own sentence, before any payment request is issued.
+     */
+    describe('the Cercle top-up reserved to cotisants', () => {
+      const topup = {
+        type: 'balance_topup' as const,
+        membersOnly: true,
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: null,
+      };
+
+      it('refuses a non-cotisant at checkout with PRODUCT_COTISANTS_ONLY, and issues nothing', async () => {
+        const t = setup(topup);
+        t.userTagService.hasActiveTag.mockResolvedValue(false);
+        const err = await t.service
+          .createCheckoutSession('asso1', 'prod1', 'user1', 500)
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'PRODUCT_COTISANTS_ONLY',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+        expect(t.checkouts.rows).toHaveLength(0);
+      });
+
+      it('CONTROL: opens the checkout of a cotisant, at the amount they chose', async () => {
+        const t = setup(topup);
+        t.userTagService.hasActiveTag.mockResolvedValue(true);
+        const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
+        expect(opened.amountCents).toBe(500);
+        expect(orderRefs(t.calls)).toHaveLength(1);
+      });
+
+      it('CONTROL: the box unticked (the default) opens it to a non-cotisant', async () => {
+        const t = setup({ ...topup, membersOnly: false });
+        t.userTagService.hasActiveTag.mockResolvedValue(false);
+        const opened = await t.service.createCheckoutSession('asso1', 'prod1', 'user1', 500);
+        expect(opened.amountCents).toBe(500);
+      });
+    });
+
+    /**
+     * Buying by the page's link is open (owner, 2026-10-31), and an archived association's page
+     * stays reachable with whatever products it left active - so the purchase itself refuses it,
+     * before the lock and again under it, and no payment request is ever issued.
+     */
+    describe('an archived association sells nothing', () => {
+      it('refuses the checkout with ASSOCIATION_ARCHIVED before routing, and issues nothing', async () => {
+        const t = setup();
+        t.assoRepo.findOne.mockResolvedValue(asso({ archived: true }));
+        // The pre-lock check is what refuses it: the provider is never asked, nothing is routed.
+        const provider = jest.spyOn(t.service as any, 'activePaymentProvider');
+        const route = jest.spyOn(t.service as any, 'routeWith');
+        const err = await t.checkout().catch((e: unknown) => e);
+        expect(provider).not.toHaveBeenCalled();
+        expect(route).not.toHaveBeenCalled();
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'ASSOCIATION_ARCHIVED',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+        expect(t.checkouts.rows).toHaveLength(0);
+      });
+
+      it('refuses it under the lock too, when the archive lands while the purchase is prepared', async () => {
+        const t = setup();
+        t.assoRepo.findOne
+          .mockResolvedValueOnce(asso())
+          .mockResolvedValue(asso({ archived: true }));
+        const err = await t.checkout().catch((e: unknown) => e);
+        expect((err as ConflictException).getResponse()).toMatchObject({
+          code: 'ASSOCIATION_ARCHIVED',
+        });
+        expect(orderRefs(t.calls)).toHaveLength(0);
+      });
+
+      it('CONTROL: the same product of a live association opens its checkout', async () => {
+        const t = setup();
+        await t.checkout();
+        expect(orderRefs(t.calls)).toHaveLength(1);
+      });
+
+      it('reads the association FOR SHARE under the lock, the row the archive writes FOR UPDATE', async () => {
+        const t = setup();
+        await t.checkout();
+        // The transaction's manager hands an Association read to the association repository.
+        expect(t.assoRepo.findOne).toHaveBeenCalledWith(
+          expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+        );
+      });
+    });
 
     it('gives every attempt its own order_ref, so a retry after a DECLINED one is issued', async () => {
       const t = setup();

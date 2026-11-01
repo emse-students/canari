@@ -1197,6 +1197,55 @@ or expired - discovery removes it with no status read: there is no past and no e
 Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
 never-admitted, and both demotions out of `active` clear the flag.
 
+**The admission card and its edges, friction pass (2026-11-01).** Four defects of the same flow, none
+of them touching the rule:
+
+- *The card names the person.* `JoinRequestRow` resolved the name with `getUserDisplayNameSync`, which
+  reads a cache that notifies nobody - and a person who came by link is exactly the one no cache
+  holds, so the card read "Utilisateur inconnu" for good. The card now resolves each person once
+  when their ask (or decline line) appears (`resolveUserDisplayName`) and holds the answer in a
+  reactive map; the name is a link to `/profile/<id>`.
+- *The list says an ask exists.* `ConversationTile` shows a small count (`data-join-asks`) of the
+  asks of its conversation, derived from `pendingJoinRequests()` and gated by `canAnswerJoinRequests()`
+  like the card, so it leaves with the ask. Client-only; the preview stays the last message.
+- *The joiner is told.* A never-admitted row opened in `ChatArea` shows `chat_awaiting_admission_notice`
+  in the composer's notice band (the device-key line stays for a member's own further device). When
+  discovery purges that row - declined, or expired - it says once, as a toast
+  (`chat_admission_ended_toast`), at the one site that removes it. `chat_send_held` no longer says
+  "session".
+- *The loser of a tap race is not told it failed.* A refusal of the member's own Add carries a typed
+  `JoinRefusalKind` (`joinAnswers.ts`, from `BulkAdditionRefusal`: `add-lock-busy` is `busy`,
+  `removed-meanwhile` is `raced`, never read from the `reason` text). `busy` is only an ANSWERED
+  refusal: `acquireAddLockAnswer` tells the server's "held" from a transport error or a non-2xx, which
+  is `add-lock-unanswered` and a plain failure. `commit-race-lost` and the other aborts prove nobody
+  answered this ask, so they are failures too. `answerJoinRequestOutcome` returns the kind and
+  `answerJoinRequestOrToast` says "someone is adding people, try again in a moment" or "another member
+  already answered"; the ask stays until the server's settlement frame clears it. Any other refusal is
+  still "try again".
+
+**One push per ask, to the members already admitted (owner, 2026-11-01).** A member who has the app
+closed learned of an ask only at the next open. The invitation-link acceptance now sends ONE ordinary,
+user-visible push per `askId` ("X veut rejoindre", the conversation's name as the body), composed on
+the device from `contentKey = chat_join_ask` (`composeServerNotification` on Android, the NSE on iOS;
+category `messages`, so the account's messages switch and a conversation muted to `none` silence it).
+It is NOT the background-add wake, which an awaiting seat still suppresses (`notifyWelcomeRequest`):
+that wake lets a phone answer by itself and no push answers an ask.
+
+**One push per member Decline, never per seat.** The claim is a row keyed `(groupId, userId)`
+(`dm_join_ask_pushes`, migration 043), NOT the seat: a self-withdrawal (`members.controller.ts`)
+deletes the seat and a re-follow writes a new one, so a claim on the seat let the joiner push every
+member again and again with no member acting. `pushJoinAsk` inserts the row with `gen` = the person's
+`dm_seat_evictions."declinedAtSeatGeneration"` (0 when none) `ON CONFLICT DO UPDATE ... WHERE old gen
+< new gen RETURNING 1`: only a MEMBER's Decline moves that counter, so accept / withdraw / accept sends
+once, a Decline then a new ask sends again, and an expiry re-arms nothing. Two replicas race on the one
+statement and only one gets a row back. Never to the joiner, to a seat that itself awaits a member,
+or to a member for whom a block stands between them and the asker (either direction, `isBlockedBetween`,
+logged). With no resolvable name the actor is empty and every device says "Someone wants to join" -
+the lock screen never shows an id (the failed lookup is a WARN). At-most-once: a send failing after
+the claim is logged per recipient (summary `sent / failed / muted / blocked`), not retried. **The push
+is not withdrawn when the ask ends**: an ordinary push cannot be recalled, and the card in the
+conversation says the ask is over. Migration 043 is purely additive (a new table).
+
 **A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
 2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
 persisted, enumerated by the SYNC_WATCHDOG - is what drives every later pass. Discovery removed the
@@ -1357,8 +1406,60 @@ device honouring a server-written flag, the very trust in server rows this polic
 durably until the row loads), logs it at ERROR and reports it once (`POST mls/uninvited-entry`,
 `[UNINVITED_ENTRY]` in the delivery log). Never in a community or salon key group, where an external
 commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
-production before anything is decided about such entries. The receiving side is hardened in a
-second step.
+production before anything is decided about such entries.
+
+**The admission rule is disarmed (owner, 2026-10-31): it judges, and refuses nothing.** #2815
+(2026-10-24 design, merged 2026-10-31) made a group classified `Closed` refuse, unmerged, an
+EXTERNAL commit whose user holds no leaf in the tree BEFORE the commit, and then FREEZE the group:
+no recovery, and every later frame ACKed and dropped. Its post-merge review found that this
+breaks conversations for good on paths that are legitimate, so the refusal and the freeze were
+removed the same day and today's behaviour returned:
+
+- **Legitimate paths produce exactly that commit.** A peer whose KeyPackage was skipped at creation
+  (a 1:1 included) enters as a person (`external_join_is_a_further_device` false, `welcome.rs`); a
+  user whose only device was revoked had its leaf removed by the stray sweep; a user whose only leaf
+  was evicted while the seat stands rejoins on `unhonoured-seat` (`recovery.ts`). Each was frozen out.
+- **A frozen group dropped every later frame for good**, the freeze had no way to be lifted
+  (`liftAdmissionFreeze` had no caller) and it was stored device-wide.
+- **A malicious member could freeze any conversation on purpose** by enrolling a second account and
+  joining by external commit; and an older client, or a group not yet classified, merged the commit
+  while the frozen members went deaf - the group split.
+
+**What stays.** `mls-core`'s `admission` module still holds the three persisted states per group
+(`PersistedState.admission`, keyed by group id: `Closed`, `Open`, unclassified) and the pure verdict
+`judge_external_commit(policy, tree_before, entrant) -> AdmissionVerdict` - a function of the tree at
+the commit's base epoch and the commit alone, so two honest members at the same epoch reach the same
+one. In a `Closed` group an `Uninvited` verdict is logged at WARN (`[ADMISSION] ... the rule is
+disarmed, so it is merged`) and the commit is MERGED; it then reaches the device observers like any
+entry, so it is written and reported as `[UNINVITED_ENTRY]` exactly as described above. Key groups
+are still classified `Open` where they are registered. **No conversation is classified `Closed` any
+more** (`closeConversationAdmission` and its two call sites are deleted); a group a dev build closed
+loses that classification at the next load (see below). The `MlsError::AdmissionRefused` /
+`DecryptErrorKind::AdmissionRefused` variants, the `admission-refused` client kind, the freeze
+(`admissionFreeze.ts`, localStorage `canari_admission_frozen` - now read by nothing, so a freeze a dev
+build wrote deafens nothing) and its announcement are deleted. Pinned by
+`mls-core/tests/admission_policy.rs`, `admission.realWasm.test.ts`,
+`setupMessageHandler.staleFreeze.test.ts` and the push path's
+`an_uninvited_external_commit_in_a_closed_group_is_not_refused_for_good`.
+
+**What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
+
+1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
+   measured before anything else is built.
+2. **The emission side.** A user holding no leaf ASKS a member instead of entering alone, mirroring
+   the further-device door, and never in a 1:1 - so the legitimate paths above stop producing the
+   commit before any member refuses it. Each path is pinned by a named test that it is merged today
+   (`admission_policy.rs`: a 1:1 peer whose KeyPackage was skipped, a user whose only device was
+   revoked and swept, an only leaf evicted on a standing seat).
+3. **An unfreeze path** - whatever a refusal leaves, a person or a fact lifts it; nothing is permanent.
+4. **Never drop frames.** A refusal may stop a recovery; it may not ACK a conversation's messages away.
+
+**What stays of the mechanism, and what is pruned** (review of #2817). The setter stays - the app
+still opens every key group it registers, and that classification is what the fix-forward re-arms on
+(the owner's "the mechanism stays"). `forget_group` now forgets a group's classification, so the map
+is bounded by the groups held; a `closed` classification persisted by a dev build is dropped at load,
+and the dev build's `canari_admission_frozen` localStorage key is removed at session setup
+(`setupMessageHandler`), so a dev device stops logging the verdict on legitimate joins.
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
 (`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier

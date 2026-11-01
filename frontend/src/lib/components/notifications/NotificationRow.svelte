@@ -22,6 +22,7 @@
     CircleCheck,
     Undo2,
     CirclePause,
+    Store,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -248,7 +249,17 @@
    * naming the association, so the row carries no actor name before it.
    */
   const isLydiaPaymentsNotif = $derived(
-    notif.type === 'lydia_payments_active' || notif.type === 'lydia_payments_paused'
+    notif.type === 'lydia_payments_active' ||
+      notif.type === 'lydia_payments_paused' ||
+      notif.type === 'lydia_cashier_added'
+  );
+  /** The whole sentence of a Lydia notice, naming the association the row stores. */
+  const lydiaNoticeText = $derived(
+    notif.type === 'lydia_payments_active'
+      ? m.notif_lydia_payments_active_text({ name: notif.text })
+      : notif.type === 'lydia_payments_paused'
+        ? m.notif_lydia_payments_paused_text({ name: notif.text })
+        : m.notif_lydia_cashier_added_text({ name: notif.text })
   );
   /** An association refunded the reader (system actor): a whole sentence naming the association. */
   const isLydiaRefundNotif = $derived(notif.type === 'lydia_refund_issued');
@@ -368,6 +379,8 @@
         <CircleCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_payments_paused'}
         <CirclePause size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'lydia_cashier_added'}
+        <Store size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_refund_issued'}
         <Undo2 size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_proposed'}
@@ -427,13 +440,7 @@
       {:else if isBookingReminder}
         <span class="font-semibold">{m.notif_booking_reminder_text()}</span>
       {:else if isLydiaPaymentsNotif}
-        <span class="font-semibold"
-          ><EmojiText
-            text={notif.type === 'lydia_payments_active'
-              ? m.notif_lydia_payments_active_text({ name: notif.text })
-              : m.notif_lydia_payments_paused_text({ name: notif.text })}
-          /></span
-        >
+        <span class="font-semibold"><EmojiText text={lydiaNoticeText} /></span>
       {:else if isLydiaRefundNotif}
         <span class="font-semibold"
           ><EmojiText text={m.notif_lydia_refund_issued_text({ name: notif.text })} /></span

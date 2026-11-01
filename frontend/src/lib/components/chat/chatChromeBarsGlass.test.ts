@@ -27,8 +27,9 @@ describe('the polls and pinned bars in the glass chrome', () => {
     );
     expect(glass).toContain('var(--glass-chrome-bg)');
     expect(glass).toContain('var(--glass-chrome-edge)');
-    expect(glass).toMatch(/-webkit-backdrop-filter:\s*blur\(/);
-    expect(glass).toMatch(/[^-]backdrop-filter:\s*blur\(/);
+    expect(glass).toMatch(/-webkit-backdrop-filter:\s*(?:var\(--glass-chrome-blur\)|blur\()/);
+    expect(glass).toMatch(/[^-]backdrop-filter:\s*(?:var\(--glass-chrome-blur\)|blur\()/);
+    expect(readFileSync('src/app.css', 'utf8')).toMatch(/--glass-chrome-blur:\s*blur\(/);
     expect(narrow).toContain('.chat-glass-chrome .chat-chrome-bar,');
   });
 

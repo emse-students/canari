@@ -15,6 +15,8 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
@@ -191,13 +193,66 @@ export class BookingsService {
   /**
    * Refuses an account the space is not open to (D6, D31): enforced on every read and write, never
    * by hiding the space alone - a 'link' space is reached by its link, its audience still holds.
+   * Before the audience, the CAMPUS (`assertSpaceVisible`): a space outside the reader's spaces
+   * answers 404 `space-not-found`, exactly like one that does not exist. `use` says whether the
+   * caller only READS the space (`getSpace`, `spaceSlots`) or WRITES to it (`book`, `uploadFile`):
+   * only a read lets the account linked to one of its resources across the campus.
    */
-  private async assertMayUse(space: BookingSpace, actor: Actor, canManage: boolean) {
+  private async assertMayUse(
+    space: BookingSpace,
+    actor: Actor,
+    canManage: boolean,
+    use: 'read' | 'write'
+  ) {
     this.assertSameSideAsSpace(space, [actor.userId]);
-    if (canManage || !space.audience) return;
+    if (canManage) return;
+    await this.assertSpaceVisible(space, actor.userId, use);
+    if (!space.audience) return;
     if (matchesCondition(space.audience, await this.factsFor(space, actor.userId))) return;
     this.logger.debug(`[BOOKINGS] refused by audience space=${space.id.slice(0, 8)}`);
     throw new ForbiddenException({ code: 'audience' });
+  }
+
+  /**
+   * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
+   * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
+   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
+   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
+   * manager - the owner of a personal space - never reaches here (`assertMayUse`).
+   *
+   * ON A READ ONLY, the account linked to one of its resources (D10) is not refused here: the
+   * organiser named it - an alumnus holding a column of an association space, a colleague on
+   * another campus - so `getSpace` and `spaceSlots` pass this check for it. That is ALL it is
+   * granted: the audience (D6) is still asked next, so a linked account outside the audience is
+   * still refused (403 `audience`) and reads nothing; the space is not LISTED to it; and a WRITE -
+   * booking (`book`) or uploading a file answer (`uploadFile`) - from outside the campus answers 404
+   * like any other reader's, since the space never opened its columns to that campus. The one write
+   * left open to it is `addBlock` on ITS OWN column (D10), which does not go through this check: the
+   * linked account marks its own resource "Indisponible", gated on that column alone
+   * (`resource.linkedUserId`), and it books nothing, so no campus rule is crossed.
+   */
+  private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
+    const visible =
+      space.associationId !== null
+        ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
+        : await sameCampusAs(this.spaces.manager, space.ownerId, userId);
+    if (visible) return;
+    if (
+      use === 'read' &&
+      (await this.resources.exists({ where: { spaceId: space.id, linkedUserId: userId } }))
+    ) {
+      this.logger.debug(
+        `[BOOKINGS] space=${space.id.slice(0, 8)} open to ${userId.slice(0, 8)} outside its campus: ` +
+          'a read by the account linked to one of its resources (D10)'
+      );
+      return;
+    }
+    this.logger.log(
+      `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
+        `(${space.associationId !== null ? 'association' : 'personal'} space)`
+    );
+    throw new NotFoundException({ code: 'space-not-found' });
   }
 
   /**
@@ -221,7 +276,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] getSpace space=${spaceId}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const resources = await this.resources.find({
       where: { spaceId },
       order: { position: 'ASC', createdAt: 'ASC' },
@@ -269,7 +324,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] spaceSlots space=${spaceId} ${from}..${to}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const grid = await this.slots.spaceSlots(spaceId, from, to);
 
     const bookingIds = [
@@ -406,7 +461,10 @@ export class BookingsService {
    * The spaces a member may book from the Reservations page (D16, D31), by name, at most
    * {@link LISTED_SPACES_LIMIT} - the limit is the SQL's, so the page never reads more:
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
-   * - an association space only while its association is not ARCHIVED;
+   * - an association space only while its association is not ARCHIVED, and only when that
+   *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
+   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
    *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
    * - a space a REVIEW ACCOUNT owns only to the review cohort, and to a review account only such a
@@ -430,7 +488,8 @@ export class BookingsService {
       .leftJoin(Association, 'a', 'a.id = s.associationId')
       .where("s.discoverability = 'listed'")
       .andWhere(
-        '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
+        `((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false
+          AND ${associationVisibleToViewerSql('"s"."associationId"', ':me')}))`,
         { me: actor.userId }
       )
       .orderBy('s.name', 'ASC')
@@ -806,7 +865,7 @@ export class BookingsService {
     const holderId = (dto.holderId ?? actor.userId).trim().toLowerCase();
     const onBehalf = holderId !== actor.userId;
     if (onBehalf && !canManage) throw new ForbiddenException({ code: 'not-manager' });
-    if (!onBehalf) await this.assertMayUse(before, actor, canManage);
+    if (!onBehalf) await this.assertMayUse(before, actor, canManage, 'write');
     const range = this.parseRange(dto.startsAt, dto.endsAt);
 
     const participantIds = [
@@ -1209,7 +1268,7 @@ export class BookingsService {
   ) {
     this.logger.debug(`[BOOKINGS] uploadFile space=${spaceId} item=${itemId}`);
     const space = await this.loadSpace(spaceId);
-    await this.assertMayUse(space, actor, await this.mayManage(space, actor));
+    await this.assertMayUse(space, actor, await this.mayManage(space, actor), 'write');
     return this.bookingFiles.upload(space, itemId, file, actor.userId);
   }
 

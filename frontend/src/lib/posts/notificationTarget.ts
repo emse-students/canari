@@ -1,4 +1,5 @@
 import type { PostNotification } from './api';
+import type { AppPath } from '$lib/utils/internalPath';
 import { BOOKINGS_HREF } from '$lib/bookings/routes';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
 
@@ -6,13 +7,19 @@ import { formResponsesRoute } from '$lib/forms/responsesLink';
  * The author's inbox of republication requests (D38b) - where a `repost_personal_requested`
  * notification and its push (`fr.emse.canari://republication-requests`) both land.
  */
-export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
+export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests' satisfies AppPath;
 
 /**
  * The reader's inbox of follow requests (WP-F4) - where a `follow_request` notification and its push
  * (`fr.emse.canari://follow-requests`) both land.
  */
-export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests';
+export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests' satisfies AppPath;
+
+/**
+ * The help page a new Lydia cashier is sent to (enrolment lot 3): what Lydia Pro is, what the role
+ * allows, and what to do with Lydia's SMS. Also linked from the association's "Caissiers" section.
+ */
+export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
 
 /**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
@@ -29,7 +36,7 @@ export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests';
  * validated. That is also why an event notification lands on a list rather than on the event: the
  * thing the reader has to do is act on it, and the queue is where acting happens.
  */
-export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): string | null {
+export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): AppPath | null {
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
@@ -61,6 +68,9 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
       return '/account/purchases';
     // The association's proposal queue is reached by SLUG, which this synchronous function cannot
     // look up: `resolveNotificationHref` owns these two.
+    // A member was added as a Lydia cashier: the page saying what Lydia Pro is and what to do next.
+    case 'lydia_cashier_added':
+      return LYDIA_PRO_HELP_ROUTE;
     case 'repost_proposed':
     case 'coorganise_proposed':
     case 'lydia_payments_active':
@@ -148,6 +158,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'booking_reminder',
   'lydia_payments_active',
   'lydia_payments_paused',
+  'lydia_cashier_added',
   'lydia_refund_issued',
 ]);
 
@@ -194,7 +205,7 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
 export async function resolveNotificationHref(
   notif: Pick<PostNotification, 'type' | 'postId'>,
   lookupSlug: (associationId: string) => Promise<string>
-): Promise<string | null> {
+): Promise<AppPath | null> {
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];
   if (!section) return notificationHref(notif);
   const slug = await lookupSlug(notif.postId);

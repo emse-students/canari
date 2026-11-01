@@ -66,4 +66,24 @@ describe('ReelPreload', () => {
     p.stop();
     expect(c.release).toHaveBeenCalledTimes(1);
   });
+
+  it('hands the decrypted URL over once the video is in, for its first frame', async () => {
+    const { c, resolve } = cache();
+    const onReady = vi.fn();
+    new ReelPreload(ref, c, onReady);
+    expect(onReady).not.toHaveBeenCalled();
+    resolve('blob:x');
+    await flush();
+    expect(onReady).toHaveBeenCalledWith('blob:x');
+  });
+
+  it('a preload stopped before it was in hands nothing over', async () => {
+    const { c, resolve } = cache();
+    const onReady = vi.fn();
+    const p = new ReelPreload(ref, c, onReady);
+    resolve('blob:x');
+    p.stop();
+    await flush();
+    expect(onReady).not.toHaveBeenCalled();
+  });
 });

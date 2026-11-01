@@ -1100,6 +1100,12 @@ export interface IMlsService {
   /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.
    *  Returns true if acquired, false if another device already holds the lock. */
   acquireAddLock(groupId: string): Promise<boolean>;
+  /**
+   * {@link acquireAddLock} naming WHY a refusal happened: `held` - the server answered that another
+   * device holds the lock; `unanswered` - a transport error or a non-2xx answer, which says nothing
+   * about anyone else.
+   */
+  acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**
@@ -1519,6 +1525,16 @@ export interface IMlsService {
    * {@link getGroupMemberIdentities} does: an absent leaf and an absent group are opposite facts.
    */
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  /**
+   * Classifies `groupId` for the admission rule (`mls-core` `admission.rs`): `closed` for a
+   * conversation, whose rule names an external commit that brings a user in on their own, and
+   * `open` for a community or salon key group, whose members enter by external commit by design.
+   *
+   * Keyed by group id, so it may be set before the group is held and it survives a forget. THE RULE
+   * IS DISARMED (owner, 2026-10-31): it refuses nothing, and the app closes no conversation until
+   * the fix-forward (`docs/wiki/protocols/mls-protocol.md`); key groups are still opened.
+   */
+  setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void>;
   /**
    * The clean run covering `groupId`'s CURRENT epoch (`mls-core/src/graine_run.rs`): what Graine's
    * outbound rotation reads to decide whether a session may outlive an epoch move. The run ends on

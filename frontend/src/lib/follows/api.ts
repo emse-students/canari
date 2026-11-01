@@ -24,11 +24,45 @@ export const FOLLOW_DAILY_LIMIT = 'FOLLOW_DAILY_LIMIT';
 
 /**
  * One person in a follow list. `createdAt` is when they asked (the inbox, the sent list) or when
- * they were accepted (the followers list) - since when the row means what the list says.
+ * they were accepted (the followers list) - since when the row means what the list says. `cursor`
+ * is opaque: the next page starts right after the row it names (`nextFollowCursor`). A server older
+ * than the cursor paging sends none, and the list then ends at its first page.
  */
 export interface FollowListEntry {
   userId: string;
   createdAt: string;
+  cursor?: string;
+}
+
+/** How many people one page of a follow list holds - the server's `FOLLOW_PAGE_MAX`. */
+export const FOLLOW_PAGE_SIZE = 100;
+
+/**
+ * Where the page after `page` starts, or `null` when `page` is the last one. A page shorter than
+ * `FOLLOW_PAGE_SIZE` is the last (keyset paging: the server answered everything after the cursor
+ * there is); a full one continues after its last row.
+ */
+export function nextFollowCursor(page: readonly FollowListEntry[]): string | null {
+  if (page.length < FOLLOW_PAGE_SIZE) return null;
+  return page[page.length - 1].cursor ?? null;
+}
+
+/** The query string of one page: the size, and where it starts when it is not the first. */
+function pageQuery(after: string | undefined): string {
+  const start = after ? `&after=${encodeURIComponent(after)}` : '';
+  return `?limit=${FOLLOW_PAGE_SIZE}${start}`;
+}
+
+/**
+ * Appends `page` to `list`, a person already listed kept once - a row answered or removed between
+ * two pages never moves another one, but the guard keeps a re-read from showing a person twice.
+ */
+export function appendFollowPage(
+  list: readonly FollowListEntry[],
+  page: readonly FollowListEntry[]
+): FollowListEntry[] {
+  const seen = new Set(list.map((e) => e.userId));
+  return [...list, ...page.filter((e) => !seen.has(e.userId))];
 }
 
 const user = (userId: string) => `/api/posts/users/${encodeURIComponent(userId)}`;
@@ -57,11 +91,9 @@ export async function getFollowStatus(userId: string): Promise<FollowStatus | nu
   return status ?? null;
 }
 
-/** The requests waiting for the reader's answer, newest first. */
-export async function listFollowRequests(limit = 100, offset = 0): Promise<FollowListEntry[]> {
-  return socialRequest<FollowListEntry[]>(
-    `/api/posts/me/follow-requests?limit=${limit}&offset=${offset}`
-  );
+/** One page of the requests waiting for the reader's answer, newest first, after `after`. */
+export async function listFollowRequests(after?: string): Promise<FollowListEntry[]> {
+  return socialRequest<FollowListEntry[]>(`/api/posts/me/follow-requests${pageQuery(after)}`);
 }
 
 /** How many requests wait for the reader's answer. */
@@ -88,11 +120,9 @@ export async function refuseFollowRequest(userId: string): Promise<void> {
   });
 }
 
-/** The reader's own followers, the most recently accepted first. */
-export async function listFollowers(limit = 100, offset = 0): Promise<FollowListEntry[]> {
-  return socialRequest<FollowListEntry[]>(
-    `/api/posts/me/followers?limit=${limit}&offset=${offset}`
-  );
+/** One page of the reader's own followers, the most recently accepted first, after `after`. */
+export async function listFollowers(after?: string): Promise<FollowListEntry[]> {
+  return socialRequest<FollowListEntry[]>(`/api/posts/me/followers${pageQuery(after)}`);
 }
 
 /** Removes `userId` from the reader's followers; nobody is told. */
@@ -103,9 +133,7 @@ export async function removeFollower(userId: string): Promise<void> {
   });
 }
 
-/** The requests the reader sent that nobody has answered yet, newest first. */
-export async function listSentFollowRequests(limit = 100, offset = 0): Promise<FollowListEntry[]> {
-  return socialRequest<FollowListEntry[]>(
-    `/api/posts/me/follow-requests/sent?limit=${limit}&offset=${offset}`
-  );
+/** One page of the requests the reader sent and nobody answered yet, newest first, after `after`. */
+export async function listSentFollowRequests(after?: string): Promise<FollowListEntry[]> {
+  return socialRequest<FollowListEntry[]>(`/api/posts/me/follow-requests/sent${pageQuery(after)}`);
 }

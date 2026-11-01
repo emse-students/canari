@@ -198,8 +198,11 @@ import {
   markConversationDeletedRemotely,
 } from '$lib/utils/chat/conversations';
 import { answerBaseRefreshRequest } from '$lib/utils/chat/staleBase';
-import { reconcileRestoredLifecycles } from '$lib/utils/chat/admissionState';
-import { setGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
+import { applyRestoredLifecycles } from '$lib/utils/chat/admissionState';
+import {
+  captureGroupReadyAnnouncer,
+  setGroupReadyAnnouncer,
+} from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   registerOutbox,
   unregisterOutbox,
@@ -232,6 +235,7 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
@@ -296,8 +300,9 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id: string) => st.deleteConversation(id) : undefined,
     log: cb.log,
-    // An external join is the other way a group becomes ready, and it owes what a Welcome owes.
-    onGroupReady: (groupId: string) => announceGroupReady(ctx, cb, groupId),
+    // An external join is the other way a group becomes ready, and it owes what a Welcome owes -
+    // to THIS session only: captured now, it announces nothing once the session has ended.
+    onGroupReady: captureGroupReadyAnnouncer(),
   };
 }
 
@@ -314,8 +319,13 @@ const groupReadySweeps = new WeakMap<SessionContext, ReturnType<typeof setTimeou
  * (`resumeOutboxGroup`, which skips their backoff - a plain flush did not); their statuses are
  * refreshed; the askers this group kept waiting are served; and the invitation sweep runs, debounced
  * once per session, since a burst of Welcomes needs one sweep.
+ *
+ * NOT EXPORTED, AND REACHED ONLY THROUGH THE REGISTRY: every one of those steps reaches module-level
+ * state, so a call that lands after this session ended acts on the next. The session registers this
+ * function (`setGroupReadyAnnouncer`) and every `onGroupReady` is `captureGroupReadyAnnouncer()`,
+ * whose one liveness check is the only way in.
  */
-export function announceGroupReady(
+function announceGroupReady(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
   readyGroupId: string
@@ -1730,6 +1740,10 @@ export async function loginImpl(
     // Info level: one line per ledger entry at start, each a decision a device reading must name.
     await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
+    // What the iOS notification extension did while the app was shut: decrypted, fell back, timed
+    // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below
+    // depends on it, and a log line must never hold a login.
+    void drainNseOutcomes(appendLog);
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()
@@ -2062,7 +2076,9 @@ export async function loginImpl(
           );
       },
       // The group just became sendable (a Welcome processed): the one seam an external join shares.
-      onGroupReady: (readyGroupId: string) => announceGroupReady(ctx, cb, readyGroupId),
+      // Captured after `setGroupReadyAnnouncer` above: a Welcome processed after this session ended
+      // announces nothing into the next one.
+      onGroupReady: captureGroupReadyAnnouncer(),
       onMlsFatalError: (kind) => {
         ctx.setMlsFatalError(kind);
         if (kind === 'oom') {
@@ -2255,40 +2271,15 @@ export async function loginImpl(
           `[INIT] Partial restore: ${shortfall.restored}/${shortfall.expected} conversation(s) hold their MLS group (missing ${ids})`
         );
       }
-      const missingKeys: string[] = [];
       // The demotion of rows whose group is not held, and its mirror: the promotion of `pending`
-      // rows whose group is - on MEMBERSHIP, never on held state alone (`reconcileRestoredLifecycles`).
-      const {
-        demoted,
-        promoted: recoveredKeys,
-        awaiting,
-      } = await reconcileRestoredLifecycles({
+      // rows whose group is - on MEMBERSHIP, never on held state alone - each written as it changed.
+      await applyRestoredLifecycles({
         conversations: cb.conversations,
         localGroups: localMlsGroups,
         mlsService,
+        saveConversation: cb.saveConversation,
         log: cb.log,
       });
-      missingKeys.push(...demoted);
-      if (awaiting.length > 0) {
-        cb.log(
-          `[INIT] ${awaiting.length} pending conversation(s) hold a group this device is out of - evicted state dropped, kept pending for the re-admission recovery: ${awaiting.map((k) => k.slice(0, 8)).join(', ')}`
-        );
-      }
-      if (missingKeys.length > 0) {
-        cb.log(
-          `[WARN] Groups without local MLS state detected - ${missingKeys.length} conversation(s) marked not-ready, re-invite triggered on next connect.`
-        );
-        console.warn(
-          `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
-        );
-        await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
-      if (recoveredKeys.length > 0) {
-        cb.log(
-          `[INIT] ${recoveredKeys.length} conversation(s) stuck pending but already synced - "Sync" badge cleared.`
-        );
-        await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
     } catch (e) {
       console.warn('[INIT] Error detecting missing MLS groups:', e);
     }

@@ -27,6 +27,7 @@ import { DataSource } from 'typeorm';
 import { Client } from 'pg';
 import { BOOKING_ENTITIES } from './bookings.module';
 import { BookingsService, NEAR_NOW_MS, type Actor } from './bookings.service';
+import { sameCampusAsViewerSql } from '../spaces/reader-spaces';
 import {
   BOOKINGS_ERASURE_STATEMENTS,
   runErasureStatements,
@@ -137,6 +138,16 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   /** core-service's profile call fails while set (`listedSpaces`). */
   let profileDown = false;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+  /**
+   * An association that reaches EVERY space (one `(NULL, NULL)` rule), as `[{ id }]` like the
+   * INSERT it replaces: the campus border is drawn only by the tests that narrow its rules.
+   */
+  const newAssociation = (): Promise<{ id: string }[]> =>
+    q(
+      `WITH a AS (INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id),
+         r AS (INSERT INTO association_audiences ("associationId") SELECT id FROM a)
+       SELECT id FROM a`
+    );
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -155,7 +166,22 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       `CREATE TABLE associations (id uuid PRIMARY KEY, name varchar, archived boolean NOT NULL DEFAULT false,
          "logoUrl" varchar, "logoMediaId" uuid)`
     );
-    await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
+    // The profile columns the campus predicate reads (`reader-spaces.ts`). Every account of this
+    // file is an ICM Saint-Etienne student unless a test says otherwise, and every association
+    // reaches every space (`newAssociation`) - so only the tests about the campus see a border.
+    await q(
+      `CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar,
+         admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
+         cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
+    );
+    await q(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
+    await q(`INSERT INTO spaces VALUES ('ICM', 'saint-etienne'), ('ISMIN', 'gardanne')`);
+    await q(
+      `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
+    );
+    await q(
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+    );
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
@@ -336,9 +362,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
    * ORGA, who holds MANAGE_BOOKINGS on it - unless `managed` is false.
    */
   async function setup(settings: Partial<BookingSpace> = {}, resources = 1, managed = true) {
-    const association = (
-      await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
-    )[0].id as string;
+    const association = (await newAssociation())[0].id as string;
     if (managed) grants.add(`${ORGA}:${association}`);
     const space = await ds.getRepository(BookingSpace).save({
       ownerId: CREATOR,
@@ -1168,6 +1192,245 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
   });
 
+  /**
+   * THE CAMPUS (owner, 2026-10-31): an ASSOCIATION space is open to those its association is
+   * visible to - a member of it (D21), or its rules reach one of their spaces - and a PERSONAL space
+   * to those on its owner's campus (the campus, never a formation: staff keep theirs). Outside it, the space is not listed and answers 404
+   * `space-not-found` by its id, exactly like a space that does not exist. Its manager is never
+   * refused.
+   */
+  describe('the campus (owner, 2026-10-31)', () => {
+    /** An ISMIN Gardanne student. */
+    const GARDANNE = 'g'.repeat(64);
+    /** An ISMIN Gardanne student who is a MEMBER of the Saint-Etienne association (D21). */
+    const GARDANNE_MEMBER = 'h'.repeat(64);
+    /** A campus and no cursus: staff, who have no space at all. */
+    const STAFF = 's'.repeat(64);
+
+    beforeAll(async () => {
+      for (const id of [GARDANNE, GARDANNE_MEMBER]) {
+        await q(
+          `INSERT INTO users (id, "firstName", "lastName", campus, cursus)
+           VALUES ($1, 'Ga', 'X', 'gardanne', '[{"formation": "ISMIN"}]')`,
+          [id]
+        );
+      }
+      await q(
+        `INSERT INTO users (id, "firstName", "lastName", campus, cursus)
+         VALUES ($1, 'Staff', 'X', 'saint-etienne', '[]')`,
+        [STAFF]
+      );
+    });
+
+    const listedTo = async (viewer: string, spaceId: string) =>
+      (await service.listedSpaces(as(viewer))).some((s) => s.id === spaceId);
+
+    it('an association space of Saint-Etienne: listed and bookable there, 404 from Gardanne, open to a member', async () => {
+      const { space, resourceIds } = await setup({ name: 'campus asso' });
+      await q(
+        `UPDATE association_audiences SET campus = 'saint-etienne' WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+
+      expect(await listedTo(ALICE, space.id)).toBe(true);
+      expect(await listedTo(GARDANNE, space.id)).toBe(false);
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(
+        await refusal(service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE)))
+      ).toEqual({
+        code: 'space-not-found',
+      });
+
+      // CONTROL: the same campus books it.
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', ALICE)).resolves.toBeDefined();
+
+      // D21: joining the association opens it, whatever the campus.
+      expect(await listedTo(GARDANNE_MEMBER, space.id)).toBe(false);
+      await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+        space.associationId,
+        GARDANNE_MEMBER,
+      ]);
+      expect(await listedTo(GARDANNE_MEMBER, space.id)).toBe(true);
+      await expect(
+        book(space.id, resourceIds[0], '11:00', '11:30', GARDANNE_MEMBER)
+      ).resolves.toBeDefined();
+
+      // Its manager is never refused, nor kept out of the list.
+      expect(await listedTo(ORGA, space.id)).toBe(true);
+      await expect(service.getSpace(space.id, as(ORGA))).resolves.toBeDefined();
+    });
+
+    /**
+     * THE ACCOUNT LINKED TO A RESOURCE (D10) IS NAMED BY THE SPACE ITSELF, so the campus never
+     * stands between it and its own column: an alumnus holding a column of an association space it
+     * is not a member of, a colleague of another campus on a personal space. Review of #2828.
+     */
+    /**
+     * The D10 exception is a READ: a linked account outside the campus is refused a booking - of its
+     * own column and of column B - and a file upload, as any reader outside the space is.
+     */
+    async function linkedWritesRefused(spaceId: string, resourceIds: string[]) {
+      for (const resourceId of resourceIds) {
+        expect(await refusal(book(spaceId, resourceId, '10:00', '10:30', GARDANNE))).toEqual({
+          code: 'space-not-found',
+        });
+      }
+      const pdf = Buffer.from('%PDF-1.4');
+      expect(
+        await refusal(
+          service.uploadFile(spaceId, 'cv', { buffer: pdf, size: pdf.length }, as(GARDANNE))
+        )
+      ).toEqual({ code: 'space-not-found' });
+      expect(
+        (
+          await q(
+            `SELECT count(*)::int AS n FROM bookings b
+               JOIN booking_resources r ON r.id = b."resourceId" WHERE r."spaceId" = $1`,
+            [spaceId]
+          )
+        )[0].n
+      ).toBe(0);
+    }
+
+    it('an association space: the account linked to one of its resources reads it from another campus', async () => {
+      const { space, resourceIds } = await setup({ name: 'campus asso linked' }, 2);
+      await q(
+        `UPDATE association_audiences SET campus = 'saint-etienne' WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+      // CONTROL: before the link, GARDANNE is outside the space.
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [
+        GARDANNE,
+        resourceIds[0],
+      ]);
+      const read = await service.getSpace(space.id, as(GARDANNE));
+      expect(read.resources.find((r) => r.id === resourceIds[0])?.linkedToMe).toBe(true);
+      await expect(
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE))
+      ).resolves.toBeDefined();
+      // Being linked opens the space it names, and only that: still not listed (not a member).
+      expect(await listedTo(GARDANNE, space.id)).toBe(false);
+      // A READ only: from another campus it books no column, its own or B, and uploads nothing.
+      await linkedWritesRefused(space.id, resourceIds);
+    });
+
+    it('a personal space: the account linked to one of its resources reads it from another campus', async () => {
+      const { space, resourceIds } = await setup(
+        {
+          name: 'campus personal linked',
+          associationId: null,
+          ownerId: BOB,
+          discoverability: 'link',
+        },
+        2
+      );
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [
+        GARDANNE,
+        resourceIds[0],
+      ]);
+      await expect(service.getSpace(space.id, as(GARDANNE))).resolves.toBeDefined();
+      await expect(
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE))
+      ).resolves.toBeDefined();
+      // Another account of that campus, linked to nothing, is still outside.
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE_MEMBER)))).toEqual({
+        code: 'space-not-found',
+      });
+      await linkedWritesRefused(space.id, resourceIds);
+    });
+
+    it("a personal space: open to its owner's CAMPUS, 404 to another campus, the owner always", async () => {
+      const { space, resourceIds } = await setup({
+        name: 'campus personal',
+        associationId: null,
+        ownerId: BOB,
+        discoverability: 'link',
+      });
+
+      // ALICE (an ICM student) and STAFF (no cursus) are on BOB's campus: the campus decides, never
+      // a formation (owner, 2026-10-31).
+      for (const [reader, slot] of [
+        [ALICE, '10:00'],
+        [STAFF, '11:00'],
+      ] as const) {
+        await expect(service.getSpace(space.id, as(reader))).resolves.toBeDefined();
+        await expect(
+          book(space.id, resourceIds[0], slot, slot.replace(':00', ':30'), reader)
+        ).resolves.toBeDefined();
+      }
+
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '12:00', '12:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
+
+      // The owner manages it, so the border never stands in their way.
+      await expect(service.getSpace(space.id, as(BOB))).resolves.toBeDefined();
+    });
+
+    it('a personal space of STAFF (a campus, an empty cursus): a student of that campus books it, another campus is refused', async () => {
+      const { space, resourceIds } = await setup({
+        name: 'campus staff personal',
+        associationId: null,
+        ownerId: STAFF,
+        discoverability: 'link',
+      });
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', ALICE)).resolves.toBeDefined();
+      expect(await refusal(book(space.id, resourceIds[0], '11:00', '11:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
+      await expect(service.getSpace(space.id, as(STAFF))).resolves.toBeDefined();
+    });
+
+    it('CONTROL: an owner with no campus opens their personal space to nobody else', async () => {
+      const NOWHERE = 'n'.repeat(64);
+      await q(
+        `INSERT INTO users (id, "firstName", "lastName", campus, cursus) VALUES ($1, 'No', 'X', NULL, '[]')`,
+        [NOWHERE]
+      );
+      const { space, resourceIds } = await setup({
+        name: 'campus nowhere personal',
+        associationId: null,
+        ownerId: NOWHERE,
+        discoverability: 'link',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', ALICE))).toEqual({
+        code: 'space-not-found',
+      });
+    });
+
+    it('keeps the review cohort apart: the same campus is no bridge across it, either way', async () => {
+      const previous = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = DAN;
+      try {
+        // DAN (a review account) and ALICE carry the same campus in this fixture.
+        const sameCampus = async (owner: string, viewer: string) =>
+          (await q(`SELECT ${sameCampusAsViewerSql('$1', '$2')} AS v`, [owner, viewer]))[0].v;
+        expect(await sameCampus(DAN, ALICE)).toBe(false);
+        expect(await sameCampus(ALICE, DAN)).toBe(false);
+        expect(await sameCampus(DAN, DAN)).toBe(true);
+        // CONTROL: outside the cohort, the same campus matches.
+        expect(await sameCampus(BOB, ALICE)).toBe(true);
+      } finally {
+        if (previous === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = previous;
+      }
+    });
+  });
+
   describe("the booker's page and the calendar link (WP-B5)", () => {
     const KEY = 'k'.repeat(48);
     let previousKey: string | undefined;
@@ -1231,6 +1494,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       try {
         const school = await setup({ name: '0008 school' });
         const reviewer = await setup({ name: '0009 reviewer', ownerId: DAN });
+        // The cohort's own association, as in production: the review account is its member, and a
+        // review account has no real space, so membership is what makes it visible (D21).
+        await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+          reviewer.space.associationId,
+          DAN,
+        ]);
         const personal = await setup({ name: '0010 own', associationId: null, ownerId: DAN });
         const mine = [school.space.id, reviewer.space.id, personal.space.id];
         expect(await listedAmong(DAN, mine)).toEqual([reviewer.space.id, personal.space.id]);
@@ -1549,9 +1818,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ({ lines, exceptions }) as never;
 
     it('creates a personal space for anyone, an entity space for its organiser alone', async () => {
-      const association = (
-        await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
-      )[0].id as string;
+      const association = (await newAssociation())[0].id as string;
       grants.add(`${ORGA}:${association}`);
       const { id: personal } = await organiser.create({ name: 'Psy' }, as(ALICE));
       expect(

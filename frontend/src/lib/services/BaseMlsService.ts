@@ -4002,6 +4002,15 @@ export abstract class BaseMlsService implements IMlsService {
    * the holder's release sends no frame, so nothing else would say it.
    */
   async acquireAddLock(groupId: string): Promise<boolean> {
+    return (await this.acquireAddLockAnswer(groupId)) === 'taken';
+  }
+
+  /**
+   * {@link acquireAddLock} with WHY a refusal happened kept: `held` is the server's own answer that
+   * another device holds the lock; `unanswered` is a transport error or a non-2xx answer, which says
+   * nothing about anyone else.
+   */
+  async acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
@@ -4018,10 +4027,10 @@ export abstract class BaseMlsService implements IMlsService {
     if (answer.acquired) {
       this.addLocksHeld.set(groupId, answer.token);
       markAddLock(this.userId, groupId, answer.token);
-      return true;
+      return 'taken';
     }
     this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
-    return false;
+    return answer.answered ? 'held' : 'unanswered';
   }
 
   /**
@@ -6029,6 +6038,7 @@ export abstract class BaseMlsService implements IMlsService {
     const previous = this.distributionScopeByGroup.get(groupId);
     this.distributionScopeByGroup.set(groupId, scope);
     this.knownDistributionGroups.add(groupId);
+    this.openAdmissionOfKeyGroup(groupId);
     // Written only when it is NEWS: the community loop re-registers every group on every load, and
     // a row restored by `hydrateDistributionGroups` already says exactly this.
     if (previous === undefined || !sameScope(previous, scope)) {
@@ -6048,7 +6058,26 @@ export abstract class BaseMlsService implements IMlsService {
    */
   noteDistributionGroup(groupId: string): void {
     this.knownDistributionGroups.add(groupId);
+    this.openAdmissionOfKeyGroup(groupId);
     this.collectFramesLeftForKeyGroup(groupId);
+  }
+
+  /**
+   * Classifies a key-distribution group as OPEN for the admission rule: its members enter by
+   * external commit by design, and a group a conversation's rule closed would refuse every newcomer
+   * of a community. Called wherever this session learns a group IS a key group, which is always
+   * BEFORE it is joined or created (the registration precedes both), and keyed by group id so it
+   * stands whether or not the group is held yet.
+   *
+   * Never throws: a failure leaves the group unclassified, which merges its external commits exactly
+   * as before - the safe side - and is said at WARN because the rule then does not apply to it.
+   */
+  private openAdmissionOfKeyGroup(groupId: string): void {
+    void this.setAdmissionPolicy(groupId, 'open').catch((e: unknown) => {
+      console.warn(
+        `[ADMISSION] key group ${groupId.slice(0, 8)}... could not be classified open (it stays unclassified): ${String(e)}`
+      );
+    });
   }
 
   /**
@@ -7934,6 +7963,7 @@ export abstract class BaseMlsService implements IMlsService {
     keyLen: number
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
+  abstract setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void>;
 
   /** See {@link IMlsService.isGroupActive}. Platform-specific: WASM query vs Tauri `invoke`. */
   abstract isGroupActive(groupId: string): Promise<boolean>;

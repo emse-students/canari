@@ -20,6 +20,11 @@ import {
   LYDIA_BUSINESS_TOKEN_REJECTED,
   LYDIA_CASHIER_NOT_CONFIGURED,
   LYDIA_CASHIER_PERMISSIONS,
+  LYDIA_CASHIER_ROLE_PERMISSIONS,
+  cashierRightsDifference,
+  LYDIA_CASHIER_REMOVAL_PRECONDITION,
+  LYDIA_CASHIER_READBACK_INVALID,
+  parseCashierReading,
   LYDIA_CASHIER_PERMISSIONS_INVALID,
   LYDIA_CASHIER_PHONE_INVALID,
   LYDIA_CASHIER_RIGHTS_INCOMPLETE,
@@ -914,10 +919,12 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
       LYDIA_CASHIER_PERMISSIONS.length - 1
     );
     expect(rights.access_fee).toBe(false);
-    // CONTROL: rights at the TOP level are not Lydia's shape and grant nothing.
+    // CONTROL: rights at the TOP level are not Lydia's shape: refused, never read as "no rights".
     mockedAxios.post.mockResolvedValueOnce({ data: { error: '0', ...allRights } });
-    const top = await withKey().readCashierRights('asso-1', 'vendor-1', PHONE);
-    expect(Object.values(top).some(Boolean)).toBe(false);
+    await expect(withKey().readCashierRights('asso-1', 'vendor-1', PHONE)).rejects.toMatchObject({
+      status: 502,
+      response: { code: LYDIA_CASHIER_READBACK_INVALID },
+    });
   });
 
   it('signs the ENCODED cashier_phone and permissions ARRAY, asks for the SMS, then reads back', async () => {
@@ -1035,5 +1042,309 @@ describe('LydiaPaymentProvider.addBusinessHolder - the Responsable (lot 2)', () 
     // `postForm` logs Lydia's answer; neither answer echoes the phone, and no line of ours names it.
     expect(lines.join(' | ')).not.toContain('612345678');
     expect(lines.join(' | ')).toContain('78');
+  });
+});
+
+describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
+  const PRIVATE = 'provider-private';
+  const PHONE = '+33612345678';
+  const CONTEXT_PHONE = '+33698765432';
+  /** Five names Lydia listed on homologation beyond the documented 13 (2026-10-31). */
+  const EXTRAS = [
+    'access_b2c_cancel',
+    'access_b2c_list',
+    'access_b2c_payments',
+    'access_switch_3ds',
+    'access_tap2pay',
+  ];
+  const none = Object.fromEntries([...LYDIA_CASHIER_PERMISSIONS, ...EXTRAS].map((n) => [n, '0']));
+  const rightsOf = (names: readonly string[]) => ({
+    ...none,
+    ...Object.fromEntries(names.map((n) => [n, '1'])),
+  });
+  /** The read that meets the removal preconditions. */
+  const preconditionsMet = { data: { error: '0', data: rightsOf(LYDIA_CASHIER_PERMISSIONS) } };
+
+  function withKey() {
+    return new LydiaPaymentProvider({
+      LYDIA_ENV: 'homologation',
+      LYDIA_PROVIDER_TOKEN: 'provider-token',
+      LYDIA_PROVIDER_PRIVATE_TOKEN: PRIVATE,
+    });
+  }
+
+  beforeEach(() => {
+    mockedAxios.post.mockReset();
+    for (const level of ['log', 'warn', 'error', 'debug'] as const) {
+      jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
+    }
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockedAxios.post.mockReset();
+  });
+
+  it('the three roles: Responsable all 13, Tresorier statements + refunds + cancels, Vendeur collect alone', () => {
+    expect([...LYDIA_CASHIER_ROLE_PERMISSIONS.responsable]).toEqual([...LYDIA_CASHIER_PERMISSIONS]);
+    expect([...LYDIA_CASHIER_ROLE_PERMISSIONS.tresorier].sort()).toEqual(
+      ['access_cancelrequest', 'access_canceltransaction', 'access_statement'].sort()
+    );
+    expect([...LYDIA_CASHIER_ROLE_PERMISSIONS.vendeur]).toEqual(['access_collect']);
+  });
+
+  it.each(['responsable', 'tresorier', 'vendeur'] as const)(
+    'a %s is added with EXACTLY its permission array, signed over the encoded values, then read back',
+    async (role) => {
+      mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } }).mockResolvedValueOnce({
+        data: { error: '0', data: rightsOf(LYDIA_CASHIER_ROLE_PERMISSIONS[role]) },
+      });
+      await withKey().addCashier('asso-1', 'vendor-1', PHONE, role);
+      const sent = new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string);
+      expect(JSON.parse(sent.get('permissions') ?? '')).toEqual([
+        ...LYDIA_CASHIER_ROLE_PERMISSIONS[role],
+      ]);
+      expect(sent.get('notify')).toBe('yes');
+      expect(sent.get('signature')).toBe(
+        signLydiaRequest(
+          { cashier_phone: PHONE, permissions: sent.get('permissions') ?? '' },
+          PRIVATE
+        )
+      );
+    }
+  );
+
+  it('a read-back with ONE right beyond the role is not a confirmation: added, UNCONFIRMED', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } }).mockResolvedValueOnce({
+      data: { error: '0', data: rightsOf(['access_collect', 'access_checkout']) },
+    });
+    const attempt = withKey().addCashier('asso-1', 'vendor-1', PHONE, 'vendeur');
+    await expect(attempt).rejects.toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+    await expect(
+      (async () => {
+        mockedAxios.post
+          .mockResolvedValueOnce({ data: { error: '0' } })
+          .mockResolvedValueOnce({ data: { error: '0', data: rightsOf([]) } });
+        await withKey().addCashier('asso-1', 'vendor-1', PHONE, 'vendeur');
+      })()
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_RIGHTS_INCOMPLETE } });
+  });
+
+  it('an UNDOCUMENTED right at 1 for a Vendeur is a mismatch: added, UNCONFIRMED', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } }).mockResolvedValueOnce({
+      data: { error: '0', data: rightsOf(['access_collect', 'access_tap2pay']) },
+    });
+    await expect(
+      withKey().addCashier('asso-1', 'vendor-1', PHONE, 'vendeur')
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_RIGHTS_INCOMPLETE } });
+  });
+
+  it('a Responsable needs the documented 13; the undocumented names are neither required nor refused', async () => {
+    for (const extras of [[], EXTRAS]) {
+      mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } }).mockResolvedValueOnce({
+        data: { error: '0', data: rightsOf([...LYDIA_CASHIER_PERMISSIONS, ...extras]) },
+      });
+      await expect(
+        withKey().addCashier('asso-1', 'vendor-1', PHONE, 'responsable')
+      ).resolves.toBeUndefined();
+    }
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '0' } }).mockResolvedValueOnce({
+      data: {
+        error: '0',
+        data: rightsOf(LYDIA_CASHIER_PERMISSIONS.filter((n) => n !== 'access_fee')),
+      },
+    });
+    await expect(
+      withKey().addCashier('asso-1', 'vendor-1', PHONE, 'responsable')
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_RIGHTS_INCOMPLETE } });
+  });
+
+  it.each([
+    [
+      'a documented right missing',
+      {
+        error: '0',
+        data: (() => {
+          const data: Record<string, string> = { ...none };
+          delete data.access_collect;
+          return data;
+        })(),
+      },
+    ],
+    ['a value other than "0" or "1"', { error: '0', data: { ...none, access_collect: 'yes' } }],
+    ['a numeric value', { error: '0', data: { ...none, access_collect: 1 } }],
+    [
+      'an undocumented right reading neither',
+      { error: '0', data: { ...none, access_tap2pay: '' } },
+    ],
+    ['no error field', { data: none }],
+    ['data missing', { error: '0' }],
+    ['data null', { error: '0', data: null }],
+    ['data an array', { error: '0', data: [] }],
+    ['data a string', { error: '0', data: 'none' }],
+  ])('parseCashierReading refuses %s: the typed 502 READBACK_INVALID', (_label, answer) => {
+    expect(() => parseCashierReading(answer as Record<string, unknown>)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({ code: LYDIA_CASHIER_READBACK_INVALID }),
+      })
+    );
+  });
+
+  it('an error other than 0 is a typed refusal, never a reading', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '2', message: 'x', data: none } });
+    await expect(withKey().readCashierReading('asso-1', 'vendor-1', PHONE)).rejects.toMatchObject({
+      status: 502,
+    });
+  });
+
+  it('a malformed read-back after an add is never a confirmation: added, UNCONFIRMED', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockResolvedValueOnce({ data: { error: '0', data: { access_collect: '1' } } });
+    await expect(
+      withKey().addCashier('asso-1', 'vendor-1', PHONE, 'vendeur')
+    ).rejects.toBeInstanceOf(LydiaCashierAddedUnconfirmedException);
+  });
+
+  it('cashierRightsDifference names exactly the rights that differ from the role', () => {
+    const reading = parseCashierReading({
+      error: '0',
+      data: rightsOf(['access_collect', 'access_fee', 'access_tap2pay']),
+    });
+    expect(cashierRightsDifference(reading, 'vendeur')).toEqual(['access_fee', 'access_tap2pay']);
+    expect(cashierRightsDifference(reading, 'tresorier')).toEqual([
+      'access_statement',
+      'access_canceltransaction',
+      'access_cancelrequest',
+      'access_collect',
+      'access_fee',
+      'access_tap2pay',
+    ]);
+  });
+
+  it('a removal: preconditions, the removal, a re-read at 0 - confirmed', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce(preconditionsMet)
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockResolvedValueOnce({ data: { error: '0', data: none } });
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
+      verified: true,
+      held: 0,
+    });
+    const urls = mockedAxios.post.mock.calls.map(([url]) => String(url));
+    expect(urls[0]).toMatch(/\/api\/business\/getpermission\.json$/);
+    expect(
+      new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string).get('cashier_phone')
+    ).toBe(CONTEXT_PHONE);
+    expect(urls[1]).toMatch(/\/api\/business\/removecashier\.json$/);
+    expect(
+      Object.fromEntries(new URLSearchParams(mockedAxios.post.mock.calls[1][1] as string))
+    ).toEqual({
+      vendor_token: 'vendor-1',
+      phone: CONTEXT_PHONE,
+      cashier_phone: PHONE,
+    });
+    expect(urls[2]).toMatch(/\/api\/business\/getpermission\.json$/);
+  });
+
+  it('a precondition not met: the typed 409 REMOVAL_PRECONDITION, and nothing is removed', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        error: '0',
+        data: rightsOf(LYDIA_CASHIER_PERMISSIONS.filter((n) => n !== 'access_cashier')),
+      },
+    });
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_CASHIER_REMOVAL_PRECONDITION },
+    });
+    expect(mockedAxios.post.mock.calls).toHaveLength(1);
+  });
+
+  it('the Responsable check malformed or unanswered: refused before any removal', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { error: '0', data: null } });
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).rejects.toMatchObject({
+      response: { code: LYDIA_CASHIER_READBACK_INVALID },
+    });
+    mockedAxios.post.mockRejectedValueOnce(new Error('socket hang up'));
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).rejects.toMatchObject({
+      response: { code: LYDIA_UNREACHABLE },
+    });
+    expect(
+      mockedAxios.post.mock.calls.filter(([url]) => String(url).includes('removecashier'))
+    ).toHaveLength(0);
+  });
+
+  it('a removal whose re-read still shows a right - documented or not - is NOT confirmed', async () => {
+    for (const left of ['access_collect', 'access_tap2pay']) {
+      mockedAxios.post
+        .mockResolvedValueOnce(preconditionsMet)
+        .mockResolvedValueOnce({ data: { error: '0' } })
+        .mockResolvedValueOnce({ data: { error: '0', data: rightsOf([left]) } });
+      await expect(
+        withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+      ).resolves.toEqual({
+        verified: false,
+        held: 1,
+      });
+    }
+  });
+
+  it('a removal whose re-read cannot be trusted is NOT confirmed (held unknown)', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce(preconditionsMet)
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockResolvedValueOnce({ data: { error: '0' } });
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
+      verified: false,
+      held: null,
+    });
+  });
+
+  it('a refused removal of a number that holds nothing reads 0 rights: confirmed by the re-read', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce(preconditionsMet)
+      .mockResolvedValueOnce({ data: { error: '2', message: 'x' } })
+      .mockResolvedValueOnce({ data: { error: '0', data: none } });
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
+      verified: true,
+      held: 0,
+    });
+  });
+
+  it('a re-read that fails is NOT confirmed (held unknown), never a throw', async () => {
+    mockedAxios.post
+      .mockResolvedValueOnce(preconditionsMet)
+      .mockResolvedValueOnce({ data: { error: '0' } })
+      .mockRejectedValueOnce(new Error('socket hang up'));
+    await expect(
+      withKey().removeCashier('asso-1', 'vendor-1', CONTEXT_PHONE, PHONE)
+    ).resolves.toEqual({
+      verified: false,
+      held: null,
+    });
+  });
+
+  it('no Provider key: the removal is refused before any call', async () => {
+    await expect(
+      new LydiaPaymentProvider({ LYDIA_ENV: 'homologation' }).removeCashier(
+        'asso-1',
+        'vendor-1',
+        CONTEXT_PHONE,
+        PHONE
+      )
+    ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_NOT_CONFIGURED } });
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 });

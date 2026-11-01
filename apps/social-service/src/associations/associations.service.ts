@@ -8,6 +8,7 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { assertKindMaySell, writablePermissions } from './selling-kinds';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -41,6 +42,17 @@ import {
 import { isInReviewCohort } from '../review-cohort';
 import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
+import { listLydiaCashiers } from './lydia-cashiers-list';
+import {
+  LYDIA_CASHIER_PHONE_IN_USE,
+  claimLost,
+  claimTokenOf,
+  clearClaim,
+  confirmedOf,
+  lockAssociation,
+  numberHeldBy,
+  writeClaim,
+} from './lydia-cashier-claim';
 import {
   LYDIA_ENROLMENT_IN_FLIGHT,
   LYDIA_READINESS_LOG_TAG,
@@ -287,13 +299,14 @@ export const LYDIA_ACCOUNT_ALREADY_LINKED = 'LYDIA_ACCOUNT_ALREADY_LINKED';
 
 /**
  * The `code` of the 409 refusing to record a Responsable while another person is the live one:
- * changing the Responsable is lot 3 (docs/wiki/backlog.md, the Lydia chantier).
+ * changing the Responsable to another PERSON is not offered (lot 3 changes their number only).
  */
 export const LYDIA_RESPONSABLE_ALREADY_SET = 'LYDIA_RESPONSABLE_ALREADY_SET';
 
 /**
- * The `code` of the 409 refusing ANOTHER phone number for the live Responsable: Lydia would keep the
- * old number as a cashier Canari no longer tracks, so changing it comes with lot 3.
+ * The `code` of the 409 refusing ANOTHER phone number for the live Responsable while an EARLIER
+ * number change still has an old number whose removal Lydia has not confirmed (lot 3): that one is
+ * removed first. Also a record-mode request with another number, which changes nothing at Lydia.
  */
 export const LYDIA_RESPONSABLE_PHONE_LOCKED = 'LYDIA_RESPONSABLE_PHONE_LOCKED';
 
@@ -306,14 +319,14 @@ export const LYDIA_BUSINESS_CHANGED = 'LYDIA_BUSINESS_CHANGED';
 function responsableAlreadySet(): ConflictException {
   return new ConflictException({
     code: LYDIA_RESPONSABLE_ALREADY_SET,
-    message: 'This association already has a Responsable; changing them is not available yet',
+    message: 'This association already has a Responsable',
   });
 }
 
 function responsablePhoneLocked(): ConflictException {
   return new ConflictException({
     code: LYDIA_RESPONSABLE_PHONE_LOCKED,
-    message: "The Responsable's number cannot be changed yet",
+    message: 'An earlier number change of the Responsable is not finished',
   });
 }
 
@@ -689,6 +702,11 @@ export class AssociationsService {
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
     const asso = await this.findById(id);
+    // Enabling a cotisation creates a product: a list or an institution sells nothing. Disabling
+    // one (or editing a stored mode) stays open.
+    if (dto.cotisationEnabled === true) {
+      assertKindMaySell(this.logger, id, asso.type, 'cotisation enable');
+    }
     const patch = { ...dto } as unknown as Partial<Association>;
     // Blank clears the logo URL; anything else is held to the image URL allowlist before any write.
     if (dto.logoUrl !== undefined) {
@@ -738,7 +756,21 @@ export class AssociationsService {
       patch.cotisationExpiresAt =
         dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
-    await this.assoRepo.update(id, patch);
+    if (dto.archived !== undefined) {
+      // Archiving is ordered against a purchase on the association ROW: `decidePurchase` reads it
+      // FOR SHARE under the buyer's lock, so this write waits for a checkout already deciding, and a
+      // checkout deciding after it reads `archived` committed (docs/wiki/cotisations.md).
+      await this.assoRepo.manager.transaction(async (manager) => {
+        await manager.findOne(Association, {
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        await manager.update(Association, id, patch);
+      });
+      this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+    } else {
+      await this.assoRepo.update(id, patch);
+    }
     await this.invalidatePostListCaches();
     return this.findById(id);
   }
@@ -1145,8 +1177,9 @@ export class AssociationsService {
 
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
   async addMember(dto: AddMemberDto & { associationId: string }) {
-    const { associationId, userId, role, permissions } = dto;
-    await this.findById(associationId);
+    const { associationId, userId, role } = dto;
+    const target = await this.findById(associationId);
+    const permissions = writablePermissions(target.type, dto.permissions);
 
     const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
@@ -1203,6 +1236,10 @@ export class AssociationsService {
     });
     if (!membership) {
       throw new NotFoundException('Member not found');
+    }
+    if (permissions !== undefined) {
+      const kind = await this.kindOf(associationId);
+      if (kind) permissions = writablePermissions(kind, permissions);
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
@@ -3166,6 +3203,9 @@ ${rejectionReason}`
       );
       throw new ServiceUnavailableException('Business key storage is not configured');
     }
+    // A list or an institution collects nothing. An absent row is left to the UPDATE below (404).
+    const target = await this.assoRepo.findOne({ where: { id }, select: { id: true, type: true } });
+    if (target) assertKindMaySell(this.logger, id, target.type, 'Lydia account link');
     const sealed = sealSecret(
       LYDIA_BUSINESS_KEY_PURPOSE,
       lydiaBusinessKeyContext(id, vendorToken),
@@ -3251,11 +3291,19 @@ ${rejectionReason}`
     const responsable = asso.lydiaAccountId
       ? await this.lydiaResponsableOf(id, asso.lydiaAccountId)
       : null;
+    const cashiers = asso.lydiaAccountId
+      ? await listLydiaCashiers(
+          (sql, params) => this.assoRepo.query(sql, params),
+          id,
+          asso.lydiaAccountId
+        )
+      : [];
     return {
       lydiaAccountId: asso.lydiaAccountId,
       lydiaDashboardUrl: asso.lydiaDashboardUrl,
       lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
       responsable,
+      cashiers,
       readiness:
         asso.lydiaReadinessCause && asso.lydiaReadinessAt
           ? { cause: asso.lydiaReadinessCause, at: new Date(asso.lydiaReadinessAt).toISOString() }
@@ -3573,7 +3621,7 @@ ${rejectionReason}`
     await this.assoRepo.query(
       why === 'admin'
         ? `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL,
-                  "lydiaResponsableStartedAt" = NULL
+                  "lydiaResponsableStartedAt" = NULL, "lydiaCashierClaimToken" = NULL
             WHERE id = $1`
         : `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL
             WHERE id = $1`,
@@ -3638,140 +3686,245 @@ ${rejectionReason}`
   }
 
   /**
-   * Whether `phone` is the number sealed on the live Responsable row `rowId` of association `id`.
-   * A row whose seal cannot be opened (a rotated or missing secret) is NOT a match, said at ERROR:
-   * the number is then locked until lot 3, never silently replaced. The phone is never logged.
+   * Whether `phone` is the number sealed in `sealed` on a live Responsable row of association `id`.
+   * Called INSIDE the transaction that locked that row, so the answer is about the number the
+   * operation then acts on. No seal, or one that cannot be opened (a rotated or missing secret), is
+   * NOT a match, said at ERROR. The phone is never logged.
    */
-  private async lydiaResponsablePhoneMatches(
+  private lydiaResponsablePhoneMatches(
     id: string,
     sealed: string | null,
-    phone: string
-  ): Promise<boolean> {
+    phone: string,
+    what: 'current' | 'other' = 'current'
+  ): boolean {
     if (!sealed) {
-      this.logger.error(
-        `[LYDIA] live Responsable of ${sanitizeLog(id)} has no sealed phone - treated as another number`
-      );
+      if (what === 'current') {
+        this.logger.error(
+          `[LYDIA] live Responsable of ${sanitizeLog(id)} has no sealed phone - treated as another number`
+        );
+      }
       return false;
     }
     try {
       return openSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, sealed) === phone;
     } catch (err: unknown) {
       this.logger.error(
-        `[LYDIA] the live Responsable's phone of ${sanitizeLog(id)} cannot be opened - treated as ` +
-          `another number: ${err instanceof Error ? err.name : String(err)}`
+        `[LYDIA] the live Responsable's ${what} phone of ${sanitizeLog(id)} cannot be opened - ` +
+          `treated as another number: ${err instanceof Error ? err.name : String(err)}`
       );
       return false;
     }
   }
 
   /**
-   * What core-service checks before asking Lydia to add a Responsable, AND the claim of that step.
-   * Answers the Business linked now, whether the chosen person is a member, who the live
-   * Responsable is (changing them is lot 3), and - when the same person is asked again - whether
-   * `phone` is the number already recorded (`phoneMatches`; a different one is refused by core,
-   * `LYDIA_RESPONSABLE_PHONE_LOCKED`, since Lydia would keep the old number as a cashier Canari no
-   * longer tracks).
+   * Refuses (409 `LYDIA_CASHIER_PHONE_IN_USE`) a Responsable number that ANOTHER live cashier row of
+   * `vendorToken`'s Business holds - its current or its other number - as the cashier steps' add does:
+   * one number, one row. The rows are locked by `manager`'s transaction; a seal that does not open
+   * counts as holding the number, refused rather than risked. At the `claim` it is a WARN; at the
+   * `record` it is an ERROR, nothing recorded. The phone is never logged.
+   */
+  private async assertNotAnotherCashierNumber(
+    manager: EntityManager,
+    id: string,
+    vendorToken: string,
+    phone: string,
+    step: 'claim' | 'record'
+  ): Promise<void> {
+    const others: Array<{ phoneSealed: string | null; previousPhoneSealed: string | null }> =
+      await manager.query(
+        `SELECT "phoneSealed", "previousPhoneSealed" FROM lydia_cashiers
+          WHERE "associationId" = $1 AND "vendorToken" = $2 AND role <> 'responsable'
+            AND "removedAt" IS NULL
+          ORDER BY id FOR UPDATE`,
+        [id, vendorToken]
+      );
+    const match = numberHeldBy(
+      others.flatMap((other) => [other.phoneSealed, other.previousPhoneSealed]),
+      phone,
+      (sealed) => {
+        try {
+          return openSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, sealed);
+        } catch (err: unknown) {
+          this.logger.error(
+            `[LYDIA] a cashier number of ${sanitizeLog(id)} cannot be opened - counted as ` +
+              `holding this number: ${err instanceof Error ? err.name : String(err)}`
+          );
+          return null;
+        }
+      }
+    );
+    if (!match) return;
+    if (step === 'record') {
+      this.logger.error(
+        `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: number already held by another ` +
+          `cashier row - not recorded`
+      );
+    } else {
+      this.logger.warn(
+        `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: the number is another cashier's`
+      );
+    }
+    throw new ConflictException({
+      code: LYDIA_CASHIER_PHONE_IN_USE,
+      message: 'This number already is a cashier number',
+    });
+  }
+
+  /**
+   * What core-service checks before asking Lydia to add a Responsable, AND the claim of that step,
+   * in ONE transaction that locks the association row and the live Responsable row, so the numbers
+   * compared are the numbers the step then acts on. Answers the Business linked now, whether the
+   * chosen person is a member, who the live Responsable is (another person is refused), and - when
+   * the same person is asked again - whether `phone` is the number recorded (`phoneMatches`, the
+   * sealed number opened here and compared). A different number is a NUMBER CHANGE (lot 3,
+   * `numberChange`) when core asks for one (`allowNumberChange`, an add) and either no other number
+   * is tracked on the row or `phone` IS that other number (switching back, or retrying a new number
+   * Lydia did not confirm); a third number is refused (`LYDIA_RESPONSABLE_PHONE_LOCKED`, by core).
+   * An older core never asks, so it keeps lot 2's refusal.
    *
-   * Only when every check passes is the step CLAIMED, in ONE statement on the association row
-   * (`lydiaResponsableStartedAt`, migration 118), so two managers cannot both have Lydia add a
-   * cashier: the loser reads the typed 409 `LYDIA_RESPONSABLE_IN_FLIGHT`, or
-   * `LYDIA_BUSINESS_CHANGED` when the Business changed between the read and the claim. The claim is
-   * released by the record (success), by `releaseLydiaResponsable` (a typed refusal), or by a
-   * global admin; an outcome nobody knows keeps it.
+   * Only when every check passes is the step CLAIMED (`lydia-cashier-claim.ts`: the claim and a new
+   * token, answered as `claimToken`); a claim already held is the typed 409
+   * `LYDIA_RESPONSABLE_IN_FLIGHT`. Released by the record, by `releaseLydiaResponsable` carrying the
+   * token (a typed refusal), or by a global admin; an outcome nobody knows keeps it.
    */
   async claimLydiaResponsable(
     id: string,
     userId: string,
-    phone: string
+    phone: string,
+    opts: { mode?: 'add' | 'record'; allowNumberChange?: boolean } = {}
   ): Promise<{
     vendorToken: string | null;
     member: boolean;
     currentUserId: string | null;
     phoneMatches: boolean;
+    numberChange: boolean;
     claimed: boolean;
+    claimToken: string | null;
   }> {
     this.logger.debug(`[LYDIA] Responsable claim asked on ${sanitizeLog(id)}`);
     if (!E164_RE.test(phone)) {
       this.logger.warn(`[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: phone not E.164`);
       throw new BadRequestException('An E.164 phone is required');
     }
-    const vendorToken = await this.lydiaVendorTokenOf(id);
     const member = await this.isMember(userId, id);
-    const live: Array<{ userId: string; phoneSealed: string | null }> = vendorToken
-      ? await this.assoRepo.query(
-          `SELECT "userId", "phoneSealed" FROM lydia_cashiers
-            WHERE "associationId" = $1 AND "vendorToken" = $2 AND role = 'responsable'
-              AND "removedAt" IS NULL
-            LIMIT 1`,
-          [id, vendorToken]
-        )
-      : [];
-    const currentUserId = live[0]?.userId ?? null;
-    const phoneMatches =
-      currentUserId === userId
-        ? await this.lydiaResponsablePhoneMatches(id, live[0].phoneSealed, phone)
+    return this.assoRepo.manager.transaction(async (manager) => {
+      const asso = await lockAssociation(manager, id);
+      if (!asso) throw new NotFoundException('Association not found');
+      const vendorToken = asso.vendorToken;
+      const live: Array<{
+        userId: string;
+        phoneSealed: string | null;
+        previousPhoneSealed: string | null;
+      }> = vendorToken
+        ? await manager.query(
+            `SELECT "userId", "phoneSealed", "previousPhoneSealed" FROM lydia_cashiers
+              WHERE "associationId" = $1 AND "vendorToken" = $2 AND role = 'responsable'
+                AND "removedAt" IS NULL
+              LIMIT 1 FOR UPDATE`,
+            [id, vendorToken]
+          )
+        : [];
+      const currentUserId = live[0]?.userId ?? null;
+      const same = currentUserId === userId;
+      const phoneMatches = same
+        ? this.lydiaResponsablePhoneMatches(id, live[0].phoneSealed, phone)
         : true;
-    const answer = { vendorToken, member, currentUserId, phoneMatches, claimed: false };
-    if (!vendorToken || !member || (currentUserId && currentUserId !== userId) || !phoneMatches) {
-      this.logger.debug(
-        `[LYDIA] Responsable step on ${sanitizeLog(id)} not claimed: business=${!!vendorToken} ` +
-          `member=${member} other=${!!currentUserId && currentUserId !== userId} phoneMatches=${phoneMatches}`
+      const otherMatches =
+        same && !phoneMatches
+          ? this.lydiaResponsablePhoneMatches(id, live[0].previousPhoneSealed, phone, 'other')
+          : false;
+      // Lot 3: ANOTHER number for the live Responsable is a number change - asked only by a core
+      // that knows how to finish one (`allowNumberChange`), for an add, and only while no other
+      // number is tracked on the row or the number asked IS that other one.
+      const numberChange =
+        same &&
+        !phoneMatches &&
+        opts.allowNumberChange === true &&
+        opts.mode === 'add' &&
+        (!live[0].previousPhoneSealed || otherMatches);
+      const answer = {
+        vendorToken,
+        member,
+        currentUserId,
+        phoneMatches,
+        numberChange,
+        claimed: false,
+        claimToken: null,
+      };
+      if (!vendorToken || !member || (currentUserId && !same) || (!phoneMatches && !numberChange)) {
+        this.logger.debug(
+          `[LYDIA] Responsable step on ${sanitizeLog(id)} not claimed: business=${!!vendorToken} ` +
+            `member=${member} other=${!!currentUserId && !same} ` +
+            `phoneMatches=${phoneMatches} numberChange=${numberChange}`
+        );
+        return { ...answer, numberChange: false };
+      }
+      await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone, 'claim');
+      if (asso.claimed) {
+        this.logger.warn(
+          `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: another cashier operation is in flight`
+        );
+        throw new ConflictException({
+          code: LYDIA_RESPONSABLE_IN_FLIGHT,
+          message:
+            'A Responsable is being added to this association; its outcome must be known first',
+        });
+      }
+      const claimToken = await writeClaim(manager, id);
+      this.logger.log(
+        `[LYDIA] Responsable step claimed on association ${sanitizeLog(id)}` +
+          (numberChange
+            ? otherMatches
+              ? ' (switch to the other number)'
+              : ' (number change)'
+            : '')
       );
-      return answer;
-    }
-    const result: unknown[] = await this.assoRepo.query(
-      `UPDATE associations SET "lydiaResponsableStartedAt" = now()
-        WHERE id = $1 AND "lydiaAccountId" = $2 AND "lydiaResponsableStartedAt" IS NULL
-        RETURNING id`,
-      [id, vendorToken]
-    );
-    const written = Array.isArray(result[0]) ? (result[0] as unknown[]).length : result.length;
-    if (written > 0) {
-      this.logger.log(`[LYDIA] Responsable step claimed on association ${sanitizeLog(id)}`);
-      return { ...answer, claimed: true };
-    }
-    if ((await this.lydiaVendorTokenOf(id)) !== vendorToken) {
-      this.logger.warn(
-        `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: the Business changed meanwhile`
-      );
-      throw lydiaBusinessChanged();
-    }
-    this.logger.warn(
-      `[LYDIA] Responsable claim refused on ${sanitizeLog(id)}: another Responsable step is in flight`
-    );
-    throw new ConflictException({
-      code: LYDIA_RESPONSABLE_IN_FLIGHT,
-      message: 'A Responsable is being added to this association; its outcome must be known first',
+      return { ...answer, claimed: true, claimToken };
     });
   }
 
   /**
    * Releases the Responsable step's claim after a TYPED outcome core-service knows (Lydia refused,
    * or the read-back answered): nothing is left in flight at Lydia. Never on an unknown outcome.
+   * Clears it only when it still carries `claimToken`; answers whether it did.
    */
-  async releaseLydiaResponsable(id: string): Promise<void> {
-    await this.assoRepo.query(
-      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`,
-      [id]
-    );
-    this.logger.log(
-      `[LYDIA] Responsable step released on association ${sanitizeLog(id)} (refused)`
-    );
+  async releaseLydiaResponsable(id: string, claimToken: string): Promise<boolean> {
+    const cleared = await clearClaim((s, p) => this.assoRepo.query(s, p), id, claimToken);
+    if (cleared) {
+      this.logger.log(
+        `[LYDIA] Responsable step released on association ${sanitizeLog(id)} (refused)`
+      );
+    } else {
+      this.logger.warn(
+        `[LYDIA] Responsable step release on association ${sanitizeLog(id)} ignored: the claim ` +
+          `no longer carries that token`
+      );
+    }
+    return cleared;
   }
 
   /**
-   * Records the Responsable core-service just added at Lydia (or found already a cashier there):
-   * `confirmed` when Lydia's read-back showed every right, UNCONFIRMED (`confirmedAt` NULL) when the
-   * add answered and anything after it failed - Lydia then holds a cashier, and this row is what
-   * the number lock and the one-Responsable rule guard on. The phone is sealed at rest (`LYDIA_CASHIER_PHONE_PURPOSE`, the
-   * association id as context) and only its last two digits readable. In ONE transaction, the
-   * association row locked: refused when the Business linked now is not `vendorToken` (409
-   * `LYDIA_BUSINESS_CHANGED`), when another person is the live Responsable (409
-   * `LYDIA_RESPONSABLE_ALREADY_SET`, also what a concurrent insert's unique violation answers), or
-   * when the same person comes with ANOTHER number (409 `LYDIA_RESPONSABLE_PHONE_LOCKED`; changing
-   * it is lot 3). The same person and number again (a re-sent SMS) confirms an unconfirmed row. The
-   * step's claim is cleared by the same transaction, and by every typed refusal here. The phone is
-   * never logged.
+   * Records the Responsable core-service just added at Lydia (or found already a cashier there),
+   * under the claim `claimToken` (`LYDIA_CASHIER_CLAIM_LOST` when the association's claim no longer
+   * carries it). `confirmed` - an explicit boolean (`LYDIA_CASHIER_CONFIRMED_REQUIRED`) - is true when
+   * Lydia's read-back showed every right. The phone is sealed at rest (`LYDIA_CASHIER_PHONE_PURPOSE`,
+   * the association id as context) and only its last two digits readable. In ONE transaction, the
+   * association row and the Responsable row locked, the numbers compared opened there: refused when
+   * the Business linked now is not `vendorToken` (409 `LYDIA_BUSINESS_CHANGED`), or another person is
+   * the live Responsable (409 `LYDIA_RESPONSABLE_ALREADY_SET`, also a concurrent insert's unique
+   * violation).
+   *
+   * For the live Responsable (lot 3), `phone` is:
+   * - its CURRENT number: a re-sent SMS, which confirms an unconfirmed row;
+   * - its OTHER number (`previousPhoneSealed`): switching to it - CONFIRMED, the two numbers swap and
+   *   the one left becomes the other, whose removal core asks for next (`removeOther`); NOT
+   *   confirmed, nothing changes;
+   * - a THIRD number while another is tracked: 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`;
+   * - a new number: CONFIRMED, it becomes the current one and the old one the other, to remove next
+   *   (`removeOther`); NOT confirmed, the OLD number stays the live one and the new one is only
+   *   tracked as the other.
+   * The step's claim is cleared by the same transaction, and by every typed refusal here. The phone
+   * is never logged.
    */
   async recordLydiaResponsable(
     id: string,
@@ -3781,25 +3934,34 @@ ${rejectionReason}`
       phone: unknown;
       addedByUserId: unknown;
       confirmed: unknown;
+      claimToken: unknown;
     }
-  ): Promise<LydiaResponsableView> {
+  ): Promise<{ view: LydiaResponsableView; cashierId: string; removeOther: boolean }> {
     const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
     const vendorToken = text(input.vendorToken);
     const userId = text(input.userId);
     const phone = text(input.phone);
     const addedBy = text(input.addedByUserId);
-    const confirmed = input.confirmed;
-    if (
-      !vendorToken ||
-      !userId ||
-      !addedBy ||
-      !E164_RE.test(phone) ||
-      typeof confirmed !== 'boolean'
-    ) {
-      this.logger.warn(`[LYDIA] Responsable record refused on ${sanitizeLog(id)}: malformed body`);
-      throw new BadRequestException(
-        'vendorToken, userId, addedByUserId, an E.164 phone and confirmed are required'
-      );
+    const claimToken = claimTokenOf(input.claimToken);
+    if (!claimToken) {
+      this.logger.warn(`[LYDIA] Responsable record refused on ${sanitizeLog(id)}: no claim token`);
+      throw new BadRequestException('claimToken is required');
+    }
+    let confirmed: boolean;
+    try {
+      if (!vendorToken || !userId || !addedBy || !E164_RE.test(phone)) {
+        this.logger.warn(
+          `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: malformed body`
+        );
+        throw new BadRequestException(
+          'vendorToken, userId, addedByUserId and an E.164 phone are required'
+        );
+      }
+      confirmed = confirmedOf(input.confirmed);
+    } catch (err: unknown) {
+      // A malformed record is a typed outcome too: its claim is released, never left stuck.
+      await this.releaseLydiaResponsable(id, claimToken);
+      throw err;
     }
     if (!isSecretBoxConfigured()) {
       this.logger.error(
@@ -3809,14 +3971,19 @@ ${rejectionReason}`
     }
     const sealed = sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, phone);
     const phoneEnd = phone.slice(-2);
+    let outcome: { cashierId: string; removeOther: boolean; kept: string };
     try {
-      await this.assoRepo.manager.transaction(async (manager) => {
-        const asso: Array<{ vendorToken: string | null }> = await manager.query(
-          `SELECT "lydiaAccountId" AS "vendorToken" FROM associations WHERE id = $1 FOR UPDATE`,
-          [id]
-        );
-        if (asso.length === 0) throw new NotFoundException('Association not found');
-        if ((asso[0].vendorToken?.trim() || null) !== vendorToken) {
+      outcome = await this.assoRepo.manager.transaction(async (manager) => {
+        const asso = await lockAssociation(manager, id);
+        if (!asso) throw new NotFoundException('Association not found');
+        if (asso.claimToken !== claimToken) {
+          this.logger.error(
+            `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the claim no longer carries ` +
+              `its token - Lydia may hold a number this record does not keep`
+          );
+          throw claimLost();
+        }
+        if (asso.vendorToken !== vendorToken) {
           this.logger.warn(
             `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: the Business changed meanwhile`
           );
@@ -3827,12 +3994,18 @@ ${rejectionReason}`
           userId: string;
           vendorToken: string;
           phoneSealed: string | null;
+          phoneEnd: string | null;
+          previousPhoneSealed: string | null;
+          previousPhoneEnd: string | null;
         }> = await manager.query(
-          `SELECT id, "userId", "vendorToken", "phoneSealed" FROM lydia_cashiers
+          `SELECT id, "userId", "vendorToken", "phoneSealed", "phoneEnd", "previousPhoneSealed",
+                  "previousPhoneEnd"
+             FROM lydia_cashiers
             WHERE "associationId" = $1 AND role = 'responsable' AND "removedAt" IS NULL FOR UPDATE`,
           [id]
         );
         const current = live[0];
+        await this.assertNotAnotherCashierNumber(manager, id, vendorToken, phone, 'record');
         const sameBusiness = !!current && current.vendorToken === vendorToken;
         if (sameBusiness && current.userId !== userId) {
           this.logger.warn(
@@ -3840,45 +4013,86 @@ ${rejectionReason}`
           );
           throw responsableAlreadySet();
         }
-        if (
-          sameBusiness &&
-          !(await this.lydiaResponsablePhoneMatches(id, current.phoneSealed, phone))
-        ) {
-          this.logger.warn(
-            `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: another number for the same ` +
-              `Responsable (locked until lot 3)`
-          );
-          throw responsablePhoneLocked();
-        }
-        if (current && !sameBusiness) {
-          // A row of an EARLIER Business: not a cashier of this one. Closed, its phone cleared.
-          await manager.query(
-            `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL
-              WHERE id = $1`,
-            [current.id]
-          );
-        }
+        let result: { cashierId: string; removeOther: boolean; kept: string };
         if (sameBusiness) {
-          await manager.query(
-            `UPDATE lydia_cashiers
-                SET "confirmedAt" = CASE WHEN $3 THEN now() ELSE "confirmedAt" END,
-                    "addedByUserId" = $2, "addedAt" = now()
-              WHERE id = $1`,
-            [current.id, addedBy, confirmed]
-          );
+          const isCurrent = this.lydiaResponsablePhoneMatches(id, current.phoneSealed, phone);
+          const isOther =
+            !isCurrent &&
+            this.lydiaResponsablePhoneMatches(id, current.previousPhoneSealed, phone, 'other');
+          if (!isCurrent && !isOther && current.previousPhoneSealed) {
+            this.logger.warn(
+              `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: a third number while ` +
+                `another one is tracked`
+            );
+            throw responsablePhoneLocked();
+          }
+          if (isCurrent) {
+            await manager.query(
+              `UPDATE lydia_cashiers
+                  SET "confirmedAt" = CASE WHEN $3 THEN now() ELSE "confirmedAt" END,
+                      "addedByUserId" = $2, "addedAt" = now()
+                WHERE id = $1`,
+              [current.id, addedBy, confirmed]
+            );
+            result = { cashierId: current.id, removeOther: false, kept: 'the same number' };
+          } else if (!confirmed) {
+            // Lydia did not prove the asked number: the live number keeps its place and every
+            // right; a NEW asked number is only TRACKED as the other number (Lydia may list it),
+            // and an asked number that already is the other one stays as it was.
+            if (!isOther) {
+              await manager.query(
+                `UPDATE lydia_cashiers
+                    SET "previousPhoneSealed" = $2, "previousPhoneEnd" = $3,
+                        "previousRevokeUnconfirmedAt" = NULL
+                  WHERE id = $1`,
+                [current.id, sealed, phoneEnd]
+              );
+            }
+            result = {
+              cashierId: current.id,
+              removeOther: false,
+              kept: `the number ending ${current.phoneEnd ?? '??'} (the one ending ${phoneEnd} unconfirmed)`,
+            };
+          } else {
+            // Lydia proved the asked number (a new one, or the other one switched back to): it
+            // becomes the live number; the one it replaces becomes the other, removed next.
+            await manager.query(
+              `UPDATE lydia_cashiers
+                  SET "previousPhoneSealed" = "phoneSealed", "previousPhoneEnd" = "phoneEnd",
+                      "previousRevokeUnconfirmedAt" = NULL, "revokeUnconfirmedAt" = NULL,
+                      "phoneSealed" = $2, "phoneEnd" = $3, "confirmedAt" = now(),
+                      "addedByUserId" = $4, "addedAt" = now()
+                WHERE id = $1`,
+              [current.id, sealed, phoneEnd, addedBy]
+            );
+            result = {
+              cashierId: current.id,
+              removeOther: true,
+              kept: `the number ending ${phoneEnd}, the one ending ${current.phoneEnd ?? '??'} to remove`,
+            };
+          }
         } else {
-          await manager.query(
+          if (current) {
+            // A row of an EARLIER Business: not a cashier of this one. Closed, its phones cleared.
+            await manager.query(
+              `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL,
+                    "previousPhoneSealed" = NULL, "previousPhoneEnd" = NULL
+                WHERE id = $1`,
+              [current.id]
+            );
+          }
+          const inserted: Array<{ id: string }> = await manager.query(
             `INSERT INTO lydia_cashiers
                ("associationId", "vendorToken", "userId", "phoneSealed", "phoneEnd", role,
                 "addedByUserId", "confirmedAt")
-             VALUES ($1, $2, $3, $4, $5, 'responsable', $6, CASE WHEN $7 THEN now() END)`,
+             VALUES ($1, $2, $3, $4, $5, 'responsable', $6, CASE WHEN $7 THEN now() END)
+             RETURNING id`,
             [id, vendorToken, userId, sealed, phoneEnd, addedBy, confirmed]
           );
+          result = { cashierId: inserted[0].id, removeOther: false, kept: 'a new row' };
         }
-        await manager.query(
-          `UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`,
-          [id]
-        );
+        await clearClaim((s, p) => manager.query(s, p), id, claimToken);
+        return result;
       });
     } catch (err: unknown) {
       if ((err as { code?: unknown })?.code === '23505') {
@@ -3887,24 +4101,25 @@ ${rejectionReason}`
         this.logger.warn(
           `[LYDIA] Responsable record refused on ${sanitizeLog(id)}: a concurrent record won`
         );
-        await this.releaseLydiaResponsable(id);
+        await this.releaseLydiaResponsable(id, claimToken);
         throw responsableAlreadySet();
       }
-      if (err instanceof ConflictException) await this.releaseLydiaResponsable(id);
+      if (err instanceof ConflictException) await this.releaseLydiaResponsable(id, claimToken);
       throw err;
     }
     const audit =
       `Lydia Responsable recorded on association ${sanitizeLog(id)}: user ` +
-      `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ${sanitizeLog(addedBy).slice(0, 8)}`;
+      `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ` +
+      `${sanitizeLog(addedBy).slice(0, 8)} - live: ${outcome.kept}`;
     if (confirmed) {
       this.logger.log(`[AUDIT] ${audit}`);
     } else {
-      // Lydia holds this cashier and did not confirm its rights: a same-number resend confirms it.
+      // Lydia holds this number and did not confirm its rights: a same-number resend confirms it.
       this.logger.error(`[AUDIT] ${audit} - UNCONFIRMED: added at Lydia, rights not read back`);
     }
     const view = await this.lydiaResponsableOf(id, vendorToken);
     if (!view) throw new Error('the Responsable row just written cannot be read back');
-    return view;
+    return { view, cashierId: outcome.cashierId, removeOther: outcome.removeOther };
   }
 
   /**
@@ -3929,12 +4144,13 @@ ${rejectionReason}`
     // The cashiers Canari recorded were cashiers of THAT Business: closed, their phone cleared
     // (retention: a phone is kept only while its holder is a cashier, migration 118).
     await this.assoRepo.query(
-      `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL
+      `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL,
+                  "previousPhoneSealed" = NULL, "previousPhoneEnd" = NULL
         WHERE "associationId" = $1 AND "removedAt" IS NULL`,
       [id]
     );
     await this.assoRepo.query(
-      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL WHERE id = $1`,
+      `UPDATE associations SET "lydiaResponsableStartedAt" = NULL, "lydiaCashierClaimToken" = NULL WHERE id = $1`,
       [id]
     );
     await this.invalidatePostListCaches();
@@ -4057,6 +4273,15 @@ ${rejectionReason}`
    * before accepting paid forms/purchases.
    * @throws BadRequestException when neither the association nor its approved parent can receive payments
    */
+  /** The kind of an association (`null` when it does not exist) - what the forms' price guard reads. */
+  async kindOf(associationId: string): Promise<Association['type'] | null> {
+    const row = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: { id: true, type: true },
+    });
+    return row?.type ?? null;
+  }
+
   async assertPaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {
@@ -4121,6 +4346,7 @@ ${rejectionReason}`
     ]);
     if (!asso) throw new NotFoundException('Association not found');
     if (!parent) throw new NotFoundException('Parent association not found');
+    assertKindMaySell(this.logger, associationId, asso.type, 'payment delegation request');
 
     // No chains: the parent must not itself route its payments to a further association.
     if (parent.paymentParentAssociationId) {
@@ -4194,6 +4420,8 @@ ${rejectionReason}`
     ]);
     if (!parent) throw new NotFoundException('Parent association not found');
     if (!child) throw new NotFoundException('Association not found');
+    assertKindMaySell(this.logger, parentAssociationId, parent.type, 'payment delegation approval');
+    assertKindMaySell(this.logger, childId, child.type, 'payment delegation approval');
     if (
       child.paymentParentAssociationId !== parentAssociationId ||
       child.paymentDelegationStatus !== 'pending'
