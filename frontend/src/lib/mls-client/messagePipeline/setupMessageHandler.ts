@@ -8,7 +8,11 @@ import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
-import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
+import {
+  appMessageSentAtMs,
+  appMsgToEnvelope,
+  normalizeMessageId,
+} from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   requestReAdd,
@@ -786,6 +790,7 @@ async function handleWelcome({
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
                       messageId: normalizeMessageId(appMsg.messageId),
+                      sentAt: appMessageSentAtMs(appMsg.sentAt),
                       deliveryMeta: msg.deliveryMeta,
                       ...(authorship ? { authorship } : {}),
                     });
@@ -1308,6 +1313,7 @@ async function handleKnownGroup({
         convoKey,
         senderNorm: sender,
         messageId: normalizeMessageId(msg.messageId),
+        sentAt: appMessageSentAtMs(msg.sentAt),
         deliveryMeta,
         ...(authorship ? { authorship } : {}),
       });

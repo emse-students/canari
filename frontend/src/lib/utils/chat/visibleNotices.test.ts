@@ -26,6 +26,7 @@ import { inviteMembersToGroup } from './groupCreation';
 import { buildHistoryDigest, diffHistoryDigest, isEmptyHistoryDiff } from './historyManifest';
 import { historyStateKey } from './historyStateKey';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
+import { appMessageSentAtMs } from './messageUtils';
 import { handleSystemEvent } from '$lib/mls-client/messagePipeline/systemMessageHandler';
 import { applyReplaySystemEvent } from './historySystemEvents';
 
@@ -361,6 +362,7 @@ async function memberRowIdFor(frame: NonNullable<ReturnType<typeof decodeAppMess
     convoKey: GROUP,
     senderNorm: ALICE,
     messageId: frame.messageId ?? undefined,
+    sentAt: appMessageSentAtMs(frame.sentAt),
     persistMlsStateNow: vi.fn(),
   } as never);
   const calls = addMessageToChat.mock.calls as unknown as Array<
