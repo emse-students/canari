@@ -347,6 +347,12 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 if [ "$(auth_held)" = 1 ]; then ok "the POST is held in its auth subrequest before the release starts"; else fail "the POST never reached its auth subrequest"; fi
+for svc in frontend api; do
+  for c in $(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "label=com.docker.compose.service=$svc"); do
+    printf '    %s %s, port-3000 sockets before the release (local remote state):\n' "$svc" "$c"
+    docker exec "$c" cat /proc/net/tcp 2>/dev/null | awk '$2 ~ /:0BB8$/ || $3 ~ /:0BB8$/ { print "      " $2, $3, $4, $10 }'
+  done
+done
 deploy >"$TMP/auth.log" 2>&1 &
 DEPLOY_PID=$!
 # Released once the deploy either waits for it (the check is sound) or has moved on to retiring the
