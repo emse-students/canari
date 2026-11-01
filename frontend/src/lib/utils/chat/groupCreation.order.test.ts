@@ -159,6 +159,7 @@ function dmDeps() {
     }),
     getLocalGroups: vi.fn(() => Array.from(local)),
     acquireAddLock: vi.fn(async () => true),
+    acquireAddLockAnswer: vi.fn(async () => 'taken'),
     releaseAddLock: vi.fn(async () => {}),
     // Annotated to `IMlsService`'s own shape rather than inferred from this one happy answer: a
     // test below replaces the mock with the empty result, which an inferred `welcome: Uint8Array`

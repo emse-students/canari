@@ -1,7 +1,7 @@
 /**
- * THE WEB DOCUMENT'S CONTENT-SECURITY-POLICY, as SvelteKit's `kit.csp` writes it (svelte.config.js).
+ * THE WEB DOCUMENT'S CONTENT-SECURITY-POLICY, as SvelteKit's `kit.csp` writes it (kit.config.js).
  *
- * Plain JavaScript on purpose: `svelte.config.js` runs before Vite and cannot import TypeScript, and
+ * Plain JavaScript on purpose: `kit.config.js` runs before Vite and cannot import TypeScript, and
  * the frontend suite (`csp.test.ts`) and the build check (`scripts/check-built-csp.mjs`) read the
  * same object, so there is one description of the policy and three readers of it.
  *

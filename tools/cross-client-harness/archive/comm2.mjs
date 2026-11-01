@@ -128,7 +128,12 @@ const venueGone = workspaceId ? workspaceFootprint(workspaceId).workspace === 0 
 const expectations = {
   linkIsAJoinUrl: !!link && link.includes('/c/join/'),
   // Reading it again gives the same token: one live link, rotation the only way to mint another.
-  linkIsStable: !!link && link === linkAgain,
+  // THE TOKEN, NOT THE WHOLE URL: since Graine v2 every device that shows the link mints a fresh
+  // admission-proof FRAGMENT for the same server token (`admissionIssue.ts`, "two fragments for one
+  // server token, both valid"), so two reads of one live link differ after the `#` by design. The
+  // first 1.5.0-alpha.1 replay failed here on that alone (2026-10-27).
+  linkIsStable: !!link && !!linkAgain && link.split('#')[0] === linkAgain.split('#')[0],
+  linkCarriesAFreshFragmentEachRead: !!link && !!linkAgain && link.includes('#') && link.split('#')[1] !== linkAgain.split('#')[1],
   previewAccepted: preview?.valid === true,
   // What the link is FOR: it names what you are about to join, before you join it.
   previewNamesTheCommunity: preview?.name === community,

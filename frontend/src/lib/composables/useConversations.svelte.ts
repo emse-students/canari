@@ -81,6 +81,7 @@ import {
   makeUnrecordedInvitationTeller,
 } from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { captureGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
   loadExistingConversations,
@@ -110,6 +111,7 @@ import {
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
 import { drainOutboxForExit } from '$lib/utils/chat/outbox';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 
 /** Salons whose "decoded after entry was decided" decision was already logged this session. */
 const salonEntryDecisionNoted = new SvelteSet<string>();
@@ -739,7 +741,13 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
+    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
+    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
+    // of a salon this device meets for the first time is not on disk yet when its first page lands
+    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
+    // device's placeholder).
     try {
+      await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
     } catch (e) {
@@ -852,19 +860,9 @@ export function useConversations() {
       // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
       // Said ONCE per salon per session: it is the decision (the page waited for an entry), and the
       // same salon re-reading on every open repeated it (5 lines in one measured row).
-      //
-      // EXPECTED, NOT AN ORDERING DEFECT (RM-4/RM-5, 2026-10-26): it is met when a salon is opened
-      // while a listing is still entering salons - a community joined by link loads its salons as
-      // the joiner lands on one, a cold start restores the last salon before its first listing. The
-      // page is fetched in parallel and only its DECODE waits; how long is the open's cost, so the
-      // line carries it (community-open-budget F3).
-      const entryWaitFrom = performance.now();
       if ((await whenSalonEntryDecided(rawId)) && !salonEntryDecisionNoted.has(rawId)) {
         salonEntryDecisionNoted.add(rawId);
-        ctx.log(
-          `[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided ` +
-            `(held ${Math.round(performance.now() - entryWaitFrom)} ms behind a listing in flight)`
-        );
+        ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
       }
       const loaded: ChatMessage[] = [];
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
@@ -1150,10 +1148,94 @@ export function useConversations() {
     queuedCtx: ConversationContext | null;
     /** How many asks the queued restore carries, reported once when it starts rather than per ask. */
     queuedAsks: number;
+    /** Conversations whose archive replay a restore skipped on a link known down (`oweArchiveReplays`). */
+    owedArchives: Set<string>;
+    /** Unsubscribes the one reconnect listener that replays {@link owedArchives}; null when none is armed. */
+    owedReconnectOff: (() => void) | null;
   }
 
   function newRestoreGeneration(id: number): RestoreGeneration {
-    return { id, retired: false, running: null, queued: null, queuedCtx: null, queuedAsks: 0 };
+    return {
+      id,
+      retired: false,
+      running: null,
+      queued: null,
+      queuedCtx: null,
+      queuedAsks: 0,
+      // A `SvelteSet` only because the lint asks for one in a `.svelte.ts`; nothing renders it.
+      owedArchives: new SvelteSet(),
+      owedReconnectOff: null,
+    };
+  }
+
+  /**
+   * THE ARCHIVES A RESTORE SKIPPED ON A LINK KNOWN DOWN ARE REPLAYED ON THE NEXT RECONNECT, ONCE.
+   *
+   * The restore runs at boot and on a Welcome only, so a replay it skipped (`loadExistingConversations`,
+   * `onArchiveReplaysSkipped`) would otherwise wait for the conversation's next OPEN - days on a
+   * phone, against a mailbox that keeps 14. An EVENT, never a clock: `connectivity.onReconnect`
+   * fires on `online` and when a request is answered after a transport failure; an edge that comes
+   * while the server is still not proven (`isOffline`) leaves the listener armed for the next one.
+   * Idempotent by the durable stream cursor: a conversation already replayed meanwhile (opened, or a
+   * later restore) costs one `limit=1` probe. Bound to its generation: a sign-out drops it.
+   */
+  function oweArchiveReplays(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    ids: string[]
+  ): void {
+    for (const id of ids) gen.owedArchives.add(id);
+    if (gen.owedReconnectOff) return;
+    gen.owedReconnectOff = connectivity.onReconnect(() => {
+      if (connectivity.isOffline) return;
+      gen.owedReconnectOff?.();
+      gen.owedReconnectOff = null;
+      const owed = [...gen.owedArchives];
+      gen.owedArchives.clear();
+      if (gen.retired || owed.length === 0) return;
+      void replayOwedArchives(gen, ctx, owed);
+    });
+  }
+
+  /**
+   * Replays each owed archive in turn - serialised, as the restore's own phase 2 is.
+   *
+   * A LINK THAT DROPS AGAIN MID-REPLAY RE-OWES WHAT IS LEFT: each id is checked against
+   * `connectivity.isOffline` before its read, and the remainder goes back to
+   * {@link oweArchiveReplays} for the next answered reconnect, said once. Without it every remaining
+   * id would send its probe into the dead link, and `loadHistoryForConversation` - to which an
+   * unanswered read is an empty page, not a throw - would drop each one silently.
+   */
+  async function replayOwedArchives(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    ids: string[]
+  ): Promise<void> {
+    ctx.log(`[CATCHUP] link back - replaying ${ids.length} archive(s) skipped while it was down`);
+    for (let i = 0; i < ids.length; i++) {
+      if (gen.retired) return;
+      if (connectivity.isOffline) {
+        const rest = ids.slice(i);
+        ctx.log(
+          `[CATCHUP] the link dropped again - ${rest.length} archive replay(s) owed to the next reconnect`
+        );
+        oweArchiveReplays(gen, ctx, rest);
+        return;
+      }
+      const id = ids[i];
+      // Left since (a leave, a delete): nothing to replay into.
+      if (!conversations.has(id)) continue;
+      try {
+        await loadHistoryForConversation(id, id, ctx);
+      } catch (e) {
+        // REACHABLE, AND NOT FROM THE NETWORK: the replay's own failures are caught and logged
+        // inside, but its fast path (the stream cursor read from `localStorage`, the stored page
+        // read and drawn) runs outside that catch and throws out. Logged, and the loop goes on - this
+        // runs under `void`, so an escape would be an unhandled rejection that ends the replay of
+        // every id after it. This archive waits for the conversation's next open.
+        ctx.log(`[CATCHUP] owed archive replay of ${id.slice(0, 8)} failed: ${String(e)}`);
+      }
+    }
   }
 
   let restoreGeneration = newRestoreGeneration(0);
@@ -1169,6 +1251,9 @@ export function useConversations() {
   function invalidateRestores(): void {
     const retired = restoreGeneration;
     retired.retired = true;
+    retired.owedReconnectOff?.();
+    retired.owedReconnectOff = null;
+    retired.owedArchives.clear();
     restoreGeneration = newRestoreGeneration(retired.id + 1);
     // The re-planner re-plans into THIS session's map: the next account must not inherit it. Its
     // entries stay in the leaving account's own record.
@@ -1273,6 +1358,7 @@ export function useConversations() {
         historyBaseUrl: ctx.historyBaseUrl,
         log: ctx.log,
         onArchivedIdsChange: () => {},
+        onArchiveReplaysSkipped: (ids) => oweArchiveReplays(gen, ctx, ids),
       });
       restored = true;
     } finally {
@@ -1888,6 +1974,7 @@ export function useConversations() {
               if (id) selectConversationWithCtx(id, ctx);
             },
             saveConversation: (name: string) => saveConversation(name, ctx),
+            onGroupReady: captureGroupReadyAnnouncer(),
             log: ctx.log,
           });
           console.log(`[VERIFY] Direct conversation ${convo.id} recovery triggered`);

@@ -25,7 +25,7 @@ function makeService(promoRows: unknown[] = []) {
   // `promoCutoffFor` before it is touched, which is why the older cases below need no rows.
   const manager = { query: jest.fn(() => Promise.resolve(promoRows)) };
   const calendarRepo = { createQueryBuilder: jest.fn(() => qb), manager };
-  // POSITIONAL, AND THIRTEEN LONG - so a constructor change silently shifts every argument after
+  // POSITIONAL, AND FOURTEEN LONG - so a constructor change silently shifts every argument after
   // the one it touched. The comments are the guard: keep them aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
   const service = new AssociationsService(
@@ -41,7 +41,8 @@ function makeService(promoRows: unknown[] = []) {
     undefined as never, // redis
     undefined as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
   return { service, qb };
 }

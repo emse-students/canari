@@ -12,8 +12,54 @@ const APP = { processing: 'app', e2e: true };
 const RAW = { processing: 'off', e2e: true };
 /** The app with its camera on from the start (a video call). */
 const VID = { ...APP, video: true };
+/**
+ * The app with its RNNoise noise suppression ON - the default since owner decision D-B
+ * (2026-10-31). `APP` alone is the switch turned OFF: the rows measured before D-B keep their
+ * meaning, and the `ns` rows below say what the suppressor changes.
+ */
+const APP_NS = { ...APP, noiseSuppression: true };
 
 export const MATRIX = [
+  {
+    name: 'app-ns',
+    what: 'the app with RNNoise ON (the default since D-B), clean reference - what the suppressor does to clean speech',
+    gated: true,
+    caller: APP_NS,
+    callee: APP_NS,
+  },
+  {
+    name: 'raw-ns',
+    what: "EXPERIMENT: every browser voice processing step off, RNNoise ON - RNNoise's own effect, without the browser's NS/AGC in front of it",
+    caller: { ...RAW, noiseSuppression: true },
+    callee: { ...RAW, noiseSuppression: true },
+  },
+  {
+    name: 'app-browser-ns-off-ns',
+    what: "EXPERIMENT: the app's chain with the BROWSER's noise suppressor off (AEC and AGC kept), RNNoise ON - one suppressor instead of two",
+    caller: { ...APP_NS, processing: 'app-no-ns' },
+    callee: { ...APP_NS, processing: 'app-no-ns' },
+  },
+  {
+    name: 'app-browser-ns-off-ns-noisy',
+    what: 'EXPERIMENT: the same on the noisy reference - does RNNoise alone still remove the background',
+    noisy: true,
+    caller: { ...APP_NS, processing: 'app-no-ns' },
+    callee: { ...APP_NS, processing: 'app-no-ns' },
+  },
+  {
+    name: 'app-noisy',
+    what: 'EXPERIMENT: noisy reference (steady band noise + hum, 10 dB below speech), RNNoise OFF - the browser NS alone',
+    noisy: true,
+    caller: APP,
+    callee: APP,
+  },
+  {
+    name: 'app-ns-noisy',
+    what: 'EXPERIMENT: noisy reference, RNNoise ON - what the suppressor removes; scored against the CLEAN reference',
+    noisy: true,
+    caller: APP_NS,
+    callee: APP_NS,
+  },
   {
     name: 'app',
     what: 'the app as shipped: its constraints, its sender parameters, its SDP, E2E on',
@@ -292,6 +338,24 @@ export function videoChecks(r) {
   return checks;
 }
 
+/**
+ * A row whose measured sender runs the app's noise suppression (`r.ns`) measured the PROCESSED
+ * track only if the sender carried it to the end, the worklet counted frames, and the primary path
+ * never failed - otherwise its numbers are the raw path's, under a name that says RNNoise.
+ */
+export function nsChecks(r) {
+  if (!r.ns) return [];
+  return [
+    [
+      'ns-on',
+      r.ns.state === 'on' &&
+        r.ns.sendsProcessed === true &&
+        r.ns.fallbacks === 0 &&
+        (r.ns.stats?.frames ?? 0) > 0,
+    ],
+  ];
+}
+
 /** Log lines in which the app's E2E worker named a non-Opus payload or a double encryption. */
 export function witnessLines(r) {
   return (r.log ?? []).filter((l) => /"type":"(opusInvalid|doubleEncrypted)"/.test(l)).length;
@@ -331,6 +395,7 @@ export function verdict(r) {
     checks.push(['clipping', r.metrics.clippedSamples <= THRESHOLDS.maxClippedClean]);
   }
   checks.push(...videoChecks(r));
+  checks.push(...nsChecks(r));
   const failed = checks.filter(([, ok]) => !ok).map(([n]) => n);
   const pass = failed.length === 0;
   return { pass, failed, gated: !!r.gated, fault: !!r.fault, ok: r.fault ? !pass : pass };

@@ -44,7 +44,8 @@
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
   import { phoneViewport } from '$lib/stores/phoneViewport.svelte';
   import MessageMobileActions from './MessageMobileActions.svelte';
-  import { canShareOut, shareMediaOut, shareTextOut } from '$lib/sharing/shareOut';
+  import { canShareOut, runShareOut, shareMediaOut, shareTextOut } from '$lib/sharing/shareOut';
+  import { copyText } from '$lib/utils/clipboard';
   import { showToast } from '$lib/stores/toast.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
@@ -284,20 +285,13 @@
   const shareAction = $derived.by(() => {
     if (!canShareOut() || isDeleted || isReelMessageRow) return undefined;
     const ref = mediaRef;
-    if (ref) return ref.mediaId ? () => void shareOut(() => shareMediaOut(ref)) : undefined;
-    const text = textContent;
-    return text ? () => void shareOut(() => shareTextOut(text)) : undefined;
-  });
-
-  async function shareOut(open: () => Promise<void>) {
-    Log.d('MessageBubble', `share out ${messageId.slice(0, 8)}`);
-    try {
-      await open();
-    } catch (err) {
-      console.error('[share-out] message share failed', err);
-      showToast(m.share_out_failed(), 'error');
+    const what = `message ${messageId.slice(0, 8)}`;
+    if (ref) {
+      return ref.mediaId ? () => void runShareOut(what, () => shareMediaOut(ref)) : undefined;
     }
-  }
+    const text = textContent;
+    return text ? () => void runShareOut(what, () => shareTextOut(text)) : undefined;
+  });
 
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
@@ -801,9 +795,9 @@
              generic building icon. -->
         <div class="h-5 w-5 shrink-0 overflow-hidden rounded-md">
           <GroupAvatar
+            id={channelInvite.channelId}
             imageMediaId={channelInvite.workspaceImageMediaId ?? null}
             name={channelInvite.workspaceName || channelInvite.channelName}
-            variant="community"
             fill
           />
         </div>
@@ -1138,7 +1132,7 @@
         : undefined}
       onCopy={textContent && !isDeleted
         ? () => {
-            navigator.clipboard?.writeText(textContent);
+            void copyText(textContent, { what: 'text' });
             showMobileActions = false;
             if (
               settings.vibrationsEnabled &&

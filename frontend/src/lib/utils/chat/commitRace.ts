@@ -41,7 +41,9 @@ export class AddAbortedError extends Error {
   constructor(
     readonly groupId: string,
     readonly why: AddAbortReason,
-    detail: string
+    detail: string,
+    /** The roster read that decided this abort carried a seat generation, so it is a read of a race, not a failure to read. */
+    readonly seatGenerationKnown = false
   ) {
     super(
       `The Add in ${groupId.slice(0, 8)}... was abandoned before its stage (${why}): ${detail}`

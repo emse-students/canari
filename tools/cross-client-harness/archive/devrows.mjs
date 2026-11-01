@@ -45,6 +45,7 @@ import {
   welcomeAcrossReloadOwn,
 } from '../devicerows.mjs';
 import { recordCreated } from '../campaign.mjs';
+import { dismissMintedNoticesOn } from '../devicenotice.mjs';
 import { srvLines } from '../estate.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
@@ -89,7 +90,9 @@ import {
   REVOKED_RETURN_NARRATION,
   REVOKED_REFUSALS,
   REVOKED_SIGN_OUT_NARRATION,
-  SIBLING_MINT_NARRATION,
+  revokedLogoutOnce,
+  signOutCount,
+  mintedKeyPackageVettedNarration,
   consoleLines,
   logcatSince,
 } from '../watch.mjs';
@@ -285,7 +288,16 @@ const ACTIONS = {
       offline: cut ? ['W3'] : [],
       minted: { W3: minted },
       detail: { minted, revokedAt, panel, seatedMs, socketsClosed: cut?.socketsClosed ?? null, reenrolled },
-      judge: () => [{ what: `the panel revoked W3 (${panel.ok ? 'ok' : `exit ${panel.exit}: ${panel.tail}`})`, ok: panel.ok }, ...own],
+      // THE SIGN-OUT IS COUNTED, NOT FORGIVEN BY A NEEDLE: the reset's own clearAuth is the one logout, and the
+      // session-expired redirect adds none. Zero (never signed out) and two (the P3 of alpha.3) both fail.
+      judge: () => [
+        { what: `the panel revoked W3 (${panel.ok ? 'ok' : `exit ${panel.exit}: ${panel.tail}`})`, ok: panel.ok },
+        ...own,
+        (() => {
+          const n = signOutCount(consoleLines(W3.cx));
+          return { what: `the revoked device signed out exactly once (${n} logout line(s))`, ok: n === 1 };
+        })(),
+      ],
     };
   },
 
@@ -488,16 +500,32 @@ try {
   // A ROW THAT MINTS tells the owner (W1) and every contact (W2) of the new device - the subject of
   // DEV-1 and the premise of every other DEV row, so both seats name their device-notice narration.
   const minting = spec.mint.length > 0;
+  // THE MINTED IDS, per seat: the owner vets each one (`[TRUST] ... vetted: pinned`, DEV-2 of alpha.6),
+  // and a minted seat vets its sibling - scoped to these ids, never forgiven by tag.
+  const mintedIds = Object.fromEntries(Object.entries(act.minted ?? {}).filter(([, m]) => m?.deviceId).map(([d, m]) => [d, m.deviceId]));
   const logs = {
-    W1: [...GROUP_CREATION_NARRATION, ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []), ...(minting ? OWNER_DEVICE_NOTICE_NARRATION : []), ...(act.narration ?? [])],
+    W1: [
+      ...GROUP_CREATION_NARRATION,
+      ...(act.revoked?.length ? DEVICE_PANEL_NARRATION : []),
+      ...(minting ? [...OWNER_DEVICE_NOTICE_NARRATION, ...mintedKeyPackageVettedNarration(Object.values(mintedIds))] : []),
+      ...(act.narration ?? []),
+    ],
     ...(minting && spec.devices.includes('W2') ? { W2: CONTACT_DEVICE_NOTICE_NARRATION } : {}),
   };
   const refusals = {};
   for (const d of spec.mint) {
-    logs[d] = (act.revoked ?? []).includes(d) ? REVOKED_NARRATION : MINT_NARRATION;
+    // The single logout line is forgiven on a revoked seat ONLY while the live console holds exactly one.
+    // `seats.seat[d].cx`, not `cx(d)`: that helper is local to `play()`, and the judge runs out here
+    // (#2523 wrote `cx(d)`, and DEV-2's first alpha.6 run died on `cx is not defined`).
+    logs[d] = (act.revoked ?? []).includes(d) ? [...REVOKED_NARRATION, revokedLogoutOnce(() => consoleLines(seats.seat[d].cx))] : MINT_NARRATION;
     // TWO MINTS IN ONE ROW (DEV-4, DEV-6) make each minted seat the owner's other device for the
     // other: it is told of its sibling at first sight and vets the sibling's KeyPackage.
-    if (spec.mint.length > 1) logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...SIBLING_MINT_NARRATION];
+    if (spec.mint.length > 1) {
+      const siblings = Object.entries(mintedIds)
+        .filter(([s]) => s !== d)
+        .map(([, id]) => id);
+      logs[d] = [...logs[d], ...OWNER_DEVICE_NOTICE_NARRATION, ...mintedKeyPackageVettedNarration(siblings)];
+    }
     refusals[d] = (act.revoked ?? []).includes(d) ? [...MINT_REFUSALS, ...REVOKED_REFUSALS] : MINT_REFUSALS;
   }
   const observers = await observersOf(seats, { logs, refusals, provoked: act.records ?? {}, offline: act.offline ?? [] });
@@ -506,7 +534,18 @@ try {
     verdict,
     { ...out.detail, own: out.own ?? [], failures, invariant: invariantDetail(out.invariant ?? null), serverWindowSince: since },
     observers,
-    () => closeSeats(seats)
+    async () => {
+      // THE NOTICES THIS ROW'S MINTS LEFT, dismissed after the verdict and only for the ids it minted:
+      // on W1 every one, on a minted seat still signed in its siblings (`devicenotice.mjs`).
+      const ids = Object.values(mintedIds);
+      await dismissMintedNoticesOn([
+        { seat: 'W1', cx: seats.seat.W1?.cx, minted: ids },
+        ...Object.entries(mintedIds)
+          .filter(([d]) => !(act.revoked ?? []).includes(d))
+          .map(([d, id]) => ({ seat: d, cx: seats.seat[d]?.cx, minted: ids.filter((x) => x !== id) })),
+      ]);
+      closeSeats(seats);
+    }
   );
 } catch (e) {
   console.error(`[${rowId}] ${e?.stack ?? e}`);

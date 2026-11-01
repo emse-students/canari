@@ -45,6 +45,11 @@ const USER_STORAGE_KEY = 'canari_saved_user';
 const LEGACY_USER_EMAIL_KEY = 'canari_user_email';
 const USER_DISPLAY_NAME_KEY = 'canari_user_display_name';
 const USER_GLOBAL_ADMIN_KEY = 'canari_global_admin';
+/**
+ * The campus and cursus the reader's own profile last carried ({@link noteReaderSpaces}), so a
+ * change is found by COMPARING two answers of the server, never by the age of a held one.
+ */
+const READER_SPACES_KEY = 'canari_reader_spaces';
 
 /** Returns the persisted user ID from localStorage, or `null` if not logged in. */
 export function getSavedUserId(): string | null {
@@ -71,6 +76,8 @@ export function saveUserLocally(user: { id: string; displayName?: string; admin?
   // avatar read "Avatar de <previous user>" while the picker beside it said the right name
   // (iPhone, 2026-10-07). Dropped at the switch, so no reader can mistake it for the new owner's.
   if (accountChanged) localStorage.removeItem(USER_DISPLAY_NAME_KEY);
+  // The previous account's campus is no baseline for this one: everything is forgotten below anyway.
+  if (accountChanged) localStorage.removeItem(READER_SPACES_KEY);
   if (user.displayName) localStorage.setItem(USER_DISPLAY_NAME_KEY, user.displayName);
   localStorage.setItem(USER_GLOBAL_ADMIN_KEY, user.admin ? 'true' : 'false');
   // A REMEMBERED VERDICT BELONGS TO ONE ACCOUNT. Anything derived from the previous session's
@@ -95,6 +102,7 @@ export function clearUserLocally(): void {
   localStorage.removeItem(LEGACY_USER_EMAIL_KEY);
   localStorage.removeItem(USER_DISPLAY_NAME_KEY);
   localStorage.removeItem(USER_GLOBAL_ADMIN_KEY);
+  localStorage.removeItem(READER_SPACES_KEY);
   setGlobalAdmin(false);
   setFeedAudience(null);
   forgetReaderCaches();
@@ -187,7 +195,46 @@ const myProfile = new SharedCache<UserProfile>(30_000, { perReader: true });
 
 /** Fetches the authenticated user's own profile from the core service. */
 export function fetchMyProfile(): Promise<UserProfile> {
-  return myProfile.load('me', requestMyProfile);
+  return myProfile.load('me', async () => {
+    const profile = await requestMyProfile();
+    noteReaderSpaces(profile);
+    return profile;
+  });
+}
+
+/** The part of a profile the reader's SPACES are computed from (D16), as one comparable string. */
+export function readerSpacesFingerprint(profile: {
+  campus?: Campus | null;
+  cursus?: CursusEntry[];
+}): string {
+  const cursus = (profile.cursus ?? [])
+    .map((c) => `${c.formation}:${c.promo}`)
+    .sort()
+    .join(',');
+  return `${profile.campus ?? ''}|${cursus}`;
+}
+
+/**
+ * Records the campus and cursus the reader's own profile carries, and FORGETS EVERYTHING HELD ABOUT
+ * THE READER ({@link forgetReaderCaches}) when they differ from the ones last recorded.
+ *
+ * WHY: the directory, the shop, the partnerships and the agenda are scoped by the reader's spaces
+ * (D16, D37), and the caches holding them are per reader - so a campus or cursus changed by an
+ * admin's correction, or by MiConnect between two sessions, would be drawn with the old campus until
+ * each cache expired. The decision is made from DURABLE STATE (the last recorded value), never from
+ * a clock: an unchanged profile forgets nothing, and the first reading of an account only records.
+ */
+export function noteReaderSpaces(profile: {
+  campus?: Campus | null;
+  cursus?: CursusEntry[];
+}): void {
+  if (typeof localStorage === 'undefined') return;
+  const next = readerSpacesFingerprint(profile);
+  const previous = localStorage.getItem(READER_SPACES_KEY);
+  localStorage.setItem(READER_SPACES_KEY, next);
+  if (previous === null || previous === next) return;
+  console.log('[USER] campus or cursus changed: forgetting what was held about the reader');
+  forgetReaderCaches();
 }
 
 /**
@@ -363,6 +410,7 @@ export async function updateMyProfile(data: {
   }
   const profile = (await res.json()) as UserProfile;
   invalidateMyProfile(profile);
+  noteReaderSpaces(profile);
   return profile;
 }
 

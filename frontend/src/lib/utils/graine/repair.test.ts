@@ -8,7 +8,6 @@ import {
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
 import {
-  adoptRecordedHistoryAsk,
   forgetWorkspaceRepairState,
   noteHistoryAnswered,
   noteHistoryHeldNothing,
@@ -678,93 +677,75 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     const { requestId, devices } = sentAsk();
     expect([...devices].sort()).toEqual(['bob-phone', 'web-bob']);
 
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-    const heldNothingLines = () =>
-      info.mock.calls.flat().filter((l) => String(l).includes('holds nothing of community'));
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    // Recorded, and said by nobody yet: one line per member answered, not one per device.
-    expect(heldNothingLines()).toEqual([]);
 
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sentAsk(1).answerer).toBe('carol');
-    expect(heldNothingLines()).toHaveLength(1);
-    expect(heldNothingLines()[0]).toContain('2 device(s) answered (web-bob, bob-phone)');
+  });
+
+  it('says ONE line per decision: a device answering while a sibling is still to answer is silent, and the decision names both', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1', 'carol:web-carol'];
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const heldNothingLines = () =>
+      info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('holds nothing'));
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    await settle();
+    expect(heldNothingLines()).toEqual([]);
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
+    await settle();
+    expect(heldNothingLines()).toEqual([
+      expect.stringContaining(
+        'bob holds nothing of community ws-1 on web-bob,bob-phone at distribution epoch 7 - recorded, every device of bob on the key group has answered'
+      ),
+    ]);
+    // The decision names the member, never the next step: the walk's own next line says it.
+    expect(heldNothingLines()[0]).not.toContain('asking the next member');
     info.mockRestore();
   });
 
-  it("says nothing of an answer to ANOTHER device's ask, and says a late answer to a superseded ask of ours", async () => {
-    await requestCommunityHistory('ws-1');
-    const first = sentAsk(0).requestId;
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    const ignored = () =>
-      debug.mock.calls.flat().filter((l) => String(l).includes('ignoring "I hold nothing"'));
-
-    // Every member of the key group receives every answer: an id this device never sent is not ours.
-    noteHistoryHeldNothing('ws-1', 'bob', 'someone-elses-request', 'web-bob');
-    expect(ignored()).toEqual([]);
-
-    // bob answers, the walk asks carol: a late copy of bob's answer quotes an ask of ours no longer
-    // in flight - a decision of this device's, and said.
-    await answerNothing(0);
-    expect(sentAsk(1).answerer).toBe('carol');
-    noteHistoryHeldNothing('ws-1', 'bob', first, 'web-bob');
-    expect(ignored()).toHaveLength(1);
-    expect(ignored()[0]).toContain(`it answers request ${first}, not the history ask in flight`);
-    debug.mockRestore();
-  });
-
-  it('knows an ask sent before a restart as its own, from the durable record', async () => {
-    await requestCommunityHistory('ws-1');
-    const first = sentAsk(0).requestId;
-    restart();
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-    const ignored = () =>
-      debug.mock.calls.flat().filter((l) => String(l).includes('ignoring "I hold nothing"'));
-
-    // The session forgot it; the frame handler adopts it from the record before the page closes it.
-    adoptRecordedHistoryAsk('ws-1', first);
-    noteHistoryHeldNothing('ws-1', 'bob', first, 'web-bob');
-    expect(ignored()).toHaveLength(1);
-
-    // An id the record does not hold is still not ours.
-    adoptRecordedHistoryAsk('ws-1', 'someone-elses-request');
-    noteHistoryHeldNothing('ws-1', 'bob', 'someone-elses-request', 'web-bob');
-    expect(ignored()).toHaveLength(1);
-    debug.mockRestore();
-  });
-
-  it('says ONCE that a request naming no device holds the walk until every tree device answered', async () => {
-    // No per-device presence: the request names nobody, and only the tree says when bob is done.
+  it('an ask REPLACED before its decision still says what it gathered: who answered, who was owed', async () => {
     listWorkspaceMembers.mockResolvedValue([
-      { userId: 'bob', online: true },
-      { userId: 'alice', online: true },
-      { userId: 'carol', online: true },
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
     ]);
-    treeLeaves = [
-      'bob:web-bob',
-      'bob:bob-phone',
-      'bob:bob-laptop',
-      'alice:device-1',
-      'carol:web-carol',
-    ];
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1'];
     await requestCommunityHistory('ws-1');
-    const { requestId, devices } = sentAsk();
-    expect(devices).toEqual([]);
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-    const held = () =>
-      info.mock.calls.flat().filter((l) => String(l).includes('the walk waits for'));
+    const { requestId } = sentAsk();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
-    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
     await settle();
+    await requestCommunityHistory('ws-1', { evenIfSeedsHeld: true });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(held()).toHaveLength(1);
-    expect(held()[0]).toContain('2 more device(s) of bob on the key group');
+    const ended = info.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('ended before'));
+    expect(ended).toEqual([
+      expect.stringContaining(
+        'the history ask of community ws-1 to bob ended before its decision (replaced by a new ask): web-bob recorded as holding nothing at distribution epoch 7, bob-phone still owed'
+      ),
+    ]);
+    info.mockRestore();
+  });
+
+  it('an ask replaced before ANY answer ends in silence', async () => {
+    await requestCommunityHistory('ws-1');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await requestCommunityHistory('ws-1', { evenIfSeedsHeld: true });
+    expect(info.mock.calls.flat().join(' ')).not.toContain('ended before');
     info.mockRestore();
   });
 

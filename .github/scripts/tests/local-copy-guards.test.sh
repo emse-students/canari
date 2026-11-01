@@ -60,7 +60,7 @@ else
     # characters `$sql` as they appear in the source file, and expanding them would search for the
     # value of a variable this script does not have.
     # shellcheck disable=SC2016
-    if grep '"\$sql"' "$STRIPS" | grep -qF "\\\"$col\\\""; then
+    if grep '"\$sql"' "$STRIPS" | grep -F "\\\"$col\\\"" >/dev/null; then
       ok "$col is stripped"
     else
       fail "$col is declared by an entity and NOT stripped by the local copy - a live identifier would reach a developer's laptop"
@@ -135,7 +135,7 @@ else
   ok "derived $count media column(s) from the entity declarations"
   for col in $media_columns; do
     # shellcheck disable=SC2016
-    if grep '"\$sql"' "$STRIPS" | grep -qF "\\\"$col\\\""; then
+    if grep '"\$sql"' "$STRIPS" | grep -F "\\\"$col\\\"" >/dev/null; then
       ok "$col is cleared"
     else
       fail "$col is declared by an entity and NOT cleared by the local copy - it would reference objects it never received, and every render of them is a 404"

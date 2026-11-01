@@ -230,6 +230,7 @@ function ctx(
     'settleEach',
     'replanOwedInvitationsIn',
     'acquireAddLock',
+    'acquireAddLockAnswer',
     'releaseAddLock',
     'wakeAtAddLockExpiry',
     'cancelAddLockExpiryWakes',
@@ -247,7 +248,7 @@ function ctx(
         g: string
       ) => Promise<
         | { acquired: true; token: string | undefined }
-        | { acquired: false; retryAfterMs: number | undefined }
+        | { acquired: false; retryAfterMs: number | undefined; answered?: boolean }
       >;
       releaseAddLock: (g: string, token: string | undefined) => Promise<boolean>;
     };
@@ -1572,6 +1573,23 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     expect(replanner).toHaveBeenCalledTimes(1);
     return replanner;
   }
+
+  it('tells an ANSWERED refusal (`held`) from a lock request that got no answer (`unanswered`)', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    fakeLockServer(c);
+    const lock = c as unknown as {
+      acquireAddLockAnswer(g: string): Promise<'taken' | 'held' | 'unanswered'>;
+    };
+    c.delivery.acquireAddLock = vi
+      .fn()
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: 5_000, answered: true })
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: undefined, answered: false })
+      .mockResolvedValueOnce({ acquired: true, token: 'mine' });
+
+    expect(await lock.acquireAddLockAnswer(G)).toBe('held');
+    expect(await lock.acquireAddLockAnswer(G)).toBe('unanswered');
+    expect(await lock.acquireAddLockAnswer(G)).toBe('taken');
+  });
 
   it('a DESTROYED client keeps no wake: the server-stated moment comes and nothing re-plans', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

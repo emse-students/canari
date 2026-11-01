@@ -20,13 +20,18 @@ import {
 /** Associations projection returned by social-service for a user. */
 interface SocialAssociations {
   current: {
+    type: 'association' | 'list' | 'institution';
+    promo: number | null;
     name: string;
     slug: string;
     role: string;
     logoUrl: string | null;
   }[];
   former: {
+    type: 'association' | 'list' | 'institution';
+    promo: number | null;
     name: string;
+    slug: string | null;
     role: string;
     logoUrl: string | null;
     startYear: number | null;

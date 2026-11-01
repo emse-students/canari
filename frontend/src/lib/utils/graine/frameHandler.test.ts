@@ -27,7 +27,7 @@ import {
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
-import { handleDistributionFrame, resetEmptyBundleNotes } from './frameHandler';
+import { handleDistributionFrame, resetAnswerDecisionsSaid } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
@@ -110,6 +110,8 @@ function member(
 }
 
 beforeEach(() => {
+  // Each test's first decision is said: what an earlier test said is not this test's.
+  resetAnswerDecisionsSaid();
   // Every member admitted before the proof existed, so every row that is not about admission sees
   // the past handed over exactly as before. The roots a device records are per account, durable.
   localStorage.clear();
@@ -1656,9 +1658,7 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     expect(noteHistoryHeldNothingSpy).toHaveBeenCalledWith('ws-1', 'Bob', 'r-h', 'web-bob');
   });
 
-  it('absorbs nothing and says no absorb line - the claim speaks, on the device that asked', async () => {
-    // Every seat of the key group receives the answer: `absorbed 0/0` was one line per answer on
-    // each of them (RM-4, 2026-10-26).
+  it('says no `absorbed` line for a bundle that carried no seed - it reaches every member, and what it decides is said where it is decided', async () => {
     const { storage } = fakeStorage();
     wire(storage);
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
@@ -1666,7 +1666,6 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     await handleDistributionFrame(holdsNothingFrame());
 
     expect(debug.mock.calls.flat().join(' ')).not.toContain('absorbed');
-    expect(debug.mock.calls.flat().join(' ')).not.toContain('empty bundle');
     debug.mockRestore();
   });
 
@@ -1733,19 +1732,11 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
-    resetEmptyBundleNotes();
 
-    const emptyBundle = {
+    await handleDistributionFrame({
       ...holdsNothingFrame(),
       plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-h' })),
-    };
-    await handleDistributionFrame(emptyBundle);
-    // A second answer of the same old answerer reaches this seat too: said once per session.
-    await handleDistributionFrame(emptyBundle);
-    expect(
-      debug.mock.calls.flat().filter((l) => String(l).includes('Bob sent an empty bundle'))
-    ).toHaveLength(1);
+    });
 
     expect(saved).toHaveLength(0);
     expect(repaired).toHaveLength(0);
@@ -1754,12 +1745,9 @@ describe('a bundle saying "I hold nothing" (section 24)', () => {
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
     expect(info).not.toHaveBeenCalled();
-    // An empty hand that claims nothing is the one empty bundle with nobody else to speak for it.
-    expect(debug.mock.calls.flat().join(' ')).toContain('Bob sent an empty bundle');
     warn.mockRestore();
     error.mockRestore();
     info.mockRestore();
-    debug.mockRestore();
   });
 });
 
@@ -3255,6 +3243,53 @@ describe('the salon scope of an answer', () => {
     // The public seed is unlisted and the private one is another roster's: nothing may travel, and
     // "I hold nothing" would be false - this device holds rows of the community.
     expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('says a withheld answer ONCE per decision: a repeat of the same ask is silent, a changed roster speaks again', async () => {
+    // DEVREVOKE-KEYGROUP (2026-10-29): a minted device asked three times in 27 s and every ask
+    // printed the same pair of lines against the same roster.
+    const sendMessage = wireAnswerer([{ channelId: PRIVATE, isPrivate: true }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const said = (needle: string) =>
+      info.mock.calls.map((c) => c.join(' ')).filter((l) => l.includes(needle)).length;
+    const ask = (requestId: string) =>
+      handleDistributionFrame(
+        askOn(workspaceScope('ws-1'), {
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+          requestId,
+        })
+      );
+
+    await ask('r-1');
+    await ask('r-2');
+    await ask('r-3');
+    expect(said('withholding 2 seed(s)')).toBe(1);
+    expect(said("withheld for their salon's roster")).toBe(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // The public salon is listed now: a different decision, said once.
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    await ask('r-4');
+    await ask('r-5');
+    expect(said('withholding 1 seed(s)')).toBe(1);
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    info.mockRestore();
+  });
+
+  it('another asking DEVICE is another decision, said for it', async () => {
+    wireAnswerer([{ channelId: PRIVATE, isPrivate: true }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const history = { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY };
+
+    await handleDistributionFrame(askOn(workspaceScope('ws-1'), history));
+    await handleDistributionFrame({
+      ...askOn(workspaceScope('ws-1'), { ...history, requestId: 'r-other' }),
+      senderDeviceId: 'mallory-phone',
+    });
+
+    const lines = info.mock.calls.map((c) => c.join(' '));
+    expect(lines.filter((l) => l.includes('withholding 2 seed(s)'))).toHaveLength(2);
     info.mockRestore();
   });
 

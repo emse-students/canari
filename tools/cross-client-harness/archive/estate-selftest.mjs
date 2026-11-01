@@ -25,7 +25,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { estateOriginsAmong, estateVerdict, localAliases, NOT_AN_ESTATE } from '../estate-origins.mjs';
+import { ANDROID_APP_ORIGIN, appBundleVerdict, estateOriginsAmong, estateVerdict, localAliases, NOT_AN_ESTATE } from '../estate-origins.mjs';
 import {
   DEV_PROJECT,
   EstateRefusedError,
@@ -58,6 +58,12 @@ ok('local only is ACCEPTED', estateVerdict([SITE], SITE).ok);
 ok('local behind the engine schemes is ACCEPTED', estateVerdict([...ENGINE, SITE], SITE).ok);
 ok('production is REFUSED', !estateVerdict([PROD], SITE).ok);
 ok('dev is REFUSED', !estateVerdict([DEV], SITE).ok);
+// THE ANDROID APP IS JUDGED BY ITS RECORDED BUNDLE, never by a timeline its plugin-http traffic never reaches (2026-10-27).
+ok('an app whose recorded bundle targets the estate and passed is ACCEPTED', appBundleVerdict({ origin: DEV, bundleOk: true }, DEV).ok);
+ok('an app no build recorded is REFUSED, never assumed', appBundleVerdict(null, DEV).reason === 'unrecorded');
+ok('an app built for another estate is REFUSED', appBundleVerdict({ origin: SITE, bundleOk: true }, DEV).reason === 'other-estate');
+ok('an app whose bundle check did not pass is REFUSED', appBundleVerdict({ origin: DEV, bundleOk: false }, DEV).reason === 'bundle-unchecked');
+ok('the app origin is one the timeline excuses - which is why its silence proves nothing', NOT_AN_ESTATE.includes(ANDROID_APP_ORIGIN) && estateVerdict([ANDROID_APP_ORIGIN], DEV).reason === 'silent');
 ok('the engine schemes ALONE are refused, as silence', estateVerdict(ENGINE, SITE).reason === 'silent');
 
 // THE STRAY IS THE CASE A WEAKER TEST PASSES. "SITE is among them" would accept this; a client
@@ -275,7 +281,7 @@ ok('a non-local site has no aliases', localAliases(PROD, IFACES).length === 0);
   ok('upper case is the same host to a browser and is judged as such', !allowed('https://CANARI-EMSE.FR/chat') && allowed('https://DEV.canari-emse.fr/chat'));
   ok('an unknown host, another port, plain http of dev are refused', !allowed('https://example.org/') && !allowed('https://dev.canari-emse.fr:8443/') && !allowed('http://dev.canari-emse.fr/'));
   ok('the Tauri engine pages pass', allowed('http://tauri.localhost/chat') && allowed('tauri://localhost/chat'));
-  ok('inert browser pages pass, exactly', allowed('about:blank') && allowed('chrome://newtab/') && allowed('chrome-native://newtab/') && allowed('chrome-error://chromewebdata/') && !allowed('chrome://settings/') && !allowed('about:blank#x'));
+  ok('inert browser pages pass, exactly', allowed('about:blank') && allowed('chrome://newtab/') && allowed('chrome-native://newtab/') && allowed('chrome-error://chromewebdata/') && allowed('') && !allowed(' ') && !allowed('chrome://settings/') && !allowed('about:blank#x'));
   ok('the identity providers pass over https only', allowed('https://miconnect.emse.fr/if/flow/x') && allowed('https://auth.canari-emse.fr/x') && allowed('https://cas.emse.fr/cas/login') && !allowed('http://miconnect.emse.fr/'));
   ok('a production refusal says so', /PRODUCTION/.test(pageVerdict('https://canari-emse.fr./x', DEV).why));
   ok('a non-URL is refused', !allowed('not a url'));

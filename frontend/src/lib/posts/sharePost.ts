@@ -1,11 +1,9 @@
 import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
-import { shareTextOut } from '$lib/sharing/shareOut';
+import { runShareOut, shareTextOut } from '$lib/sharing/shareOut';
 import { landShareOn } from '$lib/sharing/shareLanding';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
-import { showToast } from '$lib/stores/toast.svelte';
 import { Log } from '$lib/utils/Log';
-import { m } from '$lib/paraglide/messages';
 
 /**
  * HOW A POST IS SHARED: the three rows of its share sheet (`PostShareSheet`), opened by the
@@ -27,17 +25,21 @@ export function postShareUrl(postId: string): string {
  * another app takes (`incomingShare`, `landShareOn`). The member writes a word if they like and
  * sends with Send; nothing is sent from here. In the conversation the link draws the in-app card
  * (`LinkPreviewCard`), which each reader fetches under their OWN session.
+ *
+ * True when the landing was published - what lets a surface drawn over the conversations (the reel
+ * viewer) step aside for it; false when the link was not offered.
  */
-export function sendPostLinkInApp(postId: string, conversationId: string): void {
+export function sendPostLinkInApp(postId: string, conversationId: string): boolean {
   Log.i(
     'sharePost',
     `sending the link of ${postId.slice(0, 8)} into ${conversationId.slice(0, 16)}`
   );
   if (!incomingShare.offerTo(postShareUrl(postId), conversationId)) {
     Log.i('sharePost', `the link of ${postId.slice(0, 8)} was not offered`);
-    return;
+    return false;
   }
   landShareOn(conversationId);
+  return true;
 }
 
 /**
@@ -45,21 +47,13 @@ export function sendPostLinkInApp(postId: string, conversationId: string): void 
  * where there is one (`canShareOut`, the phone apps): the sheet's row is not drawn elsewhere.
  */
 export function sharePostLinkOut(postId: string): void {
-  Log.d('sharePost', `sharing the public link of ${postId.slice(0, 8)}`);
-  shareTextOut(postShareUrl(postId)).catch((e: unknown) => {
-    Log.d('sharePost', `the share sheet did not open: ${String(e)}`);
-    showToast(m.share_out_failed(), 'error');
-  });
+  void runShareOut(`post ${postId.slice(0, 8)}`, () => shareTextOut(postShareUrl(postId)));
 }
 
 /**
- * Copies the post's public link, and a toast says so. A TOAST, never a confirmation drawn in the
- * control: the sheet closes on the same tap. The rejection is logged rather than swallowed:
- * `writeText` refuses on an unfocused document and in any non-secure context.
+ * Copies the post's public link; the helper's toast confirms or reports a refusal. A TOAST, never a
+ * confirmation drawn in the control: the sheet closes on the same tap.
  */
 export function copyPostLink(postId: string): void {
-  Log.d('sharePost', `copying the public link of ${postId.slice(0, 8)}`);
-  copyPublicShareLink(`/posts/${postId}`)
-    .then(() => showToast(m.post_link_copied_label(), 'info'))
-    .catch((e: unknown) => Log.d('sharePost', `share link copy failed: ${String(e)}`));
+  void copyPublicShareLink(`/posts/${postId}`);
 }

@@ -15,10 +15,13 @@
  * file a mention on `canari_mentions`. What was wrong is the sentence a later reader gets: *this
  * verdict was taken on that code*. It was not, and re-running that commit would have failed.
  *
- * **IT RECORDS, IT DOES NOT REFUSE.** Building from a dirty tree is not a mistake to be prevented -
- * it is how a fix gets measured before it is committed, and a gate against it would make the loop
- * impossible. What must not happen is a verdict that CLAIMS a commit it was not built from. So the
- * tree state is written down at build time, keyed by the one value the phone can later be asked for.
+ * **IT RECORDS; `a1apk.mjs` REFUSES ONLY AN UNDECLARED DIRTY APP TREE.** Building from a dirty tree
+ * is how a fix gets measured before it is committed, so `--dirty` keeps that loop open. Since
+ * 2026-10-26 (coordinator), an uncommitted change that can reach the APK (`appTreeDirt` in
+ * `a1plan.mjs`: anything but `tools/` and the docs) is refused unless `--dirty` declares it. What must
+ * not happen is a verdict that CLAIMS a commit it was not built from. So the tree state is measured
+ * BEFORE the build (`treeState`) and written down keyed by the one value the phone can later be
+ * asked for, with the dirty paths beside the hash.
  *
  * **THE KEY IS `builtAt`, BECAUSE IT IS THE ONLY THING BOTH ENDS KNOW.** The preflight reads
  * `/_app/version.json` off the running app and gets a millisecond timestamp; this module reads the
@@ -36,6 +39,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STATE_DIR } from './names.mjs';
 import { parseBuildStamp } from './buildstamp.mjs';
+import { porcelainPaths } from './a1plan.mjs';
 
 const HARNESS = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HARNESS, '..', '..');
@@ -67,17 +71,19 @@ function packagedStamp(repo = REPO) {
 const gitIn = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 
 /**
- * Write down what the tree looked like when this APK was built.
+ * THE TREE AS IT IS NOW: its HEAD, whether anything is uncommitted, a hash of that, and the paths.
  *
- * Called by `a1apk.mjs` after the build and BEFORE the install: the record has to exist by the time
- * anything asks the phone what it is running.
+ * MEASURED BEFORE THE BUILD, never after it (2026-10-26). `tauri android build` regenerates
+ * `frontend/src-tauri/gen/android/app/src/main/AndroidManifest.xml` from the deep-link config, so a
+ * tree read AFTER the build was "dirty" on every build. Both alpha.5 A1 builds, made from fresh
+ * detached worktrees of two different commits, recorded the same diff `209727a40d43`, which was
+ * exactly that regenerated manifest. The source a build compiles is the tree BEFORE it.
  *
- * @param {string} [repo] the tree the APK was built from - this checkout, or a `--ref` worktree
- * @returns the record, so the caller can print it rather than re-deriving it
+ * @param {string} [repo]
+ * @returns {{head: string, dirty: boolean, diffSha: string|null, dirtyFiles: string[]}}
  */
-export function recordApkBuild(repo = REPO, artefact = {}) {
+export function treeState(repo = REPO) {
   const git = (...args) => gitIn(repo, ...args);
-  const builtAt = packagedStamp(repo);
   // The commit is recorded as the tree's HEAD rather than resolved from the timestamp: at build
   // time HEAD is a FACT, where the timestamp derivation is what this module exists to qualify.
   const head = git('rev-parse', '--short', 'HEAD');
@@ -87,12 +93,38 @@ export function recordApkBuild(repo = REPO, artefact = {}) {
   const dirty = porcelain.length > 0;
   // HEAD's own diff plus the untracked list - `git diff HEAD` does not mention untracked files, so
   // the porcelain lines are folded in or two builds differing only by a new file would hash alike.
-  const diffSha = dirty
-    ? createHash('sha256').update(git('diff', 'HEAD')).update(porcelain).digest('hex').slice(0, 12)
-    : null;
+  const diffSha = dirty ? createHash('sha256').update(git('diff', 'HEAD')).update(porcelain).digest('hex').slice(0, 12) : null;
+  return { head, dirty, diffSha, dirtyFiles: porcelainPaths(porcelain) };
+}
+
+/**
+ * Write down what the tree looked like when this APK was built.
+ *
+ * Called by `a1apk.mjs` after the build and BEFORE the install: the record has to exist by the time
+ * anything asks the phone what it is running.
+ *
+ * @param {string} [repo] the tree the APK was built from - this checkout, or a `--ref` worktree
+ * @returns the record, so the caller can print it rather than re-deriving it
+ */
+export function recordApkBuild(repo = REPO, artefact = {}, state = treeState(repo)) {
+  const builtAt = packagedStamp(repo);
+  const { head, dirty, diffSha, dirtyFiles } = state;
   // `artefact`: the APK's sha256, the origin it was planned for and its bundle verdict, which
   // `installVerdict` in `a1plan.mjs` requires before a `--no-build` install (R2 review).
-  const record = { builtAt, head, dirty, diffSha, recordedAt: new Date().toISOString(), ...artefact };
+  const record = { builtAt, head, dirty, diffSha, ...(dirty ? { dirtyFiles } : {}), recordedAt: new Date().toISOString(), ...artefact };
+  appendFileSync(FILE, `${JSON.stringify(record)}\n`);
+  return record;
+}
+
+/**
+ * Writes down a build this rig did NOT make: a Play tester build whose provenance `testerbuild.mjs`
+ * read from its release and accepted (`a1tester.mjs`). Same file, same `builtAt` key, so every
+ * reader keeps one join; `source: 'play-tester'` says where the facts came from.
+ *
+ * @param {object} record the record `testerBuildVerdict` returned
+ */
+export function recordTesterBuild(record) {
+  if (record?.source !== 'play-tester' || !record.builtAt) throw new Error('recordTesterBuild: not a tester build record');
   appendFileSync(FILE, `${JSON.stringify(record)}\n`);
   return record;
 }

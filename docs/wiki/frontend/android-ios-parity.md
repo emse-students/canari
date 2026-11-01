@@ -19,6 +19,11 @@ compares against each other, so an asymmetry is only ever noticed by the person 
 This page is that comparison, done once, deliberately, so the next finding is read off a list rather
 than off a symptom.
 
+**Two things are PROVEN and must not be re-verified**: the session HOLDS on the iPhone (check P), and
+this audit read everything else as symmetric. So the iOS classes close by HARDWARE, one lettered check
+at a time ([device-verification](../device-verification.md)) - **never by a fix written against a
+suspected lifecycle bug nobody has seen.**
+
 **Its companion is [mobile.md](mobile.md)**, which explains how each platform works; this page only
 says where they DISAGREE. The two open UI items are the P2 in [backlog](../backlog.md), and the
 conclusion they share - one pass over `app.css` with a device in hand, not seven local patches - is

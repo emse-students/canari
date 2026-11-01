@@ -10,7 +10,7 @@ import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
-import { getToken } from '$lib/stores/auth';
+import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
@@ -40,9 +40,10 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import {
+  advanceLastMessageAt,
   insertMessageOrdered,
   mergeMessagesInInputOrder,
-  messageTime,
+  tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
@@ -102,6 +103,7 @@ import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/out
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
+import { resetAnswerDecisionsSaid } from '$lib/utils/graine/frameHandler';
 import {
   clearControlRefusal,
   clearMessageControlRefusals,
@@ -141,7 +143,14 @@ export interface MessagingContext {
   deviceKeyB64: string;
   authToken: string;
   setAuthToken: (v: string) => void;
+  /** The conversation on screen WHEN THE CONTEXT WAS BUILT - a snapshot, stale after any await. */
   selectedContact: string | null;
+  /**
+   * The conversation on screen NOW, read live. What a send says after an await - a refusal banner
+   * - belongs to the conversation still on screen, and comparing against the snapshot above was
+   * always true, so a banner went to whichever conversation the member had moved to.
+   */
+  selectedNow: () => string | null;
   getSendError: () => string;
   setSendError: (v: string) => void;
   storage: IStorage | null;
@@ -202,6 +211,51 @@ export function useMessaging() {
    * review, 2026-10-15: the in-app camera made staging a photo and walking away an ordinary act).
    */
   const pendingByConversation = new SvelteMap<string, import('$lib/media').PendingMediaFile[]>();
+  /**
+   * The TEXT typed in each conversation's composer, keyed by conversation id - the same rule as
+   * {@link pendingByConversation}. It was one field for every conversation, so a draft left in A
+   * (or a share staged there) sat in B's composer after a switch, and B's Send posted it there
+   * (Mi 9T, 2026-10-27).
+   */
+  const draftByConversation = new SvelteMap<string, string>();
+
+  /** The text typed in `conversationKey`'s composer ('' when none or no conversation). */
+  function draftFor(conversationKey: string | null | undefined): string {
+    return conversationKey ? (draftByConversation.get(conversationKey) ?? '') : '';
+  }
+
+  /** Replaces the text of `conversationKey`'s composer; an empty text leaves no entry. */
+  function setDraft(conversationKey: string | null | undefined, text: string): void {
+    if (!conversationKey) {
+      if (text)
+        console.warn(`[DRAFT] ${text.length} char(s) typed with no conversation open - dropped`);
+      return;
+    }
+    if (text) draftByConversation.set(conversationKey, text);
+    else draftByConversation.delete(conversationKey);
+  }
+
+  /**
+   * A writer of `conversationKey`'s draft for text that comes back LATER - an edit's saved draft, a
+   * refused send, a salon text resumed after an await. It is bound to the account signed in NOW: a
+   * sign-out in between (`signOutGeneration`) makes it drop the text, because {@link forgetAccount}
+   * has cleared the drafts and a write after it would hand the leaving account's text to the next
+   * one opening the same conversation (review of #2614, 2026-10-27).
+   */
+  function lateDraftWriter(
+    conversationKey: string | null | undefined,
+    origin: string
+  ): (text: string) => void {
+    const generation = signOutGeneration();
+    return (text) => {
+      if (signOutGeneration() !== generation) {
+        if (text)
+          console.info(`[DRAFT] ${origin}: ${text.length} char(s) dropped - signed out since`);
+        return;
+      }
+      setDraft(conversationKey, text);
+    };
+  }
 
   /** The staged files of `conversationKey`, oldest first ([] when none or no conversation). */
   function pendingMediaFilesFor(
@@ -211,18 +265,20 @@ export function useMessaging() {
   }
 
   /**
-   * THE ACCOUNT SIGNED OUT: its staged files and armed replies leave the memory. This composable is
-   * a singleton that outlives a sign-out without a page reload, and both maps are keyed by
+   * THE ACCOUNT SIGNED OUT: its staged files, armed replies and drafts leave the memory. This composable is
+   * a singleton that outlives a sign-out without a page reload, and the maps are keyed by
    * conversation ids the NEXT account may open too - a DM between the two accounts, a salon of a
    * shared community - whose composer would then show, and send, what the previous one staged.
    */
   function forgetAccount(log: (msg: string) => void): void {
     const staged = pendingByConversation.size;
     const replies = replyByConversation.size;
+    const drafts = draftByConversation.size;
     pendingByConversation.clear();
     replyByConversation.clear();
+    draftByConversation.clear();
     log(
-      `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
+      `[COMPOSER] signed out: staging of ${staged}, replies of ${replies} and drafts of ${drafts} conversation(s) forgotten`
     );
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
@@ -233,15 +289,47 @@ export function useMessaging() {
     unregisterDeviceNotices();
     // And the join asks on screen: a member of the NEXT account must not answer them.
     resetJoinRequests();
+    // And what this device said about the history it withheld: the next account's asks are new.
+    resetAnswerDecisionsSaid();
   }
+
+  /**
+   * The rank at which each staged file first joined a staging, so a file a send took and gives
+   * back returns to its place: the staging is oldest first, and a file staged while the send was
+   * held, or given back by an overlapping send, must not be reordered by the return.
+   */
+  const stagingRank = new WeakMap<import('$lib/media').PendingMediaFile, number>();
+  let nextStagingRank = 0;
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
   function setPendingMediaFiles(
     conversationKey: string,
     files: import('$lib/media').PendingMediaFile[]
   ) {
+    for (const file of files) {
+      if (!stagingRank.has(file)) stagingRank.set(file, nextStagingRank++);
+    }
     if (files.length === 0) pendingByConversation.delete(conversationKey);
     else pendingByConversation.set(conversationKey, files);
+  }
+
+  /**
+   * Gives files a send took back to `conversationKey`'s staging, each at the place it was staged:
+   * merged with what is staged now and ordered by {@link stagingRank}. Prepending them would be
+   * right for ONE refused send (what it took was the whole staging at its tap, so everything staged
+   * since is younger), and wrong as soon as two sends are refused: the first one's files are back
+   * when the second one's return, and those are YOUNGER than them.
+   */
+  function restageInOrder(
+    conversationKey: string,
+    files: import('$lib/media').PendingMediaFile[]
+  ): void {
+    const rank = (file: import('$lib/media').PendingMediaFile) =>
+      stagingRank.get(file) ?? Number.MAX_SAFE_INTEGER;
+    setPendingMediaFiles(
+      conversationKey,
+      [...pendingMediaFilesFor(conversationKey), ...files].sort((a, b) => rank(a) - rank(b))
+    );
   }
   /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
   const videoPreparation = new VideoPreparationState();
@@ -675,7 +763,7 @@ export function useMessaging() {
     const refusal = await retrySalonSend(messageId, makeSendDeps(ctx, convo));
     if (!refusal) return;
     // A retry may wait for its salon to load: the banner goes to the conversation still on screen.
-    if (ctx.selectedContact === key) ctx.setSendError(refusal);
+    if (ctx.selectedNow() === key) ctx.setSendError(refusal);
     else ctx.log(`[SEND] retry refusal not shown: the conversation changed (${refusal})`);
   }
 
@@ -882,7 +970,7 @@ export function useMessaging() {
         ctx.conversations.set(normalized, {
           ...convo,
           messages: nextMessages,
-          lastMessageAt: Math.max(convo.lastMessageAt ?? 0, upgraded.timestamp.getTime()),
+          lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [upgraded]),
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
@@ -916,7 +1004,9 @@ export function useMessaging() {
             type: 'message_added',
             conversationId: normalized,
             message: upgraded,
-            lastMessageAt: updatedConvo.lastMessageAt ?? upgraded.timestamp.getTime(),
+            ...(updatedConvo.lastMessageAt !== undefined
+              ? { lastMessageAt: updatedConvo.lastMessageAt }
+              : {}),
             unreadCount: updatedConvo.unreadCount ?? 0,
             ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
@@ -949,7 +1039,7 @@ export function useMessaging() {
       ...convo,
       unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+      lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}`);
 
@@ -960,7 +1050,7 @@ export function useMessaging() {
         type: 'message_added',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
         unreadCount: nextUnreadCount,
         ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       });
@@ -976,7 +1066,7 @@ export function useMessaging() {
         type: 'own_message_composed',
         conversationId: normalized,
         message: newMsg,
-        lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
       });
     }
 
@@ -1062,7 +1152,7 @@ export function useMessaging() {
   /**
    * Appends multiple messages in a single reactive update and one batch IndexedDB write.
    * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
-   * cause UI jank. Updates `lastMessageAt` to the max timestamp in the batch.
+   * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
@@ -1205,14 +1295,13 @@ export function useMessaging() {
 
     const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
-    const batchMaxTs = merged.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 
     if (current) {
       ctx.conversations.set(normalized, {
         ...current,
         unreadCount: nextUnreadCount,
         messages: merged,
-        lastMessageAt: Math.max(current.lastMessageAt ?? 0, batchMaxTs),
+        lastMessageAt: advanceLastMessageAt(current.lastMessageAt, merged),
       });
     } else {
       // Same rule as the vanished-conversation return at the top: never silent. The rows are still
@@ -1303,7 +1392,7 @@ export function useMessaging() {
       type: 'messages_batch',
       conversationId: normalized,
       messages: brandNew,
-      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
+      ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, brandNew)),
       unreadCount: nextUnreadCount,
     });
 
@@ -1372,10 +1461,32 @@ export function useMessaging() {
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
     );
 
-    // Media (inline upload+send) still requires a ready MLS group; queuing media is a later
-    // increment. Text/reply are captured into the outbox and never blocked here - they flush
-    // automatically once the group becomes sendable.
+    // THE STAGED FILES ARE CLAIMED IN THE TICK THEY ARE READ, BEFORE THE FIRST AWAIT. The barrier
+    // below can hold a send for many seconds on a stalled link (18 s measured, 2026-10-31), and the
+    // staging used to be cleared only after it: every Send tap meanwhile read the same files again
+    // and queued another copy under a new id - 13 taps, 13 copies of one video. Now a second Send
+    // finds nothing staged and aborts as an empty send. ONLY WHAT THIS SEND TOOK leaves: a file
+    // staged in the same conversation during the barrier belongs to the NEXT send. A voice note
+    // (`opts.files`) never entered the staging.
+    if (sendsQueue && fileEntries.length > 0) {
+      setPendingMediaFiles(
+        sentFrom,
+        pendingMediaFilesFor(sentFrom).filter((entry) => !fileEntries.includes(entry))
+      );
+    }
+
+    // A DM/GROUP FILE IS QUEUED IN THE OUTBOX like a text, but only once the group is usable: the
+    // barrier and the membership check below run BEFORE its placeholder and its entry are written,
+    // and a refusal gives the claimed files back to the staging. Text/reply are captured into the
+    // outbox and never blocked here - they flush automatically once the group becomes sendable.
+    // Queuing the file at the tap and dropping this barrier, which the outbox flush already takes,
+    // is `docs/wiki/backlog.d/media-send-queued-at-the-tap.md`.
     if (filesToSend.length > 0 && !isChannel) {
+      const generation = signOutGeneration();
+      const barrierStartedAt = performance.now();
+      ctx.log(
+        `[SEND] media barrier: waiting for the inbound queue and the membership check before ${fileEntries.length} file(s) are queued`
+      );
       // WAIT FOR THE DRAIN, DO NOT REFUSE BECAUSE OF IT.
       //
       // This used to bail out on `isMessageCatchupActive` and tell the user "Synchronisation en
@@ -1386,15 +1497,84 @@ export function useMessaging() {
       // at the current epoch", and `waitForMessageQueueIdle` states exactly that, as a fact rather
       // than a guess. It is the same barrier the outbox flusher takes before every send, and it
       // costs nothing when there is no drain to wait for.
-      await ctx
-        .ensureMls()
-        // `null`: a click on the send button, never a stack inside a decrypt session.
-        .waitForMessageQueueIdle('media send', null)
-        .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-      const stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
-      if (!stillMember || convo.lifecycle !== 'active') {
-        ctx.setSendError(m.chat_send_session_establishing());
+      /**
+       * Gives the claimed files back to the staging, and says so - or says why not: a voice note or
+       * a chat-reel take (`opts.files`) never came from the staging, and a sign-out since the tap
+       * has handed the staging to the next account. Answers whether the files are back.
+       */
+      const restage = (why: string): boolean => {
+        if (!sendsQueue) {
+          ctx.log(
+            `[SEND] ${fileEntries.length} file(s) NOT re-staged after ${why}: a voice note or a chat-reel take, sent without passing through the staging`
+          );
+          return false;
+        }
+        if (signOutGeneration() !== generation) {
+          ctx.log(
+            `[SEND] ${fileEntries.length} file(s) NOT re-staged after ${why}: signed out since the send`
+          );
+          return false;
+        }
+        restageInOrder(sentFrom, fileEntries);
+        ctx.log(
+          `[SEND] ${fileEntries.length} file(s) back in the staging of ${sentFrom.slice(0, 8)}… after ${why}`
+        );
+        return true;
+      };
+      let stillMember: boolean;
+      // ONE GUARD OVER EVERYTHING THAT CAN THROW WHILE THE FILES ARE CLAIMED - `ensureMls()` too,
+      // which throws synchronously when there is no MLS service, before any promise exists.
+      try {
+        await ctx
+          .ensureMls()
+          // `null`: a click on the send button, never a stack inside a decrypt session.
+          .waitForMessageQueueIdle('media send', null)
+          .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
+        stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
+      } catch (error) {
+        ctx.log(`[SEND] media barrier threw: ${String(error)}`);
+        restage('a barrier that threw');
+        throw error;
+      }
+      // THE ROW AS IT IS NOW, not the snapshot taken before the two awaits above: a Remove merged
+      // during the barrier - the first half of a re-admission writes the row `pending` - is exactly
+      // what this refusal is for. A file is not queued until the group is usable.
+      const lifecycle = ctx.conversations.get(sentFrom)?.lifecycle;
+      ctx.log(
+        `[SEND] media barrier: done after ${Math.round(performance.now() - barrierStartedAt)} ms (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
+      );
+      // THE ACCOUNT THAT TAPPED SEND LEFT DURING THE BARRIER: `forgetAccount` has cleared the
+      // staging, and neither a queue entry nor a re-staged file of the leaving account may reach
+      // the next one.
+      if (signOutGeneration() !== generation) {
+        ctx.log(
+          `[SEND] media dropped: signed out during the barrier, ${fileEntries.length} file(s) neither queued nor re-staged`
+        );
         return;
+      }
+      if (!stillMember || lifecycle !== 'active') {
+        ctx.log(
+          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is not usable yet (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
+        );
+        const restaged = restage('the refusal');
+        // THE BANNER IS THE CONVERSATION ON SCREEN NOW, and the barrier may have lasted long enough
+        // for the member to leave `sentFrom`: a refusal is said there only, so it is never read as a
+        // fact about another conversation. A re-staged file waits, visible, in `sentFrom`'s composer;
+        // one that was NOT re-staged (a voice note, a chat-reel take) is lost, so it is said
+        // wherever the member now is - never dropped in silence.
+        const sessionNotReady = m.chat_send_session_establishing();
+        if (ctx.selectedNow() === sentFrom) {
+          ctx.setSendError(sessionNotReady);
+        } else if (!restaged) {
+          ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: sessionNotReady }));
+        } else {
+          ctx.log(
+            '[SEND] refusal banner not shown: the conversation changed since the send, the file(s) wait in its composer'
+          );
+        }
+        // FALSE, not undefined: nothing was queued, so the composer gives the caption it cleared at
+        // the tap back to `sentFrom`'s draft (`MainChatPage` `handleSendChat`).
+        return false;
       }
     }
 
@@ -1413,15 +1593,7 @@ export function useMessaging() {
             : 'file';
 
     if (fileEntries.length > 0) {
-      // Only the queue's own send empties it; a voice note never entered it.
-      // ONLY WHAT THIS SEND TOOK leaves the staging: the membership barrier above awaits, and a file
-      // staged in the same conversation meanwhile belongs to the NEXT send, not to this one's clear.
-      if (sendsQueue) {
-        setPendingMediaFiles(
-          sentFrom,
-          pendingMediaFilesFor(sentFrom).filter((entry) => !fileEntries.includes(entry))
-        );
-      }
+      // The staging was claimed before the barrier, above; a failure below re-stages what is unsent.
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
@@ -1600,13 +1772,8 @@ export function useMessaging() {
           ctx.log(
             `[MEDIA] ${unsent} file(s) dropped, not re-staged: the session ended while the salon was loading`
           );
-        } else if (ctx.selectedContact === sentFrom) {
-          if (unsent > 0) {
-            setPendingMediaFiles(sentFrom, [
-              ...fileEntries.slice(sentMediaMessageCount),
-              ...pendingMediaFilesFor(sentFrom),
-            ]);
-          }
+        } else if (ctx.selectedNow() === sentFrom) {
+          if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
@@ -1648,7 +1815,7 @@ export function useMessaging() {
         ctx.log(`[SEND] Failed: ${result.error}`);
         // A SALON SEND MAY ANSWER LONG AFTER THE CLICK - held until its salon loads - and the
         // banner belongs to the conversation on screen. Its row keeps the failure either way.
-        if (ctx.selectedContact === sentFrom) ctx.setSendError(result.error);
+        if (ctx.selectedNow() === sentFrom) ctx.setSendError(result.error);
         else ctx.log(`[SEND] banner not shown: the conversation changed since the send`);
       }
       // THE TEXT LIVES IN A ROW (failed, with its retry) when the send was echoed: the composer has
@@ -2400,6 +2567,11 @@ export function useMessaging() {
 
     /** The message the user is replying to IN a given conversation (null when none is pending there). */
     replyFor,
+    /** The text typed in a given conversation's composer. */
+    draftFor,
+    lateDraftWriter,
+    /** Replaces the text of a given conversation's composer. */
+    setDraft,
     /** The files staged IN a given conversation, sent by its next handleSendChat. */
     pendingMediaFilesFor,
     /** Forgets every staged file and armed reply of the account that signed out. */

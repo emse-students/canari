@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Headers,
+  HttpCode,
   Post,
   Query,
   Logger,
@@ -15,11 +16,20 @@ import { PaymentService } from './payment.service';
 import type { LydiaCallbackVerdict } from './lydia-callback-verification';
 import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
+  internalLydiaBusinessOfVendorTokenUrl,
+  internalLydiaReadinessUrl,
   internalSocialRequestConfig,
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
 } from './social-internal-client';
 import { describeHttpError } from '../common/http-error-log';
+
+/**
+ * The `code` of social-service's 503 for a `BUSINESS_VALIDATED` naming the pending token of an
+ * enrolment not linked yet (`libs/contracts/lydia-refusal-codes.json`, `social.enrolmentPending`):
+ * an expected retry, logged at WARN. Any other failure to apply is an ERROR.
+ */
+export const LYDIA_ENROLMENT_PENDING = 'LYDIA_ENROLMENT_PENDING';
 
 const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
@@ -62,6 +72,17 @@ export function describeContentType(contentType: string | undefined): string {
     .toLowerCase()
     .replace(/[^\w/.+-]/g, '');
   return mediaType.slice(0, 48) || 'none';
+}
+
+/** The two events Lydia's documentation names for the `business/create` webhook (lydia-api.md 5b). */
+export const LYDIA_BUSINESS_EVENTS = ['BUSINESS_VALIDATED', 'BUSINESS_UNVALIDATED'] as const;
+
+/** What a `vendor_token` may look like before it is used for a lookup: printable ASCII, bounded. */
+const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
+
+/** A sender-chosen event name, safe for a log line: `[w.-]` only, 32 characters at most. */
+function describeEventName(event: string): string {
+  return event.replace(/[^\w.-]/g, '').slice(0, 32) || 'none';
 }
 
 @Controller('payments')
@@ -302,5 +323,127 @@ export class PaymentWebhookController {
     }
 
     return { received: true };
+  }
+
+  /**
+   * Receives the `webhook` Lydia was given at `business/create` (`LydiaPaymentProvider
+   * .createOnboarding`): two fields, `vendor_token` and `event` (`BUSINESS_VALIDATED` or
+   * `BUSINESS_UNVALIDATED`), and NO signature (lydia-api.md section 5b), so anyone can send this
+   * body.
+   *
+   * WHAT IT MAY CHANGE, decided by the owner on 2026-10-30 (lot 2): `BUSINESS_VALIDATED` marks the
+   * holder of the vendor token READY (social-service `markLydiaReady`, cause `webhook-validated`) -
+   * the risk of an unsigned VALIDATED was ACCEPTED, and a forged one cannot make a payer pay into
+   * nothing: a Business that is not validated answers `request/do` with error 5 BEFORE any request
+   * exists, which reverts the readiness at once - and an unsigned VALIDATED never clears what Lydia
+   * itself reported (error 5 / 2701): only a global admin does. `BUSINESS_UNVALIDATED` NEVER changes
+   * state and NOTIFIES NOBODY: it is a WARN line naming the association, in this service's log and
+   * nowhere else. So no body can turn an association NOT ready. Anything malformed, an unknown event,
+   * no holder or two holders writes nothing (200: nothing to retry). A VALIDATED that could not be
+   * APPLIED, or that names the Business of an enrolment answered but not linked yet, answers 503
+   * to ask for a retry - whether Lydia retries a 503 is UNMEASURED. Bounded and rate-limited like the request callback (multer limits here, nginx zone
+   * `lydia_callback` at the edge).
+   */
+  @Post('lydia-business-webhook')
+  @HttpCode(200)
+  @UseInterceptors(NoFilesInterceptor({ limits: LYDIA_CALLBACK_BODY_LIMITS }))
+  async handleLydiaBusinessWebhook(
+    @Body() body: Record<string, unknown>,
+    @Headers('content-type') contentType?: string
+  ): Promise<{ received: true }> {
+    const text = (name: string): string => {
+      const value = body?.[name];
+      return typeof value === 'string' ? value : '';
+    };
+    const event = text('event');
+    const vendorToken = text('vendor_token');
+    const known = (LYDIA_BUSINESS_EVENTS as readonly string[]).includes(event);
+    if (!known || !VENDOR_TOKEN_SHAPE.test(vendorToken)) {
+      this.logger.warn(
+        `[LYDIA-BUSINESS-WEBHOOK] unsigned body ignored: event=${describeEventName(event)}, ` +
+          `vendor_token ${vendorToken ? 'malformed' : 'absent'}${known ? '' : ' or event unknown'} ` +
+          `(content-type=${describeContentType(contentType)}, ${describeFieldNames(body)})`
+      );
+      return { received: true };
+    }
+    if (event === 'BUSINESS_VALIDATED') {
+      let applied: { outcome?: string; associationId?: string | null };
+      try {
+        const { data } = await axios.post<{ outcome?: string; associationId?: string | null }>(
+          internalLydiaReadinessUrl(),
+          { vendorToken, ready: true, cause: 'webhook-validated' },
+          { ...internalSocialRequestConfig(), timeout: 30_000 }
+        );
+        applied = data ?? {};
+      } catch (err: unknown) {
+        // A 503 asks Lydia for a retry either way; that it retries is unmeasured. Only social's
+        // TYPED pending-enrolment answer is expected; anything else failed to apply.
+        const answer = (err as { response?: { status?: number; data?: { code?: unknown } } })
+          .response;
+        if (answer?.status === 503 && answer.data?.code === LYDIA_ENROLMENT_PENDING) {
+          this.logger.warn(
+            '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED names the Business of an enrolment not ' +
+              'linked yet - answered 503 to ask for a retry; whether Lydia retries is unmeasured'
+          );
+        } else {
+          this.logger.error(
+            '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED could not be applied - answered 503; ' +
+              'whether Lydia retries is unmeasured',
+            describeHttpError(err as Error)
+          );
+        }
+        throw new ServiceUnavailableException('Failed to apply the business event');
+      }
+      if (applied.outcome === 'no-holder') {
+        // A token no association holds and no enrolment is waiting for: nothing to retry.
+        this.logger.warn(
+          '[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned) for no association of ours ' +
+            'and no pending enrolment - nothing written'
+        );
+        return { received: true };
+      }
+      this.logger.log(
+        `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_VALIDATED (unsigned) applied: ${applied.outcome ?? 'unknown'}` +
+          `${applied.associationId ? ` for association ${applied.associationId}` : ''}`
+      );
+      return { received: true };
+    }
+    const holder = await this.associationOfVendorToken(vendorToken);
+    const named = holder
+      ? `association ${holder.associationId} (marked ready here: ${holder.onboardingComplete ? 'yes' : 'no'})`
+      : 'no association of ours';
+    this.logger.warn(
+      `[LYDIA-BUSINESS-WEBHOOK] BUSINESS_UNVALIDATED (unsigned) for ${named} - Lydia turns daily ` +
+        `transfers off; NOTHING changed here and nobody was notified - this line is the only record`
+    );
+    return { received: true };
+  }
+
+  /**
+   * Which association holds `vendorToken`, read from social-service (a SELECT, nothing else), or
+   * null when none does, when two do, or when the read fails - which is logged and never turns into
+   * a decision, since the webhook decides nothing.
+   */
+  private async associationOfVendorToken(
+    vendorToken: string
+  ): Promise<{ associationId: string; onboardingComplete: boolean } | null> {
+    try {
+      const { data } = await axios.post<{
+        associationId?: string | null;
+        onboardingComplete?: boolean | null;
+      }>(
+        internalLydiaBusinessOfVendorTokenUrl(),
+        { vendorToken },
+        { ...internalSocialRequestConfig(), timeout: 10_000 }
+      );
+      if (typeof data?.associationId !== 'string') return null;
+      return { associationId: data.associationId, onboardingComplete: !!data.onboardingComplete };
+    } catch (err: unknown) {
+      this.logger.warn(
+        '[LYDIA-BUSINESS-WEBHOOK] could not read which association holds the vendor token',
+        describeHttpError(err as Error)
+      );
+      return null;
+    }
   }
 }

@@ -90,7 +90,7 @@ if [ ! -d "$ROOT/proj" ]; then ok "a first deploy (no container) creates nothing
 
 export STUB_IDS="aaa bbb ccc" STUB_BAD="bbb"
 archive_logs "$TMP/docker" proj "$ROOT" 3 >/dev/null 2>&1
-d="$(find "$ROOT/proj" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -1)"
+d="$(find "$ROOT/proj" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sed -n 1p)"
 if [ -f "$ROOT/proj/$d/aaa.log.gz" ] && [ -f "$ROOT/proj/$d/ccc.log.gz" ]; then
   ok "one gzip file per readable container"
 else
@@ -102,7 +102,7 @@ if [ "$(gzip -dc "$ROOT/proj/$d/aaa.log.gz")" = "line from aaa" ]; then ok "the 
 if grep -q -- "--since $((LOG_ARCHIVE_WINDOW_DAYS * 24))h" "$TMP/calls"; then
   ok "an archive reaches back $LOG_ARCHIVE_WINDOW_DAYS days into a log, no further"
 else
-  fail "archive_logs did not pass --since $((LOG_ARCHIVE_WINDOW_DAYS * 24))h to docker logs: $(grep logs "$TMP/calls" | head -1)"
+  fail "archive_logs did not pass --since $((LOG_ARCHIVE_WINDOW_DAYS * 24))h to docker logs: $(grep logs "$TMP/calls" | sed -n 1p)"
 fi
 
 # Retention by COUNT: five more deploys inside the age window, KEEP=3, distinct stamps (the stamp
@@ -142,8 +142,8 @@ fi
 
 # ── the deploy calls it before its first `up -d` ─────────────────────────────
 DEPLOY="$REPO/infrastructure/deploy/deploy-environment.sh"
-call="$(grep -n '^archive_logs ' "$DEPLOY" | head -1 | cut -d: -f1)"
-up="$(grep -n '^dc up -d' "$DEPLOY" | head -1 | cut -d: -f1)"
+call="$(grep -n '^archive_logs ' "$DEPLOY" | sed -n 1p | cut -d: -f1)"
+up="$(grep -n '^dc up -d' "$DEPLOY" | sed -n 1p | cut -d: -f1)"
 if [ -n "$call" ] && [ -n "$up" ] && [ "$call" -lt "$up" ]; then
   ok "deploy-environment.sh archives logs before its first up -d"
 else

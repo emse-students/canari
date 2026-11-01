@@ -10,6 +10,7 @@ import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { captureGroupReadyAnnouncer } from './groupReadyAnnouncer';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
@@ -285,6 +286,10 @@ export async function createNewGroup(
           contactName: groupDisplayName,
           displayName: groupDisplayName, // preserve original casing for display
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     selectConversation(conversationKey);
@@ -327,6 +332,8 @@ export type BulkAdditionRefusal =
   | 'no-devices'
   /** Another device holds the group's add lock: nothing was staged, the invite can be retried. */
   | 'add-lock-busy'
+  /** The add-lock request got no answer (transport error, non-2xx): nothing is known of another device. */
+  | 'add-lock-unanswered'
   /** The commit added no device - every key package was skipped (logged per device). */
   | 'no-device-added'
   /**
@@ -411,6 +418,10 @@ async function processBulkAddition(
 
   log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
 
+  // Whether this Add went out WITH a seat generation (see `rosterPremise`). Without one the server
+  // cannot date the departures it checks, so its refusal is a client-side read failure and not a race.
+  let seatGenerationCarried = false;
+
   // Same reason as the 1-to-1 path: the server's refusal at `addGroupMember` is authoritative, but
   // it lands after the Welcomes have gone out. Anyone a block stands between is dropped from the
   // batch here, and the rest of the invitation proceeds - one blocked person must not cancel an
@@ -467,15 +478,21 @@ async function processBulkAddition(
       return notAdded('no-devices');
     }
 
-    const lockAcquired = await mlsService.acquireAddLock(conversation.id).catch(() => false);
-    if (!lockAcquired) {
+    const lock = await mlsService
+      .acquireAddLockAnswer(conversation.id)
+      .catch(() => 'unanswered' as const);
+    if (lock !== 'taken') {
+      // ONLY AN ANSWERED REFUSAL IS "ANOTHER DEVICE IS ADDING": a lock request that got no answer
+      // says nothing about anyone else, and is a failure the member may retry.
       log(
-        `[WARN] Add-lock busy for ${conversation.id} - invite cancelled (another device is in progress).`
+        lock === 'held'
+          ? `[WARN] Add-lock busy for ${conversation.id} - invite cancelled (another device is in progress).`
+          : `[WARN] Add-lock request for ${conversation.id} got no answer - invite cancelled.`
       );
       console.warn(
-        `[SYNC] Add-lock busy for ${conversation.id}, aborting to avoid concurrent commits`
+        `[SYNC] Add-lock ${lock === 'held' ? 'busy' : 'unanswered'} for ${conversation.id}, aborting to avoid concurrent commits`
       );
-      return notAdded('add-lock-busy');
+      return notAdded(lock === 'held' ? 'add-lock-busy' : 'add-lock-unanswered');
     }
 
     // Users registered server-side AND whose Welcome was accepted: only those are announced.
@@ -504,6 +521,7 @@ async function processBulkAddition(
         resumed,
         answering
       );
+      seatGenerationCarried = premise.seatGeneration !== undefined;
       const raced = await addDevicesRebuildingOnRace(
         mlsService,
         conversation.id,
@@ -593,7 +611,7 @@ async function processBulkAddition(
         `[SYNC] Members added: ${targetUsers.join(', ')} (${announcedUsers.size}/${targetUsers.length} delivered)`
       );
     } finally {
-      if (lockAcquired) await mlsService.releaseAddLock(conversation.id).catch(() => {});
+      await mlsService.releaseAddLock(conversation.id).catch(() => {});
     }
 
     // NOT ADMITTED IS NOT ADDED: refused by the gate (no leaf given), or departed since the merge.
@@ -650,8 +668,15 @@ async function processBulkAddition(
     // that could not be READ is a rebuild that could not be justified - retried like a lost race.
     if (e instanceof AddAbortedError) {
       log(`[SYNC] the Add was abandoned before its stage (${e.why}) - nobody added`);
-      console.warn(`[SYNC] processBulkAddition: ${e.message}`);
-      // Refused to admit everyone it named: a Decline, a departure or a block came first.
+      // Refused to admit everyone it named: a Decline, a departure or a block came first. With a seat
+      // generation carried that is the designed outcome of a race the member lost on purpose: an info
+      // line with the same facts. WITHOUT one (the roster read failed, or an old resumed entry) the
+      // server's refusal of an undated departure is a client-side read failure, so it still warns.
+      const designed =
+        (e.why === 'removed-meanwhile' || e.why === 'not-admitted') &&
+        (seatGenerationCarried || e.seatGenerationKnown);
+      if (designed) console.info(`[SYNC] processBulkAddition: ${e.message}`);
+      else console.warn(`[SYNC] processBulkAddition: ${e.message}`);
       if (e.why === 'removed-meanwhile' || e.why === 'not-admitted') {
         return notAdded('removed-meanwhile');
       }
@@ -755,7 +780,8 @@ async function rosterPremise(
       throw new AddAbortedError(
         groupId,
         'removed-meanwhile',
-        `the ask of ${answering.userId} was settled before the Add was built`
+        `the ask of ${answering.userId} was settled before the Add was built`,
+        firstRead.seatGeneration !== null && firstRead.seatGeneration !== undefined
       );
     }
   }
@@ -1110,6 +1136,7 @@ export async function startNewConversation(
             if (id) maybeSelect(id);
           },
           saveConversation,
+          onGroupReady: captureGroupReadyAnnouncer(),
           log,
         });
       } catch {
@@ -1227,6 +1254,10 @@ export async function startNewConversation(
           displayName: contact,
           directPeerId: contact,
         },
+        // The creation moment seeds the ordering of a conversation that holds only notices; the
+        // first real message replaces it (conversationRecency). Not `startedAt`: that is the
+        // server's write-once fact and a local clock would pre-empt it.
+        lastMessageAt: Date.now(),
       })
     );
     maybeSelect(conversationKey);

@@ -34,10 +34,10 @@ import {
   userOf,
   watchersOf,
 } from '../mlsrow.mjs';
-import { clientBuild, errorDetail, finishObserved, record } from '../results.mjs';
+import { clientBuild, errorDetail, finishObserved, keepConsoles, record } from '../results.mjs';
 import { composeVerdict, invariantDetail, rowGroupName, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence } from '../settlerows.mjs';
-import { GROUP_CREATION_NARRATION, consoleLines } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, bigRowNarration, consoleDump, consoleLines } from '../watch.mjs';
 import { addMembers } from './addmember.mjs';
 
 const argv = process.argv.slice(2);
@@ -284,7 +284,9 @@ try {
   const { verdict, failures } = composeVerdict({ own: out.own ?? [], invariant: out.invariant ?? null, premise: out.premise ?? [] });
   for (const f of failures) console.log(`[${id}] ${f}`);
   console.log(`[${id}] assertions: ${verdict}`);
-  const observers = await observersOf(seats, { logs: { W1: [...GROUP_CREATION_NARRATION] } });
+  // EVERY SEAT ITS BIG-ROW NARRATION (`bigRowNarration`: A1 its own lines too), W1 its group creation.
+  const logs = Object.fromEntries(spec.devices.map((d) => [d, [...bigRowNarration(d), ...(d === 'W1' ? GROUP_CREATION_NARRATION : [])]]));
+  const observers = await observersOf(seats, { logs });
   await finishObserved(
     id,
     verdict,
@@ -302,7 +304,16 @@ try {
   );
 } catch (e) {
   console.error(`[${id}] ${e?.stack ?? e}`);
-  record(id, 'ERROR', errorDetail(e));
+  // AN ERROR KEEPS EVERY SEAT'S CONSOLE. BIG-1-noI1's first alpha.5 run (2026-10-26) ended on W3
+  // refusing to open the row's group three times in 40 s, and nothing said what W3 was doing - a
+  // twelve-device row is exactly where one busy seat hides. Reading a console never throws past here.
+  let consoles = null;
+  try {
+    consoles = seats ? keepConsoles(id, consoleDump(Object.fromEntries(Object.entries(seats.seat ?? {}).map(([d, s]) => [d, { cx: s?.cx }])))) : null;
+  } catch (k) {
+    console.error(`[${id}] the seats' consoles could not be kept: ${String(k?.message ?? k)}`);
+  }
+  record(id, 'ERROR', { ...errorDetail(e), ...(consoles ? { consoles } : {}) });
   closeSeats(seats);
   process.exit(1);
 }

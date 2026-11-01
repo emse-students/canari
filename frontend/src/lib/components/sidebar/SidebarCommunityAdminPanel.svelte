@@ -16,7 +16,8 @@
   } from '@lucide/svelte';
   import QrCodeModal from '../shared/QrCodeModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { globalChannels } from '$lib/stores/globalChatSingleton.svelte';
+  import { appendLog, globalChannels } from '$lib/stores/globalChatSingleton.svelte';
+  import { commitCommunityKick, committingDeviceId } from '$lib/utils/graine/commitRemoval';
   import SidePanel from '../shared/SidePanel.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -40,6 +41,7 @@
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import { Log } from '$lib/utils/Log';
+  import { copyText } from '$lib/utils/clipboard';
   import Picker from '../ui/Picker.svelte';
   import type { PickerOption } from '../ui/picker';
 
@@ -168,7 +170,6 @@
   let shareInvite = $state<WorkspaceInviteDto | null>(null);
   let shareLoading = $state(false);
   let shareError = $state('');
-  let shareCopied = $state(false);
   /** The QR code of the live invite link, shown in the shared modal. */
   let shareQrOpen = $state(false);
   /** Days until expiry for the next link; 0 means it never expires. */
@@ -425,7 +426,11 @@
     }
     memberRemoving = { ...memberRemoving, [userId]: true };
     try {
-      await channelService.kickFromWorkspace(workspaceDbId, userId);
+      await channelService.kickFromWorkspace(workspaceDbId, userId, committingDeviceId());
+      // Whoever removes somebody commits the Remove (channel-encryption section 10): from the
+      // community's key group and from every private salon's this device holds. Not awaited and
+      // never throws - the kick has already succeeded, every outcome is logged.
+      void commitCommunityKick(channelService, workspaceDbId, userId, appendLog);
       communityMembers = communityMembers.filter((mem) => mem.userId !== userId);
     } catch (e) {
       Log.d('communityAdmin.handleRemoveMember failed', e);
@@ -494,8 +499,10 @@
     if (!workspaceDbId) return;
     shareLoading = true;
     shareError = '';
-    shareCopied = false;
-    try {
+    // THE LINK IS MINTED ON THE TAP, so it is handed to `copyText` as a PROMISE, synchronously:
+    // WebKit refuses a clipboard write after an awaited round trip. A refusal is toasted by the
+    // helper; the link stays visible for a manual copy.
+    const link = (async () => {
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
       const invite = await channelService.createWorkspaceInvite(workspaceDbId, {
         rotate,
@@ -513,12 +520,10 @@
       const fragment = await mintInviteFragment(workspaceDbId, invite.expiresAt ?? null);
       shareInvite = invite;
       shareLink = `${publicAppUrl(`/c/join/${invite.token}`)}#${fragment}`;
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        shareCopied = true;
-      } catch {
-        // Clipboard may be blocked; the link stays visible for manual copy.
-      }
+      return shareLink;
+    })();
+    try {
+      await copyText(link, { what: 'link' });
     } catch (e) {
       Log.d('communityAdmin.loadShareLink failed', e);
       shareError = m.chat_channel_invite_link_error();
@@ -653,7 +658,6 @@
       historyVisibilityError = '';
       shareLink = '';
       shareInvite = null;
-      shareCopied = false;
       activeTab = 'overview';
     }
   });
@@ -712,9 +716,9 @@
             <div class="relative shrink-0">
               <div class="h-24 w-24 overflow-hidden rounded-full shadow-md">
                 <GroupAvatar
+                  id={selectedWorkspaceId}
                   imageMediaId={selectedWorkspace?.imageMediaId}
                   name={selectedWorkspace?.name ?? ''}
-                  variant="community"
                   fill
                   shape="circle"
                 />
@@ -1014,11 +1018,6 @@
                   </button>
                 </div>
                 <p class="text-text-muted text-xs">{shareBounds}</p>
-                {#if shareCopied}
-                  <p class="text-green-ok text-xs font-semibold">
-                    {m.chat_link_copied_success()}
-                  </p>
-                {/if}
               {:else}
                 <button
                   type="button"

@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
+import { sameSideOfReviewCohort } from '../review-cohort';
 import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
@@ -75,8 +76,14 @@ export class PostInteractionsService {
     post.reactions = reactions;
     await this.postRepo.save(post);
 
-    // Notify post author of a new reaction (not for self-reactions or changes).
-    if (isNew && post.authorId && post.authorId !== userId) {
+    // Notify post author of a new reaction (not for self-reactions or changes), never across the
+    // review cohort's boundary (review-cohort.ts).
+    if (
+      isNew &&
+      post.authorId &&
+      post.authorId !== userId &&
+      sameSideOfReviewCohort(userId, post.authorId)
+    ) {
       void (async () => {
         try {
           const actorName = await this.notifications.resolveActorName(userId);
@@ -246,6 +253,12 @@ export class PostInteractionsService {
         mention: mentionContent,
       };
       const send = async (recipientId: string, type: 'comment' | 'reply' | 'mention') => {
+        // Never across the review cohort's boundary (review-cohort.ts), whatever names the
+        // recipient: the post's author, the parent's, or a mention in the text.
+        if (!sameSideOfReviewCohort(data.userId, recipientId)) {
+          this.logger.log(`[NOTIFY] ${type} not sent: across the review cohort's boundary`);
+          return;
+        }
         await notify(recipientId, type);
         await this.push.notifyContent(recipientId, pushContentFor[type](actorName, pushPreview), {
           type: 'social',
