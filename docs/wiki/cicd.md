@@ -221,7 +221,7 @@ which is how three chains came to each re-derive the same fact:
 
 1. `enumerate-services` names all eight services (no diff: every service is built every release)
 2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
-3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
+3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK - across the replica lists too, because they rest naming each service by DNS ([why](#a-rollback-across-the-replica-lists))
 4. Database migrations, then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
@@ -277,18 +277,54 @@ in `depends_on` order):
 2. Wait for its healthcheck (`start_interval: 2s`, so a ready replica is seen in seconds, not at the
    next 30 s tick). An unhealthy replica is removed and the deploy STOPS - the old one never stopped
    serving (measured: 0 failed requests across a refused release).
-3. **Put the new replica in rotation and take the old one out, and prove it** (since 2026-11-01).
-   The nginx in front of the service - the frontend's for the five services it proxies, the edge's
-   for the frontend, named by the label `canari.deploy.rotation: <proxy>:<port>` - chooses a replica
-   from an explicit list, `upstream <service> { server <container name>:<port> resolve; }`, that
-   `rolling.sh` writes into `infrastructure/edge/rotation/<proxy>.conf`. The deploy rewrites the list
-   with the new replica and without the old one, runs `nginx -t` and `nginx -s reload` in each
-   running replica of the proxy (no new container), and waits for the proof below.
+3. **Take the old replica out of rotation** (since 2026-11-01). The nginx in front of the service -
+   the frontend's for the five services it proxies, the edge's for the frontend, named by the label
+   `canari.deploy.rotation: <proxy>:<port>` - chooses a replica from an `upstream <service>` block
+   that `rolling.sh` writes into `infrastructure/edge/rotation/<proxy>.conf`. The service's block is
+   rewritten to name the NEW replica alone, by its container name (`rotation_take_out`); every other
+   block is carried over byte for byte. In each running replica of the proxy (no new container), the
+   deploy asks `nginx -T` what it would load, reloads it, and waits for the pairing check below.
 4. **Wait until nothing is queued on the old replica**: two consecutive reads of its own
    `/proc/net/tcp{,6}` with no half-open connection (`SYN_RECV`, state `03`) and every LISTEN row's
-   `rx_queue` (its accept queue) at 0. What it has in flight is printed, and left to step 5.
+   `rx_queue` (its accept queue) at 0. What it has in flight is printed, and left to step 5. A read
+   that fails - the `docker exec`, or a table with no header - is UNKNOWN, never clean, and reads
+   that run out FAIL the deploy with the old replica still running.
 5. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
    flight, exits (`drain-on-sigterm.ts` in the four NestJS services, `serve_until` in the gateway).
+6. **The block goes back to rest** (`rotation_restore`): the service by its DNS name,
+   `server core-service:3012 resolve;`, which now names the new replica alone. A failure anywhere
+   after step 3 restores it too, naming every replica still running - the old one included, since
+   nothing stopped it - and fails the deploy.
+
+**The lists have two forms, and the estate rests in the first.** Between deploys every block names
+its service by DNS - byte for byte the list the frontend image bakes for an estate with no such deploy
+(`deploy-replace.test.sh` compares them). Only the ONE service being replaced is named by a container,
+for the minute its replacement takes. Three things follow:
+
+- **A sibling is never re-read.** The first version re-rendered every service behind a proxy from
+  `running healthy` containers, so a sibling that was `starting` or `unhealthy` at that moment got a
+  `down` placeholder and dropped out of rotation (2026-11-01 review). Now the health filter applies to
+  the service being replaced, whose staying replica must be healthy or the deploy refuses, and a
+  sibling's block is copied as the file holds it.
+- **The lists exist before anything includes them.** The frontend's `include` and the edge's are
+  unconditional, and the bind mount hides the image's own list, so a fresh host or a lost directory
+  would leave both unable to start. `deploy-environment.sh` reads the plan and calls `rotation_seed`
+  BEFORE its first `dc up`: every list written in the resting form (a list a killed deploy left
+  mid-replacement is put back at rest too), and a running proxy whose list that changed is reloaded.
+- **A rollback across the replica lists works** ([below](#a-rollback-across-the-replica-lists)).
+
+**Before a reload, the proxy is asked what it would load.** `nginx -T` in the proxy's replica must
+show `rotation/<proxy>.conf` AND the line `# render <id>` this write put in it: a proxy that does not
+include the file, or reads another one (a missing or misdirected mount), would reload, pass the check
+and keep choosing the replica about to stop - so the deploy refuses. One proxy may read no list: a
+frontend image from before 2026-11-01, recognised by including no rotation file and naming EVERY
+service routed through it by `<service>:<port>`. It is the image the first deploy carrying the lists
+still finds running, and the one a rollback brings back. It is drained exactly as every deploy drained
+before the lists - the retiring replica stays up `ROLLING_RESOLVER_TTL_SECONDS + 1` (3 s) while that
+nginx re-resolves the name - with a `::warning` naming it. Never a regression, never a refusal; the
+next deploy runs no such image. A reload nginx REFUSED after `nginx -T` accepted the files is read
+from the proxy's own error log (`[emerg]` since the reload) the moment no new worker has appeared,
+instead of being waited out for ten minutes.
 
 **Why steps 3 and 4 exist - a 502 one release in thirty (main CI run 41311303760, 2026-11-01: 1 POST
 in 346).** Closing a listener RESETS every connection still in its accept queue: handshakes the kernel
@@ -300,16 +336,43 @@ window itself: a handshake can always complete between the last `accept()` and t
 window is as wide as the event loop is busy. So the replica leaves rotation first, provably, and is
 told to stop after.
 
-**The proof that a reload has taken effect is read, never waited out.** A reload starts new workers
-on the new list; the old workers keep the old list and every connection they hold - a reload never
-cuts one. An old worker accepts nothing new, so it can only choose a replica for a request it was
-already handling, and only before that request is being proxied. So `rolling.sh` reads, inside each
-proxy container, every pre-reload worker's sockets (`/proc/<pid>/fd`) joined to the TCP table, and the
-reload holds once a new worker exists and each old worker's client connections (sockets on a port
-nginx listens on) are all paired with an established upstream connection. Waiting for the old workers
-to EXIT instead - the first design asked for - would wait for the last WebSocket opened before the
-release: a `/api/ws` lives an hour and is kept alive by its pings. The test holds such a connection
-open across the release and asserts the reload is proven with that old worker still alive.
+**The pairing check: what it proves, and what it does not.** A reload starts new workers on the new
+list; the old workers keep the old list and every connection they hold - a reload never cuts one. An
+old worker accepts nothing new, so it can only choose a replica for a request it was already
+handling. So `rolling.sh` reads, inside each proxy container, every pre-reload worker's sockets
+(`/proc/<pid>/fd`) joined to the TCP table, and the check holds once a new worker exists and, in each
+old worker, the client connections (sockets on a port nginx listens on) are no more than its
+ESTABLISHED upstream connections. Waiting for the old workers to EXIT instead would wait for the last
+WebSocket opened before the release: a `/api/ws` lives an hour and is kept alive by its pings. The
+test holds such a connection open across the release and asserts the check holds with that old
+worker still alive. It is believed when it holds, and terminates when the requests do - never by a
+clock; the read count bounds only a request that never ends.
+
+- **An `auth_request` subrequest pairs nothing** (2026-11-01 review). Every API location of the
+  frontend asks core-service first, on an upstream connection of its own, BEFORE the request chooses
+  where it goes; counted, that connection masked a request that had not chosen yet. `rolling.sh`
+  reads, from the proxy's `nginx -T`, the port of every service an `auth_request` location proxies to
+  (`rotation_subrequest_ports`: core-service's 3012 here) and never counts a connection to it. The
+  cost: a main request to core-service also holds the check until it ends - by its own completion.
+  An `auth_request` whose target it cannot place makes the deploy refuse rather than guess. The
+  test holds a POST inside its `auth_request` across a release and asserts the check waits for it
+  and the POST is answered `200` (without the exclusion it was a `502`).
+- **What it does not prove.** A request whose upstream FAILS after it was paired may choose again
+  from the old list: `proxy_next_upstream` (an idempotent method only, nginx's own rule) or an
+  `error_page` that proxies elsewhere (the frontend's all answer from nginx itself). That needs a
+  replica the deploy has NOT touched to fail on its own, and lands on the retiring one only by that
+  coincidence. It also assumes one upstream at a time per client connection (no `mirror`, no SSI in
+  the frontend's configuration). Both are said, not waited for.
+- **What it cannot read is unknown, never clean**: a table with no header prints `?`, a failed
+  `docker exec` is a read that did not happen, and an old worker whose fd list reads EMPTY (a live
+  worker always holds its listening socket) makes the read `?`.
+- **The read runs as the workers' own uid** (`docker exec -u`, the uid read from
+  `/proc/<worker>/status` before the reload). Found while fixing the review (2026-11-01): the first
+  version read `/proc/<pid>/fd` as root, which for another user's process needs `CAP_SYS_PTRACE`, which
+  an exec does not have - every fd list came back empty, no old worker ever showed a connection, and
+  the check held VACUOUSLY on every deploy (the measured 0-in-1692 came from the take-out and the
+  queue read, not from it). nginx keeps its workers dumpable, so their own uid reads them with no
+  added capability.
 
 **What the reload does to WebSockets and to the edge.** Nothing is cut by a reload, at either nginx:
 a WebSocket stays on the old worker and on the replica it was opened to. It ends only when that
@@ -372,14 +435,22 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
 **What is NOT zero, said rather than hidden:**
 
 - **The first deploy carrying the replica lists** still runs the OLD frontend image, which reads no
-  list, while the five services behind it are replaced: that one deploy keeps the reset window it
-  had. From the next one on, every overlap service leaves rotation before it stops.
+  list, while the five services behind it are replaced: each is drained the old way (the warning
+  above names it), so that one deploy keeps the reset window it had - and so does a rollback to a
+  release older than the lists. From the next one on, every overlap service leaves rotation before
+  it stops. `deploy-rolling.test.sh` runs that switch, and asserts it is drained and not refused.
+  A removal date for that path is in [legacy-compatibility](legacy-compatibility.md).
 - A WebSocket on the retired gateway or frontend is closed, and the client reconnects - a drop, not
   an error the member sees.
 - media-service and call-service are `exclusive`: their few seconds of gap remain
   ([backlog](backlog.md)).
-- A Node-to-Node call still resolves its peer through Docker's DNS, so one landing in a peer's
-  drain window can still be refused or reset (not observed): no list governs it.
+- **The lists govern the two nginx, and nothing else.** A service-to-service call resolves its peer
+  through Docker's DNS: social-service and frontend-ssr reach core-service as
+  `http://core-service:3012` (`USER_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `CORE_SERVICE_URL` in both
+  compose files), so while core-service is replaced, a call of theirs that lands in the old
+  replica's accept queue as it closes can still be reset - a POST among them answered with an error
+  (not observed). Taking a replica out of rotation for those callers would need a list in each of
+  them; nothing is built for it.
 - **The transition deploy** - the first one carrying this - moves the port from the frontend to the
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
@@ -394,6 +465,26 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
 - The `*/5` Le Cercle webhook retry (`retryDueWebhookDeliveries`) does not claim its rows, so both
   replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
   so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
+
+#### A rollback across the replica lists
+
+**Re-running an older release's deploy runs THAT release's `rolling.sh`**, and a release from before
+2026-11-01 never rewrites the lists. Had the lists rested naming containers, that rollback would
+remove the containers they name - the frontend's list pointing at a gateway that no longer exists,
+the edge's at a frontend that no longer exists - and answer `502` until something rewrote them. They
+rest naming each service by DNS instead, with `valid=2s`, which is exactly what the older library
+expects of the nginx in front: it starts the new replica, waits 3 s for every nginx to re-resolve, and
+retires the old one, as it always did (its reset window included). The older compose file drops the
+frontend's list mount and the older `edge/nginx.conf` reads no list, so after the rollback nothing
+reads them; the untracked files stay, and the next deploy carrying the lists re-seeds them.
+
+The rule is an invariant: **no deploy ends with a list naming a container** - finished, or failed
+(step 6). Only a runner killed in the middle of a replacement can leave one, and `rotation_seed` puts
+it back at rest at the start of the next deploy of this code; a ROLLBACK straight after such a kill
+would find it, so re-run the newer deploy first. `deploy-rolling.test.sh` rolls the fixture back with
+the library main shipped before the lists (frozen as `rolling-fixture/rolling-pre-rotation.sh`) and
+asserts the estate answers on the older version with no edge reload, and `deploy-replace.test.sh`
+holds `ROLLING_RESOLVER_TTL_SECONDS` equal to that library's wait and to every `valid=`.
 
 #### The edge is ready when it listens, not when it runs
 

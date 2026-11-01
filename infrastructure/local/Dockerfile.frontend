@@ -74,12 +74,13 @@ RUN printf 'default_type application/json;\nadd_header Access-Control-Allow-Orig
 
 # WHICH REPLICAS THIS nginx MAY CHOOSE, one `upstream` per service a release replaces with overlap
 # (2026-11-01, docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). On a deployed
-# estate this directory is a READ-ONLY MOUNT of the list `infrastructure/lib/rolling.sh` writes: each
-# replica by its container name, entered once it is healthy and taken out - by a reload, proven to
-# have taken effect - before it is stopped. A replica told to stop while still in rotation resets
-# the connections queued on it, a 502 on a POST nginx may not replay. The file below is what an
-# estate WITHOUT that deploy reads (a workstation, the e2e stack): every replica Docker's DNS names,
-# as before. The upstream name IS the service name, so a `set $upstream_x <service>;` below picks
+# estate this directory is a READ-ONLY MOUNT of the list `infrastructure/lib/rolling.sh` writes: while
+# a service is replaced, its new replica alone by container name, so the old one is out - by a
+# reload the pairing check holds - before it is stopped. A replica told to stop while still in
+# rotation resets the connections queued on it, a 502 on a POST nginx may not replay. The file below
+# is the list's RESTING FORM, byte for byte what the deploy writes between replacements (and what a
+# rollback relies on), and what an estate WITHOUT that deploy reads (a workstation, the e2e stack):
+# every replica Docker's DNS names. The upstream name IS the service name, so a `set $upstream_x <service>;` below picks
 # the group - the value carries no port, or nginx would look the name up in DNS instead.
 RUN mkdir -p /etc/nginx/rotation && printf 'upstream chat-gateway {\n    zone chat-gateway 64k;\n    resolver 127.0.0.11 valid=2s ipv6=off;\n    server chat-gateway:3000 resolve;\n}\nupstream chat-delivery-service {\n    zone chat-delivery-service 64k;\n    resolver 127.0.0.11 valid=2s ipv6=off;\n    server chat-delivery-service:3010 resolve;\n}\nupstream core-service {\n    zone core-service 64k;\n    resolver 127.0.0.11 valid=2s ipv6=off;\n    server core-service:3012 resolve;\n}\nupstream social-service {\n    zone social-service 64k;\n    resolver 127.0.0.11 valid=2s ipv6=off;\n    server social-service:3014 resolve;\n}\nupstream frontend-ssr {\n    zone frontend-ssr 64k;\n    resolver 127.0.0.11 valid=2s ipv6=off;\n    server frontend-ssr:3000 resolve;\n}\n' > /etc/nginx/rotation/frontend.conf
 

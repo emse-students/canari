@@ -13,13 +13,13 @@
 #
 #   overlap    the new container starts BESIDE the old one (`--scale` to one more, `--no-recreate`).
 #              Once it is HEALTHY, the nginx in front of the service (its ROTATION, a label) is given
-#              a list of replicas that names the new one and no longer the old one, and reloaded; the
-#              old replica is told to stop only once that is PROVEN to have taken effect - every
-#              nginx worker that still knew the old list can no longer choose a replica - and nothing
-#              is left queued on it (rotation_update, wait_unqueued). THEN it gets SIGTERM, which the
-#              services answer by closing their listener and finishing what is in flight
-#              (`drain-on-sigterm` in each NestJS service, axum's graceful shutdown in the gateway,
-#              nginx's own SIGQUIT, adapter-node's own handler).
+#              a list that names the new replica alone, and reloaded; the old replica is told to stop
+#              only once the pairing check says no old nginx worker is still about to choose a replica
+#              and nothing is left queued on it (rotation_take_out, wait_unqueued). THEN it gets
+#              SIGTERM, which the services answer by closing their listener and finishing what is in
+#              flight (`drain-on-sigterm` in each NestJS service, axum's graceful shutdown in the
+#              gateway, nginx's own SIGQUIT, adapter-node's own handler). Once it is gone, the list
+#              goes back to naming the service by its DNS name (rotation_restore).
 #   exclusive  stopped, then started, as before: a gap, for a service that keeps state in its own
 #              process and would split it if two ran at once.
 #   pinned     brought up as it is; recreated only when its own definition changes (a datastore's
@@ -36,7 +36,9 @@
 #
 # Usage:
 #   . "$ROOT/infrastructure/lib/rolling.sh"
-#   replace_services <<<"$(dc config --format json | python3 infrastructure/lib/replace-modes.py ...)"
+#   plan="$(dc config --format json | python3 infrastructure/lib/replace-modes.py ...)"
+#   rotation_seed <<<"$plan"       # before ANY `up`: the proxies cannot start without their lists
+#   replace_services <<<"$plan"
 
 # How long a retired replica may take to finish what is in flight before Docker kills it. A drained
 # NestJS replica exits by itself as soon as its last request is answered; this bounds the one that
@@ -48,16 +50,27 @@ ROLLING_DRAIN_SECONDS="${ROLLING_DRAIN_SECONDS:-10}"
 ROLLING_HEALTH_ATTEMPTS="${ROLLING_HEALTH_ATTEMPTS:-90}"
 
 # How many half-second reads of a proxy's workers the deploy makes, after a reload, before declaring
-# that the workers which knew the old list will never settle. Bounds the FAILURE case only (a reload
-# nginx refused after `-t` accepted it, a request that never ends): the proof is believed the moment
-# it holds, which for a request in flight is when that request has chosen its replica. Ten minutes,
-# because an upload is read in full before nginx chooses where to send it.
+# that the workers which knew the old list will never settle. Bounds the FAILURE case only (a request
+# that never ends): the check is believed the moment it holds, which for a request in flight is when
+# that request has chosen its replica. Ten minutes, because an upload is read in full before nginx
+# chooses where to send it. A reload nginx REFUSED is read from its error log at the first read, not
+# waited out.
 ROLLING_ROTATION_READS="${ROLLING_ROTATION_READS:-1200}"
 
 # How many reads of a retiring replica's sockets the deploy makes before declaring its process unable
 # to accept. Bounds the FAILURE case only: a process that is alive empties its accept queue in one
 # turn of its event loop.
 ROLLING_QUIESCE_READS="${ROLLING_QUIESCE_READS:-100}"
+
+# HOW LONG AN nginx KEEPS AN ADDRESS IT RESOLVED BY NAME: `valid=` in every list this file writes,
+# and in the frontend image's own server-level resolver. Two things read it, and neither is a guess:
+#   - a frontend image from BEFORE the lists (a transition, rotation_is_legacy) re-resolves every
+#     service by DNS, so a replica it may still choose is retired only once this has run out - the
+#     drain every deploy made before 2026-11-01;
+#   - a ROLLBACK to such a release runs that release's own rolling.sh, which waits exactly this long
+#     before retiring, so the lists it finds (named by DNS, rotation_restore) must expire as fast.
+# deploy-replace.test.sh holds this number to the lists, to both images and to the frozen library.
+ROLLING_RESOLVER_TTL_SECONDS=2
 
 # containers_of <service> - every container of that service in this project, running or not, one id
 # per line. One-off `compose run` containers are not replicas and are left out.
@@ -108,79 +121,117 @@ wait_healthy() {
 # by peer) while reading response header from upstream`), and a POST that has been sent is the one
 # request nginx may NOT replay: 502. A replica that closes its listener while it is still in rotation
 # cannot avoid this however fast it accepts: a handshake can always complete between the last
-# accept() and the close(). So the replica leaves rotation FIRST, provably, and is told to stop after.
+# accept() and the close(). So the replica leaves rotation FIRST, and is told to stop after.
 #
-# Rotation used to be Docker's DNS, and DNS cannot be the lever: it names a container for as long as
-# it runs - an unhealthy or a paused one included (measured on Docker 29, 2026-11-01). So each nginx
-# in front reads an explicit list instead: an `upstream <service>` block per service it routes to,
-# naming each replica by its container name, written by this file into ROTATION_DIR (mounted
-# read-only into the frontend and, through its own directory, into the edge) and applied by
-# `nginx -s reload`. A replica enters the list only once it is healthy, and leaves it before it stops.
+# Docker's DNS cannot be the lever: it names a container for as long as it runs - an unhealthy or a
+# paused one included (measured on Docker 29, 2026-11-01). So each nginx in front reads an explicit
+# list: an `upstream <service>` block per service it routes to, written by this file into
+# ROTATION_DIR (mounted read-only into the frontend and, through its own directory, into the edge)
+# and applied by `nginx -s reload`.
+#
+# TWO FORMS, AND THE ESTATE RESTS IN THE FIRST. Between deploys every block names its service by its
+# DNS NAME (`server core-service:3012 resolve;`) - the very list the frontend image bakes for an
+# estate with no such deploy, so `rotation_seed` can write it before anything starts. Only while ONE
+# service is being replaced does its block name a CONTAINER (`server canari-core-service-2:3012
+# resolve;`): the new replica alone, so the old one is out before it stops; once the old one is gone
+# the block goes back to the DNS name. Every other block is carried over byte for byte - a sibling is
+# never re-read, so a sibling that is `starting` or `unhealthy` stays exactly as reachable as it was.
+# The resting form is also what makes a ROLLBACK work: the rolling.sh of a release older than the
+# lists never rewrites them, and a list naming a container that rollback removes would answer 502;
+# a list naming the service by DNS follows that older deploy the way its own nginx always did.
 
-# The routes of the estate, "<service> <proxy> <port>" per line, from the plan replace_services reads.
+# The routes of the estate, "<service> <proxy> <port>" per line, from the plan (rotation_routes_set).
 ROTATION_ROUTES=""
+# The render id of the list last written for a proxy: the line `# render <id>` the proxy's own
+# `nginx -T` must show before a reload is believed to read THIS file (rotation_apply).
+ROTATION_TOKEN=""
+# Whether the last rotation_write changed a list, render id aside.
+ROTATION_CHANGED=no
+
+# rotation_routes_set - reads the plan replace-modes.py prints on stdin and keeps its routes.
+rotation_routes_set() {
+  ROTATION_ROUTES="$(awk '$4 != "" && $4 != "-" { split($4, r, ":"); print $1, r[1], r[2] }')"
+}
 
 # rotation_file <proxy> - where the list a proxy includes is written.
 rotation_file() {
   printf '%s/%s.conf\n' "$ROTATION_DIR" "$1"
 }
 
-# rotation_render <proxy> [<container to leave out>...] - writes the replica lists of every service
-# routed through <proxy>: each running, healthy replica, minus the ones being retired. Written to a
-# temporary file and renamed, so a reload never reads half a file.
-rotation_render() {
-  local proxy="$1" service via port cid state name file tmp count
-  shift
+# rotation_route <service> - prints "<proxy> <port>" for a routed service, nothing otherwise.
+rotation_route() {
+  printf '%s\n' "$ROTATION_ROUTES" | awk -v s="$1" '$1 == s { print $2, $3 }'
+}
+
+# rotation_block <service> <port> [<container name>...] - one `upstream` block: the replicas named,
+# or, with none, the service's DNS name (the resting form). The same text, byte for byte, as the
+# list baked in Dockerfile.frontend (deploy-replace.test.sh compares them).
+rotation_block() {
+  local service="$1" port="$2" name
+  shift 2
+  printf 'upstream %s {\n    zone %s 64k;\n    resolver 127.0.0.11 valid=%ss ipv6=off;\n' \
+    "$service" "$service" "$ROLLING_RESOLVER_TTL_SECONDS"
+  if [ $# -eq 0 ]; then
+    printf '    server %s:%s resolve;\n' "$service" "$port"
+  else
+    # `resolve` re-reads the name if the container restarts with another address; a container name
+    # names exactly one replica, so the list stays the list.
+    for name in "$@"; do
+      printf '    server %s:%s resolve;\n' "$name" "$port"
+    done
+  fi
+  printf '}\n'
+}
+
+# rotation_existing_block <file> <service> - the block for <service> as the file holds it, or nothing.
+rotation_existing_block() {
+  [ -f "$1" ] || return 0
+  awk -v s="upstream $2 {" '$0 == s { on = 1 } on { print } on && $0 == "}" { exit }' "$1"
+}
+
+# rotation_write <proxy> <service> <block> - rewrites the list of <proxy>: <service>'s block becomes
+# <block>, every other block is carried over as the file holds it (written in the resting form only
+# when the file has none). An empty <service> writes EVERY block in the resting form. Written to a
+# temporary file and renamed, so a reload never reads half a file. Sets ROTATION_TOKEN and
+# ROTATION_CHANGED.
+rotation_write() {
+  local proxy="$1" target="$2" block="$3" file tmp svc via port existing
   file="$(rotation_file "$proxy")"
   tmp="$file.tmp"
+  ROTATION_TOKEN="$(date +%s)-$$-$RANDOM"
   {
     printf '# WRITTEN BY infrastructure/lib/rolling.sh AT EVERY DEPLOY - which replicas %s may choose.\n' "$proxy"
     printf '# Not tracked by git; docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.\n'
-    while read -r service via port; do
+    printf '# render %s\n' "$ROTATION_TOKEN"
+    while read -r svc via port; do
       [ "$via" = "$proxy" ] || continue
-      printf '\nupstream %s {\n    zone %s 64k;\n' "$service" "$service"
-      # `resolve` re-reads the name if the container restarts with another address; a container name
-      # names exactly one replica, so the list stays the list.
-      printf '    resolver 127.0.0.11 valid=2s ipv6=off;\n'
-      count=0
-      for cid in $(containers_of "$service"); do
-        case " $* " in *" $cid "*) continue ;; esac
-        state="$($DOCKER_CLI inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Name}}' "$cid" 2>/dev/null)" || continue
-        case "$state" in
-        'running healthy '* | 'running none '*)
-          name="${state##* }"
-          printf '    server %s:%s resolve;\n' "${name#/}" "$port"
-          count=$((count + 1))
-          ;;
-        esac
-      done
-      if [ "$count" -eq 0 ]; then
-        # A service with no healthy replica: said in the file, where nginx answers it with a 502
-        # ("no live upstreams") rather than a name that would resolve to nothing.
-        printf '    server 127.0.0.1:1 down;\n'
-        printf '::warning::%s: no healthy replica of %s to put in rotation\n' "$proxy" "$service" >&2
+      printf '\n'
+      if [ -n "$target" ] && [ "$svc" = "$target" ]; then
+        printf '%s\n' "$block"
+        continue
       fi
-      printf '}\n'
+      existing=""
+      [ -z "$target" ] || existing="$(rotation_existing_block "$file" "$svc")"
+      if [ -n "$existing" ]; then
+        printf '%s\n' "$existing"
+      else
+        rotation_block "$svc" "$port"
+      fi
     done <<<"$ROTATION_ROUTES"
   } >"$tmp" || return 1
+  if [ -f "$file" ] && cmp -s <(grep -v '^# render ' "$file") <(grep -v '^# render ' "$tmp"); then
+    ROTATION_CHANGED=no
+  else
+    ROTATION_CHANGED=yes
+  fi
   mv -f "$tmp" "$file" || return 1
 }
 
-# Run INSIDE a proxy container (busybox sh, as root), with the number of reads as $1 and the awk
-# program below as $2. Tests the new list, reloads, then reads until every worker that existed before
-# the reload has either exited or can no longer choose a replica, and prints "<reads> <old workers
-# still alive>". Exit 2: nginx refused the list; exit 3: never settled.
-#
-# THE PROOF. `nginx -s reload` starts new workers on the new list; the old workers keep the old list,
-# and the connections they hold - a reload never cuts one. An old worker accepts nothing new, so it can
-# only choose a replica for a request it was already handling, and only before that request is being
-# proxied. So once each of its client connections (a socket on a port nginx listens on) is paired with
-# an upstream connection already established, it has nothing left to choose: what remains is requests
-# being proxied and WebSockets, which it may keep for an hour without ever reaching the retiring
-# replica anew. Waiting for those workers to EXIT instead would wait for the last WebSocket opened
-# before the release. Read from /proc - the workers' own sockets, joined to the namespace's TCP table.
+# Run INSIDE a proxy container (busybox sh, as root). Shared by the three scripts below: the
+# configuration file the running master was started with (`-c`, read from its own command line),
+# and the workers, as "<pid>:<start time>" so a recycled pid is never taken for the same worker.
 # shellcheck disable=SC2016 # runs in the proxy's shell, not this one
-ROTATION_SETTLE_SCRIPT='
+ROTATION_PROXY_PRELUDE='
 workers() {
   for d in /proc/[0-9]*; do
     s="$(cat "$d/stat" 2>/dev/null)" || continue
@@ -197,128 +248,361 @@ for a in $(tr "\0" " " </proc/1/cmdline); do
   [ "$prev" = "-c" ] && conf="$a"
   prev="$a"
 done
-nginx ${conf:+-c "$conf"} -t -q || exit 2
-before=" $(workers | tr "\n" " ")"
-nginx ${conf:+-c "$conf"} -s reload || exit 2
-read=0
-unpaired="?"
-old=""
-while [ "$read" -lt "$1" ]; do
-  read=$((read + 1))
-  fresh=0
-  old=""
-  for w in $(workers); do
-    case "$before" in
-    *" $w "*) old="$old ${w%%:*}" ;;
-    *) fresh=1 ;;
-    esac
-  done
-  unpaired="$({
-    for p in $old; do
-      for f in /proc/$p/fd/*; do
-        l="$(readlink "$f" 2>/dev/null)"
-        case "$l" in "socket:["*) i="${l#socket:[}"; echo "S $p ${i%]}" ;; esac
-      done
-    done
-    cat /proc/net/tcp /proc/net/tcp6 2>/dev/null
-  } | awk "$2")"
-  if [ "$fresh" = 1 ] && [ "$unpaired" = 0 ]; then
-    echo "$read $(echo $old | wc -w)"
-    exit 0
-  fi
-  sleep 0.5
-done
-echo "$read $(echo $old | wc -w) $unpaired"
-exit 3
 '
 
-# The join: "S <worker> <inode>" lines, then the TCP tables. Prints how many client connections of the
-# old workers are not yet paired with an established upstream connection. A LISTEN row (0A) names a
-# port nginx listens on; a socket on such a port is a client's, any other is an upstream.
+# Prints the configuration nginx would load NOW (`nginx -T`), every included file under a
+# `# configuration file <path>:` line. Fails when nginx refuses it.
+# shellcheck disable=SC2016 # runs in the proxy's shell, not this one
+ROTATION_DUMP_SCRIPT="$ROTATION_PROXY_PRELUDE"'
+exec nginx ${conf:+-c "$conf"} -T -q
+'
+
+# Prints "<uid of the workers>|<the workers that exist BEFORE the reload>", then sends it.
+# shellcheck disable=SC2016 # runs in the proxy's shell, not this one
+ROTATION_RELOAD_SCRIPT="$ROTATION_PROXY_PRELUDE"'
+before=" $(workers | tr "\n" " ")"
+w="${before# }"
+w="${w%%:*}"
+uid=""
+[ -n "$w" ] && uid="$(awk "/^Uid:/ { print \$2 }" "/proc/$w/status")"
+nginx ${conf:+-c "$conf"} -s reload || exit 2
+printf "%s|%s\n" "$uid" "$before"
+'
+
+# One read after the reload: $1 the workers from before it, $2 the pairing awk program below, $3 the
+# subrequest ports (hex). Prints "<a new worker exists: 0|1> <unpaired client connections of the old
+# workers, or ?> <old workers still alive>".
+# shellcheck disable=SC2016 # runs in the proxy's shell, not this one
+ROTATION_READ_SCRIPT="$ROTATION_PROXY_PRELUDE"'
+fresh=0
+old=""
+for w in $(workers); do
+  case "$1" in
+  *" $w "*) old="$old ${w%%:*}" ;;
+  *) fresh=1 ;;
+  esac
+done
+blind=0
+socks=""
+for p in $old; do
+  n=0
+  for f in /proc/$p/fd/*; do
+    l="$(readlink "$f" 2>/dev/null)"
+    case "$l" in "socket:["*) i="${l#socket:[}"; socks="$socks
+S $p ${i%]}"; n=$((n + 1)) ;; esac
+  done
+  # A live worker always holds its listening socket: seeing none is not seeing it, not a clean worker.
+  [ -d "/proc/$p" ] && [ "$n" = 0 ] && blind=1
+done
+if [ "$blind" = 1 ]; then
+  unpaired="?"
+else
+  unpaired="$({
+    printf "%s\n" "$socks"
+    cat /proc/net/tcp
+    cat /proc/net/tcp6 2>/dev/null
+  } | awk -v skip="$3" "$2")"
+fi
+echo "$fresh $unpaired $(echo $old | wc -w)"
+'
+
+# THE PAIRING CHECK - what it proves, and what it does not.
+#
+# `nginx -s reload` starts new workers on the new list; the old workers keep the old list, and the
+# connections they hold - a reload never cuts one. An old worker accepts nothing new, so it can only
+# choose a replica for a request it was already handling. The check reads every old worker's sockets
+# (`/proc/<pid>/fd`) joined to the TCP table, and holds when, in each old worker, the client
+# connections (a socket on a port nginx listens on) are no more than its ESTABLISHED upstream
+# connections - a request nginx is already proxying has chosen its replica. What is left are requests
+# being proxied and WebSockets, which an old worker may keep for an hour; waiting for it to EXIT
+# would wait for the last WebSocket opened before the release.
+#
+# A SUBREQUEST'S CONNECTION NEVER PAIRS A CLIENT (2026-11-01 review). `auth_request` opens an upstream
+# connection (the frontend's to core-service) BEFORE the request chooses where it is going; counted,
+# it would stand for a request that has not chosen yet. So every upstream connection to a port an
+# `auth_request` location proxies to (rotation_subrequest_ports, read from `nginx -T`) is left out,
+# main requests to that service included: those then hold the check until they end - by their own
+# completion, never by a clock.
+#
+# WHAT IT DOES NOT PROVE. A request whose upstream FAILS after it was paired can choose again from
+# the old list: `proxy_next_upstream` (an idempotent method only, nginx's own rule) or an `error_page`
+# that proxies elsewhere (the frontend's all answer from nginx itself). Such a re-choice needs a
+# replica the deploy has NOT touched to fail on its own, and lands on the retiring replica only by that
+# coincidence; it is left visible, not waited for. One request per client connection is assumed
+# (no `mirror`, no SSI in the frontend config).
+#
+# A table it cannot read prints `?`, never `0`: an unreadable /proc is not a clean one.
 # shellcheck disable=SC2016 # an awk program
 ROTATION_PAIRS_AWK='
+BEGIN { ns = split(skip, s, " "); for (i = 1; i <= ns; i++) sk[s[i]] = 1 }
 $1 == "S" { own[$3] = $2; next }
-$1 == "sl" { next }
+$1 == "sl" { hdr = 1; next }
 {
   n = split($2, a, ":"); port = a[n]
+  m = split($3, b, ":"); rport = b[m]
   if ($4 == "0A") { listen[port] = 1; next }
-  if ($10 in own) { k++; P[k] = port; ST[k] = $4; W[k] = own[$10] }
+  if ($10 in own) { k++; P[k] = port; R[k] = rport; ST[k] = $4; W[k] = own[$10] }
 }
 END {
-  for (i = 1; i <= k; i++) { if (P[i] in listen) c[W[i]]++; else if (ST[i] == "01") u[W[i]]++ }
+  if (!hdr) { print "?"; exit }
+  for (i = 1; i <= k; i++) { if (P[i] in listen) c[W[i]]++; else if (!(R[i] in sk) && ST[i] == "01") u[W[i]]++ }
   bad = 0
   for (w in c) if (c[w] > u[w] + 0) bad += c[w] - u[w]
   print bad + 0
 }'
 
-# rotation_apply <proxy> - reloads every running replica of <proxy> on its new list and returns once
-# the reload is PROVEN to have taken effect in each (ROTATION_SETTLE_SCRIPT). A proxy with no running
-# replica has nothing to reload: it reads the list when it starts.
-rotation_apply() {
-  local proxy="$1" pid out rc
-  for pid in $($DOCKER_CLI ps -q --filter "label=com.docker.compose.project=$PROJECT" \
-    --filter "label=com.docker.compose.service=$proxy" --filter "label=com.docker.compose.oneoff=False"); do
-    out="$($DOCKER_CLI exec "$pid" sh -c "$ROTATION_SETTLE_SCRIPT" sh "$ROLLING_ROTATION_READS" "$ROTATION_PAIRS_AWK")"
-    rc=$?
-    case "$rc" in
-    0)
-      # shellcheck disable=SC2086 # "<reads> <old workers>"
-      set -- $out
-      printf '  %s: %s reloaded; the new list holds, proven after %s read(s) (%s old worker(s) still finishing proxied requests)\n' \
-        "$proxy" "${pid:0:12}" "$1" "$2"
+# rotation_subrequest_ports <proxy> - reads `nginx -T` on stdin and prints, one per line, the port of
+# every service an `auth_request` location proxies to: a `host:port` as written, a bare name through
+# the proxy's own route. Fails, rather than guessing, on a target it cannot place.
+rotation_subrequest_ports() {
+  local proxy="$1" uri target route port
+  # shellcheck disable=SC2016 # an awk program
+  awk '
+    $1 == "auth_request" { u = $2; sub(/;$/, "", u); if (u != "off") want[u] = 1; next }
+    $1 == "location" && $2 == "=" { cur = $3; next }
+    cur != "" && $1 == "}" { cur = ""; next }
+    cur != "" && $1 == "set" && $2 ~ /^\$/ { t = $3; sub(/;$/, "", t); target[cur] = t; next }
+    cur != "" && $1 == "proxy_pass" {
+      t = $2; sub(/;$/, "", t); sub(/^https?:\/\//, "", t); sub(/\/.*/, "", t)
+      if (t !~ /^\$/) target[cur] = t
+    }
+    END { for (u in want) print u, ((u in target) ? target[u] : "-") }' |
+    while read -r uri target; do
+      case "$target" in
+      *:[0-9]*) port="${target##*:}" ;;
+      -)
+        printf '::error::%s: auth_request %s proxies to nothing this deploy can read - the pairing check would count its connections as chosen requests\n' "$proxy" "$uri" >&2
+        return 1
+        ;;
+      *)
+        route="$(rotation_route "$target")"
+        if [ "${route%% *}" != "$proxy" ]; then
+          printf '::error::%s: auth_request %s proxies to %s, which is not routed through %s - its port is unknown\n' "$proxy" "$uri" "$target" "$proxy" >&2
+          return 1
+        fi
+        port="${route#* }"
+        ;;
+      esac
+      printf '%s\n' "$port"
+    done | sort -u
+  # The loop runs in a subshell: its `return 1` is the pipeline's status only through PIPESTATUS.
+  [ "${PIPESTATUS[1]}" -eq 0 ]
+}
+
+# rotation_is_legacy <proxy> - reads `nginx -T` on stdin; true when it is a proxy from BEFORE the
+# lists: it includes no rotation file at all, and names EVERY service routed through it by its DNS
+# name and port (`set $upstream_gateway chat-gateway:3000;`). That is the frontend image a release
+# still finds running on the first deploy that carries the lists, and after a rollback to an older
+# release. Anything else that reads no list is refused.
+rotation_is_legacy() {
+  local proxy="$1" dump svc via port
+  dump="$(cat)"
+  case "$dump" in *"/rotation/"*) return 1 ;; esac
+  while read -r svc via port; do
+    [ "$via" = "$proxy" ] || continue
+    case "$dump" in *"$svc:$port"*) ;; *) return 1 ;; esac
+  done <<<"$ROTATION_ROUTES"
+  return 0
+}
+
+# rotation_reload <proxy> <container> <mode> <subrequest ports> - reloads one replica of the proxy and
+# returns once the reload has taken effect: a new worker exists, and, in mode `retiring`, the pairing
+# check holds. A reload nginx refused (it can, after `nginx -T` accepted the files: a port it cannot
+# bind) is read from the replica's own error log the moment no new worker has appeared.
+rotation_reload() {
+  local proxy="$1" pid="$2" mode="$3" ports="$4" hex="" p t0 before uid out read=0 waited=0 fresh unpaired alive
+  for p in $ports; do hex="$hex $(printf '%04X' "$p")"; done
+  t0="$(date +%s)"
+  before="$($DOCKER_CLI exec "$pid" sh -c "$ROTATION_RELOAD_SCRIPT")" || {
+    printf '::error::%s: %s did not take the reload signal - it keeps serving the old list; stopping the deploy\n' "$proxy" "${pid:0:12}" >&2
+    return 1
+  }
+  uid="${before%%|*}"
+  before="${before#*|}"
+  [ -n "$uid" ] || {
+    printf '::error::%s: %s had no worker to read before the reload - the pairing check has nothing to stand on; stopping the deploy\n' "$proxy" "${pid:0:12}" >&2
+    return 1
+  }
+  while [ "$read" -lt "$ROLLING_ROTATION_READS" ]; do
+    read=$((read + 1))
+    # AS THE WORKERS' OWN USER, and it is load-bearing (measured 2026-11-01): /proc/<pid>/fd of a
+    # process owned by another user needs CAP_SYS_PTRACE, which an exec does not have, so read as
+    # root every fd list came back EMPTY, every old worker looked like it held nothing, and the check
+    # held vacuously. nginx keeps its workers dumpable, so their own uid reads them with no
+    # capability at all. A worker whose fds still read as nothing makes the read `?` (unknown).
+    out="$($DOCKER_CLI exec -u "$uid" "$pid" sh -c "$ROTATION_READ_SCRIPT" sh "$before" "$ROTATION_PAIRS_AWK" "$hex")" || out=""
+    read -r fresh unpaired alive <<<"$out"
+    case "$fresh:$unpaired" in
+    0:*)
+      # No new worker yet: either the master has not got to the signal, or it refused the files.
+      if $DOCKER_CLI logs --since "$t0" "$pid" 2>&1 | grep -F '[emerg]' >&2; then
+        printf '::error::%s: %s REFUSED the reload (above) - it keeps serving the old list; stopping the deploy\n' "$proxy" "${pid:0:12}" >&2
+        return 1
+      fi
       ;;
-    2)
-      printf '::error::%s: %s refused the new replica list - it keeps serving the old one; stopping the deploy\n' "$proxy" "${pid:0:12}" >&2
-      cat "$(rotation_file "$proxy")" >&2 || true
-      return 1
+    1:0 | 1:[0-9]*)
+      if [ "$mode" != retiring ] || [ "$unpaired" = 0 ]; then
+        printf '  %s: %s reloaded; ' "$proxy" "${pid:0:12}"
+        if [ "$mode" = retiring ]; then
+          printf 'paired after %s read(s) (%s old worker(s) still finishing proxied requests)\n' "$read" "$alive"
+        else
+          printf 'a new worker runs on the list\n'
+        fi
+        return 0
+      fi
+      if [ "$waited" = 0 ]; then
+        printf '  %s: %s waiting for %s request(s) of the old workers to choose an upstream\n' "$proxy" "${pid:0:12}" "$unpaired"
+        waited=1
+      fi
       ;;
     *)
-      printf '::error::%s: %s did not settle on the new list after %s reads (%s) - the old replica stays up; stopping the deploy\n' \
-        "$proxy" "${pid:0:12}" "$ROLLING_ROTATION_READS" "${out:-exit $rc}" >&2
-      return 1
+      # `?`, or an exec that failed: unknown, which is never taken for clean.
       ;;
     esac
+    sleep 0.5
+  done
+  printf '::error::%s: %s did not settle on the new list after %s reads (last read: %s) - the old replica stays up; stopping the deploy\n' \
+    "$proxy" "${pid:0:12}" "$ROLLING_ROTATION_READS" "${out:-unreadable}" >&2
+  return 1
+}
+
+# rotation_apply <proxy> <mode> - makes every running replica of <proxy> load the list last written
+# (ROTATION_TOKEN), and returns once that has taken effect in each. Mode `retiring`: a replica is
+# about to be stopped, so the pairing check must hold; mode `plain`: nothing is retired. A proxy with
+# no running replica has nothing to reload: it reads the list when it starts.
+#
+# BEFORE A RELOAD, THE PROXY IS ASKED WHAT IT WOULD LOAD (`nginx -T`). The list must be in it, with
+# this render's id: a proxy that does not include the file, or includes a different one (a missing or
+# misdirected mount), would reload, pass the check, and keep choosing the replica about to stop. The
+# one proxy allowed to read no list is a frontend image from before the lists (rotation_is_legacy),
+# which is drained the way every deploy drained before them.
+rotation_apply() {
+  local proxy="$1" mode="$2" pid dump ports legacy=0
+  for pid in $($DOCKER_CLI ps -q --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter "label=com.docker.compose.service=$proxy" --filter "label=com.docker.compose.oneoff=False"); do
+    if ! dump="$($DOCKER_CLI exec "$pid" sh -c "$ROTATION_DUMP_SCRIPT" 2>&1)"; then
+      printf '::error::%s: %s refuses its configuration with the new list - it keeps serving the old one; stopping the deploy\n' "$proxy" "${pid:0:12}" >&2
+      printf '%s\n' "$dump" | tail -5 >&2
+      cat "$(rotation_file "$proxy")" >&2 || true
+      return 1
+    fi
+    if printf '%s\n' "$dump" | grep -qE "^# configuration file .*/rotation/$proxy\.conf:\$"; then
+      if ! printf '%s\n' "$dump" | grep -qxF "# render $ROTATION_TOKEN"; then
+        printf '::error::%s: %s includes a rotation/%s.conf that is not the one just written in %s (render %s) - its mount is not that directory; stopping the deploy\n' \
+          "$proxy" "${pid:0:12}" "$proxy" "$ROTATION_DIR" "$ROTATION_TOKEN" >&2
+        return 1
+      fi
+      ports="$(printf '%s\n' "$dump" | rotation_subrequest_ports "$proxy")" || return 1
+      rotation_reload "$proxy" "$pid" "$mode" "$ports" || return 1
+    elif printf '%s\n' "$dump" | rotation_is_legacy "$proxy"; then
+      printf '::warning title=A proxy from before the replica lists::%s: %s reads no rotation/%s.conf and names its services by DNS - an image older than 2026-11-01 (the first deploy carrying the lists, or a rollback). It is drained the old way.\n' \
+        "$proxy" "${pid:0:12}" "$proxy" >&2
+      legacy=1
+    else
+      printf '::error::%s: %s includes no rotation/%s.conf, and does not name its services by DNS either - nothing would take a retiring replica out of its rotation; stopping the deploy\n' \
+        "$proxy" "${pid:0:12}" "$proxy" >&2
+      return 1
+    fi
+  done
+  if [ "$legacy" = 1 ] && [ "$mode" = retiring ]; then
+    # The pre-2026-11-01 drain, unchanged: such a proxy re-resolves the service by DNS every
+    # ROLLING_RESOLVER_TTL_SECONDS, so once that has run out it names the new replica too. Its reset
+    # window is the one every deploy had before the lists; the next deploy runs no such image.
+    printf '  %s: waiting %ss for the DNS-resolving proxy to re-resolve (the drain from before the lists)\n' \
+      "$proxy" "$((ROLLING_RESOLVER_TTL_SECONDS + 1))"
+    sleep $((ROLLING_RESOLVER_TTL_SECONDS + 1))
+  fi
+}
+
+# rotation_seed - reads the plan on stdin and writes every proxy's list in the resting form. Called
+# BEFORE ANY `up`: the frontend and the edge include their list unconditionally and refuse to start
+# without it - a fresh host, a lost directory. A list that already exists is normalised to the
+# resting form too (a deploy killed mid-replacement leaves a container name in it), and a running
+# proxy whose list that changed is reloaded on it.
+rotation_seed() {
+  local proxy
+  rotation_routes_set
+  [ -n "$ROTATION_ROUTES" ] || return 0
+  [ -n "${ROTATION_DIR:-}" ] || {
+    printf '::error::the plan routes services through a proxy, but the caller set no ROTATION_DIR\n' >&2
+    return 1
+  }
+  mkdir -p "$ROTATION_DIR" || return 1
+  for proxy in $(printf '%s\n' "$ROTATION_ROUTES" | awk 'NF { print $2 }' | sort -u); do
+    rotation_write "$proxy" "" "" || return 1
+    printf 'rotation: %s written for %s\n' "$(rotation_file "$proxy")" "$proxy"
+    if [ "$ROTATION_CHANGED" = yes ]; then
+      rotation_apply "$proxy" plain || return 1
+    fi
   done
 }
 
-# rotation_update <service> [<container to leave out>...] - puts the current healthy replicas of
-# <service>, minus the ones given, into rotation at the proxy that routes to it, and returns once
-# that is proven. A service with no route has nothing to do.
-rotation_update() {
-  local service="$1" proxy
-  proxy="$(printf '%s\n' "$ROTATION_ROUTES" | awk -v s="$service" '$1 == s { print $2 }')"
-  [ -n "$proxy" ] || return 0
-  [ -n "${ROTATION_DIR:-}" ] || {
-    printf '::error::%s is routed through %s, but the caller set no ROTATION_DIR\n' "$service" "$proxy" >&2
+# rotation_take_out <service> <container...> - the block of <service> names the given replicas alone
+# (those of them running and healthy: the health filter applies to the service being replaced, and
+# to nothing else), and the proxy is reloaded on it, the pairing check holding. A service with no
+# route has nothing to do.
+rotation_take_out() {
+  local service="$1" route proxy port cid state names=""
+  shift
+  route="$(rotation_route "$service")"
+  [ -n "$route" ] || return 0
+  proxy="${route%% *}"
+  port="${route#* }"
+  for cid in "$@"; do
+    state="$($DOCKER_CLI inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Name}}' "$cid" 2>/dev/null)" || continue
+    case "$state" in
+    'running healthy '* | 'running none '*) names="$names ${state##* /}" ;;
+    esac
+  done
+  if [ -z "$names" ]; then
+    printf '::error::%s: none of the replicas meant to stay (%s) is healthy - taking the others out would leave %s nothing to choose\n' "$service" "$*" "$proxy" >&2
     return 1
-  }
-  rotation_render "$proxy" "${@:2}" || return 1
-  rotation_apply "$proxy"
+  fi
+  # shellcheck disable=SC2086 # deliberate word splitting: one name per word
+  rotation_write "$proxy" "$service" "$(rotation_block "$service" "$port" $names)" || return 1
+  rotation_apply "$proxy" retiring
 }
 
-# The retiring replica's own sockets, read twice in a row: no connection half-open (state 03,
-# SYN_RECV) and every listener's accept queue empty (a LISTEN row's rx_queue IS that queue). Prints
-# "<waiting> <established on a listened port>".
+# rotation_restore <service> - the block of <service> back in the resting form (its DNS name: every
+# replica that runs), the proxy reloaded on it when that changed it.
+rotation_restore() {
+  local service="$1" route proxy
+  route="$(rotation_route "$service")"
+  [ -n "$route" ] || return 0
+  proxy="${route%% *}"
+  rotation_write "$proxy" "$service" "$(rotation_block "$service" "${route#* }")" || return 1
+  [ "$ROTATION_CHANGED" = yes ] || return 0
+  rotation_apply "$proxy" plain
+}
+
+# The retiring replica's own sockets: no connection half-open (state 03, SYN_RECV) and every
+# listener's accept queue empty (a LISTEN row's rx_queue IS that queue). Prints "<waiting>
+# <established on a listened port>", or "? ?" when it read no table at all.
 # shellcheck disable=SC2016 # an awk program
 QUEUE_AWK='
-$1 == "sl" { next }
+$1 == "sl" { hdr = 1; next }
 {
   n = split($2, a, ":"); port = a[n]
   if ($4 == "0A") { listen[port] = 1; if (substr($5, 10) != "00000000") w++ }
   else if ($4 == "03") w++
   else if ($4 == "01") { k++; E[k] = port }
 }
-END { for (i = 1; i <= k; i++) if (E[i] in listen) f++; print w + 0, f + 0 }'
+END { if (!hdr) { print "? ?"; exit } for (i = 1; i <= k; i++) if (E[i] in listen) f++; print w + 0, f + 0 }'
 
 # wait_unqueued <service> <container> - returns once nothing is waiting to be accepted by the
 # replica, which rotation has already stopped sending anything new: two clean reads in a row mean no
-# half-open connection could still complete and none is still queued. In flight is printed, not waited
-# for: SIGTERM is what drains it, and a WebSocket would never let it reach zero.
+# half-open connection could still complete and none is still queued. A read that fails (the exec, or
+# the table) is UNKNOWN, never clean. In flight is printed, not waited for: SIGTERM is what drains
+# it, and a WebSocket would never let it reach zero. Returns 1 when the reads run out.
 wait_unqueued() {
-  local service="$1" cid="$2" read=0 clean=0 out=""
+  local service="$1" cid="$2" read=0 clean=0 out="" raw
   while [ "$read" -lt "$ROLLING_QUIESCE_READS" ]; do
     read=$((read + 1))
-    out="$($DOCKER_CLI exec "$cid" sh -c 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null' | awk "$QUEUE_AWK")"
+    if raw="$($DOCKER_CLI exec "$cid" sh -c 'cat /proc/net/tcp && { cat /proc/net/tcp6 2>/dev/null || true; }')"; then
+      out="$(printf '%s\n' "$raw" | awk "$QUEUE_AWK")"
+    else
+      out="unreadable"
+    fi
     if [ "${out%% *}" = 0 ]; then
       clean=$((clean + 1))
       if [ "$clean" -ge 2 ]; then
@@ -331,11 +615,11 @@ wait_unqueued() {
     fi
     sleep 0.1
   done
-  # Out of rotation, so nothing new reaches it, but its process did not accept what was queued: it is
-  # hung, and those connections are lost whether it is stopped now or later. Stopping it is still
-  # right; it is said, because it is the very failure this exists to prevent.
-  printf '::error::%s: %s still had connections waiting (%s) after %s reads - its process is not accepting; retiring it anyway\n' \
+  # Out of rotation, so nothing new reaches it, but its queue was never read empty: its process is not
+  # accepting, or its sockets cannot be read. Either way nothing proves stopping it is safe.
+  printf '::error::%s: %s still had connections waiting, or could not be read (%s), after %s reads - not stopping it; stopping the deploy\n' \
     "$service" "${cid:0:12}" "${out:-unreadable}" "$ROLLING_QUIESCE_READS" >&2
+  return 1
 }
 
 # retire <service> <container...> - drains and removes replicas already out of rotation. `docker
@@ -345,7 +629,7 @@ retire() {
   local service="$1" cid
   shift
   for cid in "$@"; do
-    wait_unqueued "$service" "$cid"
+    wait_unqueued "$service" "$cid" || return 1
     printf '  %s: retiring %s (drain up to %ss)\n' "$service" "${cid:0:12}" "$ROLLING_DRAIN_SECONDS"
     $DOCKER_CLI stop --time "$ROLLING_DRAIN_SECONDS" "$cid" >/dev/null || return 1
     $DOCKER_CLI rm "$cid" >/dev/null || return 1
@@ -353,7 +637,7 @@ retire() {
 }
 
 # replace_overlap <service> - the new replica beside the old, then the old one out of rotation, then
-# out.
+# out, then the list back at rest.
 replace_overlap() {
   local service="$1" old new count cid
   old="$(containers_of "$service")"
@@ -365,7 +649,7 @@ replace_overlap() {
     dc up -d --no-deps "$service" || return 1
     new="$(containers_of "$service")"
     wait_healthy "$new" "$service" || return 1
-    rotation_update "$service"
+    rotation_restore "$service"
     return
   fi
 
@@ -396,11 +680,19 @@ replace_overlap() {
   fi
 
   # One reload puts the new replica in and takes the old one out; the old one is stopped only once
-  # that holds. A failure here leaves both running - the old one merely no longer chosen.
+  # that holds. ANY failure from here puts the list back at rest - naming every replica still
+  # running, the old one included, since nothing stopped it - so a failed deploy, like a finished
+  # one, leaves lists an older release's deploy (a rollback) can follow.
+  if ! rotation_take_out "$service" "$new"; then
+    rotation_restore "$service" || true
+    return 1
+  fi
   # shellcheck disable=SC2086 # deliberate word splitting: one id per word
-  rotation_update "$service" $old || return 1
-  # shellcheck disable=SC2086 # deliberate word splitting: one id per word
-  retire "$service" $old
+  if ! retire "$service" $old; then
+    rotation_restore "$service" || true
+    return 1
+  fi
+  rotation_restore "$service"
 }
 
 # replace_in_place <service> <publishes-a-host-port> - compose recreates the container if, and only
@@ -424,7 +716,7 @@ replace_in_place() {
 replace_services() {
   local plan service mode ports
   plan="$(cat)"
-  ROTATION_ROUTES="$(printf '%s\n' "$plan" | awk '$4 != "" && $4 != "-" { split($4, r, ":"); print $1, r[1], r[2] }')"
+  rotation_routes_set <<<"$plan"
   while read -r service mode ports _ <&3; do
     [ -n "$service" ] || continue
     printf '\n-- %s (%s)\n' "$service" "$mode"

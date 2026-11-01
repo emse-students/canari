@@ -222,6 +222,32 @@ else
   printf '\nno service image changes were reported - not pulling\n'
 fi
 
+# ── How each service may be replaced, and the proxies' replica lists ─────────
+# Read BEFORE ANY `up`, for two reasons. A declaration two replicas could not honour is refused while
+# nothing has changed. And the frontend and the edge include their replica list unconditionally, so a
+# list that does not exist - a fresh host, a lost directory - is a proxy that cannot start:
+# rotation_seed writes every list in its resting form (each service by its DNS name) first.
+#
+# Where rolling.sh writes the lists: inside edge/, which the edge already mounts, and mounted
+# read-only into the frontend as /etc/nginx/rotation (both compose files). Not tracked by git, so
+# `git reset --hard` leaves the lists the running proxies were reloaded on.
+# docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
+ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"
+# shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
+. "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
+
+printf '\nreading how each service may be replaced\n'
+REPLACE_PLAN="$(dc config --format json | python3 "$DEPLOY_PATH/infrastructure/lib/replace-modes.py" "${REGISTRY}/${IMAGE_PREFIX}/")" || {
+  printf '::error::%s declares a service this deploy cannot replace safely - see the lines above; nothing was changed\n' \
+    "$COMPOSE_FILE" >&2
+  exit 1
+}
+printf '%s\n' "$REPLACE_PLAN"
+rotation_seed <<<"$REPLACE_PLAN" || {
+  printf '::error::the replica lists in %s could not be written or loaded - nothing was changed\n' "$ROTATION_DIR" >&2
+  exit 1
+}
+
 # ── The database first, and its migrations BEFORE any application service ──────
 # Services used to start first and migrate after, so a deploy had a window in which new code met the
 # old schema: `relation "spaces" does not exist` and `column "Post.publishedAt" does not exist`
@@ -314,21 +340,6 @@ on_port_conflict() {
     return 1
   }
 }
-
-# Where rolling.sh writes which replicas each nginx in front may choose: inside edge/, which the edge
-# already mounts, and mounted read-only into the frontend as /etc/nginx/rotation (both compose files).
-# Not tracked by git, so `git reset --hard` leaves the lists the running proxies were reloaded on.
-ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"
-# shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
-. "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
-
-printf '\nreading how each service may be replaced\n'
-REPLACE_PLAN="$(dc config --format json | python3 "$DEPLOY_PATH/infrastructure/lib/replace-modes.py" "${REGISTRY}/${IMAGE_PREFIX}/")" || {
-  printf '::error::%s declares a service this deploy cannot replace safely - see the lines above; nothing was changed\n' \
-    "$COMPOSE_FILE" >&2
-  exit 1
-}
-printf '%s\n' "$REPLACE_PLAN"
 
 if ! replace_services <<<"$REPLACE_PLAN"; then
   printf '::error::the estate was not fully replaced - every service before the failing one runs the new release, the failing one and those after it still run the previous one\n' >&2

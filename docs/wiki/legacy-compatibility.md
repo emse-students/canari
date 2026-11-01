@@ -171,6 +171,21 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
 
+### No date yet - a frontend image older than the replica lists, drained by DNS (2026-11-01)
+
+**Site:** `rotation_is_legacy` and the `legacy` branch of `rotation_apply` in
+`infrastructure/lib/rolling.sh`.
+**What it humours:** a frontend nginx from before the lists, which reads no `rotation/frontend.conf`
+and names every service by `<service>:<port>`. The first deploy carrying the lists finds one running,
+and so does every deploy after a rollback to a release older than them. Its retiring replica is kept
+up `ROLLING_RESOLVER_TTL_SECONDS + 1` while that nginx re-resolves - the drain every deploy made
+before the lists - with a `::warning` naming it, rather than refused
+([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
+**Condition:** no release a rollback may still target predates the lists - the GHCR prune keeps 30
+pushes, so once the 30 newest releases of each estate carry them. Then delete the branch, so a
+proxy that reads no list is refused like any other. The resting DNS form of the lists is NOT part of
+this entry: it is the design, and stays.
+
 ### No date yet - the Lydia key paste field of a build older than enrolment lot 1
 
 **Site:** `retiredLydiaBusinessKeyPaste` (`PUT :id/lydia-business-key`) and `lydiaBusinessKeyStatus`
