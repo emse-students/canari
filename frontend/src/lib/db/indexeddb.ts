@@ -39,6 +39,7 @@ import {
   mergeOutboxEntry,
   OutboxPayloadUnreadableError,
   outboxClearColumns,
+  outboxKindHoldsBlob,
   OUTBOX_CLEAR_PATCH_KEYS,
 } from './outboxCodec';
 import {
@@ -1278,6 +1279,43 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /**
+   * See {@link IStorage.saveReelTake}: the take, its sends and their messages in ONE two-store
+   * transaction, every payload sealed before it opens (a transaction closes on a non-IDB await).
+   */
+  async saveReelTake(
+    take: OutboxEntry,
+    sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+    deviceKeyB64: string
+  ): Promise<void> {
+    for (const s of sends) invalidateHistoryStateKey(s.message.conversationId);
+    const db = this.ensureDb();
+    await writeOutboxWithBlob(this.blobs, take, async (blobKeyB64) => {
+      const [sealedTake, ...sealedSends] = await Promise.all([
+        encryptData(encodeOutboxSensitive(take, blobKeyB64), deviceKeyB64),
+        ...sends.map((s) => encryptData(encodeOutboxSensitive(s.entry), deviceKeyB64)),
+      ]);
+      const sealedMessages = await Promise.all(
+        sends.map((s) => encryptData(toMessagePayload(s.message), deviceKeyB64))
+      );
+      const tx = db.transaction(['messages', 'outbox'], 'readwrite');
+      const done = idbCommitted(tx);
+      const outbox = tx.objectStore('outbox');
+      outbox.put({ ...outboxClearColumns(take), ...sealedTake });
+      sends.forEach((s, i) => {
+        outbox.put({ ...outboxClearColumns(s.entry), ...sealedSends[i] });
+        tx.objectStore('messages').put({
+          id: s.message.id,
+          conversationId: s.message.conversationId,
+          timestamp: s.message.timestamp,
+          orderAt: storedOrderAt(s.message),
+          ...sealedMessages[i],
+        });
+      });
+      await done;
+    });
+  }
+
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     const db = this.ensureDb();
@@ -1435,7 +1473,8 @@ export class IndexedDbStorage implements IStorage {
       store.delete(id);
     };
     await done;
-    if (kind === 'media' || kind === 'unknown') await deleteOutboxBlobQuietly(this.blobs, id);
+    if (outboxKindHoldsBlob(kind) || kind === 'unknown')
+      await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
   /** See {@link IStorage.sweepOutboxBlobs}. */

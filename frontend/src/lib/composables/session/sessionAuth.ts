@@ -473,7 +473,22 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       const ownerId = ctx.getUserId();
       await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
     },
+    // A CHAT-REEL TAKE'S FILE (RC-13), under the same owner-bound token: the hold on an adopted feed
+    // upload, and its release once no message cites it. Both owed in the take row, not here.
+    holdChatReel: async (mediaId: string) => {
+      const { MediaService } = await import('$lib/media');
+      return new MediaService().holdChatReel(mediaId, ownerTokenOf(ctx.getUserId()));
+    },
+    releaseChatReel: async (mediaId: string) => {
+      const { MediaService } = await import('$lib/media');
+      return new MediaService().releaseChatReel(mediaId, ownerTokenOf(ctx.getUserId()));
+    },
   };
+}
+
+/** A token that is `ownerId`'s and nobody else's (`ownerBoundToken`): another account's is refused. */
+function ownerTokenOf(ownerId: string): () => Promise<string> {
+  return ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
 }
 
 /**
@@ -482,7 +497,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
  * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
  */
 function releaserFor(ownerId: string): SessionReleaser {
-  const token = ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+  const token = ownerTokenOf(ownerId);
   return async (uploadId, why) => {
     const { MediaService } = await import('$lib/media');
     return new MediaService().releaseResumableUpload(uploadId, token, why);

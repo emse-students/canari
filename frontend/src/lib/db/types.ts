@@ -175,6 +175,21 @@ export interface OutboxMediaUploadedRef {
   encoding?: string;
 }
 
+/**
+ * A file a chat-reel take ADOPTED from the CanaReels publish step (reels-in-chat 15.5): the post's
+ * upload, with the description of THAT file - the raw take beside it keeps its own until the chat
+ * hold is placed and the adopted file becomes the take's `uploadedRef`.
+ */
+export interface OutboxAdoptedUpload extends OutboxMediaUploadedRef {
+  mimeType: string;
+  size: number;
+  fileName?: string;
+  width?: number;
+  height?: number;
+  /** The declared duration of the published reel (whole ms). */
+  durationMs?: number;
+}
+
 /** Sensitive media descriptor for a queued media message. */
 export interface OutboxMediaPayload {
   /** MediaKind enum value (image/video/audio/file). */
@@ -211,9 +226,21 @@ export interface OutboxMediaPayload {
   /**
    * The bytes in the blob are the RAW take and still owe a preparation before upload (reels-in-chat
    * RC-5): the outbox runs it inside the upload task, then replaces the blob with the prepared file.
-   * Absent: the bytes are what is uploaded.
+   * Absent: the bytes are what is uploaded. Only a `reel-take` row carries it (RC-13).
    */
   prepare?: 'chat-reel';
+  /**
+   * A SEND of a chat reel (RC-13): the `reel-take` row whose file this message carries. The send
+   * holds no bytes and never uploads; it is sendable once its take holds an `uploadedRef`.
+   */
+  takeId?: string;
+  /**
+   * A take's file ADOPTED from the CanaReels publish step (reels-in-chat 15.5): the post's upload,
+   * written here BEFORE the post is created. Not yet `uploadedRef`, because the chat hold is not
+   * placed yet - and until it is, the raw take is kept, so a hold the server refuses leaves the take
+   * its own file to prepare and upload.
+   */
+  adoptedRef?: OutboxAdoptedUpload;
   /**
    * The resumable upload session this entry's bytes are going through (RC-5). Persisted BEFORE the
    * first part leaves, so a relaunch asks the server which parts it holds instead of re-sending them.
@@ -233,6 +260,39 @@ export interface OutboxMediaPayload {
 export interface OutboxBlobRef {
   keyB64: string;
   slot?: 'b';
+}
+
+/** One conversation a chat-reel take is sent to (RC-13), as the take row records it. */
+export interface OutboxReelTakeSend {
+  /** The send's message id: its outbox row while it is queued, its message once sent. */
+  id: string;
+  /** The conversation (MLS group id) it was queued for at the press. */
+  conversationId: string;
+  /** Written BEFORE the send's row is deleted: this send reached its conversation. */
+  sent?: true;
+  /** The sender deleted this message for everyone since ("Supprimer pour tout le monde"). */
+  deleted?: true;
+}
+
+/**
+ * What a `reel-take` row knows beyond its file (reels-in-chat 15.2, 15.7). The sends it names are
+ * FIXED at the press, written in the same transaction as their rows: the take lives while one of
+ * those rows is still queued - read from the rows, never counted.
+ */
+export interface OutboxReelTake {
+  sends: OutboxReelTakeSend[];
+  /**
+   * `sending` (absent): the file is being made or sent. `sent`: every send row is gone and at least
+   * one went - the small SENT-TAKE RECORD, kept to the take's expiry for "Supprimer partout".
+   * `releasing`: the file is owed its owner `DELETE` (no send went, or the last live message was
+   * deleted); the row goes once the server answered.
+   */
+  state?: 'sent' | 'releasing';
+  /**
+   * The CanaReels publish step of this press may still upload the file (15.5). Honoured only while
+   * that step is alive in this page life: after a relaunch the take uploads its own.
+   */
+  awaitsPublish?: true;
 }
 
 /** What survives a kill of a resumable upload: enough to address the same session and re-seal the same bytes. */
@@ -267,7 +327,13 @@ export interface OutboxEntry {
   conversationId: string;
   /** Compose time (Unix ms) - IMMUTABLE; the canonical ordering key, sent as proto sentAt. */
   sentAt: number;
-  kind: 'text' | 'reply' | 'media' | 'control';
+  /**
+   * `reel-take` (RC-13): the file of a chat reel sent to one or more conversations - no message of its
+   * own, no lane, its `conversationId` is {@link REEL_TAKE_QUEUE}. Its sends are `media` rows naming it.
+   */
+  kind: 'text' | 'reply' | 'media' | 'control' | 'reel-take';
+  /** A `reel-take` row's sends and state (encrypted with the payload). */
+  take?: OutboxReelTake;
   /** Sensitive payload (encrypted at rest): plain text body for text/reply. */
   text?: string;
   /** Quoted message reference for replies. */
@@ -687,6 +753,20 @@ export interface IStorage {
 
   /** Encrypt and upsert a queued outbound message. */
   saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void>;
+  /**
+   * A chat-reel TAKE and its N SENDS in ONE outbox transaction (reels-in-chat RC-13, 15.2), with each
+   * send's optimistic message: a kill leaves neither a take nobody sends nor a send with no take.
+   * The take's bytes go to the blob store first (as for any attachment). On SQLite the N + 1 outbox
+   * rows are ONE statement (the largest unit of atomicity the plugin gives, `sqliteBatch.ts`) and the
+   * messages a second - the entries first, as for a single send; on IndexedDB all of it is one
+   * transaction. Throws `OutboxEntryWrittenAloneError` (named by the take) when the rows landed and
+   * their messages did not: the queue owns them, nothing may be written or given back a second time.
+   */
+  saveReelTake(
+    take: OutboxEntry,
+    sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+    deviceKeyB64: string
+  ): Promise<void>;
   /**
    * The queue as the flusher polls it: every entry sorted by `sentAt`, but a `media` entry carries
    * its scheduling columns ONLY (`media` undefined) - its payload is the whole file, and reading

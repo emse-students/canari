@@ -12,6 +12,22 @@ import type { OutboxBlobRef, OutboxEntry } from './types';
 //    base64-encoded so they survive JSON serialization inside encryptData/decryptData.
 // ---------------------------------------------------------------------------
 
+/**
+ * The `conversation_id` of every `reel-take` row (reels-in-chat RC-13): a take belongs to no
+ * conversation and no lane - its sends do. Never a group id (a UUID), so no lane, exit or owed-exit
+ * read ever matches it.
+ */
+export const REEL_TAKE_QUEUE = 'reel-take';
+
+/**
+ * Whether rows of `kind` may own an attachment blob: a `media` row (an ordinary attachment) and a
+ * `reel-take` (the take's raw then prepared file). The ONE list both stores read when they delete a
+ * row, so a take's slots go with it.
+ */
+export function outboxKindHoldsBlob(kind: string | undefined): boolean {
+  return kind === 'media' || kind === 'reel-take';
+}
+
 /** Non-encrypted columns of a persisted outbox row. */
 export interface OutboxClearColumns {
   id: string;
@@ -92,6 +108,7 @@ export function encodeOutboxSensitive(
   if (entry.controlProto && entry.controlProto.length > 0) {
     payload.controlProtoB64 = toBase64(entry.controlProto);
   }
+  if (entry.take) payload.take = entry.take;
   return payload;
 }
 
@@ -129,6 +146,7 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
       typeof payload?.controlProtoB64 === 'string'
         ? base64ToUint8(payload.controlProtoB64)
         : undefined,
+    ...(payload?.take && Array.isArray(payload.take.sends) ? { take: payload.take } : {}),
   };
 }
 

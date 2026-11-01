@@ -65,6 +65,38 @@ export function messageInsertSql(rows: number): string {
   );
 }
 
+/** Columns bound per outbox row in {@link outboxInsertSql}. */
+export const OUTBOX_COLUMNS = 12;
+
+/**
+ * Outbox rows ONE statement can carry. A chat-reel take and its sends (RC-13) must fit in one: they
+ * are written atomically or not at all, never split across statements.
+ */
+export const OUTBOX_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / OUTBOX_COLUMNS);
+
+/**
+ * `INSERT OR REPLACE` for `rows` outbox rows, placeholders numbered across the whole statement like
+ * {@link messageInsertSql}. One row is the ordinary queued entry; several are a chat-reel take and
+ * its sends, which ONE statement makes atomic.
+ */
+export function outboxInsertSql(rows: number): string {
+  if (!Number.isInteger(rows) || rows < 1 || rows > OUTBOX_ROWS_PER_STATEMENT) {
+    throw new Error(`outboxInsertSql takes 1 to ${OUTBOX_ROWS_PER_STATEMENT} rows, got ${rows}`);
+  }
+  const tuples = Array.from({ length: rows }, (_, row) => {
+    const base = row * OUTBOX_COLUMNS;
+    const placeholders = Array.from(
+      { length: OUTBOX_COLUMNS },
+      (_, column) => `$${base + column + 1}`
+    );
+    return `(${placeholders.join(', ')})`;
+  });
+  return (
+    'INSERT OR REPLACE INTO outbox (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at, iv, cipher_text) VALUES ' +
+    tuples.join(', ')
+  );
+}
+
 /** The table and primary-key column behind each device-key-sealed store. */
 const SEALED_STORE_TABLES: Record<SealedStore, { table: string; key: string }> = {
   messages: { table: 'messages', key: 'id' },

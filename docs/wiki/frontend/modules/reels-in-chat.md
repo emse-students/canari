@@ -506,7 +506,7 @@ are for one engineer including tests, in days.
 | RC-10 | *Later*: "opened" signal (D3), then view once for DMs (3.4, with its own `minClientVersion` gate) | its own study when asked | - | RC-9 |
 | RC-11 | *Later*: prepare while the member reviews | measured battery cost on discarded takes | 1.5 | RC-5 |
 | **RC-12** | **The "Envoyer à..." sheet** (15.1, 15.8): the tab's review action, `ReelSendSheet` with "Publier sur CanaReels" first, the list source and its permission filter, the search, multi-select and the server's target cap, the hand-over to `ReelPublishSheet` when the feed row is ticked, i18n, accessibility | component tests: the feed row is first and alone reproduces today's path byte for byte; a read-only or muted salon is not listed; the cap; Back returns to the take; a press writes ONE take and N sends (asserted on the outbox fake) | 3 | RC-13 (to send); RC-8 for the salon rows |
-| **RC-13** | **The multi-target outbox** (15.2, 15.7): the take row and N send rows written in one transaction, the take withdrawn when no send names it (durable reference, no counter), per-send failure and retry, the "expired before it was sent" refusal, the sent-take record and "Supprimer partout", the encoder lease shared with `publishReel`; the take ADOPTING the publish step's upload (`awaitsPublish`, the ref written before the post, the chat hold before the first send - 15.5); **RC-5's single-target entry becomes the one-send case** (one path) | the RC-5 kill-at-each-stage suite re-run with 3 sends, plus: a kill between the take and its sends (impossible by the transaction, asserted), one send refused for good while two go, a cancel of one send keeps the take, the last cancel releases the session and deletes the blob, a send held past its hint fails for good; feed + chats: ONE upload on the fake server, a post refused after the upload still sends the chats, a publish step left before its upload makes the take upload its own | 5 | RC-5, RC-14 |
+| **RC-13** | **Built 2026-11-01, switch OFF ([section 17](#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)).** **The multi-target outbox** (15.2, 15.7): the take row and N send rows written in one transaction, the take withdrawn when no send names it (durable reference, no counter), per-send failure and retry, the "expired before it was sent" refusal, the sent-take record and "Supprimer partout", the encoder lease shared with `publishReel`; the take ADOPTING the publish step's upload (`awaitsPublish`, the ref written before the post, the chat hold before the first send - 15.5); **RC-5's single-target entry becomes the one-send case** (one path) | the RC-5 kill-at-each-stage suite re-run with 3 sends, plus: a kill between the take and its sends (impossible by the transaction, asserted), one send refused for good while two go, a cancel of one send keeps the take, the last cancel releases the session and deletes the blob, a send held past its hint fails for good; feed + chats: ONE upload on the fake server, a post refused after the upload still sends the chats, a publish step left before its upload makes the take upload its own | 5 | RC-5, RC-14 |
 | **RC-14** | **BUILT 2026-11-01 ([section 16](#16-what-the-shared-file-server-package-rc-14-built-2026-11-01)).** **Server changes for a shared file** (15.3, 15.4, 15.7): media-service HOLDS per object (`post`, `chat` with its due time), the sweep and stats reading them, an owner-only idempotent chat-hold route (moving a `reel-pending` to `chat-reel`), the post claim accepting `chat-reel` -> `reel`, `reel-purge` carrying its reason (`moderation` purges, `author`/`retention` release), the sender's `DELETE` releasing its hold; the salon send declares the reel's `mediaId` on its `channel_messages` row (**an additive migration, APPROVED by the owner 2026-10-30**); `chat-reel-purge`'s allowlist = moderator of THAT salon + the row names the id + the blob's owner is the row's proven author + a `chat` hold; `chatReelMaxTargets` in `reel-limits`; the owner-delete justification rewritten in [media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09) | media-service: a published-and-sent file survives its post's author delete and its 30-day chat hold alone, goes with the last hold, goes at once on a moderation purge; a held `reel-pending` is not swept at 24 h; social-service spec and the real-database path: a moderator of salon S cannot purge a blob only salon T names, nor one whose owner is not the row's author; a lying declaration of another member's id is refused; every later reader gets `410` | 4.5 | RC-2; lands WITH RC-8's purge, deployed on both estates before any client creates a hold |
 **Total for the first usable version (RC-0 to RC-9): about 21-23 engineer-days; send-to-many
 (RC-12 to RC-14 and the RC-6/RC-9 amendments) adds about 15.** The ordering puts the
@@ -520,7 +520,7 @@ merged: RC-1 to RC-5, RC-7, and (1) RC-3's profile and 60 s cap wired into
 `prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01), and (2) the session-leak P2 (the
 durable release mark of section 14, 2026-11-01). Built: (3) RC-14 (section 16, 2026-11-01), deployed
 on both estates before any client creates a hold. Owed, in this order:
-(3b) **RC-13 - before the switch, not after: once a reel is written in the field, a
+(3b) **RC-13 - built 2026-11-01 (section 17), before the switch as decided: once a reel is written in the field, a
 single-target RC-5 row persisted in a member's outbox would need a legacy decoder when the shape
 changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with its 410 amendment,
 since a shared blob can vanish under any tile); (5) **the salons stay out of the writer until RC-8
@@ -1259,4 +1259,60 @@ its order after the answer and its failures), `posts.service.reels.spec.ts` and 
 of another member's file is refused; the author's own delete purges nothing).
 
 **Owed**: the bench run against a real media-service over HTTP (with RC-2's); the salon SEND of a reel
-(RC-8, after the switch per D-salons-later); RC-13, the client that calls the hold route.
+(RC-8, after the switch per D-salons-later). The client that calls the hold route is RC-13 (section 17).
+
+## 17. What the multi-target outbox (RC-13) built (2026-11-01)
+
+Section 15.2 as designed, behind `CHAT_REEL_WRITER_ENABLED = false`: **one path** - the chat camera's
+single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no longer knows a raw take
+(`PendingMediaFile.prepareRaw` is gone).
+
+- **The rows.** `buildChatReelTake` (`reels/chatReelTake.ts`, pure) makes the `reel-take` row - its
+  `conversationId` is `REEL_TAKE_QUEUE`, never a group id; it holds the file and `take.sends` - and
+  one `media` row per conversation naming `media.takeId`, with no bytes. `OutboxController.enqueueTake`
+  writes them through `IStorage.saveReelTake`: on SQLite the N + 1 outbox rows are ONE multi-row
+  `INSERT` (`outboxInsertSql`, at most `OUTBOX_ROWS_PER_STATEMENT`), then the echoes, as for a single
+  send; on IndexedDB one transaction over `outbox` and `messages`. The echo is drawn with
+  `skipDbSave` - it is already on disk.
+- **The take is driven beside the lanes, never in one** (`driveTakes` in `runFlushOnce`): prepared and
+  uploaded ONCE through RC-5's own upload task (`launchUpload`, now given the conversations whose
+  lanes wait on it). A send resolves its file from its take (`resolveTakeSend`) and answers
+  `uploading` until there is one, holding back only what depends on it. Progress and status are
+  drawn on every live send's bubble (`viewIdsOf`); a Retry on a send retries the take while the file
+  is not there.
+- **Liveness from the rows, no counter.** A send is marked `sent` on its take BEFORE its row is
+  deleted (`markSendSent`). When any send row goes - sent, failed for good, withdrawn - `settleTake`
+  reads the take and the queue under a per-take lock: a send still queued keeps it; one that went
+  and stands makes it the SENT-TAKE RECORD (`state: 'sent'`, no file, deleted after its expiry); none
+  withdraws it (`withdrawTake`: the transfer aborted, the session released, and a file it holds given
+  back through a durable `releasing` state, the row deleted only once
+  `DELETE /api/media/chat-reel/:id` answered). An unreadable queue decides nothing (`queueOrNull`).
+- **Failures.** The take's upload failure takes an attachment's dispositions; a refusal for good
+  (`too-large`, `refused`, `unpreparable`) fails EACH queued send for good, its sentence in each
+  thread. A send past its `expiresAtMs` fails for good (`expired`, `outbox_reel_send_expired`); a send
+  whose take row is gone fails as `take-lost` (`outbox_reel_take_lost`).
+- **Adoption (15.5).** `enqueueTake(..., { awaitsPublish })` makes the take wait, in this page life
+  only, for `adoptPublishedUpload` (fed by `publishReel`'s new `onUploaded`, called after the upload
+  and BEFORE `POST /api/posts`) or `endPublishWait`. An adopted file is written as `media.adoptedRef`
+  beside the raw take; the take places the chat hold (`MediaService.holdChatReel`) before any send:
+  held, it becomes `uploadedRef` and the raw take goes; refused, the take uploads its own; no answer,
+  it waits on the ladder.
+- **The encoder lease** (`video/encoderLease.ts`): FIFO, abort-aware, taken by `publishReel` and by
+  `prepareQueuedChatReel`.
+- **D-delete-one and "Supprimer partout".** `applyDeleteLocally` tells the outbox when a reel message
+  is deleted for everyone (`reelSendDeleted`): the record marks it, and the file is released when no
+  message citing it stands. `handleDeleteReelEverywhere` deletes every standing send of the record
+  through the one delete path; `cancelTakeEverywhere` is "Annuler partout".
+
+**Tests**: `outbox.reelResume.test.ts` - RC-5's kill-at-each-stage suite run with ONE and THREE sends
+(19 cases each), plus the RC-13 cases: the take and its sends are one statement and a failed write
+leaves neither; one send refused for good while two go; a cancel of one send keeps the take;
+"Annuler partout"; a send past its hint; feed + chats with ONE upload on the fake server and the hold
+before the first send; a post refused after the upload still sends the chats; a publish step ended
+before its upload; a refused hold; D-delete-one. `encoderLease.test.ts`, `chatReelTake.test.ts`.
+
+**Not built here, and why.** The bubble menu entries "Supprimer partout" and "Annuler partout": they
+are offered only for a take sent to two or more conversations, which nothing can create before the
+sheet, so they land with RC-12 over the controller and composable functions above. RC-12 also wires
+`onUploaded` / `endPublishWait` from the sheet's publish hand-over, and posts the tab's
+`reel_sendto_failed_in` notice. Owed on devices: the RC-0 re-run and the readings, with the switch.
