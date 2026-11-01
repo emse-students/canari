@@ -5145,6 +5145,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_association_repost_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_association_repost_body) }
             )
+            // WP-F6: `actor` is the person who reposted.
+            "social_member_repost" -> Pair(
+                res.getString(R.string.notif_social_member_repost_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_member_repost_body) }
+            )
             "social_repost_proposed" -> Pair(
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_repost_proposed_body) }

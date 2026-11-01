@@ -121,7 +121,7 @@ open (sell the rest and skip the grant, split the payment from the grant) are no
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 planned below.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 BUILT (draft #2859, for `1.6.0`).** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -283,7 +283,10 @@ ordinary review.
   space / other space x personal / anonymous / association post), the read-grants spec unchanged,
   and the privacy-policy paragraph in the same pull request.
 - **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
-  review before arming).** The consent setting (per author, per post); the SQL beside the
+  review before arming). BUILT, draft pull request #2859, migration 121**
+  ([as built](profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
+  owed: the Opus review, then arming on the owner's go (it changes who sees what). The plan as
+  written: The consent setting (per author, per post); the SQL beside the
   republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
   on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
   reaching the reposter's ACCEPTED followers only (Q2); never an anonymous post; blocks both ways;

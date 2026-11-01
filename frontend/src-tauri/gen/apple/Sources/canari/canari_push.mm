@@ -683,6 +683,7 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_followed_post" : @"followed_post",
     // Republication (D38): the republishing, then the proposing, association names the title.
     @"social_association_repost" : @"association_repost",
+    @"social_member_repost" : @"member_repost",
     @"social_repost_proposed" : @"repost_proposed",
     // D38b: an association asks the AUTHOR to republish their personal post.
     @"social_repost_personal_requested" : @"repost_personal_requested",

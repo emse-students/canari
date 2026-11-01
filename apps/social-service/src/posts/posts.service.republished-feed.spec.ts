@@ -9,6 +9,7 @@ import { PostMediaRetentionService } from './post-media-retention.service';
 import {
   inAssociationsFeedSql,
   republishedFeedAtSql,
+  memberRepostedAmongSql,
   republishedForViewerSql,
 } from './republished-feed-sql';
 
@@ -95,12 +96,20 @@ describe('PostsService feeds of what associations republish', () => {
       expect(params[4]).toBe('v1');
     });
 
+    it('takes what a FOLLOWED PERSON reposted (WP-F6), never an anonymous post', async () => {
+      const { service, feed } = makeService();
+      await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
+
+      expect(feed().sql).toContain(`OR ${memberRepostedAmongSql('$4', '$5')}`);
+      expect(memberRepostedAmongSql('$4', '$5')).toContain('NOT COALESCE(posts.anonymous, false)');
+    });
+
     it('places a row at the latest republication by a followed association', async () => {
       const { service, feed } = makeService();
       await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
 
       expect(feed().sql).toContain(
-        `ORDER BY posts.pinned DESC, ${republishedFeedAtSql('$5', '$3')} DESC, posts.id DESC`
+        `ORDER BY posts.pinned DESC, ${republishedFeedAtSql('$5', '$3', '$4')} DESC, posts.id DESC`
       );
     });
   });

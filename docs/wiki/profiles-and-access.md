@@ -1510,6 +1510,105 @@ nobody else.
   `core-service/src/users/user-blocks.service.spec.ts` (sever before lifting, 503 keeps the block). `reader-spaces` and `personal-republications` PostgreSQL specs were
   re-pointed where the opening changes who sees or is newly reached.
 
+### WP-F6 - member reposts with the author's consent, as built (2026-11-01)
+
+Decision 1 and Q2 of the [follow requests](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)
+(user, 2026-10-25); the consent's shape is the owner's of 2026-11-01: a PER-AUTHOR setting
+"Autoriser mes abonnés à republier mes posts", ON by default, plus a per-post override. A PERSON
+republishes a post, reels included, to THEIR OWN accepted followers. A disclosure change: Opus
+security review before arming.
+
+- **Migration 121, additive**: `member_reposts (postId, reposterId, repostedAt)`, keyed by the pair,
+  the post's foreign key `ON DELETE CASCADE`; `user_repost_settings (userId, allowReposts)` - NO
+  ROW IS THE DEFAULT, ON, so nothing is backfilled; `posts."allowReposts"` (NULL follows the
+  setting).
+- **One disjunct, both branches**: `memberRepostReachesUserSql` (`spaces/reader-spaces.ts`) is ORed
+  into the personal AND the association branch of `postVisibleToUserSql` (Q2: a repost of an entity
+  post widens it to the reposter's followers). It holds when an ACCEPTED `user_follows` row links
+  the reader to a reposter, the post is not anonymous, reader, reposter and author stand on the
+  same side of the review cohort, and no block stands between reader and reposter - nor, for a
+  PERSONAL post, between reader and author or reposter and author. The author pairs are left out
+  for an entity post on purpose: its `authorId` is the officer who wrote it, and a feed that
+  changed when a reader blocked that person would name them (the oracle `blockedAuthorSql`
+  documents). Blocks are CHECKED, never trusted to the severing. Left out with `followers: false`:
+  Tout and the promo browse stay feeds of spaces (decision 5). Never a read grant. Monotone in
+  reposts.
+- **A repost never outlives what its reposter holds (Opus review, 2026-11-01)**: the row alone
+  carries nothing. `memberRepostCarriesSql` also asks that the reposter STILL sees the post
+  FIRST-HAND (`postVisibleToUserSql` with `memberReposts: false, readGrants: false` - it never
+  recurses) and is not muted (`user_moderation.isMuted`, the only account restriction
+  social-service holds, the one D38b's `senderSpeaksSql` reads). An author who removes the
+  follower, a reposter who unfollows or leaves a members-only association, a muted reposter: the
+  row stays and reaches nobody until the access comes back. The SAME helper filters the card's
+  "Republié par" names and the Suivis arm (`memberRepostedAmongSql`, `republishedFeedAtSql`), so a
+  stale row neither names, surfaces nor dates a post.
+- **An association is never the second step**: every D38/D38b path asks the predicate with
+  `memberReposts: false` - the republication's `assertVisibleTo`, the request's
+  `assertVisibleWithoutGrant` and `describe`, and the offers (`PostsService.firstHandIds`, a
+  column of the one `grantFreeVisibleIds` query; the requestable query). A vote keeps the
+  grant-free set: a repost opens every reader-side act a follow opens.
+- **The bell**: a `member_repost` row is shown only while its recipient still sees the post
+  (`bellRowShownSql`, `getNotifications`): its text preview must not outlive the access, and the
+  access ends on paths (an unfollow, a removal, a membership) no repost write can hook. The row is
+  left to the 90-day sweep.
+- **Consent is state, not a predicate term**: `repostConsentSql` (an entity post always; a personal
+  one by its override, else the setting, else ON) is read by the write under the author's advisory
+  lock (`member-repost:author:<id>`), then the post row; turning the setting off, or an override
+  that leaves a post without consent, deletes the rows it no longer covers under the SAME lock in
+  the same transaction. No repost outlives a "no", and none can read "yes" while a "no" commits.
+- **NO CHAIN (decided 2026-11-01 by the lead, holding the owner's autonomy)**: only a reader who
+  sees the post FIRST-HAND may repost it - through its own audience (a shared space, the author's
+  accepted followers, an association that carries it, membership or the rules of its entity). A
+  reader who sees it ONLY through another member's repost may not: the author's consent covers one
+  step of reach, not an unbounded chain. The write and the card ask the predicate with
+  `memberReposts: false` (`FIRST_HAND`, `member-reposts.service.ts`).
+- **Refusals, in order, each a typed `MEMBER_REPOST_*` code and an integration case**: absent,
+  hidden, scheduled or expired (404); not seen FIRST-HAND without a grant and without the admin's
+  by-id reach (404, nothing confirmed - a reader who sees it only through a repost included); anonymous (400); the reposter's own personal post (400); a block either
+  way with a personal post's author (403); no consent (403); already reposted (409, the key). A
+  muted account is refused at the route. An entity post the reposter wrote is NOT refused as "own":
+  the refusal would tell them whose it is.
+- **Who is told (the D38 rule)**: `NEWLY_REACHED_BY_MEMBER_REPOST_SQL`, asked under the post row's
+  lock BEFORE the row exists - the reposter's accepted followers who cannot see the post now, minus
+  the blocks and the cohort above. A PERSONAL post is told at the repost, announced or not (its
+  announcement goes to the author's followers only); an ENTITY post not yet announced is told
+  nothing - the sweep tells everyone who sees it by then. Type `member_repost`, push
+  `social_member_repost` (Kotlin, the NSE and `canari_push.mm`, fr and en), category `posts`.
+- **Suivis at the repost's time**: the followed arm admits a post a followed person reposted
+  (`memberRepostedAmongSql`, never anonymous) and places it at the latest of its publication, its
+  counted republications and its reposts by people the reader follows (`republishedFeedAtSql`).
+- **Removal**: a hide (`dropRepublicationsOf` -> `dropMemberRepostsOf`, both moderation paths); a
+  delete (the foreign key); the reposter's erasure (`member_reposts`, `user_repost_settings`) and
+  the author's (their personal posts are deleted, the key cascades); a block
+  (`severFollowsBetween` -> `severMemberRepostsBetween`, personal posts only; core-service's unblock
+  severs again before it lifts); a withdrawn consent; the reposter's own "Annuler".
+- **The card**: `canRepost`, `repostedByMe`, `repostedBy` (the people the READER follows who
+  reposted it - a stranger is not told who reposted) and, on the reader's own personal post only,
+  `repostConsent { override, effective }`; an entity-loaded post no longer spreads
+  `allowReposts`. Two queries a page (`member-repost-card.ts`), restating the write's refusals.
+- **Routes**: `POST|DELETE /api/posts/:id/reposts`, `GET|PUT /api/posts/me/repost-settings`,
+  `PUT /api/posts/:id/repost-consent {allowReposts: boolean | null}` (the author of a personal
+  post; 404 to anyone else).
+- **The client**: the share sheet's "Republier pour mes abonnés" / "Annuler ma republication" row
+  (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
+  ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the
+  "Republié par" line names reposters after associations; the bell row `member_repost`.
+- **Not built**: no list of who reposted for the author; the author cannot remove ONE repost (they
+  withdraw consent on the post instead) - both accepted for `1.6.0` and owed
+  ([backlog](backlog.d/p3-member-reposts-the-author-sees-and-removes-one-repost.md)); a live is
+  never reposted (accepted); an officer may repost their own association's post (accepted: refusing
+  it would name them).
+- **Proof**: `posts/member-reposts.integration.spec.ts` (PostgreSQL, 121 applied twice): the D38b
+  refusal list re-run for a member reposter, no chain (a reader reached only by a repost is refused
+  and offered nothing), accepted vs pending vs none, Tout untouched, a block
+  either way and a left-over row, the newly reached only (announced or not, personal or entity),
+  hide, delete and severing, the setting OFF and the override both ways, the card against the
+  write; a repost that outlives its reposter's access (removed follower, unfollow, members-only
+  association left, muted) reaches nobody, names nobody and leaves no bell preview.
+  `republications.integration.spec.ts` and `personal-republications.integration.spec.ts`: an
+  officer who sees a post only through a repost cannot republish or ask, and is offered nothing.
+  The six PostgreSQL specs that share the predicate apply 121.
+
 ### The review cohort - store reviewers in a world of their own (2026-10-31)
 
 **The owner's requirement (2026-10-31):** the Google Play and App Store reviewers sign in with accounts
