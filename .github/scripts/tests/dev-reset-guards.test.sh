@@ -211,6 +211,7 @@ exec)
   *'count(*) FROM users;'*) echo "$STUB_USERS" ;;
   *'count(*) FROM push_token'*) echo 0 ;;
   *string_agg*) echo "" ;;
+  *'SELECT filename FROM'*) [ -n "$STUB_LEDGER" ] && printf '%s\n' "$STUB_LEDGER" ;;
   *'SELECT checksum FROM'*) echo "" ;;
   *'SELECT'*'(SELECT count(*)'*) echo 0 ;;
   esac
@@ -220,8 +221,15 @@ exit 0
 STUB
 chmod +x "$TMP/bin/docker"
 
+# The ledger the owner's hold reads: every migration file of the tree, as on a dev estate whose
+# schema-only restore carried production's ledger - so the historic DROP COLUMN files are history,
+# not requests, and this test stays about the reset's ORDER. The hold itself is
+# deploy-migrations.test.sh's subject. The per-file checksum query still answers nothing, so the
+# loop applies (and records) every file, which is what the order assertion below reads.
+stub_ledger="$(find apps/*/src/migrations -name '*.sql' | sort)"
+
 run_stubbed() {
-  STUB_LOG="$TMP/$1.log" STUB_STREAM="$TMP/$1.stream" STUB_PROJECT="$2" STUB_USERS="$seed_users" \
+  STUB_LEDGER="$stub_ledger" STUB_LOG="$TMP/$1.log" STUB_STREAM="$TMP/$1.stream" STUB_PROJECT="$2" STUB_USERS="$seed_users" \
     PATH="$TMP/bin:$PATH" bash "$SCRIPT" "${@:3}" </dev/null >"$TMP/$1.out" 2>&1
 }
 

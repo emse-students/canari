@@ -74,16 +74,96 @@ require_orm_schema() {
   return 1
 }
 
+# THE OWNER'S HOLD (owner, 2026-11-01: "a migration is applied only if it is additive, reviewed, and
+# with a backup taken just before"). Migrations 034, 038 and 042 were each written as "owed the
+# owner's yes" and reached production with the next release anyway: the yes was a sentence in the
+# backlog, and this loop applies every unrecorded file. So a migration that needs the owner is now
+# REFUSED until a committed line approves it - the deploy fails closed, naming the file, BEFORE any
+# file is applied. Two things make a migration need it, and both estates are held alike:
+#
+# - the marker, a line of its own reading `-- canari:hold-for-owner`, written by the author of any
+#   migration the owner must see (a backfill, a lock on a hot table, anything not plainly additive);
+# - a statement that destroys data, read from the SQL with its `--` comments stripped: DROP of a
+#   TABLE, COLUMN, SCHEMA or DATABASE, TRUNCATE, DELETE FROM, or a column TYPE change. A statement
+#   the author forgot to mark is still caught. An UPDATE backfill is NOT matched - it is the author's
+#   to mark; a DROP CONSTRAINT/INDEX/TRIGGER IF EXISTS before a re-create is not destructive either.
+#
+# THE APPROVAL IS A COMMITTED LINE, `<repo-relative path> <sha256 of the file>`, in
+# MIGRATION_APPROVALS_FILE - reviewed in a pull request, kept in history, and bound to the CONTENT:
+# a file edited after its approval is held again. A release has no input to carry it (`gh release
+# create` takes none), and an environment flag would be a switch nobody reads. Only files the ledger
+# has NOT recorded are examined: an applied migration is history, not a request.
+readonly MIGRATION_APPROVALS_FILE='infrastructure/migration-approvals.txt'
+readonly MIGRATION_HOLD_MARKER_PATTERN='^--[[:space:]]*canari:hold-for-owner[[:space:]]*$'
+readonly MIGRATION_DESTRUCTIVE_PATTERN='\b(DROP[[:space:]]+(TABLE|COLUMN|SCHEMA|DATABASE)|TRUNCATE|DELETE[[:space:]]+FROM)\b|\bALTER[[:space:]]+COLUMN[^;]*[[:space:]](SET[[:space:]]+DATA[[:space:]]+)?TYPE\b'
+
+# Prints why the migration file $1 needs the owner's approval, or nothing when it does not.
+migration_hold_reason() {
+  local migration="$1" statement
+  if tr -d '\r' <"$migration" | grep -qE "$MIGRATION_HOLD_MARKER_PATTERN"; then
+    printf 'it carries the hold marker'
+    return 0
+  fi
+  statement="$(sed 's/--.*$//' "$migration" | grep -oiE "$MIGRATION_DESTRUCTIVE_PATTERN" | head -1 || true)"
+  if [ -n "$statement" ]; then
+    printf 'it contains a destructive statement (%s)' "$statement"
+  fi
+}
+
+# Refuses, before anything is applied, every unrecorded migration that needs the owner's approval
+# and has none for its current content. $1 is the sorted file list, $2 the ledger's filenames.
+require_owner_approvals() {
+  local migrations="$1" ledger="$2" migration reason checksum approved refused=0
+  while read -r migration; do
+    [ -z "$migration" ] && continue
+    grep -qxF "$migration" <<<"$ledger" && continue
+    reason="$(migration_hold_reason "$migration")"
+    [ -z "$reason" ] && continue
+
+    checksum="$(sha256sum "$migration" | cut -d' ' -f1)"
+    approved=""
+    if [ -f "$MIGRATION_APPROVALS_FILE" ]; then
+      approved="$(tr -d '\r' <"$MIGRATION_APPROVALS_FILE" | awk -v f="$migration" '$1 == f { print $2 }')"
+    fi
+    if grep -qxF "$checksum" <<<"$approved"; then
+      printf 'migration %s needs the owner because %s - APPROVED in %s for this content\n' \
+        "$migration" "$reason" "$MIGRATION_APPROVALS_FILE"
+      continue
+    fi
+
+    refused=$((refused + 1))
+    if [ -n "$approved" ]; then
+      printf '::error::%s is HELD: %s, and %s approves another version of it (%s), not this one (%s). The file changed after the owner approved it.\n' \
+        "$migration" "$reason" "$MIGRATION_APPROVALS_FILE" "$(printf '%s' "$approved" | tr '\n' ' ' | sed 's/ $//')" "$checksum"
+    else
+      printf '::error::%s is HELD for the owner: %s, and %s does not approve it.\n' \
+        "$migration" "$reason" "$MIGRATION_APPROVALS_FILE"
+    fi
+    printf '::error::to apply it, the owner (additive, reviewed, a backup taken just before) merges the line "%s %s" into %s, then re-runs this deploy.\n' \
+      "$migration" "$checksum" "$MIGRATION_APPROVALS_FILE"
+  done <<<"$migrations"
+
+  if [ "$refused" -gt 0 ]; then
+    printf '::error::%s migration(s) held for the owner - NOTHING was applied, the %s database is unchanged.\n' \
+      "$refused" "$ENVIRONMENT"
+    return 1
+  fi
+}
+
 apply_migrations() {
   psql -q -c "CREATE TABLE IF NOT EXISTS ${MIGRATION_LEDGER_TABLE} (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
   require_orm_schema || return 1
 
-  local migrations applied skipped migration checksum recorded
+  local migrations applied skipped migration checksum recorded ledger
   migrations="$(find apps/*/src/migrations -name '*.sql' 2>/dev/null | sort || true)"
   if [ -z "$migrations" ]; then
     printf 'no migration files found\n'
     return 0
   fi
+
+  # A ledger that cannot be read is read as empty, so every file is examined: the gate fails closed.
+  ledger="$(psql -At -c "SELECT filename FROM ${MIGRATION_LEDGER_TABLE}" </dev/null || true)"
+  require_owner_approvals "$migrations" "$ledger" || return 1
 
   applied=0
   skipped=0

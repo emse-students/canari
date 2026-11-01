@@ -149,6 +149,12 @@ Rules, all of them load-bearing:
   re-enabled `cotisationEnabled`, silently reverting admin changes. The ledger fixes this going
   forward; keep backfills narrowly conditioned anyway.
 
+- **A migration the owner must see is HELD, never "owed the owner's yes" in prose.** A line of its
+  own reading `-- canari:hold-for-owner`, or any data-destroying statement (DROP TABLE/COLUMN,
+  TRUNCATE, DELETE FROM, a column TYPE change), makes the deploy FAIL before anything is applied
+  until `infrastructure/migration-approvals.txt` approves that file's checksum
+  ([cicd](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
+
 - **A CHECK that evaluates to NULL PASSES.** `CHECK (mode = 'step' AND "stepMinutes" > 0 ...)`
   let a NULL step through (migration 087, found by its integration spec). `COALESCE` or
   `IS NOT NULL` every nullable operand of a CHECK.

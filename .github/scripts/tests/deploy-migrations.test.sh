@@ -75,6 +75,12 @@ guard="$(sed -n '/^require_orm_schema() {/,/^}/p' "$SCRIPT")"
 sentinel_decl="$(sed -n '/^readonly ORM_SENTINEL_TABLE=/p' "$SCRIPT")"
 ledger_decl="$(sed -n '/^readonly MIGRATION_LEDGER_TABLE=/p' "$SCRIPT")"
 SENTINEL="$(printf '%s' "$sentinel_decl" | sed "s/^readonly ORM_SENTINEL_TABLE='//; s/'$//")"
+# The owner's hold: its three declarations and two functions, verbatim, evaluated by every runner
+# below because `apply_migrations` calls the gate before it applies anything.
+hold_parts="$(
+  sed -n '/^readonly MIGRATION_APPROVALS_FILE=/p; /^readonly MIGRATION_HOLD_MARKER_PATTERN=/p; /^readonly MIGRATION_DESTRUCTIVE_PATTERN=/p' "$SCRIPT"
+  sed -n '/^migration_hold_reason() {/,/^}/p; /^require_owner_approvals() {/,/^}/p' "$SCRIPT"
+)"
 
 run_with_draining_psql() {
   (
@@ -98,6 +104,7 @@ run_with_draining_psql() {
     eval "$sentinel_decl"
     eval "$ledger_decl"
     eval "$guard"
+    eval "$hold_parts"
     eval "$fn"
     apply_migrations
   )
@@ -179,6 +186,7 @@ run_without_schema() {
     eval "$sentinel_decl"
     eval "$ledger_decl"
     eval "$guard"
+    eval "$hold_parts"
     eval "$fn"
     apply_migrations
   )
@@ -222,6 +230,142 @@ if printf '%s' "$prod_out" | grep -q 'dev-reset'; then
   fail "the production refusal points at the DEV reset job - a reader could empty the wrong estate"
 else
   ok "and it does not point production at a dev-only remedy"
+fi
+
+printf '\na migration the owner must approve is HELD until a committed line approves its content\n'
+
+# WHY THIS SECTION EXISTS. Migrations 034, 038 and 042 were written as "owed the owner's yes" and
+# reached production with the next release anyway, because this loop applies every unrecorded file
+# and the yes was a sentence in the backlog (2026-11-01). The gate is exercised end to end through
+# the real `apply_migrations`, never by grepping the library for its message.
+HOLD="$TMP/hold"
+HMIG="apps/core-service/src/migrations"
+mkdir -p "$HOLD/$HMIG" "$HOLD/infrastructure"
+printf 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a int;\n' >"$HOLD/$HMIG/001_plain.sql"
+printf -- '-- Migration 002: a backfill the owner must see.\n-- canari:hold-for-owner\nUPDATE t SET a = 1;\n' >"$HOLD/$HMIG/002_held.sql"
+printf -- '-- dropping nothing in a comment: DROP TABLE t;\nALTER TABLE t DROP COLUMN IF EXISTS b;\n' >"$HOLD/$HMIG/003_drop.sql"
+printf -- '-- the re-create idiom is not destructive\nALTER TABLE t DROP CONSTRAINT IF EXISTS c;\nSELECT 1;\n' >"$HOLD/$HMIG/004_plain.sql"
+held_sum="$(sha256sum "$HOLD/$HMIG/002_held.sql" | cut -d' ' -f1)"
+drop_sum="$(sha256sum "$HOLD/$HMIG/003_drop.sql" | cut -d' ' -f1)"
+
+# $1: the approvals file's content; $2: the filenames the ledger already records, one per line.
+run_hold() {
+  (
+    cd "$HOLD" || exit 1
+    printf '%s' "$1" >infrastructure/migration-approvals.txt
+    LEDGER_ROWS="$2"
+    # shellcheck disable=SC2034 # read by the `eval`ed gate, which names the estate in its refusal
+    ENVIRONMENT=prod
+    # shellcheck disable=SC2317,SC2329 # called only from `eval`ed code, so the body looks unreachable and the definition looks unused (SC2329 exists from shellcheck 0.11; CI pins 0.10)
+    psql() {
+      local args="$*" name
+      cat >/dev/null 2>&1 || true
+      case "$args" in
+      *to_regclass*) printf 't\n' ;;
+      *"SELECT filename FROM"*) [ -n "$LEDGER_ROWS" ] && printf '%s\n' "$LEDGER_ROWS" ;;
+      *"SELECT checksum FROM"*)
+        name="${args#*filename = \'}"
+        name="${name%\'*}"
+        grep -qxF "$name" <<<"$LEDGER_ROWS" && sha256sum "$name" | cut -d' ' -f1
+        ;;
+      esac
+      return 0
+    }
+    eval "$sentinel_decl"
+    eval "$ledger_decl"
+    eval "$guard"
+    eval "$hold_parts"
+    eval "$fn"
+    apply_migrations
+  )
+}
+
+if [ -n "$(sed -n '/^require_owner_approvals() {/,/^}/p' "$SCRIPT")" ]; then
+  ok "require_owner_approvals() is extractable from the real script"
+else
+  fail "require_owner_approvals() is not a function in infrastructure/lib/migrations.sh - nothing holds a migration for the owner"
+fi
+
+out="$(run_hold '' '' </dev/null 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  ok "with no approval the deploy FAILS (exit $rc), it does not skip the held file and carry on"
+else
+  fail "with no approval the deploy succeeded - a held migration would reach production unread"
+fi
+if printf '%s\n' "$out" | grep -q '^::error::.*002_held\.sql is HELD.*hold marker'; then
+  ok "the refusal is an ::error:: naming the marked file and why it is held"
+else
+  fail "no ::error:: names 002_held.sql and its marker"
+fi
+if printf '%s\n' "$out" | grep -q '^::error::.*003_drop\.sql is HELD.*DROP COLUMN'; then
+  ok "an UNMARKED destructive statement is held too, and the statement is named"
+else
+  fail "003_drop.sql (DROP COLUMN, no marker) was not held"
+fi
+if printf '%s\n' "$out" | grep -qF "$HMIG/002_held.sql $held_sum"; then
+  ok "the refusal prints the exact approval line, path and checksum"
+else
+  fail "the refusal does not print the approval line the owner would commit"
+fi
+if [ "$(printf '%s\n' "$out" | grep -c '^applying ')" = "0" ]; then
+  ok "and NOTHING is applied, not even the plain files before the held one"
+else
+  fail "files were applied before the refusal: $(printf '%s\n' "$out" | grep '^applying ' | tr '\n' ' ')"
+fi
+if printf '%s\n' "$out" | grep -qE '00[14]_plain\.sql is HELD'; then
+  fail "a plain migration (or a DROP CONSTRAINT IF EXISTS re-create, or a DROP in a comment) was held"
+else
+  ok "the plain files, the DROP CONSTRAINT IF EXISTS idiom and a DROP in a comment are not held"
+fi
+
+out="$(run_hold "$HMIG/002_held.sql $held_sum
+$HMIG/003_drop.sql $drop_sum
+" '' </dev/null 2>&1)"
+rc=$?
+applied_lines="$(printf '%s\n' "$out" | grep -c '^applying ')"
+if [ "$rc" -eq 0 ] && [ "$applied_lines" = "4" ]; then
+  ok "once both are approved for their content, all 4 files apply (plain ones exactly as before)"
+else
+  fail "approved held migrations did not apply (exit $rc, $applied_lines of 4 applied)"
+fi
+if printf '%s\n' "$out" | grep -q '002_held\.sql needs the owner.*APPROVED'; then
+  ok "and the log says which approval let each one through"
+else
+  fail "an approved held migration applied without a line saying so"
+fi
+
+stale="0000000000000000000000000000000000000000000000000000000000000000"
+out="$(run_hold "# a comment line
+$HMIG/002_held.sql $stale
+$HMIG/003_drop.sql $drop_sum
+" '' </dev/null 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q '002_held\.sql is HELD.*approves another version'; then
+  ok "an approval of ANOTHER version of the file does not apply this one - an edit after approval re-holds it"
+else
+  fail "an approval with a stale checksum let the edited migration through (exit $rc)"
+fi
+if printf '%s\n' "$out" | grep -q '003_drop\.sql is HELD'; then
+  fail "a correctly approved migration was held alongside the stale one"
+else
+  ok "and the other approval still holds - each file is judged on its own line"
+fi
+
+out="$(run_hold '' "$HMIG/002_held.sql
+$HMIG/003_drop.sql" </dev/null 2>&1)"
+rc=$?
+applied_lines="$(printf '%s\n' "$out" | grep -c '^applying ')"
+if [ "$rc" -eq 0 ] && [ "$applied_lines" = "2" ]; then
+  ok "a held migration the ledger already records is history, not a request: the 2 others apply"
+else
+  fail "recorded held migrations blocked the deploy or were replayed (exit $rc, $applied_lines applied)"
+fi
+
+if [ -f "$REPO/infrastructure/migration-approvals.txt" ]; then
+  ok "infrastructure/migration-approvals.txt is committed, so the place to approve is not a guess"
+else
+  fail "infrastructure/migration-approvals.txt is missing - the refusal names a file nobody can find"
 fi
 
 printf '\nboth callers run the loop, and the reset runs it BEFORE it truncates\n'

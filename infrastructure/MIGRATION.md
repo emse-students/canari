@@ -230,7 +230,10 @@ the first bootstrap of a production box wants a stable one. The run will:
 Production runs TypeORM with `synchronize: false`, so **an entity change without a matching SQL file
 never reaches production**. The CD step "Run database migrations" collects
 `apps/*/src/migrations/*.sql`, sorts by path, and applies every file not yet listed in the
-`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`.
+`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`. A file
+carrying `-- canari:hold-for-owner`, or a data-destroying statement, is REFUSED - the deploy fails
+before applying anything - until `infrastructure/migration-approvals.txt` names it with its sha256
+([cicd](../docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
 
 Writing one: idempotent statements only (`IF NOT EXISTS` / `IF EXISTS`, or a `DO $$ ... $$` guard),
 camelCase columns double-quoted, a fresh number in that service's directory, and no edits to a file

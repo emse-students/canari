@@ -1,0 +1,14 @@
+# The owner's approvals of held migrations - read by `require_owner_approvals` in
+# infrastructure/lib/migrations.sh, on every deploy and every dev reset.
+#
+# A migration is HELD when it carries the line `-- canari:hold-for-owner` or contains a statement
+# that destroys data (DROP TABLE/COLUMN/SCHEMA/DATABASE, TRUNCATE, DELETE FROM, a column TYPE
+# change). A held migration is refused - the deploy fails, nothing is applied - until a line here
+# names it AND the sha256 of its current content:
+#
+#   apps/<service>/src/migrations/<NNN>_<name>.sql <sha256sum of the file>
+#
+# Only the OWNER adds a line, in a reviewed pull request, once the migration is additive or its loss
+# is accepted, it is reviewed, and a backup is taken just before the deploy (owner, 2026-11-01).
+# An edit to the file after its approval changes the checksum, and the migration is held again.
+# Mechanism: docs/wiki/cicd.md ("A migration the owner must approve is held").

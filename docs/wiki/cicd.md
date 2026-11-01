@@ -253,6 +253,38 @@ release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
 
+#### A migration the owner must approve is held (2026-11-01)
+
+**Why.** `apply_migrations` (`infrastructure/lib/migrations.sh`, run by `deploy-environment.sh` and
+by the dev reset) applies every file the `schema_migrations` ledger has not recorded. Migrations 034,
+038 and 042 were each written as "owed the owner's yes" and reached production with the next
+release anyway: the yes was a sentence in the backlog, never a gate. The owner's rule (2026-11-01): a
+migration is applied only if it is additive, reviewed, and with a backup taken just before.
+
+**What holds a migration.** Before ANY file is applied, `require_owner_approvals` examines every
+unrecorded file. It is held when it carries a line of its own `-- canari:hold-for-owner` (the
+author's call: a backfill, a lock on a hot table, anything not plainly additive), or when its SQL,
+`--` comments stripped, contains a data-destroying statement: `DROP TABLE|COLUMN|SCHEMA|DATABASE`,
+`TRUNCATE`, `DELETE FROM`, or `ALTER COLUMN ... TYPE`. The second rule catches what the author
+forgot to mark; it does NOT match an `UPDATE` backfill (mark it) nor the `DROP CONSTRAINT|INDEX|TRIGGER
+IF EXISTS` that precedes a re-create. A file already in the ledger is history, never examined.
+
+**What lifts it.** A line `<repo-relative path> <sha256 of the file>` in
+`infrastructure/migration-approvals.txt`, merged by the owner through a pull request - durable,
+reviewed, and bound to the CONTENT: a file edited after its approval is held again, and the refusal
+says so. Chosen over a release input because `gh release create` carries none, and over an
+environment flag because a switch nobody reads is no approval.
+
+**How it fails.** Closed and loud: one `::error::` per held file naming it, why it is held, and the
+exact line to commit; then `NOTHING was applied`, and the deploy stops before any service is
+replaced. **Dev and production are held alike** - a pre-release carrying a held migration does not
+reach dev before the owner's line, so the approval precedes the first estate it touches. After the
+approval merges, re-run the deploy (a pre-release rerun) or cut the next tag.
+
+`deploy-migrations.test.sh` drives the real `apply_migrations`: a held file and an unmarked `DROP
+COLUMN` are refused with nothing applied, both apply once approved, a stale checksum is refused, a
+plain file and the re-create idiom apply as before, and a recorded held file does not block.
+
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
 

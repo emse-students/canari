@@ -45,7 +45,7 @@ delete this entry.
 
 ## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
 
-Owner, 2026-10-29: P1 + schema. **Built and merged; migration 042 is APPLIED in production** (`apply_migrations` applies every unrecorded migration on deploy, [no hold exists](backlog.d/a-migration-the-owner-must-approve-has-no-gate-2026-11-01.md)).
+Owner, 2026-10-29: P1 + schema. **Built and merged; migration 042 is APPLIED in production** (`apply_migrations` applies every unrecorded migration on deploy, no hold existed then; [one does now](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
 
 **The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
 else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
