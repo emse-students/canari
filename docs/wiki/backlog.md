@@ -45,7 +45,7 @@ delete this entry.
 
 ## P1 - the creation bootstrap is bound to the recorded creator (migration 042)
 
-Owner, 2026-10-29: P1 + schema. **Built, in review; owed the owner's yes for migration 042.**
+Owner, 2026-10-29: P1 + schema. **Built and merged; migration 042 is APPLIED in production** (`apply_migrations` applies every unrecorded migration on deploy, [no hold exists](backlog.d/a-migration-the-owner-must-approve-has-no-gate-2026-11-01.md)).
 
 **The rule.** The creation bootstrap enrols the group's recorded creator (`createdBy`) and nobody
 else; a group with no recorded creator is bootstrapped by nobody. The creation route records its
@@ -58,8 +58,7 @@ answers `not_creator`). The column is internal: no route returns it. An erasure 
 NULL`, `lock_timeout 5s`, no default, no backfill, nothing rewritten or deleted. It runs before the
 images that read the column, which is the deploy's own order.
 
-**Owed to the owner.** The yes for 042 on production (a schema change, so it waits for it under the
-release authority of 2026-10-11) - in practice, the stable that carries this. A group created in the
+**Left.** A group created in the
 seconds a deploy straddles (row written by the old image, NULL creator) has its creation refused, and
 the user retries. The P3 entry on failed creations below can now be closed on `createdBy` (let the
 recorded creator end a group nobody joined) - not done here.
@@ -122,7 +121,7 @@ open (sell the rest and skip the grant, split the payment from the grant) are no
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 BUILT as a draft (2026-10-31), WP-F6 planned below.** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 planned below.** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -268,7 +267,7 @@ ordinary review.
   - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
     one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
 - **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
-  arming). BUILT 2026-10-31, draft pull request, target `1.5.5`** (owner reconfirmed 2026-10-31):
+  arming). MERGED as #2827, ships in `1.5.4`** (owner reconfirmed 2026-10-31):
   [as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
   the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
   WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
@@ -321,12 +320,6 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   after "Welcome complete: re-queued 1 buffered message(s)" and before "[HISTORY] ... holds 1 frame(s)
   it can never read - reconciling". The frame predates the membership, so under the no-past-for-new-
   members decision it is not a loss: drop it at INFO with its reason, once.
-- **A freshly minted device asks the server three times whether its own KeyPackage exists while it
-  already knows its first publication is running.** DEV-1, W3: census "0 proven" and a generate round
-  in flight, yet each of the three key-group external joins does `GET /api/mls/devices/<user>/<device>/key-package`
-  and learns "absent" from a 404 ("externalJoin ... waits for the server to hold this device's
-  KeyPackage (absent, a round is running)"). The wake-up is already round-driven; remove the GET
-  before the first round (never learn by failing what a fact could tell).
 - **Restored notices carry no proof and no mark (the `[AUTHORSHIP] ... carry no author proof` lines of
   DEV-1).** Every one checked is a system notice row (`sender 'system'`), never a user message: the
   count equals the system rows of each batch. Two classes. (a) Device-local rows relayed into other
@@ -1057,36 +1050,6 @@ merged. The design has to show that this fence covers every way a socket-close r
 an in-flight Add, including the Welcome loop after the accept. Needs an Opus design and security
 review.
 
-## P2 - An Add whose commit outcome is unknown is reported as failed (NET-3, 2026-10-25)
-
-`processBulkAddition` (`groupCreation.ts`) handles a `CommitOutcomeUnknownError` in its catch-all.
-It logs `console.error('[SYNC] processBulkAddition failed:', …)` and returns `not-added('failed')`,
-and `reportBulkAdditionRefusal` then toasts that the invitation added nobody. The commit is KEPT
-and resubmitted (`kept until a resubmission answers`). On `1.4.1-alpha.3` (NET-3, captive portal on
-the commit POST) it was ACCEPTED at the next settlement, about 26 s later. So an unknown outcome is
-logged as an error and shown to the member as a failure, and the member may retry an Add that is
-going to land. It wants its own outcome: an Add pending its answer, said as such, at `warn` at most.
-P2 (re-graded the same day): the toast misinforms, and the member may retry an Add that will land.
-**#2426 (merged) covers the TYPED case**: a `CommitOutcomeUnknownError` now returns
-`outcome-unknown`, logs at `warn` and is said as a warning ("pending connection"), pinned by
-`conversationRefusalMessage.test.ts` and `lostInvitation.test.ts`. **What is left is the
-catch-all**: a no-answer NOT thrown as that type still reaches `console.error` and `failed`. Whether
-a portal on the commit POST always reaches the typed error is what the OFF-3 replay on the next build
-answers - if it falls through, the fix is at the throw, not at the toast.
-
-## P2 - An invitee the Add could not check is dropped silently when others are added (1.4.1 dev campaign, 2026-10-25)
-
-`processBulkAddition` (`groupCreation.ts`) asks `isBlockedWith` for each invitee before the Add. A
-check that THROWS (a captive portal, a dropped link) only logs `[ERROR] Could not check whether <id>
-can be added, skipping`, and the invitee leaves the batch. The user is told only when NOBODY is left
-(`nobody-reachable`, `chat_invite_error_nobody_reachable`). With several invitees and one that could
-not be checked, the others are added, the gesture reads as a success, and the dropped person is
-named nowhere on screen - the user silently loses part of an action. The same shape follows two
-steps later: an invitee whose device fetch comes back empty is skipped with `[WARN] Skipped: no
-devices found` and no notice. Found by reading while the campaign ran the portal row (NET-3) on
-`1.4.1-alpha.3`; the fix is to carry the skipped users in `BulkAdditionOutcome` and name them in
-the notice. A blocked invitee is skipped deliberately and stays out of this.
-
 ## P3 - A leave made while the link is down loses its `memberLeft` notice for good (RM-8, 2026-10-25)
 
 When a member leaves while every request fails, `leaveGroupAndBroadcast`'s notice send throws:
@@ -1212,21 +1175,6 @@ failed attempts in about eight seconds. Nothing is lost, and the order holds. Bu
 failing what a fact on the same client could have told it. The fix is to carry the group's
 unknown-outcome state to where the outbox decides to attempt a send, so that it waits for the
 settlement instead of trying and failing.
-
-## P3 - One failed Add is reported three times (TOK-2, 2026-10-25)
-
-When a bulk Add fails, the client says so three times within 3 ms. Read on `1.4.1-alpha.4`, TOK-2,
-where the token renewal behind the commit failed (`DeliveryRenewalFailedError`):
-
-- an untagged `Bulk invite error: <typed error>` at log level;
-- `[SYNC] processBulkAddition failed: <typed error>` at `console.error`, with a stack;
-- `[GROUP] an invitation added nobody (failed)`.
-
-All three carry the same fact. The rule is that a line is either expected and necessary, or the
-visible end of something upstream. So one failed Add should be ONE accusing line that carries the
-typed outcome: tagged, at the level the outcome deserves, with no stack for a typed and expected
-error. The cross-client rig forgives the three as TOK-2's provoked narration until this is fixed, and
-the needle's comment points here.
 
 ## P3 - A harness self-test run failed twice and could not be reproduced (2026-10-25)
 
@@ -1481,8 +1429,7 @@ conversation - Accepter / Refuser" (a PERSON, never a device: a member's device 
 ask since 2026-10-31), which replaces the group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
 member's Add); and an entry no member made is written in the conversation and reported
 (`[UNINVITED_ENTRY]`, with its `kind`) - see
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: migration 038
-deployed with the build; `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Migration 038 is applied in production; owed: `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
 than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
 production once the build serves both stores; the four review findings below. The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
@@ -1696,8 +1643,8 @@ paged history answer ([channel-encryption §4.4](protocols/channel-encryption.md
 (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue): MERGED (#2260), for the next stable (user). It
 ships the READERS with migration 034 and the writer OFF (`QUEUED_PAYLOAD_SHARED_WRITES=false`).
-Owed: the user's yes to apply migration 034; then, once that stable is in production, a pull
-request turning the writer on in the release after it; then one re-measure of the queue's bytes
+Migration 034 is applied in production; owed: a pull
+request turning the writer on (`QUEUED_PAYLOAD_SHARED_WRITES`, still false) in a later release; then one re-measure of the queue's bytes
 ([chat-delivery](services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)).
 Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
@@ -1993,12 +1940,27 @@ iOS rows after a manual iOS compile; a one-time reader for the old join files, w
 
 ## P3 - The native command boundary carries its error codes as string prefixes (2026-10-28)
 
-Every Tauri command returns `Result<_, String>`, and every code the TypeScript side reads
-(`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, `MLS_MANAGER_ABSENT`) crosses as the string's
-leading token, read by one predicate each (`isKeystoreKeyUnavailable`, `classifyStateLoadFailure`,
-`isMlsManagerAbsent`). Tauri can serialise an error object instead: one `{ code, message }` type for
-every command, decoded into typed errors at the one `invoke` boundary. All codes move in one pull
-request, never one at a time (two conventions would give every reader two shapes)
+Tauri can serialise an error object instead of a string: one `{ code, message }` type, decoded into
+typed errors at the one `invoke` boundary. The 2026-10-28 decision moved every code in one pull
+request; **the owner amended it on 2026-10-29 (amended, the entry stays open): two steps, each
+separately reviewed.**
+
+- **Step 1 - PR #2596:** the `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE`, the ones that unblock
+  CORRUPT-1/2 (a damaged state called a PIN rotation).
+- **Step 2 - its own MLS-critical pull request, NOT BUILT:** everything still carried as a string
+  prefix. `MLS_MANAGER_ABSENT` (81 call sites through `live_manager` / `live_manager_mut` in `state.rs`,
+  across `commands/mls.rs`, `storage.rs`, `concurrency.rs`, `mobile/background.rs`,
+  `mobile/key_group_join.rs`; read by `isMlsManagerAbsent`); `EVICTED:` and `ALREADY_MEMBER:` (the
+  `MlsError` Display in `mls-core/src/lib.rs`, crossing both Tauri and WASM, read in
+  `mlsDecryptError.ts`, `mlsSendError.ts` and `utils/chat/actions.ts`); `GAP_QUEUED:`,
+  `GAP_DB_INSERT_FAILED:` and `UNRECOVERABLE:` (the decrypt commands in `commands/mls.rs`).
+  **The riskiest part is the decode order:** `classifyIncomingDecryptError` depends on the ORDER of the
+  markers it tests and drives re-add and heal decisions, so a typed decode must reproduce that order
+  exactly, with a test per marker pair, before any code moves.
+- **The interim has TWO conventions, deliberately:** typed `{ code, message }` for step 1's codes,
+  string prefixes for step 2's. Each reader knows which shape its code has. **It ends when step 2 is
+  merged**, and not before.
+
 ([mls-protocol](protocols/mls-protocol.md#the-native-manager-does-not-outlive-its-account-2026-10-27)).
 
 ## P3 - A rotation that fails every time loops through the PIN gate (2026-10-28)
@@ -3549,7 +3511,7 @@ The group panel reads the user-level roster (`user-members`) and drops only seat
 `awaitingAdmission`. A link seat written BEFORE migration 038 got `awaitingAdmission` defaulting to
 `false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
 read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
-on production. If it is 0, delete this section; otherwise a backfill migration the user approves.
+on production. If it is 0, delete this section; otherwise a backfill migration (additive, reviewed, backed up just before, per the owner's rule of 2026-11-01).
 
 - **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
 

@@ -8,6 +8,10 @@ vi.mock('$lib/mls-client', async (importOriginal) => ({
 }));
 
 import { SavedStateUnopenedError } from '$lib/mls-client';
+import {
+  KeystoreKeyUnavailableError,
+  mlsStateLoadErrorOf,
+} from '$lib/mls-client/mlsStateLoadError';
 import { MlsStateUnreadableNowError, MlsStateVerdictError } from '$lib/mls-client/mlsStateSeal';
 import { MLS_STATE_UNREADABLE_NOW_READS, WebMlsService } from './WebMlsService';
 
@@ -40,6 +44,7 @@ function makeCtx() {
     loadStateWithKey: WebMlsService.prototype['loadStateWithKey'],
     classifyStateLoadFailure: WebMlsService.prototype['classifyStateLoadFailure'],
     rotateDeviceIdentity: vi.fn().mockResolvedValue('rotated'),
+    reenrolLostState: vi.fn().mockResolvedValue(false),
   };
   return ctx;
 }
@@ -87,7 +92,9 @@ describe('WebMlsService - a state unreadable right now', () => {
 
   it('CONTROL: an alteration mls-core PROVED still rotates, read once', async () => {
     // What separates the two classes is the deterministic reader's verdict, not the engine's.
-    loadAndInitWasm.mockRejectedValue(new MlsStateVerdictError('STATE_ALTERED', unreadable()));
+    loadAndInitWasm.mockRejectedValue(
+      new MlsStateVerdictError('STATE_ALTERED', 'judged', unreadable())
+    );
     const ctx = makeCtx();
 
     await initImpl(ctx, new Uint8Array([1, 2, 3]), { noFreshStart: true });
@@ -104,8 +111,84 @@ describe('WebMlsService - a state unreadable right now', () => {
   ] as const)('classifies the verdict %s by its TYPE as %s', (code, failure) => {
     const ctx = makeCtx();
     // The message is overwritten so only the type can carry the verdict.
-    const error = new MlsStateVerdictError(code, unreadable());
+    const error = new MlsStateVerdictError(code, 'judged', unreadable());
     error.message = 'no code in this text';
     expect(ctx.classifyStateLoadFailure(error)).toBe(failure);
+  });
+});
+
+/**
+ * A DESTRUCTIVE REPAIR IS GATED ON KNOWING THE STATE IS BROKEN, WHATEVER THE CALLER PASSES. A
+ * keystore refusal and an untyped failure prove nothing about the saved bytes, so with a state
+ * present `init` rotates nothing, with or without `noFreshStart` - the rejections built by the real
+ * boundary converter (`mlsStateLoadErrorOf`), as the WASM constructor's refusal arrives.
+ */
+describe('WebMlsService init - a cause that proves nothing destroys nothing', () => {
+  beforeEach(() => {
+    loadAndInitWasm.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([{ noFreshStart: true }, {}])(
+    'a keystore refusal with a saved state propagates as itself, nothing rotated (%o)',
+    async (opts) => {
+      loadAndInitWasm.mockRejectedValue(
+        mlsStateLoadErrorOf({ code: 'KEYSTORE_KEY_UNAVAILABLE', message: 'no key' })
+      );
+      const ctx = makeCtx();
+
+      const failure = await initImpl(ctx, new Uint8Array([1, 2, 3]), opts).catch((e) => e);
+
+      expect(failure).toBeInstanceOf(KeystoreKeyUnavailableError);
+      expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([{ noFreshStart: true }, {}])(
+    'an untyped failure with a saved state pauses as `unknown`, nothing rotated (%o)',
+    async (opts) => {
+      loadAndInitWasm.mockRejectedValue(mlsStateLoadErrorOf({ code: null, message: 'a trap' }));
+      const ctx = makeCtx();
+
+      const failure = await initImpl(ctx, new Uint8Array([1, 2, 3]), opts).catch((e) => e);
+
+      expect(failure).toBeInstanceOf(SavedStateUnopenedError);
+      expect((failure as SavedStateUnopenedError).reason).toBe('unknown');
+      expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+    }
+  );
+
+  it('an untyped failure with NO state is logged ONCE - at its boundary, not again by init', async () => {
+    loadAndInitWasm.mockImplementation(async () => {
+      throw mlsStateLoadErrorOf({ code: null, message: 'a trap' });
+    });
+    const ctx = makeCtx();
+
+    const failure = await initImpl(ctx, undefined, {}).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(ctx.rotateDeviceIdentity).not.toHaveBeenCalled();
+    const lines = [
+      ...vi.mocked(console.warn).mock.calls,
+      ...vi.mocked(console.error).mock.calls,
+    ].filter((c) => String(c[0]).includes('a trap') || String(c[1]).includes('a trap'));
+    expect(lines).toHaveLength(1);
+  });
+
+  it('an error NO boundary built (a TypeError) with no state is logged ONCE - by the classifier', async () => {
+    loadAndInitWasm.mockRejectedValue(new TypeError('a wiring fault'));
+    const ctx = makeCtx();
+
+    const failure = await initImpl(ctx, undefined, {}).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(TypeError);
+    const lines = [
+      ...vi.mocked(console.warn).mock.calls,
+      ...vi.mocked(console.error).mock.calls,
+    ].filter((c) => c.some((part) => String(part).includes('a wiring fault')));
+    expect(lines).toHaveLength(1);
   });
 });

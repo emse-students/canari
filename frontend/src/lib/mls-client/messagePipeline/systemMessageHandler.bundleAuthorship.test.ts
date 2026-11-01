@@ -151,6 +151,47 @@ describe('history_bundle - restored history carries its author signature', () =>
     expect(added(ctx)[0].restoredUnverified).toBeUndefined();
   });
 
+  it('drops a relayed server time below the SIGNED sentAt, though the relayer wrote both as 1 (review of #2824, C)', async () => {
+    const { alice, mallory } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const relay = async (timestamp: number, serverTimestamp: number) => {
+      const ctx = {
+        ...makeCtx(alice, mallory),
+        deliveryMeta: { queuedCreatedAt: SENT_AT + 60_000 },
+      };
+      await handleSystemEvent(
+        'history_bundle',
+        {
+          messages: [
+            {
+              id: 'm1',
+              senderId: 'alice',
+              content: helloContent,
+              timestamp,
+              serverTimestamp,
+              authorship,
+            },
+          ],
+        },
+        ctx as any
+      );
+      return added(ctx as any)[0];
+    };
+
+    const forged = await relay(1, 1);
+    expect(forged).toEqual(
+      expect.objectContaining({ messageId: 'm1', timestamp: new Date(SENT_AT) })
+    );
+    expect(forged.serverTimestamp).toBeUndefined();
+    expect(
+      error.mock.calls.some(([line]) => String(line).includes('below the SIGNED sentAt'))
+    ).toBe(true);
+    // An honest one, at the signed sentAt plus the delivery, is kept.
+    expect((await relay(SENT_AT, SENT_AT + 500)).serverTimestamp).toBe(SENT_AT + 500);
+    error.mockRestore();
+  });
+
   it('keeps an unsigned message relayed by someone else, MARKED as unverified', async () => {
     const { alice, mallory } = await cast();
     const ctx = makeCtx(alice, mallory);

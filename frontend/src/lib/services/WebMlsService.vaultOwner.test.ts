@@ -7,6 +7,7 @@ vi.mock('$lib/mls-client', async (importOriginal) => ({
 
 import { VaultOwnerUnprovenError } from '$lib/mls-client';
 import { WebMlsService } from './WebMlsService';
+import { MlsStateVerdictError } from '$lib/mls-client/mlsStateSeal';
 
 /**
  * THE WEB HALF OF "A VAULT KEY OF UNPROVEN OWNER CHANGES NOTHING".
@@ -16,7 +17,7 @@ import { WebMlsService } from './WebMlsService';
  * account A left in the vault, and B's own PIN never opened it again. So with no state the key is
  * refused, and with a state it must open it; no rotation and no fresh start either way.
  */
-const UNOPENABLE = new Error('STATE_UNDECRYPTABLE: aead::Error');
+const UNOPENABLE = new MlsStateVerdictError('STATE_UNDECRYPTABLE', 'aead::Error');
 
 function makeCtx(loadStateWithKey: ReturnType<typeof vi.fn>) {
   return {

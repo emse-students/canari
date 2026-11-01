@@ -513,8 +513,8 @@ pipeline (RC-5) before the UI polish because a reel that cannot survive a weak n
 that works in the office.
 
 **What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30).** Built and
-merged: RC-1 to RC-5, RC-7. Owed, in this order: (1) RC-3's profile and 60 s cap wired into
-`prepareQueuedChatReel` (section 14); (2) the session-leak P2 ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled));
+merged: RC-1 to RC-5, RC-7, and (1) RC-3's profile and 60 s cap wired into
+`prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01). Owed, in this order: (2) the session-leak P2 ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled));
 (3) RC-14 then **RC-13 - before the switch, not after: once a reel is written in the field, a
 single-target RC-5 row persisted in a member's outbox would need a legacy decoder when the shape
 changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with its 410 amendment,
@@ -685,7 +685,7 @@ reel message does, and nothing sends one until RC-4 (behind its OFF switch); the
 - **The mark**: a video handed back by the chat camera is marked on the FILE (`markChatReelTake`, a `WeakSet` like `capturePoster.ts`), because the composers' one attachment path is `File[]`. A gallery pick is never marked.
 - **The declaration**: `prepareOneChatVideo` carries the mark onto the PREPARED file with its length; the MLS send builds `intent`, `durationMs` and `expiresAtMs` (send time + 30 days, `chatReelDeclaration`, the clock passed in) into BOTH the optimistic envelope and the outbox payload, so the tile draws at once. The ThumbHash comes from the camera's poster.
 - **The class**: the outbox uploader names `chat-reel` for a declared reel (`uploadClassFor`), `ephemeral` for everything else.
-- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - the take still reads `reel-limits`' 90 s until it merges), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 14) - since RC-5 a filmed take is no longer STAGED.
+- **Not built**: the cap and the chat encoding profile (RC-3, #2049 - wired in on 2026-11-01, section 14), the salon path (RC-8), push (RC-7). The raw-take store, the resumable outbox states and "Envoyer" sending at once are RC-5's (section 14) - since RC-5 a filmed take is no longer STAGED.
 
 ## 14. What the resumable outbox (RC-5) built, and what it owes on devices (2026-10-19)
 
@@ -810,10 +810,20 @@ preparation and its Retry; a refused one that fails for good; and a seeded flaky
 media-service's `upload-session.service.spec.ts` walks the client's resume sequence across server
 restarts.
 
-**A BLOCKER OF `CHAT_REEL_WRITER_ENABLED`, owed at the switch-on and not before**: RC-3 (#2049)
-merged the chat profile after #2098 branched, so `prepareQueuedChatReel` must pass `profile: 'chat'`
-and RC-3's 60 s cap before the switch is flipped. Nothing on this branch needs it while the switch is
-off.
+**RC-3 WIRED IN (2026-11-01)**: `prepareQueuedChatReel` (`utils/chat/prepareQueuedChatReel.ts`)
+reads the upload limits and `reel-limits` BEFORE the encoder runs, then prepares with
+`chatReelPrepareOptions` (`profile: 'chat'`, `maxSeconds` = the server's `chatMaxDurationMs` / 1000,
+the plaintext ceiling as `maxBytes`). **There is no fallback to the 90 s reel cap**: `chatMaxDurationMs`
+is REQUIRED in `ReelLimits` (served since 89a81ad7d5), and an answer without a usable one
+(`servedChatCapMs` is `null`) throws `ChatReelCapMissingError`. That error is ordinary, as is a cap that
+cannot be read at all (offline), so the outbox PARKS the take (kept, Retry) and it is never prepared
+without its cap. The chat camera arms its ring and checks a gallery pick against
+`captureCapMs(limits, 'chat')` (60 s); the feed and post destinations keep `maxDurationMs`. A chat
+answer without the cap is said at ERROR when the limits arrive, and the camera does not film (the
+"refused" fault). A take over the cap by more than the encoder's 0.5 s grace is `too long`: failed
+for good, as this section classifies it. Pinned by `chatReelWriter.test.ts`,
+`prepareQueuedChatReel.test.ts`, `outbox.reelResume.test.ts` (the cap unreadable: the real preparer
+parks the take) and `ReelCapture.svelte.test.ts` (60 s in a chat, 90 s in the feed).
 
 **Not built**: a caption on a reel (the review has no text field; "Envoyer" sends the take alone),
 preparing while the member reviews (RC-11), and a background upload a suspended app continues (the

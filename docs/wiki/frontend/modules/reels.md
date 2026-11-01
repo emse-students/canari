@@ -826,7 +826,7 @@ sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `P
 the tabs that narrowed the open tab to its reels). On the phone the user found the two stacked bars
 ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no Reels tab in any bar.
 
-1. **One row**: the three tabs (Associations / Suivis / Tout) and, at its right end, a clap icon
+1. **One row**: the three tabs (Associations / Suivis / Mon espace, "Tout" until 1.6) and, at its right end, a clap icon
    (`ReelsEntryButton`, named "Ouvrir les CanaReels"). The row is `FeedTabRow`: when it is too narrow
    (390 px at 2x text) the TABS scroll sideways with a fade, the icon never wraps or leaves. The
    SELECTED tab is scrolled into full view on arrival and on every selection
