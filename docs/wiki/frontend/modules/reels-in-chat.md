@@ -781,8 +781,16 @@ new field lives in the encrypted outbox payload.
   session answer. A transport failure, an edge page, a 5xx or a refused token keeps the mark
   (`releaseUploadSession` now returns `answered`/`unanswered`). The session's drain
   (`registerUploadReleaseDrain`, the `pendingGroupExits` shape) releases the owner's marks once at
-  startup and on every reconnect, under that owner's token, and is detached at sign-out so a mark is
-  never released with the next account's token. Idempotent by the server: a repeat is a 404, an
+  startup and on every reconnect, and is detached at sign-out. **Two accounts on one device never
+  mix (review of 2026-11-01)**: the drain's owner is FIXED at registration; ONE pass runs at a time
+  (a flush waits for the pass in flight); a pass asks before EVERY `DELETE` whether its registration
+  is still the current one and stops otherwise, keeping the marks it did not reach; and every
+  `DELETE` takes its token through `ownerBoundToken`, which refuses a token whose subject is not the
+  mark's owner (`ReleaseOwnerChangedError`, nothing sent, `unanswered`, the mark kept) - so another
+  account's 403 can never read as an answer and drop the mark. The 401 renewal already refuses a
+  renewed token naming another account (`TokenAccountChangedError`). An EMPTY owner id is a fallback
+  signal: no mark is written, the `DELETE` is still tried, the line accuses at ERROR, and an
+  unanswered one is the server's 24 h sweep's. Idempotent by the server: a repeat is a 404, an
   answer. **What each former leak path is now:**
   - a cancel made offline: marked, released at the next start or reconnect;
   - a sign-out: never was a leak - the outbox survives a sign-out, and the row resumes its session at
