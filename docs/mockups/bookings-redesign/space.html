@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Espace de réservation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="mockup.css" />
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="mockup.js"></script>
+  </head>
+  <body>
+    <div id="page" class="page grid">
+      <div class="stack loose">
+        <div class="note">
+          <b>Mockup - the booker's page of a space (D44-D48).</b> Two cases from the design's bounds:
+          <a href="?">the music room</a> (one HIDDEN default column, steps of 30 min, duration by
+          drag) and <a href="?case=alumni">the alumni interviews</a> (14 columns, fixed 25-min slots,
+          a column selector). The organiser's view of the same page is
+          <a href="dashboard.html">dashboard.html</a>.
+        </div>
+
+        <!-- D45: the poster is a BANNER here, a thumbnail in the list -->
+        <div class="poster" id="poster">
+          <div class="poster-art" id="poster-art"></div>
+        </div>
+
+        <div class="row wrap" style="align-items: flex-start; gap: 16px">
+          <div class="grow stack tight">
+            <h1 id="space-name"></h1>
+            <div class="row muted xs" id="space-owner"></div>
+            <p id="space-desc"></p>
+          </div>
+          <div class="row">
+            <button class="btn" aria-label="Partager">
+              <i data-lucide="qr-code"></i><span class="desktop-only">Partager</span>
+            </button>
+            <a class="btn" href="dashboard.html"
+              ><i data-lucide="settings-2"></i><span class="desktop-only">Gérer</span></a
+            >
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="stack">
+            <!-- D46: the column selector, only when there are several columns -->
+            <div id="col-select"></div>
+
+            <!-- Desktop: week navigation. Phone: the week strip (D48) -->
+            <div class="row wrap desktop-only">
+              <button class="btn icon" aria-label="Semaine précédente">
+                <i data-lucide="chevron-left"></i>
+              </button>
+              <button class="btn icon" aria-label="Semaine suivante">
+                <i data-lucide="chevron-right"></i>
+              </button>
+              <button class="btn sm">Aujourd'hui</button>
+              <h3 id="week-label" class="grow"></h3>
+              <div class="legend">
+                <span><i style="background: var(--cn-surface); border: 1px solid var(--cn-border)"></i>Libre</span>
+                <span><i style="background: var(--tint-taken)"></i>Réservé</span>
+                <span><i style="background: var(--cn-yellow)"></i>Vous</span>
+                <span><i style="background: var(--tint-blocked)"></i>Indisponible</span>
+                <span><i style="background: var(--tint-closed)"></i>Fermé</span>
+              </div>
+            </div>
+
+            <div class="phone-only stack tight">
+              <div class="row">
+                <button class="btn icon ghost" aria-label="Semaine précédente">
+                  <i data-lucide="chevron-left"></i>
+                </button>
+                <span class="grow strong" style="text-align: center" id="strip-label"></span>
+                <button class="btn icon ghost" aria-label="Semaine suivante">
+                  <i data-lucide="chevron-right"></i>
+                </button>
+              </div>
+              <div class="strip" id="strip"></div>
+            </div>
+
+            <div class="desktop-only" id="grid-week"></div>
+            <div class="phone-only" id="grid-day"></div>
+
+            <p class="muted xs" id="hint"></p>
+
+            <div class="note">
+              <b>D46 / D48.</b> Desktop: days are columns, as a week agenda. Press a free step and drag
+              down: the yellow outline and the chip at the bottom follow, capped at the space's step
+              ceiling and stopped by anything taken; letting go opens the sheet with that length. A
+              plain click books one step. Phone: one day at a time, the week strip above (the dot
+              says whether the day still has room); a finger holds 250 ms before it drags, as shipped
+              in WP-B5. "Prochains créneaux" is gone (D47). A closed day folds to a narrow strip.
+            </div>
+          </div>
+
+          <aside class="stack">
+            <div class="card">
+              <div class="list-row"><h3 class="grow">Vos réservations ici</h3></div>
+              <div class="list" id="mine"></div>
+            </div>
+            <div class="card pad stack tight">
+              <div class="row"><i data-lucide="bell-ring"></i><span class="strong">Notifications</span></div>
+              <p class="xs muted">
+                Vous êtes prévenu si l'organisateur annule, si quelqu'un vous ajoute à une
+                réservation, et avant le créneau (rappel réglable).
+              </p>
+            </div>
+            <div class="note">
+              <b>D53.</b> The old sentence "vous ne serez pas prévenu" (D13) is gone from every
+              screen: the three notifications replace it.
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <!-- Booking sheet -->
+      <div class="scrim"></div>
+      <section class="sheet" id="sheet-book" aria-label="Réserver">
+        <div class="sheet-head">
+          <h3 class="grow">Réserver</h3>
+          <button class="btn icon ghost" data-close aria-label="Fermer"><i data-lucide="x"></i></button>
+        </div>
+        <div class="sheet-body" id="book-body"></div>
+        <div class="sheet-foot">
+          <button class="btn" data-close>Annuler</button>
+          <button class="btn primary" data-close><i data-lucide="check"></i>Réserver</button>
+        </div>
+      </section>
+
+      <!-- Detail sheet -->
+      <section class="sheet" id="sheet-detail" aria-label="Détail">
+        <div class="sheet-head">
+          <h3 class="grow" id="detail-title"></h3>
+          <button class="btn icon ghost" data-close aria-label="Fermer"><i data-lucide="x"></i></button>
+        </div>
+        <div class="sheet-body" id="detail-body"></div>
+        <div class="sheet-foot" id="detail-foot"></div>
+      </section>
+    </div>
+
+    <script>
+      MK.shell({ active: 'bookings' });
+      const alumni = MK.params.get('case') === 'alumni';
+      const F = MK.fmt;
+
+      /* ------------------------------------------------------------ fixtures */
+      const music = {
+        name: 'Salle de musique',
+        owner: 'BDA · Maison des élèves',
+        desc: 'Piano droit, batterie, deux amplis. Laissez la salle rangée. 3 h maximum d\'affilée, 4 personnes au plus.',
+        art: 'music',
+        week: '26 octobre – 1er novembre 2026',
+        step: 30,
+        maxSteps: 6,
+        mode: 'book',
+        startMin: 480,
+        endMin: 1380,
+        scrollTo: 780,
+        columns: null,
+        days: [
+          { label: 'lun.', num: 26, long: 'Lundi 26 oct.', open: [[480, 1380]], past: true,
+            items: [{ s: 1080, e: 1200, kind: 'taken', title: 'Réservé' }] },
+          { label: 'mar.', num: 27, long: 'Mardi 27 oct.', open: [[480, 1380]], today: true,
+            items: [
+              { s: 540, e: 630, kind: 'taken', title: 'Réservé' },
+              { s: 1020, e: 1080, kind: 'mine', title: 'Vous', sub: 'avec Léa' },
+              { s: 1200, e: 1320, kind: 'taken', title: 'Réservé' },
+            ] },
+          { label: 'mer.', num: 28, long: 'Mercredi 28 oct.', open: [[480, 1380]],
+            items: [
+              { s: 720, e: 840, kind: 'blocked', title: 'Indisponible', sub: 'Accordage du piano' },
+              { s: 1140, e: 1260, kind: 'taken', title: 'Réservé' },
+            ] },
+          { label: 'jeu.', num: 29, long: 'Jeudi 29 oct.', open: [[480, 1380]],
+            items: [{ s: 1110, e: 1230, kind: 'taken', title: 'Réservé' }] },
+          { label: 'ven.', num: 30, long: 'Vendredi 30 oct.', open: [[480, 1380]],
+            items: [
+              { s: 1020, e: 1140, kind: 'taken', title: 'Réservé' },
+              { s: 1260, e: 1380, kind: 'taken', title: 'Réservé' },
+            ] },
+          { label: 'sam.', num: 31, long: 'Samedi 31 oct.', open: [[600, 1380]],
+            items: [{ s: 840, e: 1020, kind: 'taken', title: 'Réservé' }] },
+          { label: 'dim.', num: 1, long: 'Dimanche 1er nov.', open: [], closedLabel: 'Fermé · Toussaint' },
+        ],
+        mine: [{ when: 'Aujourd\'hui · 17:00 – 18:00', what: 'avec Léa M.' }],
+      };
+
+      const alumniCols = [
+        'Camille — Conseil en stratégie',
+        'Hugo — Énergie',
+        'Inès — Finance de marché',
+        'Thomas — Aéronautique',
+        'Sarah — Data science',
+        'Lucas — Industrie pharmaceutique',
+        'Manon — Start-up (CTO)',
+        'Nathan — Ferroviaire',
+        'Chloé — Audit',
+        'Julien — Semi-conducteurs',
+        'Emma — Développement durable',
+        'Paul — Automobile',
+        'Léa — Recherche',
+        'Antoine — Banque d\'investissement',
+      ];
+      function slotsFor(day) {
+        const items = [];
+        for (let s = 840; s + 25 <= 1125; s += 25) {
+          const taken = (day === 3 && [865, 915, 990, 1040].includes(s)) || (day === 4 && [840, 940].includes(s));
+          if (day === 3 && s === 1015) {
+            items.push({ s, e: s + 25, kind: 'blocked', title: 'Indisponible' });
+            continue;
+          }
+          items.push(taken ? { s, e: s + 25, kind: 'taken', title: 'Réservé' } : { s, e: s + 25, kind: 'slot', title: F(s) + ' · Libre' });
+        }
+        return items;
+      }
+      const alumniCase = {
+        name: 'Entretiens Alumni 2026',
+        owner: 'Association des Alumni',
+        desc: 'Simulation d\'entretien de 25 min avec un ancien. Choisissez un alumni, puis un créneau. CV en PDF demandé.',
+        art: 'briefcase',
+        week: '9 – 15 novembre 2026',
+        step: 25,
+        maxSteps: 1,
+        mode: 'slots',
+        startMin: 840,
+        endMin: 1140,
+        scrollTo: 840,
+        columns: alumniCols,
+        narrowClosed: true,
+        days: [
+          { label: 'lun.', num: 9, long: 'Lundi 9 nov.', open: [] },
+          { label: 'mar.', num: 10, long: 'Mardi 10 nov.', open: [] },
+          { label: 'mer.', num: 11, long: 'Mercredi 11 nov.', open: [] },
+          { label: 'jeu.', num: 12, long: 'Jeudi 12 nov.', open: [[840, 1125]], items: slotsFor(3) },
+          { label: 'ven.', num: 13, long: 'Vendredi 13 nov.', open: [[840, 1125]], items: slotsFor(4) },
+          { label: 'sam.', num: 14, long: 'Samedi 14 nov.', open: [] },
+          { label: 'dim.', num: 15, long: 'Dimanche 15 nov.', open: [] },
+        ],
+        mine: [],
+      };
+      const S = alumni ? alumniCase : music;
+      if (!alumni) S.narrowClosed = true;
+
+      /* ------------------------------------------------------------ header */
+      document.getElementById('space-name').textContent = S.name;
+      document.getElementById('space-owner').innerHTML = MK.icon('users', 'icon-sm') + S.owner;
+      document.getElementById('space-desc').textContent = S.desc;
+      document.getElementById('poster-art').innerHTML = MK.icon(S.art);
+      document.getElementById('week-label').textContent = S.week;
+      document.getElementById('strip-label').textContent = S.week;
+
+      /* D44 + D46: no selector at all for the hidden default column */
+      const cs = document.getElementById('col-select');
+      if (S.columns) {
+        cs.innerHTML =
+          '<div class="field"><label for="col">Avec qui ?</label>' +
+          '<div class="row"><select id="col" class="input" style="max-width:420px">' +
+          S.columns.map((c) => '<option>' + c + '</option>').join('') +
+          '</select><span class="pill ok">7 créneaux libres</span></div></div>' +
+          '<div class="note"><b>D46, several columns.</b> Up to five columns read as pills; more (here 14) as a list. Each option could carry its free count. Question for the user: should the organiser also get the OLD one-day grid (all columns side by side) to see who is free at 15:00?</div>';
+      }
+
+      /* ------------------------------------------------------------ the sheets */
+      function bookSheet(day, s, e) {
+        const d = S.days[day];
+        const col = S.columns ? document.getElementById('col').value : null;
+        let html =
+          '<div class="card pad stack tight"><div class="row">' + MK.icon('calendar-clock') +
+          '<span class="strong">' + d.long + ' · ' + F(s) + ' – ' + F(e) + '</span></div>' +
+          '<div class="xs muted">' + (col ? S.name + ' · ' + col : S.name) + '</div></div>';
+        if (!alumni) {
+          html +=
+            '<div class="field"><span class="label">Durée</span><div class="row">' +
+            '<button class="btn icon" aria-label="Moins">' + MK.icon('minus') + '</button>' +
+            '<span class="strong grow" style="text-align:center">' + MK.dur(e - s) + '</span>' +
+            '<button class="btn icon" aria-label="Plus">' + MK.icon('plus') + '</button></div>' +
+            '<span class="xxs muted">Jusqu\'à 3 h d\'affilée</span></div>' +
+            '<div class="field"><span class="label">Avec qui ? <span class="muted">(4 personnes en tout)</span></span>' +
+            '<div class="row wrap"><span class="pill"><span class="avatar sm">LM</span>Léa M. ' + MK.icon('x', 'icon-sm') + '</span></div>' +
+            '<input class="input" placeholder="Ajouter quelqu\'un…" />' +
+            '<span class="xxs muted">Les personnes ajoutées sont prévenues par une notification et peuvent se retirer.</span></div>';
+        } else {
+          html +=
+            '<div class="field"><label>Votre année</label><select class="input"><option>2A</option><option>1A</option><option>3A</option></select></div>' +
+            '<div class="field"><span class="label">Votre CV (PDF, 8 Mo max)</span><button class="btn">' + MK.icon('file-up') + 'Choisir un fichier</button>' +
+            '<span class="xxs muted">Lu par les organisateurs seulement, effacé 7 jours après l\'entretien.</span></div>';
+        }
+        html +=
+          '<div class="field"><span class="label">Rappel</span><select class="input"><option>1 h avant</option><option>15 min avant</option><option>La veille</option><option>Pas de rappel</option></select></div>' +
+          '<div class="note"><b>D53, question.</b> Is the reminder delay chosen by the organiser for the space (with this select only as a per-person override), or by each person alone?</div>' +
+          '<p class="xxs muted">Une réservation ne se modifie pas : pour changer quelque chose, annulez et réservez de nouveau.</p>';
+        document.getElementById('book-body').innerHTML = html;
+        MK.paintIcons();
+        MK.openSheet('sheet-book');
+      }
+
+      function detailSheet(it, day) {
+        const d = S.days[day];
+        if (it.kind === 'slot') {
+          bookSheet(day, it.s, it.e);
+          return;
+        }
+        const title = { mine: 'Votre réservation', taken: 'Réservé', blocked: 'Indisponible' }[it.kind];
+        document.getElementById('detail-title').textContent = title;
+        let body = '<div class="row">' + MK.icon('clock') + '<span class="strong">' + d.long + ' · ' + F(it.s) + ' – ' + F(it.e) + '</span></div>';
+        let foot = '<button class="btn" data-close>Fermer</button>';
+        if (it.kind === 'mine') {
+          body +=
+            '<div class="row">' + MK.icon('users') + '<span>Vous, Léa M.</span></div>' +
+            '<div class="card pad stack tight"><span class="xs strong">Infos pour les personnes de la réservation</span>' +
+            '<span>Code de la porte : donné ici une fois réservé</span></div>' +
+            '<div class="row">' + MK.icon('bell') + '<span class="xs">Rappel 1 h avant</span></div>';
+          foot =
+            '<button class="btn">' + MK.icon('calendar-plus') + 'Ajouter à mon agenda</button>' +
+            '<button class="btn danger" data-close>' + MK.icon('x') + 'Annuler</button>';
+        } else if (it.kind === 'taken') {
+          body += '<p class="xs muted">Les noms ne sont visibles que par l\'organisateur et les personnes de la réservation.</p>';
+        } else {
+          body += '<p>' + (it.sub || 'Raison non affichée') + '</p>';
+        }
+        document.getElementById('detail-body').innerHTML = body;
+        document.getElementById('detail-foot').innerHTML = foot;
+        MK.paintIcons();
+        MK.openSheet('sheet-detail');
+      }
+
+      /* ------------------------------------------------------------ grids */
+      const base = {
+        startMin: S.startMin, endMin: S.endMin, step: S.step, maxSteps: S.maxSteps,
+        mode: S.mode, nowMin: alumni ? null : 860, scrollTo: S.scrollTo,
+        narrowClosed: S.narrowClosed, onSelect: bookSheet, onItem: detailSheet,
+      };
+      MK.weekGrid(document.getElementById('grid-week'), Object.assign({}, base, { days: S.days }));
+
+      let dayIdx = alumni ? 3 : 1;
+      function drawDay() {
+        const d = S.days[dayIdx];
+        MK.weekGrid(document.getElementById('grid-day'), Object.assign({}, base, {
+          days: [d], narrowClosed: false, hideHead: true,
+          onSelect: (_i, s, e) => bookSheet(dayIdx, s, e),
+          onItem: (it) => detailSheet(it, dayIdx),
+        }));
+        const strip = document.getElementById('strip');
+        strip.innerHTML = S.days.map((x, i) => {
+          const free = !x.open.length ? 'none' : (x.items || []).length > 3 ? 'few' : '';
+          return '<button data-i="' + i + '" class="' + (i === dayIdx ? 'on' : '') + (x.today ? ' today' : '') + '">' +
+            x.label + '<b>' + x.num + '</b><span class="free ' + free + '"></span></button>';
+        }).join('');
+      }
+      document.getElementById('strip').addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        dayIdx = +b.dataset.i;
+        drawDay();
+      });
+      drawDay();
+
+      document.getElementById('hint').textContent = alumni
+        ? 'Touchez un créneau libre pour le réserver.'
+        : 'Glissez sur les cases libres pour choisir la durée (3 h maximum).';
+
+      const mine = document.getElementById('mine');
+      mine.innerHTML = S.mine.length
+        ? S.mine.map((m) => '<div class="list-row"><span class="avatar" style="background:var(--cn-yellow)">' + MK.icon('music', 'icon-sm') + '</span><div class="grow"><div class="strong">' + m.when + '</div><div class="xs muted">' + m.what + '</div></div></div>').join('')
+        : '<div class="list-row muted xs">Aucune réservation pour l\'instant.</div>';
+      MK.paintIcons();
+    </script>
+  </body>
+</html>
