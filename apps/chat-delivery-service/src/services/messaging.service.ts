@@ -123,6 +123,7 @@ import {
   FCM_DATA_LIMIT,
   PushMessageInput,
 } from './push-payload';
+import { claimBanner, readBannerOwners } from './push-claim';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
@@ -824,6 +825,20 @@ export interface AckMessagesBody {
   messageIds: string[];
 }
 
+/**
+ * What an ACK answers: how many rows it deleted, and who owns each requested row's banner
+ * (`acknowledgeMessages`). `pushed` and `unresolved` are always present; a client that finds them
+ * absent is talking to a server older than the claim (docs/wiki/legacy-compatibility.md).
+ */
+export interface AckMessagesAnswer {
+  status: string;
+  count: number;
+  /** Ids whose banner a push already owns - the page must not raise one. */
+  pushed: string[];
+  /** Ids whose owner is unknown - the page raises one (a duplicate rather than a missing banner). */
+  unresolved: string[];
+}
+
 /** Offline device ids a TRANSPORT_SKIPPED_OFFLINE line names before it says "+N more". */
 const SKIPPED_DEVICES_LOGGED = 5;
 
@@ -1159,6 +1174,30 @@ export class MessagingService {
       }
     }
 
+    // THE BANNER IS THE PUSH'S OR THE PAGE'S, NEVER BOTH (`push-claim.ts`). A push that would draw
+    // claims it before sending; if the device's ACK claimed it first, the page owns it and this push
+    // is not sent - the device has the frame. A silent push owns no banner and claims nothing.
+    let claimedBanner = false;
+    if (!drawNothing) {
+      try {
+        const owner = await claimBanner(this.redis, queued.id, 'push');
+        if (owner === 'ack') {
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] queuedId=${queued.id} already acknowledged - the page owns its banner; not pushed`
+          );
+          return;
+        }
+        claimedBanner = true;
+      } catch (e) {
+        // AN UNKNOWN OWNER COSTS A DUPLICATE, NEVER A MISSING BANNER: the push goes out unclaimed, and
+        // the ACK that follows will find no claim and raise its own. Accused, because both banners
+        // are then shown and this line is the only trace of why.
+        this.logger.error(
+          `[PUSH_SEND][${traceId}] banner claim for queuedId=${queued.id} failed - pushed UNCLAIMED, the page may announce it too: ${String(e)}`
+        );
+      }
+    }
+
     // Resolve group name for a meaningful fallback when the Android service
     // cannot decrypt (app killed, JNI state unavailable).
     //
@@ -1279,6 +1318,7 @@ export class MessagingService {
     // ten pushes in one run, twice over (2026-08-29 and 2026-08-30). FCM ignores the apns block
     // for an Android token and the data map is redundant for an iOS one - the APNs payload is
     // self-contained by design - so each token now carries exactly the half it reads.
+    let accepted = 0;
     for (const pt of pushTokens) {
       try {
         await getMessaging().send(
@@ -1305,6 +1345,7 @@ export class MessagingService {
                 },
               }
         );
+        accepted++;
         if (batch) {
           // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
           // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
@@ -1341,6 +1382,14 @@ export class MessagingService {
           );
         }
       }
+    }
+    if (claimedBanner && accepted === 0) {
+      // CLAIMED AND NEVER UN-CLAIMED: the ACK that follows is told the push owns this banner, so the
+      // page stays silent - and no push reached the device. A missing banner, and this is its trace.
+      this.logger.error(
+        `[PUSH_SEND][${traceId}] queuedId=${queued.id} claimed its banner and no token accepted the push - ` +
+          `the page will stay silent for it (the claim is kept, never undone)`
+      );
     }
   }
 
@@ -6893,12 +6942,20 @@ export class MessagingService {
    * Acknowledges (deletes) processed messages from the delivery queue by ID.
    * Enforces that the caller owns the userId and only deletes messages addressed
    * to the specified device.
+   *
+   * AND SAYS WHO OWNS EACH ROW'S BANNER (`push-claim.ts`). Every row this call finds queued is
+   * claimed for the ACK before it is deleted; an id it does not find - a retry of an ACK whose first
+   * attempt landed - is only read. The answer lists the ids whose banner a push already owns
+   * (`pushed`: the extension announced them, the page must not) and the ids whose owner is unknown
+   * (`unresolved`: no claim to read, or Redis refused - the page announces them, a duplicate rather
+   * than a missing banner). Every other requested id is the page's to announce. A retried ACK is
+   * told what its first attempt was told, because the claim records the winner.
    */
   async acknowledgeMessages(
     body: AckMessagesBody,
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined
-  ): Promise<{ status: string; count: number }> {
+  ): Promise<AckMessagesAnswer> {
     const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -6918,21 +6975,65 @@ export class MessagingService {
       this.logger.warn(
         `[ACK][${traceId}] IGNORE empty messageIds user=${safeUserId} device=${safeDeviceId}`
       );
-      return { status: 'ignored', count: 0 };
+      return { status: 'ignored', count: 0, pushed: [], unresolved: [] };
     }
 
-    // Delete only the messages the client has confirmed.
-    const result = await this.queuedMessageRepo.delete({
+    const owned = {
       id: In(safeMessageIds),
       recipientId: safeUserId,
       deviceId: safeDeviceId, // Security: prevents a device from deleting another device's messages.
-    });
-
-    this.logger.log(
-      `[ACK][${traceId}] DONE deleted=${result.affected || 0} user=${safeUserId} device=${safeDeviceId}`
+    };
+    const banners = await this.claimBannersForAck(
+      safeMessageIds,
+      (await this.queuedMessageRepo.find({ where: owned, select: { id: true } })).map((r) => r.id),
+      traceId
     );
 
-    return { status: 'deleted', count: result.affected || 0 };
+    // Delete only the messages the client has confirmed.
+    const result = await this.queuedMessageRepo.delete(owned);
+
+    this.logger.log(
+      `[ACK][${traceId}] DONE deleted=${result.affected || 0} user=${safeUserId} device=${safeDeviceId} ` +
+        `pushed=${banners.pushed.length} unresolved=${banners.unresolved.length}`
+    );
+
+    return { status: 'deleted', count: result.affected || 0, ...banners };
+  }
+
+  /**
+   * The banner verdicts of one ACK: claims every row it found queued (`queued`) for the ACK, and
+   * only reads the claim of every other requested id - a row no longer queued is never claimed
+   * afresh, so an expired claim answers `unresolved` and never a guessed owner.
+   */
+  private async claimBannersForAck(
+    requested: readonly string[],
+    queued: readonly string[],
+    traceId: string
+  ): Promise<{ pushed: string[]; unresolved: string[] }> {
+    const pushed: string[] = [];
+    const unresolved: string[] = [];
+    const found = new Set(queued);
+    const gone = requested.filter((id) => !found.has(id));
+    try {
+      for (const id of queued) {
+        if ((await claimBanner(this.redis, id, 'ack')) === 'push') pushed.push(id);
+      }
+      const owners = await readBannerOwners(this.redis, gone);
+      for (const id of gone) {
+        const owner = owners.get(id);
+        if (owner === 'push') pushed.push(id);
+        else if (owner === undefined) unresolved.push(id);
+      }
+    } catch (e) {
+      // Every id not yet answered is unknown: announced by the page, a duplicate at worst. Accused,
+      // because a duplicate banner is the visible end of this line.
+      const answered = new Set(pushed);
+      for (const id of requested) if (!answered.has(id)) unresolved.push(id);
+      this.logger.error(
+        `[ACK][${traceId}] banner claims failed - ${unresolved.length} id(s) answered unresolved: ${String(e)}`
+      );
+    }
+    return { pushed, unresolved };
   }
 
   /**

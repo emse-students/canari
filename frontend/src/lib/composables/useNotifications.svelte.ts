@@ -665,8 +665,10 @@ export function useNotifications() {
      * the user reported on 2026-09-18.
      */
     native?: NativeMessageNotification
-  ) {
-    if (typeof window === 'undefined') return;
+  ): Promise<boolean> {
+    // RESOLVES `true` ONLY WHEN A NOTIFICATION WAS POSTED: a caller that records "this message was
+    // announced" (`notifiedMessages.ts`) must not record a throttle, a refusal or a throw.
+    if (typeof window === 'undefined') return false;
     const convKey = conversationId ?? '__default__';
 
     // A TERMINAL REFUSAL IS KNOWN BEFORE ANY OF THIS, AND ASKING IT PER MESSAGE COSTS THREE LINES A
@@ -682,7 +684,7 @@ export function useNotifications() {
     // burns the per-conversation window and prints a line about a decision that was never live.
     // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
     // the web value says nothing - the Tauri branch below is left exactly as it was.
-    if (systemNotificationsBlockedAnnounceOnce()) return;
+    if (systemNotificationsBlockedAnnounceOnce()) return false;
 
     const now = Date.now();
     const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
@@ -691,7 +693,7 @@ export function useNotifications() {
       // and "the code never got there" were the same observation from outside - which is what made
       // TAB-1's zero unattributable for a day.
       console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
-      return;
+      return false;
     }
     lastNotifAtByConv.set(convKey, now);
     // ONE BUILDER ON ANDROID, AND IT IS THE RICH ONE. Checked before the plugin rather than
@@ -706,7 +708,7 @@ export function useNotifications() {
         console.log(
           `[NOTIF] Not raised for ${convKey} - Android has one builder and this call gave it nothing to build from.`
         );
-        return;
+        return false;
       }
       const accepted = await postNativeMessageNotification(native);
       console.log(
@@ -714,12 +716,16 @@ export function useNotifications() {
           ? `[NOTIF] Raised for ${convKey} by the native builder${mentionsMe ? ` on ${CHANNEL_MENTIONS}` : ''}.`
           : `[NOTIF] Not raised for ${convKey} - the native builder refused it; nothing else posts on Android.`
       );
-      return;
+      return accepted;
     }
 
     if (isTauriRuntime()) {
       try {
-        if (await isPermissionGranted()) {
+        const granted = await isPermissionGranted();
+        if (!granted) {
+          console.log(`[NOTIF] Not raised for ${convKey} - the native permission is not granted.`);
+        }
+        if (granted) {
           // ON iOS THIS BANNER TAKES THE EXTENSION'S PLACE IN FRONT, so it is headed like it: the
           // group or the salon as the title, the sender beside the text (`pluginMessageBanner`).
           const shown =
@@ -751,7 +757,10 @@ export function useNotifications() {
           // front (#2843), and `CanariShowMessageNotification` returns early there, so this plugin
           // call is the one banner an iPhone in front gets for a message. The extension still writes
           // its push-cache entry, marked `presented: false`, so that entry suppresses nothing
-          // (`notifiedMessages.ts`). In the background the extension builds every banner. Then WEB
+          // (`notifiedMessages.ts`). OUT OF FRONT this is reached too, and only for a message whose
+          // banner the server's ACK answer gave the page: a row a push already owns is announced by
+          // the extension, and `notifyInbound` waits for that answer before it calls here
+          // (`bannerOwnership.ts`). Then WEB
           // and DESKTOP, where the plugin is the only builder there is. Desktop is a different
           // implementation again (notify-rust) that no session has measured.
           //
@@ -778,7 +787,7 @@ export function useNotifications() {
             armNotificationTapListener();
           }
         }
-        return;
+        return granted;
       } catch {
         /* fallback to web */
       }
@@ -786,7 +795,7 @@ export function useNotifications() {
 
     if (!('Notification' in window)) {
       console.log(`[NOTIF] Not raised for ${convKey} - this engine exposes no Notification API.`);
-      return;
+      return false;
     }
     {
       if (Notification.permission !== 'granted') {
@@ -801,11 +810,11 @@ export function useNotifications() {
               `[NOTIF] Not raised for ${convKey} - permission is "denied" and only the user can change it.`
             );
           }
-          return;
+          return false;
         }
         console.log(`[NOTIF] Not raised for ${convKey} - permission is "default"; asking.`);
         void requestSystemNotificationPermission();
-        return;
+        return false;
       }
       // Reset the announcement so a later revocation is audible rather than swallowed by a flag set
       // in a state the session has since left.
@@ -834,10 +843,12 @@ export function useNotifications() {
         };
         console.log(`[NOTIF] Raised for ${convKey}.`);
         setTimeout(() => n.close(), 8000);
+        return true;
       } catch (e) {
         // A browser refuses a Notification for reasons a page cannot test for in advance, and an
         // empty catch here is indistinguishable from never having tried.
         console.log(`[NOTIF] Constructor threw for ${convKey}: ${String(e)}`);
+        return false;
       }
     }
   }

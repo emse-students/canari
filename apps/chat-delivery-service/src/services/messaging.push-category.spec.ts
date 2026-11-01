@@ -66,7 +66,8 @@ describe('MessagingService - notification categories', () => {
         { provide: getRepositoryToken(MlsCommitLog), useValue: unusedRepo },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: unusedRepo },
         { provide: getRepositoryToken(RevokedDevice), useValue: unusedRepo },
-        { provide: 'REDIS_CLIENT', useValue: {} },
+        // The banner claim (`push-claim.ts`) always wins here: no ACK is ever in play in this file.
+        { provide: 'REDIS_CLIENT', useValue: { call: jest.fn().mockResolvedValue(null) } },
       ],
     }).compile();
     service = module.get(MessagingService);

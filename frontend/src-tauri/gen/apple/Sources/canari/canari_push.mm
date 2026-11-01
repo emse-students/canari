@@ -1279,10 +1279,6 @@ void CanariDrainAppGroupFcmCache(void) {
   if (incoming.length == 0) {
     return;
   }
-  // Delete first: an NSE invocation racing this drain would otherwise have its entry read and
-  // then deleted anyway. Losing one costs latency only - the message is still in the pending
-  // queue, since a push decrypt acknowledges nothing.
-  [[NSFileManager defaultManager] removeItemAtURL:srcUrl error:nil];
 
   NSString *path = [dst stringByAppendingPathComponent:kFcmCacheFileName];
   [g_cacheLock lock];
@@ -1303,8 +1299,29 @@ void CanariDrainAppGroupFcmCache(void) {
       [lines removeObjectAtIndex:0];
     }
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
-    [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    // THE COPY LANDS BEFORE THE SOURCE GOES, so a reader between the two (`push_cache_message_ids`
+    // reads both directories) sees the entries in one place or the other, never in neither. The
+    // source used to be deleted first, and that window answered "not known presented".
+    NSError *writeError = nil;
+    if (![body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&writeError]) {
+      NSLog(@"[CanariPush] drainAppGroupFcmCache: copy NOT written - the App Group file is kept: %@",
+            writeError);
+      return;
+    }
     CanariExcludeNativeCacheFilesFromBackup(dst);
+    // DELETED ONLY IF IT IS STILL WHAT WAS READ. An extension may have rewritten it since (it runs in
+    // its own process, beyond this lock); deleting then would lose its entry unread. Kept instead, it
+    // is carried at the next activation - a line carried twice is injected once, by message id.
+    NSString *now = [NSString stringWithContentsOfURL:srcUrl encoding:NSUTF8StringEncoding error:nil];
+    if ([now isEqualToString:incoming]) {
+      NSError *removeError = nil;
+      if (![[NSFileManager defaultManager] removeItemAtURL:srcUrl error:&removeError]) {
+        NSLog(@"[CanariPush] drainAppGroupFcmCache: App Group file not removed: %@", removeError);
+      }
+    } else {
+      NSLog(@"[CanariPush] drainAppGroupFcmCache: the extension wrote during the drain - its file is "
+            @"kept for the next activation");
+    }
     NSLog(@"[CanariPush] drainAppGroupFcmCache: %lu entry/entries carried over", (unsigned long)lines.count);
   } @finally {
     [g_cacheLock unlock];

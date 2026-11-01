@@ -70,8 +70,35 @@ export function unnotifiedOf(userId: string, ids: readonly string[]): string[] {
 }
 
 /**
- * Records `ids` as notified. Called BEFORE the banner is raised, in the same tick as the
- * {@link unnotifiedOf} that cleared them, so two decisions about one message cannot both pass.
+ * The ids a decision has CLAIMED and whose banner is not settled yet, per account - in memory,
+ * because a claim lives exactly as long as the one await it spans (the banner's post). Keyed
+ * `user\u0000id`.
+ */
+const announcing = new Set<string>();
+
+/**
+ * Claims, for one banner, the ids of `ids` neither recorded nor claimed by another decision, and
+ * returns them. Synchronous: the check and the claim are one tick, so two decisions about one
+ * message cannot both pass. Every claim is ended by {@link settleAnnouncement}.
+ */
+export function claimAnnouncement(userId: string, ids: readonly string[]): string[] {
+  const owed = unnotifiedOf(userId, ids).filter((id) => !announcing.has(`${userId}\u0000${id}`));
+  for (const id of owed) announcing.add(`${userId}\u0000${id}`);
+  return owed;
+}
+
+/**
+ * Ends a {@link claimAnnouncement}: the ids are RECORDED only when the banner was actually raised.
+ * A throttle, a refused permission or a throw leaves them announceable by the next delivery.
+ */
+export function settleAnnouncement(userId: string, ids: readonly string[], raised: boolean): void {
+  if (raised) recordNotified(userId, ids);
+  for (const id of ids) announcing.delete(`${userId}\u0000${id}`);
+}
+
+/**
+ * Records `ids` as notified - once their banner exists ({@link settleAnnouncement}), or when the
+ * push cache proves the system presented them.
  */
 export function recordNotified(userId: string, ids: readonly string[]): void {
   const fresh = ids.filter(Boolean);

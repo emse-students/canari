@@ -201,8 +201,10 @@ describe('iOS keeps the caches out of backups, and nothing else', () => {
     expect(append).toMatch(
       /writeToFile:path[^\n]*\n\s*CanariExcludeNativeCacheFilesFromBackup\(dir\);/
     );
+    // The drain's write is GUARDED (a failed copy returns and keeps the App Group file), so the
+    // exclusion follows the guard's closing brace rather than the write's own line.
     expect(drain).toMatch(
-      /writeToFile:path[^\n]*\n\s*CanariExcludeNativeCacheFilesFromBackup\(dst\);/
+      /writeToFile:path[^\n]*\n(?:[^\n]*\n){0,4}?\s*return;\n\s*}\n\s*CanariExcludeNativeCacheFilesFromBackup\(dst\);/
     );
     expect(mirror).toContain('CanariExcludeNativeCacheFilesFromBackup(container.path);');
     const nse = between(swift, /private func writeFcmCache\(/, /\n {2}}\n/);

@@ -15,7 +15,7 @@ import {
 import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
-import type { ConversationMeta, IStorage, StoredMessage } from '$lib/db';
+import type { IStorage, StoredMessage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import { Log } from '$lib/utils/Log';
 import type {
@@ -88,6 +88,7 @@ import {
   replayConversationHistories,
   seedConversationRows,
   type LoadConversationsContext,
+  type SeededConversations,
   purgeConversation,
   retireConversation,
   toConversationMeta,
@@ -1154,7 +1155,7 @@ export function useConversations() {
      * of this generation takes it and runs only its history phase: seeding again would rebuild every
      * row and drop what a live frame wrote into it since.
      */
-    seeded: ConversationMeta[] | null;
+    seeded: SeededConversations | null;
   }
 
   function newRestoreGeneration(id: number): RestoreGeneration {
