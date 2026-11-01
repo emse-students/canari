@@ -1,6 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
-import { isIosAppInactive, onIosAppActive } from '$lib/utils/appActive';
+import { onIosQueueGateRelease, withholdsQueuedFrame } from '$lib/utils/appActive';
 import type {
   IMlsService,
   GroupMeta,
@@ -775,23 +775,43 @@ export abstract class BaseMlsService implements IMlsService {
     setIntegrityFindingReporter((finding) =>
       this.delivery.deliveryPost('integrity-finding', { ...finding })
     );
-    // THE FRAMES LEFT QUEUED WHILE THE iPHONE APP WAS INACTIVE ARE PULLED ON ITS RETURN: the socket
-    // may have survived the short inactive window, so no reconnect pull would ever ask for them.
-    this.offIosActive = onIosAppActive(() => {
-      if (this.withheldWhileInactive.size === 0) return;
-      console.log(
-        `[QUEUE] the app is active again - pulling the ${this.withheldWhileInactive.size} frame(s) left queued while it was not`
-      );
-      this.withheldWhileInactive.clear();
-      void this.fetchPendingMessages();
-    });
+    // THE FRAMES LEFT QUEUED WHILE THE iPHONE APP WAS INACTIVE ARE PULLED ONCE THE GATE RELEASES
+    // THEM (the app active again, or their group's call live): the socket may have survived the
+    // inactive window, so no reconnect pull would ever ask for them.
+    this.offIosActive = onIosQueueGateRelease((why) => this.pullWhatTheGateReleases(why));
   }
 
   /**
    * The queued rows this page left unconsumed while the iPhone app was inactive (`appActive.ts`),
-   * pulled again when it becomes active. Their ids only: nothing else of theirs is kept.
+   * by group (`''` for a frame with no group). Their ids only: nothing else of theirs is kept. A
+   * group present here keeps withholding its later frames, so their order is never inverted, until
+   * {@link pullWhatTheGateReleases} releases the whole group and pulls it back.
    */
-  private readonly withheldWhileInactive = new Set<string>();
+  private readonly withheldFrames = new Map<string, Set<string>>();
+
+  /**
+   * Releases every withheld group the gate would now let through, and pulls them back - the ONE
+   * place a withheld frame is given up. NEVER WHILE A DRAIN RUNS: that drain is still withholding
+   * the later frames of those groups (they are in {@link withheldFrames}), and a pull started now
+   * would strand them - its copy of each is refused by the dedup the drain's own withholding has not
+   * reached yet. The drain decides at its end instead (`processQueue`), where nothing is in flight.
+   */
+  private pullWhatTheGateReleases(why: string): void {
+    if (this.withheldFrames.size === 0) return;
+    if (this.messageScheduler.draining) {
+      console.log(`[QUEUE] gate release (${why}) during a drain - decided at its end`);
+      return;
+    }
+    let count = 0;
+    for (const [group, ids] of this.withheldFrames) {
+      if (withholdsQueuedFrame(group === '' ? undefined : group)) continue;
+      count += ids.size;
+      this.withheldFrames.delete(group);
+    }
+    if (count === 0) return;
+    console.log(`[QUEUE] gate released (${why}) - pulling the ${count} frame(s) left queued`);
+    void this.fetchPendingMessages();
+  }
 
   /** Unsubscribes the active-signal listener, in {@link destroy}. */
   private offIosActive: (() => void) | null = null;
@@ -2559,8 +2579,6 @@ export abstract class BaseMlsService implements IMlsService {
     let drainIngest: BulkIngestHandle | null = null;
     /** Rows this drain left queued because the iPhone app was inactive - see the gate below. */
     const withheld: string[] = [];
-    /** Their groups: a later frame of the same group is left too, so the order is never inverted. */
-    const withheldGroups = new Set<string>();
 
     await this.messageScheduler.drain(
       async (msg) => {
@@ -2575,15 +2593,23 @@ export abstract class BaseMlsService implements IMlsService {
         // ATOMIC WITH THE START OF DECRYPTION: this check and the callback below run in one
         // synchronous stretch, and the native transition arrives as a JS task, so a frame either
         // starts here while active - and completes, banner and ACK, as before - or never starts.
-        // A frame with no queued row is consumed as before: nothing could push it.
+        // A frame with no queued row is consumed as before: nothing could push it. A frame of the
+        // live call's group is consumed too (`withholdsQueuedFrame`): the call needs its signalling.
+        // A frame of a group that already has one left queued is left too, whatever the state now,
+        // so the group's order is never inverted; the release happens after the drain, all at once.
+        const withheldKey = groupId ?? '';
         if (
           msg.queuedMessageId &&
-          (isIosAppInactive() || (groupId !== undefined && withheldGroups.has(groupId)))
+          (withholdsQueuedFrame(groupId) || this.withheldFrames.has(withheldKey))
         ) {
           this.settleDelivery(msg.queuedMessageId, false);
-          this.withheldWhileInactive.add(msg.queuedMessageId);
+          let ids = this.withheldFrames.get(withheldKey);
+          if (!ids) {
+            ids = new Set();
+            this.withheldFrames.set(withheldKey, ids);
+          }
+          ids.add(msg.queuedMessageId);
           withheld.push(msg.queuedMessageId);
-          if (groupId !== undefined) withheldGroups.add(groupId);
           return;
         }
         recordQueueDrainMessage(groupId);
@@ -2733,15 +2759,6 @@ export abstract class BaseMlsService implements IMlsService {
           drainIngest = this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
         },
         onDrainEnd: async () => {
-          if (withheld.length > 0) {
-            console.log(
-              `[QUEUE] ${withheld.length} frame(s) left queued - the iPhone app is inactive; the server is asked to push them now`
-            );
-            // NOT AWAITED, AND NOTHING DEPENDS ON IT: it only brings the deferred push forward.
-            // Unanswered or refused, the row is still queued and the server pushes it ten seconds
-            // after it sent it (`scheduleDeferredPush`), as it always has.
-            void this.delivery.pushQueuedNow(withheld);
-          }
           if (ackIds.length > 0) {
             logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
             // ANNOUNCED, still not awaited: the drain must not block on a round trip, and the
@@ -2772,6 +2789,25 @@ export abstract class BaseMlsService implements IMlsService {
         },
       }
     );
+
+    // THE WITHHELD FRAMES ARE DECIDED HERE, once the drain is over and nothing is in flight: a gate
+    // that released during the drain (the app became active, a call went live) was deferred to this
+    // point (`pullWhatTheGateReleases`), so the frames of a released group come back in one pull,
+    // in order. What is still withheld is asked to be pushed now.
+    this.pullWhatTheGateReleases('drain end');
+    if (withheld.length > 0) {
+      const held = new Set([...this.withheldFrames.values()].flatMap((ids) => [...ids]));
+      const stillWithheld = withheld.filter((id) => held.has(id));
+      if (stillWithheld.length > 0) {
+        console.log(
+          `[QUEUE] ${stillWithheld.length} frame(s) left queued - the iPhone app is inactive; the server is asked to push them now`
+        );
+        // NOT AWAITED, AND NOTHING DEPENDS ON IT: it only brings the deferred push forward.
+        // Unanswered or refused, the row is still queued and the server pushes it ten seconds
+        // after it sent it (`scheduleDeferredPush`), as it always has.
+        void this.delivery.pushQueuedNow(stillWithheld);
+      }
+    }
 
     // Messages that arrived via WebSocket while onDrainEnd was awaiting (draining=true)
     // were enqueued but could not start a new drain. Restart here so they are not stuck.

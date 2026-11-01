@@ -3,6 +3,7 @@ import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
+import { setIosLiveCallGroup } from '$lib/utils/appActive';
 import { canari } from '../proto/canari.js';
 import {
   callEndReasonFromWire,
@@ -646,6 +647,12 @@ export class CallService {
     // rings is enough - gives the two ends different keys. Held from leaving `idle` until the
     // call is over (`idle` or `ended`); a commit a person asked for is not delayed by it.
     this.callState.subscribe((state) => this.syncLeafRefreshHold(state));
+    // A LIVE CALL'S GROUP IS CONSUMED EVEN OUT OF FRONT ON AN iPHONE (`appActive.ts`): the call runs
+    // with the app in the background, and its hangup, answer and renegotiation are MLS frames of
+    // that group, which the inactive gate would otherwise leave queued. Same span as the hold above.
+    this.callState.subscribe((state) =>
+      setIosLiveCallGroup(state === 'idle' || state === 'ended' ? null : this.currentGroupId)
+    );
     // A CALL HOLDS THE APP'S SOUND from ringing (out or in) to its end (`callSoundGate`), and the
     // ringback stops on ANY move out of `calling` - the second line is the backstop of the explicit
     // stops, which name their reason first.

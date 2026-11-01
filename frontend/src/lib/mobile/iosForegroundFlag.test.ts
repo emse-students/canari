@@ -60,6 +60,30 @@ describe('the iOS active signal', () => {
     expect(launch).toContain('CanariSetAppGroupForegroundFlag(NO)');
     expect(launch).toContain('g_isInForeground = false');
   });
+
+  it('the page ASKS the same flag the extension reads, by the same name', () => {
+    const rust = readFileSync(
+      resolve(here, '../../../src-tauri/src/commands/app_active.rs'),
+      'utf8'
+    );
+    const nse = readFileSync(
+      resolve(here, '../../../src-tauri/gen/apple/canari_NSE/NotificationService.swift'),
+      'utf8'
+    );
+    const asked = /APP_ACTIVE_FLAG_FILE: &str = "([^"]+)"/.exec(rust)?.[1];
+    const written = /URLByAppendingPathComponent:@"([^"]+)"\]/.exec(
+      body(IOS_MM, 'static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {')
+    )?.[1];
+    const read = /appInForegroundFile = "([^"]+)"/.exec(nse)?.[1];
+    expect(asked).toBeDefined();
+    expect(asked).toBe(written);
+    expect(asked).toBe(read);
+  });
+
+  it('a push the page could not be told is an ERROR', () => {
+    const push = body(IOS_MM, 'static void CanariPushActiveToPage(BOOL active) {');
+    expect(push).toContain('NSLog(@"[CanariIOS] ERROR active=%d not told to the page: %@"');
+  });
 });
 
 describe('the App Group push cache drain', () => {
