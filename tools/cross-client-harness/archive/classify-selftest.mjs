@@ -378,6 +378,7 @@ const CASES = [
   // controls: a reason outside the enum, and the same sentence saying something WAS committed.
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (tree-unconfirmed) - nothing committed', 'notable'],
   ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (removed-meanwhile): w5 left the roster or the tree while the Add was rebuilt', 'notable'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (removed-meanwhile): w4, w5 left the roster or the tree while the Add was kept', 'notable'],
   ['log', '[04:00:00] [GROUP] an invitation added nobody (commit-race-lost) in 46163138... (the invitation lost at epoch 2, re-planned): AddAbortedError: The Add in 46163138... was abandoned before its stage (premise-unreadable): no roster baseline to rebuild on', 'notable'],
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (gave-up) - nothing committed', 'unexplained'],
   ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (gave-up): x', 'unexplained'],

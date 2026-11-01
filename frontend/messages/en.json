@@ -1476,6 +1476,7 @@
   "chat_invite_error_unreachable": "Nobody was added: the connection was lost before the invitation could start. Try again once you are back online.",
   "chat_invite_left_out_unchecked": "Not added: {names}. Whether they can be invited could not be checked - invite them again.",
   "chat_invite_left_out_no_device": "Not added: {names} - no device of theirs is available yet.",
+  "chat_invite_left_out_no_key_package": "Not added: {names} - none of their devices could be added right now.",
   "chat_invite_resumed_left_out": "The invitation you made in {conversation} before the connection was lost did not reach {names}. Invite them again.",
   "common_you_label": "You",
   "chat_group_no_members_label": "No members to display.",

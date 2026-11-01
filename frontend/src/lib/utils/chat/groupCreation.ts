@@ -354,7 +354,10 @@ export async function createNewGroup(
 export type BulkAdditionRefusal =
   /** No user id was named. */
   | 'nobody-named'
-  /** A block stands between the inviter and every named user, or it could not be checked. */
+  /**
+   * A block stands between the inviter and every named user it could check (an unanswered check
+   * for every one of them is `unreachable` or `failed` instead, the read's own reasons).
+   */
   | 'nobody-reachable'
   /** No named user has a device to add. */
   | 'no-devices'
@@ -411,7 +414,12 @@ export type BulkAdditionRefusal =
  */
 export interface InviteeLeftOut {
   userId: string;
-  why: 'unchecked' | 'no-device';
+  /**
+   * `unchecked`: a read about them got no answer. `no-device`: the server answered that they have
+   * none. `no-key-package`: every device of theirs was skipped by the Add (an expired, absent or
+   * untrusted KeyPackage, logged per device by `warnSkippedKeyPackages`).
+   */
+  why: 'unchecked' | 'no-device' | 'no-key-package';
 }
 
 /**
@@ -578,6 +586,12 @@ async function attemptBulkAddition(
     }
   }
   if (reachable.length === 0) {
+    // NO CHECK ANSWERED, NOBODY BLOCKED: that is a read that failed, not a block - said with the
+    // reason a device read that got no answer gives (`unreachable` when nothing answered).
+    if (leftOutCauses.size === targetUsers.length) {
+      const causes = [...leftOutCauses.values()];
+      return notAdded(unreadDevicesReason(causes), causes[0]);
+    }
     return notAdded('nobody-reachable', leftOutCauses.values().next().value);
   }
   targetUsers = reachable;
@@ -699,6 +713,9 @@ async function attemptBulkAddition(
       );
       addedUsers = added;
       warnSkippedKeyPackages(bulk.skipped, conversation.id, '[SYNC]', log);
+      // A PERSON WHOSE EVERY DEVICE WAS SKIPPED is not in the commit while the others are: left out
+      // and named, never dropped in silence (the skip itself is logged per device just above).
+      leftOut.push(...everyDeviceSkipped(allDevices, bulk.skipped, added));
 
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
@@ -836,6 +853,31 @@ async function attemptBulkAddition(
 }
 
 /** An `added` outcome, naming whoever was left out only when someone was. */
+/**
+ * The people of an Add whose EVERY device the commit skipped ({@link InviteeLeftOut} `no-key-package`)
+ * and who were not added by another of their devices. A person with no device in `skipped` is not
+ * here: whatever kept them out has its own reason.
+ *
+ * @param devices Every device the Add offered, each with the `userId` it belongs to.
+ * @param skipped The devices the commit left out for their KeyPackage.
+ * @param added The people the merged commit added.
+ */
+export function everyDeviceSkipped(
+  devices: readonly { deviceId: string; userId: string }[],
+  skipped: readonly { deviceId: string }[],
+  added: ReadonlySet<string>
+): InviteeLeftOut[] {
+  if (skipped.length === 0) return [];
+  const skippedIds = new Set(skipped.map((s) => s.deviceId));
+  const byUser = new Map<string, boolean>();
+  for (const d of devices) {
+    byUser.set(d.userId, (byUser.get(d.userId) ?? true) && skippedIds.has(d.deviceId));
+  }
+  return [...byUser]
+    .filter(([userId, allSkipped]) => allSkipped && !added.has(userId))
+    .map(([userId]) => ({ userId, why: 'no-key-package' as const }));
+}
+
 function addedOutcome(
   addedUsers: ReadonlySet<string>,
   leftOut: readonly InviteeLeftOut[]
@@ -1091,7 +1133,9 @@ export async function replanLostInvitation(
   // lifts on an event - a commit applied in the group, the next connection - so the entry waits.
   if (outcome.reason === 'add-lock-busy') return { kind: 'waiting', on: 'add-lock' };
   if (outcome.reason === 'tree-unconfirmed') return { kind: 'waiting', on: 'tree-unconfirmed' };
-  if (outcome.reason === 'unreachable') return { kind: 'waiting', on: 'connection' };
+  if (outcome.reason === 'unreachable' || outcome.reason === 'add-lock-unanswered') {
+    return { kind: 'waiting', on: 'connection' };
+  }
   return { kind: 'not-completed', reason: outcome.reason };
 }
 

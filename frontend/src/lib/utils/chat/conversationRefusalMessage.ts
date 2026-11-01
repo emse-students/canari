@@ -93,7 +93,7 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
   'nobody-reachable': () => m.chat_invite_error_nobody_reachable(),
   'no-devices': () => m.chat_invite_error_no_devices(),
   'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
-  'add-lock-unanswered': () => m.chat_invite_error_failed(),
+  'add-lock-unanswered': () => m.chat_invite_error_unreachable(),
   'no-device-added': () => m.chat_invite_error_no_device_added(),
   'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
   'removed-meanwhile': () => m.chat_invite_error_removed_meanwhile(),
@@ -107,11 +107,12 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
 /**
  * The reasons said as a WARNING rather than an error: nothing about the invitation is wrong, it is
  * waiting on the connection - kept and finishing by itself (`outcome-unknown`), or never started
- * (`unreachable`).
+ * (`unreachable`, or the add-lock request that got no answer, `add-lock-unanswered`).
  */
 const INVITE_WARNINGS: ReadonlySet<BulkAdditionRefusal> = new Set([
   'outcome-unknown',
   'unreachable',
+  'add-lock-unanswered',
 ]);
 
 /**
@@ -175,11 +176,18 @@ async function reportLeftOut(
   }
   const unchecked = leftOut.filter((l) => l.why === 'unchecked');
   const noDevice = leftOut.filter((l) => l.why === 'no-device');
+  const noKeyPackage = leftOut.filter((l) => l.why === 'no-key-package');
   if (unchecked.length > 0) {
     showToast(m.chat_invite_left_out_unchecked({ names: await namesOf(unchecked) }), 'warning');
   }
   if (noDevice.length > 0) {
     showToast(m.chat_invite_left_out_no_device({ names: await namesOf(noDevice) }), 'warning');
+  }
+  if (noKeyPackage.length > 0) {
+    showToast(
+      m.chat_invite_left_out_no_key_package({ names: await namesOf(noKeyPackage) }),
+      'warning'
+    );
   }
 }
 

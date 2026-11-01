@@ -113,6 +113,11 @@ describe('reportBulkAdditionRefusal', () => {
     expect(m.chat_invite_error_unreachable()).not.toBe(m.chat_invite_error_failed());
   });
 
+  it('says an add-lock request that got NO ANSWER as the same WARNING: nothing is known of another device', () => {
+    reportBulkAdditionRefusal('add-lock-unanswered');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_invite_error_unreachable(), 'warning');
+  });
+
   it('logs NOTHING: the outcome was logged once where it was decided (TOK-2)', () => {
     const warn = vi.mocked(console.warn);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -136,11 +141,13 @@ describe('reportBulkAdditionOutcome', () => {
       leftOut: [
         { userId: 'carol', why: 'unchecked' },
         { userId: 'dave', why: 'no-device' },
+        { userId: 'erin', why: 'no-key-package' },
       ],
     });
     expect(showToast.mock.calls).toEqual([
       [m.chat_invite_left_out_unchecked({ names: 'Carol' }), 'warning'],
       [m.chat_invite_left_out_no_device({ names: 'Dave' }), 'warning'],
+      [m.chat_invite_left_out_no_key_package({ names: 'erin' }), 'warning'],
     ]);
   });
 

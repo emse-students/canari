@@ -1508,6 +1508,7 @@
   "chat_invite_error_unreachable": "Personne n'a été ajouté : la connexion a été perdue avant le début de l'ajout. Réessayez une fois la connexion revenue.",
   "chat_invite_left_out_unchecked": "Non ajouté : {names}. Leur ajout n'a pas pu être vérifié - invitez-les à nouveau.",
   "chat_invite_left_out_no_device": "Non ajouté : {names} - aucun de leurs appareils n'est encore disponible.",
+  "chat_invite_left_out_no_key_package": "Non ajouté : {names} - aucun de leurs appareils n'a pu être ajouté pour le moment.",
   "chat_invite_resumed_left_out": "L'ajout fait dans {conversation} avant la perte de connexion n'a pas atteint {names}. Invitez-les à nouveau.",
   "common_you_label": "Vous",
   "chat_group_no_members_label": "Aucun membre à afficher.",

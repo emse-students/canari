@@ -267,6 +267,56 @@ describe('inviteMembersToGroup - names whoever it left out', () => {
     });
   });
 
+  it('a person whose EVERY device the Add skipped is named `no-key-package`; one with a device added is not', async () => {
+    const d = inviteDeps();
+    d.mlsService.fetchUserDevices = vi.fn(async (u: string) =>
+      u === 'dave' ? [{ deviceId: 'dave-a' }, { deviceId: 'dave-b' }] : [{ deviceId: `${u}-dev` }]
+    );
+    // carol's only device is skipped; dave loses one of two, so only carol is left out.
+    (d.mlsService as { addMembersBulk: unknown }).addMembersBulk = vi.fn(async () => ({
+      addedDeviceIds: ['bob-dev', 'dave-b'],
+      skipped: [
+        { deviceId: 'carol-dev', reason: 'expired' as const },
+        { deviceId: 'dave-a', reason: 'invalid-signature' as const },
+      ],
+      welcome: new Uint8Array([1]),
+    }));
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol', 'dave'], convo, d.deps as never);
+
+    expect(outcome).toEqual({
+      kind: 'added',
+      addedUsers: ['bob', 'dave'],
+      leftOut: [{ userId: 'carol', why: 'no-key-package' }],
+    });
+  });
+
+  it('every block check unanswered and nobody blocked is `unreachable`, not `nobody-reachable`', async () => {
+    const d = inviteDeps();
+    vi.mocked(isBlockedWith).mockRejectedValue(
+      new TransportFailureError(new TypeError('Failed to fetch'))
+    );
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'unreachable' });
+    expect(d.mlsService.addMembersBulk).not.toHaveBeenCalled();
+    vi.mocked(isBlockedWith).mockResolvedValue(false);
+  });
+
+  it('one invitee blocked and the other unchecked is still `nobody-reachable`', async () => {
+    const d = inviteDeps();
+    vi.mocked(isBlockedWith).mockImplementation(async (u: string) => {
+      if (u === 'carol') throw new TransportFailureError(new TypeError('Failed to fetch'));
+      return true;
+    });
+
+    const outcome = await inviteMembersToGroup(['bob', 'carol'], convo, d.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'nobody-reachable' });
+    vi.mocked(isBlockedWith).mockResolvedValue(false);
+  });
+
   it('a blocked invitee is NOT named: that skip is deliberate', async () => {
     const d = inviteDeps();
     vi.mocked(isBlockedWith).mockImplementation(async (u: string) => u === 'carol');

@@ -1221,7 +1221,7 @@ const NOTABLE = [
   // an ask settled first) is forgiven only in the rows that play it, at info
   // (`admissionMemberNarration`).
   /^\[GROUP\] an invitation added nobody \((?:tree-unconfirmed|commit-race-lost)\) in [0-9a-f]{8}\.\.\.(?: \(the invitation lost at epoch \d+, re-planned\))?: AddAbortedError: The Add in [0-9a-f]{8}\.\.\. was abandoned before its stage \((?:tree-unconfirmed|premise-unreadable)\): .+$/,
-  /^\[GROUP\] an invitation added nobody \(removed-meanwhile\) in [0-9a-f]{8}\.\.\.(?: \(the invitation lost at epoch \d+, re-planned\))?: AddAbortedError: The Add in [0-9a-f]{8}\.\.\. was abandoned before its stage \(removed-meanwhile\): \S+ left the roster or the tree while the Add was (?:rebuilt|kept)$/,
+  /^\[GROUP\] an invitation added nobody \(removed-meanwhile\) in [0-9a-f]{8}\.\.\.(?: \(the invitation lost at epoch \d+, re-planned\))?: AddAbortedError: The Add in [0-9a-f]{8}\.\.\. was abandoned before its stage \(removed-meanwhile\): \S+(?:, \S+)* left the roster or the tree while the Add was (?:rebuilt|kept)$/,
   /^\[\w+\] Tree of [0-9a-f]{8}\.\.\. not confirmed at the server's epoch, cannot say whether \S+ is a member - nothing added$/,
   /^\[COMMIT_RACE\] [0-9a-f]{8}\.\.\. .+ was refused \((?:epoch-moved|seat-claim-overtaken), now epoch \d+\) - rebuilding on the tree that won$/,
   /^\[COMMIT\] [0-9a-f]{8}\.\.\. refused concurrent_commit at epoch \d+: read the commit log, \d+ commit\(s\) applied, now epoch \d+$/,
