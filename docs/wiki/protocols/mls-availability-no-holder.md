@@ -388,9 +388,17 @@ history from it - the tripwire D2/D3 narrowed. So the self-join must not open wh
 still be a member. **The server holds the door shut** with one constant,
 `FURTHER_DEVICE_SELF_JOIN_OPEN = false` (`apps/chat-delivery-service/src/utils/device-seat.ts`):
 
-- `GET /api/mls/group-info/:groupId?deviceId=` serves the base WITHOUT the asking device's seat, so
-  the client reads `seat_unreadable` and does not join (`recovery.ts`, the D1 block);
+- a `no_peer_online` answer to a welcome_request says so (`selfJoin: false`), and the client then
+  waits for a member's Add without a second `externalJoin` or base fetch, logging it once per pass at
+  info (`recovery.ts`, the D1 block). Only `selfJoin: true` opens the door; an older server that says
+  nothing reads as shut;
+- `GET /api/mls/group-info/:groupId?deviceId=` serves the base WITHOUT the asking device's seat - a
+  second lock: a join that got there anyway reads `seat_unreadable` and is not built;
 - a `selfJoinIfNobody` ask is stored, queued and woken exactly as any other.
+
+The stored frame, the relayed frame and the frame a withdrawal `LREM`s are built by ONE function,
+`welcomeRequestFrame` (`messaging.service.ts`), so a withdrawal removes the very bytes the store
+pushed (pinned by `messaging.no-holder-facts.spec.ts`, store then withdraw).
 
 A constant, not an environment switch: the condition is a fact about the shipped clients, the same on
 every estate, and the commit that flips it is its record. **Lifted by a one-line pull request once
@@ -420,8 +428,9 @@ pending state (`readNoHolder`, `frontend/src/lib/utils/chat/noHolder.svelte.ts`)
 3. **Then the seat.** A queued Welcome or an Add in flight reads `welcome-owed`; an unread add lock or an
    `active` seat reads `unknown`.
 4. **Then the holders (review of #2832).** A group merely SLOW is not a dead one. The answer also
-   carries `holders`: `liveHolderDevices`, the count of OTHER users' devices with an `active` row in the
-   group AND a KeyPackage published within `RETENTION_WINDOW_MS` (90 days - the window the server
+   carries `holders`: `liveHolderDevices`, the count of devices other than the asking one - the
+   user's OWN other devices included (re-review of #2832: one of them coming back re-adds this one) -
+   with an `active` row in the group AND a KeyPackage published within `RETENTION_WINDOW_MS` (90 days - the window the server
    already uses to call a device gone, `detectStaleDevices`), and `wakeSent`, whether this very request
    woke member phones. Anything but `0` and `false` reads `unknown`: a member who did not open the app
    tonight is still a holder.

@@ -20,8 +20,9 @@ import { isWelcomeOwed, readWelcomeOwedFromSeat } from './welcomeOwed';
  *    never reach the banner - the branch is reachable only once the base fact has ruled the join out;
  * 2. then the SEAT: a queued Welcome or an Add in flight is on its way, and an unreadable seat is
  *    unknown;
- * 3. then the HOLDERS: a group merely SLOW is not a dead one - while any other user's device still
- *    holds it and published a KeyPackage within the server's retention window, or this very answer
+ * 3. then the HOLDERS: a group merely SLOW is not a dead one - while any other device still
+ *    holds it (any device but this one - the user's own other device included) and published a
+ *    KeyPackage within the server's retention window, or this very answer
  *    woke member phones, the reading is `unknown` and the ordinary waiting text stays;
  * 4. only then, with the server's own verdict that no member device is online, `no-holder`.
  *

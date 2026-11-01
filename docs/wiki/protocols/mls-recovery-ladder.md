@@ -272,7 +272,7 @@ and no member's device online no longer waits for one: the `stored` answer is th
 join (D1), so the server-row ask once planned for it is not needed and was closed on 2026-10-31. **Until
 the server opens that door** (`FURTHER_DEVICE_SELF_JOIN_OPEN`, held shut until `minClientVersion`
 carries D2/D3 - [the gate](mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client)),
-the join reads `seat_unreadable` and the device waits for a member as before.
+the answer says `selfJoin: false` and the device waits for a member as before, without a second join.
 
 **The history answerer says its withholding once and counts repeats.** `utils/graine/frameHandler.ts` says
 `withholding N seed(s)` and `not answering ...'s history ask ...` once per asking device and key group

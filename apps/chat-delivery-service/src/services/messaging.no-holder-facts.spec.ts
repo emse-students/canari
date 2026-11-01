@@ -28,15 +28,34 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   let service: MessagingService;
 
   const pipelineCalls: { op: string; args: unknown[] }[] = [];
+  /** An in-memory Redis behind the pipeline: sets and lists, applied in call order at `exec`. */
+  const sets = new Map<string, Set<string>>();
+  const lists = new Map<string, string[]>();
+  const apply = (op: string, args: unknown[]) => {
+    const key = String(args[0]);
+    if (op === 'sadd') (sets.get(key) ?? sets.set(key, new Set()).get(key)!).add(String(args[1]));
+    if (op === 'srem') sets.get(key)?.delete(String(args[1]));
+    if (op === 'rpush') (lists.get(key) ?? lists.set(key, []).get(key)!).push(String(args[1]));
+    if (op === 'lrem')
+      lists.set(
+        key,
+        (lists.get(key) ?? []).filter((v) => v !== args[2])
+      );
+  };
   const pipe = () => {
     const p: Record<string, unknown> = {};
+    const queued: { op: string; args: unknown[] }[] = [];
     for (const op of ['sadd', 'srem', 'rpush', 'lrem', 'expire']) {
       p[op] = jest.fn((...args: unknown[]) => {
         pipelineCalls.push({ op, args });
+        queued.push({ op, args });
         return p;
       });
     }
-    p.exec = jest.fn().mockResolvedValue([]);
+    p.exec = jest.fn(async () => {
+      for (const q of queued) apply(q.op, q.args);
+      return [];
+    });
     return p;
   };
   const redis = {
@@ -82,6 +101,8 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     queuedMessageRepo = repo();
     keyPackageRepo = repo();
     pipelineCalls.length = 0;
+    sets.clear();
+    lists.clear();
     deviceRows = [
       { userId: 'requ', deviceId: 'reqd', status: 'pending' },
       { userId: 'ua', deviceId: 'da', status: 'active' },
@@ -142,6 +163,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
         seat: { status: 'pending', welcomeQueued: false, addInFlight: false },
         holders: { liveHolderDevices: 1, wakeSent: true },
       },
+      selfJoin: false,
     });
   });
 
@@ -192,7 +214,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   });
 
   describe('whether a member could still answer (D5 liveness)', () => {
-    it("counts only OTHER users' active devices with a KeyPackage inside the retention window", async () => {
+    it('counts every active device with a KeyPackage inside the retention window but the asking one', async () => {
       deviceRows.push(
         { userId: 'requ', deviceId: 'old-phone', status: 'active' },
         { userId: 'ub', deviceId: 'db', status: 'active' },
@@ -201,11 +223,25 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
       liveKeyPackages = [
         { userId: 'ua', deviceId: 'da' },
         { userId: 'requ', deviceId: 'old-phone' },
+        { userId: 'requ', deviceId: 'reqd' },
       ];
 
       const res = await service.notifyBaseRefreshRequest('requ', body);
 
-      expect(res.facts?.holders).toEqual({ liveHolderDevices: 1, wakeSent: false });
+      expect(res.facts?.holders).toEqual({ liveHolderDevices: 2, wakeSent: false });
+    });
+
+    it("counts the user's OWN other device when it is the only live holder, so no banner shows", async () => {
+      deviceRows = [
+        { userId: 'requ', deviceId: 'reqd', status: 'pending' },
+        { userId: 'requ', deviceId: 'old-phone', status: 'active' },
+        { userId: 'ua', deviceId: 'da', status: 'active' },
+      ];
+      liveKeyPackages = [{ userId: 'requ', deviceId: 'old-phone' }];
+
+      const res = await service.notifyBaseRefreshRequest('requ', body);
+
+      expect(res.facts?.holders.liveHolderDevices).toBe(1);
     });
 
     it('reads zero when every other holder is gone past the window', async () => {
@@ -234,6 +270,9 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
       const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
 
       expect(res.status).toBe('no_peer_online');
+      // The answer says the door is shut, so the client waits for a member's Add without a second
+      // join attempt (re-review of #2832, N2).
+      expect(res.selfJoin).toBe(false);
       expect(fcmWake).toHaveBeenCalledTimes(1);
       expect(pipelineCalls.some((c) => c.op === 'sadd')).toBe(true);
     });
@@ -259,6 +298,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
       const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
 
       expect(res.status).toBe('no_peer_online');
+      expect(res.selfJoin).toBe(true);
       expect(res.facts?.holders).toEqual({ liveHolderDevices: 1, wakeSent: false });
       expect(fcmWake).not.toHaveBeenCalled();
       expect(redis.sadd).not.toHaveBeenCalled();
@@ -280,6 +320,17 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
           }),
         ],
       });
+    });
+
+    it('withdraws exactly the bytes the store path pushed: an earlier stored ask leaves nothing behind', async () => {
+      await service.notifyWelcomeRequest('requ', body);
+      expect(sets.get('pending_welcome:g1')?.has('requ:reqd')).toBe(true);
+      expect(lists.get('pending_welcome_notify:ua')).toHaveLength(1);
+
+      await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
+
+      expect(sets.get('pending_welcome:g1')?.has('requ:reqd')).toBe(false);
+      expect(lists.get('pending_welcome_notify:ua')).toEqual([]);
     });
 
     it('still stores and wakes an ask without the intent', async () => {

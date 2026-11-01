@@ -495,6 +495,32 @@ export interface SendWelcomeBody {
   groupId: string;
 }
 
+/**
+ * THE ONE BUILDER OF A `welcome_request` FRAME (review of #2832): the frame relayed to an online
+ * member, the frame queued in each member's `pending_welcome_notify:{userId}` list, and the frame a
+ * withdrawal `LREM`s from that list. A withdrawal only finds what the store pushed if both are the
+ * same bytes, so neither site may spell the JSON itself.
+ */
+export function welcomeRequestFrame(
+  groupId: string,
+  requesterUserId: string,
+  requesterDeviceId: string
+): string {
+  return JSON.stringify({ type: 'welcome_request', groupId, requesterUserId, requesterDeviceId });
+}
+
+/** The distinct user ids of `members` (`user:device` keys) other than the requester's own device. */
+function memberUserIdsOtherThan(members: string[], senderKey: string): string[] {
+  return [
+    ...new Set(
+      members
+        .filter((m) => m !== senderKey)
+        .map((m) => m.split(':')[0])
+        .filter(Boolean)
+    ),
+  ];
+}
+
 export interface NotifyWelcomeRequestBody {
   groupId: string;
   requesterUserId: string;
@@ -3403,7 +3429,7 @@ export class MessagingService {
       if (!roster || roster.awaitingAdmission === true) return undefined;
       const base = await this.readGroupInfo(groupId);
       const seat = await this.seatOf(groupId, userId, deviceId);
-      const liveHolderDevices = await this.liveHolderDevices(groupId, userId);
+      const liveHolderDevices = await this.liveHolderDevices(groupId, userId, deviceId);
       return {
         base: base ? { baseEpoch: base.baseEpoch, activeEpoch: base.activeEpoch } : null,
         seat,
@@ -3418,19 +3444,27 @@ export class MessagingService {
   }
 
   /**
-   * How many devices of OTHER users still hold `groupId` and are alive: an `active` row in the group,
+   * How many devices other than the asking one still hold `groupId` and are alive: an `active` row,
    * and a KeyPackage published within {@link RETENTION_WINDOW_MS} - the window this service already
    * treats as "a device is gone" (`detectStaleDevices`), so a device is never alive for one rule and
    * dead for this one. A member who did not open the app tonight is counted; one gone for months is
    * not ({@link HolderLiveness}).
    */
-  private async liveHolderDevices(groupId: string, requesterUserId: string): Promise<number> {
+  private async liveHolderDevices(
+    groupId: string,
+    requesterUserId: string,
+    requesterDeviceId: string
+  ): Promise<number> {
     const requester = requesterUserId.trim().toLowerCase();
     const rows = await this.deviceGroupRepo.find({
       where: { groupId, status: 'active' },
       select: { userId: true, deviceId: true },
     });
-    const others = rows.filter((r) => r.userId.trim().toLowerCase() !== requester);
+    // EVERY HOLDER BUT THE ASKING DEVICE ITSELF (re-review of #2832): the user's OWN other device
+    // still holding the group is a holder like any member's - it re-adds this one when it comes back.
+    const others = rows.filter(
+      (r) => !(r.userId.trim().toLowerCase() === requester && r.deviceId === requesterDeviceId)
+    );
     if (others.length === 0) return 0;
     const live = await this.keyPackageRepo.find({
       where: {
@@ -5868,7 +5902,7 @@ export class MessagingService {
   async notifyWelcomeRequest(
     authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
-  ): Promise<{ status: string; target?: string; facts?: NoHolderFacts }> {
+  ): Promise<{ status: string; target?: string; facts?: NoHolderFacts; selfJoin?: boolean }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
@@ -5899,12 +5933,7 @@ export class MessagingService {
         (awaitingAsk ? ` ask=awaiting-member repeat=${nth} (said at 1, 10, 100...)` : '')
     );
 
-    const notification = JSON.stringify({
-      type: 'welcome_request',
-      groupId,
-      requesterUserId,
-      requesterDeviceId,
-    });
+    const notification = welcomeRequestFrame(groupId, requesterUserId, requesterDeviceId);
 
     for (const member of members) {
       if (member === senderKey) continue;
@@ -5952,12 +5981,7 @@ export class MessagingService {
               recipientId: memberUserId,
               deviceId: memberDeviceId,
               proto: Buffer.from(
-                JSON.stringify({
-                  type: 'welcome_request',
-                  groupId,
-                  requesterUserId: storedUserId,
-                  requesterDeviceId: storedDeviceId,
-                })
+                welcomeRequestFrame(groupId, storedUserId, storedDeviceId)
               ).toString('base64'),
               isWelcomeRequest: true,
               groupId,
@@ -5990,7 +6014,14 @@ export class MessagingService {
       !awaitingAsk &&
       (await this.baseIsCurrent(groupId, traceId))
     ) {
-      await this.withdrawStoredWelcomeRequest(groupId, senderKey, members, traceId);
+      await this.withdrawStoredWelcomeRequest(
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        senderKey,
+        members,
+        traceId
+      );
       say(
         `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - a further device that joins by itself: nothing stored, nothing woken`
       );
@@ -6001,7 +6032,11 @@ export class MessagingService {
         traceId,
         false
       );
-      return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
+      return {
+        status: 'no_peer_online',
+        ...(facts ? { facts } : {}),
+        selfJoin: this.furtherDeviceSelfJoinOpen,
+      };
     }
 
     // No peer online - persist so the request is replayed when a peer connects.
@@ -6014,20 +6049,8 @@ export class MessagingService {
     // Also store per-member in pending_welcome_notify:{userId} so the Gateway can drain
     // signals as soon as a member reconnects, without waiting for the next welcome_request.
     // The format is the JSON that the Gateway will send directly to the WebSocket client.
-    const notificationFrame = JSON.stringify({
-      type: 'welcome_request',
-      groupId,
-      requesterUserId,
-      requesterDeviceId,
-    });
-    const uniqueMemberUserIds = [
-      ...new Set(
-        members
-          .filter((m) => m !== senderKey)
-          .map((m) => m.split(':')[0])
-          .filter(Boolean)
-      ),
-    ];
+    const notificationFrame = welcomeRequestFrame(groupId, requesterUserId, requesterDeviceId);
+    const uniqueMemberUserIds = memberUserIdsOtherThan(members, senderKey);
     if (uniqueMemberUserIds.length > 0) {
       const notifyPipeline = this.redis.pipeline();
       for (const memberUserId of uniqueMemberUserIds) {
@@ -6066,7 +6089,11 @@ export class MessagingService {
       traceId,
       !awaitingAsk
     );
-    return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
+    return {
+      status: 'no_peer_online',
+      ...(facts ? { facts } : {}),
+      selfJoin: this.furtherDeviceSelfJoinOpen,
+    };
   }
 
   /**
@@ -6088,32 +6115,24 @@ export class MessagingService {
   /**
    * Withdraws a `welcome_request` an earlier pass stored for `senderKey`: its entry in
    * `pending_welcome:{groupId}` and the frame queued for each member in
-   * `pending_welcome_notify:{userId}` (the frame is the same deterministic JSON, so `LREM` finds it).
+   * `pending_welcome_notify:{userId}` - built by {@link welcomeRequestFrame}, the same bytes the store
+   * pushed, so `LREM` finds it.
    * Best-effort and logged: what it misses is a stale ask a member's device answers with an Add the
    * gate refuses for a seat already active.
    */
   private async withdrawStoredWelcomeRequest(
     groupId: string,
+    requesterUserId: string,
+    requesterDeviceId: string,
     senderKey: string,
     members: string[],
     traceId: string
   ): Promise<void> {
-    const [requesterUserId, requesterDeviceId] = senderKey.split(':');
-    const frame = JSON.stringify({
-      type: 'welcome_request',
-      groupId,
-      requesterUserId,
-      requesterDeviceId,
-    });
+    const frame = welcomeRequestFrame(groupId, requesterUserId, requesterDeviceId);
     try {
       const pipeline = this.redis.pipeline();
       pipeline.srem(`pending_welcome:${groupId}`, senderKey);
-      for (const memberUserId of new Set(
-        members
-          .filter((m) => m !== senderKey)
-          .map((m) => m.split(':')[0])
-          .filter(Boolean)
-      )) {
+      for (const memberUserId of memberUserIdsOtherThan(members, senderKey)) {
         pipeline.lrem(`pending_welcome_notify:${memberUserId}`, 0, frame);
       }
       await pipeline.exec();

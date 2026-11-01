@@ -60,7 +60,16 @@ export type { IncomingDeliveryMeta };
  */
 export type WelcomeRequestAnswer =
   | { status: 'forwarded'; target: string }
-  | { status: 'stored'; facts?: NoHolderFacts }
+  | {
+      status: 'stored';
+      facts?: NoHolderFacts;
+      /**
+       * Whether the server lets a further device join by itself (D1) - `true` only when it says so.
+       * Absent (an older server) or `false` (the door is held shut until every member client reads
+       * such an entry as D2/D3 say): the device waits for a member's Add and tries no join.
+       */
+      selfJoin?: boolean;
+    }
   | null;
 
 /**
@@ -75,9 +84,9 @@ export type NoHolderFacts = {
   base: { baseEpoch: number; activeEpoch: number } | null;
   seat: DistributionSeat;
   /**
-   * `liveHolderDevices`: OTHER users' devices with an active row in the group and a KeyPackage
-   * published within the server's retention window - a member who merely did not open the app
-   * tonight. `wakeSent`: this very answer woke member phones in the background.
+   * `liveHolderDevices`: every device but the asking one - the user's own other devices included -
+   * with an active row in the group and a KeyPackage published within the server's retention
+   * window: a holder who merely did not open the app tonight. `wakeSent`: this very answer woke member phones in the background.
    */
   holders: { liveHolderDevices: number; wakeSent: boolean };
 };
