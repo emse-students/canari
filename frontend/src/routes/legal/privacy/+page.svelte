@@ -151,9 +151,9 @@
           campus, sa formation ou son espace, y compris un membre du personnel, et y compris les
           publications parues avant votre acceptation ; elle est notifiée quand vous publiez ou
           lancez un direct. Elle trouve vos publications dans son onglet « Suivis » et dans la
-          recherche, pas dans « Tout », qui reste limité aux espaces ; un direct en cours lui est
-          montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages et
-          les messages du chat d'un direct sur une de vos publications personnelles sont lus par
+          recherche, pas dans « Mon espace », qui reste limité aux espaces ; un direct en cours lui
+          est montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages
+          et les messages du chat d'un direct sur une de vos publications personnelles sont lus par
           tout son public, qui comprend donc ces abonnés. Elle ne voit jamais ce que vous publiez de
           façon anonyme. La retirer de vos abonnés ou se désabonner lui retire aussitôt cet accès ;
           un blocage, dans un sens ou dans l'autre, le lui retire aussitôt et supprime l'abonnement,
