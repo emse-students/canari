@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServerInstant } from '$lib/mls-client/serverInstant';
 import type { Conversation } from '$lib/types';
 import { recordEviction } from './eviction';
-import { drainOwedRemovalNotices, owesRemovalNotice, removalNoticeId } from './removalNotice';
+import {
+  drainOwedRemovalNotices,
+  forgetRemovalNotices,
+  owesRemovalNotice,
+  removalNoticeId,
+} from './removalNotice';
 
 /**
  * A removal line whose instant the server did not answer is OWED, durably, and written when the
@@ -66,6 +71,7 @@ const evict = (
 
 beforeEach(() => {
   localStorage.clear();
+  forgetRemovalNotices();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -96,6 +102,7 @@ describe('the removal line is owed until the server answers', () => {
       askRemovedAt: async () => ({ kind: 'at', at: REMOVED_AT }),
       addMessageToChat: w.addMessageToChat,
       log: () => {},
+      isCurrent: () => true,
     });
     expect(w.written).toEqual([
       { id: removalNoticeId(w.groupId, REMOVED_AT), serverTimestamp: REMOVED_AT },
@@ -121,14 +128,111 @@ describe('the removal line is owed until the server answers', () => {
     expect(ask).toHaveBeenCalledTimes(1);
   });
 
-  it('two evidences landing together write ONE line, under the removal id', async () => {
+  it('two evidences landing together write ONE line, even with different instants', async () => {
     const w = world();
-    const ask = async (): Promise<ServerInstant> => ({ kind: 'at', at: REMOVED_AT });
-    // The thread is not yet showing the first line when the second evidence reads it.
-    const writes: Promise<unknown>[] = [evict(w, ask), evict(w, ask, 'inbound-frame')];
+    // The Remove commit's delivery and the announcement's are two instants of one removal.
+    const writes: Promise<unknown>[] = [
+      evict(w, async () => ({ kind: 'at', at: REMOVED_AT })),
+      evict(w, async () => ({ kind: 'at', at: REMOVED_AT + 40 }), 'inbound-frame'),
+    ];
     await Promise.all(writes);
-    const ids = new Set(w.written.map((x) => x.id));
-    expect(ids).toEqual(new Set([removalNoticeId(w.groupId, REMOVED_AT)]));
+    // Whichever evidence writes first, the second finds the line and writes none.
+    expect(w.written).toHaveLength(1);
+  });
+
+  /** The 2026-09-22 rule kept across the ask (review of #2890, MED-B). */
+  it('a removal undone WHILE its date is asked writes no line, and is settled', async () => {
+    const w = world();
+    const readmit = () =>
+      w.conversations.set(w.groupId, { ...w.conversations.get(w.groupId)!, lifecycle: 'active' });
+    await evict(w, async () => {
+      readmit(); // a Welcome installs during the await
+      return { kind: 'at', at: REMOVED_AT };
+    });
+    expect(w.written).toEqual([]);
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(false);
+  });
+
+  it('the drain: a removal undone while its date is asked writes no line', async () => {
+    const w = world();
+    await evict(w, async () => ({ kind: 'unserved' }));
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(true);
+    await drainOwedRemovalNotices({
+      ownerId: OWNER,
+      conversations: w.conversations,
+      askRemovedAt: async () => {
+        w.conversations.set(w.groupId, {
+          ...w.conversations.get(w.groupId)!,
+          lifecycle: 'active',
+        });
+        return { kind: 'at', at: REMOVED_AT };
+      },
+      addMessageToChat: w.addMessageToChat,
+      log: () => {},
+      isCurrent: () => true,
+    });
+    expect(w.written).toEqual([]);
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(false);
+  });
+
+  it('the drain writes nothing once its session ended, and the line stays owed', async () => {
+    const w = world();
+    await evict(w, async () => ({ kind: 'unserved' }));
+    let current = true;
+    await drainOwedRemovalNotices({
+      ownerId: OWNER,
+      conversations: w.conversations,
+      askRemovedAt: async () => {
+        current = false; // signed out while the answer travelled
+        return { kind: 'at', at: REMOVED_AT };
+      },
+      addMessageToChat: w.addMessageToChat,
+      log: () => {},
+      isCurrent: () => current,
+    });
+    expect(w.written).toEqual([]);
+    expect(owesRemovalNotice(OWNER, w.groupId)).toBe(true);
+  });
+
+  /** Review of #2890, MED-A: an answered "no instant" is per account and per session, and said. */
+  it('an answered "no instant" silences only this account, only this session, and says so', async () => {
+    const w = world();
+    const log = vi.fn();
+    await evict(w, async () => ({ kind: 'none' }));
+    const again = () =>
+      recordEviction({
+        conversations: w.conversations,
+        groupId: w.groupId,
+        evidence: 'inbound-frame',
+        ownerId: OWNER,
+        askRemovedAt: async () => ({ kind: 'at', at: REMOVED_AT }),
+        addMessageToChat: w.addMessageToChat,
+        saveConversation: vi.fn(async () => {}),
+        log,
+      });
+    await again();
+    expect(w.written).toEqual([]);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('removal notice not asked'));
+    // Another account on this install asks for itself.
+    await recordEviction({
+      conversations: w.conversations,
+      groupId: w.groupId,
+      evidence: 'inbound-frame',
+      ownerId: 'bob',
+      askRemovedAt: async () => ({ kind: 'at', at: REMOVED_AT }),
+      addMessageToChat: w.addMessageToChat,
+      saveConversation: vi.fn(async () => {}),
+      log: () => {},
+    });
+    expect(w.written).toHaveLength(1);
+  });
+
+  it('the next session asks afresh after an answered "no instant"', async () => {
+    const w = world();
+    await evict(w, async () => ({ kind: 'none' }));
+    forgetRemovalNotices(); // the sign-out
+    await evict(w, async () => ({ kind: 'at', at: REMOVED_AT }), 'inbound-frame');
+    expect(w.written).toHaveLength(1);
   });
 
   it('the drain drops a group re-admitted since, or whose row is gone', async () => {
@@ -142,6 +246,7 @@ describe('the removal line is owed until the server answers', () => {
       askRemovedAt: ask,
       addMessageToChat: w.addMessageToChat,
       log: () => {},
+      isCurrent: () => true,
     });
     expect(ask).not.toHaveBeenCalled();
     expect(owesRemovalNotice(OWNER, w.groupId)).toBe(false);

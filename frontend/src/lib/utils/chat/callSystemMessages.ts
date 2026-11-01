@@ -33,11 +33,20 @@ export interface CallSystemMessageContext {
 
 let activeContext: CallSystemMessageContext | null = null;
 const endedCallIds = new Set<string>();
+/**
+ * The calls whose row THIS device's end wrote (no started row here): the only rows the hangup's server
+ * time may be patched onto. A started row with no server time (its invite's send answered none) keeps
+ * the order key of its start - the end's acceptance would move it.
+ */
+const rowsWrittenByTheEnd = new Set<string>();
 
 /** Registers the chat context used by call lifecycle notifications. Cleared on logout. */
 export function setCallSystemMessageContext(ctx: CallSystemMessageContext | null): void {
   activeContext = ctx;
-  if (!ctx) endedCallIds.clear();
+  if (!ctx) {
+    endedCallIds.clear();
+    rowsWrittenByTheEnd.clear();
+  }
 }
 
 /** Returns the currently registered call system-message context, if any. */
@@ -170,6 +179,7 @@ export async function recordCallEnded(
       groupId,
       { isSystem: true, messageId, soleWriter: true, ...at }
     );
+    if (at.ownAct) rowsWrittenByTheEnd.add(callId);
     return;
   }
 
@@ -212,8 +222,9 @@ function callDurationMs(
  * Gives a call row the server's acceptance of this device's own hangup, once its send answers - the
  * way `patchServerTimestamp` gives an own text row its own. The record is written at the act, never
  * held for the send (a catch-up gate or an epoch barrier can hold a send for minutes, and a kill
- * before it settles would leave the row unfinalised). Only a row that has no server time yet (one the
- * end itself created) takes it: a finalised row keeps the order key of its start.
+ * before it settles would leave the row unfinalised). Only a row this device's end WROTE takes it
+ * ({@link rowsWrittenByTheEnd}): a finalised row keeps the order key of its start, even one whose
+ * invite's send answered no server time.
  */
 export async function patchCallRecordServerTime(
   ctx: CallSystemMessageContext | null,
@@ -222,6 +233,10 @@ export async function patchCallRecordServerTime(
   serverTimestamp: number
 ): Promise<void> {
   if (!ctx) return;
+  if (!rowsWrittenByTheEnd.delete(callId)) {
+    appendLog(`[CallRecord] ${callId} server time of the end not patched: the row is its start's`);
+    return;
+  }
   const convo = ctx.conversations.get(groupId);
   const messageId = callMessageId(callId);
   const idx = convo ? convo.messages.findIndex((x) => x.id === messageId) : -1;
@@ -229,7 +244,6 @@ export async function patchCallRecordServerTime(
     appendLog(`[CallRecord] ${callId} server time not patched: no row`);
     return;
   }
-  if (convo.messages[idx].serverTimestamp !== undefined) return;
   const messages = replaceMessageOrdered(convo.messages, idx, {
     ...convo.messages[idx],
     serverTimestamp,

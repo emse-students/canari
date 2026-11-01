@@ -8,7 +8,13 @@
  * to "a later evidence": it is recorded HERE, per account, and asked again at the next evidence for
  * the group and, at the latest, once the next session's restore has rebuilt the map
  * ({@link drainOwedRemovalNotices}). Only an ANSWER settles it: the instant (the line is written), or
- * the server holding no record (`none`, `refused` - said once, at ERROR, and never asked again).
+ * the server holding no record (`none`, `refused` - said once, at ERROR, and not asked again this
+ * session for this account).
+ *
+ * A REMOVAL CAN BE UNDONE WHILE ITS DATE IS ASKED (a Welcome installs during the await), and
+ * `retractEvictionNotice` then finds nothing to withdraw. So the row is re-read after every await,
+ * and the line is written only while it is still `removed` and does not already hold one - the
+ * 2026-09-22 rule (a false "you were removed" above a working conversation) kept across the ask.
  *
  * Per account, in `localStorage` like every per-account record (`accountLocalKeys.ts`).
  */
@@ -28,15 +34,30 @@ type NoticeWriter = (
 ) => Promise<void>;
 
 /**
- * The id of the removal line: one per group and removal instant, so two evidences of the same removal
- * landing together write ONE row, and a later removal (after a re-admission) writes its own.
+ * The id of the removal line: one per group and removal instant, so a later removal (after a
+ * re-admission) writes its own row. Two evidences of the SAME removal do not rely on it - they carry
+ * different instants (the Remove commit's delivery, the announcement's) - but on
+ * {@link writeRemovalNotice} running ONE write at a time per group and re-reading the thread.
  */
 export function removalNoticeId(groupId: string, removedAt: number): string {
   return `evicted:${groupId}:${removedAt}`;
 }
 
-/** Groups whose removal the server ANSWERED with no instant: not asked again this session. */
+/**
+ * `ownerId:groupId` of the removals the server ANSWERED with no instant: not asked again this
+ * session. Per account, and emptied when the session ends ({@link forgetRemovalNotices}).
+ */
 const undatable = new Set<string>();
+
+/** The write in flight per `ownerId:groupId`: two evidences landing together write one after the other. */
+const inFlight = new Map<string, Promise<unknown>>();
+
+/** Ends the session's memory of answered removals: called when the account signs out or switches. */
+export function forgetRemovalNotices(): void {
+  undatable.clear();
+}
+
+const scopeOf = (ownerId: string | undefined, groupId: string) => `${ownerId ?? '-'}:${groupId}`;
 
 function readOwed(ownerId: string): string[] {
   const s = accountStore();
@@ -87,6 +108,19 @@ function settle(ownerId: string | undefined, groupId: string): void {
     );
 }
 
+/** Why the line may no longer be written into `groupId`'s row, or `null` when it still may. */
+function noLongerOwed(conversations: Map<string, Conversation>, groupId: string): string | null {
+  const key = findConversationKeyByGroupId(conversations, groupId);
+  const row = key ? conversations.get(key) : undefined;
+  if (!row) return 'the row is gone';
+  if (row.lifecycle !== 'removed') return `the row is ${row.lifecycle ?? 'active'} again`;
+  const notice = m.chat_system_removed_from_group();
+  if (row.messages.some((msg) => msg.isSystem && msg.content === notice)) {
+    return 'the thread already holds the line';
+  }
+  return null;
+}
+
 /** What {@link writeRemovalNotice} needs. */
 export interface RemovalNoticeDeps {
   conversations: Map<string, Conversation>;
@@ -105,22 +139,57 @@ export interface RemovalNoticeDeps {
   /** How this was learnt, for the log. */
   label: string;
   log: (message: string) => void;
+  /** Whether the session that started this is still the signed-in one; a retired one writes nothing. */
+  isCurrent?: () => boolean;
 }
 
 /**
  * Writes the removal line if its instant is known or answered, and otherwise records what the answer
- * means: settled for good, or owed. Returns what became of it. Never throws.
+ * means: settled for good, or owed. Returns what became of it. Never throws. One write at a time per
+ * account and group.
  */
-export async function writeRemovalNotice(
+export function writeRemovalNotice(
   deps: RemovalNoticeDeps
-): Promise<'written' | 'settled' | 'owed'> {
-  const { groupId, ownerId, removedAt, askRemovedAt, speak, label, log } = deps;
+): Promise<'written' | 'settled' | 'owed' | 'stale'> {
+  const scope = scopeOf(deps.ownerId, deps.groupId);
+  const previous = inFlight.get(scope) ?? Promise.resolve();
+  const run = previous.then(() => writeRemovalNoticeNow(deps));
+  inFlight.set(scope, run);
+  void run.finally(() => {
+    if (inFlight.get(scope) === run) inFlight.delete(scope);
+  });
+  return run;
+}
+
+async function writeRemovalNoticeNow(
+  deps: RemovalNoticeDeps
+): Promise<'written' | 'settled' | 'owed' | 'stale'> {
+  const { conversations, groupId, ownerId, removedAt, askRemovedAt, speak, label, log } = deps;
   const short = groupId.slice(0, 8);
+  const scope = scopeOf(ownerId, groupId);
+  /** Re-read after every await: the session may have ended, the removal been undone, the line written. */
+  const recheck = (): 'stale' | 'settled' | null => {
+    if (deps.isCurrent && !deps.isCurrent()) {
+      log(`[EVICT] ${short}… - removal notice not written (${label}): the session ended meanwhile`);
+      return 'stale';
+    }
+    const why = noLongerOwed(conversations, groupId);
+    if (why === null) return null;
+    settle(ownerId, groupId);
+    log(`[EVICT] ${short}… - removal notice not written (${label}): ${why}`);
+    return 'settled';
+  };
+  const before = recheck();
+  if (before) return before;
+
   let at: number | null =
     typeof removedAt === 'number' && Number.isFinite(removedAt) && removedAt > 0 ? removedAt : null;
   if (at === null) {
-    if (undatable.has(groupId)) {
+    if (undatable.has(scope)) {
       settle(ownerId, groupId);
+      log(
+        `[EVICT] ${short}… - removal notice not asked (${label}): the server already answered this session that it holds no instant of this removal`
+      );
       return 'settled';
     }
     let why: string;
@@ -129,12 +198,14 @@ export async function writeRemovalNotice(
     } else {
       try {
         const answer = await askRemovedAt();
+        const after = recheck();
+        if (after) return after;
         if (answer.kind === 'at') at = answer.at;
         else if (answer.kind === 'unserved') {
           why = 'this server does not serve the own-removal route yet';
         } else {
           // AN ANSWER: there is no instant, and asking again would answer the same.
-          undatable.add(groupId);
+          undatable.add(scope);
           settle(ownerId, groupId);
           if (speak) {
             console.error(
@@ -144,6 +215,8 @@ export async function writeRemovalNotice(
           return 'settled';
         }
       } catch (e) {
+        const after = recheck();
+        if (after) return after;
         why = `the server gave no answer (${String(e).slice(0, 80)})`;
       }
     }
@@ -157,8 +230,9 @@ export async function writeRemovalNotice(
       return 'owed';
     }
   }
+  const key = findConversationKeyByGroupId(conversations, groupId) ?? deps.key;
   try {
-    await deps.addMessageToChat('system', m.chat_system_removed_from_group(), deps.key, {
+    await deps.addMessageToChat('system', m.chat_system_removed_from_group(), key, {
       isSystem: true,
       messageId: removalNoticeId(groupId, at),
       timestamp: new Date(at),
@@ -178,7 +252,8 @@ export async function writeRemovalNotice(
  * Asks again for every removal line `ownerId` is owed, once the restore has rebuilt the map: a
  * retired row receives no further evidence, so this is the "next session" half of the owed contract.
  * A group whose row is gone, or no longer `removed` (a re-admission), or already holds the line, is
- * settled without a word to the server.
+ * settled without a word to the server - and re-read after the answer, by {@link writeRemovalNotice}.
+ * Stops as soon as the session that started it ends (`isCurrent`).
  */
 export async function drainOwedRemovalNotices(deps: {
   ownerId: string;
@@ -186,28 +261,20 @@ export async function drainOwedRemovalNotices(deps: {
   askRemovedAt: (groupId: string) => Promise<ServerInstant>;
   addMessageToChat: NoticeWriter;
   log: (message: string) => void;
+  isCurrent: () => boolean;
 }): Promise<void> {
   const owed = readOwed(deps.ownerId);
   if (owed.length === 0) return;
   console.log(`[EVICT] ${owed.length} owed removal notice(s) asked again after the restore`);
-  const notice = m.chat_system_removed_from_group();
   for (const groupId of owed) {
+    if (!deps.isCurrent()) {
+      deps.log('[EVICT] owed removal notices: the session ended - the rest stay owed');
+      return;
+    }
     const key = findConversationKeyByGroupId(deps.conversations, groupId);
-    const row = key ? deps.conversations.get(key) : undefined;
-    if (!key || !row || row.lifecycle !== 'removed') {
-      settle(deps.ownerId, groupId);
-      deps.log(
-        `[EVICT] ${groupId.slice(0, 8)}… - owed removal notice dropped: the row is ${row ? row.lifecycle : 'gone'}`
-      );
-      continue;
-    }
-    if (row.messages.some((msg) => msg.isSystem && msg.content === notice)) {
-      settle(deps.ownerId, groupId);
-      continue;
-    }
-    await writeRemovalNotice({
+    const outcome = await writeRemovalNotice({
       conversations: deps.conversations,
-      key,
+      key: key ?? groupId,
       groupId,
       ownerId: deps.ownerId,
       askRemovedAt: () => deps.askRemovedAt(groupId),
@@ -215,6 +282,8 @@ export async function drainOwedRemovalNotices(deps: {
       speak: true,
       label: 'owed, after the restore',
       log: deps.log,
+      isCurrent: deps.isCurrent,
     });
+    if (outcome === 'stale') return;
   }
 }

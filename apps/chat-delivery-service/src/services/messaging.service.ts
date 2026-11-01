@@ -3278,17 +3278,22 @@ export class MessagingService {
   }
 
   /**
-   * The base epoch of the commit that admitted `userId` to `groupId` in their current stretch of
-   * membership - the last commit accepted at or before their arrival - or `null` when no retained
-   * commit precedes it (everything the log holds is theirs to see).
+   * The base epoch of the last commit accepted at or before `userId`'s arrival in `groupId` - read
+   * as the commit that admitted them - or `null` when no retained commit precedes it (everything the
+   * log holds is theirs to see).
    *
    * Arrival is the open membership stretch's (`admittedAt ?? joinedAt`). A key-distribution group,
    * whose seats are per device and keep no stretch, is anchored on the REQUESTING DEVICE's row
    * `createdAt` - so a row deleted and recreated (a re-seat) moves the floor forward, and the commits
-   * before it are refused: a line about them is settled undated, never leaked. Both are written by
-   * this service's clock and the log's `createdAt` by the database's: the two are one host's UTC, and
-   * a skew of a few ms can only move the floor ONE commit earlier, never hide the admitting commit
-   * from the member it admitted.
+   * before it are refused: a line about them is settled undated, never leaked.
+   *
+   * WHAT IT DOES NOT HOLD, KNOWINGLY (review of #2890, LOW-D; owed in
+   * docs/wiki/backlog.d/p2-the-commit-time-floor-is-anchored-on-a-record-written-before-the-admission.md):
+   * the arrival can PREDATE the admission. A group conversation's `joinedAt` is written by the
+   * enrolment, before the Add commit, so the floor routinely lands one commit early; a device kicked
+   * and re-added keeps its first row (`orIgnore`), so it is floored at its first admission and
+   * answered the commit times from while it was out. Only acceptance times leak, never content; the
+   * fix is an admission recorded by the commit gate, not another clock comparison.
    *
    * FAILS CLOSED (review of #2890, MED-3): with no arrival there is no floor, and "no floor" would
    * hand the whole retained log to a newcomer. A key group asked with no device header is a 400 (the

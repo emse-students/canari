@@ -344,6 +344,24 @@ describe('a call record is dated by its frame, never by when this device drained
     expect(serverTimeOf()).toBe(1_700_000_000_999);
   });
 
+  it('a STARTED row whose invite answered no server time is not given the hangup one', async () => {
+    const { ctx, conversations } = makeCtx();
+    // The invite's send answered no receivedAt: the start row carries no server time.
+    await recordCallStarted(ctx, G, 't8', 'me', { timestamp: AT.timestamp });
+    await recordCallEnded(
+      ctx,
+      G,
+      't8',
+      { timestamp: new Date(AT.timestamp.getTime() + 60_000), ownAct: true },
+      undefined
+    );
+    await patchCallRecordServerTime(ctx, G, 't8', 1_700_000_999_000);
+    const row = conversations.get(G)!.messages.find((x) => x.id === 'call-t8') as {
+      serverTimestamp?: number;
+    };
+    expect(row.serverTimestamp).toBeUndefined();
+  });
+
   it('a signal with no instant at all is REFUSED with an error and writes nothing', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { ctx, rows } = makeCtx();
