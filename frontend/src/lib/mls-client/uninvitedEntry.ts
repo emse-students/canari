@@ -25,11 +25,12 @@ import type { DeviceEvent } from './deviceTrust';
  * - `direct-peer`: the other person of a 1:1 conversation - the conversation IS the two of them.
  * - `new-person`: neither - written in the conversation, since a member must be told about it. A
  *   device that never saw a departure reads a returning member as this.
- *
- * A further device of a user ALREADY in the tree is never one of these, whoever's commit admitted it:
- * it is announced as an added device (owner, 2026-10-31; `deviceNotices.svelte.ts`).
+ * - `unvouched-device`: a device of a user ALREADY in the tree, seen for the first time, that
+ *   admitted itself (`entersAsUnvouchedDevice`). No member added it - a further device of a member is
+ *   a member's Add after a member's tap, and an honest device never joins itself on a seat no commit
+ *   admitted - so it is written in the conversation too, and accuses.
  */
-export type UninvitedEntryKind = 'new-person' | 'returning' | 'direct-peer';
+export type UninvitedEntryKind = 'new-person' | 'returning' | 'direct-peer' | 'unvouched-device';
 
 export interface UninvitedEntryReport {
   /** Sent as the server's `kind=` field, so the count separates the three. */
@@ -79,6 +80,10 @@ export function reportUninvitedEntry(event: DeviceEvent, kind: UninvitedEntryKin
   if (kind === 'new-person') {
     console.error(
       `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} - a user absent from the tree admitted themselves; no member added them`
+    );
+  } else if (kind === 'unvouched-device') {
+    console.error(
+      `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} key=${event.keyFingerprint} - a known device of a member admitted itself under a key other than the one known for it; no member added it`
     );
   } else {
     console.log(

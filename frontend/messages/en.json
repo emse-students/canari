@@ -1383,6 +1383,8 @@
   "chat_unopenable_here": "This conversation can no longer be opened on this device: no device that held it has come back.",
   "chat_unopenable_start_again": "Start again with the same people",
   "chat_unopenable_hide": "Remove from my list",
+  "chat_unopenable_start_again_failed": "The conversation could not be started again right now. Try again in a moment.",
+  "chat_system_unvouched_device_entry": "A device of {user} entered the conversation by itself under a key other than the one known for it, without being added by a member",
   "chat_awaiting_admission_preview": "Waiting for a member to add you.",
   "chat_unread_messages_label": [
     {

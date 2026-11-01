@@ -205,9 +205,19 @@ export class MessagingController {
   async notifyWelcomeRequest(
     @Headers('x-user-id') authUserId: string | undefined,
     @Body()
-    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+      selfJoinIfNobody?: boolean;
+    }
   ) {
-    return this.messagingService.notifyWelcomeRequest(authUserId, body);
+    return this.messagingService.notifyWelcomeRequest(authUserId, {
+      groupId: body.groupId,
+      requesterUserId: body.requesterUserId,
+      requesterDeviceId: body.requesterDeviceId,
+      selfJoinIfNobody: body.selfJoinIfNobody === true,
+    });
   }
 
   /**

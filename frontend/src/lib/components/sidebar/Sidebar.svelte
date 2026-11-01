@@ -21,7 +21,11 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-  import { isHiddenFromList, loadHiddenUnopenable } from '$lib/utils/chat/noHolder.svelte';
+  import {
+    isHiddenFromList,
+    loadHiddenUnopenable,
+    releaseHiddenOnceActive,
+  } from '$lib/utils/chat/noHolder.svelte';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
   import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
@@ -396,7 +400,12 @@
    * filter and the row read the same value by construction instead of agreeing by coincidence.
    */
   $effect(() => {
-    if (currentUserId) loadHiddenUnopenable(currentUserId);
+    if (!currentUserId) return;
+    loadHiddenUnopenable(currentUserId);
+    // A hidden conversation seen active once is back on the list for good (review of #2832).
+    for (const [name, convo] of conversations) {
+      if (convo.lifecycle === 'active') releaseHiddenOnceActive(convo.id || name);
+    }
   });
 
   let conversationRows = $derived.by(() =>

@@ -7,6 +7,8 @@ import {
   announcesNewDevice,
   deviceEventAudience,
   deviceEventKey,
+  entersAsUnvouchedDevice,
+  entersByItsOwnCommit,
   entersUninvited,
   isNewToItsOwner,
   keyFingerprintOf,
@@ -98,11 +100,13 @@ describe('deviceEventAudience and deviceEventKey - the table shared with Rust', 
     isKeyDistributionGroup: boolean;
     audience: string;
     key: string | null;
+    unvouched?: boolean;
   }>;
 
   it.each(cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
     expect(deviceEventAudience(c.event, c)).toBe(c.audience);
     expect(deviceEventKey(c.event)).toBe(c.key);
+    if (c.unvouched !== undefined) expect(entersAsUnvouchedDevice(c.event)).toBe(c.unvouched);
   });
 });
 
@@ -277,30 +281,36 @@ describe('entersUninvited - an entry no member made', () => {
   });
 });
 
-describe('a further device of a member that admitted itself (owner, 2026-10-31)', () => {
-  it('is announced exactly like one a member added, and is no uninvited entry', () => {
-    const selfEntry = event({ addedBy: 'Bob:web-2' });
-    const memberAdd = event({ addedBy: 'bob:phone-1' });
-    for (const ctx of [
-      { ...alice, isKeyDistributionGroup: false },
-      { ownUserId: 'bob', ownDeviceId: 'phone-1', isKeyDistributionGroup: false },
-    ]) {
-      expect(deviceEventAudience(selfEntry, ctx)).toBe(deviceEventAudience(memberAdd, ctx));
-    }
-    expect(deviceEventAudience(selfEntry, { ...alice, isKeyDistributionGroup: false })).toBe(
-      'contact-line'
-    );
+describe('entersAsUnvouchedDevice - a member device that admitted itself into a group it was never in', () => {
+  it('is a KNOWN device of a present user, never in this group, that signed its own admission under a new key', () => {
     expect(
-      deviceEventAudience(selfEntry, {
-        ownUserId: 'bob',
-        ownDeviceId: 'phone-1',
-        isKeyDistributionGroup: false,
-      })
-    ).toBe('owner-alert');
-    expect(entersUninvited(selfEntry)).toBe(false);
+      entersAsUnvouchedDevice(
+        event({ addedBy: 'Bob:web-2', firstInGroup: true, trust: 'key-changed' })
+      )
+    ).toBe(true);
   });
 
-  it('under a key already pinned is the same device, announced by nobody', () => {
-    expect(announcesNewDevice(event({ addedBy: 'bob:web-2', trust: 'pinned' }))).toBe(false);
+  it('is only the key-changed class (D3): a further device under its known or a first-seen key is not', () => {
+    for (const trust of ['pinned', 'key-changed', 'first-sight'] as const) {
+      const e = event({ addedBy: 'bob:web-2', trust, firstInGroup: true });
+      expect(entersByItsOwnCommit(e)).toBe(true);
+      expect(entersAsUnvouchedDevice(e)).toBe(trust === 'key-changed');
+      // And the owner is told, whichever: the alert is what carries "Not me".
+      expect(announcesNewDevice(e)).toBe(true);
+    }
+  });
+
+  it('is not a device coming back to this group, a member-signed Add or a new person', () => {
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', firstInGroup: false }))).toBe(
+      false
+    );
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2' }))).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ firstInGroup: true }))).toBe(false);
+    expect(
+      entersAsUnvouchedDevice(
+        event({ addedBy: 'bob:web-2', memberAlreadyPresent: false, firstInGroup: true })
+      )
+    ).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ addedBy: null, firstInGroup: true }))).toBe(false);
   });
 });

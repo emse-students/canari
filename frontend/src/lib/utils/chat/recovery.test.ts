@@ -467,7 +467,9 @@ describe('requestReAdd', () => {
       await requestReAdd('g1', deps);
 
       expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
-      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1', {
+        selfJoinIfNobody: true,
+      });
       expect(deps.mlsService.getGroupMembers).not.toHaveBeenCalled();
       expect(deps.log).toHaveBeenCalledWith(
         expect.stringContaining("a further device of a member - a member's Add")
@@ -517,10 +519,13 @@ describe('requestReAdd', () => {
         expect(deps.mlsService.externalJoin).toHaveBeenNthCalledWith(2, 'g1', {
           welcomeOwed: 'ask',
         });
+        // ONE DOOR PER ANSWER: the ask says the device joins by itself, so the server stores,
+        // queues and wakes nothing that would race the join (review of #2832).
         expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
-        expect(deps.log).toHaveBeenCalledWith(
-          expect.stringContaining("stored for every member's next connection")
-        );
+        expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1', {
+          selfJoinIfNobody: true,
+        });
+        expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('selfJoinIfNobody'));
       });
 
       it("a FORWARDED ask lives on one member's screen, so it is put again on the cadence", async () => {
@@ -661,7 +666,9 @@ describe('requestReAdd', () => {
       await requestReAdd('g1', deps);
 
       expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1', { asAFurtherDevice: 'ask' });
-      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+      expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1', {
+        selfJoinIfNobody: true,
+      });
     });
   });
 
@@ -2061,6 +2068,8 @@ describe('requestReAdd - the no-holder banner (D5)', () => {
     welcomeQueued: false,
     addInFlight: false,
   } as const;
+  /** No other user's device holds it and is alive, and no wake went out. */
+  const GONE = { liveHolderDevices: 0, wakeSent: false };
   const noBase = (answer: unknown) => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = vi
@@ -2081,7 +2090,7 @@ describe('requestReAdd - the no-holder banner (D5)', () => {
   it('is raised on the full fact set, and taken down by the next answer that differs', async () => {
     await requestReAdd(
       'g1',
-      noBase({ status: 'stored', facts: { base: null, seat: NOTHING_ON_ITS_WAY } })
+      noBase({ status: 'stored', facts: { base: null, seat: NOTHING_ON_ITS_WAY, holders: GONE } })
     );
     expect(isUnopenableHere('g1')).toBe(true);
 
@@ -2099,7 +2108,11 @@ describe('requestReAdd - the no-holder banner (D5)', () => {
       'a queued Welcome',
       {
         status: 'stored',
-        facts: { base: null, seat: { status: 'pending', welcomeQueued: true, addInFlight: false } },
+        facts: {
+          base: null,
+          seat: { status: 'pending', welcomeQueued: true, addInFlight: false },
+          holders: GONE,
+        },
       },
     ],
     [
@@ -2109,6 +2122,7 @@ describe('requestReAdd - the no-holder banner (D5)', () => {
         facts: {
           base: STALE,
           seat: { status: 'pending', welcomeQueued: false, addInFlight: true },
+          holders: GONE,
         },
       },
     ],
@@ -2116,14 +2130,36 @@ describe('requestReAdd - the no-holder banner (D5)', () => {
       'an add lock that was not read',
       {
         status: 'stored',
-        facts: { base: null, seat: { status: 'pending', welcomeQueued: false } },
+        facts: { base: null, seat: { status: 'pending', welcomeQueued: false }, holders: GONE },
       },
     ],
     [
       'a current base (the device lets itself in)',
       {
         status: 'stored',
-        facts: { base: { baseEpoch: 5, activeEpoch: 5 }, seat: NOTHING_ON_ITS_WAY },
+        facts: { base: { baseEpoch: 5, activeEpoch: 5 }, seat: NOTHING_ON_ITS_WAY, holders: GONE },
+      },
+    ],
+    [
+      'a member who still holds it and is alive (a slow group)',
+      {
+        status: 'stored',
+        facts: {
+          base: null,
+          seat: NOTHING_ON_ITS_WAY,
+          holders: { liveHolderDevices: 1, wakeSent: false },
+        },
+      },
+    ],
+    [
+      'a wake this answer sent to member phones',
+      {
+        status: 'stored',
+        facts: {
+          base: null,
+          seat: NOTHING_ON_ITS_WAY,
+          holders: { liveHolderDevices: 0, wakeSent: true },
+        },
       },
     ],
   ])('is not raised for %s', async (_label, answer) => {
@@ -2139,9 +2175,10 @@ describe('requestReAdd - the no-holder banner (D5)', () => {
       baseEpoch: 3,
       serverEpoch: 5,
     });
-    deps.mlsService.sendBaseRefreshRequest = vi
-      .fn()
-      .mockResolvedValue({ noPeerOnline: true, facts: { base: STALE, seat: NOTHING_ON_ITS_WAY } });
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({
+      noPeerOnline: true,
+      facts: { base: STALE, seat: NOTHING_ON_ITS_WAY, holders: GONE },
+    });
     await requestReAdd('g1', deps);
     expect(isUnopenableHere('g1')).toBe(true);
 

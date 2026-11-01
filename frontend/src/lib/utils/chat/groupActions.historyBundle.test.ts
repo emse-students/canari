@@ -3,6 +3,7 @@ import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
+import { bindHistoryWithheld, withholdHistoryFrom } from './historyWithheld';
 
 const GROUP = 'g1';
 /** The device that asked - every bundle is addressed at one, never at the group at large. */
@@ -231,51 +232,130 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
   }
 });
 
-// A FURTHER DEVICE OF A MEMBER THAT ENTERED BY ITS OWN COMMIT (owner, 2026-10-31, D3): its history
-// follows rule 2 like any added device's (docs/wiki/protocols/history-answer-addressing.md) - nothing
-// is withheld from it, and no answer waits on the device events first.
-describe("a member's further device that let itself in is answered like any device", () => {
-  function serveTo(to: string, server: 'addressed' | 'broadcast' = 'addressed') {
+describe('history is withheld from an unverified device', () => {
+  afterEach(() => bindHistoryWithheld([], null));
+  const stillThere = async () => true;
+
+  function serveTo(
+    to: string,
+    server: 'addressed' | 'broadcast' = 'addressed',
+    tree: string[] = ['user-b:another-device', REQUESTER]
+  ) {
     const mlsService = createMlsServiceStub();
     if (server === 'broadcast') {
       vi.mocked(mlsService.getAddressedAnswersSupported).mockResolvedValue(false);
     }
-    vi.mocked(mlsService.getGroupMemberIdentities).mockResolvedValue([
-      'user-b:another-device',
-      REQUESTER,
-    ]);
+    vi.mocked(mlsService.getGroupMemberIdentities).mockResolvedValue(tree);
+    const log = vi.fn();
     return {
       mlsService,
+      log,
       done: sendHistoryBundleForIds(
         GROUP,
         ['m1'],
-        {
-          storage: storageWith([storedMessage('m1')]),
-          deviceKeyB64: 'k',
-          mlsService,
-          log: vi.fn(),
-        },
+        { storage: storageWith([storedMessage('m1')]), deviceKeyB64: 'k', mlsService, log },
         { to, since: 0, requestId: 'req-0001' }
       ),
     };
   }
 
-  it('answers it, addressed to it alone', async () => {
+  it('sends nothing to a device recorded as having let itself in', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await withholdHistoryFrom(GROUP, REQUESTER, 'fp-1', stillThere);
+    const { mlsService, log, done } = serveTo(REQUESTER);
+    await done;
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no history answered to it'));
+    vi.restoreAllMocks();
+  });
+
+  it('still answers another device of the conversation, addressed to it alone', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1', stillThere);
     const { mlsService, done } = serveTo(REQUESTER);
     await done;
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    expect(sentBundle(mlsService).data.to).toBe(REQUESTER);
+    vi.restoreAllMocks();
   });
 
-  it('broadcasts where the server cannot address, as for any device', async () => {
+  it('an answer scheduled in the drain that carried the entry reads the record only after it is written', async () => {
+    // The drain's own hand-over is not awaited: the answer settles the device events itself first.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { mlsService, log, done } = serveTo(REQUESTER);
+    vi.mocked(mlsService.settleDeviceEvents).mockImplementation(async () => {
+      await withholdHistoryFrom(GROUP, REQUESTER, 'fp-1', stillThere);
+      return true;
+    });
+    await done;
+
+    expect(mlsService.settleDeviceEvents).toHaveBeenCalled();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('no history answered to it'));
+    vi.restoreAllMocks();
+  });
+
+  it('answers nothing when the device events could not be decided - fail closed', async () => {
+    const { mlsService, log, done } = serveTo(REQUESTER);
+    vi.mocked(mlsService.settleDeviceEvents).mockResolvedValue(false);
+    await done;
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('device events not decided'));
+  });
+
+  it('pushes nothing either from a full bundle when the device events could not be decided', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.settleDeviceEvents).mockResolvedValue(false);
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith([]),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      to: REQUESTER,
+    });
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts nothing where a device is withheld - every leaf reads a broadcast', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1', stillThere);
+    const { mlsService, log, done } = serveTo(REQUESTER, 'broadcast');
+    await done;
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Not broadcasting history'));
+    vi.restoreAllMocks();
+  });
+
+  it('broadcasts again once the withheld device has left the tree', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1', stillThere);
+    const { mlsService, done } = serveTo(REQUESTER, 'broadcast', [REQUESTER]);
+    await done;
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it('still broadcasts in a conversation where nothing is withheld', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await withholdHistoryFrom('another-group', REQUESTER, 'fp-1', stillThere);
     const { mlsService, done } = serveTo(REQUESTER, 'broadcast');
     await done;
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
   });
 
-  it('pushes it the state-only frame of a full bundle', async () => {
+  it('pushes not even the state-only frame of a full bundle to a withheld device', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await withholdHistoryFrom(GROUP, REQUESTER, 'fp-1', stillThere);
     const mlsService = createMlsServiceStub();
     await sendFullHistoryBundle(GROUP, {
       storage: storageWith([]),
@@ -285,6 +365,7 @@ describe("a member's further device that let itself in is answered like any devi
       to: REQUESTER,
     });
 
-    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 });

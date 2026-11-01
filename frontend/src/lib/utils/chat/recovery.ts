@@ -28,7 +28,7 @@ import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { isNeverAdmitted } from './admissionState';
 import { readGroupSweepSnapshot } from './groupSweep';
-import { noteNoHolderReading, readNoHolder } from './noHolder.svelte';
+import { noteNoHolderReading, readNoHolder, releaseHiddenOnceActive } from './noHolder.svelte';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -778,16 +778,20 @@ export async function requestReAdd(
   // the device in every quiet conversation (the account's other device may never come back). So in
   // the same pass the device joins on the base it was refused on - no new timer, no second round.
   //
-  // THE TWO DOORS CANNOT BOTH OPEN: the join below re-reads this device's seat WITH the base
-  // (`welcomeOwed: 'ask'`), so an Add already under way is waited for, and a member's Add and this
-  // join built on the same epoch meet at the strict epoch gate, which accepts exactly one; the loser
-  // rebuilds (`mls-core/tests/further_device_door.rs`). The entry is announced to every member as an
-  // ordinary added device of the account (D2), and its history follows rule 2 (D3).
+  // ONE DOOR PER ANSWER. The ask carries its intent (`selfJoinIfNobody`): with no member online the
+  // server stores, queues and wakes NOTHING - an Android member's background Add answering a wake
+  // would otherwise race this join - and withdraws an ask an earlier pass stored. On a stale base the
+  // server keeps the stored ask instead, and the join below reads that base and does not join. The
+  // join re-reads this device's seat WITH the base (`welcomeOwed: 'ask'`), so an Add already under
+  // way is waited for; were two doors still to meet, the strict epoch gate accepts exactly one and
+  // the loser rebuilds (`mls-core/tests/further_device_door.rs`). The entry is announced to every
+  // member as an ordinary added device of the account (D2), and its history follows rule 2 (D3).
   if (!outcome.joined && outcome.reason === 'further_device') {
     const answer = await askAMemberToReAddUs(
       groupId,
       deps,
-      "a further device of a member - a member's Add first"
+      "a further device of a member - a member's Add first",
+      { selfJoinIfNobody: true }
     );
     if (answer?.status !== 'stored') return;
     deps.log(
@@ -1257,13 +1261,16 @@ async function endOnTheGroupsOwnAnswer(
 async function askAMemberToReAddUs(
   groupId: string,
   deps: RecoveryDeps,
-  context: string
+  context: string,
+  opts?: { selfJoinIfNobody?: boolean }
 ): Promise<WelcomeRequestAnswer> {
   const short = groupId.slice(0, 8);
   deps.log(`[READD] ${short}... sendWelcomeRequest… (${context})`);
   let answer: WelcomeRequestAnswer;
   try {
-    answer = await deps.mlsService.sendWelcomeRequest(groupId);
+    answer = opts
+      ? await deps.mlsService.sendWelcomeRequest(groupId, opts)
+      : await deps.mlsService.sendWelcomeRequest(groupId);
   } catch (e) {
     deps.log(`[READD] welcome_request failed for ${short}...: ${String(e)}`);
     noteNoHolderReading(groupId, 'unknown', deps.log);
@@ -1283,7 +1290,9 @@ async function askAMemberToReAddUs(
     !answer
       ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
       : answer.status === 'stored'
-        ? `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
+        ? opts?.selfJoinIfNobody === true
+          ? `[READD] welcome_request for ${short}... no member online - kept for a member only if the base cannot let this device in (selfJoinIfNobody)`
+          : `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
         : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
   return answer;
@@ -1445,6 +1454,8 @@ export function cancelReAdd(groupId: string): void {
   // outlive the thing it describes. Every caller of this function reaches it because the group is
   // healthy again - a Welcome landed, an external join succeeded, or WASM already holds the tree.
   noRepairerAt.delete(groupId);
-  // And so has the banner that said it could not be opened here (D5).
+  // And so has the banner that said it could not be opened here (D5), and the user's choice to take
+  // it off the list while it could not open.
   noteNoHolderReading(groupId, 'unknown', console.log);
+  releaseHiddenOnceActive(groupId);
 }

@@ -2973,11 +2973,15 @@ export abstract class BaseMlsService implements IMlsService {
    * next connection, or `null` when no answer said either - said here, since no answer is not a
    * statement that the ask was put.
    */
-  async sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer> {
+  async sendWelcomeRequest(
+    groupId: string,
+    opts?: { selfJoinIfNobody?: boolean }
+  ): Promise<WelcomeRequestAnswer> {
     const answer = await this.delivery.deliveryPost('welcome-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
+      ...(opts?.selfJoinIfNobody === true ? { selfJoinIfNobody: true } : {}),
     });
     if (answer?.status === 'forwarded' && typeof answer.target === 'string') {
       return { status: 'forwarded', target: answer.target };
@@ -7476,7 +7480,12 @@ export abstract class BaseMlsService implements IMlsService {
    * A consumer that throws loses the events it was handed - logged at error, since that is a notice
    * the user will never see; the consumer isolates each event itself so one cannot cost the others.
    */
-  /** @returns whether the events were handed over to the account they belong to. */
+  /** {@link IMlsService.settleDeviceEvents}: one more hand-over, chained after any pending one. */
+  settleDeviceEvents(why: string): Promise<boolean> {
+    return this.handOverDeviceEvents(why);
+  }
+
+  /** @returns whether the events were handed over and decided ({@link settleDeviceEvents}). */
   protected handOverDeviceEvents(why: string): Promise<boolean> {
     const run = this.deviceEventHandOver.then(async (): Promise<boolean> => {
       const consumer = this.deviceEventConsumer;

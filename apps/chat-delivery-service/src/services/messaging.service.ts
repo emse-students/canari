@@ -81,7 +81,12 @@ import {
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
-import { readDeviceSeat, type DeviceSeat, type NoHolderFacts } from '../utils/device-seat';
+import {
+  FURTHER_DEVICE_SELF_JOIN_OPEN,
+  readDeviceSeat,
+  type DeviceSeat,
+  type NoHolderFacts,
+} from '../utils/device-seat';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
@@ -493,6 +498,14 @@ export interface NotifyWelcomeRequestBody {
   groupId: string;
   requesterUserId: string;
   requesterDeviceId: string;
+  /**
+   * A FURTHER DEVICE'S ASK CARRIES ITS INTENT (D1, review of #2832): when no member device is online
+   * it will join by itself, so a stored ask, its queued frames and a background wake would only open
+   * a second door - an Android member's background Add - racing its own commit. With this set (and
+   * the door open, {@link FURTHER_DEVICE_SELF_JOIN_OPEN}) a `no_peer_online` answer stores, queues
+   * and wakes NOTHING, and withdraws an ask stored by an earlier pass. One door per answer.
+   */
+  selfJoinIfNobody?: boolean;
 }
 
 /**
@@ -848,6 +861,12 @@ interface FanOutTally {
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
+
+  /**
+   * {@link FURTHER_DEVICE_SELF_JOIN_OPEN}, read through the instance so a spec can exercise the open
+   * door without a second build of the module.
+   */
+  protected readonly furtherDeviceSelfJoinOpen: boolean = FURTHER_DEVICE_SELF_JOIN_OPEN;
   /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
   private readonly noPushTokenRepeats = new RepeatCounter();
   /**
@@ -3338,7 +3357,9 @@ export class MessagingService {
     // that lets itself in when no member device can answer (`requestReAdd`, D1 of
     // docs/wiki/protocols/mls-availability-no-holder.md) reads from this one answer whether an Add
     // already carries it, and waits for that Welcome instead of joining over it.
-    if (!base || !requesterDeviceId) return base;
+    // NOT SERVED WHILE THE DOOR IS SHUT ({@link FURTHER_DEVICE_SELF_JOIN_OPEN}): the client reads a
+    // base with no seat as `seat_unreadable` and does not join by itself.
+    if (!base || !requesterDeviceId || !this.furtherDeviceSelfJoinOpen) return base;
     const seat = await this.seatOf(groupId, requesterUserId, requesterDeviceId);
     return { ...base, seat };
   }
@@ -3370,7 +3391,8 @@ export class MessagingService {
     groupId: string,
     userId: string,
     deviceId: string,
-    traceId: string
+    traceId: string,
+    wakeSent: boolean
   ): Promise<NoHolderFacts | undefined> {
     try {
       // THE SAME DOOR AS THE BASE ITSELF: only a seated user not awaiting a member's admission is
@@ -3380,9 +3402,11 @@ export class MessagingService {
       if (!roster || roster.awaitingAdmission === true) return undefined;
       const base = await this.readGroupInfo(groupId);
       const seat = await this.seatOf(groupId, userId, deviceId);
+      const liveHolderDevices = await this.liveHolderDevices(groupId, userId);
       return {
         base: base ? { baseEpoch: base.baseEpoch, activeEpoch: base.activeEpoch } : null,
         seat,
+        holders: { liveHolderDevices, wakeSent },
       };
     } catch (e) {
       this.logger.warn(
@@ -3390,6 +3414,33 @@ export class MessagingService {
       );
       return undefined;
     }
+  }
+
+  /**
+   * How many devices of OTHER users still hold `groupId` and are alive: an `active` row in the group,
+   * and a KeyPackage published within {@link RETENTION_WINDOW_MS} - the window this service already
+   * treats as "a device is gone" (`detectStaleDevices`), so a device is never alive for one rule and
+   * dead for this one. A member who did not open the app tonight is counted; one gone for months is
+   * not ({@link HolderLiveness}).
+   */
+  private async liveHolderDevices(groupId: string, requesterUserId: string): Promise<number> {
+    const requester = requesterUserId.trim().toLowerCase();
+    const rows = await this.deviceGroupRepo.find({
+      where: { groupId, status: 'active' },
+      select: { userId: true, deviceId: true },
+    });
+    const others = rows.filter((r) => r.userId.trim().toLowerCase() !== requester);
+    if (others.length === 0) return 0;
+    const live = await this.keyPackageRepo.find({
+      where: {
+        deviceId: In(others.map((r) => r.deviceId)),
+        createdAt: MoreThanOrEqual(new Date(Date.now() - RETENTION_WINDOW_MS)),
+      },
+      select: { userId: true, deviceId: true },
+    });
+    const liveKeys = new Set(live.map((k) => `${k.userId.trim().toLowerCase()}:${k.deviceId}`));
+    return others.filter((r) => liveKeys.has(`${r.userId.trim().toLowerCase()}:${r.deviceId}`))
+      .length;
   }
 
   /**
@@ -5796,7 +5847,15 @@ export class MessagingService {
       `[BASE_REFRESH][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} members=${members.length}` +
         ` - the published base stays stale and no device can external-join until a member returns`
     );
-    const facts = await this.noHolderFacts(groupId, requesterUserId, requesterDeviceId, traceId);
+    // A base refresh never stores, queues or wakes anything (above): `wakeSent` is false by
+    // construction.
+    const facts = await this.noHolderFacts(
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+      traceId,
+      false
+    );
     return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
   }
 
@@ -5918,6 +5977,32 @@ export class MessagingService {
       }
     }
 
+    // A FURTHER DEVICE THAT WILL JOIN BY ITSELF (`selfJoinIfNobody`, D1): nothing is stored, queued
+    // or woken - an Android member's background Add answering the wake would be a second door racing
+    // the device's own commit - and an ask an EARLIER pass stored is withdrawn, so no member's next
+    // connection replays it either. One door per answer. Not for an ask awaiting a member (D4), and
+    // ONLY ON A CURRENT BASE: on a stale or absent one the device cannot let itself in, so the member's
+    // Add stays its one door and the ask is stored and woken as any other.
+    if (
+      body.selfJoinIfNobody === true &&
+      this.furtherDeviceSelfJoinOpen &&
+      !awaitingAsk &&
+      (await this.baseIsCurrent(groupId, traceId))
+    ) {
+      await this.withdrawStoredWelcomeRequest(groupId, senderKey, members, traceId);
+      say(
+        `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - a further device that joins by itself: nothing stored, nothing woken`
+      );
+      const facts = await this.noHolderFacts(
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        traceId,
+        false
+      );
+      return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
+    }
+
     // No peer online - persist so the request is replayed when a peer connects.
     const pendingSetKey = `pending_welcome:${groupId}`;
     const pipeline = this.redis.pipeline();
@@ -5973,8 +6058,69 @@ export class MessagingService {
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis` +
         (awaitingAsk ? ', no FCM wake (an ask awaits a member)' : ', FCM sent to peers')
     );
-    const facts = await this.noHolderFacts(groupId, requesterUserId, requesterDeviceId, traceId);
+    const facts = await this.noHolderFacts(
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+      traceId,
+      !awaitingAsk
+    );
     return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
+  }
+
+  /**
+   * Whether `groupId`'s stored base is at the group's epoch - the base a further device lets itself in
+   * on (D1). An unreadable base is not current: the stored ask stays the door.
+   */
+  private async baseIsCurrent(groupId: string, traceId: string): Promise<boolean> {
+    try {
+      const base = await this.readGroupInfo(groupId);
+      return base !== null && base.baseEpoch >= base.activeEpoch;
+    } catch (e) {
+      this.logger.warn(
+        `[WELCOME_REQ][${traceId}] base of group=${groupId} unreadable - a further device's ask is stored as any other: ${String(e)}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Withdraws a `welcome_request` an earlier pass stored for `senderKey`: its entry in
+   * `pending_welcome:{groupId}` and the frame queued for each member in
+   * `pending_welcome_notify:{userId}` (the frame is the same deterministic JSON, so `LREM` finds it).
+   * Best-effort and logged: what it misses is a stale ask a member's device answers with an Add the
+   * gate refuses for a seat already active.
+   */
+  private async withdrawStoredWelcomeRequest(
+    groupId: string,
+    senderKey: string,
+    members: string[],
+    traceId: string
+  ): Promise<void> {
+    const [requesterUserId, requesterDeviceId] = senderKey.split(':');
+    const frame = JSON.stringify({
+      type: 'welcome_request',
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+    });
+    try {
+      const pipeline = this.redis.pipeline();
+      pipeline.srem(`pending_welcome:${groupId}`, senderKey);
+      for (const memberUserId of new Set(
+        members
+          .filter((m) => m !== senderKey)
+          .map((m) => m.split(':')[0])
+          .filter(Boolean)
+      )) {
+        pipeline.lrem(`pending_welcome_notify:${memberUserId}`, 0, frame);
+      }
+      await pipeline.exec();
+    } catch (e) {
+      this.logger.warn(
+        `[WELCOME_REQ][${traceId}] a stored ask of ${senderKey} for group=${groupId} could not be withdrawn: ${String(e)}`
+      );
+    }
   }
 
   /**

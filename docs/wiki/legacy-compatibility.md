@@ -364,6 +364,19 @@ restored at, and forgotten once settled at a load (the burn's checkpoint commits
 install below it keeps writing epoch-less entries; above it, each one is settled at its first load
 and gone. Then `parseKey`'s `null` epoch and its arm in `sendRatchetDebt` go.
 
+### No date yet - the further-device self-join held shut for member clients older than D2/D3
+
+**Site:** `FURTHER_DEVICE_SELF_JOIN_OPEN` in `apps/chat-delivery-service/src/utils/device-seat.ts`,
+read by `getGroupInfo` and `notifyWelcomeRequest` (`messaging.service.ts`).
+**Shim (2026-11-01, review of #2832):** a member on `1.5.1`-`1.5.4` reads a further device that let
+itself in as an accusation (`unvouched-device`) and withholds history from it. So the server does not
+open D1's door: the conversation base is served without the asking device's seat (the client reads
+`seat_unreadable` and does not join), and a `selfJoinIfNobody` ask is stored and woken as any other
+([the gate](protocols/mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client)).
+**Removal condition:** a CLIENT FLOOR - `minClientVersion` at least `1.5.5`, the release carrying
+D2/D3. Then the constant flips to `true` in its own one-line pull request, and once a later floor is
+reached the constant and its two reads go.
+
 ### No date yet - a bare `userId` MLS credential, written by builds before 2026-07-24
 
 **Site:** `canonical_user_of` / `is_legacy_bare_identity` in `frontend/mls-core/src/device_trust.rs`,

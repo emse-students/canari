@@ -1454,19 +1454,27 @@ but none of its own, first sends a `welcome_request` (`externalJoin(groupId, { a
 device online adds it. A `stored` answer - the server's own verdict that no member device is online
 - makes it join by itself IN THE SAME PASS (`requestReAdd`, `recovery.ts`), with `welcomeOwed: 'ask'`
 so an Add already under way (the seat served with the base: `welcomeQueued`, `addInFlight`) is waited
-for. A member's Add and the self-join built on the same epoch meet at the strict epoch gate, which
-accepts one; the loser rebuilds (`mls-core/tests/further_device_door.rs`). A user's first device in
-a group, and a device whose own leaf is still there, keep their own door.
+for. **One door per answer**: the ask carries `selfJoinIfNobody: true`, so on a current base with no
+member online the server stores, queues and wakes nothing (and withdraws an ask an earlier pass
+stored) - no member's background Add races the join. Were a member's Add and the self-join still to
+meet on the same epoch, the strict epoch gate accepts one and the loser rebuilds
+(`mls-core/tests/further_device_door.rs`). A user's first device in a group, and a device whose own
+leaf is still there, keep their own door. **The server holds the self-join shut**
+(`FURTHER_DEVICE_SELF_JOIN_OPEN = false`: no seat is served with the base, so the device reads
+`seat_unreadable` and waits) until `minClientVersion` carries D2/D3
+([the gate](mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client)).
 
 **Such an entry is announced as an ordinary added device (D2)**: "X a ajoute un appareil" to members,
 "Nouvel appareil connecte" with "Ce n'est pas moi" on the owner's other devices - the same
 `announces_new_device` event a member's Add raises. The `unvouched-device` line, its report and the
-history withholding (`historyWithheld.ts`) are DELETED: with D1 they would accuse every honest
-recovery. The server still accepts an older client's `kind=unvouched-device` report.
+history withholding (`historyWithheld.ts`) are NARROWED to the one class that is not a further
+device's recovery: **a KNOWN device id entering by its own commit under a key other than the one known
+for it** (`trust == KeyChanged && enters_by_its_own_commit()`, one predicate on both sides of the WASM
+boundary - [the trade-off](mls-availability-no-holder.md#the-security-trade-off-honestly)).
 
-**History follows rule 2 for both doors (D3).** What a device receives is decided by the
+**History follows rule 2 for a further device (D3).** What it receives is decided by the
 history-answer rules ([history-answer-addressing](history-answer-addressing.md)); nothing is withheld
-from a device because of the door it took.
+from it because of the door it took. Only the key-changed class above is withheld.
 
 **The Android background answer adds a member's device too** (owner, 2026-10-31: *"aussi en
 arriere-plan"*). `prepare_welcome_background_with_key` (`background.rs`) applies the same
