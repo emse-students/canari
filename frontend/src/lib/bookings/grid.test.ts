@@ -15,6 +15,8 @@ import {
   slotsReadRange,
   unitDay,
   weekDates,
+  HOUR_REM,
+  firstUsefulMin,
   weekLayout,
   weekReadRange,
   windowRefusal,
@@ -153,28 +155,51 @@ function parisUnit(local: string, minutes: number, offset = '+01:00'): SlotUnit 
   return { date: local.slice(0, 10), startMs, endMs: startMs + minutes * 60_000, state: 'free' };
 }
 
-describe('the week (WP-R2, D46)', () => {
-  it('is the ISO week, Monday first, whatever day of it is asked', () => {
+describe('the week (WP-R2, D46; rolling since 2026-11-01)', () => {
+  it('is the seven days STARTING on the date asked, not the ISO week', () => {
     expect(weekDates('2026-11-04')).toEqual([
-      '2026-11-02',
-      '2026-11-03',
       '2026-11-04',
       '2026-11-05',
       '2026-11-06',
       '2026-11-07',
       '2026-11-08',
+      '2026-11-09',
+      '2026-11-10',
     ]);
-    expect(weekDates('2026-11-08')[0]).toBe('2026-11-02');
-    expect(weekDates('2026-11-02')[0]).toBe('2026-11-02');
+    expect(weekDates('2026-11-08')[0]).toBe('2026-11-08');
   });
 
-  it('reads from the day before the Monday, so a Sunday night window reaches Monday 00:30', () => {
-    expect(weekReadRange('2026-11-05')).toEqual({ from: '2026-11-01', to: '2026-11-08' });
+  it('reads from the day before the first day, so a night window reaches its 00:30', () => {
+    expect(weekReadRange('2026-11-05')).toEqual({ from: '2026-11-04', to: '2026-11-11' });
   });
 
   it('names the week and a day in the reader language', () => {
-    expect(formatWeekRange(weekDates('2026-11-04'))).toMatch(/2.+8.+2026/);
+    expect(formatWeekRange(weekDates('2026-11-04'))).toMatch(/4.+10.+2026/);
     expect(formatDayHead('2026-11-04')).toMatchObject({ num: 4 });
+  });
+
+  it('draws the whole day whatever the week holds, so the grid never changes shape', () => {
+    const early = weekLayout(
+      [parisUnit('2026-11-04T09:00', 30)],
+      weekDates('2026-11-04'),
+      paris,
+      at('2026-11-01T00:00:00Z')
+    );
+    const late = weekLayout(
+      [parisUnit('2026-11-05T21:00', 30), parisUnit('2026-11-06T22:00', 30)],
+      weekDates('2026-11-04'),
+      paris,
+      at('2026-11-01T00:00:00Z')
+    );
+    expect([early.startMin, early.endMin, early.remPerHour]).toEqual([0, 1440, HOUR_REM]);
+    expect([late.startMin, late.endMin, late.remPerHour]).toEqual([0, 1440, HOUR_REM]);
+  });
+
+  it('opens on the hour of the first unit a booker may take, a scroll position only', () => {
+    const units = [parisUnit('2026-11-04T14:30', 30), parisUnit('2026-11-05T09:00', 30)];
+    const layout = weekLayout(units, weekDates('2026-11-04'), paris, at('2026-11-01T00:00:00Z'));
+    expect(firstUsefulMin(layout, paris, at('2026-11-01T00:00:00Z'))).toBe(9 * 60);
+    expect(firstUsefulMin(weekLayout([], weekDates('2026-11-04'), paris, 0), paris, 0)).toBe(480);
   });
 
   it('places each unit by the wall time of its start, the same hour on every day', () => {
@@ -191,11 +216,11 @@ describe('the week (WP-R2, D46)', () => {
     ]);
     expect(layout.days[0].placed[0]).toMatchObject({ topMin: 600, heightMin: 30 });
     expect(layout.days[1].placed[0].topMin).toBe(600);
-    // One axis for the week, whole hours around what is offered.
-    expect([layout.startMin, layout.endMin]).toEqual([600, 660]);
+    // One axis for the week: the whole day.
+    expect([layout.startMin, layout.endMin]).toEqual([0, 1440]);
   });
 
-  it('starts the axis at the first hour ANY day opens, not at midnight, and ends after the last', () => {
+  it('has the same whole-day axis whenever the days open', () => {
     // Monday opens 08:00-09:00, Saturday 10:00-23:00 (Paris): the axis is the union, 08:00-23:00.
     const units = [
       parisUnit('2026-11-02T08:00', 60),
@@ -203,7 +228,7 @@ describe('the week (WP-R2, D46)', () => {
       parisUnit('2026-11-07T22:00', 60),
     ];
     const layout = weekLayout(units, weekDates('2026-11-02'), paris, at('2026-11-01T00:00:00Z'));
-    expect([layout.startMin, layout.endMin]).toEqual([480, 1380]);
+    expect([layout.startMin, layout.endMin]).toEqual([0, 1440]);
   });
 
   it('keeps 18:00 at 18:00 across the daylight-saving change (2026-10-24 to 2026-10-26)', () => {
@@ -256,8 +281,8 @@ describe('the week (WP-R2, D46)', () => {
     const serverRead = ({ from, to }: { from: string; to: string }) =>
       night.filter((u) => from <= u.date && u.date <= to);
     const layout = weekLayout(
-      serverRead(weekReadRange('2026-11-07')),
-      weekDates('2026-11-07'),
+      serverRead(weekReadRange('2026-11-02')),
+      weekDates('2026-11-02'),
       paris,
       at('2026-11-05T00:00:00Z')
     );
@@ -310,21 +335,16 @@ describe('the week (WP-R2, D46)', () => {
     ]);
   });
 
-  it('is tall enough that the shortest unit holds a line of text, and capped', () => {
-    const short = weekLayout(
-      [parisUnit('2026-11-02T10:00', 15)],
-      ['2026-11-02'],
-      paris,
-      at('2026-11-01T00:00:00Z')
-    );
-    expect(short.remPerHour).toBe(7);
-    const long = weekLayout(
-      [parisUnit('2026-11-02T10:00', 120)],
-      ['2026-11-02'],
-      paris,
-      at('2026-11-01T00:00:00Z')
-    );
-    expect(long.remPerHour).toBe(4);
+  it('has ONE hour height, whatever the units are', () => {
+    for (const minutes of [15, 30, 120]) {
+      const layout = weekLayout(
+        [parisUnit('2026-11-02T10:00', minutes)],
+        ['2026-11-02'],
+        paris,
+        at('2026-11-01T00:00:00Z')
+      );
+      expect(layout.remPerHour).toBe(HOUR_REM);
+    }
   });
 
   it('has no axis when nothing is offered', () => {
