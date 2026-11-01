@@ -240,7 +240,7 @@ fi
 baked="$(sed -n "s|^RUN mkdir -p /etc/nginx/rotation && printf '\\(.*\\)' > /etc/nginx/rotation/frontend.conf\$|\\1|p" "$FRONTEND_NGINX")"
 baked="$(printf '%b' "$baked")"
 resting="$(
-  # shellcheck source=../../../infrastructure/lib/rolling.sh
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
   . "$ROLLING"
   rotation_routes_set <<<"$PROD_PLAN"
   printf '%s\n' "$ROTATION_ROUTES" | while read -r svc via port; do
@@ -326,7 +326,7 @@ ended=no
 # Each assertion is a string `verdict` evals, so its `$` are expanded there, not here (SC2016); the
 # stub and the variables it reads are used through rolling.sh, which shellcheck cannot see doing so
 # (SC2034, SC2329).
-# shellcheck disable=SC2016,SC2034,SC2329
+# shellcheck disable=SC2016,SC2034,SC2317,SC2329
 while read -r verdict message; do
   if [ "$verdict" = ok ]; then ok "$message"; else fail "$message"; fi
   [ "$message" = "the rotation library's checks ran to their end" ] && ended=yes
@@ -353,7 +353,7 @@ done < <(
   DOCKER_CLI=fake_docker
   PROJECT=p
   ROTATION_DIR="$ROT"
-  # shellcheck source=../../../infrastructure/lib/rolling.sh
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
   . "$ROLLING"
   verdict() { if eval "$2"; then echo "ok $1"; else echo "fail $1"; fi; }
   block_of() { rotation_existing_block "$ROT/front.conf" "$1" | grep '^    server ' | tr -s ' ' | tr '\n' '|'; }
