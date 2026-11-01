@@ -47,6 +47,8 @@
     <string name="notif_incoming_video_call">Incoming video call</string>
     <string name="notif_action_answer_call">Answer</string>
     <string name="notif_action_decline_call">Decline</string>
+    <string name="call_screen_kind_audio">Audio call</string>
+    <string name="call_screen_kind_video">Video call</string>
     <!-- Server-composed pushes; see the French table for why they live here. -->
     <string name="notif_social_mention_title">%1$s mentioned you</string>
     <string name="notif_social_mention_body">You were mentioned in a comment</string>

@@ -64,6 +64,7 @@ import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 export type { MessageHandlerDeps } from './deps';
 
 /**
@@ -255,6 +256,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit, deliveryMeta) => {
       // The ONE canonical user id (leafIdentity.ts): ASCII letters folded, as MLS and the replay do.
       const senderNorm = canonicalUserId(sender);
+      // What the server says of every frame bounds the read marks this account may take (serverClock.ts).
+      noteServerTime(deps.userId, deliveryMeta?.queuedCreatedAt);
 
       // ── Welcome ──────────────────────────────────────────────────────────────
       if (isWelcome) {

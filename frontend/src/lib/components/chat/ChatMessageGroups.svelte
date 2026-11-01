@@ -8,6 +8,7 @@
   import SeenByHeads from '../messages/SeenByHeads.svelte';
   import type { ChatMessage, MessageReaction, ReadWatermarks } from '$lib/types';
   import { readersOf } from '$lib/utils/chat/readState';
+  import { messageDate, messageTime } from '$lib/utils/chat/messageOrder';
   import {
     isMessageGroupRow,
     type MessageGroup,
@@ -82,6 +83,8 @@
      * DERIVED from it here rather than stored on the message, so there is one copy of the fact.
      */
     readWatermarks?: ReadWatermarks;
+    /** The same read state on the server's clock (`readState.ts`); a row is read by either map. */
+    serverReadWatermarks?: ReadWatermarks;
     /**
      * Groups and salons: message id -> the members whose head sits under it (`seenByAnchors`, over
      * the WHOLE conversation). When given, it replaces the DM receipt under the sender's own last
@@ -117,11 +120,13 @@
     isDirect = false,
     isMobile = false,
     readWatermarks,
+    serverReadWatermarks,
     seenBy,
   }: Props = $props();
 
   /** Everyone who has read `msg`, its author excluded. */
-  const readersOfMessage = (msg: ChatMessage): string[] => readersOf(msg, readWatermarks);
+  const readersOfMessage = (msg: ChatMessage): string[] =>
+    readersOf(msg, readWatermarks, serverReadWatermarks);
 
   const pinnedSet = $derived(new Set(pinnedIds));
 
@@ -247,7 +252,7 @@
             messageId={msg.id}
             senderId={msg.senderId}
             content={msg.content}
-            timestamp={msg.timestamp}
+            timestamp={messageDate(msg)}
             isOwn={msg.isOwn}
             isSystem={msg.isSystem}
             replyTo={msg.replyTo}
@@ -257,7 +262,7 @@
             {onJoinChannel}
             {onReact}
             {currentUserId}
-            shouldAnimate={msg.timestamp.getTime() > switchTime}
+            shouldAnimate={messageTime(msg) > switchTime}
             {authToken}
             {isMobile}
           />
@@ -322,7 +327,7 @@
               messageId={msg.id}
               senderId={msg.senderId}
               content={msg.content}
-              timestamp={msg.timestamp}
+              timestamp={messageDate(msg)}
               isOwn={msg.isOwn}
               isSystem={msg.isSystem}
               replyTo={msg.replyTo}
@@ -364,7 +369,7 @@
                 : undefined}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}
-              shouldAnimate={msg.timestamp.getTime() > switchTime}
+              shouldAnimate={messageTime(msg) > switchTime}
               searchTerm={searchQuery}
               {authToken}
               {isMobile}

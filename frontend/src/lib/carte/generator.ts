@@ -86,11 +86,8 @@ const GENERIC_ROLES = new Set(['membre', 'member', 'adherent', 'adherente']);
 
 /** Whether a role is one of those, ignoring case and accents. */
 function isGenericRole(role: string): boolean {
-  const plain = role
-    .normalize('NFD')
-    .replaceAll(/[̀-ͯ]/g, '')
-    .trim()
-    .toLowerCase();
+  const stripped = role.normalize('NFD').replaceAll(/[̀-ͯ]/g, '');
+  const plain = stripped.trim().toLowerCase();
   return GENERIC_ROLES.has(plain);
 }
 

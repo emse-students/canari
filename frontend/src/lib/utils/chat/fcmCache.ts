@@ -32,6 +32,7 @@ import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { recordNotified } from '$lib/utils/chat/notifiedMessages';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 
 /**
  * Shape of one entry in fcm_message_cache.ndjson (written by Android Kotlin and the
@@ -78,6 +79,14 @@ interface FcmCacheEntry {
   presented?: boolean;
   content: string;
   timestamp: number;
+  /**
+   * The SERVER's acceptance of the message in ms, the key the conversation is ordered on
+   * (`messageTime`, owner 2026-10-31): the push's `createdAt` for an inbound row, the `receivedAt`
+   * the quick reply's POST answered for our own. Absent from an entry written by an older native
+   * build, or when the server's answer carried none - the row then keeps its `timestamp` until the
+   * delivery pipeline brings the real frame.
+   */
+  serverTimestamp?: number;
   type: string;
   replyTo?: { id: string; senderId: string; preview: string } | null;
   /** `image | video | audio | file | reel` as the Rust push scanner read it; `reel` since WP-RC-7. */
@@ -349,12 +358,19 @@ async function consumeFcmCacheOnce(
       );
       continue;
     }
+    // The push's `createdAt` (or a quick reply's `receivedAt`) is the SERVER's word: it bounds this
+    // account's server read marks as a live frame does (serverClock.ts) - on a boot with no network
+    // it may be the only statement there is.
+    noteServerTime(userId, entry.serverTimestamp);
     const msg: StoredMessage = {
       id: entry.messageId,
       conversationId: entry.groupId,
       senderId: entry.senderId.toLowerCase(),
       content: entry.content,
       timestamp: entry.timestamp,
+      ...(typeof entry.serverTimestamp === 'number' && entry.serverTimestamp > 0
+        ? { serverTimestamp: entry.serverTimestamp }
+        : {}),
       isFcmPreview: true,
     };
     try {

@@ -43,7 +43,7 @@ import {
   type PendingInvitationRow,
   WelcomeTargetUnknownError,
   isTerminalWelcomeRefusal,
-  admitRefusalMakesWelcomeUndeliverable,
+  whyWelcomeUndeliverable,
   type RefusedAdmit,
   ADD_LOCK_WAIT_BOUND_MS,
   boundAddLockWait,
@@ -75,6 +75,7 @@ import {
   MlsStateVerdictError,
   type MlsStateVerdictCode,
 } from '$lib/mls-client/mlsStateSeal';
+import { MlsStateLoadUntypedError } from '$lib/mls-client/mlsStateLoadError';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -384,8 +385,9 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
 }
 
 /**
- * The recovery each verdict of `mls-core`'s deterministic reader maps to - the same one the prefix
- * of the identical native error reaches through the string arms of `classifyStateLoadFailure`.
+ * The recovery each verdict about a saved state's bytes maps to - one table for every source of
+ * {@link MlsStateVerdictError}: the web's v2 opener, `mls-core`'s deterministic reader, and
+ * `mls-core` through the WASM constructor or the Tauri `initialiser_mls` (typed at the boundary).
  */
 const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailure> = {
   STATE_ALTERED: 'altered',
@@ -396,12 +398,14 @@ const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailur
 
 /**
  * The admits an ACCEPTED commit's answer says the gate did not record (`refusedAdmits`) - each said
- * once, at debug unless it bars the Welcome - and of them the ones no Welcome can reach ({@link admitRefusalMakesWelcomeUndeliverable}) -
+ * once, at debug unless it bars the Welcome - and of them the ones no Welcome can reach ({@link whyWelcomeUndeliverable}) -
  * returned, so the merge owes them nothing and the caller sends them nothing.
  *
  * NEVER LEARNED BY FAILING (DEV-3, 2026-10-25): a device its owner revoked while a member's Add was
  * in flight is dropped by the gate (`no_key_package`), and the member still sent it a Welcome,
  * which came back a 500 and stayed owed for every later connection. The answer had said it first.
+ * The same held for a person a key group's gate refused (`not_entitled`, RM-5 2026-10-26): the
+ * Welcome went out and came back `403 WELCOME_TARGET_NOT_MEMBER`, logged as an error.
  * The leaf stays in the tree with no seat, and the stray sweep removes it.
  */
 function undeliverableAdmits(groupId: string, refused: RefusedAdmit[] | undefined): RefusedAdmit[] {
@@ -410,11 +414,12 @@ function undeliverableAdmits(groupId: string, refused: RefusedAdmit[] | undefine
   const undeliverable: RefusedAdmit[] = [];
   for (const r of refused) {
     const who = `${sanitizeForLog(r.userId).slice(0, 8)}:${sanitizeForLog(r.deviceId)}`;
-    if (admitRefusalMakesWelcomeUndeliverable(r.reason)) {
+    const why = whyWelcomeUndeliverable(r.reason);
+    if (why !== null) {
       undeliverable.push(r);
       console.log(
-        `[COMMIT] ${short}... ${who} NOT admitted by the gate (${r.reason}: revoked, or its account ` +
-          'erased) - no Welcome is owed or sent; its leaf has no seat and the stray sweep removes it'
+        `[COMMIT] ${short}... ${who} NOT admitted by the gate (${r.reason}: ${why}) - no Welcome ` +
+          'is owed or sent; its leaf has no seat and the stray sweep removes it'
       );
     } else {
       // At debug: `already_active` is an ordinary answer to a re-Add, not news on every commit.
@@ -840,6 +845,13 @@ export abstract class BaseMlsService implements IMlsService {
    * with a recovery that cannot possibly work. Measured on CORRUPT-1 and CORRUPT-2: one byte XORed
    * in an 18.4 MB state, and the correct PIN was then refused five times over.
    *
+   * **AND SINCE 2026-10-27 IT READS A TYPE, NOT EVEN A CODE IN A SENTENCE.** The codes were still
+   * found by `includes` in the message, so any text naming one - a log line wrapped in an error, a
+   * code quoted by an unrelated failure - acquired its recovery, `altered`'s irreversible rotation
+   * included. Every boundary now carries the code as a FIELD and types it where it crosses
+   * (`mlsStateLoadErrorOf`: `initialiser_mls`, the WASM constructor; the web's v2 opener throws the
+   * type itself), and this reads `instanceof` alone.
+   *
    * **AND `sealed` WAS RENAMED, BECAUSE THE NAME WAS THE CLAIM.** An AEAD tag that does not verify
    * has two explanations the blob alone cannot separate - sealed under a different device key, or
    * altered - and nothing stored beside it says which (`mls_autosave_ver` orders concurrent
@@ -872,22 +884,27 @@ export abstract class BaseMlsService implements IMlsService {
     // A TYPE, read before any code: the web's WebCrypto refusal is not a verdict on the bytes, and
     // its message must never be able to reach a needle below.
     if (error instanceof MlsStateUnreadableNowError) return 'unreadable_now';
-    // A TYPE too: `mls-core`'s deterministic reader judged bytes WebCrypto refused, and its verdict
-    // crossed the WASM boundary as a code (`state_blob_verdict`), never as prose.
+    // A TYPE too, from every source: the web's v2 opener, `mls-core`'s deterministic reader, and
+    // `mls-core` through the WASM constructor or `initialiser_mls` - each verdict crossed its
+    // boundary as a CODE field and was typed there (`mlsStateLoadErrorOf`), never read from prose.
     if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
-    const errStr = String(error);
-    if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
-    if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
-    if (errStr.includes('STATE_ALTERED')) return 'altered';
-    if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
     if (isKeystoreKeyUnavailable(error)) return 'keystore_unavailable';
+    // Untyped AT A BOUNDARY, which already accused it (`mlsStateLoadErrorOf` logs every untyped
+    // answer once, because not every caller of a boundary classifies). A second line here would be
+    // the same failure logged twice.
+    if (error instanceof MlsStateLoadUntypedError) return 'unknown';
+    // NOTHING BELOW READS TEXT. An error outside the closed set - `MlsStateLoadUntypedError`, or
+    // anything thrown before a boundary typed it - is `unknown` whatever its message names: a
+    // sentence containing `STATE_ALTERED` is not a verdict, and treating it as one would rotate an
+    // identity on the strength of a word.
+    //
     // ACCUSING, AND HERE RATHER THAN AT THE CALL SITES so that no future caller can forget it.
     // Reaching this arm means the state load failed for a reason `mls-core` does not type, and
     // the whole defect this classifier was rewritten for is an unrecognised failure passing
-    // quietly as a diagnosis. It stays silent for the two known answers.
+    // quietly as a diagnosis.
     console.warn(
       `[MLS] Unrecognised state-load failure - not typed by mls-core, so its cause is unknown ` +
-        `and nothing will be destroyed on account of it: ${errStr.slice(0, 200)}`
+        `and nothing will be destroyed on account of it: ${String(error).slice(0, 200)}`
     );
     return 'unknown';
   }
