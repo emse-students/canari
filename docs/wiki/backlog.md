@@ -2443,6 +2443,8 @@ searches), `HEAD` content-length.
 
 ## P2 - A withdrawn or wiped chat reel can leak its upload session for 24 h (owed BEFORE `CHAT_REEL_WRITER_ENABLED`)
 
+**BUILT 2026-11-01** (draft pull request `fix/chat-reel-session-release`): the durable mark, the startup/reconnect drain, the erasure fan-out ending the owner's sessions. Two paths stay the 24 h sweep's by design (a revoked device's factory wipe, the forgot-PIN reset): [reels-in-chat](frontend/modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19). Delete this entry when it ships.
+
 Found in the review of #2117 (RC-5, 2026-10-19), not built. The withdrawal of a queued chat reel releases its resumable session with a best-effort `DELETE`. **Three paths still leak it** to media-service's 24 h sweep:
 - a cancel made offline - the weak link the reel was stuck on - logs `NOT released`;
 - a sign-out and an account erasure wipe the outbox without a `DELETE`;

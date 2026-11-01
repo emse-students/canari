@@ -95,6 +95,13 @@ import {
   registerPendingGroupExitDrain,
   unregisterPendingGroupExitDrain,
 } from '$lib/utils/chat/pendingGroupExits';
+import {
+  flushUploadReleaseMarks,
+  registerUploadReleaseDrain,
+  releaseUploadDurably,
+  unregisterUploadReleaseDrain,
+  type ReleaseAnswer,
+} from '$lib/utils/chat/uploadReleaseMarks';
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
@@ -452,11 +459,18 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       );
     },
     prepareMedia: prepareQueuedChatReel,
+    // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
+    // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
-      const { MediaService } = await import('$lib/media');
-      await new MediaService().releaseResumableUpload(uploadId, getToken, why);
+      await releaseUploadDurably(ctx.getUserId(), uploadId, why, releaseResumableSession, cb.log);
     },
   };
+}
+
+/** One media-service `DELETE` of a resumable session, under the signed-in owner's token. */
+async function releaseResumableSession(uploadId: string, why: string): Promise<ReleaseAnswer> {
+  const { MediaService } = await import('$lib/media');
+  return new MediaService().releaseResumableUpload(uploadId, getToken, why);
 }
 
 /**
@@ -1928,6 +1942,12 @@ export async function loginImpl(
     // Group exits this device decided and the server never answered. Same lifecycle and the same
     // seam as the one above: a delete or a leave that met no server is owed until one answers, and
     // the answer cannot be waited for with a timer (see `pendingGroupExits`).
+    // Upload sessions a withdrawal could not give back (made offline): owed until one answers.
+    registerUploadReleaseDrain({
+      getUserId: () => ctx.getUserId(),
+      release: releaseResumableSession,
+      log: cb.log,
+    });
     registerPendingGroupExitDrain({
       getStorage: () => ctx.getStorage(),
       ensureMls: () => ctx.ensureMls(),
@@ -2485,6 +2505,8 @@ export async function loginImpl(
       // Same moment, and NOT covered by the reconnect listener: an app killed while offline comes
       // back with the link already up, so no `online` edge ever fires for the exit it still owes.
       void flushPendingGroupExits();
+      // Same reason for an upload session a withdrawal made offline could not give back.
+      void flushUploadReleaseMarks();
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -3305,6 +3327,8 @@ export function tearDownLiveSession(
   // Same reason: an exit owed by the user who just signed out must not be replayed with the next
   // one's token. The row survives in storage, and that user's next login replays it.
   unregisterPendingGroupExitDrain();
+  // And a session release owed by that user: their marks stay, for their next sign-in.
+  unregisterUploadReleaseDrain();
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();

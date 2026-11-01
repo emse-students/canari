@@ -3,6 +3,7 @@ import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
+import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import {
   ACCOUNT_KEY,
@@ -346,6 +347,12 @@ export async function wipeDeletedAccountLocalData(
       if (await store.delete(ACCOUNT_KEY.lastActive(userId))) await store.save();
     });
   }
+
+  // The device-wide release marks name this account: the server ended its sessions in the erasure
+  // fan-out (media-service `cancelAllOwnedBy`), so they are dropped with the rest of its data.
+  await step('the upload release marks', async () => {
+    dropUploadReleaseMarksOf(userId, (line) => console.log(line));
+  });
 
   await step('the per-account local keys', async () => {
     // A keystore entry that survived keeps the device id it is named by, or the resume could never
