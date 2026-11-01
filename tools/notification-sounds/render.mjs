@@ -15,16 +15,30 @@
  * so the loudest reaches -3 dBFS, which keeps the relative levels the palette was chosen with
  * (a reaction stays softer than a message). Files are 44.1 kHz mono 16-bit WAV, the tail trimmed where
  * it falls under -70 dBFS. Only message, mention and reaction ship: send and read are in-app tones.
+ *
+ * THE CALLER'S RINGBACK is rendered here too (`RINGBACK_PHRASE` of the same palette file), into
+ * `frontend/static/sounds/canari_ringback.wav`: one exact loop, at its own lower level - see the
+ * block at the end.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GAZOUILLIS, MASTER_GAIN } from '../../frontend/src/lib/utils/soundPalette.ts';
+import {
+  GAZOUILLIS,
+  MASTER_GAIN,
+  RINGBACK_PERIOD_S,
+  RINGBACK_PHRASE,
+} from '../../frontend/src/lib/utils/soundPalette.ts';
 
 const SR = 44100;
 const OUT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../frontend/src-tauri/gen/android/app/src/main/res/raw'
+);
+/** The ringback is a WEB asset (played by the page on every platform), served from `static/`. */
+const RINGBACK_OUT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../frontend/static/sounds'
 );
 const SHIPPED = ['message', 'mention', 'reaction'];
 const PEAK_TARGET = 0.7; // -3 dBFS
@@ -107,7 +121,11 @@ function convolve(x, ir) {
 }
 
 function renderSound(name, ir) {
-  const voices = GAZOUILLIS[name];
+  return renderVoices(GAZOUILLIS[name], ir);
+}
+
+/** Renders a list of voices with its room: dry + 18 % wet, the reverb tail included. */
+function renderVoices(voices, ir) {
   const end = Math.max(...voices.map((v) => v.offset + v.dur + 0.05));
   const len = Math.ceil((end + REVERB_SECONDS) * SR);
   const dry = new Float32Array(len);
@@ -134,7 +152,9 @@ function wav(samples) {
   buf.writeUInt16LE(16, 34);
   buf.write('data', 36);
   buf.writeUInt32LE(samples.length * 2, 40);
-  samples.forEach((s, i) => buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, s)) * 32767), 44 + i * 2));
+  samples.forEach((s, i) =>
+    buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, s)) * 32767), 44 + i * 2)
+  );
   return buf;
 }
 
@@ -155,7 +175,8 @@ function sameSound(committed, fresh) {
   if (Math.abs(committed.length - fresh.length) > CHECK_TOLERANCE_SAMPLES * 2) return false;
   const end = Math.min(committed.length, fresh.length) - 1;
   for (let i = 44; i < end; i += 2) {
-    if (Math.abs(committed.readInt16LE(i) - fresh.readInt16LE(i)) > CHECK_TOLERANCE_LSB) return false;
+    if (Math.abs(committed.readInt16LE(i) - fresh.readInt16LE(i)) > CHECK_TOLERANCE_LSB)
+      return false;
   }
   return true;
 }
@@ -187,4 +208,38 @@ for (const { name, samples } of rendered) {
   console.log(`${name}: ${(kept.length / SR).toFixed(2)} s, ${data.length} bytes -> ${file}`);
 }
 console.log(`common gain x${gain.toFixed(2)} (loudest peak -3 dBFS)`);
+
+// THE CALLER'S RINGBACK (`RINGBACK_PHRASE`, calls.md "The caller's ringback"). Its own level, not the
+// notifications' common gain: it plays for up to the whole ring window, on the earpiece, so its
+// loudest peak sits at RINGBACK_PEAK_DBFS. The file is EXACTLY one loop - the phrase, its room, then
+// silence up to RINGBACK_PERIOD_S - because the `<audio loop>` playing it repeats the whole file, and
+// the pause between phrases is that silence. No fade: the tail is already under the floor long before
+// the end, and the loop point is silence on both sides.
+{
+  const RINGBACK_PEAK_DBFS = -14;
+  const phrase = renderVoices(RINGBACK_PHRASE, ir);
+  const length = Math.round(RINGBACK_PERIOD_S * SR);
+  if (phrase.length > length) {
+    console.error(
+      `RINGBACK: the phrase (${phrase.length} samples) is longer than its loop (${length})`
+    );
+    process.exit(1);
+  }
+  const ringPeak = Math.max(...phrase.map(Math.abs));
+  const ringGain = 10 ** (RINGBACK_PEAK_DBFS / 20) / ringPeak;
+  const loop = new Float32Array(length);
+  for (let i = 0; i < phrase.length; i++) loop[i] = phrase[i] * ringGain;
+  const file = resolve(RINGBACK_OUT, 'canari_ringback.wav');
+  const data = wav(loop);
+  if (check) {
+    if (!existsSync(file) || !sameSound(readFileSync(file), data)) {
+      console.error(`DRIFT: ${file} differs from the palette`);
+      drift++;
+    }
+  } else {
+    mkdirSync(RINGBACK_OUT, { recursive: true });
+    writeFileSync(file, data);
+    console.log(`ringback: ${RINGBACK_PERIOD_S} s loop, ${data.length} bytes -> ${file}`);
+  }
+}
 if (drift) process.exit(1);

@@ -72,7 +72,6 @@ fn refused_by_mls(error: &mls_core::MlsError) -> serde_json::Value {
         | K::PastEpochApplication
         | K::OwnMessage
         | K::Evicted
-        | K::AdmissionRefused
         | K::SameEpochRefusal
         | K::Unrecoverable => "mls-refused-for-good",
     };
@@ -2167,6 +2166,46 @@ mod tests {
         assert_eq!(info["ok"], false);
         assert_eq!(info["reason"], "mls-refused-for-good");
         assert_eq!(info["kind"], "SecretReuse");
+    }
+
+    /// THE ADMISSION RULE IS DISARMED ON THE PUSH PATH TOO (owner, 2026-10-31): an external commit
+    /// by a user holding no leaf is applied like any control frame. The group was closed by a dev
+    /// build and SAVED that way, which is the state such a phone actually holds - and the push path
+    /// LOADS it, so the load drops the `closed` leftover (review of #2817) and the group is judged
+    /// unclassified. That a refusal never reaches the push path even IN MEMORY is pinned by
+    /// `mls-core/tests/admission_policy.rs`, which keeps the state live.
+    #[test]
+    fn an_uninvited_external_commit_in_a_group_a_dev_build_closed_is_applied_after_the_load() {
+        let _fg = quiet_foreground();
+        let tag = "uninvited";
+        let (mut alice, _bob, group_id) = joined_pair(tag);
+        alice.set_admission_policy(&group_id, mls_core::AdmissionPolicy::Closed);
+        let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let mut stranger = MlsManager::load_or_create(&format!("{tag}-stranger"), "dev-s", None)
+            .expect("stranger");
+        let group_info = alice.export_group_info(&group_id).expect("group info");
+        let (_gid, commit) = stranger
+            .join_by_external_commit(&group_info)
+            .expect("external commit");
+
+        let info = decrypt_push_message_with_key(
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-stranger"),
+                ciphertext: &commit,
+            },
+            PushLanguage::French,
+        );
+        assert_ne!(info["reason"], "mls-refused-for-good");
+        assert_eq!(
+            info["reason"], "control-frame",
+            "the commit is applied: {info}"
+        );
     }
 
     /// A NEW v1 seed never reaches the mirror (channel-encryption section 21.7): the frame still

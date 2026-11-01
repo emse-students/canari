@@ -437,6 +437,18 @@ export class CallMicSwitch {
     this.sync('a new sender');
   }
 
+  /**
+   * The sender's peer connection was closed (the caller's ring ended unanswered): nothing is sent
+   * until the next {@link attachSender}, so no `replaceTrack` reaches a closed sender.
+   */
+  detachSender(): void {
+    if (!this.sender) return;
+    this.log('[Call] noise suppression: microphone sender detached (its connection closed)');
+    this.sender = null;
+    this.sent = 'raw';
+    this.framesAtLastTick = null;
+  }
+
   /** Takes the builder's result: a pipeline to switch to, or a failure to say and count. */
   adopt(result: CallMicPipelineResult): void {
     if (this.closed) {

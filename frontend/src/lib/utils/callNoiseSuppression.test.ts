@@ -596,6 +596,28 @@ describe('CallMicSwitch - the per-call switch', () => {
     );
   });
 
+  it('a detached sender (its connection closed) gets no replaceTrack until a new one attaches', async () => {
+    const raw = track('raw');
+    const sw = new CallMicSwitch(
+      raw,
+      true,
+      () => {},
+      () => {}
+    );
+    const closed = fakeSender(sw.trackToSend());
+    sw.attachSender(closed as unknown as RTCRtpSender);
+    sw.detachSender();
+    const fake = fakePipeline(track('processed'));
+    sw.adopt(ok(fake.pipeline));
+    await sw.settled();
+    expect(closed.replaceTrack).not.toHaveBeenCalled();
+
+    const next = fakeSender(sw.trackToSend());
+    sw.attachSender(next as unknown as RTCRtpSender);
+    await sw.settled();
+    expect(next.track).toBe(fake.pipeline.processed);
+  });
+
   it('reads no stall while the raw track is sent (switched OFF, the worklet suspended)', async () => {
     const sw = new CallMicSwitch(
       track('raw'),

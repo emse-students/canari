@@ -260,8 +260,13 @@ export interface CallReportContext {
   phase: 'tick' | 'end';
   /** Since the user's tap (call or answer), on `performance.now()`. */
   durMs: number;
-  /** Tap to the first unmuted remote audio track; `null` while no audio has arrived. */
-  setupMs: number | null;
+  /**
+   * The ring: its start (the caller's ring leaving, the callee's page ringing) to the answer; `null` before
+   * an answer. A HUMAN's time, kept apart from the app's so neither hides the other.
+   */
+  ringMs: number | null;
+  /** The answer to the first E2E proof of the call (`CallService.e2eProven`); `null` until then. */
+  connectMs: number | null;
   /** `callReportEngine`. */
   engine: string;
   ice: string;
@@ -308,7 +313,7 @@ function decryptFailuresOf(r: E2eWorkerReport): number {
 /**
  * Builds THE `[CALL_REPORT]` line of the revival plan (section 6, WP-C2): one per device, every
  * 10 s while in a call and once at its end, carrying the numbers a "the call connected but nobody
- * heard anything" report needs - `setup_ms`, `audio_level_in`, and `dec_frames` against
+ * heard anything" report needs - `ring_ms` / `connect_ms`, `audio_level_in`, and `dec_frames` against
  * `dec_fail`, which separate a key mismatch from no media at all - and `relayed=`, the only field
  * that says whether a call cost TURN volume.
  *
@@ -361,7 +366,8 @@ export function buildCallReport(
     `[CALL_REPORT] call=${ctx.callId}`,
     `phase=${ctx.phase}`,
     `dur_ms=${Math.round(ctx.durMs)}`,
-    `setup_ms=${ctx.setupMs === null ? '-' : Math.round(ctx.setupMs)}`,
+    `ring_ms=${ctx.ringMs === null ? '-' : Math.round(ctx.ringMs)}`,
+    `connect_ms=${ctx.connectMs === null ? '-' : Math.round(ctx.connectMs)}`,
     `engine=${ctx.engine}`,
     `ice=${ctx.ice}`,
     describeSelectedPair(stats),

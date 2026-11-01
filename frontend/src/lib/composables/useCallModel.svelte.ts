@@ -33,6 +33,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let peerMicSuspended = $state(false);
   let videoSendReduced = $state(false);
   let noiseSuppression = $state<NoiseSuppressionView>(initialNoiseSuppressionView());
+  let ringingOut = $state(false);
   let localStream = $state<MediaStream | null>(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole by the service's store, never mutated here
   let remoteStreams = $state<Map<string, MediaStream>>(new Map());
@@ -56,6 +57,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.peerMicSuspended.subscribe((v) => (peerMicSuspended = v)),
       service.videoSendReduced.subscribe((v) => (videoSendReduced = v)),
       service.noiseSuppression.subscribe((v) => (noiseSuppression = v)),
+      service.ringingOut.subscribe((v) => (ringingOut = v)),
       service.localStreamStore.subscribe((v) => {
         localStream = v;
         localVideoTrack = v?.getVideoTracks().find((t) => t.readyState === 'live') ?? null;
@@ -151,6 +153,10 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     /** The microphone's noise suppression for this call (`CallService.noiseSuppression`). */
     get noiseSuppression() {
       return noiseSuppression;
+    },
+    /** The caller hears it ring (`CallService.ringingOut`): the ringback plays exactly while true. */
+    get ringingOut() {
+      return ringingOut;
     },
     /** `mm:ss` since the media path connected; frozen once the call ended. */
     get duration() {

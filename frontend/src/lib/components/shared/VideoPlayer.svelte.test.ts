@@ -350,14 +350,18 @@ it('starts at 0 for a file that was not played inline', () => {
  * else - no timecode, no control row, no play or sound button - a tap on the picture plays or
  * pauses with a brief glyph that is the tap's feedback and never a state.
  */
-function mountMinimal(safeBottom = true) {
+function mountMinimal(
+  safeBottom = true,
+  poster: string | null = null,
+  onPlaybackBlocked?: (cause: 'refused' | 'unplayable') => void
+) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
   const component = mount(VideoPlayer, {
     target,
-    props: { src: 'blob:reel', minimal: true, safeBottom },
+    props: { src: 'blob:reel', minimal: true, safeBottom, poster, onPlaybackBlocked },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -398,6 +402,8 @@ it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
 it('minimal: a tap plays or pauses and shows the glyph of what it did', () => {
   const { target, root, video } = mountMinimal();
   video.dispatchEvent(new Event('loadeddata'));
+  // The element is still paused under the test, so the load asked its autoplay: not the tap's.
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
   root.click();
   flushSync();
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
@@ -409,6 +415,107 @@ it('minimal: a tap plays or pauses and shows the glyph of what it did', () => {
   expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
     'pause'
   );
+});
+
+it('minimal: a loading reel shows its first frame picture, never a play glyph', () => {
+  const { target, video } = mountMinimal(true, 'blob:first-frame');
+  const poster = target.querySelector('[data-video-first-frame-poster]')!;
+  expect(poster.getAttribute('src')).toBe('blob:first-frame');
+  expect(target.querySelector('svg.lucide-play, .lucide-play')).toBeNull();
+  video.dispatchEvent(new Event('loadeddata'));
+  flushSync();
+  expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
+});
+
+it('minimal: with no picture a loading reel is a black box, with no glyph', () => {
+  const { target } = mountMinimal();
+  expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
+  expect(target.querySelector('.bg-cn-yellow')).toBeNull();
+});
+
+it('minimal: a play button only when the engine REFUSES the autoplay', async () => {
+  const { target, video } = mountMinimal();
+  vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(
+    new DOMException('no', 'NotAllowedError')
+  );
+  video.dispatchEvent(new Event('loadeddata'));
+  video.dispatchEvent(new Event('canplay'));
+  flushSync();
+  expect(target.querySelector('button[aria-label]')).toBeNull();
+  await Promise.resolve();
+  await Promise.resolve();
+  flushSync();
+  expect(target.querySelector(`button[aria-label="${m.video_play_label()}"]`)).not.toBeNull();
+});
+
+/** Lets the `play()` promise of the last load event settle. */
+async function settlePlay() {
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+  flushSync();
+}
+const playButton = (target: HTMLElement) =>
+  target.querySelector(`button[aria-label="${m.video_play_label()}"]`);
+
+it('minimal: an interrupted autoplay is asked again at the next load event, and plays', async () => {
+  const blocked = vi.fn();
+  const { target, video } = mountMinimal(true, null, blocked);
+  const play = vi.mocked(HTMLMediaElement.prototype.play);
+  play.mockRejectedValueOnce(new DOMException('no', 'AbortError'));
+  video.dispatchEvent(new Event('loadeddata'));
+  await settlePlay();
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(playButton(target)).toBeNull();
+  // The load that interrupted it reaches `canplay`: asked once more, and this time it plays.
+  video.dispatchEvent(new Event('canplay'));
+  await settlePlay();
+  expect(play).toHaveBeenCalledTimes(2);
+  expect(playButton(target)).toBeNull();
+  expect(blocked).not.toHaveBeenCalled();
+  // Answered: later load events ask nothing.
+  video.dispatchEvent(new Event('canplay'));
+  await settlePlay();
+  expect(play).toHaveBeenCalledTimes(2);
+});
+
+it('minimal: an autoplay interrupted twice shows the button and says it is blocked', async () => {
+  const blocked = vi.fn();
+  const { target, video } = mountMinimal(true, null, blocked);
+  const play = vi.mocked(HTMLMediaElement.prototype.play);
+  play.mockRejectedValueOnce(new DOMException('no', 'AbortError'));
+  play.mockRejectedValueOnce(new DOMException('no', 'AbortError'));
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  video.dispatchEvent(new Event('loadeddata'));
+  await settlePlay();
+  video.dispatchEvent(new Event('canplay'));
+  await settlePlay();
+  expect(playButton(target)).not.toBeNull();
+  expect(blocked).toHaveBeenCalledWith('refused');
+  expect(warn).toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+it('minimal: any other autoplay failure shows the button at once, with a warning', async () => {
+  const blocked = vi.fn();
+  const { target, video } = mountMinimal(true, null, blocked);
+  vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(
+    new DOMException('no', 'NotSupportedError')
+  );
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  video.dispatchEvent(new Event('loadeddata'));
+  await settlePlay();
+  expect(playButton(target)).not.toBeNull();
+  expect(blocked).toHaveBeenCalledTimes(1);
+  expect(String(warn.mock.calls[0][0])).toContain('NotSupportedError');
+  warn.mockRestore();
+});
+
+it('minimal: bytes the engine refuses say the video is blocked', () => {
+  const blocked = vi.fn();
+  const { video } = mountMinimal(true, null, blocked);
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  video.dispatchEvent(new Event('error'));
+  expect(blocked).toHaveBeenCalledWith('unplayable');
+  error.mockRestore();
 });
 
 it('minimal: the sound follows the app-wide answer changed elsewhere (the rail)', () => {

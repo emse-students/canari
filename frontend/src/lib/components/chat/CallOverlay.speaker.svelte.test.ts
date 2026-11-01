@@ -92,6 +92,7 @@ function fakeService(state: CallState, hasVideo: boolean) {
     videoSendReduced: writable(false),
     noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
     toggleNoiseSuppression: vi.fn(),
+    ringingOut: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),

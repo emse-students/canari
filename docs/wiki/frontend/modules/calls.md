@@ -2601,6 +2601,89 @@ What changed: the other person's photo, blown up, blurred and dimmed, is the bac
   holds every button of the ring and of the call to `ui-icon-button` or `size-16`; the bar's buttons
   are plain markup and stay under the scan.
 
+### The caller's ringback (2026-10-31)
+
+**Before it, the caller heard nothing** between the dial tap and the answer: the screen said
+"Appel..." and no sound said the other phone rang (read in `CallService` and `CallOverlay`: no
+element, no tone on the `calling` side). The owner asked for one *"mieux qu'une tonalite de
+telephone, dans le style d'un canari qui chante"*.
+
+- **The sound.** `RINGBACK_PHRASE` in [soundPalette.ts](../../../../frontend/src/lib/utils/soundPalette.ts):
+  a soft roll of six quick rising syllables (1350 -> 1810 Hz) and two slower falling whistles
+  (2150 -> 1600 Hz, a faint octave partial), below the notification trills so it never gets shrill
+  over a minute of ringing. Rendered by `bun tools/notification-sounds/render.mjs` into
+  `frontend/static/sounds/canari_ringback.wav`: ONE loop of exactly `RINGBACK_PERIOD_S` = 4 s (the
+  phrase, its small room, then silence - 1.2 s of phrase, its room fading under it, then about 2 s of
+pause, a phone's rhythm),
+  loudest peak -14 dBFS, 11 dB under the notifications. `--check` covers it like the three channel
+  sounds (`notificationSoundsDrift.test.ts`).
+- **What drives it: state, not a timer.** `CallService.ringingOut` is written by `syncRingingOut(why)`
+  from three facts - the caller's ring window is open (set in `armRingTimer('calling')`, i.e. once
+  the invite has left), nobody answered (`peerArrived`), and the state is still `calling`. It moves
+  at the invite, at `PeerReady` (answered), at `endCall` (declined, busy, cancelled, not answered,
+  setup failed - the outcome is the reason) and at any state change (the backstop). Each move is
+  logged: `[Call] ringback starts - the invite left (call=...)`, `[Call] ringback stops - the call
+  ends (outcome=declined) (call=...)`. Never `true` on the callee: only the caller opens that window.
+- **What plays it.** `CallOverlay` mounts a second hidden `<audio>` beside the voice sink and hands it
+  to [callRingback.ts](../../../../frontend/src/lib/utils/callRingback.ts): `start` / `stop` follow
+  `ringingOut`; the element's own `loop` repeats the file. `prime` - a muted play paused at once -
+  runs inside the dialling tap (the overlay mounts within it) - NOT on Android, whose WebView plays
+  without a gesture and where a muted play before the microphone is held would open a MEDIA-usage
+  stream on the loudspeaker - so the `play()` seconds later is not
+  refused by a WebView's gesture rule; a refusal still says `[Call] WARN ringback refused without a
+  gesture`. Logged: `ringback primed`, `ringback playing (...)`, `ringback stopped (...)`.
+- **The output.** The microphone is held BEFORE the invite (`setupMedia`), so on Android the
+  ongoing-call service already holds the call's communication route when the ringback starts, and
+  the WebView plays in communication mode: earpiece, or the speaker / headset the route says. On the
+  iPhone the ringback element takes the same label-matched `setSinkId` as the voice. It is an output
+  only: never added to a peer connection, and it stops at the pairing, before any media can flow.
+- **Pinned by** `CallService.p2p.test.ts` ("the caller's ringback and the app's sound gate": start at
+  the invite; stop on answer, decline, busy, cancel, setup failure, window closed; never on the
+  callee) and `callRingback.test.ts` (loop, start, stop, a stop racing a pending `play()`, prime).
+- **Owed on the bench phones:** heard on the Mi 9T and the iPhone 12 placing a call: (1) it starts
+  within a second of "Appel...", (2) it comes out of the EARPIECE at a comfortable level and moves to
+  the loudspeaker with the speaker button, (3) it stops the instant the other side answers or
+  declines, (4) `adb shell dumpsys audio` during the ring shows the ringback's track with usage
+  `VOICE_COMMUNICATION` (if it reads `MEDIA`, it is on the media volume through the speaker, and the
+  route must be applied to it natively), (5) the callee hears nothing of it.
+
+### The app's other sounds during a call (2026-10-31)
+
+**Read on a production call** (owner's log): a native banner sounded for a message during an outgoing
+ring; a message landing in the open conversation trilled while a call rang; a read trill played in
+the call's own conversation. **Rule: from the ring (out or in) to the end, the app plays nothing but
+the call. Messages still arrive and are shown; only their sound goes.**
+
+| Sound | How it is silenced during a call |
+|---|---|
+| Message / mention / send / read trills (`useMessaging` arrival, `ChatBackgroundService` read watermark, `onReadStateAdvanced`) | `toneOutput.playTone` asks [callSoundGate.ts](../../../../frontend/src/lib/utils/callSoundGate.ts) and plays nothing (`[AUDIO] <name> tone silenced - a call holds the app's sound`). The incoming ring passes `purpose: 'call'` and is exempt |
+| Voice notes, audio attachments, videos, reels, lives, the reel review | `playbackArbiter`: a media playing WITH sound is paused when the gate is taken, and one that starts with sound during the call is paused on its `play`. Muted ones (the ambient feed) play on, until unmuted (`volumechange` pauses them). Nothing resumes on the call's end - the reader presses play. The reel review is now registered, so it also follows "one media at a time" and the pause on leaving the screen |
+| Browser notification (web, desktop browser) | raised with `silent: true` |
+| Android message, mention, reaction notifications (FCM push AND the WebSocket path, one builder) and social / form notifications | posted `setSilent(true)` - shown, not dropped - while [CallSoundHold](../../../../frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/CallSoundHold.kt) holds: `CallForegroundService.running` (the caller from the held microphone on, the callee from the answer) or a native ring up (`activeCallRings`). Both are state of the process, dead with it. Logged `a call holds the sound -> posted silent` |
+| iOS banners drawn by the notification service extension | `content.sound = nil` while `CXCallObserver` lists a call not ended (the CallKit ring, a call answered on it, a cellular call). In the foreground the app already presents no banner at all |
+
+**The one gate.** Each `CallService` states its `callState` under its holder id; the gate is held while
+any holder is `calling`, `incoming` or `incall` and released at `ended` / `idle`, or when a replaced
+service is retired (`retireFromPageRing`). Logged once per change: `[AUDIO] a call holds the app's
+sound (...)` / `the call released the app's sound (...)`. Pinned by `callSoundGate.test.ts`,
+`toneOutput.test.ts`, `playbackArbiter.test.ts`, the p2p block above and `CallSoundHoldTest.kt`.
+
+**What is NOT covered, and what would lift it:**
+- **Android, an in-app incoming ring before the answer.** The page rings (`incoming`), no foreground
+  service runs yet and no native ring is up, so a native banner in those seconds still sounds. The
+  JS tones are gated. Lifted by exposing `page_ring.rs`'s ringing fact over JNI (it already knows
+  the page rings a call) and adding it to `CallSoundHold.held`.
+- **iOS, a call CallKit does not know** (every outgoing call, an in-app ring, a call after the
+  handover ended its CallKit session): the extension cannot see it. Lifted by CallKit for every call
+  (owed, [the call in the background](#the-call-in-the-background-2026-10-19)); an app-group flag was
+  refused because a crash mid-call would leave every later banner silent.
+- **Desktop Tauri** notifications (`notify-rust`): unmeasured, not gated.
+
+**Owed on the bench phones:** during a Mi 9T call (ringing out, then live) a message from a third
+account arrives shown and SILENT (`dumpsys notification` shows it; no sound), and a voice note or a
+reel cannot play aloud; on the iPhone 12, a message arriving during a CallKit-answered call is
+delivered without sound (`[CanariNSE] a call is up - delivered without sound`).
+
 ## The call in the background (2026-10-19)
 
 **The timer is a function of timestamps**: `CallService.connectedAt` (first `connected`, not the
@@ -2880,6 +2963,86 @@ every url (no query). (3) The E2E success line said `no media around the transfo
 as a failure; it says `PASS - all media went through the E2E transform`. (4) An answered call
 ended `outcome=answered-or-unrung`; with no typed outcome the line now names which: `answered`, or
 `unrung` for a ring that never left.
+
+## "It stays a long time on encryption before the call" (owner, Android 1.5.3, 2026-10-31)
+
+Nine calls in the owner's log. **The encryption is not slow**: `exportSecret` takes 20-60 ms. What
+the owner saw, and what was serial:
+
+- **The label.** `CallOverlay` showed "Vérification du chiffrement..." whenever `e2eProven` was
+  false - so through the WHOLE ring, 6-57 s of a person not answering yet. **Fixed:** the line is
+  chosen by `callE2eLine(kind, proven)` (`utils/callStatusText.ts`): nothing while `incoming` or
+  `ringing` (the status alone), the check from `connecting` on, the shield once proven; the ended
+  summary keeps an earned shield and starts no check. Tests per state: `callE2eLine.test.ts`,
+  `CallOverlay.svelte.test.ts` ("the encryption line").
+- **The callee's answer was strictly serial**: room-token, then an AWAITED "answered" MLS notice
+  (0.3-0.7 s), then the ICE servers (up to 764 ms), then `getUserMedia`, then the keys, then the
+  socket and the join - 1.2-2.6 s. **Fixed (`acceptCall`):** the token, the ICE servers, the
+  microphone and the keys run side by side (`Promise.all`), each logged with its own duration
+  (`[Call] setup step <name>: N ms`), then the join. What each depended on, checked: the token is
+  where the server refuses, so the notice and the ring-end leave only once it is in hand (a refused
+  answer still tells nobody); the ICE servers need only membership (`getIceServers` in
+  `calls.service.ts`), and `fetchIceServers` now RETURNS the withheld-relay code instead of setting
+  it, so an answer landing after its call ended leaves nothing for the next one; a microphone granted
+  beside a refused token is released by `setupMedia`'s own `assertSetupLive`; keys derived for a
+  call that ended are zeroed by `setupEncryption`, and the worker dies with the call. **A cost taken
+  knowingly (review F7 of #2830):** an answer the server REFUSES (a block set during the ring, a
+  closed window) may still light the microphone for a moment, or show the system's permission
+  prompt on a first call, before the refusal ends it. A refusal of an answer is rare; every answer
+  pays the serial wait. A step stopped because a sibling step failed logs `setup step <name>
+  abandoned after N ms (the call ended)`; only the step that failed says `failed`.
+- **The "answered" notice is no longer awaited** (`announceAnswered`). Its only reader is a SIBLING
+  device of the callee still ringing the same call (`handleCallSignal`, `callMsg.answered`), whose
+  ring stops when it lands; nothing on the caller or in the call record waits for it, and the
+  server's ring-end (`'answered'`) stops the system surfaces on its own path. So the guarantee it
+  carries is kept (it leaves after the token, and still stops the siblings), and only the wait is
+  gone. A notice that fails is said at ERROR (`answered notice for <call> not sent - our other
+  devices keep ringing until their window closes`). **Not done: prefetching during the ring.** The
+  ICE servers would mint a TURN credential per ringing device per ring, declined calls included, and
+  a fetch that failed early in a 60 s ring would fail an answer made on a link that works by then;
+  in parallel with the token the fetch costs nothing extra.
+- **The caller built its peer connection only at `PeerReady`.** It is now built right after the
+  join and BEFORE the ring (`initPeerConnection({ awaitingPeer: true })`), with
+  `iceCandidatePoolSize: 1`: the engine gathers host, srflx and relay candidates through the ring
+  and surfaces them at the first `setLocalDescription`. Nothing that needs the peer runs while it
+  waits (`pcAwaitingPeer`): no offer (`offerIfNeeded` returns), no report tick, no E2E path check,
+  no video ladder. The transforms are attached in the task that creates each sender, as for every
+  build. `PeerReady` ADOPTS it (`adoptRingPeerConnection`): the report and the ladder start, and the
+  offer is queued. **Every exit of a ring closes it**: `endCall` closes it at once, not after the
+  1.5 s summary (`closeRingPeerConnection` - it holds a TURN allocation for a call nobody answered),
+  and `cleanup` closes it on every other path; tested per exit in `CallService.p2p.test.ts` ("the
+  peer connection built during the ring is closed on every exit": hang-up, window closed, declined,
+  busy, a refused seat, a refused ring, a hang-up during the build). A camera turned on or off
+  during the ring acts on it as on any peer connection, and the offer at the adoption carries it.
+  **A signalling loss DURING the ring records no outage baseline** (`onPairBroken` skips a peer
+  connection still awaiting its peer, and the adoption clears `packetsAtLoss`; review F6 of #2830):
+  a baseline read from a connection with no media outlived the ring, so a later outage whose path
+  still read `connected` while carrying nothing was never restarted. Tested in
+  `CallService.p2p.test.ts` ("a signalling loss during the ring leaves no baseline").
+- **`setup_ms` counted the human.** It ran from the tap, so a 40 s ring read as a 40 s setup. Split
+  into `ring_ms` (ring start to the answer - on the caller from the moment the ring LEFT, the
+  server's fan-out answered, so its own setup before that is not counted as the human's; on the
+  callee from its page starting to ring) and `connect_ms` (the answer to the first E2E proof),
+  in `[CALL_REPORT]` and on two lines of their own (`[Call] answered (...) ring_ms=N`, `[Call] E2E
+  proven ... (connect_ms=N)`); the observables are in
+  [calls-revival-plan](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence).
+- **Noise, same log.** `[Call] no Media Session API` was logged 313 times in 46 s of an outgoing
+  video ring: the parent re-derives `participants` on every change of the conversations map, so
+  `primary` was a NEW object many times a second and the Media Session `$effect` (and the Android
+  ongoing-call publish) re-ran with it. They now read `peerTitle` / `peerUserId`, strings a
+  re-derivation leaves equal; and `callMediaSession.ts` says each refusal once per call (emptied by
+  `clearCallMediaSession`). The reachability probes that kept running after the app paused, and the
+  stall counter reading "3/2", are [offline-and-weak-network](../offline-and-weak-network.md#21-no-probe-while-the-app-is-off-screen-and-a-stall-count-that-stops-at-its-limit-2026-10-31).
+
+**Expected callee saving:** the serial 1.2-2.6 s becomes roughly the LONGEST of its four steps
+(token ~one round trip, ICE up to 764 ms, the microphone, the keys 20-60 ms) plus the join, and the
+0.3-0.7 s notice leaves the path entirely - an estimate of 0.6-1.5 s saved per answer, until the
+phones measure it. **Owed (bench phones, Mi 9T and iPhone 12, on a pre-release carrying this):**
+`connect_ms` per direction against the log's 1.2-2.6 s; the five `setup step` lines of the callee,
+the longest named; on the caller, `ice gathering=` at the adoption line (`complete` or `gathering`
+means the pool worked), and a ring cancelled before the answer showing `closing the peer connection
+built during the ring` with no `[CALL_REPORT]`; the ring showing no encryption line; one `no Media
+Session API` line per call at most.
 
 ## Responsibilities
 

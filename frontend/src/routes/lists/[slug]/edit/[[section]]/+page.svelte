@@ -15,11 +15,24 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
-  import { Building2, Users, TriangleAlert, CalendarClock } from '@lucide/svelte';
+  import {
+    Building2,
+    Users,
+    TriangleAlert,
+    CalendarClock,
+    FolderLock,
+    ClipboardList,
+    Handshake,
+    Inbox,
+  } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
+  import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
+  import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
+  import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
+  import EditProposalsTab from '$lib/components/associations/edit/EditProposalsTab.svelte';
   import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
@@ -43,7 +56,7 @@
   /**
    * The open section is a ROUTE segment (`/lists/<slug>/edit/<section>`), never local state: Back
    * goes up one level, a reload keeps the place. `null` is the hub; a segment that is not one of the
-   * list's four sections never reaches here - `+page.ts` redirects it.
+   * list's sections never reaches here - `+page.ts` redirects it.
    */
   let editSection = $derived<EditSection | null>(parseEditSection(page.params.section));
 
@@ -82,7 +95,11 @@
   const SECTION_ICONS: Partial<Record<EditSection, HubIcon>> = {
     profile: Building2,
     members: Users,
+    documents: FolderLock,
+    formulaires: ClipboardList,
     reservations: CalendarClock,
+    partnerships: Handshake,
+    republications: Inbox,
     danger: TriangleAlert,
   };
 
@@ -95,6 +112,14 @@
         return m.asso_edit_tab_danger();
       case 'reservations':
         return m.bookings_tab_label();
+      case 'documents':
+        return m.asso_edit_tab_documents();
+      case 'formulaires':
+        return m.asso_edit_tab_formulaires();
+      case 'partnerships':
+        return m.asso_edit_tab_partenariats();
+      case 'republications':
+        return m.asso_edit_tab_proposals();
       default:
         return m.asso_edit_tab_profile();
     }
@@ -215,6 +240,38 @@
 
       {#if editSection === 'members' && canManageMembers}
         <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
+      {/if}
+
+      {#if editSection === 'documents' && rights.documents}
+        <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
+          <div>
+            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+              <FolderLock size={20} />
+              {m.asso_doc_vault_title()}
+            </h2>
+            <p class="text-text-muted mt-1 text-sm">{m.asso_doc_vault_desc()}</p>
+          </div>
+          <AssociationDocumentManager associationId={list.id} />
+        </div>
+      {/if}
+
+      {#if editSection === 'formulaires' && rights.forms}
+        <!-- A list takes no payment: it never holds the payout right, so the tab never offers the
+             payments section it does not have. -->
+        <EditFormsTab
+          asso={list}
+          onlinePaymentsReady={false}
+          canManagePayoutAccount={false}
+          onGoToPayments={() => {}}
+        />
+      {/if}
+
+      {#if editSection === 'partnerships' && rights.partnerships}
+        <EditPartnershipsTab asso={list} />
+      {/if}
+
+      {#if editSection === 'republications' && rights.proposals}
+        <EditProposalsTab asso={list} />
       {/if}
 
       {#if editSection === 'reservations' && rights.bookings}
