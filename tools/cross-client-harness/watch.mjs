@@ -3294,7 +3294,19 @@ export function logcatReport(lines, label = 'A1') {
     // No title and no body since 2026-10-22: a release log line carries no content (nativeLogContent.test.ts).
     [
       'fcm-channel-notify',
-      /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/,
+      /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false) speaker=(Named|Unnamed|Unproven) hasAvatar=(true|false)$/,
+    ],
+    // The salon line's speaker could not be NAMED, for a reason a banner ordinarily meets: a v1 row
+    // (which proves no author), a socket frame (which cannot say), a name the app has not resolved
+    // yet, no name file yet, another account's file. The FAULTS (`unreadable`, `no-names`,
+    // `no-sender-id`, `no-account`) are WARN on the phone and deliberately match nothing here.
+    [
+      'fcm-channel-speaker-unnamed',
+      /^\[SALON_AUTHOR\] author UNNAMED reason=(v1-session|socket-unproven|not-in-name-book|no-name-file|other-account) author=\S* channel=\S+ -> 'someone' and a '\?' disc$/,
+    ],
+    [
+      'fcm-channel-names-unread',
+      /^\[SALON_AUTHOR\] display_names\.json names nobody reason=(no-name-file|other-account) channel=\S+$/,
     ],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one

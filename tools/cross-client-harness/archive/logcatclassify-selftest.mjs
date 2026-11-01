@@ -77,7 +77,21 @@ const CASES = [
   // Every other shape of the frame path is a defect on a rig whose clients are all current.
   [line('W', 'CanariFCM', "openSeedFrame: seed frame refused group=2513c207 locality=ABSENT -> this device is not in the salon's key group; no join to wait for"), 'notable'],
   [line('E', 'CanariFCM', "openSeedFrame: the frame opened and holds no seed for this message's session group=2513c207 channel=c0ffee00 session=sess-1"), 'errors'],
-  [line('D', 'CanariFCM', 'handleChannelMessage: notification posted showsMessage=true bodyChars=15 mentionsMe=false'), 'explained'],
+  [line('D', 'CanariFCM', 'handleChannelMessage: notification posted showsMessage=true bodyChars=15 mentionsMe=false speaker=Named hasAvatar=true'), 'explained'],
+  [line('D', 'CanariFCM', 'handleChannelMessage: notification posted showsMessage=false bodyChars=31 mentionsMe=false speaker=Unproven hasAvatar=false'), 'explained'],
+  // The line before 2026-11-01, without its speaker: a build that lost the discriminator is NOT explained.
+  [line('D', 'CanariFCM', 'handleChannelMessage: notification posted showsMessage=true bodyChars=15 mentionsMe=false'), 'unexplained'],
+  // A salon speaker that could not be named: the ordinary reasons are explained...
+  [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=v1-session author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
+  [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=socket-unproven author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
+  [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=not-in-name-book author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
+  [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=no-name-file author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
+  [line('D', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=other-account author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'explained'],
+  [line('D', 'CanariFCM', '[SALON_AUTHOR] display_names.json names nobody reason=no-name-file channel=6333a324'), 'explained'],
+  // ...and the faults fall through to the warning bucket, which a run reads.
+  [line('W', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=unreadable author=0000abcd channel=6333a324 -> 'someone' and a '?' disc"), 'notable'],
+  [line('W', 'CanariFCM', "[SALON_AUTHOR] author UNNAMED reason=no-sender-id author= channel=6333a324 -> 'someone' and a '?' disc"), 'notable'],
+  [line('W', 'CanariFCM', '[SALON_AUTHOR] display_names.json names nobody reason=no-names channel=6333a324'), 'notable'],
   // BOTH HALVES OF THE TWO-PUSH SEQUENCE ARE `notable`, NOT `explained`, AND THE PAIR IS THE POINT.
   // A generic banner is the undecrypted state; it is legitimate only because the seed arrives on a
   // second push and redraws it. A run showing the first without the second has a banner that stayed

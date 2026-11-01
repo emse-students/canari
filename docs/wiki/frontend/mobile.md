@@ -2457,8 +2457,17 @@ them. The name never rides the push and is never fetched on the push path (user 
   - **A mention of the reader** posts on `canari_mentions` with no "<name> mentioned you" prefix: the
     speaker is above the line and the body says "@vous".
   - **One line, `[SALON_AUTHOR] author UNNAMED reason=...`**, at WARN for a fault (`unreadable`,
-    `no-sender-id`, `no-account`) and DEBUG for an ordinary state (`v1-session`,
-    `not-in-name-book`, `no-name-file`, `other-account`, `no-names`).
+    `no-sender-id`, `no-account`, `no-names` - a file that exists for this account and names
+    nobody) and DEBUG for an ordinary state (`v1-session`, `socket-unproven`, `not-in-name-book`,
+    `no-name-file`, `other-account`) - `ChannelBannerAuthor.accuses`, the one list.
+  - **The name file's reason is said ONCE per banner**, by whichever reader reads it first: the
+    speaker rule's line above carries it; when the rule did not read the file (a v1 row, a push
+    naming nobody), the mention tokens read it and say
+    `[SALON_AUTHOR] display_names.json names nobody reason=...` at the same levels.
+  - **The WebSocket trigger takes the same rule and keys** (`ChannelBannerAuthor.ofSocketFrame`) for
+    a `channel_` conversation, but it always draws **Unnamed** (`socket-unproven`, DEBUG): the
+    WebView does not hand over whether its reader proved the author, so this trigger names nobody
+    rather than a name it cannot vouch for, and fetches no face.
   The name never rides the push.
 - **The mentioned person, inside the text, comes from the same file**: a body carries
   `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's

@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.os.Build
 import android.util.Log
+import app.tauri.gallery.ConversationShortcuts
 import fr.emse.canari.call.IncomingRing
 import java.io.File
 
@@ -71,6 +72,15 @@ class CanariApplication : Application() {
             NativeCacheKey.ensure(this)
         } catch (e: Exception) {
             Log.e(TAG, "NativeCacheKey.ensure: exception: ${e.message}", e)
+        }
+        // A SALON TAKES NO CONVERSATION SHORTCUT SINCE 2026-11-01 (`showMessageNotification`), and the
+        // ones the socket trigger published before it would hold the shared dynamic budget until the
+        // next sign-out. Removed from the record's own list, so every later start finds none.
+        try {
+            // The count is logged by the recorder itself, once, when there was anything to remove.
+            ConversationShortcuts.removeRecordedWithPrefix(this, "${ConversationShortcuts.ID_PREFIX}channel_")
+        } catch (e: Exception) {
+            Log.e(TAG, "salon conversation shortcuts: not retired: ${e.message}", e)
         }
     }
 

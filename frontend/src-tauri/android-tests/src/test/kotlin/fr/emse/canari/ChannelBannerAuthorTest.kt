@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.json.JSONObject
 import org.junit.Test
 
 /**
@@ -71,8 +72,8 @@ class ChannelBannerAuthorTest {
 
     @Test
     fun `only a fault is logged at warn, an ordinary state at debug`() {
-        listOf("unreadable", "no-sender-id", "no-account").forEach { assertTrue(it, ChannelBannerAuthor.accuses(it)) }
-        listOf("v1-session", "not-in-name-book", "no-name-file", "other-account", "no-names")
+        listOf("unreadable", "no-names", "no-sender-id", "no-account").forEach { assertTrue(it, ChannelBannerAuthor.accuses(it)) }
+        listOf("v1-session", "socket-unproven", "not-in-name-book", "no-name-file", "other-account")
             .forEach { assertFalse(it, ChannelBannerAuthor.accuses(it)) }
     }
 
@@ -92,16 +93,45 @@ class ChannelBannerAuthorTest {
     }
 
     @Test
-    fun `every line of a salon keeps the salon as its conversation, whatever it proved`() {
-        // Named, then blind, then unnamed, then named again: the notification re-injects the earlier
-        // lines with their Persons, so a shape that changed between posts would rename them.
-        val lines = listOf(opened(alice), blind, opened(bob), opened(alice, proven = false), opened(alice))
-            .map { ChannelBannerAuthor.line(it, title, someone) }
-        lines.forEach { assertEquals(title, it.conversationTitle) }
-        assertEquals(
-            listOf("Alice Martin", someone, someone, someone, "Alice Martin"),
-            lines.map { it.personName },
+    fun `the conversation is the salon's title, never the speaker's - even a speaker named like the salon`() {
+        // Fails if the title were taken from the speaker: every speaker below is named differently
+        // from the salon except the last, whose STORED name is the salon's title on purpose.
+        val impostor = "d".repeat(64)
+        val names = NameBook.Held { id ->
+            mapOf(alice.lowercase() to "Alice Martin", impostor to title)[id]
+        }
+        val speakers = listOf(
+            ChannelBannerAuthor.of(true, true, alice) { names },
+            blind,
+            ChannelBannerAuthor.of(true, true, bob) { names },
+            ChannelBannerAuthor.of(true, false, alice) { names },
+            ChannelBannerAuthor.of(true, true, impostor) { names },
         )
+        val lines = speakers.map { ChannelBannerAuthor.line(it, title, someone) }
+        assertEquals(listOf("Alice Martin", someone, someone, someone, title), lines.map { it.personName })
+        lines.forEach { assertEquals(title, it.conversationTitle) }
+        // And with another salon's title the same speakers move with the TITLE, not their names.
+        speakers.map { ChannelBannerAuthor.line(it, "Autre - #salon", someone) }
+            .forEach { assertEquals("Autre - #salon", it.conversationTitle) }
+    }
+
+    @Test
+    fun `only a JSON true proves the author - absent, null and the string true do not`() {
+        assertTrue(ChannelBannerAuthor.authorProvenOf(JSONObject("""{"authorProven":true}""").opt("authorProven")))
+        assertFalse(ChannelBannerAuthor.authorProvenOf(JSONObject("""{"ok":true}""").opt("authorProven")))
+        assertFalse(ChannelBannerAuthor.authorProvenOf(JSONObject("""{"authorProven":null}""").opt("authorProven")))
+        assertFalse(ChannelBannerAuthor.authorProvenOf(JSONObject("""{"authorProven":"true"}""").opt("authorProven")))
+        assertFalse(ChannelBannerAuthor.authorProvenOf(JSONObject("""{"authorProven":false}""").opt("authorProven")))
+        assertFalse(ChannelBannerAuthor.authorProvenOf(null))
+    }
+
+    @Test
+    fun `a socket frame vouches for nobody, keyed like the push's unnamed line`() {
+        val socket = ChannelBannerAuthor.ofSocketFrame(bob.uppercase())
+        assertEquals(Author.Unnamed(bob, "socket-unproven"), socket)
+        assertEquals(opened(bob).personKey, socket.personKey)
+        assertFalse(ChannelBannerAuthor.drawsFace(socket))
+        assertEquals(Author.Unnamed("", "no-sender-id"), ChannelBannerAuthor.ofSocketFrame(""))
     }
 
     @Test

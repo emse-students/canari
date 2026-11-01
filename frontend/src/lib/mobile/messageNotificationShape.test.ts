@@ -41,10 +41,11 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
     expect(kotlin).toContain('if (isGroup || namesEachSender) style.isGroupConversation = true');
   });
 
-  it('is asked for by the two MESSAGE triggers and by nothing else', () => {
-    // The push and the WebSocket frame. A reaction (a sentence about the actor) and a salon (whose
-    // "sender" IS its title) keep the old shape, or the title would be printed twice.
-    expect(kotlin.match(/namesEachSender = true/g)).toHaveLength(2);
+  it('is asked for by the two MESSAGE triggers and the salon push, and by nothing else', () => {
+    // The MLS push, the WebSocket frame (DMs, groups and salons), and since 2026-11-01 the salon
+    // push, whose line names its speaker under the salon's title (`ChannelBannerAuthor`). A reaction
+    // (a sentence about the actor) keeps the old shape, or the actor would be printed twice.
+    expect(kotlin.match(/namesEachSender = true/g)).toHaveLength(3);
     expect(kotlin).toContain('namesEachSender: Boolean = false');
   });
 });

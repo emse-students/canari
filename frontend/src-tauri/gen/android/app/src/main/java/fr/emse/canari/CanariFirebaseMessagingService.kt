@@ -1118,6 +1118,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 "no-name-file" -> Log.d(TAG, "$label no display_names.json yet - nobody is named")
                 "other-account" -> Log.d(TAG, "$label display_names.json belongs to another account - not used")
                 "unreadable" -> Log.w(TAG, "$label display_names.json unreadable: ${read.detail}")
+                // This account's file with no map in it: a writer produced it, like an unreadable one.
+                "no-names" -> Log.w(TAG, "$label display_names.json names nobody (no-names)")
                 else -> Log.d(TAG, "$label display_names.json names nobody (${read.unusable})")
             }
             return read
@@ -2076,7 +2078,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers")
             WS_NOTIF_LANE.execute {
                 try {
-                    val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
+                    // A SALON FRAME TAKES THE PUSH'S RULE AND KEYS (`ChannelBannerAuthor`), so the two
+                    // triggers draw one shape. The WebView does not hand over whether its reader
+                    // PROVED the author (a v2 row) or took the server's word (v1), so this trigger
+                    // names nobody: "Someone", the "?" disc, no face - never a name it cannot vouch for.
+                    val salonAuthor = if (groupId.startsWith("channel_")) ChannelBannerAuthor.ofSocketFrame(senderId) else null
+                    salonAuthor?.let { logUnnamedSalonAuthor(it, groupId.removePrefix("channel_")) }
+                    val salonLine = salonAuthor?.let {
+                        ChannelBannerAuthor.line(
+                            it, groupName,
+                            appLocaleContext(context).getString(R.string.notif_mention_someone).replaceFirstChar { c -> c.titlecase() },
+                        )
+                    }
+                    val avatar = if (salonAuthor == null && senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
                     synchronized(GENERIC_BANNERS_LOCK) {
                         // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
                         val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
@@ -2084,10 +2098,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${groupId.take(8)} covers=$covers)")
                         }
                         context.showMessageNotification(
-                            senderName = senderName,
-                            groupName = groupName,
+                            senderName = salonLine?.personName ?: senderName,
+                            groupName = salonLine?.conversationTitle ?: groupName,
+                            senderKey = salonLine?.personKey,
                             body = body,
-                            largeIcon = avatar ?: generateInitialsBitmap(senderName),
+                            largeIcon = avatar ?: generateInitialsBitmap(
+                                salonAuthor?.let { ChannelBannerAuthor.initialsSource(it) } ?: senderName
+                            ),
                             groupId = groupId,
                             channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
                             sentAt = sentAt,
@@ -2197,6 +2214,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
             }
+
+        /**
+         * The ONE line an unnamed salon speaker gets, from either trigger (the push and the socket
+         * frame), WARN for a fault and DEBUG for an ordinary state ([ChannelBannerAuthor.accuses]);
+         * nothing for a named or blind one.
+         */
+        internal fun logUnnamedSalonAuthor(author: ChannelBannerAuthor.Author, channelId: String) {
+            if (author !is ChannelBannerAuthor.Author.Unnamed) return
+            val line = "[SALON_AUTHOR] author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc"
+            if (ChannelBannerAuthor.accuses(author.reason)) Log.w(TAG, line) else Log.d(TAG, line)
+        }
 
         /**
          * The other party's photo for the call surfaces outside this class - the ongoing-call
@@ -5860,9 +5888,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val pushCtx  = MlsContextLoader.loadPushContext(this)
         val myUserId = pushCtx?.userId
         // The phone's names, read at most once for this banner: the speaker and the tokens share it.
-        // The read keeps its reason, and the ONE `[SALON_AUTHOR]` line below says it - no second line.
+        // The read keeps its reason, said ONCE by whichever reader reads it first - see below.
         val namesRead = lazy { readDisplayNames(this, myUserId?.lowercase()) }
-        val nameBook = lazy { namesRead.value.names }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
@@ -5887,8 +5914,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val text = json.optString("text").takeIf { it.isNotEmpty() }
                     if (text != null) {
                         showsMessage = true
-                        authorProven = json.optBoolean("authorProven", false)
-                        renderMentions(text, myUserId, res, nameBook).take(200)
+                        authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))
+                        // Rendered BELOW, once the speaker has read (or not) the names: the reader that
+                        // reads the file first is the one that says why it names nobody.
+                        text
                     } else {
                         buildChannelFallbackText(res, channelName)
                     }
@@ -5942,17 +5971,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val author = ChannelBannerAuthor.of(showsMessage, authorProven, attribution.authorId) {
             nameBookOf(namesRead.value)
         }
-        if (author is ChannelBannerAuthor.Author.Unnamed) {
-            val line = "[SALON_AUTHOR] author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc"
-            if (ChannelBannerAuthor.accuses(author.reason)) Log.w(TAG, line) else Log.d(TAG, line)
+        logUnnamedSalonAuthor(author, channelId)
+        // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line
+        // above already carries the reason; when it did not (a v1 row, a push naming nobody), the
+        // tokens are the first reader, and a broken or foreign file is said here - never twice.
+        val speakerReadNames = namesRead.isInitialized()
+        val nameBook = lazy {
+            namesRead.value.also { read ->
+                if (!speakerReadNames) logSalonNamesUnusable(read, channelId)
+            }.names
         }
+        // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking it raw put a
+        // hex blob in the banner - see `renderMentions`. Truncated AFTER, so a token near the
+        // 200-character edge cannot be cut in half. A generic line has no tokens to render.
+        val shown = if (showsMessage) renderMentions(body, myUserId, res, nameBook).take(200) else body
         val someone = res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
         val title = buildChannelPushTitle(workspaceName, channelName)
         val line = ChannelBannerAuthor.line(author, title, someone)
         // A FACE ONLY FOR A NAMED SPEAKER: a photo beside "Someone" would name them by the back door.
         val avatarBitmap = attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))
-        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
+        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${shown.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
         return showMessageNotification(
             // ALWAYS THE GROUP SHAPE: the salon is the conversation and every line has a speaker with
             // its own key, so a notification mixing named, unnamed and blind lines keeps each line's
@@ -5961,14 +6000,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             senderName = line.personName,
             groupName  = line.conversationTitle,
             senderKey  = line.personKey,
-            body       = body,
+            body       = shown,
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
             sentAt     = createdAt,
             supersedes = supersedes,
             showsMessage = showsMessage,
+            // The group shape even for a speaker whose name happens to equal the salon's title, which
+            // `isGroup` alone (`groupName != senderName`) would read as a one-to-one thread.
+            namesEachSender = true,
         )
+    }
+
+    /**
+     * Why `display_names.json` names nobody, for a salon banner whose speaker rule did not read it -
+     * the tokens were its first reader. Same levels as `logUnnamedSalonAuthor`; nothing when it names.
+     */
+    private fun logSalonNamesUnusable(read: DisplayNamesRead, channelId: String) {
+        val reason = read.unusable ?: return
+        val line = "[SALON_AUTHOR] display_names.json names nobody reason=$reason channel=$channelId"
+        if (ChannelBannerAuthor.accuses(reason)) Log.w(TAG, line) else Log.d(TAG, line)
     }
 
     /**

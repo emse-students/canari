@@ -276,6 +276,19 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(kotlinHandler).toContain(
       'channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES'
     );
+    // THE SPEAKER'S WIRING (2026-11-01, `ChannelBannerAuthor`): the line's Person and key come from
+    // the rule, the conversation is ALWAYS the salon, the key reaches the Person, and a missing or
+    // non-boolean `authorProven` reads as not proven - all JVM-tested, pinned here at the call sites.
+    expect(kotlinHandler).toContain('senderName = line.personName,');
+    expect(kotlinHandler).toContain('groupName  = line.conversationTitle,');
+    expect(kotlinHandler).toContain('senderKey  = line.personKey,');
+    expect(kotlinHandler).toContain(
+      'authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))'
+    );
+    expect(kotlinSource).toContain('.apply { senderKey?.let { setKey(it) } }');
+    // The socket trigger takes the same rule and keys for a salon, and vouches for nobody.
+    expect(kotlinSource).toContain('ChannelBannerAuthor.ofSocketFrame(senderId)');
+    expect(kotlinSource).toContain('senderKey = salonLine?.personKey,');
 
     // The NSE handler ALONE: the shared slice runs on past it, into the rule's own definition.
     const swiftChannelOnly = functionBody(
