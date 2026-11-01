@@ -364,6 +364,32 @@ describe('complete', () => {
   });
 });
 
+describe('the account erasure', () => {
+  it("ends every open session of the erased owner, releases its budget, and leaves another member's", async () => {
+    const r = rig();
+    const a1 = await open(r, 'alice', 3000, 1024, 'chat-reel');
+    const a2 = await open(r, 'alice', 2000, 1024, 'chat-reel');
+    const b1 = await open(r, 'bob', 2000, 1024, 'chat-reel');
+    expect(await r.svc.cancelAllOwnedBy('alice')).toBe(2);
+    expect(reserved(r)).toBe(0);
+    await expect(r.svc.status('alice', a1.uploadId)).rejects.toThrow(NotFoundException);
+    await expect(r.svc.status('alice', a2.uploadId)).rejects.toThrow(NotFoundException);
+    await expect(r.svc.status('bob', b1.uploadId)).resolves.toBeDefined();
+    // A retry of the fan-out finds nothing left.
+    expect(await r.svc.cancelAllOwnedBy('alice')).toBe(0);
+  });
+
+  it('leaves a session that completed: its blob is the media erasure one', async () => {
+    const r = rig();
+    const s = await open(r, 'alice', 3000);
+    for (const i of Array(s.totalParts).keys()) {
+      await put(r, 'alice', s.uploadId, i, sliceOf(s.blob, 1024, i));
+    }
+    await r.svc.complete('alice', s.uploadId);
+    expect(await r.svc.cancelAllOwnedBy('alice')).toBe(0);
+  });
+});
+
 /** Bytes the member has reserved and not yet registered, read from the real machinery. */
 function reserved(r: Rig, owner = 'alice'): number {
   return (
