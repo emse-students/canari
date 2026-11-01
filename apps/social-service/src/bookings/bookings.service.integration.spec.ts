@@ -1270,8 +1270,35 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
      * stands between it and its own column: an alumnus holding a column of an association space it
      * is not a member of, a colleague of another campus on a personal space. Review of #2828.
      */
+    /**
+     * The D10 exception is a READ: a linked account outside the campus is refused a booking - of its
+     * own column and of column B - and a file upload, as any reader outside the space is.
+     */
+    async function linkedWritesRefused(spaceId: string, resourceIds: string[]) {
+      for (const resourceId of resourceIds) {
+        expect(await refusal(book(spaceId, resourceId, '10:00', '10:30', GARDANNE))).toEqual({
+          code: 'space-not-found',
+        });
+      }
+      const pdf = Buffer.from('%PDF-1.4');
+      expect(
+        await refusal(
+          service.uploadFile(spaceId, 'cv', { buffer: pdf, size: pdf.length }, as(GARDANNE))
+        )
+      ).toEqual({ code: 'space-not-found' });
+      expect(
+        (
+          await q(
+            `SELECT count(*)::int AS n FROM bookings b
+               JOIN booking_resources r ON r.id = b."resourceId" WHERE r."spaceId" = $1`,
+            [spaceId]
+          )
+        )[0].n
+      ).toBe(0);
+    }
+
     it('an association space: the account linked to one of its resources reads it from another campus', async () => {
-      const { space, resourceIds } = await setup({ name: 'campus asso linked' });
+      const { space, resourceIds } = await setup({ name: 'campus asso linked' }, 2);
       await q(
         `UPDATE association_audiences SET campus = 'saint-etienne' WHERE "associationId" = $1`,
         [space.associationId]
@@ -1291,15 +1318,20 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ).resolves.toBeDefined();
       // Being linked opens the space it names, and only that: still not listed (not a member).
       expect(await listedTo(GARDANNE, space.id)).toBe(false);
+      // A READ only: from another campus it books no column, its own or B, and uploads nothing.
+      await linkedWritesRefused(space.id, resourceIds);
     });
 
     it('a personal space: the account linked to one of its resources reads it from another campus', async () => {
-      const { space, resourceIds } = await setup({
-        name: 'campus personal linked',
-        associationId: null,
-        ownerId: BOB,
-        discoverability: 'link',
-      });
+      const { space, resourceIds } = await setup(
+        {
+          name: 'campus personal linked',
+          associationId: null,
+          ownerId: BOB,
+          discoverability: 'link',
+        },
+        2
+      );
       expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
         code: 'space-not-found',
       });
@@ -1315,6 +1347,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await refusal(service.getSpace(space.id, as(GARDANNE_MEMBER)))).toEqual({
         code: 'space-not-found',
       });
+      await linkedWritesRefused(space.id, resourceIds);
     });
 
     it("a personal space: open to its owner's CAMPUS, 404 to another campus, the owner always", async () => {

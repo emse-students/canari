@@ -194,12 +194,19 @@ export class BookingsService {
    * Refuses an account the space is not open to (D6, D31): enforced on every read and write, never
    * by hiding the space alone - a 'link' space is reached by its link, its audience still holds.
    * Before the audience, the CAMPUS (`assertSpaceVisible`): a space outside the reader's spaces
-   * answers 404 `space-not-found`, exactly like one that does not exist.
+   * answers 404 `space-not-found`, exactly like one that does not exist. `use` says whether the
+   * caller only READS the space (`getSpace`, `spaceSlots`) or WRITES to it (`book`, `uploadFile`):
+   * only a read lets the account linked to one of its resources across the campus.
    */
-  private async assertMayUse(space: BookingSpace, actor: Actor, canManage: boolean) {
+  private async assertMayUse(
+    space: BookingSpace,
+    actor: Actor,
+    canManage: boolean,
+    use: 'read' | 'write'
+  ) {
     this.assertSameSideAsSpace(space, [actor.userId]);
     if (canManage) return;
-    await this.assertSpaceVisible(space, actor.userId);
+    await this.assertSpaceVisible(space, actor.userId, use);
     if (!space.audience) return;
     if (matchesCondition(space.audience, await this.factsFor(space, actor.userId))) return;
     this.logger.debug(`[BOOKINGS] refused by audience space=${space.id.slice(0, 8)}`);
@@ -214,21 +221,27 @@ export class BookingsService {
    * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
    * manager - the owner of a personal space - never reaches here (`assertMayUse`).
    *
-   * THE ACCOUNT LINKED TO ONE OF ITS RESOURCES (D10) IS NEVER REFUSED HERE: the organiser named it -
-   * an alumnus holding a column of an association space, a colleague on another campus - and it
-   * reads its own column's bookings from the grid (`spaceSlots`). The campus is a border for
-   * readers the space never named; the audience (D6) still applies to it as before.
+   * ON A READ ONLY, the account linked to one of its resources (D10) is not refused here: the
+   * organiser named it - an alumnus holding a column of an association space, a colleague on
+   * another campus - so `getSpace` and `spaceSlots` pass this check for it. That is ALL it is
+   * granted: the audience (D6) is still asked next, so a linked account outside the audience is
+   * still refused (403 `audience`) and reads nothing; the space is not LISTED to it; and a WRITE -
+   * booking (`book`) or uploading a file answer (`uploadFile`) - from outside the campus answers 404
+   * like any other reader's, since the space never opened its columns to that campus.
    */
-  private async assertSpaceVisible(space: BookingSpace, userId: string) {
+  private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
     const visible =
       space.associationId !== null
         ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
         : await sameCampusAs(this.spaces.manager, space.ownerId, userId);
     if (visible) return;
-    if (await this.resources.exists({ where: { spaceId: space.id, linkedUserId: userId } })) {
+    if (
+      use === 'read' &&
+      (await this.resources.exists({ where: { spaceId: space.id, linkedUserId: userId } }))
+    ) {
       this.logger.debug(
         `[BOOKINGS] space=${space.id.slice(0, 8)} open to ${userId.slice(0, 8)} outside its campus: ` +
-          'the account linked to one of its resources (D10)'
+          'a read by the account linked to one of its resources (D10)'
       );
       return;
     }
@@ -260,7 +273,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] getSpace space=${spaceId}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const resources = await this.resources.find({
       where: { spaceId },
       order: { position: 'ASC', createdAt: 'ASC' },
@@ -308,7 +321,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] spaceSlots space=${spaceId} ${from}..${to}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const grid = await this.slots.spaceSlots(spaceId, from, to);
 
     const bookingIds = [
@@ -849,7 +862,7 @@ export class BookingsService {
     const holderId = (dto.holderId ?? actor.userId).trim().toLowerCase();
     const onBehalf = holderId !== actor.userId;
     if (onBehalf && !canManage) throw new ForbiddenException({ code: 'not-manager' });
-    if (!onBehalf) await this.assertMayUse(before, actor, canManage);
+    if (!onBehalf) await this.assertMayUse(before, actor, canManage, 'write');
     const range = this.parseRange(dto.startsAt, dto.endsAt);
 
     const participantIds = [
@@ -1252,7 +1265,7 @@ export class BookingsService {
   ) {
     this.logger.debug(`[BOOKINGS] uploadFile space=${spaceId} item=${itemId}`);
     const space = await this.loadSpace(spaceId);
-    await this.assertMayUse(space, actor, await this.mayManage(space, actor));
+    await this.assertMayUse(space, actor, await this.mayManage(space, actor), 'write');
     return this.bookingFiles.upload(space, itemId, file, actor.userId);
   }
 

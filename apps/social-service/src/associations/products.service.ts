@@ -26,7 +26,6 @@ import {
   PRODUCT_ALREADY_PURCHASED,
   PRODUCT_COTISANTS_ONLY,
   ASSOCIATION_ARCHIVED,
-  MEMBERS_ONLY_WITHOUT_COTISATION,
   PRODUCT_REQUEST_LIFETIME_SECONDS,
   PAYMENT_ROUTING_CHANGED,
   productCheckoutLookup,
@@ -52,6 +51,7 @@ import {
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { assertMembersOnlyGateable } from './members-only-gate';
 import { DELETED_ACCOUNT, isErasedAccount } from '../internal/account-erasure';
 import { Association } from './entities/association.entity';
 import {
@@ -1262,7 +1262,13 @@ export class ProductsService {
 
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
-    this.assertMembersOnlyGateable(asso, dto.membersOnly ?? false, dto.requiredTags ?? null);
+    assertMembersOnlyGateable(
+      asso,
+      dto.membersOnly ?? false,
+      dto.requiredTags ?? null,
+      this.logger,
+      'product'
+    );
 
     if (
       dto.customAmountMinCents !== undefined &&
@@ -1503,10 +1509,12 @@ export class ProductsService {
     if (dto.membersOnly !== undefined || dto.requiredTags !== undefined) {
       const asso = await this.assoRepo.findOne({ where: { id: associationId } });
       if (!asso) throw new NotFoundException('Association not found');
-      this.assertMembersOnlyGateable(
+      assertMembersOnlyGateable(
         asso,
         dto.membersOnly ?? product.membersOnly,
-        dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags
+        dto.requiredTags !== undefined ? dto.requiredTags : product.requiredTags,
+        this.logger,
+        'product'
       );
     }
 
@@ -3002,7 +3010,13 @@ export class ProductsService {
     manager: EntityManager
   ): Promise<ResolvedPurchase> {
     const { associationId, productId, paymentTarget, vendorToken } = prepared;
-    const asso = await manager.findOne(Association, { where: { id: associationId } });
+    // FOR SHARE: the archive (`AssociationsService.update`) writes this row under FOR UPDATE, so the
+    // two are ORDERED - a checkout deciding first commits before the archive lands, and one deciding
+    // after reads `archived` committed. SHARE, not UPDATE, so buyers do not queue behind each other.
+    const asso = await manager.findOne(Association, {
+      where: { id: associationId },
+      lock: { mode: 'pessimistic_read' },
+    });
     const product = await manager.findOne(AssociationProduct, {
       where: { id: productId, associationId },
     });
@@ -4266,29 +4280,6 @@ export class ProductsService {
         `was issued as request ${row.requestId ?? 'none'} - nothing recorded`
     );
     return false;
-  }
-
-  /**
-   * Refuses (400 `MEMBERS_ONLY_WITHOUT_COTISATION`) a product gated on `membersOnly` by an
-   * association with no cotisation mode: `membersOnly` means "holds an active cotisation tier of
-   * this association", and with no mode there is no tier to hold, so the product would be on sale
-   * to nobody. `requiredTags` takes precedence over `membersOnly` at purchase (`assertCanPurchase`),
-   * so a product gated by tags is not asked.
-   */
-  private assertMembersOnlyGateable(
-    asso: Pick<Association, 'id' | 'cotisationMode'>,
-    membersOnly: boolean,
-    requiredTags: string[] | null
-  ): void {
-    if (!membersOnly || (requiredTags ?? []).length > 0 || asso.cotisationMode) return;
-    this.logger.log(
-      `[SHOP] refused (${MEMBERS_ONLY_WITHOUT_COTISATION}): assoc=${asso.id.slice(0, 8)} has no ` +
-        `cotisation mode, so a members-only product would be sold to nobody`
-    );
-    throw new BadRequestException({
-      code: MEMBERS_ONLY_WITHOUT_COTISATION,
-      message: 'Enable the cotisation before reserving a product to cotisants.',
-    });
   }
 
   /**

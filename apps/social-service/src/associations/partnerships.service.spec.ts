@@ -321,6 +321,58 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
     });
   });
 
+  describe('members-only needs a cotisation to be held', () => {
+    const code = async (p: Promise<unknown>) => {
+      const err = await p.then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(BadRequestException);
+      return ((err as BadRequestException).getResponse() as { code: string }).code;
+    };
+
+    it('refuses creating a members-only card when the association has no cotisation mode', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      expect(
+        await code(
+          service.create('asso1', { title: 'X', claimMode: 'code_pool', membersOnly: true } as any)
+        )
+      ).toBe('MEMBERS_ONLY_WITHOUT_COTISATION');
+      expect(cardRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses ticking it on an existing card, and stores nothing', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      cardRepo.findOne.mockResolvedValue({ ...card(), membersOnly: false });
+      expect(await code(service.update('asso1', 'card1', { membersOnly: true } as any))).toBe(
+        'MEMBERS_ONLY_WITHOUT_COTISATION'
+      );
+      expect(cardRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: an association with a cotisation mode may reserve a card', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'lifetime' }));
+      await service.create('asso1', {
+        title: 'X',
+        claimMode: 'code_pool',
+        membersOnly: true,
+      } as any);
+      expect(cardRepo.save).toHaveBeenCalled();
+    });
+
+    it('CONTROL: an edit that does not tick the box is not asked', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      cardRepo.findOne.mockResolvedValue({ ...card(), membersOnly: true });
+      await service.update('asso1', 'card1', { title: 'Renamed' } as any);
+      expect(cardRepo.save).toHaveBeenCalled();
+      expect(assoRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
+
   describe('create - badgeText', () => {
     /**
      * IT IS SETTABLE AT CREATION SINCE 2026-09-10, and the asymmetry it removes is the point: a

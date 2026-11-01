@@ -761,13 +761,25 @@ refused at SAVE when the association has no `cotisationMode`** (400
 `MEMBERS_ONLY_WITHOUT_COTISATION`, `assertMembersOnlyGateable`, 2026-11-01): the product would be on
 sale to nobody. Asked on create, and on an update only when it touches `membersOnly` or
 `requiredTags` (an old gated product can still be withdrawn); a product gated by `requiredTags` is not
-asked, since they take precedence. Both product editors (`EditBoutiqueTab.svelte`, `/admin/cercle`)
-word it from the code (`productSaveRefusalMessage`).
+asked, since they take precedence. **A partnership card follows the same rule** (on create, and on an
+update that ticks the box) - ONE implementation, `members-only-gate.ts`. Both product editors
+(`EditBoutiqueTab.svelte`, `/admin/cercle`) and the card editor (`PartnershipEditor.svelte`) word it
+from the code (`membersOnlySaveRefusalMessage`). The reverse order - a mode cleared while such rows
+exist - is NOT covered and is owed a decision
+([backlog](backlog.d/members-only-rows-outlive-a-cleared-cotisation-mode.md)).
 
 **An ARCHIVED association sells nothing** (409 `ASSOCIATION_ARCHIVED`, `assertNotArchived`,
 2026-11-01): buying by the page's link is open, and an archived page stays reachable with whatever
-products it left active, so the purchase refuses it - in `preparePurchase` and again under the lock in
-`decidePurchase` - before any payment request; the shop words it (`paymentRefusal.ts`).
+products it left active, so the purchase refuses it - in `preparePurchase` (before the provider is
+even asked) and again under the lock in `decidePurchase` - before any payment request; the shop words
+it (`paymentRefusal.ts`). **The archive and a checkout are ORDERED on the association ROW**:
+`decidePurchase` reads it `FOR SHARE` inside the checkout's transaction (under the buyer's tier
+lock), and `AssociationsService.update` writes `archived` inside a transaction that first reads the
+row `FOR UPDATE`. So a checkout that read the row first commits its attempt before the archive
+lands - it was decided while the association still sold, and sending its payment request after that
+commit is correct - and a checkout that comes after the archive reads `archived` committed and is
+refused. SHARE, not UPDATE, so buyers of one association never queue behind each other; the archive
+takes no advisory lock, so it cannot form a cycle with the tier locks.
 
 ### Form pricing fields
 

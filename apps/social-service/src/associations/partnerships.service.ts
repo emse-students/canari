@@ -10,6 +10,7 @@ import { In, IsNull, Not, Repository } from 'typeorm';
 import { PartnershipCard, PartnershipClaimMode } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
+import { assertMembersOnlyGateable } from './members-only-gate';
 import {
   assertReviewerReachesAssociation,
   associationsReachedByReviewer,
@@ -227,6 +228,7 @@ export class PartnershipsService {
     this.logger.debug(
       `[PARTNERSHIP] create card: association=${associationId.slice(0, 8)} mode=${dto.claimMode}`
     );
+    if (dto.membersOnly) await this.assertMembersOnlyGateable(associationId, true);
     const card = this.cardRepo.create({
       associationId,
       title: dto.title,
@@ -250,8 +252,23 @@ export class PartnershipsService {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
     if (!card) throw partnershipNotFound();
     this.assertUpdateModeShape(card.claimMode, dto);
+    // Only an edit that ticks the box is asked: an old card left gated by a since-cleared mode can
+    // still be edited, and unticking it is what clears it.
+    if (dto.membersOnly === true) await this.assertMembersOnlyGateable(associationId, true);
     Object.assign(card, dto);
     return this.cardRepo.save(card);
+  }
+
+  /** The shared members-only rule (`members-only-gate.ts`), on the card's association re-read. */
+  private async assertMembersOnlyGateable(associationId: string, membersOnly: boolean) {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) {
+      throw new NotFoundException({
+        code: PARTNERSHIP_ERROR_CODES.ASSOCIATION_NOT_FOUND,
+        message: 'Association not found',
+      });
+    }
+    assertMembersOnlyGateable(asso, membersOnly, null, this.logger, 'partnership card');
   }
 
   /** Deletes a partnership card. Its codes cascade-delete (FK, migration 047). Requires MANAGE_PARTNERSHIPS. */

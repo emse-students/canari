@@ -158,19 +158,20 @@ export const COTISATION_DISABLED = 'COTISATION_DISABLED';
 export const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
 
 /**
- * The body `code` of social-service's 400 when a product is saved reserved to cotisants
- * (`membersOnly`) by an association with no cotisation mode: no tier exists to hold, so it would be
- * on sale to nobody.
+ * The body `code` of social-service's 400 when a product or a partnership card is saved reserved to
+ * cotisants (`membersOnly`) by an association with no cotisation mode: no tier exists to hold, so it
+ * would be offered to nobody (`members-only-gate.ts`).
  */
 export const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
 
 /**
- * The sentence for a refusal of a product SAVE that the admin can act on, or `null` for anything
- * else (the caller keeps its generic error). Classified by the typed `code`, never by the message.
+ * The sentence for a refusal of a product or partnership-card SAVE that the admin can act on, or
+ * `null` for anything else (the caller keeps its generic error). Classified by the typed `code`,
+ * never by the message.
  */
-export function productSaveRefusalMessage(err: unknown): string | null {
+export function membersOnlySaveRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === MEMBERS_ONLY_WITHOUT_COTISATION) {
-    return m.admin_product_members_only_without_cotisation();
+    return m.admin_members_only_without_cotisation();
   }
   return null;
 }

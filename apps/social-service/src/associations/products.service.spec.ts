@@ -3968,10 +3968,15 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
      * before the lock and again under it, and no payment request is ever issued.
      */
     describe('an archived association sells nothing', () => {
-      it('refuses the checkout with ASSOCIATION_ARCHIVED, and issues nothing', async () => {
+      it('refuses the checkout with ASSOCIATION_ARCHIVED before routing, and issues nothing', async () => {
         const t = setup();
         t.assoRepo.findOne.mockResolvedValue(asso({ archived: true }));
+        // The pre-lock check is what refuses it: the provider is never asked, nothing is routed.
+        const provider = jest.spyOn(t.service as any, 'activePaymentProvider');
+        const route = jest.spyOn(t.service as any, 'routeWith');
         const err = await t.checkout().catch((e: unknown) => e);
+        expect(provider).not.toHaveBeenCalled();
+        expect(route).not.toHaveBeenCalled();
         expect(err).toBeInstanceOf(ConflictException);
         expect((err as ConflictException).getResponse()).toMatchObject({
           code: 'ASSOCIATION_ARCHIVED',
@@ -3996,6 +4001,15 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         const t = setup();
         await t.checkout();
         expect(orderRefs(t.calls)).toHaveLength(1);
+      });
+
+      it('reads the association FOR SHARE under the lock, the row the archive writes FOR UPDATE', async () => {
+        const t = setup();
+        await t.checkout();
+        // The transaction's manager hands an Association read to the association repository.
+        expect(t.assoRepo.findOne).toHaveBeenCalledWith(
+          expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+        );
       });
     });
 

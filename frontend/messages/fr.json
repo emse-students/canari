@@ -1345,7 +1345,7 @@
   "admin_cercle_amount_hint": "Le montant est choisi par l'acheteur ; ces bornes l'encadrent. Une recharge est rachetable sans limite et ne peut jamais être épuisée.",
   "admin_cercle_members_only_label": "Réservé aux cotisants",
   "admin_cercle_members_only_hint": "Coché, seuls les cotisants de l'association (une formule active, quelle qu'elle soit) peuvent recharger. Décoché, toute personne connectée peut recharger.",
-  "admin_product_members_only_without_cotisation": "Activez d'abord la cotisation de l'association : sans elle, personne ne peut être cotisant et le produit ne serait en vente pour personne.",
+  "admin_members_only_without_cotisation": "Activez d'abord la cotisation de l'association : sans elle, personne ne peut être cotisant, donc rien ne peut être réservé aux cotisants.",
   "admin_cercle_webhook_secret_set": "Un secret est enregistré. Laisser vide pour le conserver, ou saisir une nouvelle valeur pour le remplacer.",
   "admin_cercle_saved": "Enregistré",
   "admin_cercle_webhook_failures_hint": "Une livraison échouée est relancée automatiquement, avec un délai qui s'allonge à chaque essai. Le bouton relance tout de suite - après avoir corrigé l'URL ou la clef, par exemple. Supprime la ligne si la recharge a déjà été traitée à la main sur le site du Cercle : la relancer la créditerait deux fois.",
