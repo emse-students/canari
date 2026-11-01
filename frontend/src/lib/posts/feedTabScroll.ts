@@ -1,7 +1,7 @@
 /**
  * Where the feed's tab row scrolls so the SELECTED tab is in full view (`FeedTabRow`).
  *
- * At 2x text on a 390 px phone the three tabs overflow their row, and the selected "Tout" - the last
+ * At 2x text on a 390 px phone the three tabs overflow their row, and the selected last tab (then "Tout") - the last
  * one - sat under the faded right edge, next to the CanaReels icon, until the reader scrolled the row
  * (Mi 9T, v1.2.9-alpha.4). The selected tab is centred in the row: a scroller clamps the offset at
  * both ends, so the first and last tabs land flush at their edge, where `scrollFades` draws no fade,

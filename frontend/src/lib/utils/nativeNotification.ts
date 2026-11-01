@@ -59,6 +59,12 @@ export type NativeMessageNotification = {
    */
   sentAt: number;
   /**
+   * The SERVER's acceptance of the same message in ms, 0 when the frame carried none. Handed to the
+   * shade's "mark as read" and quick reply, so the read mark they send lands on the clock the
+   * conversation is ordered by (readState.ts, owner 2026-10-31).
+   */
+  serverAt: number;
+  /**
    * HOW MANY INBOUND MESSAGES THIS ONE BANNER STANDS FOR: 1 for a live frame, N for a catch-up
    * flush, which raises a single banner for the last of N messages.
    *
@@ -92,6 +98,7 @@ export async function postNativeMessageNotification(
       body: notification.body,
       mentionsMe: notification.mentionsMe,
       sentAt: notification.sentAt,
+      serverAt: notification.serverAt,
       covers: notification.covers,
     });
   } catch (e) {

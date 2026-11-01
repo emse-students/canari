@@ -168,6 +168,23 @@
   /* The avatar corner (2026-10-05): a RATIO, so one token fits a 24px chip and a 56px header photo.
      Read by the `squircle` utility below. */
   --radius-squircle: 32%;
+
+  /* The incoming call's halo (owner, 2026-11-01): a soft breath out of the caller's photo, not
+     Tailwind's `ping`, which doubles in size and snaps back. Gated `motion-safe` at its call site,
+     and the global reduced-motion rule below would stop it anyway. */
+  --animate-call-halo: callHalo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+  /* The second halo: the same breath, half of it (1.2s) behind the first. */
+  --animate-call-halo-late: callHalo 2.4s cubic-bezier(0, 0, 0.2, 1) 1.2s infinite;
+  @keyframes callHalo {
+    0% {
+      transform: scale(1);
+      opacity: 0.9;
+    }
+    100% {
+      transform: scale(1.45);
+      opacity: 0;
+    }
+  }
 }
 
 /* THE SQUIRCLE - ONE MECHANISM FOR EVERY NON-ROUND AVATAR (user, 2026-10-05). `corner-shape` turns the

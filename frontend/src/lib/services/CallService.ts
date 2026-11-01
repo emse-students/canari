@@ -1966,8 +1966,13 @@ export class CallService {
 
       ws.onerror = () => {
         clearTimers();
-        appendLog('[Call] signalling WebSocket error');
         fail(new Error('call signalling WebSocket connection failed'));
+        // cleanup() closes the socket and then nulls `signaledWs`, in one synchronous run; the
+        // `error` event is dispatched asynchronously, so by the time it fires a socket that is no
+        // longer ours is one WE closed (a hang-up): WebKit still raises `error` for it, and that is
+        // the close arriving, not a failure. Decided by state, never by the event's (empty) message.
+        if (this.signaledWs !== ws) return;
+        appendLog('[Call] signalling WebSocket error');
       };
 
       ws.onclose = (ev) => {
