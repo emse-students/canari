@@ -54,6 +54,7 @@ class FakeContext {
   readonly audioWorklet = { addModule: vi.fn(async (_url: string) => {}) };
   readonly close = vi.fn(async () => {});
   readonly resume = vi.fn(async () => {});
+  readonly suspend = vi.fn(async () => {});
   constructor(readonly sampleRate = 48_000) {}
   createMediaStreamSource() {
     return { connect: vi.fn((next: unknown) => next), disconnect: vi.fn() };
@@ -142,6 +143,35 @@ describe('buildCallMicPipeline', () => {
     expect(pipeline.usable()).toBe(false);
     ctx.become('running');
     expect(pipeline.usable()).toBe(true);
+  });
+
+  it('settles `cancelled` and releases what it built when the call ends before `ready`', async () => {
+    engine();
+    const ctx = new FakeContext();
+    const abort = new AbortController();
+    const building = buildCallMicPipeline(track('raw'), deps(ctx).d, abort.signal);
+    await untilNodeBuilt();
+    abort.abort();
+    expect(await building).toEqual({
+      ok: false,
+      failure: 'cancelled',
+      detail: 'the call ended before the build settled',
+    });
+    expect(ctx.close).toHaveBeenCalledTimes(1);
+    expect(ctx.processed.stop).toHaveBeenCalled();
+  });
+
+  it('suspends its context when switched OFF and resumes it when switched ON', async () => {
+    engine();
+    const ctx = new FakeContext();
+    const building = buildCallMicPipeline(track('raw'), deps(ctx).d);
+    (await untilNodeBuilt()).say({ type: 'ready', clock: 'date' });
+    const { pipeline } = (await building) as { pipeline: CallMicPipeline };
+    ctx.resume.mockClear();
+    pipeline.setActive(false);
+    expect(ctx.suspend).toHaveBeenCalledTimes(1);
+    pipeline.setActive(true);
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
   });
 
   it('returns the cause, never throws, when the worklet module does not load', async () => {
@@ -249,13 +279,15 @@ function fakeSender(initial: MediaStreamTrack) {
 
 function fakePipeline(processed: MediaStreamTrack) {
   let usable = true;
+  let frames = 1000;
   let onChange: () => void = () => {};
   const pipeline: CallMicPipeline = {
     processed,
     usable: () => usable,
     contextState: () => (usable ? 'running' : 'suspended'),
-    stats: () => ({ frames: 1000, busyMs: 450, maxQuantumMs: 0.9, clock: 'performance' }),
+    stats: () => ({ frames, busyMs: 450, maxQuantumMs: 0.9, clock: 'performance' }),
     onUsableChange: (l) => (onChange = l),
+    setActive: vi.fn(),
     close: vi.fn(),
   };
   return {
@@ -263,6 +295,10 @@ function fakePipeline(processed: MediaStreamTrack) {
     setUsable(next: boolean) {
       usable = next;
       onChange();
+    },
+    /** The worklet's frame count as its last `stats` said it. */
+    setFrames(next: number) {
+      frames = next;
     },
   };
 }
@@ -473,6 +509,115 @@ describe('CallMicSwitch - the per-call switch', () => {
     const late = fakePipeline(track('late'));
     sw.adopt(ok(late.pipeline));
     expect(late.pipeline.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("a build still waiting on the worklet's `ready` ends with the call: its context is closed", async () => {
+    engine();
+    const ctx = new FakeContext();
+    const logs: string[] = [];
+    const sw = new CallMicSwitch(
+      track('raw'),
+      true,
+      (l) => logs.push(l),
+      () => {}
+    );
+    sw.ensurePipeline((signal) => buildCallMicPipeline(sw.raw, deps(ctx).d, signal));
+    await untilNodeBuilt();
+    expect(ctx.close).not.toHaveBeenCalled();
+
+    sw.close();
+    await vi.waitFor(() => expect(ctx.close).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(logs).toContain(
+        '[Call] noise suppression: pipeline settled after the call ended - released'
+      )
+    );
+    expect(logs.some((l) => l.includes('WARN'))).toBe(false);
+  });
+
+  it('switching OFF suspends the pipeline, switching ON resumes it (inside the tap)', () => {
+    const sw = new CallMicSwitch(
+      track('raw'),
+      true,
+      () => {},
+      () => {}
+    );
+    const fake = fakePipeline(track('processed'));
+    sw.adopt(ok(fake.pipeline));
+    sw.setEnabled(false);
+    expect(fake.pipeline.setActive).toHaveBeenLastCalledWith(false);
+    sw.setEnabled(true);
+    expect(fake.pipeline.setActive).toHaveBeenLastCalledWith(true);
+  });
+
+  it('a pipeline adopted after the switch went OFF is suspended at once', () => {
+    const sw = new CallMicSwitch(
+      track('raw'),
+      false,
+      () => {},
+      () => {}
+    );
+    const fake = fakePipeline(track('processed'));
+    sw.adopt(ok(fake.pipeline));
+    expect(fake.pipeline.setActive).toHaveBeenCalledWith(false);
+  });
+
+  it('a worklet whose frame count stops between two report ticks sends the raw track again, loudly', async () => {
+    const raw = track('raw');
+    const logs: string[] = [];
+    const sw = new CallMicSwitch(
+      raw,
+      true,
+      (l) => logs.push(l),
+      () => {}
+    );
+    const sender = fakeSender(sw.trackToSend());
+    sw.attachSender(sender as unknown as RTCRtpSender);
+    const fake = fakePipeline(track('processed'));
+    sw.adopt(ok(fake.pipeline));
+    await sw.settled();
+    expect(sender.track).toBe(fake.pipeline.processed);
+
+    sw.checkProgress(); // baseline: 1000
+    fake.setFrames(2000);
+    sw.checkProgress(); // advanced: still processed
+    await sw.settled();
+    expect(sender.track).toBe(fake.pipeline.processed);
+    expect(sw.fallbackCount()).toBe(0);
+
+    sw.checkProgress(); // 2000 again: the context says running, the worklet does not count
+    await sw.settled();
+    expect(sender.track).toBe(raw);
+    expect(sender.transform).toEqual({ the: 'E2E transform' });
+    expect(sw.fallbackCount()).toBe(1);
+    expect(sw.reportState()).toBe('unavailable');
+    expect(logs.some((l) => l.startsWith('[Call] WARN noise suppression stopped processing'))).toBe(
+      true
+    );
+  });
+
+  it('reads no stall while the raw track is sent (switched OFF, the worklet suspended)', async () => {
+    const sw = new CallMicSwitch(
+      track('raw'),
+      true,
+      () => {},
+      () => {}
+    );
+    const sender = fakeSender(sw.trackToSend());
+    sw.attachSender(sender as unknown as RTCRtpSender);
+    const fake = fakePipeline(track('processed'));
+    sw.adopt(ok(fake.pipeline));
+    await sw.settled();
+    sw.checkProgress();
+    sw.setEnabled(false);
+    await sw.settled();
+    sw.checkProgress();
+    sw.checkProgress();
+    sw.setEnabled(true);
+    await sw.settled();
+    sw.checkProgress(); // a fresh baseline after the OFF stretch
+    expect(sw.fallbackCount()).toBe(0);
+    expect(sender.track).toBe(fake.pipeline.processed);
   });
 });
 

@@ -40,7 +40,9 @@ export type NoiseSuppressionFailure =
   | 'wasm-fetch'
   | 'worklet-init'
   | 'graph'
-  | 'context';
+  | 'context'
+  /** The call ended (its `AbortSignal`) before the build settled: not a defect, a release. */
+  | 'cancelled';
 
 /** What the worklet last counted (`stats` on its port). */
 export interface NoiseSuppressionStats {
@@ -73,6 +75,11 @@ export interface CallMicPipeline {
   stats(): NoiseSuppressionStats | null;
   /** Called on every change of {@link usable}: the call re-decides which track it sends. */
   onUsableChange(listener: () => void): void;
+  /**
+   * The switch's position reaching the engine: OFF suspends the context (no RNNoise runs for a
+   * track nobody sends), ON resumes it - called inside the tap, so the engine lets it run.
+   */
+  setActive(active: boolean): void;
   /** Stops the processed track, the worklet and the context. Idempotent. */
   close(): void;
 }
@@ -109,18 +116,35 @@ export function noiseSuppressionUnsupported(
  * call does not wait for it: it sends `raw` until the pipeline is usable (`micTrackToSend`).
  *
  * The worklet's `ready` is awaited as a PROOF, with no clock: a worklet that never answers leaves
- * the call on the raw track, and the call's report then reads `ns=pending` - the accusation.
+ * the call on the raw track, and the call's report then reads `ns=pending` - the accusation. What
+ * ENDS that wait is the call's end, through `signal`: aborted, the build settles `cancelled` and
+ * releases its context, worklet and source - nothing it made outlives the call.
  */
 export async function buildCallMicPipeline(
   raw: MediaStreamTrack,
-  deps: CallMicPipelineDeps
+  deps: CallMicPipelineDeps,
+  signal?: AbortSignal
 ): Promise<CallMicPipelineResult> {
   deps.log('[Call] noise suppression: building the RNNoise pipeline on the microphone');
   const unsupported = noiseSuppressionUnsupported();
   if (unsupported) {
     return { ok: false, failure: unsupported, detail: 'this engine lacks it' };
   }
+  if (signal?.aborted) {
+    return { ok: false, failure: 'cancelled', detail: 'the call ended before the build began' };
+  }
+  // Rejects once the call ends; every wait below races it, so an abort settles the build at once.
+  const cancelled = new Promise<never>((_, reject) => {
+    signal?.addEventListener(
+      'abort',
+      () => reject(new PipelineBuildError('cancelled', 'the call ended before the build settled')),
+      { once: true }
+    );
+  });
+  // A build that settled first never reads it; its rejection is the race's, already handled.
+  cancelled.catch(() => undefined);
   let ctx: AudioContext | null = null;
+  let processedTrack: MediaStreamTrack | null = null;
   try {
     try {
       ctx = deps.createContext();
@@ -132,13 +156,16 @@ export async function buildCallMicPipeline(
       throw new PipelineBuildError('sample-rate', `the context runs at ${ctx.sampleRate} Hz`);
     }
     const context = ctx;
-    const [, wasm] = await Promise.all([
-      context.audioWorklet.addModule(deps.workletUrl).catch((e: unknown) => {
-        throw new PipelineBuildError('worklet-module', String(e));
-      }),
-      deps.loadWasm().catch((e: unknown) => {
-        throw new PipelineBuildError('wasm-fetch', String(e));
-      }),
+    const [, wasm] = await Promise.race([
+      Promise.all([
+        context.audioWorklet.addModule(deps.workletUrl).catch((e: unknown) => {
+          throw new PipelineBuildError('worklet-module', String(e));
+        }),
+        deps.loadWasm().catch((e: unknown) => {
+          throw new PipelineBuildError('wasm-fetch', String(e));
+        }),
+      ]),
+      cancelled,
     ]);
     let source: MediaStreamAudioSourceNode;
     let node: AudioWorkletNode;
@@ -162,13 +189,18 @@ export async function buildCallMicPipeline(
     }
     const processed = dest.stream.getAudioTracks()[0];
     if (!processed) throw new PipelineBuildError('graph', 'the destination has no audio track');
+    processedTrack = processed;
     // The engine may hold a context suspended until a gesture; the state is READ, never assumed.
-    void context.resume().catch((e: unknown) => {
-      deps.log(`[Call] WARN noise suppression: AudioContext.resume refused: ${String(e)}`);
-    });
-    const pipeline = await awaitReady(context, source, node, processed, deps);
+    resumeContext(context, deps);
+    const pipeline = await Promise.race([
+      awaitReady(context, source, node, processed, deps),
+      cancelled,
+    ]);
     return { ok: true, pipeline };
   } catch (e) {
+    // Everything the build made goes with it: the processed track, then the context (which takes
+    // the worklet and the source with it).
+    processedTrack?.stop();
     void ctx?.close().catch((closeError: unknown) => {
       deps.log(`[Call] noise suppression: AudioContext.close refused: ${String(closeError)}`);
     });
@@ -177,6 +209,12 @@ export async function buildCallMicPipeline(
     }
     return { ok: false, failure: 'graph', detail: String(e) };
   }
+}
+
+function resumeContext(ctx: AudioContext, deps: CallMicPipelineDeps): void {
+  void ctx.resume().catch((e: unknown) => {
+    deps.log(`[Call] WARN noise suppression: AudioContext.resume refused: ${String(e)}`);
+  });
 }
 
 /** Resolves once the worklet answered `ready`; rejects (typed) on its `error` or a processor error. */
@@ -207,6 +245,16 @@ function awaitReady(
     contextState: () => ctx.state,
     stats: () => lastStats,
     onUsableChange: (listener) => listeners.push(listener),
+    setActive: (active) => {
+      if (closed) return;
+      if (active) {
+        resumeContext(ctx, deps);
+        return;
+      }
+      void ctx.suspend().catch((e: unknown) => {
+        deps.log(`[Call] WARN noise suppression: AudioContext.suspend refused: ${String(e)}`);
+      });
+    },
     close: () => {
       if (closed) return;
       closed = true;
@@ -343,7 +391,12 @@ function noiseSuppressionView(
 export class CallMicSwitch {
   private pipeline: CallMicPipeline | null = null;
   private failed = false;
-  private building = false;
+  /** The build in flight, cancelled by {@link close}: the call's end settles it, no clock. */
+  private building: AbortController | null = null;
+  /** The worklet stopped counting frames while its track was sent (`checkProgress`). */
+  private stalled = false;
+  /** The worklet's frame count at the last report tick that found the processed track sent. */
+  private framesAtLastTick: number | null = null;
   private fallbacks = 0;
   private sender: RTCRtpSender | null = null;
   private closed = false;
@@ -368,7 +421,12 @@ export class CallMicSwitch {
 
   /** The track a NEW sender starts with (`addTrack`): the decision as it stands now. */
   trackToSend(): MediaStreamTrack {
-    return micTrackToSend(this.raw, this.pipeline, this.enabled);
+    return micTrackToSend(this.raw, this.live(), this.enabled);
+  }
+
+  /** The pipeline the decision may use: none once it was caught not processing. */
+  private live(): CallMicPipeline | null {
+    return this.stalled ? null : this.pipeline;
   }
 
   /** The audio sender of the call's current peer connection, created with {@link trackToSend}. */
@@ -397,7 +455,33 @@ export class CallMicSwitch {
     }
     this.pipeline = result.pipeline;
     result.pipeline.onUsableChange(() => this.sync('the pipeline changed state'));
+    // Switched OFF while it built: nothing runs for a track nobody sends.
+    if (!this.enabled) result.pipeline.setActive(false);
     this.sync('the pipeline is ready');
+  }
+
+  /**
+   * The proof the processed track still carries the microphone, read at each `[CALL_REPORT]` tick
+   * (10 s; the worklet counts frames every 5 s): `usable()` reads the context's state, which the
+   * engine may report `running` while the worklet no longer processes. While the sender carries
+   * the processed track, a frame count that did not advance since the last tick sends the raw
+   * capture again - a WARN, counted in `ns_fallbacks`, and not retried this call.
+   */
+  checkProgress(): void {
+    if (this.closed || this.stalled || !this.sendsProcessed()) {
+      this.framesAtLastTick = null;
+      return;
+    }
+    const frames = this.pipeline?.stats()?.frames ?? 0;
+    const previous = this.framesAtLastTick;
+    this.framesAtLastTick = frames;
+    if (previous === null || frames > previous) return;
+    this.stalled = true;
+    this.fallbacks += 1;
+    this.log(
+      `[Call] WARN noise suppression stopped processing (frames ${frames} since the last tick, context ${this.pipeline?.contextState()}) - the raw microphone is sent`
+    );
+    this.sync('the worklet stopped counting frames');
   }
 
   /**
@@ -405,12 +489,13 @@ export class CallMicSwitch {
    * call pays for no AudioContext and no worklet. One build per call - a build in flight, a
    * pipeline held or a build that failed (`ns=unavailable`, the switch hidden) is not retried.
    */
-  ensurePipeline(build: () => Promise<CallMicPipelineResult>): void {
+  ensurePipeline(build: (signal: AbortSignal) => Promise<CallMicPipelineResult>): void {
     if (!this.enabled || this.closed || this.building || this.pipeline || this.failed) return;
-    this.building = true;
+    const building = new AbortController();
+    this.building = building;
     this.log('[Call] noise suppression: building the pipeline (the switch is on)');
-    void build().then((result) => {
-      this.building = false;
+    void build(building.signal).then((result) => {
+      if (this.building === building) this.building = null;
       this.adopt(result);
     });
   }
@@ -420,6 +505,7 @@ export class CallMicSwitch {
     if (enabled === this.enabled) return;
     this.enabled = enabled;
     this.log(`[Call] noise suppression switched ${enabled ? 'ON' : 'OFF'} by the user`);
+    this.pipeline?.setActive(enabled);
     this.sync(enabled ? 'the user switched it on' : 'the user switched it off');
   }
 
@@ -429,7 +515,7 @@ export class CallMicSwitch {
 
   /** The `ns=` field of `[CALL_REPORT]`. */
   reportState(): NoiseSuppressionReportState {
-    return noiseSuppressionReportState(this.enabled, this.pipeline, this.failed);
+    return noiseSuppressionReportState(this.enabled, this.live(), this.failed || this.stalled);
   }
 
   /** The `ns_fallbacks=` field of `[CALL_REPORT]`: how many times the primary path failed. */
@@ -438,7 +524,7 @@ export class CallMicSwitch {
   }
 
   view(): NoiseSuppressionView {
-    return noiseSuppressionView(this.enabled, this.pipeline, this.failed);
+    return noiseSuppressionView(this.enabled, this.live(), this.failed || this.stalled);
   }
 
   /** The worklet's last counts (frames, time spent), or `null`: what the end line is made of. */
@@ -470,6 +556,9 @@ export class CallMicSwitch {
     this.pipeline?.close();
     this.pipeline = null;
     this.sender = null;
+    // A build still waiting on its worklet's proof ends with the call, and releases its context.
+    this.building?.abort();
+    this.building = null;
   }
 
   /** Queues one decision; every step settles, so one refusal never blocks the next. */

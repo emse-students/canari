@@ -2965,6 +2965,8 @@ export class CallService {
         this.armCallReport(pc);
         return;
       }
+      // Before the line is stamped, so its `ns=` already says a worklet caught not processing.
+      this.micSwitch?.checkProgress();
       const inFlight = {
         pc,
         snapshot: this.logCallReport(
@@ -3577,8 +3579,8 @@ export class CallService {
 
   /** The switch's one build, from this call's capture, when (and only when) it is ON. */
   private ensureMicPipeline(micSwitch: CallMicSwitch): void {
-    micSwitch.ensurePipeline(() =>
-      buildCallMicPipeline(micSwitch.raw, callMicPipelineDeps(appendLog))
+    micSwitch.ensurePipeline((signal) =>
+      buildCallMicPipeline(micSwitch.raw, callMicPipelineDeps(appendLog), signal)
     );
   }
 

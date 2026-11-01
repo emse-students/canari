@@ -1898,6 +1898,16 @@ fetched until the first ON of the call (`CallMicSwitch.ensurePipeline`, one buil
 the tap). `[CALL_REPORT] ns=off` is therefore the ordinary value; `ns=on`, `pending` or
 `unavailable` appear only in a call where someone turned it on.
 
+**Its lifetime is the call's, with no clock (review of #2831).** A build still waiting on the
+worklet's `ready` is cancelled by the call's end (`CallMicSwitch.close` aborts its `AbortSignal`):
+it settles `cancelled` and closes its context, worklet and source. Switched OFF, the context is
+SUSPENDED (no RNNoise runs for a track nobody sends); switched ON, it resumes inside the tap.
+`usable()` reads the context's state, which an engine may report `running` while the worklet no
+longer processes, so each 10 s `[CALL_REPORT]` tick also reads the worklet's frame count (it
+reports every 5 s): while the processed track is sent, a count that did not advance since the last
+tick sends the raw capture again - `WARN noise suppression stopped processing`, counted in
+`ns_fallbacks`, `ns=unavailable` for the rest of the call.
+
 **The mechanism.** `utils/callNoiseSuppression.ts` builds `raw capture -> MediaStreamSource ->
 AudioWorkletNode (workers/rnnoise.worklet.ts) -> MediaStreamDestination` in a 48 kHz
 `AudioContext`. RNNoise is xiph's (BSD-3-Clause), compiled to wasm by `simple-rnnoise-wasm`
