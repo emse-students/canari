@@ -19,7 +19,12 @@ import PostComposerBar from './PostComposerBar.svelte';
 // answered here, or every run prints a refused connection and a missing `getUserMedia`.
 vi.mock('$lib/posts/api', () => ({
   getReelLimits: () =>
-    Promise.resolve({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 }),
+    Promise.resolve({
+      maxDurationMs: 90_000,
+      chatMaxDurationMs: 60_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    }),
 }));
 vi.mock('$lib/reels/cameraAccess', async (orig) => ({
   ...(await orig<typeof import('$lib/reels/cameraAccess')>()),

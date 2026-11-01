@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   CHAT_REEL_RETENTION_MS,
   CHAT_REEL_WRITER_ENABLED,
+  captureCapMs,
   chatReelAllowed,
+  ChatReelCapMissingError,
+  servedChatCapMs,
   chatReelPendingDeclaration,
+  chatReelPrepareOptions,
   isChatReelTake,
   markChatReelTake,
   uploadClassFor,
@@ -49,5 +53,35 @@ describe('the chat reel writer', () => {
       microphone: 'separate',
     });
     expect(destinationRules('feed', true).photoOnly).toBe(false);
+  });
+
+  it('caps a chat take at the chat cap the server serves, and every other destination at the reel cap', () => {
+    const limits = { maxDurationMs: 90_000, chatMaxDurationMs: 60_000 };
+    expect(servedChatCapMs(limits)).toBe(60_000);
+    expect(captureCapMs(limits, 'chat')).toBe(60_000);
+    expect(captureCapMs(limits, 'feed')).toBe(90_000);
+    expect(captureCapMs(limits, 'post')).toBe(90_000);
+    expect(captureCapMs(limits, 'post-edit')).toBe(90_000);
+  });
+
+  it('has NO fallback to the 90 s reel cap: an answer without a usable chat cap films nothing', () => {
+    for (const bad of [undefined, null, 0, -1, Number.NaN, '60000']) {
+      const limits = { maxDurationMs: 90_000, chatMaxDurationMs: bad } as unknown as {
+        maxDurationMs: number;
+        chatMaxDurationMs: number;
+      };
+      expect(servedChatCapMs(limits)).toBeNull();
+      expect(captureCapMs(limits, 'chat')).toBeNull();
+      expect(captureCapMs(limits, 'feed')).toBe(90_000);
+      expect(() => chatReelPrepareOptions(limits, 1)).toThrow(ChatReelCapMissingError);
+    }
+  });
+
+  it('prepares a queued take at the chat profile under the chat cap (RC-3 wired into RC-5)', () => {
+    expect(chatReelPrepareOptions({ chatMaxDurationMs: 60_000 }, 50_000_000)).toEqual({
+      profile: 'chat',
+      maxSeconds: 60,
+      maxBytes: 50_000_000,
+    });
   });
 });
