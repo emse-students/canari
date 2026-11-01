@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import {
+  PROBE_DELAYS_AFTER_FAILURE_MS,
   PROBE_DELAYS_AFTER_ONLINE_MS,
   SLOW_ENTER_MS,
   SLOW_IN_FLIGHT_MS,
@@ -305,10 +306,11 @@ describe('prompt resume: the store asks the server instead of waiting to be told
   };
 
   // Android 1.5.3 (2026-10-31): probes kept leaving after the app paused.
-  it('never probes while the app is off screen, and probes afresh when it comes back', async () => {
+  it('on a phone, never probes while the app is off screen, and probes afresh when it comes back', async () => {
     try {
       const probe = vi.fn(async () => false);
       connectivity.setReachabilityProbe(probe);
+      connectivity.setProbePausesOffScreen(true);
       setForeground(false);
       connectivity.notifyServerUnreachable();
       await vi.advanceTimersByTimeAsync(120_000);
@@ -327,10 +329,25 @@ describe('prompt resume: the store asks the server instead of waiting to be told
     }
   });
 
-  it('stops a resume already probing when the app leaves the screen', async () => {
+  // Review F10 of #2830: a web or desktop tab is not paused by its OS, so it keeps probing.
+  it('in a web or desktop tab, probes on while the tab is hidden', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     try {
       const probe = vi.fn(async () => false);
       connectivity.setReachabilityProbe(probe);
+      connectivity.notifyServerUnreachable();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(probe).toHaveBeenCalledTimes(PROBE_DELAYS_AFTER_FAILURE_MS.length);
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it('on a phone, stops a resume already probing when the app leaves the screen', async () => {
+    try {
+      const probe = vi.fn(async () => false);
+      connectivity.setReachabilityProbe(probe);
+      connectivity.setProbePausesOffScreen(true);
       connectivity.notifyServerUnreachable();
       await vi.advanceTimersByTimeAsync(1_500);
       expect(probe).toHaveBeenCalledTimes(1);

@@ -2802,7 +2802,12 @@ the owner saw, and what was serial:
   `calls.service.ts`), and `fetchIceServers` now RETURNS the withheld-relay code instead of setting
   it, so an answer landing after its call ended leaves nothing for the next one; a microphone granted
   beside a refused token is released by `setupMedia`'s own `assertSetupLive`; keys derived for a
-  call that ended are zeroed by `setupEncryption`, and the worker dies with the call.
+  call that ended are zeroed by `setupEncryption`, and the worker dies with the call. **A cost taken
+  knowingly (review F7 of #2830):** an answer the server REFUSES (a block set during the ring, a
+  closed window) may still light the microphone for a moment, or show the system's permission
+  prompt on a first call, before the refusal ends it. A refusal of an answer is rare; every answer
+  pays the serial wait. A step stopped because a sibling step failed logs `setup step <name>
+  abandoned after N ms (the call ended)`; only the step that failed says `failed`.
 - **The "answered" notice is no longer awaited** (`announceAnswered`). Its only reader is a SIBLING
   device of the callee still ringing the same call (`handleCallSignal`, `callMsg.answered`), whose
   ring stops when it lands; nothing on the caller or in the call record waits for it, and the
@@ -2826,8 +2831,15 @@ the owner saw, and what was serial:
   peer connection built during the ring is closed on every exit": hang-up, window closed, declined,
   busy, a refused seat, a refused ring, a hang-up during the build). A camera turned on or off
   during the ring acts on it as on any peer connection, and the offer at the adoption carries it.
+  **A signalling loss DURING the ring records no outage baseline** (`onPairBroken` skips a peer
+  connection still awaiting its peer, and the adoption clears `packetsAtLoss`; review F6 of #2830):
+  a baseline read from a connection with no media outlived the ring, so a later outage whose path
+  still read `connected` while carrying nothing was never restarted. Tested in
+  `CallService.p2p.test.ts` ("a signalling loss during the ring leaves no baseline").
 - **`setup_ms` counted the human.** It ran from the tap, so a 40 s ring read as a 40 s setup. Split
-  into `ring_ms` (ring start to the answer) and `connect_ms` (the answer to the first E2E proof),
+  into `ring_ms` (ring start to the answer - on the caller from the moment the ring LEFT, the
+  server's fan-out answered, so its own setup before that is not counted as the human's; on the
+  callee from its page starting to ring) and `connect_ms` (the answer to the first E2E proof),
   in `[CALL_REPORT]` and on two lines of their own (`[Call] answered (...) ring_ms=N`, `[Call] E2E
   proven ... (connect_ms=N)`); the observables are in
   [calls-revival-plan](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence).

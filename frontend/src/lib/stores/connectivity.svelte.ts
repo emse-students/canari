@@ -137,6 +137,12 @@ class ConnectivityStore {
    * DURABLE STATE, not a timer: the return to the screen is the event that settles it.
    */
   private probeOwedOnScreen = false;
+  /**
+   * Whether probing pauses while the app is off screen: the native mobile runtimes only, where the
+   * OS pauses the app and starves its requests. A web or desktop tab in the background keeps its
+   * network, and its probes keep restoring a link it may need. Set by `installReachabilityProbe`.
+   */
+  private probePausesOffScreen = false;
   private listeners = new Set<ReconnectListener>();
   private listenersInstalled = false;
 
@@ -226,6 +232,11 @@ class ConnectivityStore {
     this.probe = probe;
   }
 
+  /** Whether probing pauses off screen ({@link probePausesOffScreen}); the native mobile runtimes. */
+  setProbePausesOffScreen(pauses: boolean): void {
+    this.probePausesOffScreen = pauses;
+  }
+
   /**
    * Probes the server until it answers, over a bounded number of attempts (see
    * {@link PROBE_DELAYS_AFTER_ONLINE_MS}). SINGLE-FLIGHT: a second trigger while one runs joins it
@@ -233,10 +244,11 @@ class ConnectivityStore {
    * recorded by the probe's own `trackedFetch` - `notifyServerReachable` fires reconnect listeners
    * (the outbox flush) exactly as any successful request would, with no second path.
    *
-   * NEVER WHILE THE APP IS OFF SCREEN. A paused app's requests are the OS's to starve, so a probe
-   * then measures the pause, not the link - and was seen probing on after the pause (Android 1.5.3,
-   * 2026-10-31). The loop stops at the next attempt and is owed to the return to the screen
-   * (`probeOwedOnScreen`), which starts it afresh.
+   * ON A PHONE, NEVER WHILE THE APP IS OFF SCREEN. A paused app's requests are the OS's to starve,
+   * so a probe then measures the pause, not the link - and was seen probing on after the pause
+   * (Android 1.5.3, 2026-10-31). The loop stops at the next attempt and is owed to the return to
+   * the screen (`probeOwedOnScreen`), which starts it afresh. A web or desktop tab is not paused by
+   * its OS and keeps probing ({@link probePausesOffScreen}).
    */
   private async probeUntilReachable(delaysMs: readonly number[], reason: string): Promise<void> {
     if (!this.probe || this.probing) return;
@@ -265,7 +277,7 @@ class ConnectivityStore {
 
   /** True (and the probing owed to the screen's return, said once) when the app is off screen. */
   private stopProbingOffScreen(reason: string): boolean {
-    if (isAppOnScreen()) return false;
+    if (!this.probePausesOffScreen || isAppOnScreen()) return false;
     this.probeOwedOnScreen = true;
     console.log(
       `[CONNECTIVITY] app off screen - probing after ${reason} stops until it is back on screen`
@@ -405,6 +417,7 @@ class ConnectivityStore {
     this.probe = null;
     this.probing = false;
     this.probeOwedOnScreen = false;
+    this.probePausesOffScreen = false;
     for (const timer of this.inFlight.values()) clearTimeout(timer);
     this.inFlight.clear();
     this.slow = false;

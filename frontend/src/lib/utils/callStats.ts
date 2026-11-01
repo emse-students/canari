@@ -261,7 +261,7 @@ export interface CallReportContext {
   /** Since the user's tap (call or answer), on `performance.now()`. */
   durMs: number;
   /**
-   * The ring: its start (the caller's tap, the callee's page ringing) to the answer; `null` before
+   * The ring: its start (the caller's ring leaving, the callee's page ringing) to the answer; `null` before
    * an answer. A HUMAN's time, kept apart from the app's so neither hides the other.
    */
   ringMs: number | null;

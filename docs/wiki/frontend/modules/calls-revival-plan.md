@@ -223,7 +223,8 @@ carries it), every 10 s while `incall` and once at the end, built by `buildCallR
   ([call-service](../../services/call-service.md#the-join-key)). Keep it one value.
 - **`ring_ms` and `connect_ms` (2026-10-31) replace `setup_ms`**, which ran from the tap to the first
   remote audio and so counted a person taking 40 s to answer as 40 s of setup. `ring_ms` is the
-  ring - the caller's tap, or the callee's page starting to ring, to the answer (the callee's tap,
+  ring - from the moment the caller's ring LEFT (the server's fan-out answered; its setup before
+  that is the app's, not the human's), or the callee's page starting to ring, to the answer (the callee's tap,
   the caller's first `PeerReady`) - a HUMAN's time, never a defect. `connect_ms` is the app's: the
   answer to the first E2E proof (`[Call] E2E proven ... (connect_ms=N)`), the moment the screen
   shows the shield. A call answered from a system surface rings the page only for its join, so its

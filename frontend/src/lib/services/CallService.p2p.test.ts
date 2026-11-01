@@ -3476,6 +3476,49 @@ describe('a network blip does not end the call', () => {
     });
   });
 
+  // Review F6 of #2830: a socket lost DURING THE RING recorded the outage baseline from the peer
+  // connection built for the ring (no media, `null`), and that baseline outlived the ring - so a
+  // later outage whose path still read `connected` while carrying nothing was never restarted.
+  it('a signalling loss during the ring leaves no baseline: a later dead-but-"connected" path is restarted', async () => {
+    const service = new CallService(fakeMls);
+    const started = service.startCall('group-1', false);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-1' });
+    await started;
+    const pc = FakePeerConnection.instances[0];
+    expect(pc.inboundPackets).toBeNull();
+
+    // The caller's socket drops while it rings, and the seat is resumed - nobody answered yet.
+    ws.drop();
+    await settle();
+    const ws2 = await resumeAttempt(1);
+    ws2.open();
+    ws2.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-2' });
+    await settle();
+
+    // The callee answers: the ring's peer connection is adopted, the call connects and carries audio.
+    ws2.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    await answer(ws2);
+    pc.setIce('connected');
+    pc.setConnection('connected');
+    pc.inboundPackets = 500;
+    expect(get(service.callState)).toBe('incall');
+
+    // An outage: the socket drops, comes back, and the path still SAYS connected - with no packet.
+    ws2.drop();
+    await settle();
+    const ws3 = await resumeAttempt(1);
+    ws3.open();
+    ws3.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-3' });
+    ws3.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+    await settle();
+    expect(pc.restarts).toBe(1);
+    expect(ws3.framesOfType('Offer')).toHaveLength(1);
+  });
+
   /**
    * The three outages of the 2026-10-19 bench reading of `1.3.1-alpha.2`, replayed. The Mi 9T is
    * the POLITE callee whose Wi-Fi goes off; the iPhone is the INITIATOR, whose own socket never
@@ -4271,6 +4314,30 @@ describe('the call keys (port of #2013, 2026-10-21)', () => {
     );
   }
 
+  // Review F8 of #2830: the steps run side by side, so one failing ends the call under the others.
+  // Only the step that failed says "failed"; the others were abandoned.
+  it('acceptCall: a step stopped by a sibling step failing says "abandoned", never "failed"', async () => {
+    server.roomTokenStatus = 403;
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const mic = holdNextMicrophone();
+    const service = new CallService(fakeMls);
+    await ringing(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    await accepted;
+    mic.release();
+    await settle();
+    const lines = await logLines();
+    expect(lines.some((l) => l.startsWith('[Call] setup step room-token failed after'))).toBe(true);
+    expect(
+      lines.some((l) =>
+        /^\[Call\] setup step media abandoned after \d+ ms \(the call ended\)$/.test(l)
+      )
+    ).toBe(true);
+    expect(lines.some((l) => l.startsWith('[Call] setup step media failed'))).toBe(false);
+  });
+
   it('acceptCall: a hangup during the ended SUMMARY (same sequence, state ended) abandons the setup', async () => {
     const { showToast } = await import('$lib/stores/toast.svelte');
     vi.mocked(showToast).mockClear();
@@ -4527,15 +4594,25 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
 
   // Owner, 2026-10-31: `setup_ms` ran from the tap, so a person taking 40 s to answer read as a
   // 40 s setup. The ring (a human) and the connect (the app) are two numbers.
-  it('splits the wait into ring_ms (tap to answer) and connect_ms (answer to the E2E proof)', async () => {
+  it('splits the wait into ring_ms (ring left to answer, the setup excluded) and connect_ms (answer to the E2E proof)', async () => {
     let now = 1_000;
     const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
     try {
       const { appendLog } = await import('$lib/utils/sessionLog');
       vi.mocked(appendLog).mockClear();
       const service = new CallService(fakeMls);
-      const ws = await callerJoined(service);
-      now = 7_000; // six seconds of ring
+      let releaseRing!: () => void;
+      server.ringHold = new Promise((r) => (releaseRing = r));
+      const started = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1' });
+      await settle();
+      now = 1_500; // half a second of the app's setup (ICE, mic, keys, join): not the ring
+      releaseRing();
+      await started;
+      now = 7_000; // five and a half seconds of ring
       ws.deliver({ type: 'PeerReady', initiator: true });
       await settle();
       const pc = FakePeerConnection.instances[0];
@@ -4548,12 +4625,12 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
         } as MessageEvent);
       expect(get(service.e2eProven)).toBe(true);
       const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
-      expect(lines).toContain('[Call] answered (the peer joined) ring_ms=6000');
+      expect(lines).toContain('[Call] answered (the peer joined) ring_ms=5500');
       expect(lines.some((l) => l.endsWith('(connect_ms=800)'))).toBe(true);
       service.endCall();
       await vi.advanceTimersByTimeAsync(1_500);
       const [end] = await reports('end');
-      expect(end).toContain('ring_ms=6000 connect_ms=800');
+      expect(end).toContain('ring_ms=5500 connect_ms=800');
       expect(end).not.toContain('setup_ms');
     } finally {
       clock.mockRestore();

@@ -317,8 +317,9 @@ export class CallService {
   /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms`. */
   private tapAt: number | null = null;
   /**
-   * `performance.now()` when this device started ringing: the caller's tap, or the callee's page
-   * starting to ring (an answer from a system surface rings the page only as long as the join takes;
+   * `performance.now()` when the ring started: on the caller once the ring LEFT (the server's
+   * fan-out answered, then the invite - the setup before it is the app's time, not the human's), on
+   * the callee its page starting to ring (an answer from a system surface rings the page only as long as the join takes;
    * the native ring before it is not seen here).
    */
   private ringStartAt: number | null = null;
@@ -998,7 +999,6 @@ export class CallService {
       video = false;
     }
     this.tapAt = performance.now();
-    this.ringStartAt = this.tapAt;
     const seq = ++this.callSetupSeq;
 
     try {
@@ -1037,6 +1037,10 @@ export class CallService {
       // hangup + ring-end must go out. Before it (initiate refused, no ICE servers, no microphone,
       // a refused ring - the server opens the window BEFORE it fans out) nobody was rung.
       this.inviteSent = true;
+      // `ring_ms` starts HERE, where the ring left (the server's fan-out, then the invite): the
+      // setup before it is the app's, and a callee can answer from its system ring before the
+      // invite's own send resolves - so not later than this either.
+      this.ringStartAt = performance.now();
       if (!this.stillCalling(roomId, 'after the ring')) {
         // The hangup's ring-end left while this ring was still fanning out, so it may have reached
         // the server FIRST; this one is ordered after a fan-out known to be complete.
@@ -1091,7 +1095,13 @@ export class CallService {
       appendLog(`[Call] setup step ${step}: ${took()} ms`);
       return value;
     } catch (e) {
-      appendLog(`[Call] setup step ${step} failed after ${took()} ms: ${String(e)}`);
+      // A step stopped because its call ended - a sibling step failed, or a hang-up - did not fail:
+      // the line names the step that did, once, and this one says it was abandoned.
+      appendLog(
+        e instanceof CallSetupAbandonedError
+          ? `[Call] setup step ${step} abandoned after ${took()} ms (the call ended)`
+          : `[Call] setup step ${step} failed after ${took()} ms: ${String(e)}`
+      );
       throw e;
     }
   }
@@ -2200,7 +2210,11 @@ export class CallService {
    */
   private onPairBroken(why: string): void {
     this.pairEpoch += 1;
-    if (this.pc && !this.packetsAtLoss) this.packetsAtLoss = inboundAudioPackets(this.pc);
+    // A peer connection built during the ring carries no media yet: a baseline read from it (no
+    // inbound stream yet) would outlive the ring and hide a later dead-but-"connected" path from the restart.
+    if (this.pc && !this.pcAwaitingPeer && !this.packetsAtLoss) {
+      this.packetsAtLoss = inboundAudioPackets(this.pc);
+    }
     appendLog(`[Call] signalling pair broken (${why}) - pairing ${this.pairEpoch}`);
   }
 
@@ -2570,6 +2584,8 @@ export class CallService {
    */
   private adoptRingPeerConnection(pc: RTCPeerConnection): void {
     this.pcAwaitingPeer = false;
+    // No outage before the pairing is evidence about the media this pairing will carry.
+    this.packetsAtLoss = null;
     appendLog(
       `[Call] the peer joined - the peer connection built during the ring is adopted (ice gathering=${pc.iceGatheringState})`
     );
