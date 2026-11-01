@@ -8,9 +8,10 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
  * device the election named, measured against THIS device's window rather than the one echoed back,
  * and it must never be read as a shortfall when it is not one.
  */
-const { noteCoverageShortfall, historyRangeStartFor } = vi.hoisted(() => ({
+const { noteCoverageShortfall, historyRangeStartFor, historyGroupStartFor } = vi.hoisted(() => ({
   noteCoverageShortfall: vi.fn().mockResolvedValue(undefined),
   historyRangeStartFor: vi.fn(),
+  historyGroupStartFor: vi.fn(),
 }));
 vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>()),
@@ -19,6 +20,7 @@ vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => ({
 vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/chat/groupActions')>()),
   historyRangeStartFor,
+  historyGroupStartFor,
 }));
 
 import { handleSystemEvent } from './systemMessageHandler';
@@ -73,6 +75,7 @@ const frame = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   noteCoverageShortfall.mockClear();
   historyRangeStartFor.mockResolvedValue(OUR_SINCE);
+  historyGroupStartFor.mockResolvedValue(undefined);
 });
 
 describe('history_coverage', () => {
@@ -83,7 +86,7 @@ describe('history_coverage', () => {
       expect.anything(),
       GROUP,
       PEER_IDENTITY,
-      { since: OUR_SINCE, coveredFrom: THEIR_COVERAGE },
+      { since: OUR_SINCE, coveredFrom: THEIR_COVERAGE, startedAt: undefined },
       expect.any(Function)
     );
   });
@@ -100,7 +103,25 @@ describe('history_coverage', () => {
       expect.anything(),
       GROUP,
       PEER_IDENTITY,
-      { since: NOW - 365 * DAY, coveredFrom: THEIR_COVERAGE },
+      { since: NOW - 365 * DAY, coveredFrom: THEIR_COVERAGE, startedAt: undefined },
+      expect.any(Function)
+    );
+  });
+
+  it("carries where the group began, read from this device's own row", async () => {
+    // The fact that tells a shortfall below the group's beginning from a real one - a group minutes
+    // old has no past below a browser's ninety days, and walking every member for it was BIG-1.
+    const startedAt = NOW - 10 * 60_000;
+    historyGroupStartFor.mockResolvedValue(startedAt);
+
+    await handleSystemEvent('history_coverage', frame(), makeCtx() as any);
+
+    expect(historyGroupStartFor).toHaveBeenCalledWith(GROUP, expect.anything());
+    expect(noteCoverageShortfall).toHaveBeenCalledWith(
+      expect.anything(),
+      GROUP,
+      PEER_IDENTITY,
+      { since: OUR_SINCE, coveredFrom: THEIR_COVERAGE, startedAt },
       expect.any(Function)
     );
   });
