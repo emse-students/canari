@@ -39,6 +39,7 @@ export interface OneDeviceAddResult {
 }
 import type { ForkFinding } from './integrityFindings';
 import type { CommitInvitation } from './commitSubmission';
+import { KeystoreKeyUnavailableError } from './mlsStateLoadError';
 import type { OwedInvitationReplanner, UnrecordedInvitationTeller } from './owedInvitations';
 
 export type { FrameDelivery };
@@ -300,11 +301,12 @@ export interface DecryptedApplication {
 /** Options for {@link IMlsService.init}. */
 export interface MlsInitOptions {
   /**
-   * When true, a saved state that fails to decrypt with the given PIN is NOT discarded
-   * via the destructive fresh-start fallback; instead {@link SavedStateUnopenedError}
-   * is thrown so the caller can offer cross-device PIN recovery (decrypt with the old PIN)
-   * before any local history is dropped. A state no PIN can open (`mismatch`, `altered`) is
-   * rotated regardless: pausing for it would strand the user with nothing to try.
+   * When true, a saved state that may be a PIN rotated elsewhere (`rotated`, `undecryptable`) is
+   * NOT rotated away; {@link SavedStateUnopenedError} is thrown so the caller can offer cross-device
+   * PIN recovery (decrypt with the old PIN) before any local history is dropped. It decides ONLY
+   * that: a state no PIN can open (`mismatch`, `altered`) is rotated regardless, and a cause that
+   * proves nothing (`unknown`, `unreadable_now`, an empty keystore) is never rotated, with or
+   * without it ({@link recoveryOfStateLoadFailure}).
    */
   noFreshStart?: boolean;
   /**
@@ -398,8 +400,10 @@ export class GroupDrainAbandonedError extends Error {
 }
 
 /**
- * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state did not
- * open under the key in hand for a reason an OLD PIN may still cure. Nothing was written.
+ * Thrown by {@link IMlsService.init} when the saved local state did not open under the key in hand
+ * and nothing proves it broken: a reason an OLD PIN may still cure (`rotated`, `undecryptable`)
+ * under `noFreshStart`, and - WHATEVER the caller passed - a cause that proves nothing about the
+ * bytes (`unknown`, `unreadable_now`; {@link recoveryOfStateLoadFailure}). Nothing was written.
  *
  * **IT CARRIES ITS CAUSE AS A TYPE, AND THAT IS WHY IT REPLACED A MESSAGE.** It used to be
  * `new Error('MLS_LOCAL_STATE_UNDECRYPTABLE')`, read back by comparing `reason.message`, and the one
@@ -447,12 +451,13 @@ export class SavedStateOfAnotherAccountError extends Error {
  * True when an MLS init failed because biometric mode found no key in the platform keystore - a
  * cancelled or refused sheet, or an entry that was never written or was wiped.
  *
- * Reads `mls-core`'s `KEYSTORE_KEY_UNAVAILABLE` code, the one contract that crosses the Tauri
- * boundary, so the service and the login flow cannot disagree about it. Both used to match the
- * sentence `"No keystore key ..."` with a regex of their own.
+ * Reads the TYPE {@link KeystoreKeyUnavailableError}, built at the Tauri boundary from `mls-core`'s
+ * `KEYSTORE_KEY_UNAVAILABLE` code field (`mlsStateLoadErrorOf`), so the service and the login flow
+ * cannot disagree about it. Both used to match a sentence, then the code inside the message; a text
+ * that merely names the code is no longer one.
  */
 export function isKeystoreKeyUnavailable(error: unknown): boolean {
-  return String(error).includes('KEYSTORE_KEY_UNAVAILABLE');
+  return error instanceof KeystoreKeyUnavailableError;
 }
 
 /**
@@ -462,12 +467,12 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
  * boundary, never the sentence after it.
  *
  * **WHY A CODE IN A STRING AND NOT A TYPED ERROR FROM THE BOUNDARY.** Tauri can carry a serialised
- * error object, but every native command returns `Result<_, String>`, and every code `mls-core` and the
- * shell define (`KEYSTORE_KEY_UNAVAILABLE`, the `STATE_*` load codes, this one) crosses as the leading
- * token of that string. Moving this one code alone to an object would give the boundary two
- * conventions and every reader two shapes to accept; the whole boundary moves at once or not at all
- * ([backlog](../../../../docs/wiki/backlog.md)). Until then the token is read here and nowhere else,
- * and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
+ * error object. The `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE` already cross that way (step 1,
+ * #2596); this code, `EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:` and
+ * `UNRECOVERABLE:` still cross as the leading token of a `Result<_, String>` and move together in a
+ * separately reviewed step 2 (81 call sites for this one). Until step 2 is merged the boundary has TWO
+ * conventions, on purpose ([backlog](../../../../docs/wiki/backlog.md)); the token is read here and
+ * nowhere else, and each caller turns it into a type AT ITS THROW ({@link MlsSessionVacantError}).
  */
 export function isMlsManagerAbsent(error: unknown): boolean {
   return /\bMLS_MANAGER_ABSENT:/.test(String(error));
@@ -513,6 +518,33 @@ export type StateLoadFailure =
  */
 export function noPinOpensState(cause: StateLoadFailure): boolean {
   return cause === 'mismatch' || cause === 'altered';
+}
+
+/**
+ * What `init` does with a saved state that did not load - decided HERE, once, for both platforms:
+ * `rotate` the device identity (a write that loses whatever the blob still holds), `pause` at the
+ * gate with nothing written ({@link SavedStateUnopenedError}), or `rethrow` the failure as it is.
+ *
+ * **A DESTRUCTIVE REPAIR IS GATED ON KNOWING THE STATE IS BROKEN, WHATEVER THE CALLER PASSES.**
+ * `unknown` (a failure nothing typed), `unreadable_now` (nothing proved about the bytes) and
+ * `keystore_unavailable` (no key, so no bytes were even read) never rotate: before 2026-11-01 an
+ * `unknown` cause still rotated whenever the caller had not set `noFreshStart`, so the boundary's
+ * "nothing will be destroyed" held for one caller's options only. `noFreshStart` now chooses only
+ * between rotating and pausing for the two causes that may be a PIN rotated elsewhere (`rotated`,
+ * `undecryptable`); the two that no PIN opens ({@link noPinOpensState}) rotate in every case.
+ */
+export function recoveryOfStateLoadFailure(
+  cause: StateLoadFailure,
+  savedStateExists: boolean,
+  noFreshStart: boolean
+): 'rotate' | 'pause' | 'rethrow' {
+  if (noPinOpensState(cause)) return 'rotate';
+  // No state, no recovery: the failure is not the state's, and it propagates as itself.
+  if (!savedStateExists) return 'rethrow';
+  // Not a verdict on the state: the login hands the user to the PIN modal.
+  if (cause === 'keystore_unavailable') return 'rethrow';
+  if (cause === 'unknown' || cause === 'unreadable_now') return 'pause';
+  return noFreshStart ? 'pause' : 'rotate';
 }
 
 /** The answer of {@link IMlsService.openLocalStateWithKey}: opened, or refused with its cause. */
