@@ -62,6 +62,9 @@ function measure(r) {
   const session = logAt(r, /refresh✓/);
   const mlsReady = logAt(r, /\[INIT\] MLS ready/);
   return {
+    'click>rail': d(r.rail, r.clickHub),
+    'click>salon msgs': d(r.messages, r.clickSalon),
+    'click>reopen msgs': d(r.reopenMessages, r.clickReopen),
     'tap>rail': d(r.rail, r.tapHub),
     'tap>salons': d(r.salons, r.tapHub),
     'tap>target salons': d(r.targetSalons, r.tapHub),
