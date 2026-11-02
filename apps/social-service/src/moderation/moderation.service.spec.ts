@@ -88,9 +88,6 @@ describe('ModerationService - reports', () => {
       if (sql.includes('FROM user_blocks')) {
         return Promise.resolve((opts.blocks ?? []).map((otherId) => ({ otherId })));
       }
-      if (sql.includes("elem->>'userId' AS user_id")) {
-        return Promise.resolve([{ user_id: 'real-writer' }]);
-      }
       return Promise.resolve([]);
     });
   }

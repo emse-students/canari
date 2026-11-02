@@ -82,7 +82,7 @@ export class PostAnnounceScheduler {
         // BEFORE the send. See the class docblock.
         const recipientIds = await this.stampAndReadRecipients(post);
         if (recipientIds === null) continue;
-        await this.notifyDeferredMentions(post);
+        await this.notifyMentions(post);
         const count = post.associationId
           ? await this.announceAssociationPost(post, recipientIds)
           : await this.announcePersonalPost(post, recipientIds);
@@ -103,14 +103,16 @@ export class PostAnnounceScheduler {
   }
 
   /**
-   * A SCHEDULED post's mentions, told at its publication - which is this sweep, the only thing that
-   * notices a post becoming visible without a request. `createPost` tells the mentions of a post
-   * published at once and defers those of a post with a `scheduledAt`, so the column is what says
-   * they are still owed; the stamp just taken is what makes this run once. Isolated: a failure
-   * here is logged and never costs the post its announcement.
+   * A POST'S MENTIONS ARE TOLD HERE AND NOWHERE ELSE, once, when the post is first published - this
+   * sweep is the only thing that sees a post become visible, at once or at its date, without a
+   * request. The stamp just taken (`feedNotifiedAt`, conditional, never reset) is what makes it
+   * once: no edit of the schedule or the text can tell them again, and no un-scheduling can skip
+   * them, because no other path tells them at all (review of #2947: two tellers overlapped). A post
+   * hidden before its sweep is not swept until it is unhidden - then it is told - and never if it
+   * stays hidden. Isolated: a failure here is logged and never costs the post its announcement.
    */
-  private async notifyDeferredMentions(post: Post): Promise<void> {
-    if (!post.scheduledAt || (post.mentions ?? []).length === 0) return;
+  private async notifyMentions(post: Post): Promise<void> {
+    if ((post.mentions ?? []).length === 0) return;
     try {
       await this.notifications.notifyPostMentions(post);
     } catch (e: unknown) {

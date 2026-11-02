@@ -10,6 +10,12 @@
  * open the post, one outside its audience, one a block separates from its author (both ways), and
  * any reader of a post hidden by moderation - plus a post scheduled later and an anonymous one.
  *
+ * The other readers the audience admits - an accepted follower, a member reached through a member
+ * repost, a read grant - are NOT re-run here: the gate's audience term IS
+ * `postVisibleToViewerSql`, the shared audience code, and each of those readers is proven on it in
+ * its own integration spec (`spaces/follower-visibility`, `posts/member-reposts`,
+ * `spaces/read-grants`). A write gated here admits exactly the readers that code admits.
+ *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every `*.integration.spec.ts`; CI's
  * `test-social-integration` sets it. Locally, against any throwaway PostgreSQL:
  *

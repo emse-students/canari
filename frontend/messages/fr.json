@@ -730,6 +730,7 @@
   "post_unable_to_delete_comment": "Impossible de supprimer le commentaire",
   "post_comment_reported": "Commentaire signalé. Merci !",
   "post_comment_already_reported": "Vous avez déjà signalé ce commentaire.",
+  "post_report_content_gone": "Cette publication n'est plus disponible.",
   "report_dialog_submit_button": "Signaler",
   "report_comment_dialog_title": "Signaler ce commentaire",
   "report_user_dialog_title": "Signaler cette personne",

@@ -227,7 +227,9 @@ export class PostNotificationsService {
    * target: one the read refuses would be handed what the post's own route would 404.
    *
    * Asked per candidate (at most 20, `resolveMentionedUserIds`), at notification time and never at
-   * the write - a scheduled post's mentions are asked at its publication (`notifyPostMentions`).
+   * the write - a post's mentions are asked at its first publication (`notifyPostMentions`). A
+   * comment's are asked when it is written, so a comment on a post not yet published (only its
+   * author may write one) tells nobody, then or later: dropped, not deferred.
    * The dropped ones are counted at debug, never named: who was mentioned is the writer's text.
    */
   async mentionRecipientsOf(
@@ -258,10 +260,10 @@ export class PostNotificationsService {
 
   /**
    * Notifies the people a post mentions (`post.mentions`, stored at the write and already narrowed
-   * to the author's side of the review cohort), through `mentionRecipientsOf`. Called when the post
-   * BECOMES VISIBLE and at no other time: by `createPost` for a post published at once, by
-   * `updatePost` for an unpublished post its author publishes now, and by `PostAnnounceScheduler`
-   * for a post that had a `scheduledAt` - so a scheduled post's mentions wait for its publication.
+   * to the author's side of the review cohort), through `mentionRecipientsOf`. Called by ONE
+   * caller, `PostAnnounceScheduler`, under its one-shot `feedNotifiedAt` claim when it first
+   * publishes the post - within a sweep for a post published at once, at its date for a scheduled
+   * one. One teller is what makes "told once" a fact rather than a reconciliation.
    *
    * An anonymous post stays anonymous to the people it mentions: the row carries no author.
    * Each recipient is isolated: one failed row does not silence the others.

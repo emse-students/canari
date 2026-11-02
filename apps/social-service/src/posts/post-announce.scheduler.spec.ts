@@ -25,6 +25,8 @@ describe('PostAnnounceScheduler', () => {
 
   let updates: { id: string; patch: Record<string, unknown> }[];
   let claimAffected = 1;
+  /** The rows already stamped, across sweeps of one test - the column the claim conditions on. */
+  let stamped: Set<string>;
   let batches: Record<string, unknown>[];
   let queries: { sql: string; params?: unknown[] }[];
   let warn: jest.SpyInstance;
@@ -49,7 +51,12 @@ describe('PostAnnounceScheduler', () => {
         transaction: (fn: (m: unknown) => Promise<unknown>) =>
           fn({
             update: (_entity: unknown, where: { id: string }, patch: Record<string, unknown>) =>
-              postRepo.update(where.id, patch).then(() => ({ affected: claimAffected })),
+              postRepo.update(where.id, patch).then(() => {
+                // The conditional stamp (`feedNotifiedAt IS NULL`): a row is claimed once, ever.
+                if (claimAffected === 0 || stamped.has(where.id)) return { affected: 0 };
+                stamped.add(where.id);
+                return { affected: 1 };
+              }),
             query,
           }),
       },
@@ -105,6 +112,7 @@ describe('PostAnnounceScheduler', () => {
     mentionsFail = false;
     updates = [];
     claimAffected = 1;
+    stamped = new Set();
     batches = [];
     queries = [];
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -120,7 +128,7 @@ describe('PostAnnounceScheduler', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  describe("a scheduled post's mentions are told at its publication, here", () => {
+  describe("a post's mentions are told HERE, once, at its first publication - and nowhere else", () => {
     const scheduled = (mentions: string[]): Row => ({
       id: 'p1',
       authorId: 'a1',
@@ -135,9 +143,29 @@ describe('PostAnnounceScheduler', () => {
       expect(mentioned).toEqual(['p1']);
     });
 
-    it('leaves a post published at once alone: createPost told its mentions', async () => {
+    it('tells the mentions of a post published at once, exactly once over every later sweep', async () => {
+      const sweep = scheduler([{ ...scheduled(['u1']), scheduledAt: null }], tables({}));
+      for (let i = 0; i < 3; i++) await sweep.announcePosts();
+      expect(mentioned).toEqual(['p1']);
+    });
+
+    it('the edit loop tells once: however often the schedule toggles, the stamp is taken once', async () => {
+      // publish now -> tomorrow -> now -> ... : each sweep sees whatever the row holds, and only the
+      // first claim tells (the writes themselves tell nobody: posts.service.anonymous-mention.spec).
+      const row: Row = { ...scheduled(['u1']), scheduledAt: null };
+      const sweep = scheduler([row], tables({}));
+      for (const at of [null, new Date('2026-10-02T08:00:00Z'), null, null]) {
+        row.scheduledAt = at;
+        await sweep.announcePosts();
+      }
+      expect(mentioned).toEqual(['p1']);
+    });
+
+    it('the lost window is told: un-scheduled after its date, before its sweep (scheduledAt null)', async () => {
+      // Scheduled 10:00:00, `scheduledAt: null` sent at 10:00:20, the sweep after: the column is
+      // null and the row unstamped, and the sweep is the teller whatever the column says.
       await scheduler([{ ...scheduled(['u1']), scheduledAt: null }], tables({})).announcePosts();
-      expect(mentioned).toEqual([]);
+      expect(mentioned).toEqual(['p1']);
     });
 
     it('asks nothing for a scheduled post that mentions nobody', async () => {

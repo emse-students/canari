@@ -184,7 +184,8 @@ describe('assertVisible refuses every write the read refuses', () => {
   it('opens a post the reader may see, and hands it back', async () => {
     const { service } = makeService({ visible: true, existing: personal });
     await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).resolves.toMatchObject({
-      id: 'p1',
+      post: { id: 'p1' },
+      blockedIds: [],
     });
   });
 

@@ -168,11 +168,11 @@ export class ModerationService {
       await this.assertReportablePost(data.reporterId, data.contentId);
     }
     if (data.contentType === 'comment') {
-      await this.assertReportableComment(data.reporterId, data.contentId);
       // The writer is read from the stored comment, never taken from the client: an anonymous
       // comment is served WITHOUT its account, so the reporter cannot name it - and the mute that
       // follows a report needs it. It is held for moderators and never served to anyone else.
-      data = { ...data, reportedUserId: await this.commentWriterId(data.contentId) };
+      const writerId = await this.assertReportableComment(data.reporterId, data.contentId);
+      data = { ...data, reportedUserId: writerId };
     }
     const saved = await this.insertReport(this.reportRepo, data);
 
@@ -221,8 +221,14 @@ export class ModerationService {
    * A COMMENT IS REPORTED BY THOSE WHO ARE SHOWN IT: its post opens to them (`assertReportablePost`'s
    * gate) and the read does not drop it for a block with its writer (`commentShownDespiteBlocks`,
    * the rule every comment read applies). Same 404 `CONTENT_NOT_FOUND` otherwise.
+   *
+   * @returns the real account that wrote it, or `null` when it has none (erased) - read in the same
+   *   scan, for the report's `reportedUserId`.
    */
-  private async assertReportableComment(reporterId: string, commentId: string): Promise<void> {
+  private async assertReportableComment(
+    reporterId: string,
+    commentId: string
+  ): Promise<string | null> {
     const rows: (OpenablePost & { comment: StoredComment })[] = await this.reportRepo.manager.query(
       `SELECT ${OPENABLE_POST_COLUMNS}, elem AS comment
            FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
@@ -236,6 +242,7 @@ export class ModerationService {
     if (!commentShownDespiteBlocks(row.comment, new Set(blockedIds))) {
       throw this.unreportable('comment', commentId, reporterId, 'a block with its writer');
     }
+    return row.comment.userId || null;
   }
 
   /** `readPostOpenVerdict` for a reporter, refused as {@link unreportable}. Returns their blocks. */
@@ -866,18 +873,6 @@ export class ModerationService {
       mutedReason: record.mutedReason ?? null,
       mutedAt: record.mutedAt ? record.mutedAt.toISOString() : null,
     };
-  }
-
-  /** The real account that wrote a stored comment, or `null` when it is gone or has none (erased). */
-  private async commentWriterId(commentId: string): Promise<string | null> {
-    const rows: { user_id: string | null }[] = await this.reportRepo.manager.query(
-      `SELECT elem->>'userId' AS user_id
-         FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
-        WHERE elem->>'id' = $1
-        LIMIT 1`,
-      [commentId]
-    );
-    return rows[0]?.user_id || null;
   }
 
   /** Locates the parent post of a comment by scanning JSON comment arrays. */

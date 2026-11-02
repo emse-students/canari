@@ -945,22 +945,23 @@ export class PostsService {
    * COMMENT only: `'READ_OR_REACT'` counts the grant, `'VOTE'` does not (a vote was never granted,
    * user 2026-10-07: read + react/comment). A caller must say which one it is.
    *
-   * @param opts.allowHidden a platform admin doing platform work (as `getById`'s flag).
-   * @returns the post, which the caller would otherwise load a second time.
+   * @param opts.allowHidden a platform admin doing platform work (as `getById`'s flag). A write
+   *   route never passes it: a hidden post takes no reaction, comment or like, an admin's included.
+   * @returns the post and the reader's blocks, which the caller would otherwise read a second time.
    */
   async assertVisible(
     postId: string,
     viewerId: string | undefined,
     intent: PostAccessIntent,
     opts: { allowHidden?: boolean } = {}
-  ): Promise<Post> {
+  ): Promise<{ post: Post; blockedIds: string[] }> {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) {
       this.logger.debug(`${intent} ${postId} withheld: no such post`);
       throw new NotFoundException('Post not found');
     }
-    await this.assertOpenable(post, { ...opts, viewerId }, intent);
-    return post;
+    const blockedIds = await this.assertOpenable(post, { ...opts, viewerId }, intent);
+    return { post, blockedIds };
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
@@ -1022,17 +1023,14 @@ export class PostsService {
     }
     await this.invalidateListCache();
 
-    // Mentions are told when the post BECOMES VISIBLE, through the read's gate
-    // (`notifyPostMentions`). A post with a `scheduledAt` is published by `PostAnnounceScheduler`,
-    // which tells them then: telling them now would push the text of a post nobody may open yet.
-    if (mentionedIds.length > 0 && entity.id) {
-      if (entity.scheduledAt) {
-        this.logger.debug(
-          `[MENTION] post ${entity.id.slice(0, 8)}: ${mentionedIds.length} mention(s) deferred to its publication`
-        );
-      } else {
-        this.notifyMentionsInBackground(entity);
-      }
+    // The mentions are STORED here and told by `PostAnnounceScheduler` alone, under its one-shot
+    // `feedNotifiedAt` claim, when the post is first published - at once (within a sweep) for a post
+    // published now, at its date for a scheduled one. One teller, so no edit can tell them twice or
+    // lose them (`notifyPostMentions`).
+    if (mentionedIds.length > 0) {
+      this.logger.debug(
+        `[MENTION] post ${entity.id.slice(0, 8)}: ${mentionedIds.length} mention(s) left to its announcement`
+      );
     }
 
     // The response goes back to the publisher, so it is stamped for them - an association post is
@@ -1780,10 +1778,9 @@ export class PostsService {
   ) {
     // `getById`'s gate, `allowHidden` included: a platform admin reads a hidden post's comments as
     // they read the post itself.
-    const post = await this.assertVisible(postId, viewerId, 'READ_OR_REACT', {
+    const { post, blockedIds } = await this.assertVisible(postId, viewerId, 'READ_OR_REACT', {
       allowHidden: opts.isGlobalAdmin === true,
     });
-    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerId);
     const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
     const isGlobalAdmin = opts.isGlobalAdmin === true;
     page.comments = (await this.commentIdentity.serve(page.comments, post, {
@@ -1851,9 +1848,6 @@ export class PostsService {
       }
     }
 
-    // An unpublished post its author publishes NOW: nothing else will tell its mentions, since the
-    // sweep tells only a post that still has a `scheduledAt` (`notifyPostMentions`).
-    let publishedNow = false;
     if ('scheduledAt' in data) {
       // A post already visible and un-scheduled keeps the instant it appeared; every other change
       // re-derives it, so the order key never disagrees with the visibility predicate.
@@ -1862,9 +1856,10 @@ export class PostsService {
       if (post.scheduledAt || !wasVisible) {
         post.publishedAt = publicationTime(post.scheduledAt, new Date());
       }
-      publishedNow = !wasVisible && !post.scheduledAt;
     }
 
+    // Stored only: the announce sweep tells them, once, when it first publishes the post - so an
+    // edit of the schedule, or of the text, never tells anyone (`notifyPostMentions`).
     const mentionedIds = post.markdown
       ? this.notifications
           .resolveMentionedUserIds(post.markdown)
@@ -1874,18 +1869,7 @@ export class PostsService {
 
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
-    if (publishedNow && mentionedIds.length > 0) this.notifyMentionsInBackground(saved);
     return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
-  }
-
-  /**
-   * Tells a post's mentions without holding up the response (`notifyPostMentions` isolates each
-   * recipient and logs its own failures; this catches what escapes it, the gate's own reads).
-   */
-  private notifyMentionsInBackground(post: Post): void {
-    void this.notifications.notifyPostMentions(post).catch((e: unknown) => {
-      this.logger.warn(`[MENTION] post ${post.id.slice(0, 8)}: mentions not notified`, e);
-    });
   }
 
   /**
