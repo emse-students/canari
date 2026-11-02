@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CHAT_REEL_RETENTION_MS,
   CHAT_REEL_WRITER_ENABLED,
@@ -17,9 +17,30 @@ import { destinationRules } from './reelCapture';
 import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 describe('the chat reel writer', () => {
-  it('is OFF in the shipped code: nothing reaches a member until RC-5 and RC-7', () => {
+  it('is OFF in a production build (no VITE_DEPLOY_ENVIRONMENT): production stays off', () => {
     expect(CHAT_REEL_WRITER_ENABLED).toBe(false);
     expect(chatReelAllowed(false)).toBe(false);
+  });
+
+  it.each([
+    ['development', true],
+    ['dev', true],
+    ['production', false],
+    ['prod', false],
+    ['', false],
+    ['staging', false],
+  ])('VITE_DEPLOY_ENVIRONMENT=%j turns the writer %s', async (env, on) => {
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', env);
+    vi.resetModules();
+    try {
+      const fresh = await import('./chatReelWriter');
+      expect(fresh.CHAT_REEL_WRITER_ENABLED).toBe(on);
+      expect(fresh.chatReelAllowed(false)).toBe(on);
+      expect(fresh.chatReelAllowed(true)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 
   it('writes a DM or a group when on, never a salon', () => {

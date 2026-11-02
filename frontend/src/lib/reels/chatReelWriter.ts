@@ -1,9 +1,10 @@
 import type { ReelLimits } from '$lib/posts/api';
+import { deployEnvironment } from '$lib/utils/deployEnvironment';
 import type { CaptureDestination } from './reelCapture';
 import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 /**
- * THE WRITER OF A CANAREEL IN A CONVERSATION - `false` UNTIL RC-5 AND RC-7 HAVE SHIPPED (user,
+ * THE WRITER OF A CANAREEL IN A CONVERSATION - it waited for RC-5 AND RC-7 to ship (user,
  * 2026-10-14: the writer waits for the resumable upload and the native push before ANY stable).
  *
  * The reader (RC-1) and the server class (RC-2) are in production; this is the one switch that lets a
@@ -21,8 +22,17 @@ import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
  *   BUILT; RC-6's `410` amendment, RC-8 or salons kept out.
  *
  * Salons are NOT written by this switch even when it is `true`: their send path is RC-8's.
+ *
+ * **ON FOR A DEV BUILD ONLY (owner, 2026-11-02: "turn the switch on for dev only"; production stays
+ * off until the owner says so).** The test is the one `CALLS_ENABLED` used for its lot 1: a build
+ * made for `dev.canari-emse.fr` - the dev web estate and every PRE-RELEASE store build, which the
+ * pipelines point at dev and nowhere else (`android.yml`, `ios.yml`, `build.yml`) - carries
+ * `VITE_DEPLOY_ENVIRONMENT=development`; production web and every STABLE store build never set it
+ * (unset MEANS production, `deployEnvironment.ts`). A compile-time fact of the binary, no timer, no
+ * server read, no fallback. Production turns on only by changing this line to `true`, in its own
+ * pull request, for a stable.
  */
-export const CHAT_REEL_WRITER_ENABLED = false;
+export const CHAT_REEL_WRITER_ENABLED = deployEnvironment() === 'development';
 
 /** A chat reel's life, the server's window (`CHAT_REEL_RETENTION_DAYS` in media-service). */
 export const CHAT_REEL_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
