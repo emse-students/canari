@@ -46,6 +46,8 @@ function makeService(opts: {
     mayAct: jest.fn(() => Promise.resolve(true)),
     mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
     isContentModerator: jest.fn(() => Promise.resolve(false)),
+    moderatedPostIds: () => Promise.resolve(new Set<string>()),
+    mayModeratePost: () => Promise.resolve(false),
     findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
   };
   const follows = {

@@ -49,6 +49,8 @@ describe('the post a publisher gets back carries the rights they actually hold',
         Promise.resolve(new Set(ids.filter((id) => holds(userId, id))))
       ),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
       resolvePostCalendarEventLink: jest.fn(() => Promise.resolve(null)),
       findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
     };

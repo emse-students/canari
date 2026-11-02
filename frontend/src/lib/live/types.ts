@@ -36,6 +36,11 @@ export interface LiveListItem {
   broadcasterId: string;
   associationId: string | null;
   startedAt: string;
+  /**
+   * The reader moderates this live as a BDE (its governed spaces hold it, 2026-11-02): draws the
+   * staff hide button. Absent from an older server, read as false.
+   */
+  viewerModerates?: boolean;
 }
 
 /**

@@ -38,6 +38,8 @@ describe('PostsService.createPost mention notifications mask an anonymous author
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
     };
     const created: Record<string, unknown>[] = [];
     const notifications = {

@@ -3,7 +3,7 @@ import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
-import { AssociationsController } from './associations.controller';
+import { AssociationsController, INSTITUTION_DELETE_ADMIN_ONLY } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
@@ -443,10 +443,14 @@ describe('AssociationsController read guards', () => {
  * AND.
  */
 describe('AssociationsController delete tier', () => {
-  function makeController(governs: boolean) {
+  function makeController(
+    governs: boolean,
+    type: 'association' | 'list' | 'institution' = 'association'
+  ) {
     const service = {
       remove: jest.fn(() => Promise.resolve({ ok: true })),
       isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(governs)),
+      findById: jest.fn(() => Promise.resolve({ id: 'asso1', type })),
     };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
@@ -498,6 +502,36 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+  });
+
+  // Owner, 2026-11-02: an institution is the global admin's to delete, as it is theirs to create.
+  it('refuses a BDE that governs an INSTITUTION, with a typed 403', async () => {
+    const { controller, service } = makeController(true, 'institution');
+
+    const refusal = await controller.remove('asso1', 'user-42', undefined).catch((e: unknown) => e);
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: INSTITUTION_DELETE_ADMIN_ONLY,
+    });
+    expect(service.remove).not.toHaveBeenCalled();
+  });
+
+  it('still lets that BDE delete a list it governs', async () => {
+    const { controller, service } = makeController(true, 'list');
+
+    await controller.remove('asso1', 'user-42', undefined);
+
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+  });
+
+  it('lets a global admin delete an institution', async () => {
+    const { controller, service } = makeController(false, 'institution');
+
+    await controller.remove('asso1', 'admin', 'true');
+
+    expect(service.findById).not.toHaveBeenCalled();
     expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
   });
 });

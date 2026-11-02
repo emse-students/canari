@@ -9,6 +9,7 @@ import {
 import { createHash } from 'crypto';
 import { isBlockedBetween } from '../common/user-blocks';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { bdeModeratesUserSql, reportInBdeScopeSql } from '../spaces/bde-moderation';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
@@ -472,10 +473,15 @@ export class ModerationService {
    * Retention is NOT this method's business. A lazy purge ran here on every call until 2026-08-27,
    * which made a moderator's GET delete rows as a side effect and gave `content_reports` a second,
    * contradictory lifetime. The one policy left is the weekly cron in `forms-reminder.scheduler`.
+   *
+   * NARROWED TO THE CALLER'S SCOPE (owner, 2026-11-02): a platform admin reads every report; a BDE
+   * `MODERATE` holder reads those about something in the spaces its BDE governs
+   * (`reportInBdeScopeSql`), in SQL so the page bounds stay true.
    */
   async listAllReports(
     limit = 50,
-    offset = 0
+    offset = 0,
+    scope: { userId: string; isGlobalAdmin: boolean } = { userId: '', isGlobalAdmin: true }
   ): Promise<
     Array<
       ContentReport & {
@@ -486,11 +492,18 @@ export class ModerationService {
       }
     >
   > {
-    const reports = await this.reportRepo.find({
-      order: { createdAt: 'DESC' },
-      take: Math.min(limit, 200),
-      skip: offset,
-    });
+    const qb = this.reportRepo
+      .createQueryBuilder('r')
+      .orderBy('r.createdAt', 'DESC')
+      .take(Math.min(limit, 200))
+      .skip(offset);
+    if (!scope.isGlobalAdmin) {
+      qb.where(reportInBdeScopeSql('r', ':scopeModerator'), { scopeModerator: scope.userId });
+    }
+    const reports = await qb.getMany();
+    this.logger.debug(
+      `[REPORT] queue read by ${short(scope.userId)} admin=${scope.isGlobalAdmin}: ${reports.length} row(s)`
+    );
 
     const postIds = reports.filter((r) => r.contentType === 'post').map((r) => r.contentId);
     const commentIds = reports.filter((r) => r.contentType === 'comment').map((r) => r.contentId);
@@ -837,8 +850,22 @@ export class ModerationService {
     return { postId };
   }
 
-  /** Returns all currently muted users. */
-  async listMutedUsers(): Promise<UserModeration[]> {
-    return this.muteRepo.find({ where: { isMuted: true }, order: { mutedAt: 'DESC' } });
+  /**
+   * Returns the currently muted users within the caller's scope (owner, 2026-11-02): all of them for
+   * a platform admin, those belonging to one of its BDE's spaces for a `MODERATE` holder.
+   */
+  async listMutedUsers(
+    scope: { userId: string; isGlobalAdmin: boolean } = { userId: '', isGlobalAdmin: true }
+  ): Promise<UserModeration[]> {
+    const qb = this.muteRepo
+      .createQueryBuilder('m')
+      .where('m.isMuted = true')
+      .orderBy('m.mutedAt', 'DESC');
+    if (!scope.isGlobalAdmin) {
+      qb.andWhere(bdeModeratesUserSql(':scopeModerator', 'm."userId"'), {
+        scopeModerator: scope.userId,
+      });
+    }
+    return qb.getMany();
   }
 }

@@ -65,8 +65,10 @@ export interface EditRights {
 }
 
 /**
- * Every right the management sections read, from one context. `assoType` matters for exactly one
- * thing: an institution's audience is a global admin's alone (`AUDIENCE_INSTITUTION_ADMIN_ONLY`).
+ * Every right the management sections read, from one context. `assoType` matters for two things,
+ * both a global admin's alone on an institution: its audience (`AUDIENCE_INSTITUTION_ADMIN_ONLY`)
+ * and its deletion (`INSTITUTION_DELETE_ADMIN_ONLY`, owner 2026-11-02) - a BDE star still deletes
+ * the associations and lists it governs.
  */
 export function editRights(
   ctx: EditPermissionContext,
@@ -85,7 +87,7 @@ export function editRights(
       may(AssociationPermissionFlag.POST_AS_ASSO) || may(AssociationPermissionFlag.PROPOSE_EVENT),
     payoutAccount: may(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT),
     audience: ctx.isGlobalAdmin || (ctx.isSuperAdmin && assoType !== 'institution'),
-    delete: ctx.isGlobalAdmin || ctx.isSuperAdmin,
+    delete: ctx.isGlobalAdmin || (ctx.isSuperAdmin && assoType !== 'institution'),
   };
 }
 

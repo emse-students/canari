@@ -29,6 +29,10 @@ import { Post } from './entities/post.entity';
 export interface CommentViewer {
   viewerId?: string;
   isGlobalAdmin: boolean;
+  /**
+   * The reader moderates the POST these comments sit under (a BDE `MODERATE` holder whose governed
+   * spaces hold it, owner 2026-11-02): a comment is judged where it is shown.
+   */
   isModerator: boolean;
   /** Associations in which the reader holds `POST_AS_ASSO` (a platform admin: all of them). */
   managedAssociationIds: ReadonlySet<string>;
@@ -36,6 +40,8 @@ export interface CommentViewer {
 
 /** The facts about the post a comment sits under. */
 export interface CommentPostFacts {
+  /** Its id: what the moderator scope of its comments is asked of. */
+  id?: string;
   authorId?: string | null;
   associationId?: string | null;
 }
@@ -138,18 +144,22 @@ export class CommentIdentityService {
     return this.associations.listFlagHolders(associationId, AssociationPermissionFlag.POST_AS_ASSO);
   }
 
-  /** The reader's standing over these comments; `isModerator` is taken when the caller knows it. */
+  /**
+   * The reader's standing over these comments, all under post `who.postId`; `isModerator` is taken
+   * when the caller knows it, and otherwise asked of THAT post (`mayModeratePost`) - never "does the
+   * reader moderate somewhere", which is the door and not the reach.
+   */
   async viewerFor(
     comments: StoredComment[],
-    who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean }
+    who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean; postId?: string }
   ): Promise<CommentViewer> {
     const isGlobalAdmin = who.isGlobalAdmin === true;
     const assocIds = comments.map((c) => c.associationId).filter((id): id is string => !!id);
     const [isModerator, managedAssociationIds] = await Promise.all([
       who.isModerator !== undefined
         ? Promise.resolve(who.isModerator)
-        : who.viewerId
-          ? this.associations.isContentModerator(who.viewerId, { isGlobalAdmin })
+        : who.viewerId && who.postId
+          ? this.associations.mayModeratePost(who.viewerId, who.postId, { isGlobalAdmin })
           : Promise.resolve(isGlobalAdmin),
       this.associations.mayActOnAny(
         who.viewerId,
@@ -181,7 +191,10 @@ export class CommentIdentityService {
   ): Promise<Record<string, unknown>[]> {
     const list = comments ?? [];
     if (list.length === 0) return [];
-    const [viewer, cards] = await Promise.all([this.viewerFor(list, who), this.cardsFor(list)]);
+    const [viewer, cards] = await Promise.all([
+      this.viewerFor(list, { ...who, postId: post.id }),
+      this.cardsFor(list),
+    ]);
     return list.map((c) => serveComment(c, viewer, post, cards));
   }
 
@@ -191,16 +204,33 @@ export class CommentIdentityService {
    * needs and the post's own shaping will withhold), so this runs BEFORE that shaping.
    */
   async serveRows(
-    rows: Array<{ comments?: unknown; authorId?: string | null; associationId?: string | null }>,
-    who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean }
+    rows: Array<{
+      id?: string;
+      comments?: unknown;
+      authorId?: string | null;
+      associationId?: string | null;
+    }>,
+    who: { viewerId?: string; isGlobalAdmin?: boolean; moderatedPostIds: ReadonlySet<string> }
   ): Promise<void> {
     const all = rows.flatMap((r) =>
       Array.isArray(r.comments) ? (r.comments as StoredComment[]) : []
     );
     if (all.length === 0) return;
-    const [viewer, cards] = await Promise.all([this.viewerFor(all, who), this.cardsFor(all)]);
+    // The standing is read once for the page; the moderator half is per ROW, each post's own scope.
+    const [base, cards] = await Promise.all([
+      this.viewerFor(all, {
+        viewerId: who.viewerId,
+        isGlobalAdmin: who.isGlobalAdmin,
+        isModerator: false,
+      }),
+      this.cardsFor(all),
+    ]);
     for (const row of rows) {
       if (!Array.isArray(row.comments)) continue;
+      const viewer: CommentViewer = {
+        ...base,
+        isModerator: !!row.id && who.moderatedPostIds.has(row.id),
+      };
       row.comments = (row.comments as StoredComment[]).map((c) =>
         serveComment(c, viewer, row, cards)
       );

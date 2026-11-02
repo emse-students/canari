@@ -58,6 +58,7 @@ import {
   type LiveStrikeConsequence,
 } from './live-strikes';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { bdeModeratesContentSql } from '../spaces/bde-moderation';
 import { short } from './live-log';
 import {
   isLiveKeySealingConfigured,
@@ -86,6 +87,12 @@ export interface LiveListItem {
   broadcasterId: string;
   associationId: string | null;
   startedAt: Date;
+  /**
+   * The reader moderates this live as a BDE `MODERATE` holder whose governed spaces hold it (owner,
+   * 2026-11-02) - what draws the staff hide button on its chat. A platform admin's own header
+   * decides theirs on the client; this answers the scoped half only.
+   */
+  viewerModerates: boolean;
 }
 
 /**
@@ -427,7 +434,8 @@ export class LivesService implements OnModuleDestroy {
   async listOpen(viewerId: string): Promise<LiveListItem[]> {
     const blocked = await blockedUserIdsFor(this.db.manager, viewerId);
     const rows: LiveListItem[] = await this.db.query(
-      `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt"
+      `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt",
+              ${bdeModeratesContentSql('$1', 'l."associationId"', 'l."broadcasterId"')} AS "viewerModerates"
          FROM lives l
         WHERE l."endedAt" IS NULL
           AND ${liveVisibleToViewerSql('l', '$1')}

@@ -158,7 +158,9 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces
   is validated by the BDE of the ORIGIN association, once.
-- **D23 - Moderation stays GLOBAL** (reports, hide, mute), as today.
+- **D23 - Moderation stays GLOBAL** (reports, hide, mute), as today. **AMENDED 2026-11-02 (owner):
+  a BDE's `MODERATE` is SCOPED to the spaces it governs, and editing another person's post is nobody's
+  power** - read [D23 amended](#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
 - **D24 - Rules by population, plus nominative permissions that only ADD.** A nominative grant never
   removes what a population gives; removal is moderation's job. Grants are made by a global admin,
   or by a BDE for its own space; cross-space rights (widening, profiles, institutions) stay with
@@ -552,7 +554,7 @@ migration), and its UI stops assuming them.
   the reader belongs to. **BUILT 2026-10-04 - see WP6b as built, below.**
 - **6c, governance.** Validating an event is VALIDATE_EVENTS in the BDE of the event association's
   space, and only those people are notified; the BDE's MANAGE_ASSO powers are scoped the same way;
-  MODERATE stays global (D23).
+  MODERATE stayed global (D23) until 2026-11-02, when it was scoped too ([D23 amended](#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
 - **6d, admin UI.** A spaces page (open a space, designate its BDE) replaces the `isBDE` toggle; an
   association's spaces are edited there.
 - **6e, institutions.** Created by a global admin, members added nominatively (D20); they publish and
@@ -620,7 +622,7 @@ association, flag)`: the user holds `flag` in the BDE of a space one of the asso
 reaches. "The event association's space(s)" are therefore the spaces its rules reach - several:
 the BDE of ANY of them; none: a global admin only. VALIDATE_EVENTS (validate, reject, edit, delete,
 deposit, `break`, and who is TOLD of a proposal) and MANAGE_ASSO (the super-admin tier, `DELETE
-:id`) read it; MODERATE stays global (D23). An event is judged on its OWN association, read from the
+:id`) read it; MODERATE stayed global (D23) until 2026-11-02 ([D23 amended](#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)). An event is judged on its OWN association, read from the
 row, never the URL's. The client draws per-association controls from `GET
 /api/associations/me/bde-reach` and the pending queue's per-row `canValidate`. **Left unscoped on
 purpose** (no association to scope to): creating an association, categories, carte, document
@@ -773,7 +775,7 @@ box no longer defines anything.
 | Per-post space rules (`post_audiences`, ceiling, DTO `audiences`) | removed (D38, migration 073) |
 | Join an association | its admins add the member; following opens nothing |
 | Follow a person | a REQUEST the person accepts or refuses (WP-F1-F4, decided 2026-10-25); an ACCEPTED follow opens the person's non-anonymous personal posts and lives across spaces, in Suivis (WP-F5) |
-| Moderation | global (D23) |
+| Moderation | scoped to the BDE's governed spaces; the platform admin global; only the author edits a post ([D23 amended](#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02), 2026-11-02) |
 
 ### Decided last (user, 2026-10-04)
 
@@ -1341,11 +1343,85 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   estate's real PostgreSQL.
 - **Staff reading, as verified (2026-10-07, local estate rebuilt at `62a02ba0d`, real PostgreSQL and a real session):** a sandbox reader with campus `saint-etienne` and `cursus = []` was signed `campus=saint-etienne` with no formation (201); `campus=gardanne` and `campus=saint-etienne&formation=ICM` were each a 403 `AGENDA_SELECTION_FORBIDDEN`. The signed `feed.ics` answered 200 `text/calendar` and the unsigned one 403 `AGENDA_SIGNATURE_REQUIRED`. The feed held the events of several formations of the campus (organisers whose audiences were ICM and ISMIN of that campus). The subscribe modal offered Campus "Saint-Etienne" and "Toutes les formations", carried `campus=saint-etienne&sig=` in its link and did not show the complete-your-profile text. The sandbox user's cursus was restored afterwards. Not read: a gardanne-only event staying out of the feed (no such organiser existed locally).
 
+### D23 amended - MODERATE is scoped, and only the author edits a post (2026-11-02)
+
+**Decided by the owner (2026-11-02):** *"Limiter a son espace de gouvernance, mais on garde masque,
+supprime, epingle, leve l'anonymat... En fait tout sauf changer l'integrite du post, c'est a dire le
+modifier"* - then, the same day: **nobody edits another person's post, the platform admin included.**
+
+**A POST'S INTEGRITY: ONLY ITS AUTHOR CHANGES ITS TEXT.** The author is the publisher: the writer of a
+personal post; for a post in an association's name, the association - whoever holds `POST_AS_ASSO`
+in it. A BDE moderator and the platform admin are refused 403 `POST_EDIT_PUBLISHER_ONLY`
+(`PostsService.assertMayEdit`); the card's pencil is served apart from the bin (`canEdit`, beside
+`canManage`). A platform admin edits their OWN posts like anyone. Comments are not posts: the rules
+of `commentRights` are unchanged.
+
+**THE BDE'S `MODERATE` IS SCOPED** like VALIDATE_EVENTS and MANAGE_ASSO, in `spaces/bde-moderation.ts`:
+
+| Target | In the BDE's scope when |
+| --- | --- |
+| an association's post or live | the association is reached by a space the BDE governs (`holdsBdeFlagOverSql`) |
+| a personal post or live | its author belongs to one of the BDE's spaces (`isReaderSpaceSql`) |
+| a comment | the post it sits under is in scope |
+| a live chat line | its live is in scope (read from the live, or from its cut once purged) |
+| a person (mute, unmute, broadcast withdrawal) | they belong to one of the BDE's spaces |
+| a report | what it is about is in scope; once its content is gone, the platform admin's |
+
+Kept within the scope: hide, unhide, delete, pin, unmask, reading an anonymous author, deleting a
+comment, cutting a live and hiding its chat lines, muting, reviewing a report. An association with no
+audience rule and a person with no space (staff) are governed by no BDE: they are the platform
+admin's, as for VALIDATE_EVENTS. **The platform admin stays global for every one of these.**
+
+- **The door and the reach.** `isContentModerator` ("moderates somewhere") still opens the moderation
+  surfaces; every act asks the scoped predicate of its target (`mayModeratePost`, `mayModerateLive`,
+  `mayModerateUser`, `mayModerateReport`). A BDE moderator outside its scope gets 403
+  `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere 403 `MODERATOR_REQUIRED` (or the 401 the
+  post routes always answered), classified at the throw (`refuseModeration`, logged `[MODERATION]`).
+- **The lists are narrowed in SQL**: the report queue (`reportInBdeScopeSql`), the hidden posts and the
+  muted list, so a page's bounds stay true.
+- **The client draws only what the server accepts**: `canManage`, `canPin`, `canUnmaskAnonymous` per
+  post and comment `canDelete` from the post's scope; `canEdit` for the pencil; per report
+  `canMuteReporter` / `canMuteReportedUser` (the latter also gates the broadcaster withdrawal); per
+  live in the list `viewerModerates` (the staff hide button). An older client keeps drawing the pencil
+  from `canManage` and gets the typed 403.
+- **Live chat**: an out-of-scope BDE moderator is no staff for that live and gets the hide route's 404,
+  as any non-staff caller does.
+- **Proof:** `bde-moderation.integration.spec.ts` (real PostgreSQL: posts, people, lives including a
+  purged one, the report queue by type), `posts.service.can-manage.spec.ts` (BDE in and out of scope,
+  the platform admin's edit of another person's post refused), the moderation and lives controller
+  specs.
+
+### D40 closed - one association's agenda is closed to an anonymous caller (2026-11-02)
+
+**Decided by the owner (2026-11-02):** `GET /api/associations/:id/events` answered every validated event
+of any association to a caller with no session, beside a feed whose selection must be signed - naming
+the association on this route defeated the signing above. It is now closed like the feed:
+
+- **Without an account, an association's agenda is read only when that association ADDRESSES
+  EVERYONE** - an audience rule with no campus (`isEveryoneRule`, its SQL twin `addressesEveryoneSql`
+  in `spaces/audience-policy.ts`; only an institution may hold one). No predicate named "open to all"
+  existed on the public feed; "addresses everyone" is the codebase's one definition of it.
+- **Otherwise the anonymous answer is an EMPTY list, never a 401**: the public association page draws
+  "no event", as it does for every other block an anonymous visitor does not get
+  (`AssociationsService.closeAnonymousAgenda`, logged `[AGENDA]`).
+- **A signed-in reader is unchanged** (`restrictToViewerSpaces`), and so is a global admin.
+- **Consumers, enumerated:** the association page's agenda block (`AssociationCalendarSection`,
+  client-side, the only anonymous consumer: empty for a visitor unless the association addresses
+  everyone); the composer's linkable-event picker (`listLinkableValidatedCalendarEvents`, signed in);
+  the edit pages (signed in). No SSR or SEO read uses this route (`serverSeo` reads the signed
+  `/calendar/feed` with the internal secret); the `.ics` export is `/calendar/feed.ics`, untouched; the
+  native apps run the same web client. **nginx** has no per-route allowlist here: `/api/associations`
+  goes through `auth_request` to core's `verify`, which answers 200 with empty identity headers for an
+  anonymous caller, so the decision is the service's and nothing changes at the edge.
+
 ### WP6e institutions as built (2026-10-05)
 
 Migration `075_institution_type.sql` (replay-safe) adds `CHK_associations_type` over `association | list | institution`.
 An institution is an `associations` row of that type, so it reuses every mechanism rather than adding a second one:
 
+- **Deleted by a global admin only (owner, 2026-11-02)**, as it is created: `DELETE /api/associations/:id` on an
+  institution is a 403 `INSTITUTION_DELETE_ADMIN_ONLY` for a BDE member holding MANAGE_ASSO that governs it, which
+  keeps deleting the associations and lists it governs. The edit page's `editRights(..).delete` follows (`editSections.ts`).
 - **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
   member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
 - **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**

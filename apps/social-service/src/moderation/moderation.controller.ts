@@ -18,6 +18,11 @@ import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.
 /**
  * Moderation endpoints: content reporting (all authenticated users)
  * and admin actions (BDE MODERATE flag or global admin).
+ *
+ * SCOPED SINCE 2026-11-02 (owner): a global admin acts everywhere; a BDE `MODERATE` holder opens
+ * these routes (`assertModerator`, the door) but reads and acts only within the spaces its BDE
+ * governs (`spaces/bde-moderation.ts`) - the queue and the muted list are narrowed, and an act on a
+ * target outside that scope is a 403 `MODERATION_OUT_OF_SCOPE`.
  */
 @Controller('moderation')
 export class ModerationController {
@@ -33,6 +38,17 @@ export class ModerationController {
     if (!canModerate) {
       throw new ForbiddenException('BDE MODERATE permission or global admin required');
     }
+  }
+
+  /** Refuses (typed 403) unless the caller moderates `targetUserId` as a person: a mute, an unmute. */
+  private async assertModeratesUser(
+    userId: string,
+    isGlobalAdmin: boolean,
+    targetUserId: string
+  ): Promise<void> {
+    await this.assertModerator(userId, isGlobalAdmin);
+    if (await this.assocService.mayModerateUser(userId, targetUserId, { isGlobalAdmin })) return;
+    await this.assocService.refuseModeration(userId, `user:${targetUserId}`);
   }
 
   // ── Public (authenticated) reports ───────────────────────────────────────
@@ -64,11 +80,25 @@ export class ModerationController {
     @Query('limit') limit?: string,
     @Query('offset') offset?: string
   ) {
-    await this.assertModerator(userId, ga === 'true');
-    return this.service.listAllReports(
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    const reports = await this.service.listAllReports(
       limit ? Math.min(parseInt(limit, 10) || 50, 200) : 50,
-      offset ? parseInt(offset, 10) || 0 : 0
+      offset ? parseInt(offset, 10) || 0 : 0,
+      { userId, isGlobalAdmin }
     );
+    // Which person on each row this caller may mute: a BDE mutes the people of its own spaces only,
+    // and a reporter or an author may live elsewhere than the content they touched.
+    const mutable = await this.assocService.moderatedUserIds(
+      userId,
+      reports.flatMap((r) => [r.reporterId, r.reportedUserId ?? '']),
+      { isGlobalAdmin }
+    );
+    return reports.map((r) => ({
+      ...r,
+      canMuteReporter: mutable.has(r.reporterId),
+      canMuteReportedUser: !!r.reportedUserId && mutable.has(r.reportedUserId),
+    }));
   }
 
   /** Marks a report as reviewed or dismissed. Requires MODERATE or global admin. */
@@ -80,7 +110,11 @@ export class ModerationController {
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: ReviewReportDto
   ) {
-    await this.assertModerator(userId, ga === 'true');
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    if (!(await this.assocService.mayModerateReport(userId, reportId, { isGlobalAdmin }))) {
+      await this.assocService.refuseModeration(userId, `report:${reportId}`);
+    }
     return this.service.reviewReport(reportId, userId, dto.action);
   }
 
@@ -95,7 +129,7 @@ export class ModerationController {
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: MuteUserDto
   ) {
-    await this.assertModerator(callerUserId, ga === 'true');
+    await this.assertModeratesUser(callerUserId, ga === 'true', targetUserId);
     return this.service.muteUser(targetUserId, callerUserId, dto.reason);
   }
 
@@ -107,7 +141,7 @@ export class ModerationController {
     @Headers('x-user-id') callerUserId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
-    await this.assertModerator(callerUserId, ga === 'true');
+    await this.assertModeratesUser(callerUserId, ga === 'true', targetUserId);
     return this.service.unmuteUser(targetUserId);
   }
 
@@ -118,8 +152,9 @@ export class ModerationController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    await this.assertModerator(userId, ga === 'true');
-    return this.service.listMutedUsers();
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    return this.service.listMutedUsers({ userId, isGlobalAdmin });
   }
 
   /** Returns the mute status of the calling user (called by post-guard middleware). */
@@ -137,7 +172,13 @@ export class ModerationController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
-    await this.assertModerator(userId, ga === 'true');
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    // A comment is judged by the post it sits under; a missing one stays the service's 404.
+    const postId = await this.service.findPostIdForComment(commentId);
+    if (postId && !(await this.assocService.mayModeratePost(userId, postId, { isGlobalAdmin }))) {
+      await this.assocService.refuseModeration(userId, `comment:${commentId}`);
+    }
     return this.service.deleteCommentById(commentId);
   }
 }

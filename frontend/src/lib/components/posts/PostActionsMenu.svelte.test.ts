@@ -163,6 +163,31 @@ it('offers the request to the author, and the cancel of a waiting request, only 
   expect(onWithdrawRequest).toHaveBeenCalledWith('prop-1');
 });
 
+/** The labels of the opened menu's rows. */
+function menuLabels(props: Parameters<typeof mountMenu>[0]): string[] {
+  mountMenu(props).querySelector('button')!.click();
+  flushSync();
+  return Array.from(document.body.querySelectorAll('[role="menuitem"]')).map(
+    (el) => el.textContent ?? ''
+  );
+}
+
+it('draws the bin without the pencil for a moderator: only the author edits (2026-11-02)', () => {
+  const labels = menuLabels({ canManage: true, canEdit: false });
+  expect(labels.some((t) => t.includes('Supprimer le post'))).toBe(true);
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(false);
+});
+
+it('draws the pencil for the author', () => {
+  const labels = menuLabels({ canManage: true, canEdit: true });
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(true);
+});
+
+it('lets the pencil follow canManage when no canEdit is passed (an older server)', () => {
+  const labels = menuLabels({ canManage: true });
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(true);
+});
+
 it('offers no request entry by default', () => {
   const card = mountMenu({});
   card.querySelector('button')!.click();

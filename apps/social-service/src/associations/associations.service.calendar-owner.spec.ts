@@ -1,5 +1,6 @@
 import { AssociationsService } from './associations.service';
 import { AssociationCalendarEventStatus } from './entities/association-calendar-event.entity';
+import { addressesEveryoneSql, isEveryoneRule } from '../spaces/audience-policy';
 
 /**
  * `listCalendarEvents` returns the events an association OWNS **and** the ones it merely co-owns,
@@ -50,7 +51,11 @@ function makeService(rows: unknown[]) {
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
     { count: jest.fn(() => Promise.resolve(0)) } as never, // memberRepo
-    { createQueryBuilder: jest.fn(() => qb) } as never, // calendarRepo
+    // `manager.query` answers the promo cutoff a signed-in read asks: no promo, no cutoff.
+    {
+      createQueryBuilder: jest.fn(() => qb),
+      manager: { query: jest.fn(() => Promise.resolve([])) },
+    } as never, // calendarRepo
     coOwnerRepo as never, // coOwnerRepo
     undefined as never, // docRepo
     undefined as never, // reviewerGrantRepo
@@ -63,7 +68,7 @@ function makeService(rows: unknown[]) {
     undefined as never, // userTagService
     { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
-  return { service, assoRepo };
+  return { service, assoRepo, qb };
 }
 
 function eventRow(id: string, associationId: string) {
@@ -124,5 +129,52 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
     expect(await service.listCalendarEvents(PAGE_ASSO)).toEqual([]);
     // `findById` is the only lookup an empty window may cost.
     expect(assoRepo.find).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ONE ASSOCIATION'S AGENDA IS CLOSED TO AN ANONYMOUS CALLER (owner, 2026-11-02): without an account
+ * it is read only when the association addresses everyone (`addressesEveryoneSql`), and is an empty
+ * list otherwise - the SQL decides, so the test pins that the clause is spliced for the anonymous
+ * read, bound to the page's association, and for nobody else.
+ */
+describe('AssociationsService.listCalendarEvents - the anonymous agenda', () => {
+  const EVERYONE = addressesEveryoneSql(':anonAgendaAssociationId');
+  const clauses = (qb: Record<string, jest.Mock>) =>
+    qb.andWhere.mock.calls.map((call: unknown[]) => call[0]);
+
+  it('splices "addresses everyone", bound to the page association, for an anonymous read', async () => {
+    const { service, qb } = makeService([]);
+
+    await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, { viewer: {} });
+
+    expect(qb.andWhere).toHaveBeenCalledWith(EVERYONE, { anonAgendaAssociationId: PAGE_ASSO });
+  });
+
+  it('leaves a signed-in reader to their spaces, never to the anonymous rule', async () => {
+    const { service, qb } = makeService([]);
+
+    await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, {
+      viewer: { userId: 'reader' },
+    });
+
+    expect(clauses(qb)).not.toContain(EVERYONE);
+  });
+
+  it('leaves a global admin whole', async () => {
+    const { service, qb } = makeService([]);
+
+    await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, {
+      viewer: { isGlobalAdmin: true },
+    });
+
+    expect(clauses(qb)).not.toContain(EVERYONE);
+  });
+
+  it('is a rule with no campus, the twin of isEveryoneRule', () => {
+    expect(EVERYONE).toContain('association_audiences');
+    expect(EVERYONE).toMatch(/campus IS NULL/);
+    expect(isEveryoneRule({ formation: 'ICM', campus: null })).toBe(true);
+    expect(isEveryoneRule({ formation: null, campus: 'saint-etienne' })).toBe(false);
   });
 });

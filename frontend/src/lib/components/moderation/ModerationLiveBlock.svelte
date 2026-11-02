@@ -24,9 +24,23 @@
     onWithdrawn: (result: LiveWithdrawalResult) => void;
     /** Told the standing drawn here is stale (a withdrawal was refused as not due): re-read the queue. */
     onStale: () => void;
+    /**
+     * The caller moderates the broadcaster as a person (a BDE: one of its own spaces, 2026-11-02),
+     * the server's `canMuteReportedUser`. False hides the withdrawal the server would refuse.
+     */
+    mayActOnBroadcaster?: boolean;
   }
 
-  let { liveId, live, formatDate, reasonLabel, onCut, onWithdrawn, onStale }: Props = $props();
+  let {
+    liveId,
+    live,
+    formatDate,
+    reasonLabel,
+    onCut,
+    onWithdrawn,
+    onStale,
+    mayActOnBroadcaster = true,
+  }: Props = $props();
 
   let dialogOpen = $state(false);
 
@@ -38,7 +52,9 @@
 
   const standing = $derived(live.broadcasterStanding);
   /** The ladder's 3rd step is a moderator's decision: offered only once the server says it is due. */
-  const withdrawable = $derived(Boolean(standing?.withdrawalDue && live.broadcasterId));
+  const withdrawable = $derived(
+    Boolean(standing?.withdrawalDue && live.broadcasterId && mayActOnBroadcaster)
+  );
   let withdrawOpen = $state(false);
 
   function handleWithdrawn(result: LiveWithdrawalResult) {

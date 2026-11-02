@@ -126,7 +126,8 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
-    return this.service.getHiddenPosts();
+    // The door is "moderates somewhere"; the list is narrowed to the caller's scope (2026-11-02).
+    return this.service.getHiddenPosts({ userId: xUserId, isGlobalAdmin: xGlobalAdmin === 'true' });
   }
 
   /** Returns posts matching the given search query. */
@@ -248,7 +249,10 @@ export class PostsController {
     });
   }
 
-  /** Updates a post's content. Author, a POST_AS_ASSO holder of its association, or a global admin. */
+  /**
+   * Updates a post's content: its author alone (a POST_AS_ASSO holder for an association's post),
+   * never a moderator nor the global admin (owner, 2026-11-02; `PostsService.assertMayEdit`).
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId')
   updatePost(
@@ -407,8 +411,8 @@ export class PostsController {
   }
 
   /**
-   * Pins a post to the top of the feed. Content moderators - a platform admin, or a BDE member
-   * holding MODERATE - which is the same tier the `canPin` field on the post is drawn from.
+   * Pins a post to the top of the feed. Its moderators - a platform admin, or a BDE member holding
+   * MODERATE whose governed spaces hold the post (2026-11-02) - the tier `canPin` is drawn from.
    */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/pin')
@@ -417,7 +421,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.setPinned(postId, true);
   }
 
@@ -429,7 +433,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.setPinned(postId, false);
   }
 
@@ -441,11 +445,11 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.clearAnonymousFlag(postId);
   }
 
-  /** Refuses the caller unless they may moderate content anywhere on the platform. */
+  /** Refuses the caller unless they moderate SOMEWHERE - the door of the moderation lists. */
   private async assertContentModerator(
     userId: string,
     globalAdminHeader: string | undefined
@@ -456,6 +460,24 @@ export class PostsController {
     if (!mayModerate) throw new UnauthorizedException('Content moderator required');
   }
 
+  /**
+   * Refuses the caller unless they moderate THIS post (owner, 2026-11-02): a platform admin, or a
+   * BDE `MODERATE` holder whose governed spaces hold it. A BDE moderator outside its scope is a 403
+   * `MODERATION_OUT_OF_SCOPE`; a caller who moderates nowhere keeps the 401 it always got.
+   */
+  private async assertModeratesPost(
+    userId: string,
+    globalAdminHeader: string | undefined,
+    postId: string
+  ): Promise<void> {
+    const isGlobalAdmin = globalAdminHeader === 'true';
+    if (await this.associationsService.mayModeratePost(userId, postId, { isGlobalAdmin })) return;
+    if (!(await this.associationsService.isContentModerator(userId))) {
+      throw new UnauthorizedException('Content moderator required');
+    }
+    await this.associationsService.refuseModeration(userId, `post:${postId}`);
+  }
+
   /** Hides a post from public feeds (moderation). Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/hide')
@@ -464,7 +486,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.hidePostByModeration(postId);
   }
 
@@ -476,7 +498,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.unhidePost(postId);
   }
 }

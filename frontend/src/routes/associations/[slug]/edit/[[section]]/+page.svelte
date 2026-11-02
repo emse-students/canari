@@ -169,9 +169,10 @@
    * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because an association's own
    * admin never holds it, however many flags they have. Since WP6c step 2 the server checks it in
    * the handler, scoped: the BDE must govern THIS association (a space it reaches), which is what
-   * `isSuperAdminUser` already reads.
+   * `isSuperAdminUser` already reads. Since 2026-11-02 (owner) an INSTITUTION is deleted by the
+   * global admin alone (`INSTITUTION_DELETE_ADMIN_ONLY`): `rights.delete` carries both rules.
    */
-  let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
+  let canDeleteAssociation = $derived(rights.delete);
   /**
    * The audience tab (WP-B): the server admits a global admin, or a BDE star writing an association
    * or a list of its own campus; an institution's audience is a global admin's alone

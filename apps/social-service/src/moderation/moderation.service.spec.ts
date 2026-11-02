@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import * as signature from '../lives/live-report-signature';
 import { LIVE_KEY_ENCRYPTION_SECRET_ENV, sealLiveKey } from '../lives/live-key-at-rest';
 import { ModerationService } from './moderation.service';
+import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
 
@@ -21,7 +22,10 @@ describe('ModerationService - reports', () => {
     save: jest.Mock;
     count: jest.Mock;
     manager: { query: jest.Mock; transaction: jest.Mock };
+    createQueryBuilder: jest.Mock;
   };
+  /** The queue's query builder: `getMany` answers what `find` is mocked to, `where` is recorded. */
+  let reportQb: Record<string, jest.Mock>;
   let muteRepo: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock; find: jest.Mock };
 
   beforeEach(() => {
@@ -32,7 +36,11 @@ describe('ModerationService - reports', () => {
       save: jest.fn().mockImplementation((row) => Promise.resolve({ id: 'r1', ...row })),
       count: jest.fn().mockResolvedValue(1),
       manager: { query: jest.fn().mockResolvedValue([]), transaction: jest.fn() },
+      createQueryBuilder: jest.fn(() => reportQb),
     };
+    reportQb = {};
+    for (const m of ['orderBy', 'take', 'skip', 'where']) reportQb[m] = jest.fn(() => reportQb);
+    reportQb.getMany = jest.fn(() => reportRepo.find());
     // The hide and the republications it drops are one transaction, run on the same query mock.
     reportRepo.manager.transaction.mockImplementation((fn: (m: unknown) => unknown) =>
       fn(reportRepo.manager)
@@ -458,6 +466,21 @@ describe('ModerationService - reports', () => {
       const [row] = await service.listAllReports();
 
       expect(row.contentPreview).toBe('bob');
+    });
+
+    // Owner, 2026-11-02: MODERATE is scoped - a BDE reads the reports of its governed spaces only.
+    it('narrows the queue to the BDE scope, in SQL, for a moderator who is not the platform admin', async () => {
+      await service.listAllReports(50, 0, { userId: 'bde-mod', isGlobalAdmin: false });
+
+      expect(reportQb.where).toHaveBeenCalledWith(reportInBdeScopeSql('r', ':scopeModerator'), {
+        scopeModerator: 'bde-mod',
+      });
+    });
+
+    it('leaves the queue whole for the platform admin', async () => {
+      await service.listAllReports(50, 0, { userId: 'admin', isGlobalAdmin: true });
+
+      expect(reportQb.where).not.toHaveBeenCalled();
     });
   });
 });

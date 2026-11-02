@@ -114,6 +114,17 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 `/api/moderation/*` and by the post controls that give the same people the same reach - and, since
 WP-L8, by the staff cut of a live.
 
+**SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
+reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
+delete, pin, unmask, mute, cut, review) asks the scope of its target - a 403
+`MODERATION_OUT_OF_SCOPE` outside it. The platform admin stays global. What "in scope" means per
+target is tabled in [profiles-and-access, D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
+
+**A post's integrity: only its author changes its text (owner, 2026-11-02).** Moderation hides,
+deletes, pins and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
+another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served `canEdit`, apart from
+the bin (`canManage`).
+
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association
@@ -121,7 +132,8 @@ post already anonymizes its author for everyone unconditionally) can be marked `
 creation - one option in the same "who is publishing" identity picker as the personal profile and
 each managed association, open to every user rather than gated to association admins.
 `PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
-**except** the same `isContentModerator` tier, or the post's own author (2026-09-17: a moderator
+**except** a moderator of THAT post (the platform admin, or since 2026-11-02 a BDE whose governed
+spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
 post - not just THAT it exists). `canUnmaskAnonymous` (same shape as `canPin`) is drawn from the
 moderator tier only, never from self-authorship. `PATCH /posts/:postId/unmask` (`PostsController`,

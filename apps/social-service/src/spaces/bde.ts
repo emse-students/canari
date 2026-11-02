@@ -7,8 +7,9 @@ import { ruleReachesSpaceSql } from './rule-sql';
  * disagree with the spaces page that designates each space's BDE; now the spaces are the only
  * truth and an association is a BDE exactly when `spaces."bdeAssociationId"` names it.
  *
- * It answers "is a BDE SOMEWHERE", which is what the platform-wide grants ask (MODERATE, D23) and
- * what the routes naming no association ask. A power exercised ON an association asks
+ * It answers "is a BDE SOMEWHERE", which is what the doors of the BDE surfaces ask (the moderation
+ * queue opens to a MODERATE holder anywhere, then narrows to its scope) and what the routes naming no
+ * association ask. A power exercised ON an association asks
  * `holdsBdeFlagOverSql` instead, which is scoped to the spaces that association reaches.
  */
 export function isBdeAssociationSql(alias: string): string {
@@ -30,7 +31,8 @@ export function isBdeAssociationSql(alias: string): string {
  * holds that), so a BDE governs its own association.
  *
  * Decided by the user (profiles-and-access, 6c): VALIDATE_EVENTS and MANAGE_ASSO are read through
- * this; MODERATE stays global and does not.
+ * this; MODERATE too since 2026-11-02 (owner), through `bde-moderation.ts`, which adds the personal
+ * content and the people this predicate cannot express.
  */
 export function holdsBdeFlagOverSql(user: string, association: string, flag: string): string {
   return `EXISTS (SELECT 1 FROM association_members bde_member

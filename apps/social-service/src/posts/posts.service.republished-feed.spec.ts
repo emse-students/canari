@@ -43,6 +43,8 @@ describe('PostsService feeds of what associations republish', () => {
       {
         mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
         isContentModerator: jest.fn(() => Promise.resolve(false)),
+        moderatedPostIds: () => Promise.resolve(new Set<string>()),
+        mayModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release: jest.fn() } as unknown as PostMediaRetentionService

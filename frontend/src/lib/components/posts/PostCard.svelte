@@ -215,6 +215,8 @@
   // Server-answered, per reader and per control. Never re-derived here: an association post carries
   // no `authorId` to compare against, and nothing in a post says whether its reader moderates.
   const canManage = $derived(localPost.canManage === true);
+  // The pencil is the author's alone (2026-11-02); an older server sends no `canEdit`.
+  const canEdit = $derived(localPost.canEdit ?? canManage);
   const canPin = $derived(localPost.canPin === true);
   const canReport = $derived(localPost.canReport === true);
   const canUnmaskAnonymous = $derived(localPost.canUnmaskAnonymous === true);
@@ -674,6 +676,7 @@
       <PostActionsMenu
         pinned={localPost.pinned ?? false}
         {canManage}
+        {canEdit}
         {canPin}
         {canReport}
         {canUnmaskAnonymous}

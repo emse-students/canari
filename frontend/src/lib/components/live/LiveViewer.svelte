@@ -103,7 +103,11 @@
   // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the content
   // moderators; a viewer screen shows the button to the same tier the moderation page opens to (a
   // platform admin, or `ensureContentModerator`), read reactively - the probe answers after mount.
-  const chatCanModerate = $derived(isGlobalAdmin() || isContentModerator());
+  // A BDE moderator is SCOPED (2026-11-02): the list says per live whether its governed spaces hold
+  // it (`viewerModerates`); absent from an older server, the door alone decides as before.
+  const chatCanModerate = $derived(
+    isGlobalAdmin() || (isContentModerator() && live.viewerModerates !== false)
+  );
   let reactions = $state<LiveReactionsLayer | null>(null);
 
   const overlay = bindHistoryOverlay(

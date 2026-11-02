@@ -411,9 +411,11 @@ export class PostInteractionsService {
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
+    // The moderator half is asked of THIS post: a BDE moderates the comments of its governed spaces.
     const viewer = await this.identity.viewerFor([comment], {
       viewerId: userId,
       isGlobalAdmin: isAdmin,
+      postId,
     });
     if (!commentRights(comment, viewer).canDelete) {
       throw new UnauthorizedException('Not your comment');

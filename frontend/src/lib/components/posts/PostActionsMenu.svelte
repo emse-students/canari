@@ -61,11 +61,16 @@
     /** Whether the post is currently pinned. */
     pinned: boolean;
     /**
-     * May edit or delete: the post's publisher (its author, or an officer of the association it
-     * speaks for), a content moderator, or a platform admin.
+     * May delete: the post's publisher (its author, or an officer of the association it speaks
+     * for), a moderator of this post (a BDE MODERATE of its spaces), or a platform admin.
      */
     canManage: boolean;
-    /** May pin or unpin: a content moderator (BDE MODERATE) or a platform admin. */
+    /**
+     * May edit: the post's author (publisher) ALONE - never a moderator nor the platform admin
+     * (owner, 2026-11-02). Defaults to `canManage` for a caller that does not pass it.
+     */
+    canEdit?: boolean;
+    /** May pin or unpin: a moderator of this post (a BDE MODERATE of its spaces) or a platform admin. */
     canPin: boolean;
     /** May report: any logged-in reader who is not the post's own publisher. */
     canReport: boolean;
@@ -131,6 +136,7 @@
   let {
     pinned,
     canManage,
+    canEdit = canManage,
     canPin,
     canReport,
     canUnmaskAnonymous,
@@ -405,7 +411,7 @@
           </button>
         {/if}
 
-        {#if canManage}
+        {#if canEdit}
           <button
             type="button"
             role="menuitem"
@@ -415,6 +421,9 @@
             <Pencil size={16} strokeWidth={2.5} />
             {m.post_edit_post_label()}
           </button>
+        {/if}
+
+        {#if canManage}
           <button
             type="button"
             role="menuitem"

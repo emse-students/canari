@@ -540,6 +540,7 @@
                 onCut={handleLiveCut}
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
+                mayActOnBroadcaster={report.canMuteReportedUser !== false}
               />
             {/if}
 
@@ -643,18 +644,25 @@
                 </button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onclick={() =>
-                    openMuteDialog(report.reporterId, displayNameFor(report.reporterId), report.id)}
-                  disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
-                  title={m.moderation_mute_reporter_hint()}
-                >
-                  <UserX size={13} />
-                  {m.moderation_muter_signaleur()}
-                </button>
-                {#if report.reportedUserId}
+                <!-- A BDE moderator mutes the people of its own spaces only (2026-11-02). -->
+                {#if report.canMuteReporter !== false}
+                  <button
+                    type="button"
+                    onclick={() =>
+                      openMuteDialog(
+                        report.reporterId,
+                        displayNameFor(report.reporterId),
+                        report.id
+                      )}
+                    disabled={processingId === report.id}
+                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
+                    title={m.moderation_mute_reporter_hint()}
+                  >
+                    <UserX size={13} />
+                    {m.moderation_muter_signaleur()}
+                  </button>
+                {/if}
+                {#if report.reportedUserId && report.canMuteReportedUser !== false}
                   <button
                     type="button"
                     onclick={() =>

@@ -99,6 +99,9 @@ export const LYDIA_KEY_PASTE_RETIRED = 'LYDIA_KEY_PASTE_RETIRED';
  */
 export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
 
+/** The `code` of the 403 a BDE caller gets deleting an institution: the global admin's alone (2026-11-02). */
+export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
+
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
 export class AssociationsController {
@@ -484,6 +487,11 @@ export class AssociationsController {
    * Returns scheduled events for the association (optional `from` / `to` ISO date bounds).
    * Cut at the caller's own promo, exactly as the aggregated feed is - a limit only one of the two
    * honoured would be no limit at all, since this route lists the same rows.
+   *
+   * CLOSED TO AN ANONYMOUS CALLER since 2026-11-02 (owner): it answered every event of any
+   * association with no session, beside a feed whose selection must be signed (D40 amended). Now an
+   * anonymous read gets an EMPTY list unless the association addresses everyone
+   * (`AssociationsService.closeAnonymousAgenda`); a signed-in reader keeps their spaces.
    */
   @Get(':id/events')
   async listCalendarEvents(
@@ -738,6 +746,10 @@ export class AssociationsController {
    *
    * SCOPED SINCE WP6c STEP 2: the BDE must GOVERN this association (`isAssociationSuperAdminOf`, a
    * space it reaches); `MANAGE_ASSO` in the BDE of another space no longer ends it.
+   *
+   * AN INSTITUTION IS THE GLOBAL ADMIN'S TO DELETE (owner, 2026-11-02), as it is theirs to create
+   * (D20): a BDE that governs one is refused 403 `INSTITUTION_DELETE_ADMIN_ONLY`, and keeps
+   * deleting the associations and lists it governs.
    */
   @UseGuards(NginxAuthGuard)
   @Delete(':id')
@@ -746,13 +758,25 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
-    if (ga !== 'true' && !(await this.service.isAssociationSuperAdminOf(userId, id))) {
-      this.logger.debug(
-        `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
-      );
-      throw new ForbiddenException(
-        "Global admin or MANAGE_ASSO in the BDE of the association's space required"
-      );
+    if (ga !== 'true') {
+      if (!(await this.service.isAssociationSuperAdminOf(userId, id))) {
+        this.logger.debug(
+          `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
+        );
+        throw new ForbiddenException(
+          "Global admin or MANAGE_ASSO in the BDE of the association's space required"
+        );
+      }
+      const target = await this.service.findById(id);
+      if (target.type === 'institution') {
+        this.logger.log(
+          `[PERM] delete institution ${sanitizeLog(id)} refused to a BDE caller: global admin only`
+        );
+        throw new ForbiddenException({
+          code: INSTITUTION_DELETE_ADMIN_ONLY,
+          message: 'Only a global admin may delete an institution',
+        });
+      }
     }
     return this.service.remove(id, userId);
   }

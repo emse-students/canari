@@ -38,6 +38,8 @@ describe('PostsService.deletePost', () => {
       {} as FollowsService,
       {
         isContentModerator: () => Promise.resolve(false),
+        moderatedPostIds: () => Promise.resolve(new Set<string>()),
+        mayModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release } as unknown as PostMediaRetentionService

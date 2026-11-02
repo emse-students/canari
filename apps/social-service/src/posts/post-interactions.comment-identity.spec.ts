@@ -40,6 +40,8 @@ describe('PostInteractionsService - comment identity', () => {
     };
     const associations = {
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
       mayActOnAny: jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids))),
       listFlagHolders: jest.fn(() => Promise.resolve(holders)),
     };
