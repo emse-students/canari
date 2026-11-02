@@ -4114,6 +4114,18 @@
   "post_republish_error": "The action failed. Try again.",
   "post_republished_by": "Republished by {names}",
   "post_republished_by_more": "Republished by {names} +{count}",
+  "post_republished_by_you": "Republished by you",
+  "post_republished_by_you_and": "Republished by you and {name}",
+  "post_republished_by_you_and_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Republished by you, {name} and {count} other",
+        "countPlural=other": "Republished by you, {name} and {count} others"
+      }
+    }
+  ],
   "post_request_republication_action": "Share as an association",
   "post_request_dialog_title": "Ask the author",
   "post_request_dialog_hint": "The post's author decides. Nothing is shown before they accept.",
@@ -5017,6 +5029,21 @@
   "post_repost_consent_allowed_toast": "Reposts allowed for this post",
   "post_repost_consent_forbidden_toast": "Reposts forbidden for this post",
   "post_repost_consent_error": "The setting could not be saved.",
+  "post_reposters_menu": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Republished by {count} person",
+        "countPlural=other": "Republished by {count} people"
+      }
+    }
+  ],
+  "post_reposters_title": "Republished by",
+  "post_reposters_empty": "Nobody reposts this post at the moment.",
+  "post_reposters_remove": "Remove",
+  "post_reposters_remove_confirm": "Remove {name}'s repost? Their followers will no longer see this post through them. {name} will not be told.",
+  "post_reposters_remove_error": "The repost could not be removed.",
   "settings_allow_reposts_label": "Allow my followers to repost my posts",
   "settings_allow_reposts_hint": "Your followers will be able to repost your posts to their own followers. You can change this post by post from a post's menu. Anonymous posts are never reposted.",
   "settings_allow_reposts_error": "The setting could not be saved.",
