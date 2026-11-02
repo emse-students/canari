@@ -65,7 +65,7 @@ describe('InvitationsController - getDeviceMemberships', () => {
   });
 
   /** Call it the way nginx does: the caller owns the userId it is asking about. */
-  const ask = () => controller.getDeviceMemberships(USER, DEVICE, USER, 'false');
+  const ask = () => controller.getDeviceMemberships(USER, DEVICE, USER);
 
   beforeEach(async () => {
     jest.clearAllMocks();

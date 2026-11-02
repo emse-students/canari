@@ -43,6 +43,7 @@ import {
   sanitizeOptionalDeviceOs,
   sanitizeOptionalNotAfter,
   sanitizeOptionalDeviceAppVersion,
+  assertCallerOwnsDeviceOrGlobalAdmin,
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
 import {
@@ -296,8 +297,7 @@ export class DevicesController {
       deviceOs?: string;
       deviceAppVersion?: string;
     },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     // IDENTITIES, not query values: this path creates a KeyPackage and a `pending` membership in
     // every group the user is in, so a placeholder accepted here becomes addressable and can then
@@ -306,13 +306,10 @@ export class DevicesController {
     const deviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
     // A device may only register under its own account (audit S2): binding to the HMAC-bound
     // x-user-id prevents an attacker from registering a device under a victim's userId, which
-    // would auto-provision pending memberships for the victim's groups and phish Welcomes.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      userId,
-      'Cannot register a device for another user'
-    );
+    // would auto-provision pending memberships for the victim's groups and phish Welcomes. NO
+    // PLATFORM-ADMIN EXEMPTION (owner, 2026-11-02): a device registered under somebody else is
+    // routed into every one of their conversations.
+    assertCallerOwnsUserId(headerUserId, userId, 'Cannot register a device for another user');
     // A deleted device is denylisted for good, and `resolveDeviceId` deliberately restores the
     // SAME id after a reinstall - so without this check the row is written, 200 is returned, and
     // the device is then filtered out of getUserDevices and resolves to a null KeyPackage
@@ -463,18 +460,13 @@ export class DevicesController {
   /** Bulk-uploads one-time prekeys for the current device. */
   async registerDevicePrekeys(
     @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    // Prekeys may only be uploaded for the caller's own account (audit S2).
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      userId,
-      'Cannot upload prekeys for another user'
-    );
+    // Prekeys may only be uploaded for the caller's own account (audit S2), a global admin included
+    // (owner, 2026-11-02): a package published under somebody else is the key their next Add uses.
+    assertCallerOwnsUserId(headerUserId, userId, 'Cannot upload prekeys for another user');
 
     // THE SAME REFUSAL AS `register-device`, for the same id: a banned device publishing a pool of
     // one-time packages would hand peers packages for a device no Welcome may reach.
@@ -554,7 +546,7 @@ export class DevicesController {
     // A device's metadata may only be edited by its owner (audit S4): the userId is a path
     // param, so without this binding any authenticated user could rewrite another user's
     // device name/OS. Admins exempt; legacy no-op when x-user-id absent.
-    assertCallerOwnsUserId(
+    assertCallerOwnsDeviceOrGlobalAdmin(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
@@ -726,7 +718,7 @@ export class DevicesController {
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    assertCallerOwnsUserId(
+    assertCallerOwnsDeviceOrGlobalAdmin(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
@@ -800,7 +792,7 @@ export class DevicesController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // Prekeys may only be purged for the caller's own device (audit S4): purging a victim's
     // one-time KeyPackages would degrade their invite availability. Admins exempt.
-    assertCallerOwnsUserId(
+    assertCallerOwnsDeviceOrGlobalAdmin(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
@@ -874,7 +866,7 @@ export class DevicesController {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // Prekeys may only be pruned for the caller's own device (audit S4). Admins exempt.
-    assertCallerOwnsUserId(
+    assertCallerOwnsDeviceOrGlobalAdmin(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
@@ -930,7 +922,7 @@ export class DevicesController {
     // per-device footprint (memberships, KeyPackages, queued messages, push token) and
     // denylists re-registration, so without this binding any user could eject a victim from
     // every conversation. Admins exempt; legacy no-op when x-user-id absent.
-    assertCallerOwnsUserId(
+    assertCallerOwnsDeviceOrGlobalAdmin(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,

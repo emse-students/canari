@@ -159,7 +159,6 @@ export class MembersController {
   /**
    * Authorizes an add/remove membership mutation on `safeGroupId`. The caller (nginx-injected,
    * HMAC-bound `x-user-id`) is allowed only when one of the following holds:
-   *  - it is a platform global admin (`x-global-admin: true`);
    *  - it is already an ADMITTED member of the group - covers invites, welcome_request re-adds, and the
    *    inviter/joiner backfill paths, which all run as an existing member (the inviter registers
    *    an invitee BEFORE sending the Welcome, so the invitee is a member by the time it self-heals);
@@ -172,6 +171,10 @@ export class MembersController {
    * INTERNAL_SHARED_SECRET), the check is a no-op to preserve legacy behavior, matching
    * `assertCallerOwnsUserId`.
    *
+   * **A PLATFORM GLOBAL ADMIN IS NOT EXEMPT** (owner, 2026-11-02): an exemption here was the very
+   * self-join above - an admin inserting itself into a roster, then external-joining through the
+   * served GroupInfo. An admin who is not a member is refused like any non-member.
+   *
    * A SEAT STILL AWAITING A MEMBER'S ADMISSION IS NOT A MEMBERSHIP HERE ({@link callerSeatStanding}):
    * counted as one, a person waiting on an invitation link enrolled an accomplice whose seat read as
    * not awaiting, and who then entered by external commit with no member's Add. It may only LEAVE
@@ -181,11 +184,9 @@ export class MembersController {
     safeGroupId: string,
     targetUserId: string,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     allowCreationBootstrap: boolean,
     allowSelfLeave = false
   ): Promise<void> {
-    if (headerGlobalAdmin === 'true') return;
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!caller) return;
 
@@ -251,7 +252,8 @@ export class MembersController {
 
   /**
    * Authorizes a roster read on `safeGroupId`. The caller (nginx-injected, HMAC-bound `x-user-id`)
-   * must be a platform global admin or an existing member of the group. Blocks roster enumeration
+   * must be an existing member of the group - a platform global admin included, who reads no roster
+   * of a conversation it is not in (owner, 2026-11-02). Blocks roster enumeration
    * by non-members (audit S5): the user list and active-device list are group metadata that leak
    * social graph / device topology. Freshly-invited joiners are registered as members BEFORE their
    * Welcome, so recovery/re-invite reads still pass. No-op when `x-user-id` is absent (legacy
@@ -262,10 +264,8 @@ export class MembersController {
    */
   private async assertCallerIsGroupMember(
     safeGroupId: string,
-    headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined
+    headerUserId: string | undefined
   ): Promise<void> {
-    if (headerGlobalAdmin === 'true') return;
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!caller) return;
     const standing = await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller);
@@ -300,16 +300,10 @@ export class MembersController {
   async getUserGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Headers('x-canari-device') headerDeviceId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      "Cannot list another user's groups"
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, "Cannot list another user's groups");
     const memberships = await this.groupMemberRepo.find({
       where: { userId: safeUserId },
     });
@@ -511,16 +505,10 @@ export class MembersController {
    */
   async getDismissedGroups(
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<string[]> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      "Cannot read another user's dismissed groups"
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, "Cannot read another user's dismissed groups");
     const rows = await this.dismissedRepo.find({
       where: { userId: safeUserId },
     });
@@ -533,16 +521,10 @@ export class MembersController {
   async dismissGroup(
     @Param('userId') userId: string,
     @Body() body: { groupId: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot dismiss a group for another user'
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot dismiss a group for another user');
     const safeGroupId = sanitizeQueryValue(body?.groupId ?? '', 'groupId');
     // Idempotent: ON CONFLICT DO NOTHING via unique constraint (userId, groupId).
     const ins = await this.dismissedRepo
@@ -566,16 +548,10 @@ export class MembersController {
   async undismissGroup(
     @Param('userId') userId: string,
     @Param('groupId') groupId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot un-dismiss a group for another user'
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot un-dismiss a group for another user');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const del = await this.dismissedRepo.delete({
       userId: safeUserId,
@@ -603,8 +579,7 @@ export class MembersController {
   async addGroupMember(
     @Param('groupId') groupId: string,
     @Body() body: { userId: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const traceId = this.makeTraceId('add-member');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
@@ -631,7 +606,6 @@ export class MembersController {
       safeGroupId,
       safeUserId,
       headerUserId,
-      headerGlobalAdmin,
       true // allow the group-creation bootstrap (creator registers itself into an empty group)
     );
     // THE ONE PLACE A BLOCK ACTUALLY STOPS SOMETHING. Hiding a person from the user search stops
@@ -773,15 +747,10 @@ export class MembersController {
    * never wrongly admitted. Without the parameter the answer is the bare array every older client
    * reads.
    */
-  async getGroupUserMembers(
-    groupId: string,
-    headerUserId?: string,
-    headerGlobalAdmin?: string
-  ): Promise<UserMemberRow[]>;
+  async getGroupUserMembers(groupId: string, headerUserId?: string): Promise<UserMemberRow[]>;
   async getGroupUserMembers(
     groupId: string,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     withSeatGeneration: '1'
   ): Promise<{ seatGeneration: number; members: UserMemberRow[] }>;
   @UseGuards(HeaderAuthGuard)
@@ -789,11 +758,10 @@ export class MembersController {
   async getGroupUserMembers(
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Query('withSeatGeneration') withSeatGeneration?: string
   ): Promise<UserMemberRow[] | { seatGeneration: number; members: UserMemberRow[] }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
+    await this.assertCallerIsGroupMember(safeGroupId, headerUserId);
     const seatGeneration =
       withSeatGeneration === '1'
         ? await readSeatGeneration(this.dataSource.manager, safeGroupId)
@@ -829,7 +797,8 @@ export class MembersController {
    * the same rows; only the round trips were the cost.
    *
    * **THE SAME AUTHORIZATION AS THE SINGLE READ, PER GROUP.** A caller is answered for a group only
-   * when it holds a row in that group's roster, or is a global admin. Every other group - one the
+   * when it holds a row in that group's roster - a global admin included (owner, 2026-11-02: no
+   * platform-admin bypass on conversation data). Every other group - one the
    * caller is not in, or one that does not exist - is listed in `refused` rather than failing the
    * whole request:
    * the single read's 403 per group, carried as a FACT the client reads by group, so it never has
@@ -857,8 +826,7 @@ export class MembersController {
   @Post('mls/group-rosters')
   async getGroupRosters(
     @Body() body: { groupIds?: unknown } | undefined,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{
     rosters: Record<string, string[]>;
     refused: string[];
@@ -892,12 +860,11 @@ export class MembersController {
       byGroup.set(row.groupId, members);
     }
 
-    const unrestricted = headerGlobalAdmin === 'true';
     const rosters: Record<string, string[]> = {};
     const refused: string[] = [];
     for (const groupId of groupIds) {
       const members = byGroup.get(groupId) ?? new Set<string>();
-      if (!unrestricted && (!caller || !members.has(caller) || callerAwaits.has(groupId))) {
+      if (!caller || !members.has(caller) || callerAwaits.has(groupId)) {
         refused.push(groupId);
         continue;
       }
@@ -1102,11 +1069,10 @@ export class MembersController {
    */
   async getGroupMembers(
     @Param('groupId') groupId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
+    await this.assertCallerIsGroupMember(safeGroupId, headerUserId);
     const rows = await this.deviceGroupRepo.find({
       where: { groupId: safeGroupId, status: 'active' as const },
       select: { userId: true, deviceId: true },
@@ -1127,8 +1093,7 @@ export class MembersController {
   async removeGroupMember(
     @Param('groupId') groupId: string,
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -1140,7 +1105,6 @@ export class MembersController {
       safeGroupId,
       safeUserId,
       headerUserId,
-      headerGlobalAdmin,
       false,
       true // self-leave: a seat still awaiting a member may withdraw itself
     );
