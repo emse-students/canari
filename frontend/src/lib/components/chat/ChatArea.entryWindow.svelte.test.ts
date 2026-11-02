@@ -143,14 +143,15 @@ describe('ChatArea entry window (F6)', () => {
     expect(rows.size).toBe(20);
   });
 
-  it('a thread of one-line rows settles on the 60-row entry window, never on more', async () => {
-    // 20 one-line rows (720 px) do not exceed a 700 px pane by the 40 px fillViewportThenPin wants,
-    // so it steps to the full entry size in the hidden frame; the widen then has nothing to add.
+  it('a thread of one-line rows fills the pane by its own measure, then widens to 60 after the reveal', async () => {
+    // 20 one-line rows (720 px) miss the 700 + 40 px a scroll needs by 20 px. The hidden frame adds
+    // what the measure asks for (the 4-group floor), NOT the full 60 - which was one 260 ms task on
+    // the Mi 9T - and the widen brings the rest after the reveal, a few rows per task.
     rowPx = 36;
     modelGeometry();
     const target = mountArea(THREAD);
     await vi.advanceTimersByTimeAsync(0);
-    expect(target.querySelectorAll(ROW_SELECTOR).length).toBeGreaterThan(0);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(24);
     await settleEntry();
     expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
   });

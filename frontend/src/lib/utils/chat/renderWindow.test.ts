@@ -4,6 +4,8 @@ import {
   resolveRenderWindow,
   stepWindowOlder,
   widenedEntryStart,
+  fillStart,
+  widenStepStart,
 } from './renderWindow';
 
 /**
@@ -153,5 +155,36 @@ describe('entry window - the first frame mounts the viewport tail only', () => {
     expect(widenedEntryStart(10, 200, 60)).toBeNull();
     expect(widenedEntryStart(0, 56, 60)).toBeNull();
     expect(widenedEntryStart(140, 200, 60)).toBeNull();
+  });
+});
+
+describe('fillStart - the rows a short first frame is missing, by its own measure', () => {
+  it('asks for the deficit divided by the measured row height, with a floor', () => {
+    // 20 rows of 36 px = 720 in a 700 pane that must overflow by 40: 20 px short -> the floor.
+    expect(fillStart(36, 20, 720, 700, 40, 4, 0)).toBe(32);
+    // 20 rows of 20 px = 400: 340 px short = 17 rows.
+    expect(fillStart(36, 20, 400, 700, 40, 4, 0)).toBe(19);
+  });
+
+  it('is null when the pane already overflows or nothing is hidden', () => {
+    expect(fillStart(36, 20, 960, 700, 40, 4, 0)).toBeNull();
+    expect(fillStart(0, 20, 400, 700, 40, 4, 0)).toBeNull();
+  });
+
+  it('never mounts more than the full entry window on a measure alone, and never past the list', () => {
+    // 20 rows of 2 px: 350 rows wanted, capped at the entry start (140 of a 200 list = 60 rows).
+    expect(fillStart(180, 20, 40, 700, 40, 4, 140)).toBe(140);
+    // A window already past the entry start pages by the measure instead.
+    expect(fillStart(100, 60, 600, 700, 40, 4, 140)).toBe(86);
+    expect(fillStart(3, 20, 100, 700, 40, 4, 0)).toBe(0);
+  });
+});
+
+describe('widenStepStart - the widen after the reveal, a few groups per task', () => {
+  it('steps towards the target and stops on it', () => {
+    expect(widenStepStart(140, 100, 10)).toBe(130);
+    expect(widenStepStart(104, 100, 10)).toBe(100);
+    expect(widenStepStart(100, 100, 10)).toBeNull();
+    expect(widenStepStart(50, 100, 10)).toBeNull();
   });
 });

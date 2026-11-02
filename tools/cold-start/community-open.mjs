@@ -33,6 +33,10 @@
  *   --profile             a V8 CPU profile (200 us sampling) from the tab tap to the salon rows,
  *                         written to `<out>/profile-<label>-<run>.cpuprofile` - what the first
  *                         mount of the page is made of (`profile-summary.mjs` reads it)
+ *   --profile-salon       a V8 CPU profile of each salon open (first and reopen), the tap on the row
+ *                         to the first bubble: `profile-<label>-<run>-first|reopen.cpuprofile`.
+ *                         A profiled run is SLOWER than a bare one (200 us sampling): read its
+ *                         shape, never its milliseconds against the budget.
  *   --before-tap <js>     an expression evaluated in the page once the nav is on screen, before the
  *                         tap: a CSS or DOM change tried on the INSTALLED build (an APK carries its
  *                         own bundle, so this is the only way to read a candidate on the phone
@@ -72,6 +76,7 @@ const PORT = Number(opt('port', 9333));
 const PROFILE = args.includes('--profile');
 const BEFORE_TAP = opt('before-tap', null);
 const TRACE = args.includes('--trace');
+const PROFILE_SALON = args.includes('--profile-salon');
 /** What `--trace` records: the renderer's timeline (input, script, style, layout, paint) and V8's script work. */
 const TRACE_CATEGORIES = [
   'devtools.timeline',
@@ -147,7 +152,7 @@ const SLOW_LINK = (cfg) => `(function (cfg) {
  * blocked main thread delays the mark exactly as it delays the paint). Re-armed every run.
  */
 const PROBE = `(function () {
-  window.__cob = { marks: {}, watch: {}, hb: [], lt: [], taps: [] };
+  window.__cob = { marks: {}, watch: {}, hb: [], lt: [], taps: [], clicks: [] };
   if (window.__cobHb) clearInterval(window.__cobHb);
   window.__cobHb = setInterval(function () { window.__cob.hb.push(Math.round(performance.now())); }, 50);
   // ONE observer per page: a warm run re-arms this probe, and a second observer doubled every entry.
@@ -160,6 +165,13 @@ const PROBE = `(function () {
   if (!window.__cobTouch) {
     window.__cobTouch = true;
     addEventListener('touchstart', function (e) { window.__cob.taps.push(Math.round(e.timeStamp)); }, { capture: true, passive: true });
+  }
+  // The CLICK is what navigation starts on: a CDP press holds the finger ~120 ms before it, which
+  // is the instrument's, not the app's. Recorded beside the touchstart so a mark can be read from
+  // either (the click> columns of derive).
+  if (!window.__cobClick) {
+    window.__cobClick = true;
+    addEventListener('click', function (e) { window.__cob.clicks.push(Math.round(e.timeStamp)); }, { capture: true, passive: true });
   }
   (function frame() {
     var c = window.__cob;
@@ -273,8 +285,13 @@ async function until(cx, name, predicate, after = null, edge = true) {
   return null;
 }
 
+/** The page's own `click` time of the LAST `tap` (null if none arrived): where the app starts to work. */
+let lastClick = null;
+
 /** A CDP touch at an element's centre. Returns the page's own `touchstart` time, or null. */
 async function tap(cx, elementExpr) {
+  lastClick = null;
+  const clicksBefore = Number(await evaluate(cx, 'window.__cob.clicks.length'));
   const rect = JSON.parse(
     await evaluate(
       cx,
@@ -291,7 +308,14 @@ async function tap(cx, elementExpr) {
   await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   for (let i = 0; i < 80; i++) {
     const taps = JSON.parse(await evaluate(cx, 'JSON.stringify(window.__cob.taps)'));
-    if (taps.length > before) return taps[before];
+    if (taps.length > before) {
+      for (let j = 0; j < 40 && lastClick === null; j++) {
+        const clicks = JSON.parse(await evaluate(cx, 'JSON.stringify(window.__cob.clicks)'));
+        if (clicks.length > clicksBefore) lastClick = clicks[clicksBefore];
+        else await waitMs(25);
+      }
+      return taps[before];
+    }
     await waitMs(25);
   }
   return null;
@@ -308,13 +332,34 @@ async function setNetwork(on) {
   }
 }
 
-/** Opens `name`'s first salon from the hub; returns [tap, pane, messages?]. */
-async function openFirstSalon(cx, key, withMessages) {
+/** The `click` time of each salon open, by key (`first`, `other`, `reopen`). */
+const salonClicks = {};
+
+/**
+ * Opens `name`'s first salon from the hub; returns [tap, pane, messages?]. With `--profile-salon`
+ * and `withMessages`, a V8 CPU profile spans exactly this tap to the first bubble
+ * (`profile-<label>-<run>-<key>.cpuprofile`): the salon mount, which `--profile` does not cover.
+ */
+async function openFirstSalon(cx, key, withMessages, runIndex = 0) {
   await arm(cx, `${key}Pane`, PRED.pane);
   if (withMessages) await arm(cx, `${key}Messages`, PRED.messages);
+  const profiled = PROFILE_SALON && withMessages;
+  if (profiled) {
+    await cx.send('Profiler.enable');
+    await cx.send('Profiler.setSamplingInterval', { interval: 200 });
+    await cx.send('Profiler.start');
+  }
   const tapped = await tap(cx, FIRST_ROW);
+  salonClicks[key] = lastClick;
   const pane = await until(cx, `${key}Pane`, null, tapped);
   const messages = withMessages ? await until(cx, `${key}Messages`, null, tapped) : null;
+  if (profiled) {
+    const { profile } = await cx.send('Profiler.stop');
+    writeFileSync(
+      join(OUT, `profile-${LABEL}-${runIndex}-${key}.cpuprofile`),
+      JSON.stringify(profile)
+    );
+  }
   return [tapped, pane, messages];
 }
 
@@ -390,6 +435,7 @@ async function oneRun(index, warmCx) {
   await arm(cx, 'rail', PRED.rail);
   await arm(cx, 'salons', PRED.salons);
   row.tapHub = await tap(cx, NAV_TAB);
+  row.clickHub = lastClick;
   row.rail = await until(cx, 'rail', null, row.tapHub);
   row.salons = await until(cx, 'salons', null, row.tapHub);
   row.hubName = await evaluate(cx, HUB_NAME);
@@ -432,7 +478,8 @@ async function oneRun(index, warmCx) {
       JSON.stringify({ traceEvents, marks })
     );
   }
-  [row.tapSalon, row.pane, row.messages] = await openFirstSalon(cx, 'first', true);
+  [row.tapSalon, row.pane, row.messages] = await openFirstSalon(cx, 'first', true, index);
+  row.clickSalon = salonClicks.first;
   say(`salon pane ${row.pane} messages ${row.messages}`);
 
   // ANOTHER COMMUNITY: the in-session switch.
@@ -448,7 +495,8 @@ async function oneRun(index, warmCx) {
     await backToHub(cx, 'b2');
     await tap(cx, railButton(TARGET));
     await until(cx, 'targetAgain', hubOf(TARGET));
-    [row.tapReopen, row.reopenPane, row.reopenMessages] = await openFirstSalon(cx, 'reopen', true);
+    [row.tapReopen, row.reopenPane, row.reopenMessages] = await openFirstSalon(cx, 'reopen', true, index);
+    row.clickReopen = salonClicks.reopen;
   }
   say('collecting');
   await waitMs(1500);
@@ -547,6 +595,9 @@ function derive(r) {
   return {
     attach: r.attachMs,
     nav: r.nav,
+    'click>rail': d(r.rail, r.clickHub),
+    'click>salon msgs': d(r.messages, r.clickSalon),
+    'click>reopen msgs': d(r.reopenMessages, r.clickReopen),
     'tap>rail': d(r.rail, r.tapHub),
     'tap>salons': d(r.salons, r.tapHub),
     'tap>target salons': d(r.targetSalons, r.tapHub),
