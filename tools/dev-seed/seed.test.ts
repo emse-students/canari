@@ -234,6 +234,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "lives_mode IN ('off', 'on')",
     holds: oneOf('lives_mode', ['off', 'on']),
   },
+  CHK_platform_config_push_mode: {
+    sql: "push_mode IN ('full', 'wake')",
+    holds: oneOf('push_mode', ['full', 'wake']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),
