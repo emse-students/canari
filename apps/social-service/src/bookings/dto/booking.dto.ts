@@ -82,6 +82,42 @@ export class CreateBookingDto {
   reminderMinutes?: number | null;
 }
 
+/**
+ * `PATCH bookings/:bookingId` - edits a coming booking (owner, 2026-11-02): its range and its other
+ * people, nothing else. The resource, the day, the holder, the answers and the files stay; changing
+ * one of them is still a cancellation and a new booking.
+ */
+export class EditBookingDto {
+  /** The NEW half-open range, UTC instants, ISO 8601 - on the same local day as the old one. */
+  @IsDateString()
+  @Matches(ZONED_INSTANT, { message: ZONED_INSTANT_MESSAGE })
+  startsAt: string;
+
+  @IsDateString()
+  @Matches(ZONED_INSTANT, { message: ZONED_INSTANT_MESSAGE })
+  endsAt: string;
+
+  /**
+   * The WHOLE set of the booking's other people after the edit, not a delta: whoever is in it and
+   * not on the booking is added, whoever is on the booking and not in it is removed. The holder is
+   * not one of them.
+   */
+  @IsArray()
+  @ArrayMaxSize(MAX_PARTICIPANTS_PER_REQUEST)
+  @IsString({ each: true })
+  @MaxLength(255, { each: true })
+  participantIds: string[];
+
+  /**
+   * The booking's `revision` as the sheet read it (`bookingRevision`): an edit of any other state
+   * - a participant withdrew, someone else edited meanwhile - is refused `BOOKING_EDIT_CONFLICT`
+   * / `stale` and changes nothing.
+   */
+  @IsString()
+  @MaxLength(64)
+  revision: string;
+}
+
 /** `POST bookings/:bookingId/cancel` - an optional word to the booking's people (Q-R3). */
 export class CancelBookingDto {
   /** Carried by the notification only: never stored with the booking (Q-R3). */

@@ -211,6 +211,8 @@
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
       notif.type === 'booking_added' ||
+      notif.type === 'booking_changed' ||
+      notif.type === 'booking_removed' ||
       // The reminder carries the booked space's owning association (owner, 2026-10-30). A reminder
       // written before that, or for a link-only / personal space, has none: it keeps the neutral
       // avatar - a data gap in old rows, not a fallback path (logged below).
@@ -248,6 +250,9 @@
     booking_cancelled: m.notif_booking_cancelled_text,
     booking_withdrawn: m.notif_booking_withdrawn_text,
     booking_added: m.notif_booking_added_text,
+    // An edit (owner, 2026-11-02): the booking moved, or the reader was taken off it.
+    booking_changed: m.notif_booking_changed_text,
+    booking_removed: m.notif_booking_removed_text,
   };
   /**
    * An association's Lydia payments became active or were paused (system actor): a whole sentence
@@ -412,6 +417,10 @@
         <CalendarMinus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'booking_added'}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_changed'}
+        <CalendarClock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_removed'}
+        <CalendarMinus size={glyph} strokeWidth={2.75} />
       {:else if isBookingReminder}
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}

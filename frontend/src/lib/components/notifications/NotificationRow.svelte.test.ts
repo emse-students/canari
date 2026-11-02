@@ -235,6 +235,8 @@ describe('NotificationRow sentence', () => {
       ['booking_cancelled', m.notif_booking_cancelled_text()],
       ['booking_withdrawn', m.notif_booking_withdrawn_text()],
       ['booking_added', m.notif_booking_added_text()],
+      ['booking_changed', m.notif_booking_changed_text()],
+      ['booking_removed', m.notif_booking_removed_text()],
     ] as const) {
       const row = renderRow(booking(type, 'Salle de musique'));
       expect(row.textContent).toContain(sentence);

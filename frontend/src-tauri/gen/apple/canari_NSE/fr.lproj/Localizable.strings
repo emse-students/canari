@@ -58,6 +58,10 @@
 "notif.social.booking_withdrawn.body" = "Votre réservation est maintenue";
 "notif.social.booking_added.title" = "%@ vous a inscrit à une réservation";
 "notif.social.booking_added.body" = "Retrouvez-la dans Réservations";
+"notif.social.booking_changed.title" = "%@ a modifié votre réservation";
+"notif.social.booking_changed.body" = "Retrouvez le nouvel horaire dans Réservations";
+"notif.social.booking_removed.title" = "%@ vous a retiré d'une réservation";
+"notif.social.booking_removed.body" = "Vous n'en faites plus partie";
 "notif.social.booking_reminder.title" = "Rappel de réservation";
 "notif.social.booking_reminder.body" = "Votre réservation commence bientôt";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
