@@ -234,13 +234,15 @@ ordinary review.
   D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
   Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
   notification only for the newly reached, and the policy paragraph in the same pull request.
-- **WP-F7 - the register and the privacy policy for follow requests.** Register C5
-  ([register](compliance/register-of-processing.md)): the request, its answer, the followers list,
-  retention (a request until answered or withdrawn; a follow until removed or either account is
-  erased). The privacy policy (`/legal/privacy`, its public face - both change together), the
-  terms (`/legal/cgu`) if they name following, and the D34-D41 tables of
-  [profiles-and-access](profiles-and-access.md). Merges before the stable carrying F1-F4; F5 and F6
-  each amend these texts in their own pull request.
+- **WP-F7 - the register and the privacy policy for follow requests. DONE 2026-11-02.** The text
+  rode with the code: register C5 and the `/legal/privacy` paragraphs (follows, member reposts,
+  retention table) arrived in the F5 and F6 pull requests, and this package re-read them against
+  the code (the `FOLLOW_ASKS_PER_DAY` cap of 50, the notice row kept until an erasure, the refusal
+  and withdrawal deletes, the F6 consent default ON, the erasure deletes of `member_reposts` and
+  `user_repost_settings`) and found them exact. The terms (`/legal/cgu`) name followers only for
+  lives and need nothing; the D37-D41 table of
+  [profiles-and-access](profiles-and-access.md#d37-d41---what-each-surface-shows) was the one stale
+  line, now corrected.
 
 ### Risks, and what proves each away
 
