@@ -1180,7 +1180,7 @@ needs `findMessage` to succeed, so it repairs only a row the receiver already sh
 | `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
 | `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
 | `conversation_read` | **either role** | reading happens in whichever tab is showing the conversation - see below |
-| `read_state`, `unread_counts` | the **leader** only | read marks and salon counts it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
+| `read_state`, `unread_counts` | the **leader** only | one moved read mark, or salon counts with the leader's own mark, that it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
 
 The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
 cannot speak for what the leader has read, and has nothing to say about it either, since an own
@@ -4289,7 +4289,7 @@ was not up, and every one of these paths is decided in the client.
 
 **The list badge and the open thread** read two things: `unreadCount` (list, nav dot, title,
 favicon) and the reader's own watermark (the thread's divider and scroll-button count). Every path
-above moves both together through `withOwnReadAdvanced` / `withRelayedReadState`; the half-failure
+above moves both together through `withOwnReadAdvanced`; the half-failure
 was the one that moved only the first.
 
 **What changed.** Each missing event, named and added - no polling, no reload on focus:
@@ -4298,18 +4298,37 @@ was the one that moved only the first.
   `canari:foreground` event the activity already dispatches; the receipt effect reads it, so the
   transition itself re-runs the effect. Same guard, same door: nothing is marked that is not on
   screen ([read-receipt-privacy](../../read-receipt-privacy.md), door 1, unchanged).
-- `read_state` on the tab channel (leader-gated): the leader publishes a conversation's two mark
-  maps whenever a RECEIVED event moved them (`read_watermark`, `channel.read`, a bundle's restated
-  marks); a follower merges them by `max` and its own count follows (`withRelayedReadState`).
-- `unread_counts` on the tab channel (leader-gated): the salon counts a server answer moved;
-  a follower applies them except to the salon it is reading.
+- `read_state` on the tab channel (leader-gated): the leader publishes ONE moved mark
+  `{userId, at, clock}` whenever a RECEIVED event moved it (`read_watermark`, `channel.read`, each
+  entry a bundle restated); a follower merges it by `max`, and recounts its badge only when the mark
+  is its own (`withOwnReadAdvanced`) - a peer's moves the receipt and nothing else.
+- `unread_counts` on the tab channel (leader-gated): the salon counts a server answer moved, each
+  with the leader's OWN mark of that salon when it applied it. A follower skips the salon it is
+  reading and any whose own mark is newer than the leader's - it read that salon after the answer
+  was counted. Values that are not counts are refused and said.
 - `conversation_read` carries the reading tab's `mark`; the receiver advances its own watermark with
-  it. A selection still carries none and only zeroes the badge, as before.
+  it. A selection still carries none and only zeroes the badge, as before. **For a salon it also
+  stamps the receiver's counts** (`noteSalonOpened`, `noteSalonMarkFromAnotherTab`): a counts request
+  the receiver had on the wire was counted before that read, so its answer neither applies to that
+  salon nor is joined by a later caller - otherwise a leader re-raised a salon a follower had just
+  read and relayed the stale count back (review of #2937; the re-raise is older than the relay).
+- Every conversation event of the tab channel is STAMPED with the publishing tab's account and the
+  receiver drops a mismatch first (`tabEventIsAddressedHere`): the channel and the leader lock are
+  per browser, and a `conversation_read` from a tab of another account would otherwise advance this
+  account's watermark. The lock stays global: an origin holds ONE refresh credential, so two accounts
+  never hold live sessions side by side ([sessions](../../sessions.md#a-token-that-names-another-account-than-the-local-identity-is-refused-2026-10-10)),
+  and the stamp covers the moments between a second sign-in and the first tab learning of it.
 - `conversationBeingRead` (`arrivalRuntime.ts`): both callers of the server count hand it the salon
   being READ, never the bare selection.
 
-All three tab events carry one entry per participant or per moved salon, never per message, so the
-cost does not grow with a conversation's length or the list's.
+**The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
+server answer that moved a count (one entry per moved salon). Neither grows with a conversation's
+length or the list's; a group of N members costs one event per member who reads.
+
+The router is ONE function (`routeTabReadEvent`, `tabReadRelay.ts`) that `ChatBackgroundService`
+calls once, after the account gate: a leader applies `conversation_read` and ignores the two events
+only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutation-checked),
+`arrivalRuntime.beingRead.test.ts` (both halves, in a document), `tabReadRelay.wiring.test.ts`.
 
 **Not changed, recorded.** On iOS `arrivalContextNow` asks `isAppInForeground()` alone, which is
 always `true` there, so a frame the JS processes in the seconds before suspension counts as read on

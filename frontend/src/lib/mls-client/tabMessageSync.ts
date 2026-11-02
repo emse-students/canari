@@ -1,12 +1,14 @@
-import type { ChatMessage, ReadWatermarks } from '$lib/types';
+import type { ChatMessage } from '$lib/types';
 import type { ReadClock } from '$lib/utils/chat/readState';
+import { currentUserId } from '$lib/stores/userState.svelte';
 import type { UnsentReason } from '$lib/db/types';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
 
 const TAB_MESSAGES_CHANNEL = 'canari-tab-messages';
 
-export type TabMessageEvent =
+/** What a tab says about a conversation; {@link TabMessageEvent} is it stamped with its account. */
+export type TabMessageBody =
   | {
       type: 'message_added';
       conversationId: string;
@@ -71,27 +73,40 @@ export type TabMessageEvent =
       mark?: { at: number; clock: ReadClock };
     }
   /**
-   * The read state of a conversation, as the LEADER holds it after a received event moved it: a
-   * peer's receipt, this account's read on another device (`read_watermark`, `channel.read`), or the
-   * read state a history bundle restated. Leader-gated like `message_added`: only the leader has a
-   * socket, so without this a follower tab never learned either fact and kept its badge, and drew no
-   * "Vu", until it was reloaded. Both maps whole - one entry per participant - merged by `max`.
+   * ONE read mark the LEADER just moved on a received event: a peer's receipt, this account's read
+   * on another device (`read_watermark`, `channel.read`), or one restated by a history bundle.
+   * Leader-gated like `message_added`: only the leader has a socket, so without this a follower tab
+   * never learned either fact and kept its badge, and drew no "Vu", until it was reloaded. Only the
+   * entry that moved travels; a follower recounts its badge only when the entry is its own.
    */
   | {
       type: 'read_state';
       conversationId: string;
-      readWatermarks?: ReadWatermarks;
-      serverReadWatermarks?: ReadWatermarks;
+      userId: string;
+      at: number;
+      clock: ReadClock;
     }
   /**
    * Salon counts the LEADER just took from the server (`unread-counts`: a socket that came back, a
-   * community cleared on another device), the keys that moved and nothing else. The follower's copy
-   * of the count is otherwise only ever the leader's at the last arrival.
+   * community cleared on another device), the keys that moved and nothing else. Each carries the
+   * leader's OWN read mark of that salon at the moment it applied the count: a follower whose own
+   * mark is newer read that salon after the answer was counted, and keeps its own count.
    */
   | {
       type: 'unread_counts';
-      counts: Record<string, number>;
+      counts: Record<string, { count: number; mark: number }>;
     };
+
+/**
+ * A tab event as it travels: stamped with the account of the tab that published it. The channel and
+ * the leader lock are per BROWSER, not per account, so a tab signed into another account hears the
+ * same channel; a receiver drops every event its own account did not publish
+ * (`tabReadRelay.routeTabReadEvent`), once, before anything reads it.
+ */
+export type TabMessageEvent = TabMessageBody & {
+  /** The publishing tab's account (`currentUserId()`), stamped by {@link post}. */
+  account?: string;
+};
 
 const MESSAGE_EVENT_TYPES = new Set<string>([
   'message_added',
@@ -143,10 +158,21 @@ function ensureChannel(): BroadcastChannel | null {
   return messageChannel;
 }
 
+/**
+ * THE ONE WAY A CONVERSATION EVENT LEAVES THIS TAB: stamped with this tab's account, so a tab of
+ * another account in the same browser can tell it is not addressed to it (see {@link TabMessageEvent}).
+ */
+function post(event: TabMessageBody): void {
+  ensureChannel()?.postMessage({
+    ...event,
+    account: currentUserId() ?? '',
+  } satisfies TabMessageEvent);
+}
+
 /** Publishes a conversation update from the leader tab to follower tabs. */
-export function publishTabMessageUpdate(event: TabMessageEvent): void {
+export function publishTabMessageUpdate(event: TabMessageBody): void {
   if (!getIsTabLeader()) return;
-  ensureChannel()?.postMessage(event);
+  post(event);
 }
 
 /**
@@ -159,9 +185,9 @@ export function publishTabMessageUpdate(event: TabMessageEvent): void {
  * the receivers to deduplicate. The role is read here rather than at the call site so that the
  * reason lives next to the rule.
  */
-export function publishComposedMessage(event: TabMessageEvent & { type: 'own_message_composed' }) {
+export function publishComposedMessage(event: TabMessageBody & { type: 'own_message_composed' }) {
   if (getIsTabLeader()) return;
-  ensureChannel()?.postMessage(event);
+  post(event);
 }
 
 /**
@@ -176,32 +202,29 @@ export function publishConversationRead(
   readAt: number,
   mark?: { at: number; clock: ReadClock }
 ): void {
-  ensureChannel()?.postMessage({
+  post({
     type: 'conversation_read',
     conversationId,
     readAt,
     ...(mark ? { mark } : {}),
-  } satisfies TabMessageEvent);
+  });
 }
 
 /**
- * From the leader tab: the read state of `conversationId` after a RECEIVED event moved it (see
+ * From the leader tab: `userId`'s mark in `conversationId` moved to `at` on a RECEIVED event (see
  * `read_state`). Leader-gated, a no-op in a follower: a follower receives no such event.
  */
 export function publishReadState(
   conversationId: string,
-  convo: { readWatermarks?: ReadWatermarks; serverReadWatermarks?: ReadWatermarks }
+  userId: string,
+  at: number,
+  clock: ReadClock
 ): void {
-  publishTabMessageUpdate({
-    type: 'read_state',
-    conversationId,
-    ...(convo.readWatermarks ? { readWatermarks: convo.readWatermarks } : {}),
-    ...(convo.serverReadWatermarks ? { serverReadWatermarks: convo.serverReadWatermarks } : {}),
-  });
+  publishTabMessageUpdate({ type: 'read_state', conversationId, userId, at, clock });
 }
 
 /** From the leader tab: the salon counts a server answer just moved (see `unread_counts`). */
-export function publishUnreadCounts(counts: Record<string, number>): void {
+export function publishUnreadCounts(counts: Record<string, { count: number; mark: number }>): void {
   if (Object.keys(counts).length === 0) return;
   publishTabMessageUpdate({ type: 'unread_counts', counts });
 }

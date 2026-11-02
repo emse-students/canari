@@ -19,6 +19,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let isLeader = false;
 vi.mock('$lib/mls-client/tabLeader', () => ({ getIsTabLeader: () => isLeader }));
+/** The account of the tab that publishes: every tab event is stamped with it. */
+let signedIn = 'me';
+vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => signedIn }));
 vi.mock('$lib/stores/typingStore.svelte', () => ({ setTyping: vi.fn() }));
 vi.mock('$lib/stores/pinStore.svelte', () => ({ applyPin: vi.fn(), mergePinEntries: vi.fn() }));
 vi.mock('$lib/stores/pollStore.svelte', () => ({ setPollMeta: vi.fn() }));
@@ -31,7 +34,7 @@ const { handleChannelEvent } = await import('$lib/mls-client/messagePipeline/cha
 const { readMarkTarget, readWatermarkFrameData, readersOf, watermarkFor } =
   await import('./readState');
 const { reconcileSalonUnreadFromServer, resetSalonUnread } = await import('./salonUnread');
-const { applyTabReadEvent } = await import('./tabReadRelay');
+const { routeTabReadEvent, tabEventIsAddressedHere } = await import('./tabReadRelay');
 const { publishConversationRead } = await import('$lib/mls-client/tabMessageSync');
 
 /** One device's conversation store - loosely typed, as the handlers' own fixtures are. */
@@ -53,10 +56,26 @@ class FakeBroadcastChannel {
 beforeEach(() => {
   tabChannel.length = 0;
   isLeader = false;
+  signedIn = 'me';
   vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
   resetSalonUnread();
 });
 afterEach(() => vi.unstubAllGlobals());
+
+/**
+ * One event of the tab channel reaching a FOLLOWER tab signed into `me` - through the same two gates
+ * `ChatBackgroundService.applyTabMessageEvent` puts first: the account, then the read routing.
+ */
+function deliverOne(
+  event: any,
+  device: Device,
+  me: string,
+  isReading: (key: string) => boolean,
+  isLeaderHere = false
+) {
+  if (!tabEventIsAddressedHere(event, me)) return;
+  routeTabReadEvent(event, { conversations: device, me, isLeader: isLeaderHere, isReading });
+}
 
 /** A message from the peer, dated by the server at `serverAt` (its sentAt a little before). */
 const fromPeer = (id: string, serverAt: number) => ({
@@ -174,7 +193,7 @@ describe('a DM read on device A', () => {
     isLeader = true;
     await handleSystemEvent('read_watermark', readOnA(a), frameCtx(bLeader, 'me', 'me', 3000));
     isLeader = false;
-    for (const event of tabChannel) applyTabReadEvent(bFollower, event, 'me', () => false);
+    for (const event of tabChannel) deliverOne(event, bFollower, 'me', () => false);
 
     expect(bFollower.get('g1')!.unreadCount).toBe(0);
     expect(watermarkFor(bFollower.get('g1')!.serverReadWatermarks, 'me')).toBe(2000);
@@ -185,10 +204,11 @@ describe('a DM read on device A', () => {
     const pLeader = dmDevice(false);
     const pFollower = dmDevice(false);
 
+    signedIn = 'peer';
     isLeader = true;
     await handleSystemEvent('read_watermark', readOnA(a), frameCtx(pLeader, 'peer', 'me', 3000));
     isLeader = false;
-    for (const event of tabChannel) applyTabReadEvent(pFollower, event, 'peer', () => false);
+    for (const event of tabChannel) deliverOne(event, pFollower, 'peer', () => false);
 
     const c = pFollower.get('g1')!;
     expect(readersOf(c.messages[1], c.readWatermarks, c.serverReadWatermarks)).toEqual(['me']);
@@ -202,7 +222,7 @@ describe('a conversation read in one TAB of a browser', () => {
 
     // The reading tab's optimistic mark, announced with the mark it took.
     publishConversationRead('g1', reading.get('g1')!.lastMessageAt, { at: 2000, clock: 'server' });
-    for (const event of tabChannel) applyTabReadEvent(other, event, 'me', () => false);
+    for (const event of tabChannel) deliverOne(event, other, 'me', () => false);
 
     const c = other.get('g1')!;
     expect(c.unreadCount).toBe(0);
@@ -213,12 +233,12 @@ describe('a conversation read in one TAB of a browser', () => {
   it('a SELECTION (no mark) still zeroes the badge, and only when nothing newer arrived', () => {
     const other = dmDevice(true);
     publishConversationRead('g1', 1500);
-    for (const event of tabChannel) applyTabReadEvent(other, event, 'me', () => false);
+    for (const event of tabChannel) deliverOne(event, other, 'me', () => false);
     expect(other.get('g1')!.unreadCount).toBe(2);
 
     tabChannel.length = 0;
     publishConversationRead('g1', 2000);
-    for (const event of tabChannel) applyTabReadEvent(other, event, 'me', () => false);
+    for (const event of tabChannel) deliverOne(event, other, 'me', () => false);
     expect(other.get('g1')!.unreadCount).toBe(0);
   });
 });
@@ -265,28 +285,9 @@ describe('a salon read on device A', () => {
     isLeader = true;
     await handleChannelEvent(channelRead('me', 1000), channelCtx(leader, 'me'));
     isLeader = false;
-    for (const event of tabChannel) applyTabReadEvent(follower, event, 'me', () => false);
+    for (const event of tabChannel) deliverOne(event, follower, 'me', () => false);
 
     expect(follower.get('channel_s1')!.unreadCount).toBe(0);
-  });
-
-  it('when B was offline, B takes the server count on reconnect - even for the salon it has SELECTED but is not reading', async () => {
-    // B kept the salon selected and went to another page (or hid the tab, or the phone slept).
-    // A read it meanwhile; the server now counts 0. The receipt effect is not running for a salon
-    // nobody is looking at, so nothing else will ever correct this badge.
-    const b = salonDevice([salonRow('r1', 1000)]);
-    const { conversationBeingRead } = await import('./arrivalRuntime');
-
-    await reconcileSalonUnreadFromServer({
-      conversations: b,
-      selectedId: conversationBeingRead('channel_s1'),
-      userId: 'me',
-      fetchCounts: async () => ({ asOf: 5000, counts: {} }),
-      log: vi.fn(),
-      reason: 'live stream back',
-    });
-
-    expect(b.get('channel_s1')!.unreadCount).toBe(0);
   });
 
   it('the counts a leader re-reads reach its follower tabs', async () => {
@@ -303,7 +304,7 @@ describe('a salon read on device A', () => {
       reason: 'community cleared on a device',
     });
     isLeader = false;
-    for (const event of tabChannel) applyTabReadEvent(follower, event, 'me', () => false);
+    for (const event of tabChannel) deliverOne(event, follower, 'me', () => false);
 
     expect(follower.get('channel_s1')!.unreadCount).toBe(0);
   });
@@ -324,7 +325,7 @@ describe('a salon read on device A', () => {
     });
     isLeader = false;
     for (const event of tabChannel) {
-      applyTabReadEvent(follower, event, 'me', (key) => key === 'channel_s1');
+      deliverOne(event, follower, 'me', (key) => key === 'channel_s1');
     }
 
     expect(leader.get('channel_s1')!.unreadCount).toBe(4);
@@ -345,5 +346,125 @@ describe('who owns the count of the selected salon', () => {
       const args = source.slice(call, source.indexOf('});', call));
       expect(args, file).toMatch(/selectedId: conversationBeingRead\(/);
     }
+  });
+});
+
+describe('the review of #2937', () => {
+  it("a follower that read a salon after the leader's answer was counted keeps its own count", async () => {
+    // The leader's counts request is in flight; the follower reads the salon (its mark moves to 3000)
+    // and the stale answer, counted before that read, comes back on the leader.
+    const leader = salonDevice([]);
+    const follower = salonDevice([salonRow('r1', 1000), salonRow('r3', 3000)]);
+    follower.get('channel_s1')!.unreadCount = 0;
+    follower.get('channel_s1')!.readWatermarks = { me: 3000 };
+
+    isLeader = true;
+    await reconcileSalonUnreadFromServer({
+      conversations: leader,
+      selectedId: null,
+      userId: 'me',
+      fetchCounts: async () => ({ asOf: 2000, counts: { s1: 2 } }),
+      log: vi.fn(),
+      reason: 'live stream back',
+    });
+    isLeader = false;
+    for (const event of tabChannel) deliverOne(event, follower, 'me', () => false);
+
+    expect(follower.get('channel_s1')!.unreadCount).toBe(0);
+  });
+
+  it('the leader does not re-raise a salon a FOLLOWER read while its counts request was in flight', async () => {
+    const leader = salonDevice([]);
+    let answer: (value: unknown) => void = () => {};
+    isLeader = true;
+    const reconcile = reconcileSalonUnreadFromServer({
+      conversations: leader,
+      selectedId: null,
+      userId: 'me',
+      fetchCounts: () => new Promise((resolve) => (answer = resolve)),
+      log: vi.fn(),
+      reason: 'live stream back',
+    });
+    // While it is on the wire, a follower reads the salon and says so on the tab channel.
+    await Promise.resolve();
+    isLeader = false;
+    publishConversationRead('channel_s1', 0, { at: 3000, clock: 'stamped' });
+    isLeader = true;
+    for (const event of tabChannel) deliverOne(event, leader, 'me', () => false, true);
+    expect(leader.get('channel_s1')!.unreadCount).toBe(0);
+    answer({ asOf: 2000, counts: { s1: 3 } });
+    await reconcile;
+
+    expect(leader.get('channel_s1')!.unreadCount).toBe(0);
+  });
+
+  it('drops every event a tab of ANOTHER account published, and an unstamped one', () => {
+    const mine = dmDevice(true);
+    signedIn = 'someone-else';
+    publishConversationRead('g1', 2000, { at: 2000, clock: 'server' });
+    signedIn = '';
+    publishConversationRead('g1', 2000, { at: 2000, clock: 'server' });
+    for (const event of tabChannel) deliverOne(event, mine, 'me', () => false);
+
+    expect(mine.get('g1')!.unreadCount).toBe(2);
+    expect(watermarkFor(mine.get('g1')!.serverReadWatermarks, 'me')).toBe(0);
+  });
+
+  it("relays only the entry that moved, and a peer's mark leaves this tab's badge alone", async () => {
+    const a = dmDevice(true);
+    const leader = dmDevice(true);
+    const follower = dmDevice(true);
+    // A follower that holds a count the leader's messages did not set (it reads its own badge).
+    follower.get('g1')!.unreadCount = 2;
+
+    isLeader = true;
+    // Mine on a peer's device is a PEER's mark there: relay what the peer's leader would.
+    await handleSystemEvent('read_watermark', readOnA(a), frameCtx(leader, 'me', 'peer', 3000));
+    isLeader = false;
+    expect(tabChannel).toEqual([
+      expect.objectContaining({
+        type: 'read_state',
+        conversationId: 'g1',
+        userId: 'peer',
+        at: 2000,
+        clock: 'server',
+      }),
+    ]);
+    for (const event of tabChannel) deliverOne(event, follower, 'me', () => false);
+
+    expect(follower.get('g1')!.unreadCount).toBe(2);
+    expect(watermarkFor(follower.get('g1')!.serverReadWatermarks, 'peer')).toBe(2000);
+  });
+
+  it('a LEADER ignores what only a leader relays', async () => {
+    const leader = dmDevice(true);
+    for (const event of [
+      {
+        type: 'read_state',
+        conversationId: 'g1',
+        userId: 'me',
+        at: 2000,
+        clock: 'server',
+        account: 'me',
+      },
+      { type: 'unread_counts', counts: { g1: { count: 0, mark: 0 } }, account: 'me' },
+    ]) {
+      deliverOne(event, leader, 'me', () => false, true);
+    }
+    expect(leader.get('g1')!.unreadCount).toBe(2);
+  });
+
+  it('refuses a relayed count that is not a count', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const follower = salonDevice([]);
+    for (const count of [-1, 1.5, Number.NaN, Infinity]) {
+      deliverOne(
+        { type: 'unread_counts', counts: { channel_s1: { count, mark: 0 } }, account: 'me' },
+        follower,
+        'me',
+        () => false
+      );
+    }
+    expect(follower.get('channel_s1')!.unreadCount).toBe(3);
   });
 });

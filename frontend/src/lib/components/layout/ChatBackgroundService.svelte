@@ -105,7 +105,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
-  import { applyTabReadEvent } from '$lib/utils/chat/tabReadRelay';
+  import { routeTabReadEvent, tabEventIsAddressedHere } from '$lib/utils/chat/tabReadRelay';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
@@ -1570,6 +1570,22 @@
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */
   function applyTabMessageEvent(event: import('$lib/mls-client/tabMessageSync').TabMessageEvent) {
+    const me = globalSession.userId || currentUserId() || '';
+    // A tab of ANOTHER account in this browser hears the same channel: dropped here, once.
+    if (!tabEventIsAddressedHere(event, me)) return;
+    // THE READ HALF OF THE CHANNEL, whatever this tab's role: `routeTabReadEvent` applies a read from
+    // any tab, and what the leader relays (marks, salon counts) only in a follower.
+    if (
+      routeTabReadEvent(event, {
+        conversations: globalConvs.conversations,
+        me,
+        isLeader: globalSession.isTabLeader,
+        isReading: (key) => isReadingConversationNow(key, globalConvs.selectedContact),
+      })
+    ) {
+      return;
+    }
+
     // A COMPOSED MESSAGE IS HANDLED BEFORE THE ROLE IS EVEN READ, because it is the one event on
     // this channel a FOLLOWER sends and the LEADER needs. Everything below it is the leader
     // relaying what it alone receives, which a leader must not apply to itself.
@@ -1591,31 +1607,7 @@
       return;
     }
 
-    // A READ IS THE OTHER FACT A FOLLOWER MAY KNOW THAT A LEADER DOES NOT, and the leader must
-    // apply it too: reading happens in whichever tab is open on the conversation, either role.
-    // A reading carries its mark, so a message that arrived in the gap between the read and this
-    // broadcast keeps its unread state instead of being swallowed (`tabReadRelay.ts`).
-    if (event.type === 'conversation_read') {
-      applyTabReadEvent(
-        globalConvs.conversations,
-        event,
-        globalSession.userId || currentUserId() || '',
-        (key) => isReadingConversationNow(key, globalConvs.selectedContact)
-      );
-      return;
-    }
-
     if (globalSession.isTabLeader) return;
-    // The read state and the salon counts the LEADER received: a follower has no socket of its own.
-    if (event.type === 'read_state' || event.type === 'unread_counts') {
-      applyTabReadEvent(
-        globalConvs.conversations,
-        event,
-        globalSession.userId || currentUserId() || '',
-        (key) => isReadingConversationNow(key, globalConvs.selectedContact)
-      );
-      return;
-    }
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;
     // The leader counted this arrival against ITS selection. A follower tab that has the
