@@ -397,7 +397,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     if (next !== convo) {
       conversations.set(key, next);
       // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).
-      publishReadState(key, next);
+      publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
     }
     return;
   }

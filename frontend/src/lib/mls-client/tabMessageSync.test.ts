@@ -7,6 +7,8 @@ let isLeader = false;
 vi.mock('$lib/mls-client/tabLeader', () => ({
   getIsTabLeader: () => isLeader,
 }));
+// Every conversation event is stamped with the publishing tab's account.
+vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => 'me' }));
 
 import {
   publishComposedMessage,
@@ -20,12 +22,16 @@ import {
 
 /** Every `BroadcastChannel` this module opens, so a test can read what was posted. */
 const posted: unknown[] = [];
+/** The account stamp of each posted event, kept apart so the assertions below read the event. */
+const accounts: unknown[] = [];
 const listeners: ((ev: MessageEvent) => void)[] = [];
 
 class FakeBroadcastChannel {
   constructor(readonly name: string) {}
-  postMessage(data: unknown) {
-    posted.push(data);
+  postMessage(data: Record<string, unknown>) {
+    const { account, ...event } = data;
+    accounts.push(account);
+    posted.push(event);
   }
   addEventListener(_type: string, fn: (ev: MessageEvent) => void) {
     listeners.push(fn);
@@ -63,6 +69,7 @@ const relayed = {
 
 beforeEach(() => {
   posted.length = 0;
+  accounts.length = 0;
   listeners.length = 0;
   isLeader = false;
   vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
@@ -156,26 +163,41 @@ describe('tabMessageSync - who may speak, and about what', () => {
 });
 
 describe('tabMessageSync - the read state a leader received', () => {
-  it('is relayed by the leader only, both maps whole', () => {
-    const convo = { readWatermarks: { peer: 10 }, serverReadWatermarks: { me: 20 } };
-    publishReadState('g1', convo);
-    publishUnreadCounts({ channel_s1: 2 });
+  it('is relayed by the leader only, one moved entry at a time', () => {
+    publishReadState('g1', 'peer', 10, 'server');
+    publishUnreadCounts({ channel_s1: { count: 2, mark: 5 } });
     expect(posted).toEqual([]);
 
     isLeader = true;
-    publishReadState('g1', convo);
-    publishUnreadCounts({ channel_s1: 2 });
+    publishReadState('g1', 'peer', 10, 'server');
+    publishUnreadCounts({ channel_s1: { count: 2, mark: 5 } });
     publishUnreadCounts({});
     expect(posted).toEqual([
-      { type: 'read_state', conversationId: 'g1', ...convo },
-      { type: 'unread_counts', counts: { channel_s1: 2 } },
+      { type: 'read_state', conversationId: 'g1', userId: 'peer', at: 10, clock: 'server' },
+      { type: 'unread_counts', counts: { channel_s1: { count: 2, mark: 5 } } },
     ]);
+  });
+
+  it('stamps every conversation event with the account of the tab that published it', () => {
+    isLeader = true;
+    publishTabMessageUpdate(relayed);
+    publishReadState('g1', 'peer', 10, 'server');
+    publishConversationRead('g1', 100);
+    isLeader = false;
+    publishComposedMessage(composed);
+    expect(accounts).toEqual(['me', 'me', 'me', 'me']);
   });
 
   it('reaches the conversation handler', () => {
     const handler = vi.fn();
     subscribeTabMessageUpdates(handler);
-    const event = { type: 'read_state', conversationId: 'g1', readWatermarks: { peer: 10 } };
+    const event = {
+      type: 'read_state',
+      conversationId: 'g1',
+      userId: 'peer',
+      at: 10,
+      clock: 'server',
+    };
 
     for (const fn of listeners) fn({ data: event } as MessageEvent);
 
