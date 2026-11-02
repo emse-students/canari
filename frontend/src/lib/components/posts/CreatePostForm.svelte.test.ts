@@ -21,6 +21,11 @@ import {
 } from '$lib/posts/postComposerDraft';
 import { cameraOverlayStub } from '../reels/cameraOverlayStub.test-helper';
 
+const toast = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/toast.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/toast.svelte')>()),
+  showToast: toast,
+}));
 vi.mock('$lib/moderation/muteCheck', () => ({ assertNotMuted: () => Promise.resolve() }));
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
 vi.mock('$lib/associations/api', async (orig) => ({
@@ -156,13 +161,17 @@ describe('CreatePostForm - closing keeps the media', () => {
 });
 
 describe('CreatePostForm - the strip of picked files', () => {
-  it('draws "IMG_1" at index 1 and "IMG_" at index 11 as two tiles (their name+index keys collided)', async () => {
+  it('trims a held draft over the cap to ten at restore, through the same rule as a pick', async () => {
+    // Twelve can only arrive from a composer closed before the cap existed: it goes through
+    // `admitAttachments` like every other way in, and the reader is told.
+    holdPostComposerMedia(
+      Array.from({ length: 12 }, (_, i) => new File(['x'], `p${i}`, { type: 'image/png' }))
+    );
     const { target } = await open();
-    for (let i = 0; i < 12; i++) {
-      const name = i === 1 ? 'IMG_1' : i === 11 ? 'IMG_' : `p${i}`;
-      pick(target, new File(['x'], name, { type: 'image/png' }));
-    }
-    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(12);
+    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(10);
+    expect(toast).toHaveBeenCalledWith(
+      m.post_attachments_partial({ taken: 10, leftOut: 2, max: 10 })
+    );
   });
 });
 

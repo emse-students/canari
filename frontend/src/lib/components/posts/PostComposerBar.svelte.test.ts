@@ -14,6 +14,7 @@
 import { it, expect, afterEach, vi } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import PostComposerBar from './PostComposerBar.svelte';
+import { m } from '$lib/paraglide/messages';
 
 // The camera chip mounts the real capture screen: no server for its cap, no lens to open. Both are
 // answered here, or every run prints a refused connection and a missing `getUserMedia`.
@@ -188,4 +189,19 @@ it('draws the "Live" chip only when the composer offers a live, and a tap opens 
   expect(chip.tagName).toBe('BUTTON');
   chip.click();
   expect(onLive).toHaveBeenCalledTimes(1);
+});
+
+it('disables every attach chip at the cap and shows the count', () => {
+  const { target } = mountBar({ attachmentCount: 10 });
+  expect(fileInputs(target).every((i) => i.disabled)).toBe(true);
+  expect(target.querySelector<HTMLButtonElement>('[data-post-camera]')!.disabled).toBe(true);
+  expect(target.querySelector('[data-attachment-counter]')!.textContent).toBe(
+    m.post_attachments_counter({ count: 10, max: 10 })
+  );
+});
+
+it('keeps the attach chips usable below the cap', () => {
+  const { target } = mountBar({ attachmentCount: 9 });
+  expect(fileInputs(target).some((i) => i.disabled)).toBe(false);
+  expect(target.querySelector<HTMLButtonElement>('[data-post-camera]')!.disabled).toBe(false);
 });
