@@ -1,3 +1,4 @@
+import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { chatTargetOfLink } from '$lib/mobile/chatLinkTarget';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { Log } from '$lib/utils/Log';
@@ -24,11 +25,25 @@ import { describeDeepLink } from '$lib/utils/logSanitize';
  * - a chat target's landing was published and has ended (displayed and released, abandoned,
  *   superseded) - read from `notifNav` in {@link resumeOpeningHolds} itself;
  * - a link to anything else navigated - {@link endResumeOpeningOnNavigation};
+ * - a tap on a notification the PAGE raised ({@link PAGE_NOTIFICATION_OPENING}): its landing was
+ *   published and has ended, or the page's tap handler said it routes nowhere -
+ *   {@link endResumeOpeningUnrouted};
  * - the app left the screen again, or the next resume carried no link.
  *
  * The hold only ever WITHHOLDS a mark, so its failure mode is a read marked later, never a read
  * claimed for a conversation nobody saw ([read-receipt-privacy](../../../../../docs/wiki/read-receipt-privacy.md), door 1).
  */
+
+/**
+ * THE OPENING OF A TAP ON A NOTIFICATION THE PAGE RAISED ITSELF (the notification plugin, on iOS).
+ *
+ * The shell knows it is a tap but not on what: the plugin's notification carries no link, and the
+ * page names the conversation when its own `onAction` publishes the landing
+ * (`useNotifications.svelte.ts`). So the hold waits for THAT landing instead of comparing with a
+ * link. On Android the page's notifications are built natively and tap as an ordinary chat link
+ * (`notifyMessageFromWebSocket`), so this marker is iOS's only. The shell sends this exact string.
+ */
+export const PAGE_NOTIFICATION_OPENING = `${MOBILE_APP_PROTOCOL}//page-notification`;
 
 /** What a resume that opens something holds. */
 interface ResumeOpening {
@@ -36,6 +51,10 @@ interface ResumeOpening {
   heldKey: string;
   /** The conversation the link opens, or `null` for a link to anything else (a post, a page). */
   target: string | null;
+  /** A page notification's tap: the target is whatever landing the page publishes for it. */
+  byLanding: boolean;
+  /** `notifNav.pending` at the resume: a landing the tap published before the edge reached the page. */
+  pendingAtOpen: string | null;
   /** `notifNav.landing` at the resume: a later one means the link's landing has been published. */
   landingAtOpen: number;
   /** Whether that landing was ALREADY pending at the resume (the link reached the page first). */
@@ -65,7 +84,8 @@ export function noteResumeOpening(
     opening = null;
     return;
   }
-  const target = chatTargetOfLink(link);
+  const byLanding = link === PAGE_NOTIFICATION_OPENING;
+  const target = byLanding ? null : chatTargetOfLink(link);
   if (target === selected) {
     opening = null;
     Log.d('[RESUME-OPEN] the resume opens the conversation already on screen - nothing held');
@@ -74,6 +94,8 @@ export function noteResumeOpening(
   opening = {
     heldKey: selected,
     target,
+    byLanding,
+    pendingAtOpen: nav.pending,
     landingAtOpen: nav.landing,
     landingAlready: target !== null && nav.pending === target,
   };
@@ -90,6 +112,14 @@ export function noteResumeOpening(
 export function resumeOpeningHolds(key: string, nav: LandingState = notifNav): boolean {
   const o = opening;
   if (!o || key !== o.heldKey) return false;
+  if (o.byLanding) {
+    // Published after the edge: the landing names the target, and only another one holds `key`.
+    if (nav.landing !== o.landingAtOpen) return nav.pending !== null && nav.pending !== key;
+    // Published BEFORE the edge reached the page: that landing is the tap's, while it lasts.
+    if (o.pendingAtOpen !== null && o.pendingAtOpen !== key) return nav.pending === o.pendingAtOpen;
+    // Not published yet: held until the page's tap handler publishes it or says it routes nowhere.
+    return true;
+  }
   if (o.target === null) return true;
   if (nav.pending === o.target) return true;
   // Not pending: either not yet published (hold), or published and since ended (release).
@@ -109,8 +139,19 @@ export function followResumeSelection(selected: string | null | undefined): void
 
 /** A navigation completed: a link to anything but a conversation has been followed. */
 export function endResumeOpeningOnNavigation(): void {
-  if (opening && opening.target === null) {
+  if (opening && opening.target === null && !opening.byLanding) {
     Log.d('[RESUME-OPEN] the link navigated - the hold ends');
+    opening = null;
+  }
+}
+
+/**
+ * The page's tap handler routed a page notification's tap NOWHERE (no identity, a notification this
+ * session did not post): no landing will come, so the conversation on screen is what the reader sees.
+ */
+export function endResumeOpeningUnrouted(why: string): void {
+  if (opening?.byLanding) {
+    Log.d(`[RESUME-OPEN] the tap routes nowhere (${why}) - the hold ends`);
     opening = null;
   }
 }

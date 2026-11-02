@@ -5,6 +5,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import { endResumeOpeningUnrouted } from '$lib/utils/chat/resumeOpening.svelte';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
@@ -165,6 +166,8 @@ export function useNotifications() {
       )(async (action) => {
         const id = action?.notification?.id;
         if (typeof id !== 'number') {
+          // No landing will follow: a resume this tap caused stops holding what it found on screen.
+          endResumeOpeningUnrouted('no notification identity');
           // ANNOUNCED ONCE PER SESSION. The cause is a property of the platform, not of the tap,
           // so repeating it per tap says nothing new and buries what does.
           if (!notifIdentityMissingAnnounced) {
@@ -180,6 +183,7 @@ export function useNotifications() {
         }
         const target = notifTargetsById.get(id);
         if (!target) {
+          endResumeOpeningUnrouted('a notification this session did not post');
           console.warn(`[NOTIF] Tap on notification ${id}, which this session did not post.`);
           return;
         }
