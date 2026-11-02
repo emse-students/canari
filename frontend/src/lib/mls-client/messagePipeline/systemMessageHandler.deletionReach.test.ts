@@ -27,11 +27,10 @@ function makeCtx(rows: Record<string, any>, senderNorm = PEER) {
       const row = store.get(id);
       if (row) store.set(id, { ...row, ...patch });
     }),
-    saveMessageIfAbsent: vi.fn(async (msg: any) => {
-      if (store.has(msg.id)) return false;
-      store.set(msg.id, msg);
-      return true;
-    }),
+    saveMessagesIfAbsent: vi.fn(),
+    putPendingMutation: vi.fn(async () => ({ written: true, evicted: 0 })),
+    getPendingMutations: vi.fn(async () => ({ entries: [], unreadable: 0 })),
+    deletePendingMutations: vi.fn(),
   };
   const ctx = {
     mlsService: {},
@@ -85,56 +84,46 @@ describe('handleSystemEvent - a delete_message whose target is stored but not sh
 
     expect(store.get('m1').isDeleted).toBeUndefined();
     expect(storage.updateMessage).not.toHaveBeenCalled();
-    expect(storage.saveMessageIfAbsent).not.toHaveBeenCalled();
+    expect(storage.putPendingMutation).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Refused a delete'));
   });
 });
 
 describe('handleSystemEvent - a delete_message that arrives before its target', () => {
-  it('KEEPS the deletion as a tombstone under the target id, stored and shown', async () => {
-    const { ctx, store, conversations } = makeCtx({});
+  it('KEEPS it as a pending mutation - never a message row, never shown', async () => {
+    const { ctx, store, storage, conversations } = makeCtx({});
 
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
 
-    const row = store.get('m1');
-    expect(row).toMatchObject({
-      id: 'm1',
-      conversationId: 'g1',
-      senderId: PEER,
-      isDeleted: true,
-      deletedBeforeArrival: true,
-      content: m.chat_system_message_deleted(),
-      serverTimestamp: 5_000,
-    });
-    const shown = conversations.get('g1').messages;
-    expect(shown).toHaveLength(1);
-    expect(shown[0]).toMatchObject({ id: 'm1', isDeleted: true, deletedBeforeArrival: true });
-  });
-
-  it('never writes over a row it could not read - the insert is the store’s to refuse', async () => {
-    const { ctx, storage, conversations } = makeCtx({});
-    // A row that `getMessage` cannot decrypt reads back as null, like an absent one.
-    storage.saveMessageIfAbsent.mockResolvedValueOnce(false);
-
-    await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
-
-    expect(conversations.get('g1').messages).toHaveLength(0);
-    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('left as it is'));
-  });
-});
-
-describe('handleSystemEvent - the conversation row comes before the tombstone that names it', () => {
-  it('saves the conversation first, so a store with a foreign key has a row to name', async () => {
-    // On SQLite a message row names its conversation; a group joined during the very drain that
-    // carries the deletion may not have reached the store yet.
-    const { ctx, storage } = makeCtx({});
-
-    await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
-
-    expect(ctx.saveConversation).toHaveBeenCalledWith('g1');
-    expect(ctx.saveConversation.mock.invocationCallOrder[0]).toBeLessThan(
-      storage.saveMessageIfAbsent.mock.invocationCallOrder[0]
+    expect(storage.putPendingMutation).toHaveBeenCalledWith(
+      {
+        conversationId: 'g1',
+        messageId: 'm1',
+        sender: PEER,
+        kind: 'delete',
+        slot: '',
+        rank: 0,
+        at: 5_000,
+      },
+      expect.any(Number),
+      'device-key'
     );
+    expect(store.size).toBe(0);
+    expect(storage.saveMessagesIfAbsent).not.toHaveBeenCalled();
+    expect(conversations.get('g1').messages).toHaveLength(0);
+  });
+
+  it('keeps nothing from a frame with no server time, and says so at error', async () => {
+    const { ctx, storage } = makeCtx({});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, {
+      ...ctx,
+      deliveryMeta: {},
+    } as any);
+
+    expect(storage.putPendingMutation).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no server time'));
   });
 
   it('leaves a row this device cannot open alone, even absent from memory', async () => {
@@ -147,7 +136,7 @@ describe('handleSystemEvent - the conversation row comes before the tombstone th
 
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
 
-    expect(storage.saveMessageIfAbsent).not.toHaveBeenCalled();
+    expect(storage.putPendingMutation).not.toHaveBeenCalled();
     expect(storage.updateMessage).not.toHaveBeenCalled();
   });
 });

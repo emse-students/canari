@@ -1336,17 +1336,20 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     it('seals a reaction arriving after the key changed under the NEW key', async () => {
       let currentKey = 'key-before-pin-change';
       const updateMessage = vi.fn().mockResolvedValue(undefined);
+      const target = { id: 'm-target', senderId: 'user-a', content: 'hi' } as any;
       const conversations = createTestConversations([
-        [
-          groupId,
-          emptyConversation(groupId, {
-            messages: [{ id: 'm-target', senderId: 'user-a', content: 'hi' } as any],
-          }),
-        ],
+        [groupId, emptyConversation(groupId, { messages: [target] })],
       ]);
       const deps = baseDeps({
         conversations,
-        storage: { updateMessage },
+        // Shown AND stored: a reaction is written at rest only to a row that stands there.
+        storage: {
+          updateMessage,
+          getMessagesByIds: vi.fn(async () => ({
+            rows: new Map([['m-target', target]]),
+            unreadable: new Set(),
+          })),
+        },
         deviceKey: () => currentKey,
       });
       const mls = deps.mlsService as any;

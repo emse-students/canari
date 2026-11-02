@@ -44,6 +44,11 @@ import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
+import {
+  keepPendingMutation,
+  settlePendingFor,
+  type PendingMutationDeps,
+} from './pendingMutationStore';
 
 /**
  * The newest time THE SERVER stamped on a page of its history log (`timestamp` is the `receivedAt`
@@ -594,22 +599,8 @@ export function replayedStoredRow(
   if (prev && !prev.restoredUnverified && pm.restoredUnverified) {
     return provenRowUnderMarkedCopy(prev, pm);
   }
-  // A tombstone written before its target arrived (`deletedBeforeArrival`) names the DELETER, whose
-  // claim is checked now that the body is here: the author's own deletion holds and the row is built
-  // from the body's sender and time; anybody else's is dropped, and the body is written whole.
-  const unauthorisedEarlyDeletion =
-    prev?.deletedBeforeArrival === true &&
-    canonicalUserId(prev.senderId) !== canonicalUserId(pm.senderId);
-  if (unauthorisedEarlyDeletion) {
-    console.error(
-      `[HISTORY_REPLAY] ${at8(at.id)}: a deletion that arrived before it was claimed by ${prev.senderId.slice(0, 8)}, not its author - the message replaces the tombstone`
-    );
-  }
   const base =
-    unauthorisedEarlyDeletion ||
-    (prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted)
-      ? undefined
-      : prev;
+    prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted ? undefined : prev;
   const deleted = base?.isDeleted === true || pm.isDeleted === true;
   const edited = base?.isEdited === true || pm.isEdited === true;
   const authorship = pm.authorship ?? base?.authorship;
@@ -886,6 +877,18 @@ export async function replayConversationHistory(params: {
      */
     let evictedFramesSkipped = 0;
     const myDeviceId = mlsService.getDeviceId();
+    // The store of mutations that came before their message, reached through this replay's own
+    // accessors: the conversation is filed under `contactName` in memory and under `id` at rest.
+    const pendingDeps: PendingMutationDeps = {
+      storage,
+      deviceKey,
+      conversations: {
+        get: () => getConversation(contactName),
+        set: (_key, next) => setConversation(contactName, next),
+      },
+      messageReactions,
+      log,
+    };
 
     // Collect reaction mutations so we can persist them to DB in one pass after
     // the main message batch write (reactions reference messages from previous
@@ -1206,6 +1209,27 @@ export async function replayConversationHistory(params: {
             const senderNorm = canonicalUserId(msg.sender_id);
             const reactions = messageReactions.get(messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
+            const shown = getConversation(contactName)?.messages.some((m) => m.id === messageId);
+            if (messageId && emoji && !shown) {
+              // Not shown: stored, buffered in this page, or not here yet - the store settles all
+              // three, and a reaction on a message this replay never writes is no longer lost.
+              await keepPendingMutation(
+                pendingDeps,
+                {
+                  conversationId: id,
+                  messageId,
+                  sender: senderNorm,
+                  kind: 'reaction',
+                  slot: emoji,
+                  rank: Number(parsed.reaction.at ?? 0),
+                  ...(parsed.reaction.removed === true ? { removed: true } : {}),
+                  ...(authorship ? { proof: authorship } : {}),
+                },
+                parseServerTimestampMs(msg.timestamp)
+              );
+              mlsUpdated = true;
+              continue;
+            }
             // Replay applies both legs: the frame carries `removed`, and the merge is ordered by
             // `at` rather than by the position the entry happens to hold in the stream.
             const updated = applyReaction(
@@ -1242,6 +1266,8 @@ export async function replayConversationHistory(params: {
               serverReadWatermarkUpdates,
               historyFloorUpdate,
               pushPendingMessage,
+              keepPending: (entry) =>
+                keepPendingMutation(pendingDeps, entry, parseServerTimestampMs(msg.timestamp)),
               dropOwnExcluded: (messages) =>
                 dropOwnExcludedMessages(id, userId, messages, { mlsService, log }),
             });
@@ -1454,7 +1480,20 @@ export async function replayConversationHistory(params: {
           userId,
         });
       });
-      await storage.saveMessages(toStore, deviceKey());
+      // A row this replay did not read is written only where none stands: the live drain may have
+      // written the id since the read above, and its row is at least as current as this one.
+      const known = toStore.filter((row) => existingById.has(row.id));
+      if (known.length > 0) await storage.saveMessages(known, deviceKey());
+      await storage.saveMessagesIfAbsent(
+        toStore.filter((row) => !existingById.has(row.id)),
+        deviceKey()
+      );
+      // What reached this device before these messages lands with them now.
+      await settlePendingFor(
+        pendingDeps,
+        id,
+        toStore.map((row) => row.id)
+      );
       // Memory takes what storage now holds for a row it shows unverified, in the same pass.
       const convoForProven = getConversation(contactName);
       const provenMessages =

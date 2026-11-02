@@ -23,8 +23,15 @@ import type {
   StoredMessage,
   StoredMessagePatch,
   StoredRowsById,
+  PendingMutation,
+  PendingMutationWrite,
 } from './types';
 import { FeedPageUnreadableError } from './types';
+import {
+  joinPendingMutation,
+  pendingMutationKey,
+  splitPendingMutation,
+} from './pendingMutationCodec';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -72,7 +79,13 @@ import {
 // ---------------------------------------------------------------------------
 
 /** The schema version `init` opens; every branch of its upgrade handler is written against it. */
-const IDB_SCHEMA_VERSION = 12;
+const IDB_SCHEMA_VERSION = 13;
+
+/** The store of mutations whose message is not here yet (`PendingMutation`), since v13. */
+const PENDING_MUTATIONS = 'pendingMutations';
+
+/** Its eviction order: one conversation's entries, oldest frame first, ties by primary key. */
+const PENDING_BY_CONVERSATION_AT = 'byConversationAt';
 
 /**
  * The messages index pages were read from until v12: `[conversationId, timestamp]`, so one
@@ -415,6 +428,7 @@ export class IndexedDbStorage implements IStorage {
       // Version 9: adds the `distributionGroups` store (which held groups carry Graine seeds).
       // Version 10: adds the `feedPages` store (the feed's stored first pages, sealed).
       // Version 11: adds the `byConversationTime` index on messages ([conversationId, timestamp]).
+      // Version 13: adds the `pendingMutations` store (mutations whose message is not here yet).
       const request = indexedDB.open(this.dbName, IDB_SCHEMA_VERSION);
 
       request.onerror = () =>
@@ -576,6 +590,20 @@ export class IndexedDbStorage implements IStorage {
               ['conversationId', 'orderPending', 'id'],
               { unique: false }
             );
+          }
+        }
+
+        if (oldVersion < 13) {
+          // Mutations whose message is not here yet (`PendingMutation`). Additive and EMPTY on every
+          // existing database, which is the honest state: a mutation dropped before this store
+          // existed left nothing behind to recover. No message row is touched.
+          if (!db.objectStoreNames.contains(PENDING_MUTATIONS)) {
+            const pending = db.createObjectStore(PENDING_MUTATIONS, {
+              keyPath: ['conversationId', 'messageId', 'sender', 'kind', 'slot'],
+            });
+            pending.createIndex(PENDING_BY_CONVERSATION_AT, ['conversationId', 'at'], {
+              unique: false,
+            });
           }
         }
 
@@ -745,7 +773,7 @@ export class IndexedDbStorage implements IStorage {
   async deleteConversation(id: string): Promise<void> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['conversations', 'messages'], 'readwrite');
+      const tx = db.transaction(['conversations', 'messages', PENDING_MUTATIONS], 'readwrite');
       tx.objectStore('conversations').delete(id);
       this.deleteMessagesInTransaction(tx, id);
       tx.oncomplete = () => resolve();
@@ -757,7 +785,7 @@ export class IndexedDbStorage implements IStorage {
   async deleteMessagesForConversation(conversationId: string): Promise<void> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('messages', 'readwrite');
+      const tx = db.transaction(['messages', PENDING_MUTATIONS], 'readwrite');
       this.deleteMessagesInTransaction(tx, conversationId);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -791,6 +819,8 @@ export class IndexedDbStorage implements IStorage {
         cursor.continue();
       }
     };
+    // The mutations awaiting those messages go with them: nothing is left for them to land on.
+    tx.objectStore(PENDING_MUTATIONS).delete(conversationMutationsRange(conversationId));
   }
 
   // -- Messages ------------------------------------------------------------
@@ -800,33 +830,39 @@ export class IndexedDbStorage implements IStorage {
     return this.saveMessages([msg], deviceKeyB64);
   }
 
-  /** See {@link IStorage.saveMessageIfAbsent}: `add`, which the key constraint refuses on a held id. */
-  async saveMessageIfAbsent(msg: StoredMessage, deviceKeyB64: string): Promise<boolean> {
+  /** See {@link IStorage.saveMessagesIfAbsent}: `add`, which the key constraint refuses on a held id. */
+  async saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>> {
+    const written = new Set<string>();
+    if (msgs.length === 0) return written;
     const db = this.ensureDb();
-    const encrypted = await encryptData(toMessagePayload(msg), deviceKeyB64);
-    const row = {
-      id: msg.id,
-      conversationId: msg.conversationId,
-      timestamp: msg.timestamp,
-      orderAt: storedOrderAt(msg),
-      ...encrypted,
-    };
-    const written = await new Promise<boolean>((resolve, reject) => {
+    // Sealed BEFORE the transaction: it closes on the first await of anything but IndexedDB.
+    const rows = await Promise.all(
+      msgs.map(async (msg) => ({
+        id: msg.id,
+        conversationId: msg.conversationId,
+        timestamp: msg.timestamp,
+        orderAt: storedOrderAt(msg),
+        ...(await encryptData(toMessagePayload(msg), deviceKeyB64)),
+      }))
+    );
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('messages', 'readwrite');
-      const req = tx.objectStore('messages').add(row);
-      let refused = false;
-      req.onerror = (event) => {
-        if (req.error?.name === 'ConstraintError') {
-          // A held id is an answer, not a failure: keep the transaction alive and report it.
-          refused = true;
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      };
-      tx.oncomplete = () => resolve(!refused);
-      tx.onerror = () => reject('saveMessageIfAbsent error: ' + tx.error);
+      const store = tx.objectStore('messages');
+      for (const row of rows) {
+        const req = store.add(row);
+        req.onsuccess = () => written.add(row.id);
+        req.onerror = (event) => {
+          if (req.error?.name === 'ConstraintError') {
+            // A held id is an answer, not a failure: keep the transaction alive and go on.
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        };
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject('saveMessagesIfAbsent error: ' + tx.error);
     });
-    if (written) invalidateHistoryStateKey(msg.conversationId);
+    for (const msg of msgs) if (written.has(msg.id)) invalidateHistoryStateKey(msg.conversationId);
     return written;
   }
 
@@ -984,6 +1020,143 @@ export class IndexedDbStorage implements IStorage {
       }
     }
     return results.sort(compareStoredOrder);
+  }
+
+  /** See {@link IStorage.getMessagesSince}: read on `byConversationTime`, the window only. */
+  async getMessagesSince(
+    conversationId: string,
+    since: number,
+    deviceKeyB64: string
+  ): Promise<StoredMessage[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx
+        .objectStore('messages')
+        .index(MESSAGES_BY_CONVERSATION_TIME)
+        .getAll(IDBKeyRange.bound([conversationId, since], [conversationId, Infinity]));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const results: StoredMessage[] = [];
+    for (const row of rows) {
+      try {
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
+          string,
+          unknown
+        >;
+        results.push(
+          fromMessagePayload(
+            { id: row.id, conversationId: row.conversationId, timestamp: row.timestamp },
+            payload
+          )
+        );
+      } catch {
+        console.warn('Failed to decrypt message', row.id);
+      }
+    }
+    return results.sort(compareStoredOrder);
+  }
+
+  // -- Mutations whose message is not here yet -----------------------------
+
+  /** See {@link IStorage.putPendingMutation}: one transaction - compare, write, evict. */
+  async putPendingMutation(
+    entry: PendingMutation,
+    cap: number,
+    deviceKeyB64: string
+  ): Promise<PendingMutationWrite> {
+    const { clear, sealed } = splitPendingMutation(entry);
+    // Sealed BEFORE the transaction: it closes on the first await of anything but IndexedDB.
+    const row = { ...clear, ...(await encryptData(sealed, deviceKeyB64)) };
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(PENDING_MUTATIONS, 'readwrite');
+      const store = tx.objectStore(PENDING_MUTATIONS);
+      const out: PendingMutationWrite = { written: false, evicted: 0 };
+      const held = store.get(pendingMutationKey(entry));
+      held.onsuccess = () => {
+        // The larger rank wins, the first on a tie - decided here, inside the write's transaction.
+        if (held.result && Number(held.result.rank) >= clear.rank) return;
+        store.put(row);
+        out.written = true;
+        const index = store.index(PENDING_BY_CONVERSATION_AT);
+        const range = IDBKeyRange.bound(
+          [entry.conversationId, -Infinity],
+          [entry.conversationId, Infinity]
+        );
+        const counted = index.count(range);
+        counted.onsuccess = () => {
+          let excess = counted.result - cap;
+          if (excess <= 0) return;
+          const cursorReq = index.openCursor(range);
+          cursorReq.onsuccess = () => {
+            const cursor = cursorReq.result;
+            if (!cursor || excess <= 0) return;
+            cursor.delete();
+            out.evicted++;
+            excess--;
+            cursor.continue();
+          };
+        };
+      };
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  /** See {@link IStorage.getPendingMutations}: the conversation's entries (at most the cap). */
+  async getPendingMutations(
+    conversationId: string,
+    messageIds: readonly string[],
+    deviceKeyB64: string
+  ): Promise<{ entries: PendingMutation[]; unreadable: number }> {
+    const out = { entries: [] as PendingMutation[], unreadable: 0 };
+    const wanted = new Set(messageIds);
+    if (wanted.size === 0) return out;
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction(PENDING_MUTATIONS, 'readonly');
+      const req = tx
+        .objectStore(PENDING_MUTATIONS)
+        .getAll(conversationMutationsRange(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    for (const row of rows) {
+      if (!wanted.has(row.messageId)) continue;
+      try {
+        const sealed = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
+          string,
+          unknown
+        >;
+        const entry = joinPendingMutation(row, sealed);
+        if (entry) out.entries.push(entry);
+        else out.unreadable++;
+      } catch {
+        out.unreadable++;
+      }
+    }
+    return out;
+  }
+
+  /** See {@link IStorage.deletePendingMutations}: each removed only at the rank it was read at. */
+  async deletePendingMutations(entries: readonly PendingMutation[]): Promise<void> {
+    if (entries.length === 0) return;
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(PENDING_MUTATIONS, 'readwrite');
+      const store = tx.objectStore(PENDING_MUTATIONS);
+      for (const entry of entries) {
+        const key = pendingMutationKey(entry);
+        const held = store.get(key);
+        held.onsuccess = () => {
+          if (held.result && Number(held.result.rank) === entry.rank) store.delete(key);
+        };
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
   }
 
   /** Rows held for `conversationId`, counted on the index - nothing is read or decrypted. */
@@ -1950,6 +2123,7 @@ export class IndexedDbStorage implements IStorage {
         'pendingGroupExits',
         'distributionGroups',
         'feedPages',
+        PENDING_MUTATIONS,
       ],
       'readwrite'
     );
@@ -1967,6 +2141,8 @@ export class IndexedDbStorage implements IStorage {
       tx.objectStore('distributionGroups').clear();
       // A copy of the feed is the account's content too; a reset leaves none of it behind.
       tx.objectStore('feedPages').clear();
+      // A mutation waiting for a message of the account goes with the account.
+      tx.objectStore(PENDING_MUTATIONS).clear();
     } catch (e) {
       // A synchronous refusal does NOT abort the transaction: the clears already queued would
       // commit and the reset would be half done. All of it, or none of it.
@@ -1976,4 +2152,10 @@ export class IndexedDbStorage implements IStorage {
     await done;
     await clearOutboxBlobsLast(this.blobs);
   }
+}
+
+/** Every pending mutation of one conversation: the key prefix `[conversationId]`. */
+function conversationMutationsRange(conversationId: string): IDBKeyRange {
+  // An array sorts after every string, so `[id, []]` bounds every key that starts with `id`.
+  return IDBKeyRange.bound([conversationId], [conversationId, []]);
 }

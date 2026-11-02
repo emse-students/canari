@@ -36,6 +36,7 @@ import {
   indexMessagesById,
   isStaleInboundMessage,
   isSystemSender,
+  mapStoredMessagesToChatMessages,
   normalizeMessageId,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
@@ -135,14 +136,17 @@ import {
 import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
-import { takeHeldEdit, type HeldEdit } from '$lib/utils/chat/heldEdits';
-import type { StoredRowsById } from '$lib/db/types';
+import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import type { PendingMutation, StoredRowsById } from '$lib/db/types';
+import { settleAgainstPending, type SettledFields } from '$lib/utils/chat/pendingMutations';
 import {
-  absorbedTombstone,
-  bodyMeetsTombstone,
-  shouldUpgradeMessage,
-  mergeMessageUpgrade,
-} from '$lib/utils/chat/messageMerge';
+  logDiscarded,
+  pendingFor,
+  settledChatMessage,
+  settledStoredPatch,
+  settlePendingFor,
+  type PendingMutationDeps,
+} from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
@@ -217,15 +221,14 @@ function mediaKindFromEnvelope(type: string): number {
   }
 }
 
-/** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 /** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
 type StoredBodyVerdict =
   | { kind: 'new' }
   | { kind: 'unreadable'; id: string }
   | { kind: 'held'; id: string }
-  | { kind: 'absorb'; row: StoredMessage }
   | { kind: 'upgrade'; row: StoredMessage; content: string };
 
+/** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   /**
@@ -980,15 +983,7 @@ export function useMessaging() {
        * jank to avoid, and there IS a write to do that only the live path performs.
        */
       const upgrades = held !== undefined && shouldUpgradeMessage(held, content);
-      // A TOMBSTONE AWAITING THIS BODY is not a duplicate either: the deletion reached this device
-      // first (`deletedBeforeArrival`), and only the live path below settles the two - it adds no
-      // row, so there is nothing for the buffer to batch.
-      const awaited = held !== undefined && bodyMeetsTombstone(held, senderId) !== 'none';
-      if (
-        !upgrades &&
-        !awaited &&
-        (existing.some((m) => m.messageId === id) || held !== undefined)
-      ) {
+      if (!upgrades && (existing.some((m) => m.messageId === id) || held !== undefined)) {
         // A duplicate is ordinary and this is not an accusation - but it is the FIRST of two silent
         // returns on the only path an inbound message can take, and between them they can absorb a
         // message without leaving anything behind. A card that never appeared has to be explainable
@@ -996,7 +991,7 @@ export function useMessaging() {
         console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}`);
         return;
       }
-      if (!upgrades && !awaited) {
+      if (!upgrades) {
         existing.push({
           senderId,
           content,
@@ -1011,14 +1006,12 @@ export function useMessaging() {
       console.log(`[ADD_MSG] Preview upgrade during a bulk ingest id=${id} - taking the live path`);
     }
 
-    const found = ctx.conversations.get(normalized);
-    if (!found) {
+    const convo = ctx.conversations.get(normalized);
+    if (!convo) {
       console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
       bufferOrphan(normalized, senderId, content, contactName, options);
       return;
     }
-    // Reassigned once, when a tombstone the body overrules leaves the thread (`bodyMeetsTombstone`).
-    let convo: Conversation = found;
 
     const isOwn = isOwnMessage(senderId, ctx.userId);
     // ONE BELIEF, ONE DERIVATION - and this is the seam that MATERIALISES the row, so it is derived
@@ -1062,26 +1055,17 @@ export function useMessaging() {
       ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
     };
 
-    // THE DELETION CAME FIRST (`deletedBeforeArrival`): the body is settled against it here, never
-    // added beside it and never written over it unless its author says otherwise.
-    const awaitingTombstone = convo.messages.find((m) => m.id === newMsg.id);
-    const meets = awaitingTombstone ? bodyMeetsTombstone(awaitingTombstone, senderId) : 'none';
-    if (awaitingTombstone && meets === 'absorb') {
-      await absorbBodyIntoTombstone(normalized, awaitingTombstone, newMsg, ctx);
-      return;
-    }
-    if (meets === 'replace') {
-      console.error(
-        `[ADD_MSG] ${newMsg.id.slice(0, 8)}: a deletion that arrived before it was claimed by ${awaitingTombstone?.senderId.slice(0, 8)}, and its author is ${newMsg.senderId.slice(0, 8)} - only an author may delete, the message replaces the tombstone`
-      );
-      convo = { ...convo, messages: convo.messages.filter((m) => m.id !== newMsg.id) };
-    }
-
     const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
     if (dupIdx !== -1) {
       const existing = convo.messages[dupIdx];
       if (shouldUpgradeMessage(existing, content)) {
-        const upgraded = mergeMessageUpgrade(existing, newMsg);
+        // A shown PREVIEW may have met a mutation before it: what is pending lands with the body.
+        const settled = await settleWithPending(
+          ctx,
+          normalized,
+          mergeMessageUpgrade(existing, newMsg)
+        );
+        const upgraded = settled.message;
         const nextMessages = insertMessageOrdered(
           convo.messages.filter((m) => m.id !== newMsg.id),
           upgraded
@@ -1112,12 +1096,15 @@ export function useMessaging() {
                 ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
                 isFcmPreview: false,
                 ...proofFields,
+                ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
               },
               ctx.deviceKeyB64
             );
+            await removeSettled(ctx, settled.consumed);
           } catch (e) {
             console.error('[DB] Failed to upgrade message:', e);
           }
+          await settlePendingFor(pendingDeps(ctx), normalized, [upgraded.id]);
         }
         const updatedConvo = ctx.conversations.get(normalized);
         if (updatedConvo) {
@@ -1141,24 +1128,24 @@ export function useMessaging() {
 
     // NOT SHOWN IS NOT NEW. Memory is a window, so a body it does not show may be a row the store
     // holds - a re-delivery, a bundle restating old history - and writing it would replace that row
-    // whole: its tombstone, its edit, its reactions. The store is asked, by the one id.
-    const persisted = !(options.skipDbSave ?? isChannelConversationId(normalized));
-    if (meets !== 'replace' && persisted && ctx.storage) {
+    // whole: its tombstone, its edit, its reactions. The store is asked, by the one id. An own
+    // message composed here names a fresh id, so nothing can stand or wait under it.
+    const persisted =
+      ctx.storage !== null && !(options.skipDbSave ?? isChannelConversationId(normalized));
+    const arriving = persisted && !options.outboxEntry;
+    let settled: Settled = { message: newMsg, fields: null, consumed: [] };
+    if (arriving) {
       const stored = await storedRowsFor(ctx, [newMsg.id]);
-      const verdict = storedBodyVerdict(stored, newMsg.id, senderId, content);
+      const verdict = storedBodyVerdict(stored, newMsg.id, content);
       if (verdict.kind !== 'new') {
-        await settleStoredBody(verdict, newMsg, ctx);
+        await settleStoredBodies([verdict], normalized, ctx);
         return;
       }
+      // What reached this device before the body - its author's deletion or edit, everyone's
+      // reactions - lands WITH it, so the screen and the store never hold the body without it.
+      settled = await settleWithPending(ctx, normalized, newMsg);
+      Object.assign(newMsg, settled.message);
     }
-    // What reached this device before the body - an edit, reactions - lands with it.
-    const heldMutations = takeHeldMutations(newMsg.id, newMsg.senderId);
-    if (heldMutations.edit) {
-      newMsg.content = applyEditToBody(newMsg.content, heldMutations.edit.text);
-      newMsg.isEdited = true;
-      newMsg.editedAt = new SvelteDate(heldMutations.edit.editedAt);
-    }
-    if (heldMutations.reactions) newMsg.reactions = heldMutations.reactions;
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
@@ -1233,6 +1220,8 @@ export function useMessaging() {
     if (
       !isOwn &&
       !isSystem &&
+      // A message deleted before it arrived says nothing: no tone, no notification.
+      !newMsg.isDeleted &&
       // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
       !isStaleInboundMessage(messageDate(newMsg)) &&
       canSeeArrival(ctx, normalized)
@@ -1245,20 +1234,22 @@ export function useMessaging() {
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
-    notifyInbound(
-      ctx,
-      normalized,
-      convo,
-      senderId,
-      content,
-      mentionsUser(content, ctx.userId),
-      isSystem,
-      isOwn,
-      resolvedTimestamp.getTime(),
-      newMsg.serverTimestamp,
-      1,
-      options.authorProven === true
-    );
+    if (!newMsg.isDeleted) {
+      notifyInbound(
+        ctx,
+        normalized,
+        convo,
+        senderId,
+        content,
+        mentionsUser(content, ctx.userId),
+        isSystem,
+        isOwn,
+        resolvedTimestamp.getTime(),
+        newMsg.serverTimestamp,
+        1,
+        options.authorProven === true
+      );
+    }
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     let pairWriteFailure: MessagePairWriteError | null = null;
@@ -1268,12 +1259,12 @@ export function useMessaging() {
           id: newMsg.id,
           conversationId: normalized,
           senderId: newMsg.senderId,
-          content: newMsg.content,
+          content,
           timestamp: newMsg.timestamp.getTime(),
           serverTimestamp: options.serverTimestamp,
           ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
           ...proofFields,
-          ...heldMutationFields(heldMutations),
+          ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
         };
         // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
         // the echo and then queuing it was two awaits, and a document torn down between them left a
@@ -1299,12 +1290,20 @@ export function useMessaging() {
             );
           }
         } else {
-          await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
+          // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
+          // outside the inbound drain) may have written the id since. Its row stands, and memory
+          // takes it.
+          const written = await ctx.storage.saveMessagesIfAbsent([row], ctx.deviceKeyB64);
+          if (written.has(row.id)) await removeSettled(ctx, settled.consumed);
+          else await showStoredInstead(ctx, normalized, [row.id]);
         }
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
       }
+      // Kept between the read above and the write - or while the message was shown and not stored
+      // yet, whoever wrote it: settled now, against the row that stands.
+      await settlePendingFor(pendingDeps(ctx), normalized, [newMsg.id]);
     }
     if (pairWriteFailure) throw pairWriteFailure;
 
@@ -1315,22 +1314,28 @@ export function useMessaging() {
     // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
   }
 
-  /**
-   * Appends multiple messages in a single reactive update and one batch IndexedDB write.
-   * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
-   * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
-   */
+  /** What keeping and settling a pending mutation reads and writes, from a messaging context. */
+  function pendingDeps(ctx: MessagingContext): PendingMutationDeps {
+    return {
+      storage: ctx.storage,
+      deviceKey: () => ctx.deviceKeyB64,
+      conversations: ctx.conversations,
+      messageReactions,
+      log: ctx.log,
+    };
+  }
+
   /** The rows the store holds under `ids` - `null` when it could not be asked, which is said. */
   async function storedRowsFor(
     ctx: MessagingContext,
     ids: readonly string[]
   ): Promise<StoredRowsById | null> {
-    if (!ctx.storage) return null;
+    if (!ctx.storage || ids.length === 0) return null;
     try {
       return await ctx.storage.getMessagesByIds(ids, ctx.deviceKeyB64);
     } catch (e) {
       console.error(
-        `[ADD_MSG] the store could not say whether it holds ${ids.length} arriving message(s) - they are written as new:`,
+        `[ADD_MSG] the store could not say whether it holds ${ids.length} arriving message(s) - they are written only where no row stands:`,
         e
       );
       return null;
@@ -1338,171 +1343,155 @@ export function useMessaging() {
   }
 
   /**
-   * What an arriving body does, given what the store holds under its id while memory shows nothing.
-   *
-   * - `new`: nothing stands there, or a tombstone written before its target whose claim this body
-   *   refutes (`bodyMeetsTombstone` -> `replace`): the body is written.
-   * - `unreadable`: a row this device cannot open - never written over.
-   * - `held`: a stored row, the same message - left as the store holds it, tombstone and edits and
-   *   reactions included. Writing the body would have replaced the row whole.
-   * - `absorb`: a tombstone written before its target, by this body's author - it takes the body's
-   *   place in the order and stays a tombstone.
-   * - `upgrade`: a stored notification preview the body upgrades, exactly as a shown one is.
+   * What an arriving body does, given what the store holds under its id while memory shows nothing:
+   * `new` (nothing stands there - the body is written), `unreadable` (a row this device cannot open,
+   * never written over), `held` (the same message, left as the store holds it - its tombstone, edit
+   * and reactions included) or `upgrade` (a stored notification preview the body replaces, exactly
+   * as a shown one is).
    */
   function storedBodyVerdict(
     stored: StoredRowsById | null,
     id: string,
-    senderId: string,
     content: string
   ): StoredBodyVerdict {
     if (!stored) return { kind: 'new' };
     if (stored.unreadable.has(id)) return { kind: 'unreadable', id };
     const row = stored.rows.get(id);
     if (!row) return { kind: 'new' };
-    const meets = bodyMeetsTombstone(row, senderId);
-    if (meets === 'replace') {
-      console.error(
-        `[ADD_MSG] ${id.slice(0, 8)}: a deletion that arrived before it was claimed by ${row.senderId.slice(0, 8)}, and its author is ${senderId.toLowerCase().slice(0, 8)} - only an author may delete, the message replaces the tombstone`
-      );
-      return { kind: 'new' };
-    }
-    if (meets === 'absorb') return { kind: 'absorb', row };
     if (shouldUpgradeMessage(row, content)) return { kind: 'upgrade', row, content };
     return { kind: 'held', id };
   }
 
+  /** A body with what was pending for it settled in, and the entries that settlement consumed. */
+  type Settled = {
+    message: ChatMessage;
+    fields: SettledFields | null;
+    consumed: PendingMutation[];
+  };
+
   /**
-   * Carries out a {@link storedBodyVerdict} other than `new`. The row is not shown, and it stays
-   * that way: the page that reaches it reads it from the store. `body` is the arriving message when
-   * the live path has one, for its position.
+   * Folds the mutations kept for `msg` (`pendingMutations.ts`) into it BEFORE it is shown or written:
+   * its author's deletion or edit, everyone's reactions. Anybody else's deletion or edit is
+   * discarded, logged. The consumed entries are removed by the caller once the body is written.
    */
-  async function settleStoredBody(
-    verdict: Exclude<StoredBodyVerdict, { kind: 'new' }>,
-    body: ChatMessage | null,
+  async function settleWithPending(
+    ctx: MessagingContext,
+    normalized: string,
+    msg: ChatMessage
+  ): Promise<Settled> {
+    const waiting = (await pendingFor(pendingDeps(ctx), normalized, [msg.id])).get(msg.id) ?? [];
+    return settledWith(msg, waiting);
+  }
+
+  /** {@link settleWithPending} on entries already read. */
+  function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
+    if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
+    const settlement = settleAgainstPending(msg, waiting);
+    logDiscarded(settlement.discarded, msg.senderId);
+    if (settlement.fields?.reactions) messageReactions.set(msg.id, settlement.fields.reactions);
+    console.log(
+      `[ADD_MSG] ${msg.id.slice(0, 8)} met ${waiting.length} mutation(s) that arrived before it`
+    );
+    return {
+      message: settlement.fields ? settledChatMessage(msg, settlement.fields) : msg,
+      fields: settlement.fields,
+      consumed: [...waiting],
+    };
+  }
+
+  /** Removes the pending entries a written body consumed; a failure costs a re-settle, which is a no-op. */
+  async function removeSettled(ctx: MessagingContext, consumed: readonly PendingMutation[]) {
+    if (!ctx.storage || consumed.length === 0) return;
+    try {
+      await ctx.storage.deletePendingMutations(consumed);
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] ${consumed.length} settled pending mutation(s) were not removed:`,
+        e
+      );
+    }
+  }
+
+  /**
+   * RE-READ ON CONFLICT. A body this device was about to write found a row already standing under
+   * its id - written by another writer between this one's read and its write. The stored row is the
+   * truth, so memory shows it instead of the copy built here.
+   */
+  async function showStoredInstead(ctx: MessagingContext, normalized: string, ids: string[]) {
+    console.log(
+      `[ADD_MSG] ${ids.length} arriving message(s) of "${normalized}" found a row written meanwhile - the stored row stands`
+    );
+    const stored = await storedRowsFor(ctx, ids);
+    const c = ctx.conversations.get(normalized);
+    if (!stored || !c) return;
+    const rows = new SvelteMap(
+      mapStoredMessagesToChatMessages([...stored.rows.values()], ctx.userId).map((m) => [m.id, m])
+    );
+    ctx.conversations.set(normalized, {
+      ...c,
+      messages: c.messages.map((m) => rows.get(m.id) ?? m),
+    });
+  }
+
+  /**
+   * Carries out the {@link storedBodyVerdict}s other than `new`. The rows are not shown, and they
+   * stay that way: the page that reaches them reads them from the store. What was pending for them is
+   * settled too - an upgrade folds it in before its write, and a held row takes it after
+   * (`settlePendingFor`).
+   */
+  async function settleStoredBodies(
+    verdicts: ReadonlyArray<Exclude<StoredBodyVerdict, { kind: 'new' }>>,
+    normalized: string,
     ctx: MessagingContext
   ) {
-    if (verdict.kind === 'unreadable') {
-      console.warn(
-        `[ADD_MSG] ${verdict.id.slice(0, 8)} is stored under a key this device cannot open - the arriving copy does not overwrite it`
-      );
-      return;
-    }
-    if (verdict.kind === 'held') {
-      console.log(`[ADD_MSG] Duplicate ignored id=${verdict.id} - stored, not shown`);
-      return;
-    }
-    if (!ctx.storage) return;
-    try {
-      if (verdict.kind === 'absorb') {
-        console.log(
-          `[ADD_MSG] ${verdict.row.id.slice(0, 8)} reached this device after its deletion - the stored tombstone stays`
+    const touched: string[] = [];
+    for (const verdict of verdicts) {
+      if (verdict.kind === 'unreadable') {
+        console.warn(
+          `[ADD_MSG] ${verdict.id.slice(0, 8)} is stored under a key this device cannot open - the arriving copy does not overwrite it`
         );
+        continue;
+      }
+      if (verdict.kind === 'held') {
+        console.log(`[ADD_MSG] Duplicate ignored id=${verdict.id} - stored, not shown`);
+        touched.push(verdict.id);
+        continue;
+      }
+      touched.push(verdict.row.id);
+      if (!ctx.storage) continue;
+      const waiting =
+        (await pendingFor(pendingDeps(ctx), normalized, [verdict.row.id])).get(verdict.row.id) ??
+        [];
+      const settlement =
+        waiting.length > 0
+          ? settleAgainstPending({ ...verdict.row, content: verdict.content }, waiting)
+          : null;
+      if (settlement) logDiscarded(settlement.discarded, verdict.row.senderId);
+      try {
+        console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
         await ctx.storage.updateMessage(
           verdict.row.id,
           {
-            ...(body ? { timestamp: body.timestamp.getTime() } : {}),
-            ...(body?.serverTimestamp !== undefined
-              ? { serverTimestamp: body.serverTimestamp }
-              : {}),
-            deletedBeforeArrival: false,
+            content: verdict.content,
+            isFcmPreview: false,
+            ...(settlement?.fields ? settledStoredPatch(settlement.fields) : {}),
           },
           ctx.deviceKeyB64
         );
-        return;
+        await removeSettled(ctx, waiting);
+      } catch (e) {
+        console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
       }
-      console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
-      await ctx.storage.updateMessage(
-        verdict.row.id,
-        { content: verdict.content, isFcmPreview: false },
-        ctx.deviceKeyB64
-      );
-    } catch (e) {
-      console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
     }
+    // A held row takes what waited for it; an upgrade, what was kept after its read.
+    if (touched.length > 0) await settlePendingFor(pendingDeps(ctx), normalized, touched);
   }
 
   /**
-   * The mutations that reached this device before the body `id` by `authorId` did: an edit held by
-   * the live handler (`heldEdits.ts`, the author's only) and the reactions `messageReactions` kept.
+   * Appends multiple messages in a single reactive update and one batch IndexedDB write.
+   * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
+   * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
-  function takeHeldMutations(
-    id: string,
-    authorId: string
-  ): { edit?: HeldEdit; reactions?: MessageReaction[] } {
-    const taken = takeHeldEdit(id, authorId);
-    if (taken && 'refused' in taken) {
-      console.error(
-        `[ADD_MSG] ${id.slice(0, 8)}: an edit that arrived before it came from ${taken.refused.by.slice(0, 8)}, and its author is ${authorId.toLowerCase().slice(0, 8)} - only an author may edit, dropped`
-      );
-    }
-    const reactions = messageReactions.get(id);
-    return {
-      ...(taken && 'edit' in taken ? { edit: taken.edit } : {}),
-      ...(reactions && reactions.length > 0 ? { reactions } : {}),
-    };
-  }
-
-  /** The stored fields of {@link takeHeldMutations}: the edit with its proof, the reactions. */
-  function heldMutationFields(held: { edit?: HeldEdit; reactions?: MessageReaction[] }) {
-    return {
-      ...(held.edit
-        ? {
-            isEdited: true,
-            editedAt: held.edit.editedAt,
-            ...(held.edit.proof ? { editProof: held.edit.proof } : {}),
-          }
-        : {}),
-      ...(held.reactions ? { reactions: held.reactions } : {}),
-    };
-  }
-
-  /**
-   * Writes a tombstone that has just absorbed its body (`absorbedTombstone`): the body's position,
-   * and no longer awaiting anything. The tombstone's content and its deletion proof stay as stored.
-   */
-  async function persistAbsorbedTombstone(absorbed: ChatMessage, ctx: MessagingContext) {
-    console.log(
-      `[ADD_MSG] ${absorbed.id.slice(0, 8)} reached this device after its deletion - the tombstone stays, at the message's place`
-    );
-    if (!ctx.storage) return;
-    try {
-      await ctx.storage.updateMessage(
-        absorbed.id,
-        {
-          timestamp: absorbed.timestamp.getTime(),
-          ...(absorbed.serverTimestamp !== undefined
-            ? { serverTimestamp: absorbed.serverTimestamp }
-            : {}),
-          deletedBeforeArrival: false,
-        },
-        ctx.deviceKeyB64
-      );
-    } catch (e) {
-      console.error(`[DB] the absorbed tombstone ${absorbed.id.slice(0, 8)} was not persisted:`, e);
-    }
-  }
-
-  /** The live path's half of {@link persistAbsorbedTombstone}: memory first, then the row. */
-  async function absorbBodyIntoTombstone(
-    normalized: string,
-    tombstone: ChatMessage,
-    body: ChatMessage,
-    ctx: MessagingContext
-  ) {
-    const absorbed = absorbedTombstone(tombstone, body);
-    const current = ctx.conversations.get(normalized);
-    if (current) {
-      ctx.conversations.set(normalized, {
-        ...current,
-        messages: insertMessageOrdered(
-          current.messages.filter((m) => m.id !== absorbed.id),
-          absorbed
-        ),
-      });
-    }
-    await persistAbsorbedTombstone(absorbed, ctx);
-  }
-
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
@@ -1532,24 +1521,32 @@ export function useMessaging() {
     // Ids seen during THIS batch are added to it too, which is what the separate dedup set did.
     const byId = indexMessagesById(convo.messages);
     // NOT SHOWN IS NOT NEW (see `addMessageToChat`): the ids memory does not show are asked of the
-    // store in ONE read, whose cost is the batch's and never the conversation's.
-    const persisted = !isChannelConversationId(normalized);
-    const notShown = messages
-      .map((pm) => normalizeMessageId(pm.messageId))
-      .filter((id): id is string => id !== undefined && !byId.has(id));
-    const stored =
-      persisted && ctx.storage && notShown.length > 0 ? await storedRowsFor(ctx, notShown) : null;
+    // store, and the mutations kept for any of them (`pendingMutations.ts`), in ONE read each, whose
+    // cost is the batch's and never the conversation's.
+    const persisted = ctx.storage !== null && !isChannelConversationId(normalized);
+    const batchIds = [
+      ...new SvelteSet(
+        messages
+          .map((pm) => normalizeMessageId(pm.messageId))
+          .filter((id): id is string => id !== undefined)
+      ),
+    ];
+    const notShown = batchIds.filter((id) => !byId.has(id));
+    const stored = persisted && notShown.length > 0 ? await storedRowsFor(ctx, notShown) : null;
+    const waiting = persisted
+      ? await pendingFor(pendingDeps(ctx), normalized, batchIds)
+      : new SvelteMap<string, PendingMutation[]>();
     const storedVerdicts: Array<Exclude<StoredBodyVerdict, { kind: 'new' }>> = [];
-    const toStore: StoredMessage[] = [];
+    const settledIds = new SvelteSet<string>();
+    // The pending entries each written row consumed, removed once the row is on disk.
+    const consumedById = new SvelteMap<string, PendingMutation[]>();
+    const upgradeRows: StoredMessage[] = [];
+    const newRows: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
     // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
     const authorProvenIds = new SvelteSet<string>();
-    // Tombstones written before their target that this batch settled (`bodyMeetsTombstone`): the
-    // absorbed keep their row and take the body's place, the replaced give their row to the body.
-    const absorbedIds = new SvelteSet<string>();
-    const replacedIds = new SvelteSet<string>();
 
     let processedCount = 0;
     for (const pm of messages) {
@@ -1561,53 +1558,32 @@ export function useMessaging() {
       // Derived per row, for the reason spelt out in `addMessageToChat` above: this is the OTHER
       // seam that materialises a row, and the `history_bundle` reaches BOTH of them.
       const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);
-      const heldMsg = byId.get(id);
-      // THE DELETION CAME FIRST (`deletedBeforeArrival`) - the case a catch-up drain produces when it
-      // carries a message and its deletion together: the body was buffered when the deletion was
-      // handled. Its author's body is absorbed; anybody else's replaces the tombstone.
-      const meets = heldMsg ? bodyMeetsTombstone(heldMsg, pm.senderId) : 'none';
-      if (heldMsg && meets === 'absorb') {
-        const absorbed = absorbedTombstone(heldMsg, {
-          timestamp: new SvelteDate(
-            resolveMessageTimestamp(
-              pm,
-              (mid) => byId.get(mid),
-              isOwnMessage(pm.senderId, ctx.userId)
-            )
-          ),
-          serverTimestamp: pm.serverTimestamp,
-        });
-        upgradedById.set(id, absorbed);
-        byId.set(id, absorbed);
-        absorbedIds.add(id);
-        continue;
-      }
-      if (meets === 'replace') {
-        console.error(
-          `[ADD_MSG] ${id.slice(0, 8)}: a deletion that arrived before it was claimed by ${heldMsg?.senderId.slice(0, 8)}, and its author is ${pm.senderId.toLowerCase().slice(0, 8)} - only an author may delete, the message replaces the tombstone`
-        );
-        replacedIds.add(id);
-        byId.delete(id);
-      }
       const existingMsg = byId.get(id);
-      if (!existingMsg && meets !== 'replace') {
-        const verdict = storedBodyVerdict(stored, id, pm.senderId, pm.content);
+      if (settledIds.has(id)) continue;
+      if (!existingMsg) {
+        const verdict = storedBodyVerdict(stored, id, pm.content);
         if (verdict.kind !== 'new') {
           storedVerdicts.push(verdict);
           // Settled once in this batch: a second copy of the id meets the same verdict.
+          settledIds.add(id);
           continue;
         }
       }
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
-        const upgraded = mergeMessageUpgrade(existingMsg, {
-          content: pm.content,
-          replyTo: pm.replyTo,
-          isSystem,
-          serverTimestamp: pm.serverTimestamp,
-        });
+        const settled = settledWith(
+          mergeMessageUpgrade(existingMsg, {
+            content: pm.content,
+            replyTo: pm.replyTo,
+            isSystem,
+            serverTimestamp: pm.serverTimestamp,
+          }),
+          waiting.get(id) ?? []
+        );
+        const upgraded = settled.message;
         upgradedById.set(id, upgraded);
+        consumedById.set(id, settled.consumed);
         if (ctx.storage) {
-          toStore.push({
+          upgradeRows.push({
             id,
             conversationId: normalized,
             senderId: upgraded.senderId,
@@ -1619,6 +1595,7 @@ export function useMessaging() {
             ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
             // This device's record of a reel's 410 (RC-6), carried over the wholesale rewrite.
             ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
+            ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
           });
         }
         continue;
@@ -1627,36 +1604,34 @@ export function useMessaging() {
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
       const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
-      // What reached this device before the body - an edit, reactions - lands with it.
-      const heldMutations = takeHeldMutations(id, pm.senderId);
-      const newMsg: ChatMessage = {
-        id,
-        senderId: pm.senderId.toLowerCase(),
-        content: heldMutations.edit
-          ? applyEditToBody(pm.content, heldMutations.edit.text)
-          : pm.content,
-        timestamp: new SvelteDate(resolvedTimestamp),
-        isOwn,
-        replyTo: pm.replyTo,
-        isSystem,
-        ingestSequence: pm.ingestSequence,
-        ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
-        ...(heldMutations.edit
-          ? { isEdited: true, editedAt: new SvelteDate(heldMutations.edit.editedAt) }
-          : {}),
-        ...(heldMutations.reactions ? { reactions: heldMutations.reactions } : {}),
-      };
+      // What reached this device before the body lands WITH it (`settleAgainstPending`).
+      const settled = settledWith(
+        {
+          id,
+          senderId: pm.senderId.toLowerCase(),
+          content: pm.content,
+          timestamp: new SvelteDate(resolvedTimestamp),
+          isOwn,
+          replyTo: pm.replyTo,
+          isSystem,
+          ingestSequence: pm.ingestSequence,
+          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+        },
+        waiting.get(id) ?? []
+      );
+      const newMsg = settled.message;
+      consumedById.set(id, settled.consumed);
       brandNew.push(newMsg);
       if (pm.authorProven === true) authorProvenIds.add(id);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
       byId.set(id, newMsg);
 
       if (ctx.storage) {
-        toStore.push({
+        newRows.push({
           id,
           conversationId: normalized,
           senderId: newMsg.senderId,
-          content: newMsg.content,
+          content: pm.content,
           timestamp: (newMsg.timestamp instanceof Date
             ? newMsg.timestamp
             : new SvelteDate(newMsg.timestamp)
@@ -1665,13 +1640,11 @@ export function useMessaging() {
           ...(isSystem ? { readBy: [] } : {}),
           ...(pm.authorship ? { authorship: pm.authorship } : {}),
           ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
-          ...heldMutationFields(heldMutations),
+          ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
         });
       }
     }
-    for (const verdict of storedVerdicts) {
-      await settleStoredBody(verdict, null, ctx);
-    }
+    await settleStoredBodies(storedVerdicts, normalized, ctx);
 
     if (upgradedById.size === 0 && brandNew.length === 0) {
       // Ordinary - a re-drain of frames this device already holds - and still not silent: it is the
@@ -1701,9 +1674,7 @@ export function useMessaging() {
     const current = ctx.conversations.get(normalized);
     const base = current ?? convo;
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
-    const toAdd = heldNow
-      ? brandNew.filter((m) => !heldNow.has(m.id) || replacedIds.has(m.id))
-      : brandNew;
+    const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
     const mine = readPointFor(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
@@ -1711,9 +1682,7 @@ export function useMessaging() {
       : toAdd.filter((msg) => isUnreadForUser(msg, mine.stamped, mine.server)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
-    const withUpgrades = base.messages
-      .filter((m) => !replacedIds.has(m.id))
-      .map((m) => upgradedById.get(m.id) ?? m);
+    const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
 
     if (current) {
@@ -1750,9 +1719,10 @@ export function useMessaging() {
     // nothing at all (TAB-1). ONE notification per flush, for the LAST inbound message: the
     // 800 ms throttle in `sendSystemNotification` would collapse a per-message loop to one anyway,
     // and the one a reader wants is the most recent, not the oldest.
+    // A message deleted before it arrived says nothing, so it is never the one announced.
     const lastInbound = [...brandNew]
       .reverse()
-      .find((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId));
+      .find((msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId));
     // AND IT ASKS THE APP, NOT THE DOCUMENT - THIS GUARD WAS THE ONE SITE IN THIS FILE THAT STILL
     // DID NOT (2026-09-24). `document.visibilityState` is permanently `'visible'` in a backgrounded
     // Android Tauri WebView - `hidden: false` and `hasFocus: true` too, byte for byte its
@@ -1790,7 +1760,7 @@ export function useMessaging() {
       );
     } else if (lastInbound) {
       const inbound = brandNew.filter(
-        (msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)
+        (msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId)
       );
       notifyInbound(
         ctx,
@@ -1820,21 +1790,28 @@ export function useMessaging() {
       unreadCount: nextUnreadCount,
     });
 
-    // Single batch DB write (community channels are server-authoritative)
-    if (ctx.storage && toStore.length > 0 && !isChannelConversationId(normalized)) {
+    // Single batch DB write (community channels are server-authoritative). An upgrade rewrites the
+    // preview it replaces; a NEW row is written only where no row stands - another writer (the
+    // archive replay runs outside the inbound drain) may have written the id since the read above,
+    // and its row then stands and memory takes it (`showStoredInstead`).
+    if (ctx.storage && persisted && (upgradeRows.length > 0 || newRows.length > 0)) {
       try {
-        await ctx.storage.saveMessages(toStore, ctx.deviceKeyB64);
+        if (upgradeRows.length > 0) await ctx.storage.saveMessages(upgradeRows, ctx.deviceKeyB64);
+        const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
+        const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
+        if (standing.length > 0) await showStoredInstead(ctx, normalized, standing);
+        await removeSettled(
+          ctx,
+          [...upgradeRows.map((row) => row.id), ...written].flatMap(
+            (id) => consumedById.get(id) ?? []
+          )
+        );
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] batchAddMessages failed:', e);
       }
-    }
-
-    // The tombstones this batch settled keep their row - their deletion proof included - and take
-    // the body's place in the order. A patch, never a rewrite.
-    for (const id of absorbedIds) {
-      const absorbed = upgradedById.get(id);
-      if (absorbed) await persistAbsorbedTombstone(absorbed, ctx);
+      // Kept between the read above and the writes: settled now, against the rows that stand.
+      await settlePendingFor(pendingDeps(ctx), normalized, batchIds);
     }
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare

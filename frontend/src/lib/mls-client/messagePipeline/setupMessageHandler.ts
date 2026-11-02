@@ -1271,7 +1271,8 @@ async function handleKnownGroup({
         convoKey,
         sender,
         msg.reaction,
-        authorship
+        authorship,
+        deliveryMeta?.queuedCreatedAt
       );
     } else if (msg.call) {
       onCallSignal?.(

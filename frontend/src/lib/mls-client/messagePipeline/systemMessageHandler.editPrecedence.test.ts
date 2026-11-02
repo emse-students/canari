@@ -24,24 +24,26 @@ function makeCtx(
   reply?: { id: string; senderId: string; content: string }
 ) {
   const conversations = new Map<string, any>();
-  conversations.set('g1', {
-    id: 'g1',
-    unreadCount: 0,
-    messages: [
-      {
-        id: 'm1',
-        senderId: 'peer',
-        content: serializeEnvelope(
-          mkTextEnvelope(editedAt === undefined ? 'original' : 'held-edit', reply)
-        ),
-        readBy: [],
-        ...(editedAt === undefined ? {} : { isEdited: true, editedAt: new Date(editedAt) }),
-      },
-    ],
-  });
+  const row = {
+    id: 'm1',
+    senderId: 'peer',
+    content: serializeEnvelope(
+      mkTextEnvelope(editedAt === undefined ? 'original' : 'held-edit', reply)
+    ),
+    readBy: [],
+    ...(editedAt === undefined ? {} : { isEdited: true, editedAt: new Date(editedAt) }),
+  };
+  conversations.set('g1', { id: 'g1', unreadCount: 0, messages: [row] });
   return {
     mlsService: {},
-    storage: { updateMessage: vi.fn().mockResolvedValue(undefined) },
+    // Shown AND stored: an edit is written at rest only to a row that stands there.
+    storage: {
+      updateMessage: vi.fn().mockResolvedValue(undefined),
+      getMessagesByIds: vi.fn(async () => ({
+        rows: new Map([['m1', row]]),
+        unreadable: new Set(),
+      })),
+    },
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,

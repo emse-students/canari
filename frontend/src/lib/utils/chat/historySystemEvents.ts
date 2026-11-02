@@ -39,7 +39,7 @@ import {
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
 import type { AuthorKeySource } from '$lib/crypto/messageAuthorship';
-import type { StoredMessagePatch } from '$lib/db/types';
+import type { PendingMutation, StoredMessagePatch } from '$lib/db/types';
 import {
   mergeVettedRow,
   upgradedRow,
@@ -117,9 +117,14 @@ export interface ReplaySystemEventCtx {
    */
   pendingById: Map<string, Omit<PendingHistoryMessage, 'ingestSequence'>>;
   /**
-   * Messages deleted via a `delete_message` event during this replay, each with the id of the
-   * member that sent the event. The author check cannot always happen here - the message may not be
-   * in memory yet - so the claim is carried to whoever can verify it against the stored row.
+   * Keeps a deletion, an edit or a reaction whose message memory does not show, in the store of
+   * mutations that came before their message (`pendingMutations.ts`), dated by this frame's server
+   * time: the live path's own seam, so the replay settles against the AUTHOR exactly as it does.
+   */
+  keepPending: (entry: Omit<PendingMutation, 'at'>) => Promise<void>;
+  /**
+   * Messages deleted via a `delete_message` event during this replay whose message memory shows,
+   * each with the id of the member that sent the event (checked against the shown row first).
    */
   deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
   /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
@@ -348,7 +353,20 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // fix; the replay path never did, because these frames could not reach the shared log and so
       // this branch was dead. The durability split made it live again, hole and all.
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'delete')) return;
-      if (convo && known) {
+      if (!known) {
+        // Not shown: stored, buffered in this page, or not here yet - the store settles all three.
+        await ctx.keepPending({
+          conversationId: ctx.conversationId,
+          messageId: data.messageId,
+          sender: senderNorm,
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+          ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+        });
+        return;
+      }
+      if (convo) {
         setConversation(contactName, {
           ...convo,
           messages: convo.messages.map((mm) =>
@@ -380,6 +398,19 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const convo = getConversation(contactName);
       const known = convo?.messages.find((m) => m.id === data.messageId);
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
+      if (!known) {
+        await ctx.keepPending({
+          conversationId: ctx.conversationId,
+          messageId: data.messageId,
+          sender: senderNorm,
+          kind: 'edit',
+          slot: '',
+          rank: editedAtMs,
+          text: data.newContent,
+          ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+        });
+        return;
+      }
       // A DELETE IS ABSORBING - the tombstone wins whatever the order, exactly as the post-save
       // pass in `history.ts` has always had it. The tombstone is carried in `content`, so an edit
       // landing on a deleted row puts the deleted text back on screen. A delete seen earlier in

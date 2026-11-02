@@ -94,6 +94,11 @@ function storageWith(
       if (entries === 'broken') throw new Error('store unreadable');
       return entries.map(rowOf);
     }),
+    // The window read (`readHistoryMessages` with a `since`): the same rows from `since` on.
+    getMessagesSince: vi.fn().mockImplementation(async (_id: string, since: number) => {
+      if (entries === 'broken') throw new Error('store unreadable');
+      return entries.map(rowOf).filter((row) => Number(row.timestamp) >= since);
+    }),
     getConversations: vi
       .fn()
       .mockResolvedValue([

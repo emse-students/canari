@@ -105,66 +105,6 @@ describe('history_bundle - rows memory does not show', () => {
   });
 });
 
-describe('history_bundle - a tombstone written before its message arrived', () => {
-  const MARKER = {
-    id: 'm1',
-    conversationId: GROUP,
-    senderId: AUTHOR,
-    content: 'deleted',
-    timestamp: 9000,
-    isDeleted: true,
-    deletedBeforeArrival: true,
-  };
-
-  it("stays, at the message's own time, when the bundle proves the deleter was its author", async () => {
-    const { ctx, store } = makeCtx(AUTHOR, { m1: MARKER });
-
-    await handleSystemEvent(
-      'history_bundle',
-      { messages: [{ id: 'm1', senderId: AUTHOR, content: 'hello', timestamp: 1000 }] },
-      ctx as any
-    );
-
-    expect(store.get('m1')).toMatchObject({
-      isDeleted: true,
-      timestamp: 1000,
-      deletedBeforeArrival: false,
-    });
-    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
-  });
-
-  it('gives way to the message when its proven author is not the deleter', async () => {
-    const { ctx, store } = makeCtx('bob', { m1: { ...MARKER, senderId: 'mallory' } });
-
-    await handleSystemEvent(
-      'history_bundle',
-      { messages: [{ id: 'm1', senderId: 'bob', content: 'hello', timestamp: 1000 }] },
-      ctx as any
-    );
-
-    // The message is added in the tombstone's place - the add path replaces the unproven claim.
-    expect(ctx.batchAddMessages).toHaveBeenCalledWith(
-      [expect.objectContaining({ messageId: 'm1', senderId: 'bob' })],
-      GROUP,
-      'restore'
-    );
-    expect(store.get('m1').deletedBeforeArrival).toBe(true);
-  });
-
-  it('stands against a copy that proves no author - a relayer naming another sender', async () => {
-    // Unsigned, and relayed by somebody who is not the sender it names: nobody is proven.
-    const { ctx } = makeCtx('mallory', { m1: MARKER });
-
-    await handleSystemEvent(
-      'history_bundle',
-      { messages: [{ id: 'm1', senderId: 'bob', content: 'resurrected', timestamp: 1000 }] },
-      ctx as any
-    );
-
-    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
-  });
-});
-
 describe('history_bundle - an addressed answer carries a deletion onto a held row', () => {
   /** An answer to the digest this device asked, as the reconciliation exchange delivers it. */
   async function answer(ctx: any, messages: unknown[]) {

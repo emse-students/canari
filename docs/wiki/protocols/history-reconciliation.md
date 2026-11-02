@@ -1557,19 +1557,12 @@ and gone for good - its frame is consumed (`noteFrameConsumed`), so the archive 
   in neither memory nor the store. The flush then rendered and persisted the deleted text. The same
   shape covers a body that reaches the device only later, through a bundle or a replay.
 
-The handler now asks the store when memory has no row (`getMessagesByIds`), authorises against
-the stored row, and tombstones it at rest. When neither holds the target, the deletion is KEPT as a
-tombstone row under the target's id, flagged `deletedBeforeArrival`, written only where no row
-stands (`saveMessageIfAbsent` - an insert the store's key constraint refuses, so a row this device
-cannot decrypt is never overwritten). Its `senderId` is the DELETER's claim. Every seam
-that materialises a body settles it there (`bodyMeetsTombstone`, `messageMerge.ts`): the live add and
-the batch flush (`useMessaging.svelte.ts`) and the replay's row builder (`replayedStoredRow`). The
-deleter's own body is ABSORBED - the tombstone stays and takes the body's place in the order
-(`absorbedTombstone`); anybody else's REPLACES it, because only an author may delete and the claim is
-checked the moment there is something to check it against. A deleted notification preview is never
-upgraded back into its body either (`shouldUpgradeMessage`). Pinned by
-`useMessaging.deletionInOneDrain.svelte.test.ts` (the report's shape, failing before the fix),
-`systemMessageHandler.deletionReach.test.ts` and `saveMessageIfAbsent.test.ts`.
+The handler now asks the store for its target (`getMessagesByIds`), authorises against the stored
+row, and tombstones it at rest. When neither memory nor the store holds the target, the deletion is
+KEPT for it - in its own store, never as a message row (next section). A deleted notification
+preview is never upgraded back into its body (`shouldUpgradeMessage`). Pinned by
+`useMessaging.deletionInOneDrain.svelte.test.ts` (the report's shape) and
+`systemMessageHandler.deletionReach.test.ts`.
 
 **Edits, reactions and re-deliveries reach the store too (2026-11-02, the same PR).** Memory is
 a window, so every seam that mutates or adds a row asks the store about the ids memory does not
@@ -1577,45 +1570,101 @@ show - in ONE read per batch, keyed by id (`getMessagesByIds`, a `WHERE id IN` c
 bound-parameter cap on SQLite, one get per id on IndexedDB), never a full-table read:
 
 - `edit_message` (`applyEdit`) finds a stored target exactly as the deletion does, authorises it
-  against the stored author, and rewrites the stored row. An edit whose target is not here yet is
-  HELD (`heldEdits.ts`, the newest per id by `editSupersedes`) and applied when the body
-  materialises, with the same author check - a held edit by anybody else is dropped;
-- a reaction (`reactionFrame.ts`) is merged into a stored row; one whose target is absent stays in
-  `messageReactions` and is written with the body when it arrives;
+  against the stored author, and rewrites the stored row;
+- a reaction (`reactionFrame.ts`, which the legacy `remove_reaction` frame now goes through too) is
+  merged into a stored row;
 - `addMessageToChat` and `batchAddMessages` settle a re-delivered body against the stored row
   (`storedBodyVerdict`): a stored row is never overwritten - a tombstone stays a tombstone, an edit
   and its reactions stay - only a notification preview is upgraded, and a row this device cannot
-  open is left alone;
+  open is left alone. A NEW row is written only where none stands (`saveMessagesIfAbsent`: `add` on
+  IndexedDB, `INSERT OR IGNORE` on SQLite), and a row another writer put there since the read is
+  shown instead (`showStoredInstead`);
 - the bundle merge counts a stored row as HELD (never added over itself) and merges onto it in the
   store (`mergeVettedIntoStore`), the rows memory shows being merged as before;
-- a `deletedBeforeArrival` tombstone that a bundle meets is settled ON PROOF (`settleMarkers`,
-  `bundleVetting.ts`): the copy's author proven equal to the deleter keeps the tombstone at the
-  message's own time; proven different restores the message; a copy that proves no author changes
-  nothing;
 - an ADDRESSED answer still only adds, EXCEPT a deletion onto a held row (`tombstoneHeld`, vetted by
-  `vetRestoredDelete` like any other), and the answerer sends every tombstone in its window with
-  what the asker lacks (`withTombstones`). The state key counts `deleted` while the digest names
-  ids only, so before this two devices differing only on a deletion exchanged digests forever. The
-  cost is every tombstone in the window on each digest answer, and the answer is skipped entirely
-  when the state keys already agree;
-- on SQLite a message row names its conversation, so the marker path saves the conversation row
-  first - the expected order of a group joined in the same drain - and an absent conversation in
-  MEMORY is logged as a defect, because the inbound handler refuses that frame before it decrypts.
+  `vetRestoredDelete` like any other), and the answerer sends the tombstones in its window with what
+  the asker lacks (`withTombstones`). The state key counts `deleted` while the digest names ids
+  only, so before this two devices differing only on a deletion exchanged digests forever. The
+  answer reads the store from the asked window on (`getMessagesSince`, the conversation-and-time
+  index) and carries at most the NEWEST `HISTORY_TOMBSTONES_PER_ANSWER` (1000, five bundle chunks)
+  tombstones beyond the lacked ids; what it cuts is said at warn with the count, and those older
+  deletions stay divergent until the window moves past them. The state key reads the same window.
+  The digest DIFF alone still reads the whole store, for the symmetry argued in
+  `answerHistoryDigest`.
 
 Pinned by `useMessaging.mutationsReachTargets.svelte.test.ts`,
-`systemMessageHandler.bundleReachesStore.test.ts` and the tombstone cases of
+`systemMessageHandler.bundleReachesStore.test.ts` and the bounded and tombstone cases of
 `groupActions.historyBundle.test.ts`.
+
+### Mutations that arrive before their message
+
+A deletion, an edit or a reaction whose message this device does not hold yet is kept in a store of
+its own (`pendingMutations` on IndexedDB since schema 13, `pending_mutations` on SQLite since schema
+18 - additive and client-local, no foreign key, so an entry may come before its conversation's row).
+The design is in `pendingMutations.ts` and the seams in `pendingMutationStore.ts`; what it fixed is
+the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the target's id
+(`deletedBeforeArrival`) and held edits in memory:
+
+- **an entry is never a message.** It is never shown, never put in memory as a message, never in
+  the digest manifest or the state key, never relayed in a bundle - the marker row was all four, so
+  an unproven claim travelled to other devices and two devices' state keys could not agree;
+- **one entry per (conversation, message, sender, kind, slot)** - the slot is the emoji of a
+  reaction, empty otherwise - each carrying the AUTHENTICATED sender, the author's signature on the
+  frame (`proof`), its rank (an edit's `editedAt`, a reaction's `at`, 0 for a deletion) and the
+  frame's server time (`at`). A larger rank replaces an entry, the first wins a tie, decided in the
+  write itself (`putPendingMutation`). The text, the removal flag and the proof are sealed under the
+  device key; an entry sealed under a key this device no longer holds is counted `unreadable` and
+  never applied;
+- **settled against the AUTHOR only, when the message is written** (`settleAgainstPending`): the
+  author's deletion, else the author's latest edit (`editSupersedes`), then everyone's reactions
+  (`applyReaction`). A deletion or an edit by anybody else is discarded and said at warn - so a
+  non-author's deletion can neither suppress the message nor stand in front of the author's, and a
+  non-author's far-future edit can never displace the author's. Every writer settles through it: the
+  live add and the batch flush (`useMessaging.svelte.ts`), the bundle merge (through the batch) and
+  the archive replay (`history.ts`, whose replayed deletions, edits and reactions of a message it
+  does not show are kept the same way, and whose written rows are settled after the write);
+- **no read-then-write gap, from either side.** A handler WRITES the entry and then looks for the
+  target again (`keepPendingMutation`); a writer WRITES the row and then reads the entries again
+  (`settlePendingFor`). Whichever lands second sees the other's write. An entry is consumed only
+  once the row AT REST carries it - a writer shows a message before it stores it, so a mutation that
+  meets a message shown and not stored yet is applied to the screen AND kept (`keepUntilStored`),
+  and the writer's own look after its write settles it at rest. Removal is conditional on the rank
+  read, so a newer entry kept meanwhile survives;
+- **held edits survive a restart**: they are rows of this store, not of memory;
+- **not kept from before the floor**: a frame older than the conversation's shared history floor
+  names a message that can never be answered to this device, so it is not kept. A frame with no
+  server time is not kept either, said at error - no delivery route of this build omits it;
+- **bounded by COUNT per conversation, never by a clock** (`PENDING_MUTATIONS_PER_CONVERSATION`,
+  1000). Past it the OLDEST by server time are evicted, in the same write, and the count is said at
+  warn. Why 1000: an entry exists only between a mutation and its message, which a drain closes in
+  one pass and a bundle or the replay within a session - a conversation holds a handful of them in
+  the ordinary case. The cases that leave entries waiting for good are mutations of a message this
+  device will never receive (below the floor of another member, a body that was never relayed);
+  1000 sealed entries are tens of kilobytes per conversation, and a clock would decide wrongly in
+  both directions.
+
+The serialisation the writers rely on is the per-group drain: `MlsPerGroupScheduler.drain` awaits
+each frame's handler, and the drain's end (`onDrainEnd` -> `endBulkMessageIngest` ->
+`batchAddMessages`) is awaited before the group is released, so within a conversation the handlers
+and the bulk flush never interleave. The archive replay writes outside the drain, which is why
+every new row is written only where none stands and every writer looks again after its write.
+
+Pinned by `pendingMutationsStore.test.ts` (both backends, and the upgrade of a v12 IndexedDB and a v17
+SQLite store), `pendingMutations.test.ts`, `useMessaging.deletionInOneDrain.svelte.test.ts` (each
+finding of the review by number, and both races) and `historySystemEvents.test.ts`.
 
 **What is still open, and why each one is not built here:**
 
-- a held edit lives for the session (cleared at sign-out): surviving a restart needs a local table,
-  which is a migration;
 - an EDIT or a REACTION that differs between two devices does not converge through reconciliation:
   the digest names ids, so the answerer cannot know the asker's state of a row it holds - carrying
   state in the digest is a protocol change;
-- the legacy `remove_reaction` frame still looks in memory only;
-- an edit or deletion replayed from the archive whose target is absent at replay time is still
-  dropped by the replay path.
+- a deletion sent AFTER this device's admission of a message from BEFORE it is kept until evicted:
+  the floor gate dates the FRAME, and a `delete_message` names only the target's id - knowing the
+  target's own time needs it on the wire, a protocol change. Such an entry is never shown and never
+  relayed, and since the message is never answered to this device it simply ages out by count;
+- the replay rewrites a row it already held (`saveMessages` over the merge it read): a live
+  mutation landing between that read and that write is lost at rest. The replay's own new rows are
+  written only where none stands.
 
 **The shared-log half is not, and it needs a decision.** The server holds ciphertext and cannot tell
 which stream entry carries a given message, so nothing there can act on a deletion by itself. Three

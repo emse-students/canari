@@ -75,7 +75,17 @@ function makeContext() {
     deviceKeyB64: 'device-key',
     authToken: 'token',
     selectedContact: CONVO,
-    storage: { saveMessage } as never,
+    // An arriving row is written only where none stands (`saveMessagesIfAbsent`); it lands in
+    // `saveMessage` here, the one sink these assertions read.
+    storage: {
+      saveMessage,
+      saveMessagesIfAbsent: vi.fn(async (rows: { id: string }[], key: string) => {
+        for (const row of rows) await saveMessage(row, key);
+        return new Set(rows.map((row) => row.id));
+      }),
+      getMessagesByIds: vi.fn(async () => ({ rows: new Map(), unreadable: new Set() })),
+      getPendingMutations: vi.fn(async () => ({ entries: [], unreadable: 0 })),
+    } as never,
     setAuthToken: vi.fn(),
     getSendError: () => '',
     setSendError: vi.fn(),

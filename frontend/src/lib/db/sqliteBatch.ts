@@ -41,13 +41,17 @@ export const MESSAGE_COLUMNS = 7;
 export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESSAGE_COLUMNS);
 
 /**
- * `INSERT OR REPLACE` for `rows` message rows, with positional placeholders.
+ * `INSERT OR REPLACE` for `rows` message rows, with positional placeholders - or `INSERT OR IGNORE`
+ * (`onConflict: 'ignore'`) for a write that must never replace a row already stored.
  *
  * The placeholders are numbered across the whole statement (`$1…$6`, `$7…$12`, …) because that is
  * what the plugin's SQLite binding expects; a repeated `$1` per tuple would bind every row to the
  * first message.
  */
-export function messageInsertSql(rows: number): string {
+export function messageInsertSql(
+  rows: number,
+  onConflict: 'replace' | 'ignore' = 'replace'
+): string {
   if (!Number.isInteger(rows) || rows < 1) {
     throw new Error(`messageInsertSql needs at least one row, got ${rows}`);
   }
@@ -60,7 +64,7 @@ export function messageInsertSql(rows: number): string {
     return `(${placeholders.join(', ')})`;
   });
   return (
-    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
+    `INSERT OR ${onConflict === 'ignore' ? 'IGNORE' : 'REPLACE'} INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ` +
     tuples.join(', ')
   );
 }

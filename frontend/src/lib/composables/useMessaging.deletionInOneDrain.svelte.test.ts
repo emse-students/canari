@@ -1,19 +1,31 @@
 /**
- * A MESSAGE AND ITS DELETION IN ONE CATCH-UP DRAIN (owner's report, 2026-11-02).
+ * A MESSAGE AND ITS MUTATIONS IN ONE CATCH-UP DRAIN (owner's report, 2026-11-02), against a REAL
+ * local store.
  *
  * A device away while the other person sent a message and deleted it receives both in one drain
  * when it comes back - or signs in again. The drain buffers inbound bodies until it ends, and
  * handles the `delete_message` the moment it is decrypted: at that instant the body is in neither
- * memory nor the store. The deletion was dropped as "nothing to delete", its frame consumed for
- * good, and the flush then rendered and persisted the deleted message.
+ * memory nor the store. The deletion is KEPT as a pending mutation - never a message row - and
+ * settled against the body's AUTHOR when the body is written (`pendingMutations.ts`).
  *
- * The two halves run here as the drain runs them - the real buffer, the real handler, one store.
+ * Each `it` names the review finding of #2936 it closes.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SvelteMap } from 'svelte/reactivity';
-import type { Conversation } from '$lib/types';
 import { m } from '$lib/paraglide/messages';
 import { handleSystemEvent } from '$lib/mls-client/messagePipeline/systemMessageHandler';
+import { IndexedDbStorage } from '$lib/db/indexeddb';
+import {
+  CONVO,
+  DRAIN,
+  KEY,
+  bodyFrame,
+  deleteFrame,
+  editFrame,
+  makeDevice,
+  freshStoreName,
+  reactionFrame,
+  systemContext,
+} from './pendingMutations.test-helper';
 
 /** Same notification-name stub as `useMessaging.bulkIngest.svelte.test.ts`. */
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
@@ -39,101 +51,26 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useMessaging } = await import('./useMessaging.svelte');
-type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 
-const ME = 'me-user-id';
+/** Opens a fresh store - or, given its name, the same one again (a restart). */
+async function openStore(name = freshStoreName()) {
+  const storage = new IndexedDbStorage(name);
+  await storage.init();
+  return { storage, name };
+}
+
 const PEER = 'peer-user-id';
 const OTHER = 'other-member-id';
-const CONVO = 'conversation-key';
-const DRAIN = { bufferUi: true, showOverlay: true };
 
-/** One store both halves write to, keyed by message id, as the real one is. */
-function makeStore() {
-  const rows = new Map<string, any>();
-  const put = async (msg: any) => {
-    rows.set(msg.id, { ...msg });
-  };
-  return {
-    rows,
-    saveMessage: vi.fn(put),
-    saveMessages: vi.fn(async (msgs: any[]) => {
-      for (const msg of msgs) await put(msg);
-    }),
-    getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
-    getMessagesByIds: vi.fn(async (ids: string[]) => ({
-      rows: new Map(ids.filter((id) => rows.has(id)).map((id) => [id, { ...rows.get(id) }])),
-      unreadable: new Set<string>(),
-    })),
-    updateMessage: vi.fn(async (id: string, patch: any) => {
-      const row = rows.get(id);
-      if (!row) return;
-      const next = { ...row };
-      for (const [k, v] of Object.entries(patch)) if (v !== undefined) next[k] = v;
-      rows.set(id, next);
-    }),
-    saveMessageIfAbsent: vi.fn(async (msg: any) => {
-      if (rows.has(msg.id)) return false;
-      rows.set(msg.id, { ...msg });
-      return true;
-    }),
-  };
+async function device() {
+  const { storage, name } = await openStore();
+  return { ...makeDevice(useMessaging, storage), name };
 }
 
-function makeContext() {
-  const store = makeStore();
-  // As the boot restore seeds it: the row, and no message shown yet.
-  const conversations = new SvelteMap<string, Conversation>([
-    [CONVO, { id: CONVO, name: CONVO, messages: [], unreadCount: 0, lastMessageAt: 0 } as never],
-  ]);
-  const ctx = {
-    conversations,
-    userId: ME,
-    deviceKeyB64: 'device-key',
-    authToken: 'token',
-    selectedContact: '',
-    storage: store as never,
-    setAuthToken: vi.fn(),
-    getSendError: () => '',
-    setSendError: vi.fn(),
-    ensureMls: vi.fn(),
-    log: vi.fn(),
-    saveConversation: vi.fn().mockResolvedValue(undefined),
-    playNotificationTone: vi.fn(),
-    playReceiveTone: vi.fn(),
-    sendSystemNotification: vi.fn().mockResolvedValue(undefined),
-  } as unknown as MessagingContext;
-  return { ctx, conversations, store };
-}
+const pending = (storage: IndexedDbStorage, ids = ['m1']) =>
+  storage.getPendingMutations(CONVO, ids, KEY);
 
-/** The `delete_message` frame of the drain, handled by the real handler against the same state. */
-function deletion(ctx: MessagingContext, by: string, messageId: string) {
-  return handleSystemEvent('delete_message', { messageId }, {
-    mlsService: {},
-    storage: ctx.storage,
-    userId: ME,
-    deviceKey: () => 'device-key',
-    conversations: ctx.conversations,
-    messageReactions: new Map(),
-    addMessageToChat: vi.fn(),
-    batchAddMessages: vi.fn(),
-    deleteConversation: vi.fn(),
-    saveConversation: vi.fn().mockResolvedValue(undefined),
-    getSelectedContact: () => null,
-    setSelectedContact: vi.fn(),
-    onReadStateAdvanced: vi.fn(),
-    log: vi.fn(),
-    convo: {},
-    convoKey: CONVO,
-    senderNorm: by,
-    persistMlsStateNow: vi.fn(),
-    deliveryMeta: { queuedCreatedAt: 9_000 },
-  } as never);
-}
-
-const shown = (conversations: SvelteMap<string, Conversation>) =>
-  conversations.get(CONVO)?.messages ?? [];
-
-describe('a message and its deletion delivered in one drain', () => {
+describe('a message and its mutations delivered in one drain', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -141,103 +78,300 @@ describe('a message and its deletion delivered in one drain', () => {
   });
 
   it("shows and stores the TOMBSTONE, at the message's place - never the deleted text", async () => {
-    const messaging = useMessaging();
-    const { ctx, conversations, store } = makeContext();
+    const d = await device();
+    const writes = [
+      vi.spyOn(d.storage, 'saveMessage'),
+      vi.spyOn(d.storage, 'saveMessages'),
+      vi.spyOn(d.storage, 'saveMessagesIfAbsent'),
+      vi.spyOn(d.storage, 'updateMessage'),
+    ];
 
-    messaging.beginBulkMessageIngest(DRAIN);
-    await messaging.addMessageToChat(PEER, 'the deleted text', CONVO, ctx, {
-      messageId: 'm1',
-      serverTimestamp: 2_000,
-    });
-    await deletion(ctx, PEER, 'm1');
-    await messaging.endBulkMessageIngest(ctx, DRAIN);
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await bodyFrame(d, PEER, 'm1', 'the deleted text');
+    await deleteFrame(d, PEER, 'm1');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
 
-    const rows = shown(conversations);
+    const rows = d.shown();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: 'm1', isDeleted: true, serverTimestamp: 2_000 });
+    // The bulk flush shows no server time (it never did); the stored row carries it.
+    expect(rows[0]).toMatchObject({ id: 'm1', isDeleted: true });
     expect(rows[0].content).toBe(m.chat_system_message_deleted());
-    expect(rows[0].deletedBeforeArrival).toBeUndefined();
-
-    const row = store.rows.get('m1');
-    expect(row.isDeleted).toBe(true);
-    expect(row.content).toBe(m.chat_system_message_deleted());
-    expect(row.serverTimestamp).toBe(2_000);
-    expect(row.deletedBeforeArrival).toBe(false);
+    const row = await d.storage.getMessage('m1', KEY);
+    expect(row).toMatchObject({ isDeleted: true, serverTimestamp: 2_000 });
+    expect(row?.content).toBe(m.chat_system_message_deleted());
     // The deleted text never reached the store, not even transiently.
-    for (const call of [...store.saveMessage.mock.calls, ...store.saveMessages.mock.calls]) {
-      expect(JSON.stringify(call)).not.toContain('the deleted text');
+    for (const spy of writes) {
+      for (const call of spy.mock.calls) expect(JSON.stringify(call)).not.toContain('the deleted');
     }
+    expect((await pending(d.storage)).entries).toEqual([]);
   });
 
-  it("lets the message through when the deletion was not its author's", async () => {
-    const messaging = useMessaging();
-    const { ctx, conversations, store } = makeContext();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('finding 1 - a deletion that came first is no message row: not shown, not in the digest, not relayed', async () => {
+    const d = await device();
 
-    messaging.beginBulkMessageIngest(DRAIN);
-    await messaging.addMessageToChat(PEER, 'a message', CONVO, ctx, {
-      messageId: 'm1',
-      serverTimestamp: 2_000,
-    });
-    await deletion(ctx, OTHER, 'm1');
-    await messaging.endBulkMessageIngest(ctx, DRAIN);
+    await deleteFrame(d, PEER, 'm1');
 
-    const rows = shown(conversations);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: 'm1', content: 'a message', senderId: PEER });
-    expect(rows[0].isDeleted).toBeUndefined();
-    expect(store.rows.get('m1')).toMatchObject({ content: 'a message', senderId: PEER });
-    expect(store.rows.get('m1').isDeleted).toBeUndefined();
+    expect(d.shown()).toEqual([]);
+    // What the digest, the state key and a bundle are read from.
+    expect(await d.storage.getMessages(CONVO, KEY)).toEqual([]);
+    expect((await d.storage.getMessagesByIds(['m1'], KEY)).rows.size).toBe(0);
+    expect((await pending(d.storage)).entries).toMatchObject([
+      { messageId: 'm1', sender: PEER, kind: 'delete' },
+    ]);
+  });
+
+  it("finding 7 - lets the message through when the deletion was not its author's, and drops that deletion", async () => {
+    const d = await device();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await bodyFrame(d, PEER, 'm1', 'a message');
+    await deleteFrame(d, OTHER, 'm1');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect(d.shown()).toHaveLength(1);
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', content: 'a message', senderId: PEER });
+    expect(d.shown()[0].isDeleted).toBeFalsy();
+    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ content: 'a message' });
+    expect((await pending(d.storage)).entries).toEqual([]);
+    expect(warn.mock.calls.flat().join(' ')).toContain('Discarded a delete');
+  });
+
+  it("finding 3 - a non-author's deletion, then the author's: the author's applies", async () => {
+    const d = await device();
+
+    await deleteFrame(d, OTHER, 'm1');
+    await deleteFrame(d, PEER, 'm1');
+    await bodyFrame(d, PEER, 'm1', 'the deleted text');
+
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
+    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+
+  it("finding 4 - a non-author's far-future edit never displaces the author's", async () => {
+    const d = await device();
+
+    await editFrame(d, OTHER, 'm1', 'forged', 9e15);
+    await editFrame(d, PEER, 'm1', 'the real edit', 5_000);
+    await bodyFrame(d, PEER, 'm1', 'original');
+
+    expect(d.shown()[0].content).toContain('the real edit');
+    expect(d.shown()[0].isEdited).toBe(true);
+    expect((await d.storage.getMessage('m1', KEY))?.content).toContain('the real edit');
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+
+  it('finding 2 - a deletion of a message from before this device was admitted shows nothing', async () => {
+    const d = await device();
+    // Admitted at 10 000: everything older is below the floor and is never answered.
+    d.conversations.set(CONVO, { ...d.conversations.get(CONVO)!, historyFloor: 10_000 });
+
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, systemContext(d, PEER));
+
+    expect(d.shown()).toEqual([]);
+    expect(await d.storage.getMessages(CONVO, KEY)).toEqual([]);
+    expect((await pending(d.storage)).entries).toEqual([]);
   });
 
   it('absorbs a body arriving LIVE after its deletion was kept', async () => {
-    const messaging = useMessaging();
-    const { ctx, conversations, store } = makeContext();
+    const d = await device();
 
-    await deletion(ctx, PEER, 'm1');
-    await messaging.addMessageToChat(PEER, 'the deleted text', CONVO, ctx, {
-      messageId: 'm1',
-      serverTimestamp: 2_000,
-    });
+    await deleteFrame(d, PEER, 'm1');
+    await bodyFrame(d, PEER, 'm1', 'the deleted text');
 
-    const rows = shown(conversations);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: 'm1', isDeleted: true, serverTimestamp: 2_000 });
-    expect(store.rows.get('m1').content).toBe(m.chat_system_message_deleted());
+    expect(d.shown()).toHaveLength(1);
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true, serverTimestamp: 2_000 });
+    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
   });
 
   it('never upgrades a DELETED notification preview back into its body', async () => {
-    const messaging = useMessaging();
-    const { ctx, conversations, store } = makeContext();
-    // The push caption, in memory before the drain reached the body.
-    conversations.set(CONVO, {
-      ...conversations.get(CONVO)!,
-      messages: [
+    const d = await device();
+    // The push caption, in memory and at rest before the drain reached the body.
+    const caption = {
+      id: 'm1',
+      senderId: PEER,
+      content: 'caption',
+      timestamp: new Date(2_000),
+      isOwn: false,
+      isFcmPreview: true,
+    };
+    d.conversations.set(CONVO, { ...d.conversations.get(CONVO)!, messages: [caption] });
+    await d.storage.saveMessage(
+      { id: 'm1', conversationId: CONVO, senderId: PEER, content: 'caption', timestamp: 2_000 },
+      KEY
+    );
+
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await deleteFrame(d, PEER, 'm1');
+    await bodyFrame(d, PEER, 'm1', '{"kind":"text","text":"the deleted text"}');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
+    expect(d.shown()[0].content).toBe(m.chat_system_message_deleted());
+    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
+  });
+
+  it('keeps an edit across a restart - the store, not memory, holds it', async () => {
+    const first = await device();
+    await editFrame(first, PEER, 'm1', 'edited before arrival', 5_000);
+
+    const { storage } = await openStore(first.name);
+    const again = makeDevice(useMessaging, storage);
+    await bodyFrame(again, PEER, 'm1', 'original');
+
+    expect(again.shown()[0].content).toContain('edited before arrival');
+    expect((await storage.getMessage('m1', KEY))?.content).toContain('edited before arrival');
+  });
+
+  it('keeps a legacy remove_reaction whose message is not here yet, through the one reaction path', async () => {
+    const d = await device();
+    await reactionFrame(d, OTHER, 'm1', '👍', 1_000);
+
+    await handleSystemEvent(
+      'remove_reaction',
+      { messageId: 'm1', emoji: '👍' },
+      systemContext(d, OTHER)
+    );
+    await bodyFrame(d, PEER, 'm1', 'a message');
+
+    expect(d.messaging.messageReactions.get('m1')).toEqual([
+      expect.objectContaining({ emoji: '👍', userId: OTHER, removed: true }),
+    ]);
+    expect((await d.storage.getMessage('m1', KEY))?.reactions).toEqual([
+      expect.objectContaining({ emoji: '👍', userId: OTHER, removed: true }),
+    ]);
+  });
+
+  it('item 9 - a reaction kept for a message another writer stored meanwhile reaches the stored row when the body comes as held', async () => {
+    const d = await device();
+    await reactionFrame(d, OTHER, 'm1', '🎉', 1_000);
+    // Another writer (a bundle, the archive replay) stores the body without settling it.
+    await d.storage.saveMessage(
+      { id: 'm1', conversationId: CONVO, senderId: PEER, content: 'a message', timestamp: 2_000 },
+      KEY
+    );
+
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await bodyFrame(d, PEER, 'm1', 'a message');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect((await d.storage.getMessage('m1', KEY))?.reactions).toEqual([
+      expect.objectContaining({ emoji: '🎉', userId: OTHER }),
+    ]);
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+});
+
+describe('the two races between a mutation handler and a message writer (finding 5)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('5a - the body lands between the handler looking for it and keeping the deletion', async () => {
+    const d = await device();
+    const put = d.storage.putPendingMutation.bind(d.storage);
+    vi.spyOn(d.storage, 'putPendingMutation').mockImplementationOnce(async (...args) => {
+      // Another writer stores the body after the handler found nothing.
+      await d.storage.saveMessages(
+        [{ id: 'm1', conversationId: CONVO, senderId: PEER, content: 'body', timestamp: 2_000 }],
+        KEY
+      );
+      return put(...args);
+    });
+
+    await deleteFrame(d, PEER, 'm1');
+
+    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+
+  it('5b - a tombstone lands between the writer reading the store and writing the body', async () => {
+    const d = await device();
+    const write = d.storage.saveMessagesIfAbsent.bind(d.storage);
+    vi.spyOn(d.storage, 'saveMessagesIfAbsent').mockImplementationOnce(async (...args) => {
+      await d.storage.saveMessage(
         {
           id: 'm1',
+          conversationId: CONVO,
           senderId: PEER,
-          content: 'caption',
-          timestamp: new Date(2_000),
-          isOwn: false,
-          isFcmPreview: true,
+          content: m.chat_system_message_deleted(),
+          isDeleted: true,
+          timestamp: 2_000,
         },
-      ],
+        KEY
+      );
+      return write(...args);
     });
-    store.rows.set('m1', { id: 'm1', conversationId: CONVO, senderId: PEER, content: 'caption' });
 
-    messaging.beginBulkMessageIngest(DRAIN);
-    await deletion(ctx, PEER, 'm1');
-    await messaging.addMessageToChat(
-      PEER,
-      '{"kind":"text","text":"the deleted text"}',
-      CONVO,
-      ctx,
-      { messageId: 'm1', serverTimestamp: 2_000 }
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await bodyFrame(d, PEER, 'm1', 'the deleted text');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
+  });
+
+  it('5b - a deletion is kept between the writer reading the pending entries and writing the body', async () => {
+    const d = await device();
+    const write = d.storage.saveMessagesIfAbsent.bind(d.storage);
+    vi.spyOn(d.storage, 'saveMessagesIfAbsent').mockImplementationOnce(async (...args) => {
+      await deleteFrame(d, PEER, 'm1');
+      return write(...args);
+    });
+
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await bodyFrame(d, PEER, 'm1', 'the deleted text');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+});
+
+describe('a mutation kept before its message, met by a relayed copy (findings 6 and 7)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  /** A `history_bundle` relayed by `relayer`, carrying `m1` as written by `sender`. */
+  const bundle = (d: Awaited<ReturnType<typeof device>>, relayer: string, sender: string) =>
+    handleSystemEvent(
+      'history_bundle',
+      { messages: [{ id: 'm1', senderId: sender, content: 'hello', timestamp: 1_000 }] },
+      systemContext(d, relayer)
     );
-    await messaging.endBulkMessageIngest(ctx, DRAIN);
 
-    expect(shown(conversations)[0]).toMatchObject({ id: 'm1', isDeleted: true });
-    expect(shown(conversations)[0].content).toBe(m.chat_system_message_deleted());
-    expect(store.rows.get('m1').content).toBe(m.chat_system_message_deleted());
+  it("finding 6 - the author's own relay settles the author's deletion, and accuses nobody", async () => {
+    const d = await device();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await deleteFrame(d, PEER, 'm1');
+
+    await bundle(d, PEER, PEER);
+
+    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({
+      isDeleted: true,
+      content: m.chat_system_message_deleted(),
+    });
+    expect((await pending(d.storage)).entries).toEqual([]);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("finding 7 - an unverified copy of the author's message is shown, whatever a non-author deleted", async () => {
+    const d = await device();
+    await deleteFrame(d, OTHER, 'm1');
+
+    // Relayed unsigned by somebody who is not its author: kept as unverified, never suppressed.
+    await bundle(d, 'carol', PEER);
+
+    const row = await d.storage.getMessage('m1', KEY);
+    expect(row).toMatchObject({ senderId: PEER, content: 'hello' });
+    expect(row?.isDeleted).toBeFalsy();
+    expect((await pending(d.storage)).entries).toEqual([]);
   });
 });

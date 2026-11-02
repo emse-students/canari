@@ -110,17 +110,6 @@ export interface StoredMessage {
   editProof?: RecordedAuthorship | null;
   /** The author's signed `delete_message` behind the tombstone. */
   deleteProof?: RecordedAuthorship;
-  /**
-   * A TOMBSTONE WRITTEN BEFORE ITS TARGET ARRIVED (2026-11-02). A `delete_message` can reach this
-   * device before the message it names: both in one catch-up drain, the message still in the bulk
-   * buffer when its deletion is handled, or the message reaching this device later (a bundle, a
-   * replay). Dropping the deletion then lost it for good - its frame is consumed and never replays -
-   * so it is kept as this row, under the target's id. `senderId` is the DELETER's claim, not a
-   * proven author: when the body arrives from that same author it is absorbed (the tombstone stays
-   * and takes the body's place in the order); from another author the claim was not the author's
-   * and the body replaces this row (`bodyMeetsTombstone`, `messageMerge.ts`).
-   */
-  deletedBeforeArrival?: boolean;
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
   /**
@@ -174,6 +163,54 @@ export interface StoredRowsById {
 }
 
 export type StoredMessagePatch = Partial<Omit<StoredMessage, 'id' | 'conversationId'>>;
+
+/** What a {@link PendingMutation} does to its message once the message is here. */
+export type PendingMutationKind = 'delete' | 'edit' | 'reaction';
+
+/**
+ * A mutation whose target message is NOT on this device yet - a deletion, an edit or a reaction
+ * that arrived before its message (2026-11-02, the owner's deleted-message report).
+ *
+ * Kept in its own local store, never as a message row: it is never shown, never put in memory as a
+ * message, never counted by the reconciliation (the digest manifest, the state key) and never relayed
+ * in a bundle. When the message arrives it is settled against the message's AUTHOR
+ * (`settleAgainstPending`, `pendingMutations.ts`): only the author's deletion and edit apply, and
+ * everyone's reactions do.
+ *
+ * Keyed by (`conversationId`, `messageId`, `sender`, `kind`, `slot`): one entry per sender and kind,
+ * and per emoji for a reaction. Two entries under one key keep the larger `rank`, the first on a tie,
+ * decided by the store in the write itself - there is no read-then-write.
+ */
+export interface PendingMutation {
+  conversationId: string;
+  messageId: string;
+  /** The frame's MLS-authenticated sender, canonical (`canonicalUserId`). */
+  sender: string;
+  kind: PendingMutationKind;
+  /** `''` for a deletion or an edit; the emoji for a reaction - a reactor holds one state per emoji. */
+  slot: string;
+  /**
+   * What decides between two entries under one key, larger winning: the edit's `editedAt`, the
+   * reaction's `at` (the same last-write-wins as `applyReaction`), 0 for a deletion (all alike).
+   */
+  rank: number;
+  /** The frame's SERVER time (Unix ms) - the order the store evicts in, oldest first. */
+  at: number;
+  /** An edit's replacement text. Sealed. */
+  text?: string;
+  /** A reaction taken back. */
+  removed?: boolean;
+  /** The frame's own author proof, when it carried one. Sealed. */
+  proof?: RecordedAuthorship;
+}
+
+/** What {@link IStorage.putPendingMutation} did. */
+export interface PendingMutationWrite {
+  /** False when an entry under the same key already ranked at least as high. */
+  written: boolean;
+  /** How many of the conversation's oldest entries the count cap evicted. */
+  evicted: number;
+}
 
 /**
  * Raw encrypted message row as persisted on disk (IndexedDB or SQLite).
@@ -656,9 +693,9 @@ export interface IStorage {
    * makes the work grow with the square of the number of conversations.
    */
   getConversation(id: string): Promise<ConversationMeta | null>;
-  /** Delete the conversation row and cascade-delete all of its messages. */
+  /** Delete the conversation row and cascade-delete all of its messages and pending mutations. */
   deleteConversation(id: string): Promise<void>;
-  /** Delete all messages for a conversation without removing its metadata row. */
+  /** Delete all messages (and the mutations awaiting them) for a conversation, keeping its metadata row. */
   deleteMessagesForConversation(conversationId: string): Promise<void>;
 
   // Messages (content encrypted with device key)
@@ -666,16 +703,16 @@ export interface IStorage {
   /** Encrypt and persist a single message to the local store. */
   saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
   /**
-   * Persist `msg` ONLY if no row is stored under its id - one atomic insert, never a replace.
+   * Persist each of `msgs` ONLY where no row is stored under its id - an insert, never a replace.
    *
-   * For a row that must never overwrite anything: a tombstone written before its target arrived
-   * (`StoredMessage.deletedBeforeArrival`). An absent row and an undecryptable one both read back as
-   * `null` from {@link getMessage}, and only the first may be written over - so the absence is
-   * decided by the store's own key constraint, in the same statement as the write.
+   * For an ARRIVING message, which must never overwrite a row another writer put there between the
+   * caller's read and this write (the archive replay writes outside the inbound drain). The absence
+   * is decided by the store's own key constraint, in the write itself; an undecryptable row counts as
+   * present, which `getMessage` alone cannot tell.
    *
-   * @returns `true` when the row was written, `false` when one already stood under that id
+   * @returns the ids this call wrote - the others were already there
    */
-  saveMessageIfAbsent(msg: StoredMessage, deviceKeyB64: string): Promise<boolean>;
+  saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>>;
   /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /**
@@ -734,6 +771,43 @@ export interface IStorage {
   getMessagesByIds(ids: readonly string[], deviceKeyB64: string): Promise<StoredRowsById>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
+  /**
+   * The messages of a conversation whose `timestamp` is at or after `since`, decrypting only those:
+   * what a reconciliation reads, whose window is `since` - its cost is the window's, never the whole
+   * conversation's. Oldest-first.
+   */
+  getMessagesSince(
+    conversationId: string,
+    since: number,
+    deviceKeyB64: string
+  ): Promise<StoredMessage[]>;
+
+  // Mutations whose message is not here yet (see PendingMutation)
+
+  /**
+   * Keep `entry` until its message arrives: written only where no entry under its key ranks at least
+   * as high, then the conversation is held to `cap` entries by evicting its OLDEST (`at`). One atomic
+   * write on both backends - never a read, an await, then a write.
+   */
+  putPendingMutation(
+    entry: PendingMutation,
+    cap: number,
+    deviceKeyB64: string
+  ): Promise<PendingMutationWrite>;
+  /**
+   * The entries waiting for any of `messageIds` in `conversationId`. An entry this device key cannot
+   * open is reported in `unreadable` and never applied.
+   */
+  getPendingMutations(
+    conversationId: string,
+    messageIds: readonly string[],
+    deviceKeyB64: string
+  ): Promise<{ entries: PendingMutation[]; unreadable: number }>;
+  /**
+   * Removes exactly the entries given, each only while it still holds the `rank` read - an entry a
+   * later frame raised meanwhile is a different version and stays.
+   */
+  deletePendingMutations(entries: readonly PendingMutation[]): Promise<void>;
   /**
    * How many rows the store holds for a conversation, decrypting NONE of them.
    *

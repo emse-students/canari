@@ -177,11 +177,6 @@ export interface ChatMessage {
   reactions?: MessageReaction[];
   isEdited?: boolean;
   isDeleted?: boolean;
-  /**
-   * A tombstone written for a deletion that arrived BEFORE its target, whose `senderId` is the
-   * deleter's claim rather than a proven author. See `StoredMessage.deletedBeforeArrival`.
-   */
-  deletedBeforeArrival?: boolean;
   /** In-session ordering during bulk catch-up (not persisted); use serverTimestamp for stable reload ordering. */
   ingestSequence?: number;
   /**

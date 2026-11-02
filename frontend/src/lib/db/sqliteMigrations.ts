@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -171,3 +171,29 @@ export function conversationStartedAtStatement(columns: readonly string[]): stri
     ? null
     : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
 }
+
+/**
+ * The v17 -> v18 table: mutations whose message is not here yet (`PendingMutation`). Created by
+ * every open, fresh or not, like `feed_pages`; the v18 step only stamps the version. Keyed by
+ * sender, kind and slot so one sender's later frame of the same kind REPLACES its earlier one by
+ * `rank`, in the upsert itself. No foreign key to `conversations`: an entry may be written before
+ * the conversation row reaches the store, and it names the conversation only to be cleared with it.
+ */
+export const PENDING_MUTATIONS_TABLE_STATEMENT = `
+            CREATE TABLE IF NOT EXISTS pending_mutations (
+                conversation_id TEXT    NOT NULL,
+                message_id      TEXT    NOT NULL,
+                sender          TEXT    NOT NULL,
+                kind            TEXT    NOT NULL,
+                slot            TEXT    NOT NULL,
+                rank            INTEGER NOT NULL,
+                at              INTEGER NOT NULL,
+                iv              TEXT,
+                cipher_text     TEXT,
+                PRIMARY KEY (conversation_id, message_id, sender, kind, slot)
+            )
+        `;
+
+/** The eviction order of `pending_mutations`: one conversation's entries, oldest frame first. */
+export const PENDING_MUTATIONS_ORDER_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_pending_mutations_conv_at ON pending_mutations(conversation_id, at)';
