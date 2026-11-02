@@ -17,4 +17,4 @@
 
 # 044: the commit-time floor read from the admission the commit gate records, and the backfill of every
 # existing seat - approved by the owner on 2026-11-02 ("Oui, dans la file").
-apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql a5a73ee30f6e5c8b8c659cf018eee909e104698cd5db83910757ac7316fef976
+apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql b6f241694235a3cb694616809be718451ed3ad336631d3a96a70c7515b92c2ef

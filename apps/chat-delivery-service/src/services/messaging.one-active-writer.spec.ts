@@ -623,11 +623,11 @@ describe('the ONE writer of an active membership', () => {
       expect(deviceGroupRepo.update.mock.calls).toEqual([
         [
           { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
-          { admittedByBaseEpoch: 0 },
+          { admittedByBaseEpoch: 0, admissionInferred: false },
         ],
         [
           { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
-          { admittedByBaseEpoch: 7 },
+          { admittedByBaseEpoch: 7, admissionInferred: false },
         ],
       ]);
     });
@@ -870,7 +870,8 @@ describe('the CREATE_GROUP door', () => {
       'u1',
       'd1',
       expect.any(String),
-      expect.objectContaining({ tag: 'CREATE_GROUP' })
+      // In from the group's first epoch: every commit time is the creator's (`commitFloorOf`).
+      expect.objectContaining({ tag: 'CREATE_GROUP', admittedByBaseEpoch: 0 })
     );
   });
 

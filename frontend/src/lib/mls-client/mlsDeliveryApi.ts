@@ -1077,11 +1077,14 @@ export class MlsDeliveryApi {
    * The headers every `/api/mls/*` request carries: the bearer token, and WHICH DEVICE IS ASKING.
    *
    * `X-Canari-Device` is here rather than at a call site because the device id is known in exactly
-   * one place and every future log line that wants it would otherwise need its own plumbing. It is
-   * self-asserted and DIAGNOSTIC ONLY - nginx authenticates the USER alongside it and no server
-   * decision reads it, so the most a client can do by lying is misattribute its own request inside
-   * its own account. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id` and
-   * friends from the auth subrequest, and client headers it does not name pass through.
+   * one place and every route that reads it would otherwise need its own plumbing. It is
+   * self-asserted, and nginx authenticates only the USER alongside it - so it is never proof of a
+   * device, only a choice among the authenticated user's OWN devices. Some server decisions do read
+   * it: the commit-time floor of `fetchCommitAcceptedAt` is read off the seat it names (a 400
+   * without it), and the own-removal date off that device's row. Lying can therefore only pick
+   * another of the user's own seats - never another account's - and a seat's floor is no wider than
+   * that seat's admission. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id`
+   * and friends from the auth subrequest, and client headers it does not name pass through.
    *
    * `'pending'` travels like any other value. It is the client's own literal for an unresolved
    * identity, the server already knows it as one, and a log line reading `device=pending` names a

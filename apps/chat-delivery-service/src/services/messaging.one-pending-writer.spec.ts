@@ -137,6 +137,24 @@ describe('the ONE writer of a pending membership', () => {
     expect(written()).not.toHaveProperty('kickedAt');
   });
 
+  /**
+   * THE ADMISSION FLOOR (`admittedByBaseEpoch`, `commitFloorOf`): a kick takes the leaf out of the
+   * tree, so it ends the admission; a demotion with no kick (the cron, a self-report) leaves the leaf
+   * and must leave the floor, or the device would be re-floored at a later epoch for nothing.
+   */
+  it('a KICK clears the admission floor', async () => {
+    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: new Date(0) });
+
+    expect(written()).toMatchObject({ admittedByBaseEpoch: null, admissionInferred: false });
+  });
+
+  it('a demotion with no kick LEAVES the admission floor alone', async () => {
+    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
+
+    expect(written()).not.toHaveProperty('admittedByBaseEpoch');
+    expect(written()).not.toHaveProperty('admissionInferred');
+  });
+
   it('RESTARTS the seat clock, because a demotion restarts the wait', async () => {
     // The fresh grace window the purge always intended a demoted device to have, and could not
     // give it: `cleanupStalePendingInvitations` was reading `updatedAt`, which somebody else's

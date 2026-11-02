@@ -173,13 +173,26 @@ export class DeviceGroupMembership {
    * commit), and the group's creation (0: nothing precedes the creator). Unlike
    * {@link admittedAtEpoch} it is never cleared by a transition: an active member keeps its floor.
    *
-   * NULL MEANS NO COMMIT ADMITTED THIS SEAT, and the floor FAILS CLOSED on it: nothing is answered.
-   * A seat enrolled `pending` and not yet admitted holds none, and a kicked seat waits for the Add
-   * that answers its kick. Rows from before migration 044 were backfilled by it, conservatively
-   * (refuse rather than leak): see that migration.
+   * NULL MEANS NO ADMISSION IS RECORDED, and the floor never reads it as "no floor". A KICK clears
+   * it (`deactivateDeviceMembership` with `removedFromTreeAt`): the seat is refused until the Add
+   * that answers the kick records a new one. A demotion with no kick (the stale-device cron, a
+   * self-report) leaves it, since the leaf stays in the tree. Any other NULL seat - enrolled and not
+   * yet admitted, or admitted by a path that did not record it - is floored at the group's current
+   * epoch by the first ask and written once (`commitFloorOf`, {@link admissionInferred}). Rows from
+   * before migration 044 were backfilled by it with the same rule (refuse rather than leak).
    */
   @Column({ type: 'integer', nullable: true, default: null })
   admittedByBaseEpoch: number | null;
+
+  /**
+   * `true` when {@link admittedByBaseEpoch} is NOT an admission but a floor INFERRED where none was
+   * recorded: the group's epoch at migration 044's backfill, or at the first ask that found the seat
+   * with none. Read only to say, in a refusal's log line, which floor refused - an inferred floor
+   * refuses commits the device may really have been admitted before, and a reader of that line must
+   * know it is not the admission. Cleared by every recorded admission.
+   */
+  @Column({ type: 'boolean', default: false })
+  admissionInferred: boolean;
 
   /**
    * When a commit admitted this device into the group - the evidence `withheldWindows` reads a
