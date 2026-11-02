@@ -44,18 +44,49 @@ const CURSOR_MAX_LENGTH = 200;
  * bound parameter, never spliced; the check only keeps a cursor this server did not write a 400.
  */
 export interface CursorKeyShape {
-  id: RegExp;
+  /** Whether `id` is a key this list could hold. */
+  accepts: (id: string) => boolean;
+  /** The longest cursor that may name one of its rows - every key it accepts fits. */
   maxLength: number;
 }
 
 /** A follow list: the key is the `user_follows` row's uuid. */
-export const FOLLOW_ROW_KEY: CursorKeyShape = { id: UUID_RE, maxLength: CURSOR_MAX_LENGTH };
+export const FOLLOW_ROW_KEY: CursorKeyShape = {
+  accepts: (id) => UUID_RE.test(id),
+  maxLength: CURSOR_MAX_LENGTH,
+};
+
+/** The longest `users.id` there is, in characters (code points): the column is a `varchar(255)`. */
+const PERSON_ID_MAX = 255;
 
 /**
- * A list of people keyed by `users.id` (`varchar(255)`): the rule every id is minted under
- * (core-service's `users/user-id.ts`) - visible ASCII, no ':' - at most 255 characters.
+ * The longest cursor a person-keyed row can have, from the worst case rather than a guess: in the
+ * JSON each character of the id is at most 4 UTF-8 bytes (a `"` or a `\` escapes to 2, an astral
+ * character is 4), the instant and the punctuation at most 64 more, and base64 writes 4 characters
+ * per 3 bytes.
  */
-export const PERSON_KEY: CursorKeyShape = { id: /^[\x21-\x39\x3b-\x7e]{1,255}$/, maxLength: 512 };
+const PERSON_CURSOR_MAX = Math.ceil((PERSON_ID_MAX * 4 + 64) / 3) * 4;
+
+/**
+ * A list of people keyed by `users.id` (`varchar(255)`). Any 1..255 characters with no control
+ * character - wider than the rule ids are minted under today (core-service's `users/user-id.ts`)
+ * on purpose: an id minted before that rule is still a person, and a cursor or a removal naming
+ * them must keep working.
+ */
+export const PERSON_KEY: CursorKeyShape = {
+  accepts: (id) => {
+    const chars = [...id];
+    return (
+      chars.length >= 1 &&
+      chars.length <= PERSON_ID_MAX &&
+      chars.every((ch) => {
+        const code = ch.codePointAt(0) ?? 0;
+        return code > 0x1f && code !== 0x7f;
+      })
+    );
+  },
+  maxLength: PERSON_CURSOR_MAX,
+};
 
 /** The cursor naming the row whose sort text is `at` and id is `id`. */
 export function encodeFollowCursor(at: string, id: string): string {
@@ -86,7 +117,7 @@ export function decodeFollowCursor(
     typeof parsed[0] !== 'string' ||
     typeof parsed[1] !== 'string' ||
     !PG_INSTANT_RE.test(parsed[0]) ||
-    !key.id.test(parsed[1])
+    !key.accepts(parsed[1])
   ) {
     throw refuse();
   }

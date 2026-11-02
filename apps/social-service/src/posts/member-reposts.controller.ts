@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   DefaultValuePipe,
@@ -18,6 +19,7 @@ import { Throttle } from '@nestjs/throttler';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { ModerationService } from '../moderation/moderation.service';
+import { PERSON_KEY } from '../follows/follow-cursor';
 import { FOLLOW_PAGE_MAX } from '../follows/follow-requests.service';
 import { MemberRepostsService } from './member-reposts.service';
 import { RepostAccountConsentDto, RepostPostConsentDto } from './dto/post.dto';
@@ -34,6 +36,9 @@ import { RepostAccountConsentDto, RepostPostConsentDto } from './dto/post.dto';
  * N times each limit here, and a restart forgets the counts. It bounds a loop; it is not a quota.
  */
 export const MEMBER_REPOST_WRITES_PER_MINUTE = 20;
+
+/** The 400 code of an author removal naming a reposter id no user could have. */
+export const REPOSTER_ID_INVALID = 'REPOSTER_ID_INVALID';
 
 /**
  * Consent changes (the account setting, a post's override) one account may make per minute, per
@@ -125,6 +130,13 @@ export class MemberRepostsController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('reposterId') reposterId: string
   ) {
+    // Not a user id this server could hold (`PERSON_KEY`): a 400 before any query.
+    if (!PERSON_KEY.accepts(reposterId)) {
+      throw new BadRequestException({
+        code: REPOSTER_ID_INVALID,
+        message: 'Not a user id',
+      });
+    }
     return this.reposts.removeRepostAsAuthor(postId, xUserId, reposterId);
   }
 

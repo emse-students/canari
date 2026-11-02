@@ -254,20 +254,28 @@ export class MemberRepostsService {
       );
     });
     await this.dropFeedCacheOf([actorId]);
-    await this.tellNewlyReached(post as unknown as PostRow, actorId, recipients);
+    const reposted = post as unknown as PostRow;
+    if (!reposted.associationId) await this.dropAuthorCountOf(reposted.authorId);
+    await this.tellNewlyReached(reposted, actorId, recipients);
     return { postId };
   }
 
-  /** The reposter takes their own repost back. 404 when there is none. */
+  /**
+   * The reposter takes their own repost back. 404 when there is none. The post's author is read in
+   * the same statement: a personal post's author caches a `repostCount` this changes.
+   */
   async unrepost(postId: string, actorId: string): Promise<{ ok: true }> {
-    const result: unknown = await this.repo.manager.query(
-      `DELETE FROM member_reposts WHERE "postId" = $1 AND "reposterId" = $2`,
-      [postId, actorId]
-    );
-    const removed = Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
-    if (removed === 0) throw new NotFoundException('Repost not found');
+    const gone: { authorId: string; associationId: string | null }[] =
+      await this.repo.manager.query(
+        `WITH gone AS (
+           DELETE FROM member_reposts WHERE "postId" = $1 AND "reposterId" = $2 RETURNING "postId")
+         SELECT p."authorId", p."associationId" FROM gone JOIN posts p ON p.id = gone."postId"`,
+        [postId, actorId]
+      );
+    if (gone.length === 0) throw new NotFoundException('Repost not found');
     this.logger.log(`[REPOST-M] ${postId.slice(0, 8)} unreposted by ${actorId.slice(0, 8)}`);
     await this.dropFeedCacheOf([actorId]);
+    if (!gone[0].associationId) await this.dropAuthorCountOf(gone[0].authorId);
     return { ok: true };
   }
 
@@ -507,6 +515,24 @@ export class MemberRepostsService {
         `[REPOST-M] ${postId.slice(0, 8)} not repostable first-hand by ${actorId.slice(0, 8)}`
       );
       throw postNotFound();
+    }
+  }
+
+  /**
+   * Drops the AUTHOR's own cached pages after a repost of their personal post is added or taken
+   * back: their card carries `repostCount`, and a cached page would show a count the reposter list
+   * contradicts for up to the page's TTL. Their followers' pages are untouched - a repost changes
+   * nothing they are shown. Best effort, logged.
+   */
+  private async dropAuthorCountOf(authorId: string): Promise<void> {
+    try {
+      const dropped = await invalidatePostListCacheFor(this.redis, [authorId]);
+      this.logger.debug(`[CACHE] member repost write: ${dropped} page(s) of its author dropped`);
+    } catch (e: unknown) {
+      this.logger.warn(
+        "[CACHE] the author's feed cache was not dropped after a member repost write",
+        e
+      );
     }
   }
 

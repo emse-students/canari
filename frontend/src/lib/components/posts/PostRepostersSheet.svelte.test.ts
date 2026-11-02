@@ -93,4 +93,26 @@ describe('PostRepostersSheet', () => {
     await vi.waitFor(() => expect(listed()).toEqual(['marie']));
     expect(onRemoved).not.toHaveBeenCalled();
   });
+
+  it('two removals in flight: a refused one puts back ITS row only, at its place', async () => {
+    listPostReposters.mockResolvedValue([row('ann'), row('bob'), row('cid')]);
+    let refuseBob: (e: Error) => void = () => {};
+    removePostRepost.mockImplementation((_post: string, userId: string) =>
+      userId === 'bob'
+        ? new Promise((_resolve, reject) => (refuseBob = reject))
+        : Promise.resolve(undefined)
+    );
+    const onRemoved = await open();
+    await vi.waitFor(() => expect(listed()).toEqual(['ann', 'bob', 'cid']));
+    (document.querySelector('[data-reposter-remove="bob"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(listed()).toEqual(['ann', 'cid']));
+    // ann's removal starts and SUCCEEDS while bob's is still in flight.
+    (document.querySelector('[data-reposter-remove="ann"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(onRemoved).toHaveBeenCalledTimes(1));
+    expect(listed()).toEqual(['cid']);
+    refuseBob(new Error('offline'));
+    // bob comes back where he stood; ann, removed meanwhile, does not.
+    await vi.waitFor(() => expect(listed()).toEqual(['cid', 'bob']));
+    expect(removePostRepost).toHaveBeenCalledTimes(2);
+  });
 });

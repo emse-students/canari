@@ -1658,12 +1658,24 @@ security review before arming.
   once is never told again, whoever reposts later. Anyone but the author of a personal,
   non-anonymous post gets the uncoded 404 of a post not seen, on both routes; an entity post has no
   list (its `authorId` is the officer). Feed pages dropped: the author's, the removed reposter's,
-  and each one's accepted followers'.
+  and each one's accepted followers'. A reposter's own repost and take-back drop the AUTHOR's pages
+  too (a personal post only, `dropAuthorCountOf`; `unrepost` reads the author in its `DELETE ...
+  RETURNING`): without it the author's cached `repostCount` contradicted the list for up to a
+  page's TTL. The sheet removes several rows at once and puts back only the row whose removal was
+  refused, at its place (never a snapshot of the list). The DELETE route refuses a `reposterId` no
+  user could hold with a 400 `REPOSTER_ID_INVALID` before any query (`PERSON_KEY.accepts`: 1..255
+  characters, no control character - wider than today's mint rule on purpose, so an id minted
+  before it can still be listed, paged and removed; the cursor's length cap is computed from that
+  worst case, 4 UTF-8 bytes a character).
 - **"Republié par vous" (owner, 2026-11-02)**: the reader who reposted a post reads "vous" FIRST on
   its "Republié par" line - "Republié par vous", "vous et Marie", "vous, Marie et 2 autres"
   (`republishedByText`, `republication.ts`, post header and reel overlay). It reads the card's own
   `repostedByMe`, which only that reader's card carries: no query was added, and nobody else is
-  shown it.
+  shown it. **`repostedByMe` is the UNFILTERED `mine` set** (`member-repost-card.ts`: a row by the
+  reader exists, whatever `memberRepostCarriesSql` says of it), unlike the names in `repostedBy`.
+  So a reader whose repost carries nothing now - muted, blocked, no longer seeing the post
+  first-hand - still reads "Republié par vous", and that is kept on purpose: it is what keeps
+  "Annuler ma republication" offered, the reader's one way to delete a row they wrote.
 - **The card**: `canRepost`, `repostedByMe`, `repostedBy` (the people the READER follows who
   reposted it - a stranger is not told who reposted) and, on the reader's own personal post only,
   `repostConsent { override, effective }` and `repostCount`; an entity-loaded post no longer spreads
@@ -1704,7 +1716,9 @@ security review before arming.
   neither for a blocked reader or a muted reposter. `member-reposts.controller.throttle.spec.ts`,
   `post-list-cache.spec.ts` and `posts.service.republished-feed.spec.ts` hold the rest. The
   author's list and removal (same spec, "THE AUTHOR SEES WHO REPOSTED"): newest first minus a block
-  left behind and a review-cohort reposter, the card's count equal to the list, paging by cursor
+  left behind either way (the reposter's, and the AUTHOR's), a muted reposter, one who lost
+  first-hand access and a review-cohort reposter - each also uncounted and unremovable (the typed
+  404, the row kept) - the card's count equal to the list, paging by cursor
   and a forged cursor refused, the uncoded 404 to a reposter, a follower, an entity post's officer,
   an anonymous post and a missing one; one removal leaves the other reposts and the reach they give,
   tells nobody, keeps the notice ledger, drops exactly the expected pages and leaves the reposter

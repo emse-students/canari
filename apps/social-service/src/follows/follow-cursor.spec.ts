@@ -29,6 +29,20 @@ describe('the follow list cursor', () => {
     expect(() => decodeFollowCursor(bad, PERSON_KEY)).toThrow(BadRequestException);
   });
 
+  it('round-trips the worst person key it accepts, and an id minted before the ASCII rule', () => {
+    const at = '2026-11-02 09:00:00.123456+05:30';
+    // 255 characters, every one escaped by JSON, 3 bytes in UTF-8, or astral (4 bytes, 2 units).
+    for (const id of ['"'.repeat(255), '\\'.repeat(255), '€'.repeat(255), '😀'.repeat(255)]) {
+      const cursor = encodeFollowCursor(at, id);
+      expect(cursor.length).toBeLessThanOrEqual(PERSON_KEY.maxLength);
+      expect(decodeFollowCursor(cursor, PERSON_KEY)).toEqual({ at, id });
+    }
+    expect(PERSON_KEY.accepts('legacy:id ü')).toBe(true);
+    expect(PERSON_KEY.accepts('')).toBe(false);
+    expect(PERSON_KEY.accepts('x'.repeat(256))).toBe(false);
+    expect(PERSON_KEY.accepts('a\u007fb')).toBe(false);
+  });
+
   it('reads an absent or empty cursor as the first page', () => {
     expect(decodeFollowCursor(undefined)).toBeNull();
     expect(decodeFollowCursor('')).toBeNull();
