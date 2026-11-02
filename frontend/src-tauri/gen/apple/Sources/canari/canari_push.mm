@@ -4774,7 +4774,12 @@ static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void (^done)(UIB
     done(UIBackgroundFetchResultFailed);
     return;
   }
-  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  // Never a cached answer: a stale `frame` for this row would act on a message already handled
+  // (the server also says `Cache-Control: no-store`).
+  NSMutableURLRequest *req =
+      [NSMutableURLRequest requestWithURL:url
+                              cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                          timeoutInterval:5.0];
   req.HTTPMethod = @"GET";
   [req setValue:[NSString stringWithFormat:@"PushSecret %@", secret]
       forHTTPHeaderField:@"Authorization"];

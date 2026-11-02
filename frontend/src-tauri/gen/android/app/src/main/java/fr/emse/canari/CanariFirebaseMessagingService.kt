@@ -29,7 +29,10 @@ import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
@@ -121,18 +124,48 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * unbounded thread-per-push it exists to prevent, wearing a queue as a disguise.
          */
         private val MLS_PUSH_LANE: ExecutorService =
-            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls") }
+            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls").also { mlsLaneThread = it } }
+
+        /**
+         * The lane's one thread, so [runSerializedWithWakeLock] knows a RE-QUEUE (a frame put back
+         * behind its Welcome, a join queued behind its banner) from an arrival: a re-queue is made
+         * on the lane and keeps its place semantics, an arrival takes a [WAKE_ORDER] ticket.
+         */
+        @Volatile private var mlsLaneThread: Thread? = null
 
         /**
          * Where wake-up fetches run - OFF [MLS_PUSH_LANE], which they would otherwise hold for a
          * network round trip each. Four threads: a burst fetches in parallel, and the frames are
-         * still dispatched in delivery order by [WAKE_ORDER]. Bounded, so a burst queues here rather
+         * still dispatched in arrival order by [WAKE_ORDER]. Bounded, so a burst queues here rather
          * than becoming a thread per push. Companion-scoped for the reason the lane is.
          */
         private val WAKE_FETCH_POOL: ExecutorService =
             Executors.newFixedThreadPool(4) { r -> Thread(r, "canari-fcm-wake") }
 
-        /** The delivery order of wake-ups, kept across their parallel fetches. See [WakeOrder]. */
+        /**
+         * Where the HTTP call of a wake fetch runs, so the fetch thread can hold it to
+         * [WAKE_FETCH_DEADLINE_MS] as a WHOLE: `connectTimeout` does not cover the DNS lookup, and
+         * `readTimeout` bounds each read, not the response. A call past its deadline is disconnected
+         * and abandoned; a DNS lookup cannot be interrupted, so its thread ends with the lookup -
+         * which is why this pool is not the fetch pool.
+         */
+        private val WAKE_HTTP_POOL: ExecutorService =
+            Executors.newCachedThreadPool { r -> Thread(r, "canari-fcm-wake-http") }
+
+        /**
+         * The whole of one wake fetch, DNS to last byte. Twice the 5 s connect + 5 s read a healthy
+         * call is allowed, and under the fetch's own 30 s wake lock. Past it the fetch is a failure,
+         * logged at ERROR as `stage=deadline`, never retried.
+         */
+        private const val WAKE_FETCH_DEADLINE_MS = 20_000L
+
+        /** The wake lock of one fetch: its deadline, plus the margin to complete its ticket. */
+        private const val WAKE_FETCH_WAKELOCK_MS = WAKE_FETCH_DEADLINE_MS + 10_000L
+
+        /**
+         * The ARRIVAL ORDER of every push bound for [MLS_PUSH_LANE], wake-up or full, kept across the
+         * wake-ups' parallel fetches. See [WakeOrder].
+         */
         private val WAKE_ORDER = WakeOrder()
 
         /**
@@ -435,6 +468,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
+                // The one "could not be loaded" notice of the wake-up push: the app is open, so the
+                // queue it asked to drain is draining. Named, not left to the channel sweep above,
+                // which an API below 26 does not filter by channel and a channel move would miss.
+                manager.cancel(WAKE_UNAVAILABLE_NOTIF_ID)
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
             }
@@ -1435,6 +1472,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return try {
                 val ids = manager.activeNotifications.filter { sbn ->
                     sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
+                        sbn.id != WAKE_UNAVAILABLE_NOTIF_ID &&
                         (android.os.Build.VERSION.SDK_INT < 26 ||
                             sbn.notification.channelId == CHANNEL_MESSAGES ||
                             sbn.notification.channelId == CHANNEL_MENTIONS)
@@ -3768,6 +3806,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * its turn does not hold the CPU awake for the ones ahead of it.
      */
     private fun runSerializedWithWakeLock(name: String, timeoutMs: Long = 60_000L, block: () -> Unit) {
+        // IN ARRIVAL ORDER WITH THE WAKE-UPS. A push arriving now takes a [WAKE_ORDER] ticket, so it
+        // cannot overtake a wake-up that arrived before it and is still fetching (a key-group
+        // Welcome sent as a wake, then the salon push sealed on it). Work queued ON the lane (a
+        // re-queue behind a Welcome) or from inside a release (the fetched frame's own dispatch) is
+        // already in its turn and goes straight to the lane.
+        if (Thread.currentThread() === mlsLaneThread) {
+            executeOnLane(name, timeoutMs, block)
+            return
+        }
+        val now = WAKE_ORDER.inOrder({ executeOnLane(name, timeoutMs, block) }) { it() }
+        if (!now) Log.d(TAG, "$name: waits for ${WAKE_ORDER.waiting() - 1} earlier wake-up(s) still fetching")
+    }
+
+    /** Queues [block] on [MLS_PUSH_LANE] under its own wake lock - the only place work enters it. */
+    private fun executeOnLane(name: String, timeoutMs: Long, block: () -> Unit) {
         MLS_PUSH_LANE.execute {
             val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
@@ -4358,12 +4411,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * A CONTENT-FREE WAKE-UP PUSH: fetch what the server kept, then dispatch it as the full push
      * (owner, 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
      *
-     * THE FETCH IS OFF THE MLS LANE, THE DISPATCH ON IT, IN DELIVERY ORDER. A ticket is taken here, on
-     * FCM's thread, so tickets follow delivery; the fetch runs on [WAKE_FETCH_POOL]; [WAKE_ORDER]
-     * releases the results in ticket order, and each is queued on the lane by
-     * [runSerializedWithWakeLock] as it is released - so A's work still precedes B's, and the lane is
-     * never held by a round trip. One request, no retry and no timer: the socket's own timeouts bound
-     * it, and the ticket is completed in a `finally`, so no path leaves a later wake waiting.
+     * THE FETCH IS OFF THE MLS LANE, THE DISPATCH ON IT, IN ARRIVAL ORDER - WITH EVERY OTHER PUSH. A
+     * ticket is taken here, on FCM's thread; every full push bound for the lane takes one too
+     * ([runSerializedWithWakeLock]). The fetch runs on [WAKE_FETCH_POOL], and [WAKE_ORDER] releases
+     * the results in ticket order - so a Welcome sent as a wake is still joined before the salon push
+     * that arrived after it, and the lane is never held by a round trip. One request, no retry: the
+     * whole fetch is held to [WAKE_FETCH_DEADLINE_MS], and the ticket is settled on every path (the
+     * fetch's `finally`, or here if it could not be scheduled), so no path leaves a later push
+     * waiting.
      *
      * A FAILED FETCH IS NEVER DRAWN AS THE GENERIC TEXT. It is logged at ERROR with its stage, and a
      * visible frame gets a notification that SAYS the message could not be loaded; a silent one gets
@@ -4390,27 +4445,66 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
         val ticket = WAKE_ORDER.take()
-        WAKE_FETCH_POOL.execute {
-            val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_wake_fetch")
-            wl.acquire(60_000L)
-            var outcome: WakeAnswer.Outcome = WakeAnswer.Outcome.Failed("uncaught")
+        // EVERY PATH COMPLETES THE TICKET, or every push that arrived after this one waits for ever.
+        val settle = { outcome: WakeAnswer.Outcome ->
             try {
-                outcome = fetchWakeFrame(queuedMessageId, silent)
+                val released = WAKE_ORDER.complete(ticket, { onWakeFetched(queuedMessageId, silent, mentionsOnly, outcome) }) { it() }
+                Log.d(TAG, "[PUSH_WAKE] settled queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
             } catch (e: Throwable) {
-                Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
-            } finally {
-                val result = outcome
-                val released = WAKE_ORDER.complete(ticket, { onWakeFetched(queuedMessageId, silent, mentionsOnly, result) }) { action ->
-                    runSerializedWithWakeLock("fcm_wake") { action() }
-                }
-                Log.d(TAG, "[PUSH_WAKE] fetch done queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
-                if (wl.isHeld) wl.release()
+                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
             }
+        }
+        try {
+            WAKE_FETCH_POOL.execute {
+                var outcome: WakeAnswer.Outcome = WakeAnswer.Outcome.Failed("uncaught")
+                var wl: PowerManager.WakeLock? = null
+                try {
+                    wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_wake_fetch")
+                    wl.acquire(WAKE_FETCH_WAKELOCK_MS)
+                    outcome = fetchWakeFrameWithinDeadline(queuedMessageId, silent)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                } finally {
+                    settle(outcome)
+                    if (wl?.isHeld == true) wl.release()
+                }
+            }
+        } catch (e: RejectedExecutionException) {
+            // Never expected (the pool is never shut down) - and if it ever is, the ticket is settled
+            // HERE, so no later push waits on a fetch that was never scheduled.
+            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}")
+            settle(WakeAnswer.Outcome.Failed("not-scheduled"))
         }
     }
 
-    /** What one wake fetch became, acted on in its turn on the MLS lane. */
+    /**
+     * [fetchWakeFrame] held to [WAKE_FETCH_DEADLINE_MS] as a whole. Past it the connection is
+     * disconnected, the call abandoned on [WAKE_HTTP_POOL], and the fetch is a failure accused at
+     * ERROR - the frame stays queued for the next open.
+     */
+    private fun fetchWakeFrameWithinDeadline(queuedMessageId: String, silent: Boolean): WakeAnswer.Outcome {
+        val connection = AtomicReference<HttpURLConnection?>(null)
+        val call = WAKE_HTTP_POOL.submit<WakeAnswer.Outcome> { fetchWakeFrame(queuedMessageId, silent, connection) }
+        return try {
+            call.get(WAKE_FETCH_DEADLINE_MS, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            Log.e(TAG, "[PUSH_WAKE] fetch EXCEEDED its ${WAKE_FETCH_DEADLINE_MS} ms deadline queued=$queuedMessageId " +
+                "(connected=${connection.get() != null}) - a stalled DNS lookup or a trickling response; abandoned")
+            connection.get()?.disconnect()
+            call.cancel(true)
+            WakeAnswer.Outcome.Failed("deadline")
+        } catch (e: java.util.concurrent.ExecutionException) {
+            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
+            WakeAnswer.Outcome.Failed("uncaught")
+        }
+    }
+
+    /**
+     * What one wake fetch became, acted on IN ITS TURN: run inside [WAKE_ORDER]'s release, so the
+     * frame's own lane work ([dispatchPush] -> [runSerializedWithWakeLock]) enters the lane at the
+     * place this push ARRIVED, before anything that arrived after it.
+     */
     private fun onWakeFetched(queuedMessageId: String, silent: Boolean, mentionsOnly: Boolean, outcome: WakeAnswer.Outcome) {
         when (outcome) {
             is WakeAnswer.Outcome.Frame -> {
@@ -4431,7 +4525,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * `GET /api/mls/push/wake` for one queued row, with the device's own ids and PushSecret - the
      * auth `fetch-proto` uses. The decision on what came back is [WakeAnswer.classify]'s.
      */
-    private fun fetchWakeFrame(queuedMessageId: String, silent: Boolean): WakeAnswer.Outcome {
+    private fun fetchWakeFrame(
+        queuedMessageId: String,
+        silent: Boolean,
+        connection: AtomicReference<HttpURLConnection?>,
+    ): WakeAnswer.Outcome {
         val ctx = MlsContextLoader.loadPushContext(this) ?: return WakeAnswer.Outcome.Failed("no-push-context")
         val secret = retrievePushSecret(this) ?: return WakeAnswer.Outcome.Failed("no-push-secret")
         val url = URL(
@@ -4446,8 +4544,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 connectTimeout = 5_000
                 readTimeout    = 5_000
                 requestMethod  = "GET"
+                useCaches      = false
                 setRequestProperty("Authorization", "PushSecret $secret")
-            }
+            }.also { connection.set(it) }
         } catch (e: Exception) {
             Log.e(TAG, "[PUSH_WAKE] cannot open the connection: ${e.javaClass.simpleName}")
             return WakeAnswer.Outcome.Failed("transport")

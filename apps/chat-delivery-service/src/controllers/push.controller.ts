@@ -9,6 +9,7 @@ import {
   BadRequestException,
   ConflictException,
   UseGuards,
+  Header,
   Headers,
   Res,
   Logger,
@@ -96,14 +97,17 @@ const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex
 export const KEY_GROUP_PUSH_LIMIT_PER_MINUTE = 64;
 
 /**
- * Wake-up fetches one user may make per minute on `mls/push/wake` (one per wake push a device
- * received; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+ * Wake-up fetches one USER may make per minute on `mls/push/wake`, PER REPLICA (one per wake push a
+ * device received; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
  *
- * Sized on the device, not on an average: Android posts at most 5 notifications a second per app
- * (`NotificationManagerService.MAX_PACKAGE_ENQUEUE_RATE`), so 300 a minute is every VISIBLE frame a
- * phone can show, and the same again is left for the silent ones (receipts, own-device copies) that
- * wake it without drawing. A refusal is the throttler's `429`; the device treats it as a failed
- * fetch (logged, accused), and the frame stays queued for the next open.
+ * What the number is, and is not: the throttler keys on the user (`PushSecretThrottlerGuard`), so
+ * every device of that user shares it, and its storage is the replica's own memory, so N replicas
+ * admit up to N times it. It is therefore a bound on abuse, not a per-phone budget. Sized from one
+ * phone upward: Android posts at most 5 notifications a second per app
+ * (`NotificationManagerService.MAX_PACKAGE_ENQUEUE_RATE`), so 300 a minute is every VISIBLE frame
+ * one phone can show; 600 leaves the same again for silent frames or a second device. A user whose
+ * devices together exceed it on one replica gets a `429`, which each device treats as a failed
+ * fetch (logged, accused) - the frame stays queued for the next open.
  */
 export const WAKE_FETCH_LIMIT_PER_MINUTE = 600;
 
@@ -455,6 +459,9 @@ export class PushController {
    */
   @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
   @Throttle({ default: { limit: WAKE_FETCH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  // A per-device answer about a queue that changes under it: no client, proxy or OS cache may
+  // replay it (a stale `frame` would draw a message already read).
+  @Header('Cache-Control', 'no-store')
   @Get('mls/push/wake')
   async fetchWakeFrame(
     @Query('messageId') messageIdRaw: string,

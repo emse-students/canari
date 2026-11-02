@@ -989,7 +989,13 @@ class NotificationService: UNNotificationServiceExtension {
     let d = Self.encode(ctx.deviceId)
     let urlStr =
       "\(ctx.baseUrl)/api/mls/push/wake?messageId=\(q)&userId=\(u)&deviceId=\(d)&silent=\(silent ? "true" : "false")"
-    guard let (data, status) = syncRequest(method: "GET", urlStr: urlStr, secret: secret, body: nil) else {
+    // Never a cached answer: the same URL is asked again for the same row, and a stale `frame`
+    // would draw a message already read (the server also says `Cache-Control: no-store`).
+    guard
+      let (data, status) = syncRequest(
+        method: "GET", urlStr: urlStr, secret: secret, body: nil,
+        cachePolicy: .reloadIgnoringLocalCacheData)
+    else {
       return .failed("transport")
     }
     guard status == 200 else {
@@ -2516,9 +2522,12 @@ class NotificationService: UNNotificationServiceExtension {
   /// `secret` is optional because one route needs none: `/api/media/public/:id` is what a
   /// signed-out browser fetches. A nil sends NO `Authorization` header rather than an empty one -
   /// a header the proxy would then have to reason about.
-  private func syncRequest(method: String, urlStr: String, secret: String?, body: Data?) -> (Data, Int)? {
+  private func syncRequest(
+    method: String, urlStr: String, secret: String?, body: Data?,
+    cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy
+  ) -> (Data, Int)? {
     guard let url = URL(string: urlStr) else { return nil }
-    var req = URLRequest(url: url)
+    var req = URLRequest(url: url, cachePolicy: cachePolicy)
     req.httpMethod = method
     if let secret = secret {
       req.setValue("PushSecret \(secret)", forHTTPHeaderField: "Authorization")

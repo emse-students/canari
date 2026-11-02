@@ -40,7 +40,7 @@ describe('the wake-up push the registration promises', () => {
     expect(service).toContain('dispatchPush(outcome.fields)');
   });
 
-  it('the Android fetch runs OFF the MLS lane, and only the dispatch is queued on it, in order', () => {
+  it('the Android fetch runs OFF the MLS lane, and every push reaches the lane in arrival order', () => {
     const service = read(ANDROID);
     const wake = service.slice(
       service.indexOf('private fun onWakePush('),
@@ -48,11 +48,15 @@ describe('the wake-up push the registration promises', () => {
     );
     // The round trip is on the fetch pool; the lane only ever sees the released, ordered action.
     expect(wake).toContain('WAKE_FETCH_POOL.execute');
-    expect(wake.indexOf('fetchWakeFrame(')).toBeLessThan(wake.indexOf('WAKE_ORDER.complete('));
-    expect(wake).toMatch(/WAKE_ORDER\.complete\([\s\S]*runSerializedWithWakeLock\("fcm_wake"\)/);
-    expect(wake).not.toMatch(
-      /runSerializedWithWakeLock\("fcm_wake"\) \{\s*when \(val outcome = fetchWakeFrame/
-    );
+    expect(wake).toContain('val ticket = WAKE_ORDER.take()');
+    expect(wake).toContain('fetchWakeFrameWithinDeadline(queuedMessageId, silent)');
+    // The ticket is settled on every path, the unschedulable fetch included.
+    expect(wake).toMatch(/finally \{\s*settle\(outcome\)/);
+    expect(wake).toMatch(/catch \(e: RejectedExecutionException\) \{[\s\S]*settle\(/);
+    // EVERY push bound for the lane takes its turn in the same order (a full push included).
+    const runner = service.slice(service.indexOf('private fun runSerializedWithWakeLock('));
+    expect(runner.slice(0, 1500)).toContain('WAKE_ORDER.inOrder(');
+    expect(service.match(/MLS_PUSH_LANE\.execute/g)).toHaveLength(1);
     // A failure for a mentions-only conversation is posted silently, under one id for all of them.
     expect(service).toContain('.setSilent(mentionsOnly || callHoldsSound())');
     expect(service).toContain('val notifId = WAKE_UNAVAILABLE_NOTIF_ID');

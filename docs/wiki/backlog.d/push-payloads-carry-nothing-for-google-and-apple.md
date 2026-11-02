@@ -107,15 +107,30 @@ drawn as the generic text:
 - iOS app, silent frame: the error line, no action (the dismissal it would have done is the one
   thing lost, and the next activation clears every conversation's notifications anyway).
 
-No retry and no timer: one request, bounded by the transport's own timeout (5 s, as `fetch-proto`).
+No retry: one request. On iOS it is bounded by the transport's own timeout (5 s, as `fetch-proto`);
+on Android the WHOLE fetch, DNS lookup to last byte, is held to `WAKE_FETCH_DEADLINE_MS` = 20 s
+(`connectTimeout` does not cover DNS, and `readTimeout` bounds each read, not the response): past it
+the connection is disconnected, the call abandoned on its own pool, and the fetch is a failure logged
+at ERROR as `stage=deadline`. The fetch's wake lock is that deadline plus 10 s. Every client asks
+with caching off (`useCaches = false`, `reloadIgnoringLocalCacheData`), and the server answers
+`Cache-Control: no-store`.
 
-**On Android the fetch is OFF the MLS lane, and the dispatch ON it, in delivery order.** The lane is
-the single writer of `mls.bin`; a fetch on it held every later frame for a round trip. A ticket is
-taken on FCM's thread (`WakeOrder.take`), the fetch runs on a 4-thread pool, and `WakeOrder`
-releases the results in ticket order onto the lane - so a commit still precedes the message sealed
-after it even when the message's fetch returns first. Termination is a proof, not a clock: a ticket
-waits only on an earlier fetch, every fetch ends (socket timeouts), and the ticket is completed in a
-`finally` (`WakeOrderTest`).
+**On Android the fetch is OFF the MLS lane, and EVERY push reaches the lane in ARRIVAL order.** The
+lane is the single writer of `mls.bin`, and its order is load-bearing: a key-group Welcome must be
+joined before the salon push sealed on that group is opened (NOTIF-21), a commit applied before the
+message sealed after it. A wake reaches the lane only once its fetch returns, so ordering the wakes
+among themselves is not enough - a FULL `channel` push arriving after a Welcome sent as a wake would
+overtake it. So every push bound for the lane takes a `WakeOrder` ticket on arrival: a full push's
+is completed at once (`WakeOrder.inOrder`, inside `runSerializedWithWakeLock`), a wake's when its
+fetch returns, and the lane is handed work only in ticket order. Work queued ON the lane (a frame
+re-queued behind its Welcome) or from inside a release (the fetched frame's own dispatch) is
+already in its turn and goes straight to the lane. Termination is a proof, not a clock: a ticket
+waits only on an earlier wake, every fetch ends within its deadline, and the ticket is settled on
+every path - the fetch's `finally`, and the arrival thread itself if the fetch could not be
+scheduled; an action that throws does not strand the ones behind it (`WakeOrderTest`).
+
+The one "could not be loaded" notification is cancelled by id when the app comes to the foreground
+(`cancelAllMessageNotifications`), and is not counted as an unread conversation.
 The server writes `[PUSH_WAKE] served|gone` per fetch, so **sends with `mode=wake` minus fetches
 served** is the population of wakes no device acted on - the one rate that says whether the switch
 can stay on.
