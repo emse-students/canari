@@ -37,10 +37,12 @@ export function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${out}$`);
 }
 
-/** The `MATCH` argument of a scan call, or everything. */
-function matcherOf(args: (string | number)[]): RegExp {
+/** The `MATCH` argument of a scan call as a predicate, or one accepting everything. */
+function matcherOf(args: (string | number)[]): (value: string) => boolean {
   const i = args.findIndex((a) => String(a).toUpperCase() === 'MATCH');
-  return i >= 0 ? globToRegExp(String(args[i + 1])) : /^/;
+  if (i < 0) return () => true;
+  const re = globToRegExp(String(args[i + 1]));
+  return (value) => re.test(value);
 }
 
 /** One page of `items` from `cursor`, Redis-shaped: the next cursor is '0' once the end is reached. */
@@ -63,19 +65,19 @@ export function memoryRedis(pageSize = 2): MemoryRedis {
     async scan(cursor, ...args) {
       const [next, keys] = page(allKeys(), cursor, pageSize);
       const match = matcherOf(args);
-      return [next, keys.filter((k) => match.test(k))];
+      return [next, keys.filter((k) => match(k))];
     },
     async sscan(key, cursor, ...args) {
       const [next, members] = page([...(sets.get(key) ?? [])].sort(), cursor, pageSize);
       const match = matcherOf(args);
-      return [next, members.filter((m) => match.test(m))];
+      return [next, members.filter((m) => match(m))];
     },
     async hscan(key, cursor, ...args) {
       const [next, fields] = page([...(hashes.get(key)?.keys() ?? [])].sort(), cursor, pageSize);
       const match = matcherOf(args);
       return [
         next,
-        fields.filter((f) => match.test(f)).flatMap((f) => [f, hashes.get(key)?.get(f) ?? '']),
+        fields.filter((f) => match(f)).flatMap((f) => [f, hashes.get(key)?.get(f) ?? '']),
       ];
     },
     async smembers(key) {

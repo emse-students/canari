@@ -252,7 +252,7 @@ interface DrainRegistration {
 let registered: DrainRegistration | null = null;
 let unsubscribeReconnect: (() => void) | null = null;
 /** The ONE pass in flight, whoever started it: two passes never run at once. */
-let running: Promise<unknown> | null = null;
+let running: { done: Promise<unknown> } | null = null;
 
 /** Attaches the signed-in session's drain to the reconnect edge. An empty owner is refused, said. */
 export function registerUploadReleaseDrain(deps: DrainRegistration): void {
@@ -285,7 +285,7 @@ export function unregisterUploadReleaseDrain(): void {
  * at its start, and stops the moment that registration is replaced.
  */
 export async function flushUploadReleaseMarks(): Promise<void> {
-  while (running) await running.catch(() => undefined);
+  while (running) await running.done.catch(() => undefined);
   const reg = registered;
   if (!reg) return;
   const pass = sweepUploadReleaseMarks(
@@ -295,13 +295,14 @@ export async function flushUploadReleaseMarks(): Promise<void> {
     defaultStore(),
     () => registered === reg
   );
-  running = pass;
+  const slot = { done: pass };
+  running = slot;
   try {
     await pass;
   } catch (e) {
     // A store that refuses a write (quota): the marks it holds stay owed for the next pass.
     reg.log(`[UPLOAD-RELEASE] ERROR: the pass failed, its marks stay owed: ${String(e)}`);
   } finally {
-    if (running === pass) running = null;
+    if (running === slot) running = null;
   }
 }
