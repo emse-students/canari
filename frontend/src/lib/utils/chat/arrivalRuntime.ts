@@ -1,6 +1,7 @@
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isNarrowChatLayout } from '$lib/utils/viewport';
+import { resumeOpeningHolds } from './resumeOpening.svelte';
 import {
   readerCanSeeArrival,
   readerIsReadingConversation,
@@ -54,6 +55,9 @@ export function isReadingConversationNow(
   selectedConversationKey: string | null | undefined
 ): boolean {
   if (typeof document === 'undefined') return false;
+  // A conversation shown only because the app came back to open another one is not being read
+  // (`resumeOpening.svelte.ts`): an arrival in it stays unread, as the receipt effect leaves it.
+  if (resumeOpeningHolds(conversationKey)) return false;
   return readerIsReadingConversation(arrivalContextNow(conversationKey, selectedConversationKey));
 }
 

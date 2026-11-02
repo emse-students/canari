@@ -80,6 +80,12 @@ writer and every door in the code, the server suites, and production COUNTS (no 
   marked on resume until something else changes the conversation - read in the code, not measured.
   **Fixed 2026-11-02**, door 1 unchanged: the effect now follows the foreground as state, so the
   resume itself runs it ([chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
+  **Its consequence, decided by the owner the same day:** a resume caused by tapping a notification
+  for conversation Y, with X left open, must NOT mark X, the same on both platforms. The shell sends
+  the link the resume opens WITH the foreground edge (`detail.opening`: Android from the intent
+  `onNewIntent` took before `onResume`, iOS from its notification delegate), and the page holds X
+  until the landing selects Y, is abandoned, or the link navigates (`resumeOpening.svelte.ts`). A
+  plain resume still marks X. The hold only withholds a mark - door 1 is narrowed, never widened.
 
 ## The fix (2026-10-14)
 

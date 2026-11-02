@@ -125,6 +125,7 @@
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { endResumeOpeningOnNavigation } from '$lib/utils/chat/resumeOpening.svelte';
   import {
     openNotificationTarget,
     resolveConversationKey,
@@ -2244,6 +2245,8 @@
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // A resume that opened a page link held the conversation left on screen until it navigated.
+    endResumeOpeningOnNavigation();
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
       path === '/login' ||

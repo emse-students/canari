@@ -13,6 +13,7 @@ import { resolve } from '$app/paths';
 import type { AppPath } from '$lib/utils/internalPath';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { listenForNativeNotificationTaps } from '$lib/mobile/notificationTapDrain';
+import { chatTargetOfLink } from '$lib/mobile/chatLinkTarget';
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -186,7 +187,7 @@ if (isTauriRuntime()) {
         // Chat conversation deep link: fr.emse.canari://chat/{groupId}
         // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
         if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
-          const groupId = u.pathname.replace(/^\//, '');
+          const groupId = chatTargetOfLink(u.href);
           // A LINK NAVIGATES, IT NEVER ANSWERS A CALL. The native answer is carried by a
           // private intent (`pending_call_accept.json`, `$lib/stores/pendingCallAccept`); a
           // parameter of this URL is never read as one, whoever opened it.
