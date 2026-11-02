@@ -588,15 +588,18 @@ describe('historyOverlayStack - the native Back with an overlay the WebView woul
     expect(depths.at(-1)).toBe(0);
   });
 
-  it('promises nothing at a router entry, off the iOS-style no-entry runtime, or on a ghost', async () => {
-    // The pointer on the router's own entry although an overlay is on the stack.
+  it('promises nothing at a router entry or off the no-entry runtime, and says so to native', async () => {
+    // The pointer on the router's own entry although an overlay is on the stack (a router write
+    // moved it): the native layer lowered its depth before asking, the page re-tells it the truth.
     let h = fakeHistory();
     let depths = bridge();
     stop = initHistoryOverlayStack();
     pushHistoryOverlay(vi.fn());
     expect(depths.at(-1)).toBe(1);
     history.replaceState({ sveltekit: 9 }, '');
+    depths.length = 0;
     expect(native()()).toBe(false);
+    expect(depths).toEqual([0]);
     expect(h.index).toBe(1);
     stop();
 
@@ -608,21 +611,49 @@ describe('historyOverlayStack - the native Back with an overlay the WebView woul
     expect(depths.at(-1)).toBe(0);
     expect(native()()).toBe(false);
     expect(h.index).toBe(0);
-    stop();
+  });
 
-    // The pointer on a ghost above a live overlay.
-    h = fakeHistory();
-    depths = bridge();
+  it('a ghost between two live overlays still has one to close: the Back agrees with settleArrival', async () => {
+    const h = fakeHistory();
+    const depths = bridge();
     stop = initHistoryOverlayStack();
     history.pushState({ sveltekit: 1 }, '');
     const closeBelow = vi.fn();
     const closeAbove = vi.fn();
     pushHistoryOverlay(closeBelow);
     pushHistoryOverlay(closeAbove);
-    releaseHistoryOverlay(closeAbove);
+    releaseHistoryOverlay(closeAbove); // the pointer sits on its ghost, `closeBelow` is live under it
+    expect(depths.at(-1)).toBe(1);
+    expect(native()()).toBe(true);
+    await settle();
+    expect(closeBelow).toHaveBeenCalledWith('back');
+    expect(h.index).toBe(2);
     expect(depths.at(-1)).toBe(0);
-    expect(native()()).toBe(false);
-    expect(h.index).toBe(3);
+  });
+
+  it('two Backs merged into ONE popstate leave nothing pending: later overlays are counted whole', async () => {
+    const h = fakeHistory();
+    const depths = bridge();
+    stop = initHistoryOverlayStack();
+    history.pushState({ sveltekit: 1 }, '');
+    const closeTake = vi.fn();
+    const closeQuestion = vi.fn();
+    pushHistoryOverlay(closeTake);
+    pushHistoryOverlay(closeQuestion);
+    // The browser accepts both `history.back()` calls and lands once, two entries down.
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    expect(native()()).toBe(true);
+    expect(native()()).toBe(true);
+    expect(back).toHaveBeenCalledTimes(2);
+    expect(depths.at(-1)).toBe(0);
+    history.replaceState({ sveltekit: 1 }, ''); // the pointer now on the router's entry
+    h.fire({ sveltekit: 1 });
+    expect(closeQuestion).toHaveBeenCalledWith('back');
+    expect(closeTake).toHaveBeenCalledWith('back');
+
+    // A new overlay is counted at its full value, not one short for a Back that never came.
+    pushHistoryOverlay(vi.fn());
+    expect(depths.at(-1)).toBe(1);
   });
 });
 

@@ -50,6 +50,15 @@ class MainActivity : TauriActivity() {
      */
     private val overlayDepth = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /** One atomic step: the decision (a Back is available) and the decrement it implies. */
+    private fun takeOverlayBack(): Boolean {
+        while (true) {
+            val depth = overlayDepth.get()
+            if (depth <= 0) return false
+            if (overlayDepth.compareAndSet(depth, depth - 1)) return true
+        }
+    }
+
     /**
      * THE HARDWARE BACK PRESS STEPS THE WEBVIEW'S HISTORY, AND WITHOUT THIS LINE NOTHING DECIDED
      * THAT - Chromium did, when it felt like it.
@@ -380,8 +389,7 @@ class MainActivity : TauriActivity() {
         // close (`BackBridge`, `historyOverlayStack.ts`), so this reads a fact instead of asking a
         // question: above zero the depth falls HERE and the page steps its own history; zero leaves.
         val web = liveWebView
-        if (web != null && overlayDepth.get() > 0) {
-            overlayDepth.decrementAndGet()
+        if (web != null && takeOverlayBack()) {
             Log.i("MainActivity", "Back handed to the page: an overlay is open")
             web.evaluateJavascript("window.__canariBackFromNative&&window.__canariBackFromNative()", null)
             return
