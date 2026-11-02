@@ -606,7 +606,7 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
   expire" and the age only. A `410` met INSIDE the viewer shows the player's own expired state; the tile
   behind it is only told by the hint (a tile that learned from the `410` would need the viewer to report
   back - left for RC-9 to measure).
-- **Viewer**: the feed's `ReelViewer` on ONE post-shaped entity (`reelMessageAsPost`), `loadPage` empty
+- **Viewer**: the feed's `ReelViewer` on ONE post-shaped entity (`reelMessageAsPost`, which carries the sender as `authorId` so the slide draws the sender's avatar and profile link, not the "UI" fallback of an empty id; the post `id` stays the message's), `loadPage` empty
   (a conversation's reels are not the feed's; the chain through the conversation's other reels of 3.2 is
   not built). **The save button is in the bar next to the volume, for every reel** (D-save), so the feed
   viewer changed too. A reel message is NOT forwardable (the bubble drops the action).
