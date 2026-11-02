@@ -157,9 +157,15 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   Every row also shows its member count, so an empty entity reads "0 membre".
 - **Search, type filter, keyset pages.** One request per visible kind, ordered `(name, id)` and paged on
   that pair (`(a.name, a.id) > cursor`). A page costs the same at any depth, and a row created meanwhile
-  never shifts the next page. The search runs on the server (`strpos` over the lowercased name or
-  slug). Its answers are numbered when sent, so an answer older than the one on screen is dropped.
-  "Afficher plus" asks for the cursor the last page gave. Each row carries its audience rules, which
+  never shifts the next page. The search runs on the server, over the name or slug, ignoring case
+  AND accents ("ecole" finds the name with its acute accent). The fold is `foldSql` in
+  `search-fold.ts`, a `translate` table. It is not `unaccent`: no social-service migration installs that
+  extension, only core-service creates it at boot. Search answers are numbered when sent, so an
+  answer older than the one on screen is dropped. "Afficher plus" asks with the cursor the last page
+  gave AND the query that cursor was read for. A cursor is a position in one result set, so a click
+  during the search pause never mixes the old cursor with the new query. A cursor the server did not
+  write is the typed `ADMIN_ASSOCIATION_BAD_CURSOR`, never a 500: a malformed shape, an id that is not
+  a UUID, and a NUL are all refused this way. Each row carries its audience rules, which
   replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds,
   [legacy-compatibility](../../legacy-compatibility.md)).
   Measured 2026-11-02, read-only: production holds 97 entities (49 associations, 44 lists, 4
@@ -170,7 +176,9 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   - a name;
   - a kind;
   - its spaces (`CellPicker`, written as `toRules(cells)`);
-  - an OPTIONAL first admin, picked from the accounts and given `firstAdminPresetFor(kind)`. This is
+  - an OPTIONAL first admin, picked from the accounts and given `firstAdminPresetFor(kind)`. It carries
+    NO role: the row takes the column's default, like any member added without a title. A label
+    typed by this code would be a locale string stored as data. This is
     the kind's admin preset, except for an institution. **An institution's members are managed by
     the platform admin only** (owner, 2026-11-02), so its first admin never holds `MANAGE_MEMBERS`.
     The server refuses that bit on an institution with `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
@@ -186,7 +194,11 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   creator-campus default, so a platform admin with no campus on their profile can still create.
 - **The slug preview is the server's answer** (`GET /api/associations/admin/slug-preview?name=`,
   `previewDerivedSlug`). It walks the same `slugCandidates`, skipping a taken slug or a cotisation-stem
-  collision, so `-2` and `-3` appear as the create would take them. It is asked once the name has
+  collision, so `-2` and `-3` appear as the create would take them. It reads every stem ONCE
+  (`stemCollidesElsewhere`, where a slug is its own base stem) and ASKS the same predicate the create's
+  `assertCotisationStemFree` applies. It never catches that refusal, which would WARN on every
+  keystroke for a collision nobody committed. A test asserts that a preview logs no warning, and a
+  control that catches the refusal again fails it. It is asked once the name has
   rested for 300 ms and is numbered like the search. The create stays the authority: a concurrent
   create may move the slug on by one suffix, and the link follows what the create answered.
 
@@ -203,6 +215,9 @@ Tests:
   `MANAGE_MEMBERS`.
 - `page.catalogue.svelte.test.ts`: both links per row and the member count; "show more"; the server
   search; the type filter; opening the form.
+  - A search answer older than the one on screen is dropped.
+  - "Show more" during the search pause asks with its cursor's own query.
+  - A control without each guard fails its test.
 
 ## Cercle top-ups (`/admin/cercle`)
 

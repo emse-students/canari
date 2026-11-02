@@ -179,3 +179,54 @@ it('opens the create form from the header and closes it on a creation', async ()
   flushSync();
   expect(target.querySelector('[data-admin-create]')).not.toBeNull();
 });
+
+function typeSearch(target: HTMLElement, value: string) {
+  const search = target.querySelector<HTMLInputElement>('input[type="search"]')!;
+  search.value = value;
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+it('drops a search answer older than the one on screen', async () => {
+  const target = await render();
+  let releaseFirst: () => void = () => undefined;
+  const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+  api.listAdminCatalogue.mockImplementation(async (type: Kind, opts: { q?: string }) => {
+    if (opts.q === 'Club') {
+      await firstHeld;
+      return { rows: type === 'association' ? FIRST.association.rows : [], next: null };
+    }
+    return { rows: type === 'list' ? FIRST.list.rows : [], next: null };
+  });
+
+  typeSearch(target, 'Club');
+  await vi.waitFor(() =>
+    expect(api.listAdminCatalogue).toHaveBeenCalledWith('association', { q: 'Club' })
+  );
+  typeSearch(target, 'Rouge');
+  await vi.waitFor(() => expect(target.querySelectorAll('[data-row-links]')).toHaveLength(1));
+  expect(target.textContent).toContain('Liste Rouge');
+
+  releaseFirst();
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(target.textContent).toContain('Liste Rouge');
+  expect(target.textContent).not.toContain('Club Photo');
+});
+
+it('"show more" inside the search pause asks with the query its cursor was read for', async () => {
+  const target = await render();
+  typeSearch(target, 'Zen');
+  const more = Array.from(target.querySelectorAll('button')).find(
+    (b) => b.textContent!.trim() === m.admin_entity_load_more()
+  )!;
+
+  more.click();
+
+  await vi.waitFor(() =>
+    expect(api.listAdminCatalogue).toHaveBeenCalledWith('association', { q: '', after: 'cur-a' })
+  );
+  expect(api.listAdminCatalogue).not.toHaveBeenCalledWith('association', {
+    q: 'Zen',
+    after: 'cur-a',
+  });
+});

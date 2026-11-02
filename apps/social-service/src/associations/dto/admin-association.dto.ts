@@ -13,7 +13,24 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { AudienceRuleDto } from '../../spaces/dto/space.dto';
-import { AddMemberDto } from './association.dto';
+import { ALL_PERMISSION_FLAGS } from '../entities/association-member.entity';
+
+/**
+ * The optional first admin of a new entity: an account and its rights. NO ROLE: the role is a title
+ * a person writes on the members tab, and a label typed by this code would be a locale string stored
+ * as data - the row takes the column's default, as any member added with no title.
+ */
+export class FirstAdminDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  userId!: string;
+
+  @IsInt()
+  @Min(0)
+  @Max(ALL_PERMISSION_FLAGS)
+  permissions!: number;
+}
 
 /** The three kinds the `associations.type` column stores. */
 export const ASSOCIATION_KINDS = ['association', 'list', 'institution'] as const;
@@ -45,11 +62,11 @@ export class AdminCreateAssociationDto {
   @Type(() => AudienceRuleDto)
   audiences!: AudienceRuleDto[];
 
-  /** Optional; absent means NO member at all (owner: "personne au départ"). */
+  /** Optional; absent means NO member at all (owner: "personne au depart"). */
   @IsOptional()
   @ValidateNested()
-  @Type(() => AddMemberDto)
-  firstAdmin?: AddMemberDto;
+  @Type(() => FirstAdminDto)
+  firstAdmin?: FirstAdminDto;
 }
 
 /** The largest page the admin catalogue serves. */

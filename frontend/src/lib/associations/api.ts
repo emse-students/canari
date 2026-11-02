@@ -3376,8 +3376,11 @@ export interface AdminCreateAssociationPayload {
   type: Association['type'];
   /** The spaces it reaches; empty reaches nobody. */
   audiences: AudienceRule[];
-  /** Absent: the entity starts with no member at all. */
-  firstAdmin?: { userId: string; role: string; permissions: number };
+  /**
+   * Absent: the entity starts with no member at all. No role: a title is written by a person on
+   * the members tab, never a label this code would store as data.
+   */
+  firstAdmin?: { userId: string; permissions: number };
 }
 
 /** Creates an entity placed in its spaces, through the server's one creation path. */

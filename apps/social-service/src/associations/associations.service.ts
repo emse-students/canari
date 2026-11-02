@@ -40,7 +40,11 @@ import {
   assertRosterStaysOnOneSide,
 } from './review-cohort-reach';
 import { isInReviewCohort } from '../review-cohort';
-import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
+import {
+  assertCotisationStemFree,
+  isCotisationStemCollision,
+  stemCollidesElsewhere,
+} from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
@@ -139,6 +143,8 @@ import {
 } from '../spaces/audience-policy';
 import { normaliseRules } from '../spaces/spaces.service';
 import type { AudienceRuleDto } from '../spaces/dto/space.dto';
+import type { FirstAdminDto } from './dto/admin-association.dto';
+import { SEARCH_FOLD_PARAMS, foldSql } from './search-fold';
 import {
   ADMIN_ASSOCIATION_ERROR,
   ADMIN_CATALOGUE_DEFAULT_LIMIT,
@@ -164,7 +170,7 @@ const LOGO_MAX_BYTES = 2 * 1024 * 1024;
  */
 export interface AssociationPlacement {
   audiences: AudienceRuleDto[];
-  firstAdmin?: AddMemberDto;
+  firstAdmin?: FirstAdminDto;
 }
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -590,33 +596,20 @@ export class AssociationsService {
    * concurrent create may still move it one suffix on. `null` when every candidate is taken.
    */
   async previewDerivedSlug(name: string): Promise<string | null> {
-    const candidates = slugCandidates(name);
-    const taken = new Set(
-      (
-        (await this.assoRepo.query(`SELECT slug FROM associations WHERE slug = ANY($1::text[])`, [
-          candidates,
-        ])) as { slug: string }[]
-      ).map((r) => r.slug)
-    );
-    for (const candidate of candidates) {
-      if (taken.has(candidate)) continue;
-      try {
-        await assertCotisationStemFree(this.assoRepo.manager, null, candidate);
-        this.logger.debug(`[slug] preview ${candidate} (${taken.size} candidate(s) taken)`);
-        return candidate;
-      } catch (err) {
-        if (!isCotisationStemCollision(err)) throw err;
-      }
-    }
-    this.logger.warn(`[slug] preview: no free slug in ${SLUG_MAX_ATTEMPTS} attempts`);
-    return null;
+    // ONE read of every stem (a slug is its own base stem, so a taken slug collides too), then the
+    // same predicate the create's `assertCotisationStemFree` applies - asked, never learned by
+    // catching its refusal, so a preview typed letter by letter logs no collision it did not make.
+    const collides = await stemCollidesElsewhere(this.assoRepo.manager, null);
+    const slug = slugCandidates(name).find((candidate) => !collides(candidate)) ?? null;
+    if (slug === null) this.logger.debug(`[slug] preview: no free candidate`);
+    return slug;
   }
 
   /**
    * One page of the platform admin's catalogue (`/admin/spaces`): every entity of one kind, member
    * or not, ordered by `(name, id)` and paged by KEYSET so a page costs the same at any depth and
    * a row created meanwhile never shifts the next one. `q` keeps the names or slugs containing it,
-   * case-insensitively (`strpos`, so `%` and `_` are plain characters). Each row carries its
+   * ignoring case and accents (`foldSql`; `strpos`, so `%` and `_` are plain characters). Each row carries its
    * member count and its audience rules, so the grid needs no second whole-table read.
    */
   async adminCatalogue(query: {
@@ -632,11 +625,13 @@ export class AssociationsService {
       .orderBy('a.name', 'ASC')
       .addOrderBy('a.id', 'ASC')
       .take(limit + 1);
-    const search = query.q?.trim().toLowerCase();
+    const search = query.q?.trim();
     if (search) {
+      // Accent- and case-insensitive on both sides: "ecole" finds "Ecole" written with its accent.
+      const needle = foldSql(':catalogueQ');
       qb.andWhere(
-        '(strpos(lower(a.name), :catalogueQ) > 0 OR strpos(lower(a.slug), :catalogueQ) > 0)',
-        { catalogueQ: search }
+        `(strpos(${foldSql('a.name')}, ${needle}) > 0 OR strpos(${foldSql('a.slug')}, ${needle}) > 0)`,
+        { catalogueQ: search, ...SEARCH_FOLD_PARAMS }
       );
     }
     if (query.after) {
@@ -788,7 +783,7 @@ export class AssociationsService {
   private async insertMembership(
     manager: EntityManager,
     association: Pick<Association, 'id' | 'type'>,
-    member: AddMemberDto,
+    member: { userId: string; permissions: number; role?: string },
     sortOrder: number
   ): Promise<AssociationMember> {
     await assertRosterStaysOnOneSide(manager, association.id, member.userId);
@@ -796,7 +791,8 @@ export class AssociationsService {
       manager.create(AssociationMember, {
         associationId: association.id,
         userId: member.userId,
-        role: member.role,
+        // No role given: the column's default, never a label this code types.
+        ...(member.role === undefined ? {} : { role: member.role }),
         permissions: writablePermissions(association.type, member.permissions),
         sortOrder,
       })

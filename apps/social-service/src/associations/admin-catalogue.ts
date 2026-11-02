@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 
 /**
@@ -16,6 +17,11 @@ export const ADMIN_ASSOCIATION_ERROR = {
   BAD_CURSOR: 'ADMIN_ASSOCIATION_BAD_CURSOR',
 } as const;
 
+const logger = new Logger('AdminCatalogue');
+
+/** The one character PostgreSQL text cannot hold, spelt by code point. */
+const NUL = String.fromCharCode(0);
+
 /** The default page of the admin catalogue: a screenful of rows, never the whole table. */
 export const ADMIN_CATALOGUE_DEFAULT_LIMIT = 50;
 
@@ -31,8 +37,9 @@ export function encodeCatalogueCursor(position: CataloguePosition): string {
 }
 
 /**
- * Reads a cursor back. Anything this server did not write - truncated, edited, another shape - is a
- * typed 400, never a 500 and never a silent first page.
+ * Reads a cursor back. Anything this server did not write - truncated, edited, another shape, an id
+ * that is not a UUID, a name PostgreSQL cannot hold (a NUL) - is a typed 400, never a 500 from the
+ * driver and never a silent first page.
  */
 export function decodeCatalogueCursor(cursor: string): CataloguePosition {
   try {
@@ -41,13 +48,18 @@ export function decodeCatalogueCursor(cursor: string): CataloguePosition {
       Array.isArray(value) &&
       value.length === 2 &&
       typeof value[0] === 'string' &&
-      typeof value[1] === 'string'
+      typeof value[1] === 'string' &&
+      !value[0].includes(NUL) &&
+      isUUID(value[1])
     ) {
       return { name: value[0], id: value[1] };
     }
   } catch {
     // Falls through to the typed refusal below: a cursor that does not parse is not ours.
   }
+  logger.warn(
+    `[ADMIN_CATALOGUE] cursor refused: not one this server wrote (${cursor.length} chars)`
+  );
   throw new BadRequestException({
     code: ADMIN_ASSOCIATION_ERROR.BAD_CURSOR,
     message: 'This catalogue cursor is not one this server wrote.',
@@ -70,6 +82,7 @@ export function platformAdminOnly(): ForbiddenException {
 export function assertFirstAdminAllowedForType(type: string, permissions: number): void {
   if (type !== 'institution') return;
   if ((permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0) return;
+  logger.warn(`[create] institution first admin refused: MANAGE_MEMBERS is the platform admin's`);
   throw new BadRequestException({
     code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY,
     message: "Only the platform administrator manages an institution's members.",

@@ -135,7 +135,6 @@ it('sends the spaces ticked as rules, and the picked first admin with the admin 
   expect(payload.audiences).toEqual([{ formation: null, campus: 'saint-etienne' }]);
   expect(payload.firstAdmin).toEqual({
     userId: 'r2',
-    role: m.asso_members_role_admin(),
     permissions: firstAdminPresetFor('association'),
   });
 });

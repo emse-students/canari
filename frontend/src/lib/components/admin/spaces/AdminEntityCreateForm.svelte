@@ -119,7 +119,6 @@
           ? {
               firstAdmin: {
                 userId: firstAdminId,
-                role: m.asso_members_role_admin(),
                 permissions: firstAdminPresetFor(kind),
               },
             }

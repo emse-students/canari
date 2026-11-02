@@ -43,10 +43,15 @@
   type Kind = Association['type'];
   type KindFilter = Kind | 'all';
 
-  /** One section's keyset pages: the rows fetched so far and the cursor of the next page. */
+  /**
+   * One section's keyset pages: the rows fetched so far, the cursor of the next page, and the
+   * search THAT CURSOR BELONGS TO - a cursor is a position in one result set, so "show more" asks
+   * with the query it was read for, never with what the box holds now.
+   */
   interface SectionState {
     rows: AdminCatalogueRow[];
     next: string | null;
+    query: string;
     loading: boolean;
   }
 
@@ -61,9 +66,9 @@
   let kindFilter = $state<KindFilter>('all');
   let creating = $state(false);
   let pages = $state<Record<Kind, SectionState>>({
-    association: { rows: [], next: null, loading: false },
-    list: { rows: [], next: null, loading: false },
-    institution: { rows: [], next: null, loading: false },
+    association: { rows: [], next: null, query: '', loading: false },
+    list: { rows: [], next: null, query: '', loading: false },
+    institution: { rows: [], next: null, query: '', loading: false },
   });
   /** The stored rules of each listed entity, by id - read with its page, replaced on every write. */
   let rulesById = $state<Record<string, AudienceRule[]>>({});
@@ -107,17 +112,24 @@
 
   /** Reads the first page of every visible kind for the current search, from scratch. */
   async function reloadCatalogue() {
+    clearTimeout(searchTimer);
     const seq = ++loadSeq;
     const kinds = visibleKinds;
+    const asked = query;
     for (const kind of kinds) pages[kind].loading = true;
     try {
       const answers = await Promise.all(
-        kinds.map((kind) => listAdminCatalogue(kind, { q: query }))
+        kinds.map((kind) => listAdminCatalogue(kind, { q: asked }))
       );
       if (seq !== loadSeq) return;
       kinds.forEach((kind, i) => {
         holdRules(answers[i].rows);
-        pages[kind] = { rows: answers[i].rows, next: answers[i].next, loading: false };
+        pages[kind] = {
+          rows: answers[i].rows,
+          next: answers[i].next,
+          query: asked,
+          loading: false,
+        };
       });
       error = null;
     } catch (e) {
@@ -128,19 +140,27 @@
     }
   }
 
-  /** Appends the next page of one kind. */
+  /**
+   * Appends the next page of one kind, asked with the query its cursor was read for. A search typed
+   * meanwhile restarts the list, so an answer (or a failure) arriving after that is dropped.
+   */
   async function loadMore(kind: Kind) {
-    const cursor = pages[kind].next;
-    if (!cursor || pages[kind].loading) return;
+    const { next: cursor, query: asked, loading: busyNow } = pages[kind];
+    if (!cursor || busyNow) return;
     const seq = loadSeq;
     pages[kind].loading = true;
     try {
-      const page = await listAdminCatalogue(kind, { q: query, after: cursor });
-      // A search typed meanwhile restarted the list: this page belongs to the previous one.
+      const page = await listAdminCatalogue(kind, { q: asked, after: cursor });
       if (seq !== loadSeq) return;
       holdRules(page.rows);
-      pages[kind] = { rows: [...pages[kind].rows, ...page.rows], next: page.next, loading: false };
+      pages[kind] = {
+        rows: [...pages[kind].rows, ...page.rows],
+        next: page.next,
+        query: asked,
+        loading: false,
+      };
     } catch (e) {
+      if (seq !== loadSeq) return;
       Log.d('admin.spaces.loadMore failed', e);
       error = m.admin_spaces_load_error();
       pages[kind].loading = false;

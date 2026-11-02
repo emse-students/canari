@@ -35,7 +35,7 @@ describe('AdminAssociationsController', () => {
       create: jest.fn(() => Promise.resolve({ id: 'new', slug: 'club', name: 'Club' })),
     };
     const controller = new AdminAssociationsController(service as never);
-    const firstAdmin = { userId: 'u1', role: 'Admin', permissions: 7 };
+    const firstAdmin = { userId: 'u1', permissions: 7 };
 
     await controller.create('admin-1', {
       name: 'Club',

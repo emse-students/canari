@@ -45,6 +45,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
   let assos: Repository<Association>;
   let members: Repository<AssociationMember>;
   let audiences: Repository<AssociationAudience>;
+  let warnSpy: jest.SpyInstance;
 
   /** The platform admin has NO campus: the explicit placement must not need one. */
   const adminCreate = (
@@ -52,7 +53,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     opts: {
       type?: 'association' | 'list' | 'institution';
       audiences?: { formation: null; campus: 'saint-etienne' | 'gardanne' | null }[];
-      firstAdmin?: { userId: string; role: string; permissions: number };
+      firstAdmin?: { userId: string; permissions: number };
     } = {}
   ) =>
     service.create({ name, type: opts.type ?? 'association' } as never, 'platform-admin', true, {
@@ -61,9 +62,10 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     });
 
   beforeAll(async () => {
-    for (const level of ['log', 'warn', 'debug', 'error'] as const) {
+    for (const level of ['log', 'debug', 'error'] as const) {
       jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
     }
+    warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     admin = new Client({ connectionString: URL });
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -132,14 +134,15 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
 
   it('creates with a first admin, in the same transaction, holding the preset sent', async () => {
     const created = await adminCreate('Avec Admin', {
-      firstAdmin: { userId: 'officer', role: 'Admin', permissions: ADMIN_PRESET },
+      firstAdmin: { userId: 'officer', permissions: ADMIN_PRESET },
     });
 
     const roster = await members.find({ where: { associationId: created.id } });
     expect(roster).toHaveLength(1);
+    // No title typed by code: the column's own default, as for any member added without one.
     expect(roster[0]).toMatchObject({
       userId: 'officer',
-      role: 'Admin',
+      role: 'Membre',
       permissions: ADMIN_PRESET,
     });
   });
@@ -148,7 +151,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     const before = await assos.count();
     await expect(
       adminCreate('Fantome', {
-        firstAdmin: { userId: 'nobody', role: 'Admin', permissions: ADMIN_PRESET },
+        firstAdmin: { userId: 'nobody', permissions: ADMIN_PRESET },
       })
     ).rejects.toMatchObject({
       response: { code: ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN },
@@ -161,7 +164,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     await expect(
       adminCreate('Mines Instit', {
         type: 'institution',
-        firstAdmin: { userId: 'officer', role: 'Admin', permissions: ADMIN_PRESET },
+        firstAdmin: { userId: 'officer', permissions: ADMIN_PRESET },
       })
     ).rejects.toMatchObject({
       response: { code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY },
@@ -171,7 +174,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     const publisher = ADMIN_PRESET & ~AssociationPermissionFlag.MANAGE_MEMBERS;
     const created = await adminCreate('Mines Instit', {
       type: 'institution',
-      firstAdmin: { userId: 'officer', role: 'Admin', permissions: publisher },
+      firstAdmin: { userId: 'officer', permissions: publisher },
     });
     const [only] = await members.find({ where: { associationId: created.id } });
     expect(only.permissions & AssociationPermissionFlag.MANAGE_MEMBERS).toBe(0);
@@ -189,7 +192,10 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
 
   it('the preview walks past a cotisation-stem collision exactly as the create does', async () => {
     await adminCreate('Stem');
+    warnSpy.mockClear();
     const preview = await service.previewDerivedSlug('Stem 2026-2027');
+    // ASKED, never learned by failing: a preview logs no refusal it did not make.
+    expect(warnSpy).not.toHaveBeenCalled();
 
     const dated = await adminCreate('Stem 2026-2027');
 
@@ -229,7 +235,6 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     const bde = await adminCreate('BDE Gardanne', {
       firstAdmin: {
         userId: 'bde-star',
-        role: 'Admin',
         permissions: ADMIN_PRESET | AssociationPermissionFlag.MANAGE_ASSO,
       },
     });
@@ -255,7 +260,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     for (let i = 0; i < 5; i++) await adminCreate('Liste Pareille', { type: 'list' });
     await adminCreate('Autre Liste', {
       type: 'list',
-      firstAdmin: { userId: 'officer', role: 'Admin', permissions: ADMIN_PRESET },
+      firstAdmin: { userId: 'officer', permissions: ADMIN_PRESET },
     });
 
     const seen: string[] = [];
@@ -278,6 +283,11 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     expect(found.rows[0].memberCount).toBe(1);
     expect(found.next).toBeNull();
 
+    // Accents and case fold on both sides: "ecole" finds the name written with its acute accent.
+    await adminCreate(`${String.fromCharCode(0xc9)}cole Doctorale`, { type: 'list' });
+    const folded = await service.adminCatalogue({ type: 'list', q: 'ecole' });
+    expect(folded.rows.map((r) => r.slug)).toEqual(['ecole-doctorale']);
+
     const bySlug = await service.adminCatalogue({ type: 'list', q: 'liste-pareille-3' });
     expect(bySlug.rows.map((r) => r.slug)).toEqual(['liste-pareille-3']);
   });
@@ -289,8 +299,18 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
       'saint-etienne',
     ]);
 
-    await expect(
-      service.adminCatalogue({ type: 'association', after: 'not-a-cursor' })
-    ).rejects.toMatchObject({ response: { code: ADMIN_ASSOCIATION_ERROR.BAD_CURSOR } });
+    const forged = (value: unknown) =>
+      Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+    for (const after of [
+      'not-a-cursor',
+      // Well-formed, but its id is no UUID: a 400, never the driver's 22P02 as a 500.
+      forged(['a', 'x']),
+      // A name PostgreSQL text cannot hold.
+      forged([`a${String.fromCharCode(0)}b`, '00000000-0000-4000-8000-000000000000']),
+    ]) {
+      await expect(service.adminCatalogue({ type: 'association', after })).rejects.toMatchObject({
+        response: { code: ADMIN_ASSOCIATION_ERROR.BAD_CURSOR },
+      });
+    }
   });
 });

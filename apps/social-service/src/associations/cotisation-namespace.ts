@@ -11,11 +11,12 @@ export const TIER_TAG_NAME_TAKEN = 'TIER_TAG_NAME_TAKEN';
 const logger = new Logger('CotisationNamespace');
 
 /**
- * Every cotisation stem of every association but `associationId` (all of them when null): each
+ * Every cotisation stem of every association but `associationId` (all of them when null - a
+ * creation, where the association does not exist yet): each
  * slug, and `<slug>-<variantKey>` for each named membership tier.
  */
 async function otherAssociationStems(
-  manager: EntityManager,
+  manager: Pick<EntityManager, 'query'>,
   associationId: string | null
 ): Promise<string[]> {
   const others: { slug: string; variantKey: string | null }[] = await manager.query(
@@ -40,12 +41,12 @@ async function otherAssociationStems(
  * reason `assertCotisationStemFree` gives.
  */
 export async function stemCollidesElsewhere(
-  manager: EntityManager,
-  associationId: string
+  manager: Pick<EntityManager, 'query'>,
+  associationId: string | null
 ): Promise<(stem: string) => boolean> {
   const stems = await otherAssociationStems(manager, associationId);
   logger.debug(
-    `[COTISATION] ${stems.length} other stem(s) read for a derived key of assoc=${associationId.slice(0, 8)}`
+    `[COTISATION] ${stems.length} other stem(s) read for a derived key of assoc=${associationId?.slice(0, 8) ?? 'new'}`
   );
   return (stem) => {
     const clash = stems.some((other) => cotisationStemsCollide(stem, other));
