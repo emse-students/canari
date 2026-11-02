@@ -41,8 +41,13 @@
   } from '$lib/bookings/wizard';
   import type { MembershipTier } from '$lib/associations/api';
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
-  import { listSpaceOwnerChoices } from '$lib/bookings/spaceOwners';
-  import type { Association } from '$lib/associations/api';
+  import { listActableAssociations } from '$lib/associations/actable';
+  import {
+    AssociationPermissionFlag,
+    getAssociation,
+    type Association,
+  } from '$lib/associations/api';
+  import { forgetAudienceTiers } from '$lib/forms/audience';
   import { cotisationOptionsFor } from '$lib/forms/cotisationSettings';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
@@ -90,6 +95,16 @@
   /** The entities the organiser may create spaces for (`MANAGE_BOOKINGS`). */
   let ownerChoices = $state<Association[]>([]);
   const ownerId = $derived(owner || null);
+  let ownerChoicesFailed = $state(false);
+  /** The entity the wizard opened on, read by id so it is offered even when the list lacks it. */
+  let preset = $state<Association | null>(null);
+  const offeredOwners = $derived.by(() => {
+    if (!associationId || ownerChoices.some((a) => a.id === associationId)) return ownerChoices;
+    const known =
+      preset ??
+      ({ id: associationId, name: String(m.bookings_owner_current()) } as unknown as Association);
+    return [known, ...ownerChoices];
+  });
   let formations = $state<FormationOption[]>([]);
 
   const STEPS = [
@@ -101,9 +116,19 @@
   onMount(() => {
     Log.d('BOOKINGS', `wizard open association=${associationId ?? 'personal'}`);
     // The audience editor's choices, as the space editor's page loads them.
-    listSpaceOwnerChoices()
+    listActableAssociations(AssociationPermissionFlag.MANAGE_BOOKINGS)
       .then((list) => (ownerChoices = list))
-      .catch((e) => Log.d('BOOKINGS', `wizard owner choices unavailable: ${String(e)}`));
+      .catch((e) => {
+        console.warn('[BOOKINGS]', `wizard owner choices unavailable: ${String(e)}`);
+        ownerChoicesFailed = true;
+      });
+    // The page's own entity is ALWAYS an option, whatever the list says (still loading, failed, or
+    // an entity the member manages without belonging to it).
+    if (associationId) {
+      getAssociation(associationId)
+        .then((a) => (preset = a))
+        .catch((e) => console.warn('[BOOKINGS]', `wizard preset owner unavailable: ${String(e)}`));
+    }
     fetchFormations()
       .then((f) => (formations = f))
       .catch((e) => Log.d('BOOKINGS', `formations unavailable: ${String(e)}`));
@@ -112,12 +137,19 @@
   /**
    * The audience tiers belong to the CHOSEN owner, so a change of owner reloads them. The cleanup
    * marks the run stale, so a slow answer for the previous owner is dropped, never applied to the
-   * new one. A personal space has no tiers.
+   * new one. A personal space has no tiers. The audience's own tier keys are forgotten too: they
+   * name the PREVIOUS owner's catalogue, and the saved audience would key another entity's tiers.
    */
+  let lastOwner: string | null | undefined;
   $effect(() => {
     const target = ownerId;
     let stale = false;
     tiers = [];
+    if (lastOwner !== undefined && lastOwner !== target) {
+      Log.d('BOOKINGS', 'wizard owner changed, audience tiers forgotten');
+      untrack(() => (draft.audience = forgetAudienceTiers(draft.audience)));
+    }
+    lastOwner = target;
     if (target) {
       Log.d('BOOKINGS', `wizard tiers load owner=${target.slice(0, 8)}`);
       cotisationOptionsFor(target)
@@ -304,14 +336,20 @@
         {m.bookings_wizard_step_what()}
       </h4>
       <!-- "Creer en tant que": the posts' "Publier en tant que" picker, personal or an entity. -->
-      <PostIdentityPicker
-        id="wizard-owner"
-        bind:value={owner}
-        associations={ownerChoices}
-        allowAnonymous={false}
-        personalOptionLabel={m.bookings_owner_personal()}
-        label={m.bookings_owner_label()}
-      />
+      <div>
+        <span class={CONTROL_LABEL_CLASS}>{m.bookings_owner_label()}</span>
+        <PostIdentityPicker
+          id="wizard-owner"
+          bind:value={owner}
+          associations={offeredOwners}
+          allowAnonymous={false}
+          personalOptionLabel={m.bookings_owner_personal()}
+          label={m.bookings_owner_label()}
+        />
+        {#if ownerChoicesFailed}
+          <p class="text-red-err text-xs" role="alert">{m.bookings_owner_load_error()}</p>
+        {/if}
+      </div>
       <Input
         id="wizard-name"
         label={m.bookings_field_name()}

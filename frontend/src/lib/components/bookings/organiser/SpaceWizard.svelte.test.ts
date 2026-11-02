@@ -28,11 +28,23 @@ vi.mock('$lib/forms/cotisationSettings', () => ({
   cotisationOptionsFor: (id: string) =>
     new Promise((resolve) => tierCalls.calls.push({ id, resolve: resolve as never })),
 }));
-const ownerChoices = vi.hoisted(() => ({ list: [] as unknown[] }));
-vi.mock('$lib/bookings/spaceOwners', () => ({
-  listSpaceOwnerChoices: () => Promise.resolve(ownerChoices.list),
+const ownerChoices = vi.hoisted(() => ({
+  list: [] as unknown[],
+  byId: {} as Record<string, unknown>,
+  load: (): Promise<unknown[]> => Promise.resolve([]),
 }));
-vi.mock('$lib/pricing/criteriaOptions', () => ({
+vi.mock('$lib/associations/actable', () => ({
+  listActableAssociations: () => ownerChoices.load(),
+}));
+vi.mock('$lib/associations/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/associations/api')>()),
+  getAssociation: (id: string) =>
+    ownerChoices.byId[id]
+      ? Promise.resolve(ownerChoices.byId[id])
+      : Promise.reject(new Error('404')),
+}));
+vi.mock('$lib/pricing/criteriaOptions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/pricing/criteriaOptions')>()),
   fetchFormations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/media', () => ({
@@ -99,6 +111,8 @@ afterAll(adoptTransitionAnimations());
 
 beforeEach(() => {
   tierCalls.calls.length = 0;
+  ownerChoices.load = () => Promise.resolve(ownerChoices.list);
+  ownerChoices.byId = {};
   ownerChoices.list = [
     { id: 'assoc-1', name: 'BDE', type: 'association' },
     { id: 'assoc-2', name: 'BDS', type: 'association' },
@@ -313,20 +327,76 @@ describe('SpaceWizard', () => {
       expect(onSkip).toHaveBeenCalledWith('Salle de musique', 'assoc-1');
     });
 
+    /** Walks to step 3 and switches "Some people only" on. */
+    async function toAudience() {
+      for (let i = 0; i < 2; i++) {
+        button(m.bookings_wizard_next()).click();
+        flushSync();
+      }
+      (
+        document.querySelector('input[name="wizard-audience"][value="true"]') as HTMLInputElement
+      ).click();
+      await settle();
+    }
+
+    const tierBox = (name: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].find((b) =>
+        b.textContent?.includes(name)
+      );
+
     it('reloads the tiers on a change of entity and drops the previous answer arriving late', async () => {
       open('assoc-1');
       await settle();
       await choose('BDS');
       expect(tierCalls.calls.map((c) => c.id)).toEqual(['assoc-1', 'assoc-2']);
-      // The first entity answers AFTER the switch: nothing may apply it.
-      tierCalls.calls[0].resolve({ tiers: [{ name: 'Stale tier', variantKey: 's' }] });
+      // BDS answers FIRST, then BDE's slow answer arrives: nothing may apply it.
       tierCalls.calls[1].resolve({ tiers: [{ name: 'Fresh tier', variantKey: 'f' }] });
       await settle();
+      tierCalls.calls[0].resolve({ tiers: [{ name: 'Stale tier', variantKey: 's' }] });
+      await settle();
+      await toAudience();
+      expect(tierBox('Fresh tier')).toBeDefined();
+      expect(tierBox('Stale tier')).toBeUndefined();
+    });
+
+    it('forgets the audience tiers of the previous owner on a change of entity', async () => {
+      open('assoc-1');
+      await settle();
+      tierCalls.calls[0].resolve({ tiers: [{ name: 'Tier BDE', variantKey: 'k' }] });
+      await settle();
+      await toAudience();
+      tierBox('Tier BDE')!.click();
+      await settle();
+      expect(tierBox('Tier BDE')!.getAttribute('aria-pressed')).toBe('true');
       for (let i = 0; i < 2; i++) {
-        button(m.bookings_wizard_next()).click();
+        button(m.common_back()).click();
         flushSync();
       }
-      expect(document.body.textContent).not.toContain('stale-tier');
+      await choose('BDS');
+      // Same key in the new catalogue: it must NOT arrive ticked.
+      tierCalls.calls[1].resolve({ tiers: [{ name: 'Tier BDS', variantKey: 'k' }] });
+      await settle();
+      await toAudience();
+      expect(tierBox('Tier BDS')!.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('offers the own entity of the page even when the list lacks it or fails to load', async () => {
+      ownerChoices.list = [];
+      ownerChoices.byId = { 'assoc-9': { id: 'assoc-9', name: 'Child asso', type: 'association' } };
+      open('assoc-9');
+      await settle();
+      expect(picker().getAttribute('aria-label')).toContain('Child asso');
+    });
+
+    it('says so when the choices fail to load, and keeps the entity of the page usable', async () => {
+      ownerChoices.load = () => Promise.reject(new Error('down'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      open('assoc-2');
+      await settle();
+      expect(document.body.textContent).toContain(m.bookings_owner_load_error());
+      expect(picker().getAttribute('aria-label')).toContain(m.bookings_owner_current());
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
     });
   });
 });

@@ -4984,5 +4984,7 @@
   "settings_allow_reposts_error": "The setting could not be saved.",
   "notif_member_repost_text": "reposted:",
   "bookings_owner_label": "Create as",
-  "bookings_owner_personal": "Me"
+  "bookings_owner_personal": "Me",
+  "bookings_owner_current": "This association",
+  "bookings_owner_load_error": "Your associations could not be loaded: only the current choice is offered."
 }

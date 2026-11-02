@@ -4984,5 +4984,7 @@
   "settings_allow_reposts_error": "Le réglage n'a pas pu être enregistré.",
   "notif_member_repost_text": "a republié :",
   "bookings_owner_label": "Créer en tant que",
-  "bookings_owner_personal": "Moi"
+  "bookings_owner_personal": "Moi",
+  "bookings_owner_current": "Cette association",
+  "bookings_owner_load_error": "La liste de vos associations n'a pas pu être chargée : seul le choix actuel est proposé."
 }
