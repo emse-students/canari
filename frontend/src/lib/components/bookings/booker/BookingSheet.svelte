@@ -7,6 +7,7 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import {
+    BookingsApiError,
     book,
     editBooking,
     uploadBookingAnswerFile,
@@ -65,7 +66,15 @@
     /** `changed`: a booking was made, or the grid is known stale (a slot taken meanwhile). */
     onClose: (changed: boolean) => void;
     /** Edit this booking instead of making one: its choices (`editRange.ts`) and its people. */
-    editing?: { bookingId: string; choices: EditChoices; participants: Person[] };
+    editing?: {
+      bookingId: string;
+      choices: EditChoices;
+      participants: Person[];
+      /** The booking view's `revision` the choices were read from, sent with the edit. */
+      revision: string;
+      /** The booking changed since (`stale`): read it again and reopen the sheet on it. */
+      onStale: () => Promise<void>;
+    };
   }
 
   let {
@@ -142,13 +151,15 @@
   }
 
   /** Sends the edit: the new range and the whole set of other people, all or nothing. */
-  async function submitEdit(bookingId: string) {
+  async function submitEdit(edited: NonNullable<typeof editing>) {
+    const bookingId = edited.bookingId;
     submitting = true;
     try {
       const { changed } = await editBooking(bookingId, {
         startsAt: new Date(first.startMs).toISOString(),
         endsAt: new Date(last.endMs).toISOString(),
         participantIds: participants.map((p) => p.id),
+        revision: edited.revision,
       });
       Log.i('BOOKINGS', `edited from the sheet id=${bookingId.slice(0, 8)} changed=${changed}`);
       showToast(changed ? m.bookings_edit_done() : m.bookings_edit_unchanged(), 'info');
@@ -161,6 +172,18 @@
         return;
       }
       error = describeBookingRefusal(e, m.bookings_edit_submit());
+      // The booking itself changed since the sheet opened (someone withdrew, another edit): its
+      // people or range as shown are not what is true. Read again, and reopen on the truth.
+      if (
+        refusalCode(e) === 'BOOKING_EDIT_CONFLICT' &&
+        e instanceof BookingsApiError &&
+        e.reason === 'stale'
+      ) {
+        Log.i('BOOKINGS', `the edit's booking changed meanwhile id=${bookingId.slice(0, 8)}`);
+        showToast(error, 'error');
+        await edited.onStale();
+        return;
+      }
       // The new range was taken or blocked meanwhile: the grid is stale, the booking is not.
       if (refusalCode(e) === 'BOOKING_EDIT_CONFLICT') {
         Log.i('BOOKINGS', `the edit's range went stale: ${String(e)}`);
@@ -183,7 +206,7 @@
     if (submitting || uploading) return;
     error = '';
     if (editing) {
-      await submitEdit(editing.bookingId);
+      await submitEdit(editing);
       return;
     }
     if (onBehalf && !holder) {

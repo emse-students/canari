@@ -271,6 +271,12 @@ export interface BookingView {
   participantNames?: string[];
   /** The people of the booking OTHER than the viewer (holder first); sent where the names are. */
   others?: BookingPerson[];
+  /**
+   * What an edit of it is built on, echoed by `editBooking`: a booking changed since (a participant
+   * withdrew, another edit) refuses the edit `BOOKING_EDIT_CONFLICT` / `stale`. Sent where the
+   * names are, so always to whoever may edit it.
+   */
+  revision?: string;
   answers?: Record<string, unknown> | null;
   /** With `answers`: the name each FILE answer's file was uploaded under, by file id (WP-B6). */
   fileNames?: Record<string, string>;
@@ -496,6 +502,8 @@ export interface BookingEditRequest {
   startsAt: string;
   endsAt: string;
   participantIds: string[];
+  /** The `revision` of the booking view the sheet was opened on. */
+  revision: string;
 }
 
 /**

@@ -27,6 +27,7 @@ import { DataSource } from 'typeorm';
 import { Client } from 'pg';
 import { BOOKING_ENTITIES } from './bookings.module';
 import { BookingsService, NEAR_NOW_MS, type Actor } from './bookings.service';
+import { bookingRevision } from './booking-views';
 import { sameCampusAsViewerSql } from '../spaces/reader-spaces';
 import {
   BOOKINGS_ERASURE_STATEMENTS,
@@ -2626,14 +2627,43 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       notices.enabled = false;
     });
 
-    const edit = (
+    /** The revision a sheet opened NOW would carry: the booking's range and live people. */
+    const revisionOf = async (id: string) => {
+      const [b] = (await q(`SELECT "startsAt", "endsAt" FROM bookings WHERE id = $1`, [id])) as {
+        startsAt: Date;
+        endsAt: Date;
+      }[];
+      const live = (await q(
+        `SELECT "userId" FROM booking_participants WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL`,
+        [id]
+      )) as { userId: string }[];
+      return bookingRevision(
+        b.startsAt,
+        b.endsAt,
+        live.map((p) => p.userId)
+      );
+    };
+    /** An edit from a sheet opened just before it - or on `revision`, a sheet opened earlier. */
+    const edit = async (
       id: string,
       from: string,
       to: string,
       participantIds: string[] = [],
       actor = ALICE,
-      nowMs = NOW
-    ) => service.edit(id, { startsAt: on(from), endsAt: on(to), participantIds }, as(actor), nowMs);
+      nowMs = NOW,
+      revision?: string
+    ) =>
+      service.edit(
+        id,
+        {
+          startsAt: on(from),
+          endsAt: on(to),
+          participantIds,
+          revision: revision ?? (await revisionOf(id)),
+        },
+        as(actor),
+        nowMs
+      );
     const rangeOf = async (id: string) => {
       const [row] = (await q(`SELECT "startsAt", "endsAt" FROM bookings WHERE id = $1`, [id])) as {
         startsAt: Date;
@@ -2724,6 +2754,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         startsAt: on('10:00', '2026-11-03'),
         endsAt: on('10:30', '2026-11-03'),
         participantIds: [],
+        revision: await revisionOf(id),
       };
       expect(await refusal(service.edit(id, nextDay, as(ALICE), NOW))).toEqual({
         code: 'BOOKING_EDIT_OUTSIDE_RULES',
@@ -3020,34 +3051,62 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       }
     });
 
-    it('an edit racing a participant withdrawing: one serial order, the same end state', async () => {
+    it('an edit racing a participant withdrawing: one serial order, never a person put back', async () => {
       for (let round = 0; round < 5; round++) {
         const { space, resourceIds } = await setup();
         const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
           participantIds: [BOB],
         });
+        // The holder's sheet was opened with BOB on it; she moves it and keeps him, while he
+        // leaves on his own.
+        const seen = await revisionOf(id);
         told.length = 0;
-        // The holder moves it and removes BOB, while BOB leaves on his own.
         const [edited, withdrawn] = await Promise.allSettled([
-          edit(id, '11:00', '11:30', []),
+          edit(id, '11:00', '11:30', [BOB], ALICE, NOW, seen),
           service.withdraw(id, as(BOB), NOW),
         ]);
-        // Either order ends the same: moved, BOB off it, ONE row of his marked. Only who removed
-        // him differs - and so whether he is told he was removed.
-        expect(edited.status).toBe('fulfilled');
-        expect(await rangeOf(id)).toEqual([on('11:00'), on('11:30')]);
-        expect(await peopleOf(id)).toEqual([]);
+        const answer = (o: PromiseSettledResult<unknown>) =>
+          o.status === 'fulfilled' ? 'fulfilled' : (o.reason as HttpException).getResponse();
+        // Withdrawal first: the edit was built on a set he is no longer in - refused whole, he
+        // stays off. Edit first: he is on the moved booking, then leaves it. Never put back.
         expect([
-          { withdraw: 'fulfilled', removed: [] },
-          { withdraw: { code: 'not-a-participant' }, removed: [BOB] },
+          {
+            edit: { code: 'BOOKING_EDIT_CONFLICT', reason: 'stale' },
+            withdraw: 'fulfilled',
+            range: [on('10:00'), on('10:30')],
+          },
+          { edit: 'fulfilled', withdraw: 'fulfilled', range: [on('11:00'), on('11:30')] },
         ]).toContainEqual({
-          withdraw:
-            withdrawn.status === 'fulfilled'
-              ? 'fulfilled'
-              : (withdrawn.reason as HttpException).getResponse(),
-          removed: tos('booking_removed'),
+          edit: answer(edited),
+          withdraw: answer(withdrawn),
+          range: await rangeOf(id),
         });
+        expect(await peopleOf(id)).toEqual([]);
+        expect(tos('booking_added')).toEqual([]);
       }
+    });
+
+    it('refuses an edit built before a withdrawal; one built after it is applied', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      // The revision the reader's own view carries is the one the edit is judged on.
+      const view = (await service.mine(as(ALICE))).find((b) => b.id === id);
+      const seen = await revisionOf(id);
+      expect(view?.revision).toBe(seen);
+      await service.withdraw(id, as(BOB), NOW);
+      told.length = 0;
+      expect(await refusal(edit(id, '11:00', '11:30', [BOB], ALICE, NOW, seen))).toEqual({
+        code: 'BOOKING_EDIT_CONFLICT',
+        reason: 'stale',
+      });
+      expect(await peopleOf(id)).toEqual([]);
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      expect(tos('booking_added')).toEqual([]);
+      // Reloaded: the sheet now reads BOB gone, and the same move is applied.
+      await expect(edit(id, '11:00', '11:30', [])).resolves.toEqual({ ok: true, changed: true });
+      expect(await rangeOf(id)).toEqual([on('11:00'), on('11:30')]);
     });
   });
 });

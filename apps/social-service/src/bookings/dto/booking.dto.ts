@@ -107,6 +107,15 @@ export class EditBookingDto {
   @IsString({ each: true })
   @MaxLength(255, { each: true })
   participantIds: string[];
+
+  /**
+   * The booking's `revision` as the sheet read it (`bookingRevision`): an edit of any other state
+   * - a participant withdrew, someone else edited meanwhile - is refused `BOOKING_EDIT_CONFLICT`
+   * / `stale` and changes nothing.
+   */
+  @IsString()
+  @MaxLength(64)
+  revision: string;
 }
 
 /** `POST bookings/:bookingId/cancel` - an optional word to the booking's people (Q-R3). */

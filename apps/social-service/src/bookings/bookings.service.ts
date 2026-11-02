@@ -45,6 +45,7 @@ import {
 } from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
 import {
+  bookingRevision,
   bookingView,
   privateInfoFor,
   relationTo,
@@ -1245,6 +1246,11 @@ export class BookingsService {
    * account's tombstone is never touched. A request that changes nothing changes nothing and tells
    * nobody (a retry after a lost answer).
    *
+   * STALE VIEWS ARE REFUSED: the request carries the `revision` its sheet read (`bookingRevision`:
+   * the range and the live people, derived, no column). Any other state under the lock - a
+   * participant withdrew, another edit landed - answers `BOOKING_EDIT_CONFLICT` / `stale` and
+   * changes nothing, so an edit never puts back a person who left (review of #2945).
+   *
    * Reminders: when the START moves, every person still on the booking is re-armed as if they had
    * chosen their delay now (`reminderSentAt` cleared, `reminderSetAt` = now): a reminder already
    * sent for the old time is owed again for the new one, and a new start already inside the delay
@@ -1316,12 +1322,12 @@ export class BookingsService {
           throw new BadRequestException({ code: BOOKING_EDIT_OUTSIDE_RULES, reason: 'other-day' });
         }
 
-        const current: { userId: string }[] = await m.query(
+        const live: { userId: string }[] = await m.query(
           `SELECT "userId" FROM booking_participants
-            WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL AND "userId" <> $2 FOR UPDATE`,
-          [bookingId, DELETED_ACCOUNT]
+            WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL FOR UPDATE`,
+          [bookingId]
         );
-        const present = new Set(current.map((p) => p.userId));
+        const present = new Set(live.map((p) => p.userId).filter((id) => id !== DELETED_ACCOUNT));
         const added = participantIds.filter((p) => !present.has(p));
         const removed = [...present].filter((p) => !participantIds.includes(p));
         const startMoved = range.startMs !== oldRange.startMs;
@@ -1329,6 +1335,18 @@ export class BookingsService {
         if (!timeChanged && added.length === 0 && removed.length === 0) {
           this.logger.debug(`[BOOKINGS] edit changes nothing booking=${bookingId.slice(0, 8)}`);
           return null;
+        }
+        // Built on another state than this one (a participant withdrew, another edit landed): the
+        // set it carries would put back who left. Refused whole, nothing changed (review of #2945).
+        // Judged after "changes nothing", so a retry of an edit that landed stays a no-op.
+        const revision = bookingRevision(
+          booking.startsAt,
+          booking.endsAt,
+          live.map((p) => p.userId)
+        );
+        if (dto.revision !== revision) {
+          this.logger.log(`[BOOKINGS] edit refused: stale view booking=${bookingId.slice(0, 8)}`);
+          throw new ConflictException({ code: BOOKING_EDIT_CONFLICT, reason: 'stale' });
         }
         // An edit that asks for LESS than the booking holds - its range inside the old one, nobody
         // added - is never refused by a setting tightened since (review of #2945).

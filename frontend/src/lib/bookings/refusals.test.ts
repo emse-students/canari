@@ -62,6 +62,8 @@ describe('describeBookingRefusal', () => {
       `${m.bookings_edit_refusal_outside_rules()} ${unchanged}`
     );
     expect(edit('BOOKING_EDIT_FORBIDDEN', 'not-yours')).toBe(m.bookings_edit_refusal_forbidden());
+    // Changed since the sheet opened: said alone - the sheet reopens on the booking as it is.
+    expect(edit('BOOKING_EDIT_CONFLICT', 'stale')).toBe(m.bookings_edit_refusal_stale());
   });
 
   it('says how many coming bookings stand in the way (D29)', () => {

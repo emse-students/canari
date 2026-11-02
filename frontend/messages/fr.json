@@ -4698,6 +4698,7 @@
   "bookings_edit_refusal_quota": "Ce changement dépasse une limite de l'espace.",
   "bookings_edit_refusal_outside_rules": "Ce nouvel horaire sort des règles de l'espace.",
   "bookings_edit_refusal_unchanged": "Votre réservation n'a pas changé.",
+  "bookings_edit_refusal_stale": "La réservation a changé entre-temps : vérifiez et recommencez.",
   "bookings_edit_refusal_forbidden": "Seules la personne qui a réservé et l'organisation de l'espace peuvent modifier cette réservation.",
   "bookings_edit_refusal_other_day": "Une réservation ne change pas de jour : annulez-la puis réservez le nouveau jour.",
   "bookings_sheet_personal_note": "Cet espace est personnel : si son propriétaire supprime son compte, les réservations à venir disparaissent sans avertissement.",

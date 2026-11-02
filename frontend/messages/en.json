@@ -4698,6 +4698,7 @@
   "bookings_edit_refusal_quota": "This change goes beyond a limit of the space.",
   "bookings_edit_refusal_outside_rules": "The new time is outside the space's rules.",
   "bookings_edit_refusal_unchanged": "Your booking has not changed.",
+  "bookings_edit_refusal_stale": "The booking changed in the meantime: check it and try again.",
   "bookings_edit_refusal_forbidden": "Only the person who booked and the space's organisers can edit this booking.",
   "bookings_edit_refusal_other_day": "A booking does not change day: cancel it and book the new day.",
   "bookings_sheet_personal_note": "This is a personal space: if its owner deletes their account, the upcoming bookings disappear without warning.",

@@ -119,6 +119,9 @@ function editSentenceFor(code: string, reason: string | null): string | null {
     default:
       return null;
   }
+  // Changed since the sheet opened: nothing to word about a rule - the sheet is reopened on it.
+  if (code === 'BOOKING_EDIT_CONFLICT' && reason === 'stale')
+    return m.bookings_edit_refusal_stale();
   const detail =
     reason === 'other-day'
       ? m.bookings_edit_refusal_other_day()

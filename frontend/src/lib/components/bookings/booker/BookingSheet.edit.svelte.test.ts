@@ -79,6 +79,7 @@ const mounted: ReturnType<typeof mount>[] = [];
 
 function render() {
   const onClose = vi.fn();
+  const onStale = vi.fn(() => Promise.resolve());
   const choices = editChoices(units, own, space, Date.parse('2026-11-01T12:00:00Z'), null)!;
   mounted.push(
     mount(BookingSheet, {
@@ -91,6 +92,8 @@ function render() {
           bookingId: own.id,
           choices,
           participants: [{ id: 'bob', displayName: 'Bob' }],
+          revision: 'rev-1',
+          onStale,
         },
         onReread: vi.fn(() => Promise.resolve()),
         onClose,
@@ -98,7 +101,7 @@ function render() {
     })
   );
   flushSync();
-  return { onClose };
+  return { onClose, onStale };
 }
 
 const button = (label: string) =>
@@ -151,6 +154,7 @@ describe('BookingSheet in edit mode', () => {
       startsAt: iso(0),
       endsAt: iso(3),
       participantIds: [],
+      revision: 'rev-1',
     });
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
     expect(showToast).toHaveBeenCalledWith(m.bookings_edit_done(), 'info');
@@ -162,6 +166,17 @@ describe('BookingSheet in edit mode', () => {
     save().click();
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(false));
     expect(showToast).toHaveBeenCalledWith(m.bookings_edit_unchanged(), 'info');
+  });
+
+  it('a booking changed meanwhile (`stale`): says so, and reopens on the booking as it is now', async () => {
+    editBooking.mockRejectedValue(
+      new BookingsApiError('dev text', 'BOOKING_EDIT_CONFLICT', 409, [], null, 'stale')
+    );
+    const { onClose, onStale } = render();
+    save().click();
+    await vi.waitFor(() => expect(onStale).toHaveBeenCalledTimes(1));
+    expect(showToast).toHaveBeenCalledWith(m.bookings_edit_refusal_stale(), 'error');
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('words a refusal by its rule, says the booking has not changed, and stays open', async () => {
