@@ -8,6 +8,10 @@ starting point, not as today's state. Anyone can log in to MiConnect with a Scho
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 
+> **Proposed reform (2026-11-02, not decided):** one home campus per association, list and
+> institution, whose BDE governs it, separate from its audience - amending D22 and D23. See
+> [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
+
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
 Read with `ak shell` on the identity-provider host, read-only. Counts are a
