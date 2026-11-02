@@ -37,7 +37,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -62,7 +62,25 @@ const TURN = opt('turn', '');
 const TURN_USER = opt('turn-user', '');
 const TURN_CREDENTIAL = opt('turn-credential', '');
 const KEEP = args.includes('--keep');
-const OUT = join(tmpdir(), `canari-sfu-e2e-${process.pid}`);
+/**
+ * Every file of a run lives in this PRIVATE directory (`mkdtemp`: random name, mode 0700), never at
+ * a predictable path under the shared temp dir, where another local user could pre-create or
+ * replace it (CodeQL js/insecure-temporary-file). Created by `main`, removed by `cleanupOut`.
+ */
+let OUT = '';
+
+/** Removes the run directory entry by entry (a Chrome profile can hold a lock for a moment). */
+function cleanupOut() {
+  if (!OUT) return;
+  for (const d of readdirSync(OUT)) {
+    try {
+      rmSync(join(OUT, d), { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
+    } catch (e) {
+      say(`WARN ${d} could not be removed (${e.code}) - delete ${OUT} by hand`);
+    }
+  }
+  rmSync(OUT, { recursive: true, force: true });
+}
 
 /** How often the driver reads the two pages' state: a polling period, never a verdict. */
 const POLL_MS = 250;
@@ -244,7 +262,7 @@ process.on('SIGINT', onSignal);
 process.on('SIGTERM', onSignal);
 
 async function main() {
-  mkdirSync(OUT, { recursive: true });
+  OUT = mkdtempSync(join(tmpdir(), 'canari-sfu-e2e-'));
   say(`service ${BIN}`);
   say(TURN ? `relay-only through ${TURN} (both browsers and the SFU)` : 'no TURN: host candidates');
   const www = join(OUT, 'www');
@@ -418,17 +436,18 @@ async function main() {
       writeFileSync(join(OUT, 'call-service.log'), serviceLog.join('\n'));
       say(`kept: ${OUT}`);
     } else {
-      for (const d of readdirSync(OUT)) {
-        try {
-          rmSync(join(OUT, d), { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
-        } catch (e) {
-          say(`WARN ${d} could not be removed (${e.code}) - delete ${OUT} by hand`);
-        }
-      }
+      cleanupOut();
     }
   }
   say(verdict);
   process.exit(verdict === 'PASS' ? 0 : 1);
 }
 
-await main();
+try {
+  await main();
+} catch (e) {
+  // A failure before `main`'s own `finally` (page build, service start) must not leave the run
+  // directory behind either; the error still surfaces.
+  if (!KEEP) cleanupOut();
+  throw e;
+}
