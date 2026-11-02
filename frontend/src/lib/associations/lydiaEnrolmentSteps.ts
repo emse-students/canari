@@ -38,6 +38,8 @@ export interface LydiaEnrolmentView {
   recordResponsable: boolean;
   /** The global admin may confirm Lydia's validation by hand (linked and not ready). */
   adminCanValidate: boolean;
+  /** Only the platform admin may unlink the Business (owner decision, 2026-11-02). */
+  adminCanDisconnect: boolean;
   /**
    * The global admin may clear the in-flight markers after checking with Lydia: whenever EITHER is
    * set (the enrolment's or the Responsable step's), linked or not, so a claim never sticks with no
@@ -107,6 +109,7 @@ export function lydiaEnrolmentView(
     ],
     recordResponsable: ready && !hasResponsable,
     adminCanValidate: isGlobalAdmin && linked && !ready,
+    adminCanDisconnect: isGlobalAdmin,
     adminCanClearInFlight:
       isGlobalAdmin && (account.enrolmentInFlightSince != null || responsableInFlight),
     responsableInFlight,
