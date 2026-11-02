@@ -10,7 +10,8 @@ const live = new Set<{ callback: (entries: unknown[]) => void }>();
 
 /** Delivers a resize callback to every observer that is still observing something. */
 export function fireResize(): void {
-  for (const o of [...live]) o.callback([]);
+  // A copy: a callback may disconnect or create an observer, and the loop must not see either.
+  for (const o of Array.from(live)) o.callback([]);
 }
 
 /** Installs the stub before each test and removes it after. */

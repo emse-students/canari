@@ -194,6 +194,11 @@ interface PostCapabilities {
    * override and what applies); absent on every other card.
    */
   repostConsent?: RepostConsent;
+  /**
+   * WP-F6: beside `repostConsent`, on the reader's OWN personal post only, how many people its
+   * author is shown as having reposted it ("Republie par N personnes", the list behind it).
+   */
+  repostCount?: number;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -620,7 +625,10 @@ export class PostsService {
   private memberRepostFields(
     postId: string | undefined,
     viewer: PostViewerContext
-  ): Pick<PostCapabilities, 'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent'> {
+  ): Pick<
+    PostCapabilities,
+    'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent' | 'repostCount'
+  > {
     const ctx = viewer.memberReposts;
     if (!viewer.viewerId || !postId) {
       return { canRepost: false, repostedByMe: false, repostedBy: [] };
@@ -630,7 +638,9 @@ export class PostsService {
       canRepost: ctx.repostable.has(postId),
       repostedByMe: ctx.mine.has(postId),
       repostedBy: ctx.reposters.get(postId) ?? [],
-      ...(consent ? { repostConsent: consent } : {}),
+      ...(consent
+        ? { repostConsent: consent, repostCount: ctx.reposterCount.get(postId) ?? 0 }
+        : {}),
     };
   }
 

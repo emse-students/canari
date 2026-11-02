@@ -13,6 +13,8 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+// FIRST: the review cohort the import-time fragments of reader-spaces are built with.
+import { REVIEW_A } from '../spaces/review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { DataSource } from 'typeorm';
@@ -780,6 +782,120 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
             AND ${bellRowShownSql('n')}`
       );
       expect(rows).toHaveLength(1);
+    });
+  });
+  describe('THE AUTHOR SEES WHO REPOSTED, AND REMOVES ONE REPOST (owner, 2026-11-02)', () => {
+    const POST = P(25);
+
+    async function noticeCount(): Promise<number> {
+      const rows: { n: number }[] = await q(
+        `SELECT count(*)::int AS n FROM member_repost_notices WHERE "postId" = $1`,
+        [POST]
+      );
+      return rows[0]?.n ?? 0;
+    }
+
+    beforeAll(async () => {
+      await q(
+        `INSERT INTO posts (id, "authorId", markdown, "feedNotifiedAt") VALUES ($1, 'au', 'post 25', now())`,
+        [POST]
+      );
+      // A store reviewer, on au's space but in a world of its own: its row is written by hand, the
+      // write would refuse it.
+      await q(
+        `INSERT INTO users (id, campus, cursus, "firstName", "lastName")
+           VALUES ($1, 'saint-etienne', '[{"formation":"ICM","promo":2024}]', 'R', 'X')`,
+        [REVIEW_A]
+      );
+      // rp (shares au's space), then fa (au's accepted follower), then b1 (shares au's space).
+      for (const reposter of ['rp', 'fa', 'b1']) await reposts.repost(POST, reposter);
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, $2)`, [
+        POST,
+        REVIEW_A,
+      ]);
+      // A block between au and b1, the row left behind (a severing that did not run).
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ('b1', 'au')`);
+    });
+
+    afterAll(async () => {
+      await q(`DELETE FROM user_blocks WHERE "blockerId" = 'b1' AND "blockedId" = 'au'`);
+    });
+
+    it('lists the reposters newest first, minus a block either way and the review cohort', async () => {
+      const list = await reposts.reposters(POST, 'au', 100, undefined);
+      expect(list.map((e) => e.userId)).toEqual(['fa', 'rp']);
+      // The rows the list leaves out are still there: the list reads, it does not clean.
+      expect(await repostRows(POST)).toEqual([REVIEW_A, 'b1', 'fa', 'rp'].sort());
+      // The card's count is the list's, on the author's card only.
+      const forAu = await memberRepostContext(ds.manager, [POST, P(11)], 'au');
+      expect(forAu.reposterCount.get(POST)).toBe(2);
+      expect(forAu.reposterCount.has(P(11))).toBe(false); // an entity post au wrote
+      const forRp = await memberRepostContext(ds.manager, [POST], 'rp');
+      expect(forRp.reposterCount.has(POST)).toBe(false);
+    });
+
+    it('pages by cursor, every row once, and refuses a cursor it did not write', async () => {
+      const first = await reposts.reposters(POST, 'au', 1, undefined);
+      expect(first.map((e) => e.userId)).toEqual(['fa']);
+      const second = await reposts.reposters(POST, 'au', 1, first[0].cursor);
+      expect(second.map((e) => e.userId)).toEqual(['rp']);
+      expect(await reposts.reposters(POST, 'au', 1, second[0].cursor)).toEqual([]);
+      const err = await refusedWith(reposts.reposters(POST, 'au', 1, 'not-a-cursor'));
+      expect(err.getStatus()).toBe(400);
+    });
+
+    it('is a 404 to anyone but the author of a personal, non-anonymous post', async () => {
+      for (const [postId, actor] of [
+        [POST, 'rp'], // a reposter
+        [POST, 'fa'], // a follower of the author
+        [P(11), 'au'], // the officer who wrote an entity post
+        [P(2), 'au'], // an anonymous post
+        [P(99), 'au'], // no such post
+      ]) {
+        const err = await refusedWith(reposts.reposters(postId, actor, 100, undefined));
+        expect(err.getStatus()).toBe(404);
+        expect(codeOf(err)).toBeUndefined(); // the 404 of a post not seen: it confirms nothing
+        const del = await refusedWith(reposts.removeRepostAsAuthor(postId, actor, 'rp'));
+        expect(del.getStatus()).toBe(404);
+        expect(codeOf(del)).toBeUndefined();
+      }
+      expect(await repostRows(POST)).toEqual([REVIEW_A, 'b1', 'fa', 'rp'].sort());
+    });
+
+    it('removes ONE repost: the others and the reach they give stay, nobody is told', async () => {
+      expect(await sees(POST, 'fo')).toBe(true); // through rp's repost
+      const before = await noticeCount();
+      expect(await reposts.removeRepostAsAuthor(POST, 'au', 'fa')).toEqual({ ok: true });
+      expect(await repostRows(POST)).toEqual([REVIEW_A, 'b1', 'rp'].sort());
+      expect(await sees(POST, 'fo')).toBe(true);
+      expect((await reposts.reposters(POST, 'au', 100, undefined)).map((e) => e.userId)).toEqual([
+        'rp',
+      ]);
+      // The removed reposter is not told; the ledger of who was told is left as it was.
+      expect(told).toEqual([]);
+      expect(await noticeCount()).toBe(before);
+      // The author's and the removed reposter's pages, and their accepted followers' (fa, of au).
+      expect(cachedReaders()).toEqual(['rp', 'fo', 'fp', 'sb', 'sr', 'out']);
+      // A plain delete: fa may repost it again while the author consents.
+      const forFa = await memberRepostContext(ds.manager, [POST], 'fa');
+      expect(forFa.mine.has(POST)).toBe(false);
+      expect(forFa.repostable.has(POST)).toBe(true);
+    });
+
+    it('a repost the list does not show cannot be removed: ONE typed 404, the row left', async () => {
+      for (const reposter of ['fa', 'b1', REVIEW_A, 'nobody']) {
+        const err = await refusedWith(reposts.removeRepostAsAuthor(POST, 'au', reposter));
+        expect(err.getStatus()).toBe(404);
+        expect(codeOf(err)).toBe(MEMBER_REPOST_CODES.notListed);
+      }
+      expect(await repostRows(POST)).toEqual([REVIEW_A, 'b1', 'rp'].sort());
+    });
+
+    it("removing the last listed repost takes the post out of that reposter's audience", async () => {
+      await reposts.removeRepostAsAuthor(POST, 'au', 'rp');
+      expect(await sees(POST, 'fo')).toBe(false);
+      expect(await reposts.reposters(POST, 'au', 100, undefined)).toEqual([]);
+      expect((await memberRepostContext(ds.manager, [POST], 'au')).reposterCount.get(POST)).toBe(0);
     });
   });
 });

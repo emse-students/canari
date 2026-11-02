@@ -14,6 +14,7 @@
     Megaphone,
     X,
     Ban,
+    Users,
   } from '@lucide/svelte';
   import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
@@ -117,6 +118,13 @@
     repostsAllowed?: boolean;
     /** WP-F6: the author picked "Autoriser" (true) or "Interdire" (false) for this post. */
     onSetRepostConsent?: (allow: boolean) => void;
+    /**
+     * WP-F6: the AUTHOR's own post only - how many people they are shown as having reposted it.
+     * Above zero, draws "Republie par N personnes", which opens the list (`onShowReposters`).
+     */
+    reposterCount?: number;
+    /** WP-F6: the author picked "Republie par N personnes". */
+    onShowReposters?: () => void;
   }
 
   let {
@@ -147,6 +155,8 @@
     onRepostChange = () => {},
     repostsAllowed,
     onSetRepostConsent = () => {},
+    reposterCount = 0,
+    onShowReposters = () => {},
   }: Props = $props();
 
   let open = $state(false);
@@ -331,6 +341,19 @@
               <Repeat2 size={16} strokeWidth={2.5} />
               {m.post_repost_consent_allow()}
             {/if}
+          </button>
+        {/if}
+
+        {#if reposterCount > 0}
+          <button
+            type="button"
+            role="menuitem"
+            data-post-reposters-open
+            onclick={() => pick(onShowReposters)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Users size={16} strokeWidth={2.5} />
+            {m.post_reposters_menu({ count: reposterCount })}
           </button>
         {/if}
 

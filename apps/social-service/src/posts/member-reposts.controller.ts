@@ -1,20 +1,24 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   ForbiddenException,
   Get,
   Headers,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Post as HttpPost,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { ModerationService } from '../moderation/moderation.service';
+import { FOLLOW_PAGE_MAX } from '../follows/follow-requests.service';
 import { MemberRepostsService } from './member-reposts.service';
 import { RepostAccountConsentDto, RepostPostConsentDto } from './dto/post.dto';
 
@@ -37,7 +41,10 @@ export const MEMBER_REPOST_WRITES_PER_MINUTE = 20;
  */
 export const REPOST_CONSENT_WRITES_PER_MINUTE = 10;
 
-/** Reads of the caller's own consent per minute: the settings screen asks once per opening. */
+/**
+ * Reads of the caller's own repost state per minute, per route: the settings screen asks its
+ * consent once per opening, the author's reposter sheet one page per scroll.
+ */
 export const REPOST_SETTINGS_READS_PER_MINUTE = 60;
 
 /**
@@ -91,6 +98,34 @@ export class MemberRepostsController {
   @Throttle({ default: { limit: MEMBER_REPOST_WRITES_PER_MINUTE, ttl: 60_000 } })
   unrepost(@Headers('x-user-id') xUserId: string, @Param('postId', ParseUUIDPipe) postId: string) {
     return this.reposts.unrepost(postId, xUserId);
+  }
+
+  /**
+   * The AUTHOR's list of who reposted their personal post, newest first (`limit` at most 100, the
+   * next page after `after`, the `cursor` of the last entry). 404 to anyone else.
+   */
+  @Get(':postId/reposts')
+  @UseGuards(UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: REPOST_SETTINGS_READS_PER_MINUTE, ttl: 60_000 } })
+  reposters(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Query('limit', new DefaultValuePipe(FOLLOW_PAGE_MAX), ParseIntPipe) limit: number,
+    @Query('after') after?: string
+  ) {
+    return this.reposts.reposters(postId, xUserId, limit, after);
+  }
+
+  /** The AUTHOR removes one person's repost of their personal post. 404 to anyone else. */
+  @Delete(':postId/reposts/:reposterId')
+  @UseGuards(UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: MEMBER_REPOST_WRITES_PER_MINUTE, ttl: 60_000 } })
+  removeRepost(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Param('reposterId') reposterId: string
+  ) {
+    return this.reposts.removeRepostAsAuthor(postId, xUserId, reposterId);
   }
 
   /** The AUTHOR's override for one personal post: true, false, or null to follow the setting. */

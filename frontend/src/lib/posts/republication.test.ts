@@ -8,6 +8,7 @@ import {
   proposalCandidates,
   republishCandidates,
   republishedByLine,
+  republishedByText,
 } from './republication';
 import { m } from '$lib/paraglide/messages';
 
@@ -50,6 +51,34 @@ describe('republishedByLine', () => {
       names: ['BDE'],
       extra: 1,
     });
+  });
+});
+
+describe('republishedByText - "vous" first for the reader who reposted (owner, 2026-11-02)', () => {
+  const marie = { id: 'm', name: 'Marie' };
+  const yann = { id: 'y', name: 'Yann' };
+  const bde = [{ id: 'b', name: 'BDE', slug: 'b', logoUrl: null }];
+
+  it('says "vous" alone when nobody else is named', () => {
+    expect(republishedByText([], [], true)).toBe(m.post_republished_by_you());
+  });
+
+  it('says "vous et X" with one other name', () => {
+    expect(republishedByText([], [marie], true)).toBe(
+      m.post_republished_by_you_and({ name: 'Marie' })
+    );
+    expect(republishedByText(bde, [], true)).toBe(m.post_republished_by_you_and({ name: 'BDE' }));
+  });
+
+  it('says "vous, X et N autres" beyond, associations still named first', () => {
+    expect(republishedByText(bde, [marie, yann], true)).toBe(
+      m.post_republished_by_you_and_more({ name: 'BDE', count: 2 })
+    );
+  });
+
+  it('leaves the line of a reader who did not repost as it was', () => {
+    expect(republishedByText([], [], false)).toBeNull();
+    expect(republishedByText([], [marie])).toBe(m.post_republished_by({ names: 'Marie' }));
   });
 });
 

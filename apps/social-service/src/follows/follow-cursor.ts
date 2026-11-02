@@ -26,7 +26,7 @@ export const FOLLOW_CURSOR_INVALID = 'FOLLOW_CURSOR_INVALID';
 export interface FollowCursor {
   /** The sort column's text, as PostgreSQL printed it (`timestamp` or `timestamptz`). */
   at: string;
-  /** The `user_follows.id` of the last row served. */
+  /** The tie-breaking key of the last row served: a `user_follows.id`, or a person's id. */
   id: string;
 }
 
@@ -35,6 +35,27 @@ const PG_INSTANT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Far beyond any cursor this file writes: a longer one is refused before it is decoded. */
 const CURSOR_MAX_LENGTH = 200;
+
+/**
+ * What a list's tie-breaking key looks like, and so how long its cursor may be. The follow lists
+ * break ties on the row's uuid ({@link FOLLOW_ROW_KEY}); a list with one row per PERSON - the
+ * reposters of a post (WP-F6), keyed `(postId, reposterId)` - breaks them on the person's id
+ * ({@link PERSON_KEY}), a `varchar(255)` with no fixed shape. Either way the key reaches SQL as a
+ * bound parameter, never spliced; the check only keeps a cursor this server did not write a 400.
+ */
+export interface CursorKeyShape {
+  id: RegExp;
+  maxLength: number;
+}
+
+/** A follow list: the key is the `user_follows` row's uuid. */
+export const FOLLOW_ROW_KEY: CursorKeyShape = { id: UUID_RE, maxLength: CURSOR_MAX_LENGTH };
+
+/**
+ * A list of people keyed by `users.id` (`varchar(255)`): the rule every id is minted under
+ * (core-service's `users/user-id.ts`) - visible ASCII, no ':' - at most 255 characters.
+ */
+export const PERSON_KEY: CursorKeyShape = { id: /^[\x21-\x39\x3b-\x7e]{1,255}$/, maxLength: 512 };
 
 /** The cursor naming the row whose sort text is `at` and id is `id`. */
 export function encodeFollowCursor(at: string, id: string): string {
@@ -45,11 +66,14 @@ export function encodeFollowCursor(at: string, id: string): string {
  * Reads a cursor back. `undefined` or empty is "the first page" (`null`); anything else this file
  * did not write is a 400 - a repeated `?after=` arrives as an array, and is refused like any other.
  */
-export function decodeFollowCursor(raw: unknown): FollowCursor | null {
+export function decodeFollowCursor(
+  raw: unknown,
+  key: CursorKeyShape = FOLLOW_ROW_KEY
+): FollowCursor | null {
   if (raw === undefined || raw === '') return null;
   const refuse = () =>
     new BadRequestException({ code: FOLLOW_CURSOR_INVALID, message: 'Invalid list cursor' });
-  if (typeof raw !== 'string' || raw.length > CURSOR_MAX_LENGTH) throw refuse();
+  if (typeof raw !== 'string' || raw.length > key.maxLength) throw refuse();
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
@@ -62,7 +86,7 @@ export function decodeFollowCursor(raw: unknown): FollowCursor | null {
     typeof parsed[0] !== 'string' ||
     typeof parsed[1] !== 'string' ||
     !PG_INSTANT_RE.test(parsed[0]) ||
-    !UUID_RE.test(parsed[1])
+    !key.id.test(parsed[1])
   ) {
     throw refuse();
   }

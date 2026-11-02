@@ -21,6 +21,8 @@ describe('member repost routes rate limit', () => {
   it.each([
     ['repost', MEMBER_REPOST_WRITES_PER_MINUTE],
     ['unrepost', MEMBER_REPOST_WRITES_PER_MINUTE],
+    ['removeRepost', MEMBER_REPOST_WRITES_PER_MINUTE],
+    ['reposters', REPOST_SETTINGS_READS_PER_MINUTE],
     ['setMyRepostSettings', REPOST_CONSENT_WRITES_PER_MINUTE],
     ['setPostConsent', REPOST_CONSENT_WRITES_PER_MINUTE],
     ['myRepostSettings', REPOST_SETTINGS_READS_PER_MINUTE],

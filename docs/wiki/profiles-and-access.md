@@ -1636,17 +1636,47 @@ security review before arming.
   (`member_reposts`, `user_repost_settings`), a reader's (`member_repost_notices`) and
   the author's (their personal posts are deleted, the key cascades); a block
   (`severFollowsBetween` -> `severMemberRepostsBetween`, personal posts only; core-service's unblock
-  severs again before it lifts); a withdrawn consent; the reposter's own "Annuler".
+  severs again before it lifts); a withdrawn consent; the reposter's own "Annuler"; the AUTHOR's
+  "Retirer" on one reposter (below).
+- **The author sees who reposted, and removes ONE repost (owner, 2026-11-02)**. On their own
+  personal, non-anonymous post the author's card carries `repostCount`, and the post menu draws
+  "Republié par N personnes" above zero; it opens `PostRepostersSheet` (the follow lists' rows and
+  paging), each row with "Retirer". **Who is listed** is `repostShownToAuthorSql`
+  (`member-reposts.service.ts`): `memberRepostCarriesSql` asked with the AUTHOR as the reader - the
+  reposter on the author's side of the review cohort, no block either way between them, not muted,
+  still seeing the post first-hand. The author learns who reposted (the owner accepted that
+  disclosure), but never someone the app otherwise keeps out of their sight, and a stale row that
+  reaches nobody is neither listed nor counted. The list, the count and the removal read the SAME
+  fragment. **The removal** is a plain delete of one `member_reposts` row under the consent lock
+  then the post row (`member-repost:author:<id>`, then `FOR UPDATE`, the order `repost` and
+  `setPostConsent` take); a repost the list does not show - gone, or by someone a block or the
+  cohort hides - is ONE typed 404 `MEMBER_REPOST_NOT_LISTED`, so the removal probes nothing the list
+  does not show. **The removed reposter is NOT told** (no bell, no push): their card stops offering
+  "Annuler ma republication", as after a withdrawn consent, and they may repost again while the
+  author consents - no per-person refusal was asked; an author who wants no reposts at all withdraws
+  consent on the post. `member_repost_notices` is left as every removal leaves it: a reader told
+  once is never told again, whoever reposts later. Anyone but the author of a personal,
+  non-anonymous post gets the uncoded 404 of a post not seen, on both routes; an entity post has no
+  list (its `authorId` is the officer). Feed pages dropped: the author's, the removed reposter's,
+  and each one's accepted followers'.
+- **"Republié par vous" (owner, 2026-11-02)**: the reader who reposted a post reads "vous" FIRST on
+  its "Republié par" line - "Republié par vous", "vous et Marie", "vous, Marie et 2 autres"
+  (`republishedByText`, `republication.ts`, post header and reel overlay). It reads the card's own
+  `repostedByMe`, which only that reader's card carries: no query was added, and nobody else is
+  shown it.
 - **The card**: `canRepost`, `repostedByMe`, `repostedBy` (the people the READER follows who
   reposted it - a stranger is not told who reposted) and, on the reader's own personal post only,
-  `repostConsent { override, effective }`; an entity-loaded post no longer spreads
+  `repostConsent { override, effective }` and `repostCount`; an entity-loaded post no longer spreads
   `allowReposts`. Two queries a page (`member-repost-card.ts`), restating the write's refusals.
 - **Routes**: `POST|DELETE /api/posts/:id/reposts`, `GET|PUT /api/posts/me/repost-settings`,
   `PUT /api/posts/:id/repost-consent {allowReposts: boolean | null}` (the author of a personal
-  post; 404 to anyone else). **Every one is throttled per caller (2026-11-02)**,
+  post; 404 to anyone else); `GET /api/posts/:id/reposts?limit&after` (the author's list, keyset
+  on `(repostedAt, reposterId)`, the follow lists' cursor with a person's id as its key,
+  `follow-cursor.ts` `PERSON_KEY`) and `DELETE /api/posts/:id/reposts/:reposterId` (the author's
+  removal), both 404 to anyone else. **Every one is throttled per caller (2026-11-02)**,
   `UserResourceThrottlerGuard` (the routes name `:postId`, which it does not read, so the bucket is
-  the caller alone across every post): 20 reposts or take-backs a minute, 10 consent changes, 60
-  reads of the setting (`member-reposts.controller.ts`, asserted by its throttle spec). **Counted
+  the caller alone across every post): 20 reposts, take-backs or author removals a minute, 10
+  consent changes, 60 reads of the setting or of the reposter list (`member-reposts.controller.ts`, asserted by its throttle spec). **Counted
   PER REPLICA**: `ThrottlerModule.forRoot` names no storage, so the counts are one process's
   memory - N replicas allow up to N times each limit, and a restart forgets them. It bounds a loop,
   it is not a quota; the told-once ledger, not the throttle, is what keeps a reader from a second
@@ -1654,11 +1684,10 @@ security review before arming.
 - **The client**: the share sheet's "Republier pour mes abonnés" / "Annuler ma republication" row
   (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
   ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the
-  "Republié par" line names reposters after associations; the bell row `member_repost`.
-- **Not built**: no list of who reposted for the author; the author cannot remove ONE repost (they
-  withdraw consent on the post instead) - both accepted for `1.6.0` and owed
-  ([backlog](backlog.d/p3-member-reposts-the-author-sees-and-removes-one-repost.md)); a live is
-  never reposted (accepted); an officer may repost their own association's post (accepted: refusing
+  "Republié par" line names reposters after associations, "vous" first for the reader who
+  reposted; the author's "Republié par N personnes" menu row and its sheet; the bell row
+  `member_repost`.
+- **Not built**: a live is never reposted (accepted); an officer may repost their own association's post (accepted: refusing
   it would name them).
 - **Proof**: `posts/member-reposts.integration.spec.ts` (PostgreSQL, 121 applied twice): the D38b
   refusal list re-run for a member reposter, no chain (a reader reached only by a repost is refused
@@ -1672,7 +1701,15 @@ security review before arming.
   keeps a reader told before it from being told again; a repost and a consent change drop exactly
   the expected readers' cached pages; the Suivis lateral admits and dates a carried repost and
   neither for a blocked reader or a muted reposter. `member-reposts.controller.throttle.spec.ts`,
-  `post-list-cache.spec.ts` and `posts.service.republished-feed.spec.ts` hold the rest.
+  `post-list-cache.spec.ts` and `posts.service.republished-feed.spec.ts` hold the rest. The
+  author's list and removal (same spec, "THE AUTHOR SEES WHO REPOSTED"): newest first minus a block
+  left behind and a review-cohort reposter, the card's count equal to the list, paging by cursor
+  and a forged cursor refused, the uncoded 404 to a reposter, a follower, an entity post's officer,
+  an anonymous post and a missing one; one removal leaves the other reposts and the reach they give,
+  tells nobody, keeps the notice ledger, drops exactly the expected pages and leaves the reposter
+  free to repost; a hidden or absent repost is the typed 404 with its row kept. Client:
+  `republication.test.ts` ("vous" alone, "vous et X", "vous, X et N autres") and
+  `PostRepostersSheet.svelte.test.ts`.
   `republications.integration.spec.ts` and `personal-republications.integration.spec.ts`: an
   officer who sees a post only through a repost cannot republish or ask, and is offered nothing.
   The six PostgreSQL specs that share the predicate apply 121. The post of a list or of a
