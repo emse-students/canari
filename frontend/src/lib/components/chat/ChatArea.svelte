@@ -132,6 +132,12 @@
     onSearchAll?: (conversationId: string, query: string) => Promise<string[] | null>;
     /** Callback to toggle a message's pinned state. */
     onTogglePin?: (messageId: string) => void;
+    /**
+     * A conversation reel's viewer met its `410` at `atMs`: record it on the message's local row,
+     * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
+     * this mount.
+     */
+    onReelPurged?: (messageId: string, atMs: number) => void;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
     /** Callback to navigate back to the conversation list on mobile. */
@@ -278,6 +284,7 @@
     onOpenMedia,
     onSearchAll,
     onTogglePin,
+    onReelPurged,
     onInviteMembers,
     onBack,
     onOpenConversations: _onOpenConversations,
@@ -1703,6 +1710,7 @@
             {canModerate}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
+            {onReelPurged}
             {pinStanding}
             {pinnedIds}
             {switchTime}
