@@ -71,9 +71,12 @@ export class LiveChatController {
     @Headers('x-global-admin') globalAdmin: string | undefined
   ) {
     const caller = callerOf(userId);
-    const staff = await this.associations.mayModerateLive(caller, id, {
+    // ParseUUIDPipe accepts either case; the stored ids are lowercase, so the id is normalised ONCE
+    // here, as `cut` does, and every comparison below reads the same value.
+    const liveId = id.toLowerCase();
+    const staff = await this.associations.mayModerateLive(caller, liveId, {
       isGlobalAdmin: globalAdmin === 'true',
     });
-    return this.chat.hide(caller, staff, id, messageId);
+    return this.chat.hide(caller, staff, liveId, messageId.toLowerCase());
   }
 }

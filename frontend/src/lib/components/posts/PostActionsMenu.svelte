@@ -67,9 +67,10 @@
     canManage: boolean;
     /**
      * May edit: the post's author (publisher) ALONE - never a moderator nor the platform admin
-     * (owner, 2026-11-02). Defaults to `canManage` for a caller that does not pass it.
+     * (owner, 2026-11-02). Required, never derived from `canManage`: that would hand the pencil back
+     * to every moderator.
      */
-    canEdit?: boolean;
+    canEdit: boolean;
     /** May pin or unpin: a moderator of this post (a BDE MODERATE of its spaces) or a platform admin. */
     canPin: boolean;
     /** May report: any logged-in reader who is not the post's own publisher. */
@@ -136,7 +137,7 @@
   let {
     pinned,
     canManage,
-    canEdit = canManage,
+    canEdit,
     canPin,
     canReport,
     canUnmaskAnonymous,

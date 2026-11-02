@@ -14,6 +14,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ModerationService } from './moderation.service';
 import { AssociationsService } from '../associations/associations.service';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
+import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 
 /**
  * Moderation endpoints: content reporting (all authenticated users)
@@ -36,7 +37,10 @@ export class ModerationController {
     // One predicate, shared with the post controls that give the same people the same reach.
     const canModerate = await this.assocService.isContentModerator(userId, { isGlobalAdmin });
     if (!canModerate) {
-      throw new ForbiddenException('BDE MODERATE permission or global admin required');
+      throw new ForbiddenException({
+        code: MODERATOR_REQUIRED,
+        message: 'BDE MODERATE permission or global admin required',
+      });
     }
   }
 
@@ -83,9 +87,9 @@ export class ModerationController {
     const isGlobalAdmin = ga === 'true';
     await this.assertModerator(userId, isGlobalAdmin);
     const reports = await this.service.listAllReports(
+      { userId, isGlobalAdmin },
       limit ? Math.min(parseInt(limit, 10) || 50, 200) : 50,
-      offset ? parseInt(offset, 10) || 0 : 0,
-      { userId, isGlobalAdmin }
+      offset ? parseInt(offset, 10) || 0 : 0
     );
     // Which person on each row this caller may mute: a BDE mutes the people of its own spaces only,
     // and a reporter or an author may live elsewhere than the content they touched.

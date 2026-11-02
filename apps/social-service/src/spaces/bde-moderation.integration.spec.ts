@@ -13,6 +13,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import { DataSource } from 'typeorm';
+import { ContentReport } from '../moderation/entities/content-report.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
   BDE_MODERATED_POST_IDS_SQL,
@@ -79,7 +81,10 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       CREATE TABLE live_cuts ("liveId" uuid PRIMARY KEY, "broadcasterId" varchar(255) NOT NULL,
         "associationId" uuid);
       CREATE TABLE content_reports (id uuid PRIMARY KEY, "contentType" varchar(30) NOT NULL,
-        "contentId" varchar NOT NULL);
+        "contentId" varchar NOT NULL, "reporterId" varchar NOT NULL DEFAULT 'r',
+        reason varchar(50) NOT NULL DEFAULT 'spam', details text, status varchar(20) NOT NULL
+        DEFAULT 'pending', "reviewedBy" varchar, "reviewedAt" timestamptz, "reportedUserId" varchar,
+        "createdAt" timestamp NOT NULL DEFAULT now());
       CREATE TABLE live_chat_reported_lines ("reportId" uuid PRIMARY KEY, "liveId" uuid NOT NULL);
     `);
     for (const [key, id] of Object.entries(A)) {
@@ -202,6 +207,10 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     expect(await live('gaMod', L.gaAssoLive)).toBe(true);
     expect(await live('seMod', L.cutSeLive)).toBe(true);
     expect(await live('gaMod', L.cutSeLive)).toBe(false);
+    // The id is cast on the parameter side: either case matches, and a non-uuid matches nothing
+    // instead of raising.
+    expect(await live('seMod', L.seLive.toUpperCase())).toBe(true);
+    expect(await live('seMod', 'not-a-uuid')).toBe(false);
   });
 
   it('narrows the report queue by what each report is about', async () => {
@@ -215,6 +224,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       ['30000000-0000-4000-8000-000000000006', 'live', L.gaAssoLive],
       ['30000000-0000-4000-8000-000000000007', 'live_chat', 'msg-1'],
       ['30000000-0000-4000-8000-000000000008', 'post', '10000000-0000-4000-8000-0000000000ff'],
+      // A free-text contentId that is no uuid: matches nothing, raises nothing.
+      ['30000000-0000-4000-8000-000000000009', 'post', 'not-a-uuid'],
     ];
     for (const [id, type, contentId] of reports) {
       await client.query(
@@ -240,5 +251,36 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       (await client.query(BDE_MODERATES_REPORT_SQL, [moderator, id])).rows[0].moderates as boolean;
     expect(await one('seMod', reports[0][0])).toBe(true);
     expect(await one('seMod', reports[1][0])).toBe(false);
+    expect(await one('seMod', 'not-a-uuid')).toBe(false);
+  });
+
+  it('narrows the queue the same through TypeORM, as `ModerationService.listAllReports` builds it', async () => {
+    // The service's own query builder, on the real tables: its `:scopeModerator` placeholder and the
+    // fragment's `::casts` and regex go through TypeORM's parameter rewriting, which the raw `pg`
+    // queries above do not exercise.
+    const ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [ContentReport],
+      synchronize: false,
+      extra: { options: `-c search_path=${schema},public` },
+    });
+    await ds.initialize();
+    try {
+      const queue = async (moderator: string) =>
+        (
+          await ds
+            .getRepository(ContentReport)
+            .createQueryBuilder('r')
+            .where(reportInBdeScopeSql('r', ':scopeModerator'), { scopeModerator: moderator })
+            .orderBy('r.id', 'ASC')
+            .getMany()
+        ).map((r) => r.id.slice(-1));
+      expect(await queue('seMod')).toEqual(['1', '4', '5', '7']);
+      expect(await queue('gaMod')).toEqual(['2', '3', '6']);
+      expect(await queue('seVal')).toEqual([]);
+    } finally {
+      await ds.destroy();
+    }
   });
 });

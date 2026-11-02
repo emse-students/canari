@@ -37,6 +37,15 @@ import { UserModeration } from './entities/user-moderation.entity';
 import { sanitizeLog } from '../common/log.utils';
 import { dropRepublicationsOf } from '../posts/republication-sql';
 
+/**
+ * Who is reading a moderation list. REQUIRED, never defaulted: a missing scope used to read as the
+ * platform admin's, which fails open (review of #2953) - every caller now says who asks.
+ */
+export interface ModerationScope {
+  userId: string;
+  isGlobalAdmin: boolean;
+}
+
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
 
@@ -479,9 +488,9 @@ export class ModerationService {
    * (`reportInBdeScopeSql`), in SQL so the page bounds stay true.
    */
   async listAllReports(
+    scope: ModerationScope,
     limit = 50,
-    offset = 0,
-    scope: { userId: string; isGlobalAdmin: boolean } = { userId: '', isGlobalAdmin: true }
+    offset = 0
   ): Promise<
     Array<
       ContentReport & {
@@ -854,9 +863,7 @@ export class ModerationService {
    * Returns the currently muted users within the caller's scope (owner, 2026-11-02): all of them for
    * a platform admin, those belonging to one of its BDE's spaces for a `MODERATE` holder.
    */
-  async listMutedUsers(
-    scope: { userId: string; isGlobalAdmin: boolean } = { userId: '', isGlobalAdmin: true }
-  ): Promise<UserModeration[]> {
+  async listMutedUsers(scope: ModerationScope): Promise<UserModeration[]> {
     const qb = this.muteRepo
       .createQueryBuilder('m')
       .where('m.isMuted = true')

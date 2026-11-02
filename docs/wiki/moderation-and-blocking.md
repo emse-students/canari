@@ -128,6 +128,17 @@ it - a moderator or the platform admin hides or deletes it, and an edit by eithe
 `COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
 of `POST_AS_ASSO` in it (decided the same day).
 
+**A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
+A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or
+rewrite its reason, whichever BDE took it, and the platform admin always may. Deliberate, not an
+oversight - a second BDE seeing the same person is a second moderator of them.
+
+**What an out-of-scope moderator can infer, accepted (owner, 2026-11-02).** On an anonymous post a BDE
+moderator outside its scope is served no pin and no unmask capability, so it can tell the post is not
+in its scope - which says the author belongs to another BDE's spaces. This follows from the rule that
+moderation goes to the author's BDE: serving the controls to the right BDE alone is what tells the
+others they are not it.
+
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association

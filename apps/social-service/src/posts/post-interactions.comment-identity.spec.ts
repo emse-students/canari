@@ -1,5 +1,5 @@
 import type { Repository } from 'typeorm';
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostsController } from './posts.controller';
 import type { Post } from './entities/post.entity';
@@ -138,7 +138,7 @@ describe('PostInteractionsService - comment identity', () => {
     const asso = { id: 'b', userId: 'writer', associationId: 'asso-1', text: 'x' };
     const { service } = make({ ...base(), comments: [anon, asso] });
     await expect(service.editComment('p1', 'a', 'someone', 'y')).rejects.toBeInstanceOf(
-      UnauthorizedException
+      ForbiddenException
     );
     await expect(service.editComment('p1', 'a', 'writer', 'y')).resolves.toMatchObject({
       ok: true,
@@ -154,7 +154,7 @@ describe('PostInteractionsService - comment identity', () => {
     const { service, associations } = make({ ...base(), comments: [asso] });
     associations.mayActOnAny.mockResolvedValue(new Set());
     await expect(service.editComment('p1', 'b', 'writer', 'z')).rejects.toBeInstanceOf(
-      UnauthorizedException
+      ForbiddenException
     );
   });
 

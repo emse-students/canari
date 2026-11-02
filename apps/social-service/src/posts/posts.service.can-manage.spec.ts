@@ -1,4 +1,4 @@
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
@@ -174,15 +174,13 @@ describe('PostsService post management rights', () => {
     it('refuses a member of the association without the flag', async () => {
       const { service } = makeService(assoPost, {});
       await expect(service.updatePost('p1', 'plain-member', edit)).rejects.toThrow(
-        UnauthorizedException
+        ForbiddenException
       );
     });
 
     it('refuses the author once the association took the flag back', async () => {
       const { service } = makeService(assoPost, {});
-      await expect(service.updatePost('p1', 'officer', edit)).rejects.toThrow(
-        UnauthorizedException
-      );
+      await expect(service.updatePost('p1', 'officer', edit)).rejects.toThrow(ForbiddenException);
     });
 
     it('deletes for an officer holding the flag', async () => {
@@ -193,16 +191,12 @@ describe('PostsService post management rights', () => {
 
     it('refuses the delete to everyone else', async () => {
       const { service } = makeService(assoPost, {});
-      await expect(service.deletePost('p1', 'stranger', false)).rejects.toThrow(
-        UnauthorizedException
-      );
+      await expect(service.deletePost('p1', 'stranger', false)).rejects.toThrow(ForbiddenException);
     });
 
     it('keeps a personal post to its author', async () => {
       const { service } = makeService(personalPost, { intruder: [ASSO] });
-      await expect(service.updatePost('p2', 'intruder', edit)).rejects.toThrow(
-        UnauthorizedException
-      );
+      await expect(service.updatePost('p2', 'intruder', edit)).rejects.toThrow(ForbiddenException);
     });
 
     it('answers the edit with a post the editor is still told they manage', async () => {

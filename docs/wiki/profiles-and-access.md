@@ -1383,15 +1383,20 @@ admin's, as for VALIDATE_EVENTS. **The platform admin stays global for every one
 - **The door and the reach.** `isContentModerator` ("moderates somewhere") still opens the moderation
   surfaces; every act asks the scoped predicate of its target (`mayModeratePost`, `mayModerateLive`,
   `mayModerateUser`, `mayModerateReport`). A BDE moderator outside its scope gets 403
-  `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere 403 `MODERATOR_REQUIRED` (or the 401 the
-  post routes always answered), classified at the throw (`refuseModeration`, logged `[MODERATION]`).
+  `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere 403 `MODERATOR_REQUIRED`, classified at
+  the throw (`refuseModeration`, logged `[MODERATION]`). **Never a 401** on these routes (review of
+  #2953): only a 401 may log a user out, and these callers' sessions are fine - the post and comment
+  routes answered "Not your post" / "Not your comment" / "Content moderator required" as 401s and now
+  answer typed 403s (`POST_EDIT_PUBLISHER_ONLY`, `COMMENT_EDIT_AUTHOR_ONLY`, `COMMENT_DELETE_FORBIDDEN`,
+  `MODERATOR_REQUIRED`). No client branch read those 401s.
 - **The lists are narrowed in SQL**: the report queue (`reportInBdeScopeSql`), the hidden posts and the
   muted list, so a page's bounds stay true.
 - **The client draws only what the server accepts**: `canManage`, `canPin`, `canUnmaskAnonymous` per
   post and comment `canDelete` from the post's scope; `canEdit` for the pencil; per report
   `canMuteReporter` / `canMuteReportedUser` (the latter also gates the broadcaster withdrawal); per
-  live in the list `viewerModerates` (the staff hide button). An older client keeps drawing the pencil
-  from `canManage` and gets the typed 403.
+  live `viewerModerates`, on the list AND on `GET /lives/:id` (the staff hide button). **An absent
+  field is false, never a fallback**: the pencil is not drawn from `canManage`, nor the hide button
+  from "moderates somewhere" - either would draw a control the server refuses.
 - **Live chat**: an out-of-scope BDE moderator is no staff for that live and gets the hide route's 404,
   as any non-staff caller does.
 - **Proof:** `bde-moderation.integration.spec.ts` (real PostgreSQL: posts, people, lives including a
@@ -1414,11 +1419,19 @@ the association on this route defeated the signing above. It is now closed like 
   (`AssociationsService.closeAnonymousAgenda`, logged `[AGENDA]`).
 - **A signed-in reader is unchanged** (`restrictToViewerSpaces`), and so is a global admin.
 - **Consumers, enumerated:** the association page's agenda block (`AssociationCalendarSection`,
-  client-side, the only anonymous consumer: empty for a visitor unless the association addresses
-  everyone); the composer's linkable-event picker (`listLinkableValidatedCalendarEvents`, signed in);
-  the edit pages (signed in). No SSR or SEO read uses this route (`serverSeo` reads the signed
-  `/calendar/feed` with the internal secret); the `.ics` export is `/calendar/feed.ics`, untouched; the
-  native apps run the same web client. **nginx** has no per-route allowlist here: `/api/associations`
+  client-side, the only anonymous reader of THIS route: empty for a visitor unless the association
+  addresses everyone); the composer's linkable-event picker (`listLinkableValidatedCalendarEvents`,
+  signed in); the edit pages (signed in). The `.ics` export is `/calendar/feed.ics`, untouched; the
+  native apps run the same web client.
+- **The server-side SEO of `/calendar` is the other anonymous face, closed by the same predicate.**
+  `serverSeo.ts` (`agendaJsonLd`) reads `/calendar/feed` per campus with the internal secret and writes
+  the 25 soonest events into the page's JSON-LD - which every anonymous visitor and crawler reads. That
+  read, trusted and with no reader, is the PUBLIC face: the feed passes `everyoneOnly` and keeps only
+  the events whose organiser addresses everyone (`AssociationsService.publishedToEveryone`, the same
+  `addressesEveryoneSql`). A signed-in reader and a signed subscription are unchanged. Proof: the
+  `coorganisation.integration.spec.ts` rows on real PostgreSQL (an association reaching only some
+  spaces is absent from the SEO read and from its own anonymous agenda) and the controller row that
+  only the trusted anonymous read asks for it. **nginx** has no per-route allowlist here: `/api/associations`
   goes through `auth_request` to core's `verify`, which answers 200 with empty identity headers for an
   anonymous caller, so the decision is the service's and nothing changes at the edge.
 

@@ -23,6 +23,7 @@ import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
 import { ModerationService } from '../moderation/moderation.service';
+import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import {
   CreatePostDto,
   ListPostsQueryDto,
@@ -457,13 +458,19 @@ export class PostsController {
     const mayModerate = await this.associationsService.isContentModerator(userId, {
       isGlobalAdmin: globalAdminHeader === 'true',
     });
-    if (!mayModerate) throw new UnauthorizedException('Content moderator required');
+    if (!mayModerate) {
+      throw new ForbiddenException({
+        code: MODERATOR_REQUIRED,
+        message: 'Content moderator required',
+      });
+    }
   }
 
   /**
    * Refuses the caller unless they moderate THIS post (owner, 2026-11-02): a platform admin, or a
    * BDE `MODERATE` holder whose governed spaces hold it. A BDE moderator outside its scope is a 403
-   * `MODERATION_OUT_OF_SCOPE`; a caller who moderates nowhere keeps the 401 it always got.
+   * `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere a 403 `MODERATOR_REQUIRED` - never a
+   * 401, which may log a user out.
    */
   private async assertModeratesPost(
     userId: string,
@@ -472,9 +479,6 @@ export class PostsController {
   ): Promise<void> {
     const isGlobalAdmin = globalAdminHeader === 'true';
     if (await this.associationsService.mayModeratePost(userId, postId, { isGlobalAdmin })) return;
-    if (!(await this.associationsService.isContentModerator(userId))) {
-      throw new UnauthorizedException('Content moderator required');
-    }
     await this.associationsService.refuseModeration(userId, `post:${postId}`);
   }
 

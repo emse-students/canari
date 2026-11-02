@@ -64,6 +64,7 @@ function mountMenu(props: Partial<Parameters<typeof PostActionsMenu>[1]> = {}) {
     props: {
       pinned: false,
       canManage: false,
+      canEdit: false,
       canPin: false,
       canReport: true,
       canUnmaskAnonymous: false,
@@ -183,9 +184,10 @@ it('draws the pencil for the author', () => {
   expect(labels.some((t) => t.includes('Modifier le post'))).toBe(true);
 });
 
-it('lets the pencil follow canManage when no canEdit is passed (an older server)', () => {
+it('never lets the pencil follow canManage: the bin alone for a manager not served canEdit', () => {
   const labels = menuLabels({ canManage: true });
-  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(true);
+  expect(labels.some((t) => t.includes('Supprimer le post'))).toBe(true);
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(false);
 });
 
 it('offers no request entry by default', () => {

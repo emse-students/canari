@@ -58,7 +58,7 @@ import {
   type LiveStrikeConsequence,
 } from './live-strikes';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
-import { bdeModeratesContentSql } from '../spaces/bde-moderation';
+import { BDE_MODERATES_LIVE_SQL, bdeModeratesContentSql } from '../spaces/bde-moderation';
 import { short } from './live-log';
 import {
   isLiveKeySealingConfigured,
@@ -80,6 +80,13 @@ export interface LiveView {
   nextIndex: number;
   key: string;
 }
+
+/**
+ * One live as a VIEWER opens it: the view, and whether that viewer moderates it as a BDE (the same
+ * `viewerModerates` the list carries), so a viewer opened from a link draws the staff hide button
+ * exactly as one opened from the list - never from a client-side fallback.
+ */
+export type LiveViewerView = LiveView & { viewerModerates: boolean };
 
 /** A live in the list of open lives - no key: the key is read by opening it. */
 export interface LiveListItem {
@@ -450,12 +457,16 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
-  async get(viewerId: string, liveId: string): Promise<LiveView> {
+  async get(viewerId: string, liveId: string): Promise<LiveViewerView> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
     // Opened before the seat is taken: a key that cannot be read (503) seats nobody.
     const key = openLiveKeyOr503(row.id, row);
     await this.takeSeat(row, viewerId);
-    return toView(row, key);
+    const scoped: { moderates: boolean }[] = await this.db.query(BDE_MODERATES_LIVE_SQL, [
+      viewerId,
+      row.id,
+    ]);
+    return { ...toView(row, key), viewerModerates: scoped[0]?.moderates === true };
   }
 
   /**

@@ -51,9 +51,12 @@ describe('ModerationController - admin paths refuse a non-moderator', () => {
   });
 
   it.each(Object.keys(ADMIN_CALLS))(
-    '%s answers 403 and never reaches the service',
+    '%s answers a typed 403 (never a 401, which may log out) and never reaches the service',
     async (name) => {
-      await expect(ADMIN_CALLS[name](controller)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(ADMIN_CALLS[name](controller)).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'MODERATOR_REQUIRED' },
+      });
       for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
     }
   );
@@ -145,10 +148,11 @@ describe('ModerationController - the BDE scope', () => {
       canMuteReporter: boolean;
       canMuteReportedUser: boolean;
     }[];
-    expect(service.listAllReports).toHaveBeenCalledWith(50, 0, {
-      userId: 'bde',
-      isGlobalAdmin: false,
-    });
+    expect(service.listAllReports).toHaveBeenCalledWith(
+      { userId: 'bde', isGlobalAdmin: false },
+      50,
+      0
+    );
     expect(row.canMuteReporter).toBe(true);
     expect(row.canMuteReportedUser).toBe(false);
   });

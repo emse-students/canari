@@ -627,4 +627,57 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await q(`SELECT 1 FROM association_members WHERE "userId" = $1`, [GONE])).toEqual([]);
     }, 30_000);
   });
+
+  /**
+   * WHAT AN ANONYMOUS VISITOR IS PUBLISHED (owner, 2026-11-02): `addressesEveryoneSql` run against the
+   * real tables, through both of its readers - the SEO read of `/calendar` (`everyoneOnly`) and one
+   * association's agenda read with no account.
+   */
+  describe('the agenda published to everyone', () => {
+    const EVERYONE = '00000000-0000-4000-8000-0000000c0a07'; // a (NULL, NULL) rule: addresses everyone
+    const OPEN_DAY = E(30);
+    const RANGE = ['2026-01-01T00:00:00.000Z', '2026-12-31T00:00:00.000Z'] as const;
+
+    beforeAll(async () => {
+      await q(
+        `INSERT INTO associations (id, name, slug, "createdBy") VALUES ($1, 'School', 'school', 'it')`,
+        [EVERYONE]
+      );
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [EVERYONE]);
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, NULL)`,
+        [EVERYONE]
+      );
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Open day', '2026-06-20T18:00:00Z', 'it', 'validated')`,
+        [OPEN_DAY, EVERYONE]
+      );
+    });
+
+    it('the SEO read keeps the events of an association addressing everyone, and no other', async () => {
+      const ids = async (everyoneOnly: boolean) =>
+        (
+          await associations.listAggregatedCalendarFeed(RANGE[0], RANGE[1], undefined, {
+            everyoneOnly,
+          })
+        ).map((r) => r.id);
+      const whole = await ids(false);
+      // Not vacuous: the unnarrowed window holds events of associations reaching only some spaces.
+      expect(whole.filter((id) => id !== OPEN_DAY).length).toBeGreaterThan(0);
+      expect(await ids(true)).toEqual([OPEN_DAY]);
+    });
+
+    it("one association's agenda read anonymously: open only if it addresses everyone", async () => {
+      expect(await associations.listCalendarEvents(A1)).toEqual([]);
+      expect((await associations.listCalendarEvents(EVERYONE)).map((r) => r.id)).toEqual([
+        OPEN_DAY,
+      ]);
+      // A signed-in reader of A1's space keeps A1's agenda.
+      const signedIn = await associations.listCalendarEvents(A1, undefined, undefined, {
+        viewer: { userId: 'seReader' },
+      });
+      expect(signedIn.length).toBeGreaterThan(0);
+    });
+  });
 });

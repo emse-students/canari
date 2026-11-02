@@ -1982,30 +1982,25 @@ export class PostsService {
    * never puts words in someone's mouth. "Author" is the publisher (`isPublisherOf`): for a post in an
    * association's name, the association, i.e. whoever speaks for it.
    *
-   * A moderator or an admin is refused 403 `POST_EDIT_PUBLISHER_ONLY`; anyone else keeps the 401
-   * "Not your post" they always got.
+   * Anyone else - a moderator, the platform admin, any other reader - is refused 403
+   * `POST_EDIT_PUBLISHER_ONLY`: a 403 and never a 401, which may log a user out (review of #2953).
    */
   private async assertMayEdit(post: Post, userId: string, isGlobalAdmin: boolean): Promise<void> {
     if (await this.isPublisherOf(post, userId)) return;
-    const moderates =
-      isGlobalAdmin || (!!userId && (await this.associationsService.isContentModerator(userId)));
     this.logger.log(
-      `[PERM] edit of post ${post.id} refused to ${userId ? userId.slice(0, 8) : 'anonymous'} (moderator=${moderates}): the author alone edits`
+      `[PERM] edit of post ${post.id} refused to ${userId ? userId.slice(0, 8) : 'anonymous'} (admin=${isGlobalAdmin}): the author alone edits`
     );
-    if (moderates) {
-      throw new ForbiddenException({
-        code: POST_EDIT_PUBLISHER_ONLY,
-        message: "Only a post's author may change its text",
-      });
-    }
-    throw new UnauthorizedException('Not your post');
+    throw new ForbiddenException({
+      code: POST_EDIT_PUBLISHER_ONLY,
+      message: "Only a post's author may change its text",
+    });
   }
 
   /**
    * Refuses the DELETE to whoever may not take this post down - the server half of `canManage`, so
    * a visible bin and an accepted delete cannot disagree: its publisher, a platform admin, or a BDE
-   * `MODERATE` holder whose governed spaces hold it (`mayModeratePost`, owner 2026-11-02). A BDE
-   * moderator outside its scope is a 403 `MODERATION_OUT_OF_SCOPE`.
+   * `MODERATE` holder whose governed spaces hold it (`mayModeratePost`, owner 2026-11-02). Anyone
+   * else is a typed 403 (`refuseModeration`: `MODERATION_OUT_OF_SCOPE` or `MODERATOR_REQUIRED`).
    *
    * @returns in which capacity the caller acts: `publisher` (the post's author, or its association's
    *   officer) or `moderator` (a content moderator or a global admin acting on someone else's post) -
@@ -2021,13 +2016,10 @@ export class PostsService {
     if (!userId) throw new UnauthorizedException('Not your post');
     if (await this.isPublisherOf(post, userId)) return 'publisher';
     if (await this.associationsService.mayModeratePost(userId, post.id)) return 'moderator';
-    if (await this.associationsService.isContentModerator(userId)) {
-      return this.associationsService.refuseModeration(userId, `post:${post.id}`);
-    }
     this.logger.debug(
       `[PERM] ${userId.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`
     );
-    throw new UnauthorizedException('Not your post');
+    return this.associationsService.refuseModeration(userId, `post:${post.id}`);
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */

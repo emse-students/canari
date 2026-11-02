@@ -1724,6 +1724,17 @@ export class AssociationsService {
   }
 
   /**
+   * WHAT IS PUBLISHED TO EVERYONE (owner, 2026-11-02): an event whose ORGANISER addresses everyone
+   * (`addressesEveryoneSql`, the ONE predicate `closeAnonymousAgenda` uses too). Asked for the
+   * server-side SEO of `/calendar`, whose JSON-LD every anonymous visitor and crawler reads: an
+   * association that addresses only some spaces is not published there, as its own agenda is not.
+   */
+  private publishedToEveryone(qb: SelectQueryBuilder<AssociationCalendarEvent>): void {
+    this.logger.debug('[AGENDA] public face: only the associations that address everyone');
+    qb.andWhere(addressesEveryoneSql('e."associationId"'));
+  }
+
+  /**
    * THE ANONYMOUS AGENDA PER SELECTION (D40): keeps the events reached by a space matching the
    * selected campus and/or formation (`eventReachesSpaceMatchingSql`, organiser or accepted
    * co-organiser). No selection leaves the feed whole, as before. Relevance, not confidentiality.
@@ -2384,7 +2395,13 @@ export class AssociationsService {
     fromIso?: string,
     toIso?: string,
     associationId?: string,
-    opts?: { includePending?: boolean; viewer?: CalendarViewer; selection?: SpaceSelection }
+    opts?: {
+      includePending?: boolean;
+      viewer?: CalendarViewer;
+      selection?: SpaceSelection;
+      /** Keep only the events of associations that ADDRESS EVERYONE (`publishedToEveryone`). */
+      everyoneOnly?: boolean;
+    }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
     const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
@@ -2421,6 +2438,7 @@ export class AssociationsService {
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
     this.restrictToSelection(qb, opts?.selection);
+    if (opts?.everyoneOnly) this.publishedToEveryone(qb);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {

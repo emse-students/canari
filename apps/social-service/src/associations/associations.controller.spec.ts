@@ -924,6 +924,31 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
         response: { code: 'AGENDA_SIGNATURE_REQUIRED' },
       });
     });
+
+    it('narrows the SEO read to the associations that address everyone, and only that read (2026-11-02)', async () => {
+      const controller = makeController();
+      const feed = (controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } })
+        .service.listAggregatedCalendarFeed;
+      const call = (userId?: string, internal?: string, sig?: string) =>
+        controller.aggregatedCalendarFeed(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          userId,
+          undefined,
+          'gardanne',
+          undefined,
+          sig,
+          internal
+        );
+      await call(undefined, 'internal-secret-for-tests');
+      expect(feed.mock.lastCall?.[3]).toMatchObject({ everyoneOnly: true });
+      await call('u1');
+      expect(feed.mock.lastCall?.[3]).toMatchObject({ everyoneOnly: false });
+      await call(undefined, undefined, sigOf('gardanne'));
+      expect(feed.mock.lastCall?.[3]).toMatchObject({ everyoneOnly: false });
+    });
   });
 });
 

@@ -8,6 +8,9 @@ import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
 
+/** The platform admin's scope: the lists unnarrowed. */
+const ADMIN_SCOPE = { userId: 'admin', isGlobalAdmin: true };
+
 /**
  * What the 2026-08-27 report reform changed, and therefore what must not regress:
  * a report is filed ONCE whatever becomes of it, the refusal carries a code rather than a sentence,
@@ -427,7 +430,7 @@ describe('ModerationService - reports', () => {
           .spyOn(signature, 'verifyReportedLine')
           .mockReturnValue({ content, author: 'verified', reporter: 'verified' });
 
-        const [row] = await service.listAllReports();
+        const [row] = await service.listAllReports(ADMIN_SCOPE);
 
         expect(row.contentPreview).toBe(preview);
         expect(row.liveChat?.text).toBe('hello');
@@ -439,7 +442,7 @@ describe('ModerationService - reports', () => {
     it('deletes nothing - retention is the weekly cron and not a side effect of reading', async () => {
       reportRepo.find.mockResolvedValue([]);
 
-      await service.listAllReports();
+      await service.listAllReports(ADMIN_SCOPE);
 
       const statements = reportRepo.manager.query.mock.calls.map((c) => String(c[0]));
       expect(statements.some((sql) => /DELETE/i.test(sql))).toBe(false);
@@ -451,7 +454,7 @@ describe('ModerationService - reports', () => {
       ]);
       reportRepo.manager.query.mockResolvedValue([{ id: 'bob', displayName: 'Bob Martin' }]);
 
-      const [row] = await service.listAllReports();
+      const [row] = await service.listAllReports(ADMIN_SCOPE);
 
       expect(row.contentPreview).toBe('Bob Martin');
       expect(row.postId).toBeNull();
@@ -463,14 +466,14 @@ describe('ModerationService - reports', () => {
       ]);
       reportRepo.manager.query.mockResolvedValue([{ id: 'bob', displayName: null }]);
 
-      const [row] = await service.listAllReports();
+      const [row] = await service.listAllReports(ADMIN_SCOPE);
 
       expect(row.contentPreview).toBe('bob');
     });
 
     // Owner, 2026-11-02: MODERATE is scoped - a BDE reads the reports of its governed spaces only.
     it('narrows the queue to the BDE scope, in SQL, for a moderator who is not the platform admin', async () => {
-      await service.listAllReports(50, 0, { userId: 'bde-mod', isGlobalAdmin: false });
+      await service.listAllReports({ userId: 'bde-mod', isGlobalAdmin: false }, 50, 0);
 
       expect(reportQb.where).toHaveBeenCalledWith(reportInBdeScopeSql('r', ':scopeModerator'), {
         scopeModerator: 'bde-mod',
@@ -478,7 +481,7 @@ describe('ModerationService - reports', () => {
     });
 
     it('leaves the queue whole for the platform admin', async () => {
-      await service.listAllReports(50, 0, { userId: 'admin', isGlobalAdmin: true });
+      await service.listAllReports({ userId: 'admin', isGlobalAdmin: true }, 50, 0);
 
       expect(reportQb.where).not.toHaveBeenCalled();
     });

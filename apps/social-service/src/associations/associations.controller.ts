@@ -330,13 +330,9 @@ export class AssociationsController {
     @Headers('x-internal-secret') internalSecret?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    assertAgendaAccess({
-      selection,
-      associationId,
-      sig,
-      signedIn: Boolean(userId?.trim()),
-      trusted: isInternalSecret(internalSecret),
-    });
+    const signedIn = Boolean(userId?.trim());
+    const trusted = isInternalSecret(internalSecret);
+    assertAgendaAccess({ selection, associationId, sig, signedIn, trusted });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -350,6 +346,10 @@ export class AssociationsController {
       includePending: include,
       viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
       selection,
+      // The trusted read with no reader is the server-side SEO of `/calendar`: what it returns is
+      // published to every anonymous visitor and crawler, so only the associations that address
+      // everyone (owner, 2026-11-02 - an anonymous visitor sees what is published to all).
+      everyoneOnly: trusted && !signedIn,
     });
   }
 

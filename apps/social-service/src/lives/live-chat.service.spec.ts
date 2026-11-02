@@ -223,4 +223,12 @@ describe('LiveChatController', () => {
     await controller.hide(OTHER_LIVE, UUID, 'M'.repeat(64), undefined);
     expect(hide).toHaveBeenLastCalledWith('m'.repeat(64), false, OTHER_LIVE, UUID);
   });
+
+  it('normalises an upper-case live id once, so the scope and the hide read the stored id', async () => {
+    await controller.hide(LIVE.toUpperCase(), UUID.toUpperCase(), 'M'.repeat(64), undefined);
+    expect(mayModerateLive).toHaveBeenLastCalledWith('m'.repeat(64), LIVE, {
+      isGlobalAdmin: false,
+    });
+    expect(hide).toHaveBeenLastCalledWith('m'.repeat(64), true, LIVE, UUID.toLowerCase());
+  });
 });

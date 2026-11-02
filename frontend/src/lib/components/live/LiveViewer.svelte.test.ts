@@ -172,7 +172,7 @@ async function settle() {
   flushSync();
 }
 
-async function render() {
+async function render(live: LiveListItem = LIVE) {
   const onClose = vi.fn();
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -180,12 +180,11 @@ async function render() {
     mount(LiveViewer, {
       target,
       props: {
-        live: LIVE,
+        live,
         onClose,
         deps,
         chatDeps,
         fetchLimits: async () => LIMITS,
-        probeModerator: async () => false,
       },
     })
   );
@@ -472,18 +471,26 @@ describe('LiveViewer', () => {
     expect(stateOf()).toBe('playing');
   });
 
-  it('the hide button is for staff only: a content moderator sees it, a viewer does not', async () => {
+  it('a moderator elsewhere, or one not told, sees no hide button: an absent field is false', async () => {
+    withOneLine();
+    setContentModerator(true);
+    await render();
+    expect(document.querySelector('[data-live-chat-line="m-1"]')).not.toBeNull();
+    document
+      .querySelector<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-line-toggle]')
+      ?.click();
+    flushSync();
+    expect(document.querySelector('[data-live-chat-hide]')).toBeNull();
+  });
+
+  it('the hide button is for the moderators of THIS live: served viewerModerates', async () => {
     withOneLine();
     chatDeps.hideMessage = vi.fn(async (liveId: string, messageId: string) => ({
       liveId,
       messageId,
       hidden: true as const,
     }));
-    await render();
-    expect(document.querySelector('[data-live-chat-line="m-1"]')).not.toBeNull();
-    expect(document.querySelector('[data-live-chat-hide]')).toBeNull();
-    setContentModerator(true);
-    flushSync();
+    await render({ ...LIVE, viewerModerates: true });
     document
       .querySelector<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-line-toggle]')!
       .click();

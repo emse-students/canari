@@ -37,6 +37,11 @@ export const MODERATOR_REQUIRED = 'MODERATOR_REQUIRED';
 export const POST_EDIT_PUBLISHER_ONLY = 'POST_EDIT_PUBLISHER_ONLY';
 /** 403 `code`: editing another person's comment, which no moderator may do either (owner, 2026-11-02). */
 export const COMMENT_EDIT_AUTHOR_ONLY = 'COMMENT_EDIT_AUTHOR_ONLY';
+/**
+ * 403 `code`: deleting a comment the caller neither wrote, nor speaks for, nor moderates. A 403 and
+ * never a 401: only a 401 may log a user out, and this caller's session is fine.
+ */
+export const COMMENT_DELETE_FORBIDDEN = 'COMMENT_DELETE_FORBIDDEN';
 
 /**
  * User `moderator` holds `MODERATE` in the BDE of a space that user `target` belongs to. Both are SQL
@@ -68,20 +73,30 @@ export const BDE_MODERATED_POST_IDS_SQL = `SELECT mp.id::text AS id FROM posts m
   WHERE mp.id = ANY($2::uuid[]) AND ${bdeModeratesContentSql('$1', 'mp."associationId"', 'mp."authorId"')}`;
 
 /**
- * User `moderator` moderates, as a BDE, the live whose id is the TEXT expression `liveId` - read from
+ * The TEXT expression `text` as a uuid, or NULL when it is not one - so a report's free-text
+ * `contentId` is cast on ITS side and the uuid primary keys it is compared with keep their indexes,
+ * and a value that is not a uuid matches nothing instead of raising. The CASE is what guards the
+ * cast: PostgreSQL folds a constant-false arm away without evaluating it.
+ */
+export function asUuidOrNullSql(text: string): string {
+  return `(CASE WHEN (${text}) ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN (${text})::uuid END)`;
+}
+
+/**
+ * User `moderator` moderates, as a BDE, the live whose id is the UUID expression `liveId` - read from
  * the live, or from its cut once the row is purged (`live_cuts` repeats both owners for this). A live
  * ended, never cut and purged has nothing left to scope and is left to the platform admin.
  */
 export function bdeModeratesLiveSql(moderator: string, liveId: string): string {
   return `EXISTS (SELECT 1 FROM (
-    SELECT ml."broadcasterId", ml."associationId" FROM lives ml WHERE ml.id::text = ${liveId}
+    SELECT ml."broadcasterId", ml."associationId" FROM lives ml WHERE ml.id = ${liveId}
     UNION ALL
-    SELECT mc."broadcasterId", mc."associationId" FROM live_cuts mc WHERE mc."liveId"::text = ${liveId}
+    SELECT mc."broadcasterId", mc."associationId" FROM live_cuts mc WHERE mc."liveId" = ${liveId}
   ) mlive WHERE ${bdeModeratesContentSql(moderator, 'mlive."associationId"', 'mlive."broadcasterId"')})`;
 }
 
-/** Does user `$1` moderate, as a BDE, live `$2`? Answers `moderates`. */
-export const BDE_MODERATES_LIVE_SQL = `SELECT ${bdeModeratesLiveSql('$1', '$2::text')} AS "moderates"`;
+/** Does user `$1` moderate, as a BDE, live `$2` (text; not a uuid answers false)? Answers `moderates`. */
+export const BDE_MODERATES_LIVE_SQL = `SELECT ${bdeModeratesLiveSql('$1', asUuidOrNullSql('$2::text'))} AS "moderates"`;
 
 /**
  * Report row `report` (a `content_reports` row) is about something user `moderator` moderates as a
@@ -91,24 +106,30 @@ export const BDE_MODERATES_LIVE_SQL = `SELECT ${bdeModeratesLiveSql('$1', '$2::t
  * - `live`: the live is in scope; `live_chat`: the live of the kept line is (once the line is erased,
  *   nothing names its live and the report is the platform admin's).
  * A report whose content is gone (a deleted post or comment) is the platform admin's too.
+ *
+ * `contentId` is free text: each branch casts IT (`asUuidOrNullSql`), never the uuid key it meets, so
+ * `posts`, `lives` and `live_cuts` are probed by primary key. A comment carries no post id, so its
+ * branch is UNCORRELATED: the comment ids under the posts this moderator governs, computed ONCE per
+ * query (a hashed subplan) and probed per report - never a scan of every post per report.
  */
 export function reportInBdeScopeSql(report: string, moderator: string): string {
   const postInScope = bdeModeratesContentSql(moderator, 'rp."associationId"', 'rp."authorId"');
+  const contentUuid = asUuidOrNullSql(`${report}."contentId"`);
   return `(
     (${report}."contentType" = 'post' AND EXISTS (SELECT 1 FROM posts rp
-      WHERE rp.id::text = ${report}."contentId" AND ${postInScope}))
-    OR (${report}."contentType" = 'comment' AND EXISTS (SELECT 1 FROM posts rp,
-      jsonb_array_elements(COALESCE(rp.comments, '[]'::jsonb)) rc
-      WHERE rc->>'id' = ${report}."contentId" AND ${postInScope}))
+      WHERE rp.id = ${contentUuid} AND ${postInScope}))
+    OR (${report}."contentType" = 'comment' AND ${report}."contentId" IN (SELECT rc->>'id'
+      FROM posts rp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rp.comments, '[]'::jsonb)) rc
+      WHERE ${postInScope}))
     OR (${report}."contentType" = 'user' AND ${bdeModeratesUserSql(moderator, `${report}."contentId"`)})
-    OR (${report}."contentType" = 'live' AND ${bdeModeratesLiveSql(moderator, `${report}."contentId"`)})
+    OR (${report}."contentType" = 'live' AND ${bdeModeratesLiveSql(moderator, contentUuid)})
     OR (${report}."contentType" = 'live_chat' AND EXISTS (SELECT 1 FROM live_chat_reported_lines rk
-      WHERE rk."reportId" = ${report}.id AND ${bdeModeratesLiveSql(moderator, 'rk."liveId"::text')})))`;
+      WHERE rk."reportId" = ${report}.id AND ${bdeModeratesLiveSql(moderator, 'rk."liveId"')})))`;
 }
 
-/** Is report `$2` about something user `$1` moderates as a BDE? Answers `moderates`. */
+/** Is report `$2` (text; not a uuid answers false) about something user `$1` moderates as a BDE? Answers `moderates`. */
 export const BDE_MODERATES_REPORT_SQL = `SELECT EXISTS (SELECT 1 FROM content_reports sr
-  WHERE sr.id::text = $2::text AND ${reportInBdeScopeSql('sr', '$1')}) AS "moderates"`;
+  WHERE sr.id = ${asUuidOrNullSql('$2::text')} AND ${reportInBdeScopeSql('sr', '$1')}) AS "moderates"`;
 
 /** The ids, among users `$2`, that user `$1` moderates as a BDE (they belong to one of its spaces). Answers `id`. */
 export const BDE_MODERATED_USER_IDS_SQL = `SELECT mu.id FROM users mu

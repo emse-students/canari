@@ -50,8 +50,7 @@
     type LiveChatSendFailure,
   } from '$lib/live/liveChat';
   import { currentUserId } from '$lib/stores/userState.svelte';
-  import { isContentModerator, isGlobalAdmin } from '$lib/stores/user';
-  import { ensureContentModerator } from '$lib/associations/api';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
@@ -66,18 +65,9 @@
     chatDeps?: Partial<LiveChatDeps>;
     /** Replaces the limits fetch - for tests. */
     fetchLimits?: typeof fetchLiveLimits;
-    /** Replaces the content-moderator probe - for tests. */
-    probeModerator?: typeof ensureContentModerator;
   }
 
-  let {
-    live,
-    onClose,
-    deps,
-    chatDeps,
-    fetchLimits = fetchLiveLimits,
-    probeModerator = ensureContentModerator,
-  }: Props = $props();
+  let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -100,14 +90,12 @@
   let chatKeyed = $state(false);
   const chatCanWrite = $derived(chatKeyed && currentUserId() !== null);
   let chatOpen = $state(true);
-  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the content
-  // moderators; a viewer screen shows the button to the same tier the moderation page opens to (a
-  // platform admin, or `ensureContentModerator`), read reactively - the probe answers after mount.
-  // A BDE moderator is SCOPED (2026-11-02): the list says per live whether its governed spaces hold
-  // it (`viewerModerates`); absent from an older server, the door alone decides as before.
-  const chatCanModerate = $derived(
-    isGlobalAdmin() || (isContentModerator() && live.viewerModerates !== false)
-  );
+  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the moderators of
+  // THIS live - a platform admin, read reactively, or a BDE whose spaces hold it.
+  // A BDE moderator is SCOPED (2026-11-02): the server says per live whether its governed spaces hold
+  // it (`viewerModerates`, on the list AND on `GET /lives/:id`). Absent means no button: falling back
+  // to the door would draw a control the server refuses.
+  const chatCanModerate = $derived(isGlobalAdmin() || live.viewerModerates === true);
   let reactions = $state<LiveReactionsLayer | null>(null);
 
   const overlay = bindHistoryOverlay(
@@ -190,10 +178,6 @@
       deps: chatDeps,
     });
     chat = session;
-    probeModerator().catch((e: unknown) => {
-      // No answer: no hide button for staff here; the moderation page still reaches the message.
-      console.warn(`[LIVE_CHAT] the moderator probe failed (${String(e)})`);
-    });
     fetchLimits().then(
       (limits) => {
         session.setLimits(limits);
