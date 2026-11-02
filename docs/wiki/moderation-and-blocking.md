@@ -123,7 +123,10 @@ target is tabled in [profiles-and-access, D23 amended](profiles-and-access.md#d2
 **A post's integrity: only its author changes its text (owner, 2026-11-02).** Moderation hides,
 deletes, pins and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
 another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served `canEdit`, apart from
-the bin (`canManage`).
+the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): its author alone edits
+it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
+`COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
+of `POST_AS_ASSO` in it (decided the same day).
 
 ### Anonymous posts - the fourth control that predicate now gates
 

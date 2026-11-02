@@ -73,7 +73,19 @@ describe('commentRights', () => {
       canEdit: false,
       canDelete: false,
     });
-    expect(commentRights(ASSO, viewer({ isGlobalAdmin: true })).canEdit).toBe(true);
+  });
+
+  it('lets a platform admin delete an association comment, never edit it (owner, 2026-11-02)', () => {
+    expect(commentRights(ASSO, viewer({ isGlobalAdmin: true }))).toEqual({
+      canEdit: false,
+      canDelete: true,
+    });
+    // An admin who holds POST_AS_ASSO there speaks for the association: they are its author.
+    const holdingAdmin = viewer({
+      isGlobalAdmin: true,
+      managedAssociationIds: new Set(['asso-1']),
+    });
+    expect(commentRights(ASSO, holdingAdmin).canEdit).toBe(true);
   });
 
   it('lets a moderator delete an anonymous comment but never edit it', () => {

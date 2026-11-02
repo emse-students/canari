@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,6 +20,7 @@ import {
 import { PushService } from '../push/push.service';
 import { isAnonymousPoll, recordAnonymousVote } from './anonymous-poll';
 import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
+import { COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
 import {
@@ -370,8 +372,11 @@ export class PostInteractionsService {
   }
 
   /**
-   * Updates the text of a comment. `commentRights` says who: the writer of an ordinary or an
-   * anonymous comment, any holder of `POST_AS_ASSO` (or a platform admin) for an association's.
+   * Updates the text of a comment. `commentRights` says who: its author only - the writer of an
+   * ordinary or an anonymous comment, any holder of `POST_AS_ASSO` for an association's (owner,
+   * 2026-11-02). One who stands over it without being its author (a moderator of the post, a
+   * platform admin, a deleter) is refused 403 `COMMENT_EDIT_AUTHOR_ONLY`; anyone else keeps the 401
+   * they always got.
    */
   async editComment(
     postId: string,
@@ -385,8 +390,22 @@ export class PostInteractionsService {
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    const viewer = await this.identity.viewerFor([comment], { viewerId: userId, isGlobalAdmin });
-    if (!commentRights(comment, viewer).canEdit) {
+    const viewer = await this.identity.viewerFor([comment], {
+      viewerId: userId,
+      isGlobalAdmin,
+      postId,
+    });
+    const rights = commentRights(comment, viewer);
+    if (!rights.canEdit) {
+      if (rights.canDelete || viewer.isModerator || viewer.isGlobalAdmin) {
+        this.logger.warn(
+          `[MODERATION] comment edit refused: not its author user=${userId.slice(0, 8)} post=${postId.slice(0, 8)}`
+        );
+        throw new ForbiddenException({
+          code: COMMENT_EDIT_AUTHOR_ONLY,
+          message: "Only a comment's author may change its text",
+        });
+      }
       throw new UnauthorizedException('Not your comment');
     }
     comment.text = text;

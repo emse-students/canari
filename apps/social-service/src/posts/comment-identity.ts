@@ -18,7 +18,7 @@ import { Post } from './entities/post.entity';
  *   even from admins, so the answer there would name them.
  * - `associationId` - the comment belongs to the association, not to its writer: `userId` is
  *   withheld the same way, the association card is served, and EVERY holder of `POST_AS_ASSO`
- *   (or a platform admin) may edit or delete it.
+ *   may edit or delete it; a platform admin may delete it, never edit it (owner, 2026-11-02).
  *
  * Withholding `userId` breaks the client's `userId === currentUserId` control checks, so the
  * server serves `canEdit` and `canDelete` PER READER and the client derives nothing from `userId`.
@@ -34,7 +34,10 @@ export interface CommentViewer {
    * spaces hold it, owner 2026-11-02): a comment is judged where it is shown.
    */
   isModerator: boolean;
-  /** Associations in which the reader holds `POST_AS_ASSO` (a platform admin: all of them). */
+  /**
+   * Associations in which the reader REALLY holds `POST_AS_ASSO` - for a platform admin too, their
+   * own memberships and not the admin tier: holding it is what makes them the comment's author.
+   */
   managedAssociationIds: ReadonlySet<string>;
 }
 
@@ -77,9 +80,12 @@ export function commentRights(
   v: CommentViewer
 ): { canEdit: boolean; canDelete: boolean } {
   const own = !!v.viewerId && c.userId === v.viewerId;
+  // A comment's integrity, as a post's (owner, 2026-11-02): only its author changes its text. The
+  // association is the author of its comment, so its POST_AS_ASSO holders edit it; a platform admin
+  // or a moderator deletes, never rewrites.
   if (c.associationId) {
-    const mayAct = v.isGlobalAdmin || v.managedAssociationIds.has(c.associationId);
-    return { canEdit: mayAct, canDelete: mayAct };
+    const holder = v.managedAssociationIds.has(c.associationId);
+    return { canEdit: holder, canDelete: holder || v.isGlobalAdmin };
   }
   if (c.anonymous === true) {
     return { canEdit: own, canDelete: own || v.isGlobalAdmin || v.isModerator };
@@ -161,12 +167,8 @@ export class CommentIdentityService {
         : who.viewerId && who.postId
           ? this.associations.mayModeratePost(who.viewerId, who.postId, { isGlobalAdmin })
           : Promise.resolve(isGlobalAdmin),
-      this.associations.mayActOnAny(
-        who.viewerId,
-        assocIds,
-        AssociationPermissionFlag.POST_AS_ASSO,
-        { isGlobalAdmin }
-      ),
+      // No admin tier: the pencil is the author's alone (owner, 2026-11-02).
+      this.associations.mayActOnAny(who.viewerId, assocIds, AssociationPermissionFlag.POST_AS_ASSO),
     ]);
     return { viewerId: who.viewerId, isGlobalAdmin, isModerator, managedAssociationIds };
   }

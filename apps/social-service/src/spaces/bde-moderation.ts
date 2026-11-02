@@ -35,6 +35,8 @@ export const MODERATION_OUT_OF_SCOPE = 'MODERATION_OUT_OF_SCOPE';
 export const MODERATOR_REQUIRED = 'MODERATOR_REQUIRED';
 /** 403 `code`: editing another person's post, which no moderator may do (owner, 2026-11-02). */
 export const POST_EDIT_PUBLISHER_ONLY = 'POST_EDIT_PUBLISHER_ONLY';
+/** 403 `code`: editing another person's comment, which no moderator may do either (owner, 2026-11-02). */
+export const COMMENT_EDIT_AUTHOR_ONLY = 'COMMENT_EDIT_AUTHOR_ONLY';
 
 /**
  * User `moderator` holds `MODERATE` in the BDE of a space that user `target` belongs to. Both are SQL

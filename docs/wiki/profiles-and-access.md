@@ -1350,11 +1350,19 @@ supprime, epingle, leve l'anonymat... En fait tout sauf changer l'integrite du p
 modifier"* - then, the same day: **nobody edits another person's post, the platform admin included.**
 
 **A POST'S INTEGRITY: ONLY ITS AUTHOR CHANGES ITS TEXT.** The author is the publisher: the writer of a
-personal post; for a post in an association's name, the association - whoever holds `POST_AS_ASSO`
-in it. A BDE moderator and the platform admin are refused 403 `POST_EDIT_PUBLISHER_ONLY`
+personal post; for a post in an association's name, the association - **any holder of `POST_AS_ASSO`
+in it edits its posts (decided, owner, 2026-11-02)**, a platform admin only by holding that flag
+there. A BDE moderator and the platform admin are refused 403 `POST_EDIT_PUBLISHER_ONLY`
 (`PostsService.assertMayEdit`); the card's pencil is served apart from the bin (`canEdit`, beside
-`canManage`). A platform admin edits their OWN posts like anyone. Comments are not posts: the rules
-of `commentRights` are unchanged.
+`canManage`). A platform admin edits their OWN posts like anyone.
+
+**A COMMENT'S INTEGRITY, THE SAME RULE (owner, 2026-11-02).** Only a comment's author edits its text:
+the writer of an ordinary or an anonymous comment, any `POST_AS_ASSO` holder for an association's.
+A moderator of the post and the platform admin may still hide or delete it, never rewrite it: an
+edit by either is refused 403 `COMMENT_EDIT_AUTHOR_ONLY` (`PostInteractionsService.editComment`),
+and the served `canEdit` of `commentRights` - the ONE statement that both draws the pencil and
+enforces the write - is false for them. The admin tier does not count as holding `POST_AS_ASSO`
+there (`CommentIdentityService.viewerFor` asks `mayActOnAny` without it).
 
 **THE BDE'S `MODERATE` IS SCOPED** like VALIDATE_EVENTS and MANAGE_ASSO, in `spaces/bde-moderation.ts`:
 
