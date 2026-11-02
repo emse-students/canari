@@ -1462,6 +1462,9 @@ pub fn run() {
             let data_dir = app.path().app_data_dir().map_err(|e| format!("{e}"))?;
             log::info!("[Path] app_data_dir = {}", data_dir.display());
             std::fs::create_dir_all(&data_dir)?;
+            // Before the WebView can resolve a device identity, which rewrites the push context the
+            // seed reads (`mls_account_state.rs`, round 8 of the review of #2919).
+            commands::mls_account_state::seed_opened_markers(&data_dir);
             let db_path = data_dir.join("mls_pending.db");
             let pending_pool = tauri::async_runtime::block_on(async {
                 sqlx::sqlite::SqlitePoolOptions::new()
@@ -1659,6 +1662,7 @@ pub fn run() {
         .on_page_load(|_webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 page_ring::forget_on_page_load();
+                commands::mls_account_state::forget_resets_of_ended_page();
             }
         })
         .on_window_event(|window, event| {

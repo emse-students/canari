@@ -11,6 +11,7 @@
   "auth_account_erasure_pending": "Ce compte est en cours de suppression. Réessayez plus tard pour en créer un nouveau.",
   "auth_user_id_invalid": "Votre identifiant de connexion n'est pas accepté par Canari. Contactez le bureau.",
   "auth_account_deleted_here": "Ce compte a été supprimé. Connectez-vous en ligne pour en créer un nouveau.",
+  "auth_device_revoked_here": "Cet appareil a été retiré de votre compte. Connectez-vous en ligne pour l'utiliser à nouveau.",
   "auth_account_erasure_blocked": "La suppression de ce compte est bloquée. Écrivez à bureau@rootz-emse.fr, nous la terminerons.",
   "auth_privacy": "Confidentialité",
   "auth_terms": "CGU",

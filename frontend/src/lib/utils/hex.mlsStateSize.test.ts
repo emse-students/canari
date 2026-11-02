@@ -35,29 +35,21 @@ describe('mlsStateSize', () => {
   it('asks for the size, never for the bytes', async () => {
     invoke.mockResolvedValue(8_131_838);
     expect(await mlsStateSize('user-1')).toBe(8_131_838);
-    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-1', knownHere: false });
+    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-1' });
     expect(invoke.mock.calls.map((c) => c[0])).not.toContain('load_mls_state');
   });
 
-  // ROUND 7 OF THE REVIEW OF #2919 (M1): a state of unproven owner is offered only to an account
-  // that signed in here before - the recorded device id is what says so.
-  it('says whether the account signed in on this install before', async () => {
+  // ROUND 8 OF THE REVIEW OF #2919 (M-1): whether a state of unproven owner counts is decided
+  // natively, from a state that OPENED - never from the device id the PIN check writes first.
+  it('hands no WebView fact about whether the account is known here', async () => {
     invoke.mockResolvedValue(0);
     localStorage.setItem('mls_device_id_user-2', 'device-2');
     try {
       await mlsStateSize('user-2');
-      await mlsStateSize('user-3');
     } finally {
       localStorage.removeItem('mls_device_id_user-2');
     }
-    expect(invoke).toHaveBeenNthCalledWith(1, 'mls_state_size', {
-      userId: 'user-2',
-      knownHere: true,
-    });
-    expect(invoke).toHaveBeenNthCalledWith(2, 'mls_state_size', {
-      userId: 'user-3',
-      knownHere: false,
-    });
+    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-2' });
   });
 
   it('is 0 off Tauri, where there is no native file to stat', async () => {
@@ -108,7 +100,7 @@ describe('hasMlsState', () => {
   it("asks about the account it was given, never the install's last one", async () => {
     invoke.mockResolvedValue(0);
     expect(await hasMlsState('user-2')).toBe(false);
-    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-2', knownHere: false });
+    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-2' });
   });
 });
 

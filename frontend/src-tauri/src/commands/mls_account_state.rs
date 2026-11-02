@@ -212,12 +212,24 @@ pub(crate) fn fresh_start_refusal(
 /// The first `<account_dir>.residue-<n>` that does not exist yet - where whatever a move would
 /// otherwise have to delete or refuse over is set aside, under the name of the account it was found
 /// with. Only [`remove_account_state`] ever removes one ([`is_residue_of`]).
-fn next_residue_dir(account_dir: &Path) -> PathBuf {
+///
+/// **UNDER THE UNPROVEN STEM, FROM THE COUNTER** ([`next_unproven_dir`], round 8 of the review of
+/// #2919): those residues are offered in the order of their names, so a freed name taken again would
+/// put a later state before an earlier one. An account's own residues are never offered, and keep the
+/// first free name.
+fn next_residue_dir(account_dir: &Path) -> Result<PathBuf, String> {
+    if account_dir.file_name().and_then(|n| n.to_str()) == Some(UNPROVEN_STEM) {
+        let data_dir = account_dir
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "an unproven residue outside the data directory".to_string())?;
+        return next_unproven_dir(data_dir);
+    }
     let mut n = 0u32;
     loop {
         let candidate = with_suffix(account_dir, &format!("{RESIDUE_INFIX}{n}"));
         if !candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
         n += 1;
     }
@@ -244,7 +256,7 @@ fn set_file_aside(
     let dir = match residue {
         Some(dir) => dir.clone(),
         None => {
-            let dir = next_residue_dir(account_dir);
+            let dir = next_residue_dir(account_dir)?;
             std::fs::create_dir_all(&dir).map_err(|e| format!("create the residue: {e}"))?;
             *residue = Some(dir.clone());
             dir
@@ -325,7 +337,7 @@ fn remove_or_set_aside(dir: &Path, account_dir: &Path) -> Result<(), String> {
         })
         .unwrap_or_default();
     // Named after the account, never after the move it was found in.
-    let aside = next_residue_dir(account_dir);
+    let aside = next_residue_dir(account_dir)?;
     std::fs::rename(dir, &aside).map_err(|e| format!("set the residue aside: {e}"))?;
     log::error!(
         "[MLS_ACCOUNT] a parked state carried {} file(s) no list names ({}) - set aside, nothing deleted",
@@ -356,7 +368,7 @@ fn account_dir_of(staging: &Path, suffix: &str) -> Result<PathBuf, String> {
 fn finish_park(data_dir: &Path, staging: &Path) -> Result<(), String> {
     let final_dir = account_dir_of(staging, PARKING_SUFFIX)?;
     if final_dir.exists() {
-        let aside = next_residue_dir(&final_dir);
+        let aside = next_residue_dir(&final_dir)?;
         std::fs::rename(&final_dir, &aside)
             .map_err(|e| format!("set the older parked state aside: {e}"))?;
         log::error!(
@@ -513,14 +525,14 @@ fn refusal_for(unfinished: &[UnfinishedMove], user_id: &str, needs_slot: bool) -
 /// - a state of unproven owner a reset set aside ([`offered_unproven_residue`]);
 /// - otherwise `None`: the slot is another account's, and this account has nothing here.
 ///
-/// The two unproven answers only when `offer_unproven` (the account signed in here before).
+/// The two unproven answers only for an account a state has OPENED for on this install
+/// ([`account_known_here_held`]).
 ///
 /// Read-only apart from finishing a move a previous process left cut ([`settle_pending_moves_held`]):
 /// the move itself happens at sign-in, in [`select_account_state`].
 pub(crate) fn account_state_file(
     data_dir: &Path,
     user_id: &str,
-    offer_unproven: bool,
 ) -> Result<Option<PathBuf>, String> {
     if user_id.is_empty() {
         return Err("no account named".to_string());
@@ -528,21 +540,21 @@ pub(crate) fn account_state_file(
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    account_state_file_held(data_dir, user_id, offer_unproven).map_err(|e| e.to_string())
+    account_state_file_held(data_dir, user_id).map_err(|e| e.to_string())
 }
 
 /// [`account_state_file`] for a caller holding [`mls_bin_write_lock`]. An unfinished move of this
 /// account's own state is TYPED (`SelectionRefused::MoveUnfinished`, round 5): the login asks the
 /// state's size before it signs in, and the gate must meet the same code either way.
 ///
-/// `offer_unproven` is whether a state of UNPROVEN owner - in the slot or set aside - is offered to
-/// this account at all: only to one that SIGNED IN ON THIS INSTALL BEFORE (round 7 of the review of
-/// #2919, [`offered_unproven_residue`]). The sign-in's selection asks the same question
-/// ([`select_account_state`]'s `expects_state`), so the two never disagree.
+/// A state of UNPROVEN owner - in the slot or set aside - is located for this account only when a
+/// state has OPENED for it on this install before ([`account_known_here_held`], round 8 of the review
+/// of #2919). The sign-in's selection asks the same native question, so the size the login measures,
+/// the bytes `load_mls_state` reads, the absence `mls_state_absent` proves and the slot the selection
+/// fills never disagree.
 fn account_state_file_held(
     data_dir: &Path,
     user_id: &str,
-    offer_unproven: bool,
 ) -> Result<Option<PathBuf>, SelectionRefused> {
     let unfinished = settle_pending_moves_held(data_dir);
     if let Some(refusal) = refusal_for(&unfinished, user_id, false) {
@@ -550,6 +562,7 @@ fn account_state_file_held(
     }
     let parked = parked_dir(data_dir, user_id);
     let slot_has_state = slot_holds_state(data_dir)?;
+    let offer_unproven = account_known_here_held(data_dir, user_id)?;
     let located = match read_mls_state_owner(data_dir)? {
         Some(owner) if owner == user_id => Some(data_dir.join("mls.bin")),
         _ if parked.exists() => Some(parked.join("mls.bin")),
@@ -583,18 +596,14 @@ fn account_state_file_held(
 /// one hold of [`mls_bin_write_lock`], so a switch cannot move the file between the two. A state that
 /// could not be located or examined is an `Err`, never a 0 (round 4 of the review of #2919): 0 is "no
 /// state", and a login that believed it would start fresh.
-pub(crate) fn account_state_size(
-    data_dir: &Path,
-    user_id: &str,
-    offer_unproven: bool,
-) -> Result<u64, SelectionRefused> {
+pub(crate) fn account_state_size(data_dir: &Path, user_id: &str) -> Result<u64, SelectionRefused> {
     if user_id.is_empty() {
         return Err("no account named".to_string().into());
     }
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| SelectionRefused::Other("mls_bin write lock poisoned".to_string()))?;
-    let Some(path) = account_state_file_held(data_dir, user_id, offer_unproven)? else {
+    let Some(path) = account_state_file_held(data_dir, user_id)? else {
         return Ok(0);
     };
     match std::fs::metadata(&path) {
@@ -642,14 +651,12 @@ pub(crate) fn start_park_for_test(data_dir: &Path, owner: &str) -> PathBuf {
 /// unpark (`unproven.residue-<n>`, round 6 of the review of #2919) - and an account with no state of
 /// its own is offered such a set-aside state ([`offered_unproven_residue`]), whose load decides.
 ///
-/// **`expects_state`: THE CALLER EXPECTS A SAVED STATE** - its login measured one
-/// ([`account_state_size`]), which it does only for an account that signed in on this install before
-/// (round 7). Without it, a state of unproven owner is never offered: one in the slot is set aside
-/// like any other, so a brand-new account starts fresh beside it instead of meeting it.
+/// **A STATE OF UNPROVEN OWNER IS OFFERED ONLY TO AN ACCOUNT A STATE HAS OPENED FOR HERE**
+/// ([`account_known_here_held`], round 8 of the review of #2919): any other sign-in sets one in the
+/// slot aside like any other, so a brand-new account starts fresh beside it instead of meeting it.
 pub(crate) fn select_account_state(
     data_dir: &Path,
     user_id: &str,
-    expects_state: bool,
 ) -> Result<(Selection, SessionClaim), SelectionRefused> {
     log::debug!("[MLS_ACCOUNT] selecting the signing-in account's state");
     if user_id.is_empty() {
@@ -658,7 +665,7 @@ pub(crate) fn select_account_state(
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| SelectionRefused::Other("mls_bin write lock poisoned".to_string()))?;
-    let selection = select_held(data_dir, user_id, expects_state)?;
+    let selection = select_held(data_dir, user_id)?;
     let claim = claim_foreground_session_held();
     // The slot changed hands on every selection but this one (an unproven state left in place or
     // brought back from aside is a change too): the extension's copy follows.
@@ -670,11 +677,7 @@ pub(crate) fn select_account_state(
 }
 
 /// [`select_account_state`] under the lock it holds.
-fn select_held(
-    data_dir: &Path,
-    user_id: &str,
-    expects_state: bool,
-) -> Result<Selection, SelectionRefused> {
+fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, SelectionRefused> {
     if let Some(refusal) = refusal_for(&settle_pending_moves_held(data_dir), user_id, true) {
         log::error!("[MLS_ACCOUNT] sign-in refused: {refusal}");
         return Err(SelectionRefused::MoveUnfinished(refusal));
@@ -688,6 +691,7 @@ fn select_held(
     }
     let mine = parked_dir(data_dir, user_id);
     let mine_parked = mine.exists();
+    let known_here = account_known_here_held(data_dir, user_id)?;
 
     let mut parked_other = false;
     match owner {
@@ -695,7 +699,7 @@ fn select_held(
             if mine_parked {
                 // The slot is where every writer writes: the parked copy is the older one. Set
                 // aside, never deleted, and never a refusal that would stand for ever.
-                let aside = next_residue_dir(&mine);
+                let aside = next_residue_dir(&mine)?;
                 std::fs::rename(&mine, &aside)
                     .map_err(|e| format!("set the older parked state aside: {e}"))?;
                 log::error!(
@@ -720,11 +724,11 @@ fn select_held(
             parked_other = true;
         }
         None if slot_holds_state(data_dir)? => {
-            if mine_parked || !expects_state {
+            if mine_parked || !known_here {
                 // SET ASIDE, NO LONGER A REFUSAL (round 6 of the review of #2919): the refusal stood
                 // until somebody deleted one of the two states. Nothing is deleted - the unproven one
-                // is offered back to an account that signed in here before and has no state of its
-                // own. An account that expects no state never meets it (round 7).
+                // is offered back to an account a state has opened for here and has no state of its
+                // own. An account no state has opened for here never meets it (rounds 7 and 8).
                 mark_foreground_active();
                 set_unproven_slot_aside_held(data_dir, next_unproven_dir(data_dir)?)?;
             } else {
@@ -738,7 +742,7 @@ fn select_held(
     }
 
     if !mine_parked {
-        if let Some(residue) = offered_unproven_residue(data_dir, user_id, expects_state)? {
+        if let Some(residue) = offered_unproven_residue(data_dir, user_id, known_here)? {
             if read_mls_state_owner(data_dir)?.is_none() && !slot_holds_state(data_dir)? {
                 mark_foreground_active();
                 bring_unproven_into_slot_held(data_dir, &residue)?;
@@ -971,8 +975,9 @@ pub(crate) fn remove_account_state(data_dir: &Path, user_id: &str) -> Result<Rem
         log::info!("[MLS_ACCOUNT] the account's state set apart by a PIN reset removed");
     }
     // The declined entry names a hash nobody can sign in as again: pruned, so the list holds only
-    // accounts that exist.
+    // accounts that exist. And the account is no longer one a state has opened for here.
     undecline_held(data_dir, &account)?;
+    forget_account_opened_held(data_dir, user_id)?;
     Ok(removed)
 }
 
@@ -1023,6 +1028,137 @@ const UNPROVEN_COUNTER_FILE: &str = "unproven.counter";
 /// state ([`offered_unproven_residue`]) - whatever was set aside, it chose a fresh one.
 const UNPROVEN_DECLINED_FILE: &str = "unproven.declined";
 
+/// `{data_dir}/mls_opened/<hash>`: ONE EMPTY FILE PER ACCOUNT A STATE HAS OPENED FOR ON THIS INSTALL
+/// (round 8 of the review of #2919). The only fact that decides whether a state of unproven owner is
+/// offered to an account ([`account_known_here_held`]).
+///
+/// **WHY NOT THE DEVICE ID.** Round 7 read `mls_device_id_<userId>`, and `resolveDeviceId` writes that
+/// id - and its native copy in `push_context.json` - BEFORE the state is opened: at the PIN check and
+/// the revocation check. A new account that mistyped its PIN once was "known" at its second attempt,
+/// was offered another account's state, and met "my PIN changed" - the round-6 symptom again. This
+/// marker is written by `initialiser_mls` only once a state is INSTALLED for the account
+/// ([`record_account_opened_held`]), and removed with the account's state (a reset's commit,
+/// [`remove_account_state`]). Native, so no WebView eviction reaches it.
+const OPENED_DIR: &str = "mls_opened";
+
+/// The marker of `user_id` in [`OPENED_DIR`].
+fn opened_marker(data_dir: &Path, user_id: &str) -> PathBuf {
+    data_dir.join(OPENED_DIR).join(parked_dir_name(user_id))
+}
+
+/// Creates [`OPENED_DIR`] the first time anything asks, SEEDED for the one install it cannot be
+/// written for: one upgraded from a build before the owner record, whose slot holds a state no
+/// record names and that no sign-in of THIS build has opened yet. That state is the account's whose
+/// sign-in the previous build last resolved - the account `push_context.json` names (its native copy
+/// of the device identity, `store_device_identity`) - so that account is marked. Eligibility, never
+/// attribution: it is only OFFERED the state, and its load decides. Without the seed every existing
+/// install would set its own user's state aside at the first sign-in after the upgrade.
+///
+/// Built in `mls_opened.tmp` and renamed into place, so a crash leaves no half-seeded directory to
+/// be mistaken for a complete one. Runs under [`mls_bin_write_lock`].
+fn ensure_opened_markers_held(data_dir: &Path) -> Result<(), String> {
+    let dir = data_dir.join(OPENED_DIR);
+    if dir.exists() {
+        return Ok(());
+    }
+    let tmp = with_suffix(&dir, ".tmp");
+    match std::fs::remove_dir_all(&tmp) {
+        Ok(()) => log::warn!("[MLS_ACCOUNT] a cut seeding of {OPENED_DIR} is started again"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("clear {OPENED_DIR}.tmp: {e}")),
+    }
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("create {OPENED_DIR}.tmp: {e}"))?;
+    if read_mls_state_owner(data_dir)?.is_none() && slot_holds_state(data_dir)? {
+        match account_the_push_context_names(data_dir) {
+            Some(user_id) => {
+                write_durably(&tmp.join(parked_dir_name(&user_id)), b"")?;
+                log::warn!(
+                    "[MLS_ACCOUNT] an install from before the owner record: the account its push context names is marked as one a state opened for - it is offered the slot's state, and its load decides"
+                );
+            }
+            None => log::warn!(
+                "[MLS_ACCOUNT] an install from before the owner record, and no push context names an account - no account is offered the slot's state"
+            ),
+        }
+    }
+    std::fs::rename(&tmp, &dir).map_err(|e| format!("rename {OPENED_DIR}: {e}"))
+}
+
+/// The `userId` `push_context.json` names, `None` when the file is absent, unreadable or names none -
+/// each accused but the absence, which a fresh install has.
+fn account_the_push_context_names(data_dir: &Path) -> Option<String> {
+    let path = data_dir.join(crate::commands::push::PUSH_CONTEXT_FILE);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            log::error!("[MLS_ACCOUNT] the push context could not be read: {e}");
+            return None;
+        }
+    };
+    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(value) => value
+            .get("userId")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string),
+        Err(e) => {
+            log::error!("[MLS_ACCOUNT] the push context is malformed: {e}");
+            None
+        }
+    }
+}
+
+/// Whether a state has OPENED for `user_id` on this install ([`OPENED_DIR`]) - the one question that
+/// decides whether a state of unproven owner is offered to it. Under [`mls_bin_write_lock`].
+pub(crate) fn account_known_here_held(data_dir: &Path, user_id: &str) -> Result<bool, String> {
+    ensure_opened_markers_held(data_dir)?;
+    let marker = opened_marker(data_dir, user_id);
+    marker
+        .try_exists()
+        .map_err(|e| format!("examine the account's opened marker: {e}"))
+}
+
+/// Records that a state was installed for `user_id` - by `initialiser_mls`, in its claimed hold, right
+/// after the owner record. Under [`mls_bin_write_lock`].
+pub(crate) fn record_account_opened_held(data_dir: &Path, user_id: &str) -> Result<(), String> {
+    ensure_opened_markers_held(data_dir)?;
+    let marker = opened_marker(data_dir, user_id);
+    if marker.exists() {
+        return Ok(());
+    }
+    write_durably(&marker, b"")?;
+    log::info!(
+        "[MLS_ACCOUNT] the account is recorded as one a state has opened for on this install"
+    );
+    Ok(())
+}
+
+/// Removes `user_id`'s marker: its state is gone (a committed reset, a removed account).
+fn forget_account_opened_held(data_dir: &Path, user_id: &str) -> Result<(), String> {
+    match std::fs::remove_file(opened_marker(data_dir, user_id)) {
+        Ok(()) => {
+            log::info!("[MLS_ACCOUNT] the account is no longer one a state has opened for here");
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove the account's opened marker: {e}")),
+    }
+}
+
+/// Seeds [`OPENED_DIR`] at start-up, before the WebView can resolve any device identity
+/// (`lib.rs` setup): the push context still names the account of the previous build then.
+pub(crate) fn seed_opened_markers(data_dir: &Path) {
+    let seeded = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())
+        .and_then(|_guard| ensure_opened_markers_held(data_dir));
+    if let Err(e) = seeded {
+        log::error!("[MLS_ACCOUNT] {OPENED_DIR} could not be seeded at start-up: {e}");
+    }
+}
+
 /// The resets staged in THIS process and not yet committed or rolled back, by parked directory name.
 /// A `<hash>.resetting` no entry here names was left by a process that died mid-reset: its server
 /// outcome is unknown, so it is undone from its journal, never removed
@@ -1037,6 +1173,29 @@ fn reset_in_flight(account: &str) -> bool {
         // A poisoned registry cannot prove the reset is ours: treated as in flight, so nothing is
         // undone under a reset that may still be running.
         .unwrap_or(true)
+}
+
+/// THE PAGE THAT STAGED A RESET IS GONE (round 8 of the review of #2919): called when a document
+/// starts loading in the webview (`on_page_load`, `lib.rs`). The commit or rollback of every reset
+/// staged so far lived in that page and will never come, so the registry forgets them all, and the
+/// next look undoes each from its journal ([`settle_pending_moves_held`]) - exactly as for a process
+/// that died. The process outlives a reload, so the registry alone stranded the reset: the settle
+/// skipped it as in flight, and a new stage of the account was refused as already running.
+pub(crate) fn forget_resets_of_ended_page() {
+    match RESETS_IN_FLIGHT.lock() {
+        Ok(mut in_flight) => {
+            if !in_flight.is_empty() {
+                log::warn!(
+                    "[MLS_ACCOUNT] the page that staged {} PIN reset(s) is gone - each is undone from its journal at the next look",
+                    in_flight.len()
+                );
+            }
+            in_flight.clear();
+        }
+        Err(_) => log::error!(
+            "[MLS_ACCOUNT] the reset registry is poisoned - a page load could not release its resets"
+        ),
+    }
 }
 
 /// Takes `account` out of [`RESETS_IN_FLIGHT`]; whether it was there.
@@ -1068,9 +1227,35 @@ fn declined_accounts(data_dir: &Path) -> Result<Vec<String>, String> {
 fn write_parked_root_file(data_dir: &Path, name: &str, text: &str) -> Result<(), String> {
     let root = data_dir.join(PARKED_STATES_DIR);
     std::fs::create_dir_all(&root).map_err(|e| format!("create {PARKED_STATES_DIR}: {e}"))?;
-    let tmp = root.join(format!("{name}.tmp"));
-    std::fs::write(&tmp, text).map_err(|e| format!("write {name}: {e}"))?;
-    std::fs::rename(&tmp, root.join(name)).map_err(|e| format!("rename {name}: {e}"))
+    write_durably(&root.join(name), text.as_bytes())
+}
+
+/// Writes `bytes` to `path` so that a crash leaves either the old file or the whole new one - never a
+/// torn or empty one (round 8 of the review of #2919: the reset journal, the residue counter and the
+/// declined list were written in place). A sibling `<name>.tmp`, flushed to the disk, renamed over
+/// `path`, then the directory flushed so the rename itself survives a power cut (Unix; Windows has
+/// no directory handle to flush, and its rename is already journalled by NTFS).
+fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = with_suffix(path, ".tmp");
+    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("create {name}.tmp: {e}"))?;
+    file.write_all(bytes)
+        .map_err(|e| format!("write {name}.tmp: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("flush {name}.tmp: {e}"))?;
+    drop(file);
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename {name}: {e}"))?;
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::File::open(parent).and_then(|d| d.sync_all()) {
+            log::error!("[MLS_ACCOUNT] the directory of {name} could not be flushed: {e}");
+        }
+    }
+    Ok(())
 }
 
 /// Rewrites [`UNPROVEN_DECLINED_FILE`].
@@ -1116,46 +1301,68 @@ fn unproven_residues(data_dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(found.into_iter().map(|(_, p)| p).collect())
 }
 
+/// The `<n>` an entry of [`PARKED_STATES_DIR`] holds as `unproven.residue-<n>`, whatever follows it (a
+/// cut `.parking`) - every name the counter must stay above.
+fn unproven_number(name: &str) -> Option<u64> {
+    let digits: String = name
+        .strip_prefix(UNPROVEN_STEM)?
+        .strip_prefix(RESIDUE_INFIX)?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
 /// A fresh `unproven.residue-<n>` path from [`UNPROVEN_COUNTER_FILE`], the counter moved on BEFORE
 /// the name is used - so a name is never handed out twice, even across a crash.
+///
+/// NEVER BELOW A NAME ON DISK, and a counter that is empty or malformed is NO REFUSAL (round 8 of the
+/// review of #2919): the names on disk are the fact the counter summarises, so it falls back to them
+/// and says so at WARN. Only a counter that cannot be READ refuses - its absence is not known then.
 fn next_unproven_dir(data_dir: &Path) -> Result<PathBuf, String> {
     let root = data_dir.join(PARKED_STATES_DIR);
     let counted = match std::fs::read_to_string(root.join(UNPROVEN_COUNTER_FILE)) {
-        Ok(text) => text
-            .trim()
-            .parse::<u64>()
-            .map_err(|e| format!("{UNPROVEN_COUNTER_FILE} malformed: {e}"))?,
+        Ok(text) => match text.trim().parse::<u64>() {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!(
+                    "[MLS_ACCOUNT] {UNPROVEN_COUNTER_FILE} is empty or malformed ({e}) - the next name is taken above the names on disk"
+                );
+                0
+            }
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
         Err(e) => return Err(format!("read {UNPROVEN_COUNTER_FILE}: {e}")),
     };
-    // Never below a name already on disk (a counter lost with a restored backup).
-    let on_disk = unproven_residues(data_dir)?
-        .iter()
-        .filter_map(|p| {
-            p.file_name()?
-                .to_str()?
-                .rsplit(RESIDUE_INFIX)
-                .next()?
-                .parse::<u64>()
-                .ok()
-        })
-        .map(|n| n + 1)
-        .max()
-        .unwrap_or(0);
+    let on_disk = match std::fs::read_dir(&root) {
+        Ok(entries) => {
+            let mut highest = 0u64;
+            for entry in entries {
+                let entry =
+                    entry.map_err(|e| format!("read an entry of {PARKED_STATES_DIR}: {e}"))?;
+                if let Some(n) = unproven_number(&entry.file_name().to_string_lossy()) {
+                    highest = highest.max(n + 1);
+                }
+            }
+            highest
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => return Err(format!("read {PARKED_STATES_DIR}: {e}")),
+    };
     let n = counted.max(on_disk);
     write_parked_root_file(data_dir, UNPROVEN_COUNTER_FILE, &(n + 1).to_string())?;
     Ok(root.join(format!("{UNPROVEN_STEM}{RESIDUE_INFIX}{n}")))
 }
 
 /// The state of unproven owner a reset set aside that `user_id` is OFFERED, if any: the first, in
-/// the order they were set aside, holding a non-empty `mls.bin` - and only when the caller says the
-/// account SIGNED IN ON THIS INSTALL BEFORE (`known_here`, round 7 of the review of #2919: a brand-new
-/// account was offered another account's state, met "sealed under your old PIN" a minute after its
-/// first PIN, and nothing ever collected the residue). Never to an account that declined them all by
+/// the order they were set aside, holding a non-empty `mls.bin` - and only when a state has OPENED for
+/// the account on this install before (`known_here`, [`account_known_here_held`]; rounds 7 and 8 of
+/// the review of #2919: a brand-new account was offered another account's state, met "sealed under
+/// your old PIN" a minute after its first PIN, and nothing ever collected the residue). Never to an account that declined them all by
 /// resetting its PIN ([`UNPROVEN_DECLINED_FILE`]). Offered and never attributed: the load under the
-/// account's own key - the credential check - is the only proof of whose it is. A load that fails
-/// puts it back aside under the NEXT name ([`return_unproven_aside_held`]), so the residues are offered
-/// in turn.
+/// account's own key - the credential check - is the only proof of whose it is. A load that proves it
+/// another account's puts it back aside under the NEXT name ([`return_unproven_aside_held`]), so the
+/// residues are offered in turn.
 fn offered_unproven_residue(
     data_dir: &Path,
     user_id: &str,
@@ -1175,19 +1382,16 @@ fn offered_unproven_residue(
 /// Moves every state file of the slot into `dir` (a fresh [`next_unproven_dir`]) and accuses it: the
 /// slot held a state NO owner record names, and something must take the slot. NOTHING IS DELETED -
 /// the owner gets it back through [`offered_unproven_residue`].
+///
+/// **AS A PARK, SO A CRASH CANNOT SPLIT IT** (round 8 of the review of #2919): the files go through
+/// `<dir>.parking` ([`finish_park`]), which the next look finishes ([`settle_pending_moves_held`]) -
+/// `mls.bin` is never left on one side and its ledgers on the other.
 fn set_unproven_slot_aside_held(data_dir: &Path, dir: PathBuf) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create the unproven residue: {e}"))?;
-    let mut moved = 0usize;
-    for name in mls_state_file_names() {
-        let src = data_dir.join(&name);
-        if !src.exists() {
-            continue;
-        }
-        std::fs::rename(&src, dir.join(&name)).map_err(|e| format!("set {name} aside: {e}"))?;
-        moved += 1;
-    }
+    let staging = with_suffix(&dir, PARKING_SUFFIX);
+    std::fs::create_dir(&staging).map_err(|e| format!("create the unproven park: {e}"))?;
+    finish_park(data_dir, &staging)?;
     log::error!(
-        "[MLS_ACCOUNT] the slot's state of UNPROVEN owner set aside as {} ({moved} file(s)) - nothing deleted, offered back to an account that signed in here before and has no state of its own",
+        "[MLS_ACCOUNT] the slot's state of UNPROVEN owner set aside as {} - nothing deleted, offered back to an account a state has opened for here and with no state of its own",
         dir.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
@@ -1195,10 +1399,10 @@ fn set_unproven_slot_aside_held(data_dir: &Path, dir: PathBuf) -> Result<PathBuf
     Ok(dir)
 }
 
-/// For a sign-in whose selection brought an unproven state back ([`Selection::UnprovenBroughtBack`])
-/// and whose load REFUSED it - a verdict about its bytes under this account's key: it is not this
-/// account's. Puts it back aside under the next name, so the next offer is the next residue. Run
-/// inside the sign-in's claimed hold; a slot that no longer holds an unowned state is left alone.
+/// For a sign-in that was offered an unproven state ([`Selection::UnprovenLeftInSlot`]) whose load
+/// PROVED it another account's. Puts it back aside under the next name, so the next offer is the next
+/// residue. Run inside the sign-in's claimed hold; a slot that no longer holds an unowned state is
+/// left alone.
 pub(crate) fn return_unproven_aside_held(data_dir: &Path) -> Result<(), String> {
     if read_mls_state_owner(data_dir)?.is_some() || !slot_holds_state(data_dir)? {
         return Ok(());
@@ -1210,13 +1414,20 @@ pub(crate) fn return_unproven_aside_held(data_dir: &Path) -> Result<(), String> 
 }
 
 /// Moves the offered unproven state `residue` into the EMPTY slot, then removes the residue
-/// directory (or sets aside what no list names in it).
+/// directory (or sets aside what no list names in it, under the counter's next name).
+///
+/// **AS AN UNPARK, SO A CRASH CANNOT SPLIT IT** (round 8 of the review of #2919): the residue is first
+/// renamed to `unproven.unparking`, one atomic step, and [`finish_unpark`] moves its files - which the
+/// next look finishes if this process dies part-way ([`settle_pending_moves_held`]).
 fn bring_unproven_into_slot_held(data_dir: &Path, residue: &Path) -> Result<(), String> {
-    let stem = data_dir.join(PARKED_STATES_DIR).join(UNPROVEN_STEM);
-    let moved = move_state_files(residue, data_dir, &stem)?;
-    remove_or_set_aside(residue, &stem)?;
+    let staging = with_suffix(
+        &data_dir.join(PARKED_STATES_DIR).join(UNPROVEN_STEM),
+        UNPARKING_SUFFIX,
+    );
+    std::fs::rename(residue, &staging).map_err(|e| format!("start bringing it back: {e}"))?;
+    finish_unpark(data_dir, &staging)?;
     log::warn!(
-        "[MLS_ACCOUNT] a state of unproven owner set aside earlier is offered to the signing-in account ({moved} file(s) moved into the slot) - its load decides whose it is"
+        "[MLS_ACCOUNT] a state of unproven owner set aside earlier is offered to the signing-in account - its load decides whose it is"
     );
     Ok(())
 }
@@ -1272,8 +1483,7 @@ fn write_reset_journal(staging: &Path, journal: &ResetJournal) -> Result<(), Str
     if let Some(dir) = &journal.unproven {
         text.push_str(&format!("unproven={dir}\n"));
     }
-    std::fs::write(staging.join(RESET_JOURNAL_FILE), text)
-        .map_err(|e| format!("write the reset journal: {e}"))
+    write_durably(&staging.join(RESET_JOURNAL_FILE), text.as_bytes())
 }
 
 /// The journal of `staging`; an absent one is an empty journal (the stage died before writing it,
@@ -1341,7 +1551,7 @@ fn undo_reset_held(data_dir: &Path, staging: &Path) -> Result<(), String> {
         finish_unpark(data_dir, &unparking)?;
     } else {
         let target = if account_dir.exists() {
-            next_residue_dir(&account_dir)
+            next_residue_dir(&account_dir)?
         } else {
             account_dir.clone()
         };
@@ -1462,6 +1672,8 @@ pub(crate) fn commit_account_reset(data_dir: &Path, user_id: &str) -> Result<usi
         removed += 1;
     }
     removed += remove_residues_of_held(data_dir, &account)?;
+    // Its state is gone: until a state opens for it again it is no account a state has opened for.
+    forget_account_opened_held(data_dir, user_id)?;
     log::info!("[MLS_ACCOUNT] the PIN reset is committed: {removed} director(y/ies) removed");
     Ok(removed)
 }
@@ -1612,16 +1824,28 @@ mod tests {
 
     /// A sign-in's selection followed by its sign-out: the session the selection marked warm ends.
     fn select(dir: &Path, user: &str) -> Result<Selection, String> {
-        let selected = select_account_state(dir, user, true)
+        let selected = select_account_state(dir, user)
             .map(|(selection, _)| selection)
             .map_err(|e| e.to_string());
         crate::concurrency::forget_live_manager_for_test();
         selected
     }
 
+    /// What `initialiser_mls` records once a state is installed for `user`: it is an account a state
+    /// has opened for here, and so one a state of unproven owner may be offered to.
+    fn known(dir: &Path, user: &str) {
+        let _guard = mls_bin_write_lock().lock().unwrap();
+        record_account_opened_held(dir, user).unwrap();
+    }
+
+    /// An install whose opened markers exist and name nobody - no seeding from a push context.
+    fn no_seed(dir: &Path) {
+        std::fs::create_dir_all(dir.join(OPENED_DIR)).unwrap();
+    }
+
     /// A sign-in's selection whose session stays open (the manager is loading).
     fn select_and_hold(dir: &Path, user: &str) -> Result<Selection, String> {
-        select_account_state(dir, user, true)
+        select_account_state(dir, user)
             .map(|(selection, _)| selection)
             .map_err(|e| e.to_string())
     }
@@ -1666,7 +1890,7 @@ mod tests {
         std::fs::write(dir.join("background_stages.json"), b"A's stages").unwrap();
 
         // B signs in: A's state is parked whole (ledger included), B starts with an empty slot.
-        assert_eq!(account_state_file(&dir, "user-b", true).unwrap(), None);
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
         assert_eq!(
             select(&dir, "user-b").unwrap(),
             Selection::Moved {
@@ -1680,7 +1904,7 @@ mod tests {
         sign_in_and_save(&dir, "user-b", &b_state);
 
         // A is located while parked, then gets its bytes back unchanged; B's go aside.
-        let a_parked = account_state_file(&dir, "user-a", true).unwrap().unwrap();
+        let a_parked = account_state_file(&dir, "user-a").unwrap().unwrap();
         assert_eq!(std::fs::read(&a_parked).unwrap(), a_state);
         assert_eq!(
             select(&dir, "user-a").unwrap(),
@@ -1702,7 +1926,7 @@ mod tests {
         assert_eq!(slot(&dir), Some(b_state.clone()));
         assert_eq!(owner(&dir).as_deref(), Some("user-b"));
         assert_eq!(
-            account_state_file(&dir, "user-b", true).unwrap(),
+            account_state_file(&dir, "user-b").unwrap(),
             Some(dir.join("mls.bin"))
         );
 
@@ -1745,6 +1969,7 @@ mod tests {
     fn a_state_with_no_owner_record_is_left_in_the_slot() {
         let _cold = cold();
         let dir = temp_dir("unproven");
+        known(&dir, "user-b");
         std::fs::write(dir.join("mls.bin"), b"state of unknown owner").unwrap();
 
         assert_eq!(
@@ -1753,7 +1978,7 @@ mod tests {
         );
         assert_eq!(slot(&dir).as_deref(), Some(&b"state of unknown owner"[..]));
         assert_eq!(
-            account_state_file(&dir, "user-b", true).unwrap(),
+            account_state_file(&dir, "user-b").unwrap(),
             Some(dir.join("mls.bin"))
         );
 
@@ -1842,7 +2067,7 @@ mod tests {
         std::fs::create_dir_all(&staging).unwrap();
         std::fs::rename(dir.join("mls.bin"), staging.join("mls.bin")).unwrap();
 
-        assert_eq!(account_state_file(&dir, "user-b", true).unwrap(), None);
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
         assert!(!staging.exists());
         assert_eq!(std::fs::read(a.join("mls.bin")).unwrap(), b"A");
         assert_eq!(
@@ -1861,7 +2086,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            account_state_file(&dir, "user-a", true).unwrap(),
+            account_state_file(&dir, "user-a").unwrap(),
             Some(dir.join("mls.bin"))
         );
         assert!(!unstaging.exists());
@@ -2009,7 +2234,7 @@ mod tests {
         assert_eq!(slot(&dir).as_deref(), Some(&b"A"[..]));
         assert_eq!(owner(&dir), None);
         // A query still answers for B (who has nothing here).
-        assert_eq!(account_state_file(&dir, "user-b", true).unwrap(), None);
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2053,10 +2278,10 @@ mod tests {
         // A state the slot's (C's) would have to give way to: two states, refused.
         std::fs::write(unstaging.join("mls.bin"), b"A").unwrap();
 
-        assert!(account_state_file(&dir, "user-a", true).is_err());
+        assert!(account_state_file(&dir, "user-a").is_err());
         assert!(select(&dir, "user-a").is_err());
         assert_eq!(
-            account_state_file(&dir, "user-b", true).unwrap(),
+            account_state_file(&dir, "user-b").unwrap(),
             Some(parked_dir(&dir, "user-b").join("mls.bin"))
         );
         assert!(select(&dir, "user-b").is_err());
@@ -2312,7 +2537,7 @@ mod tests {
 
         // Undone from its journal: back in the slot it came from, its owner record with it.
         assert_eq!(
-            account_state_file(&dir, "user-a", true).unwrap(),
+            account_state_file(&dir, "user-a").unwrap(),
             Some(dir.join("mls.bin"))
         );
         assert_eq!(slot(&dir).unwrap(), b"state-a");
@@ -2332,8 +2557,9 @@ mod tests {
     fn an_unproven_state_set_aside_by_a_reset_goes_back_to_its_owner() {
         let _cold = cold();
         let dir = temp_dir("pin-reset-unproven");
-        // A, on the old build: a state and no owner record.
+        // A, on the old build: a state and no owner record. B had a session here before.
         std::fs::write(dir.join("mls.bin"), b"A's state, never recorded").unwrap();
+        known(&dir, "user-b");
 
         // B signs in on the new build: offered the unproven state, which B's key does not open.
         assert_eq!(
@@ -2352,7 +2578,7 @@ mod tests {
         );
 
         // B starts fresh: never offered the state it gave up.
-        assert_eq!(account_state_file(&dir, "user-b", true).unwrap(), None);
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
         assert_eq!(
             select(&dir, "user-b").unwrap(),
             Selection::Moved {
@@ -2373,8 +2599,9 @@ mod tests {
         assert!(aside[0].exists());
 
         // A signs in: B is parked, and A is offered the state set aside - its load decides.
+        known(&dir, "user-a");
         assert_eq!(
-            account_state_file(&dir, "user-a", true).unwrap(),
+            account_state_file(&dir, "user-a").unwrap(),
             Some(aside[0].join("mls.bin"))
         );
         assert_eq!(
@@ -2390,28 +2617,20 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A sign-in's selection, saying whether its login measured a state, followed by its sign-out.
-    fn select_expecting(dir: &Path, user: &str, expects_state: bool) -> Selection {
-        let selected = select_account_state(dir, user, expects_state)
-            .map(|(selection, _)| selection)
-            .unwrap();
-        crate::concurrency::forget_live_manager_for_test();
-        selected
-    }
-
-    /// ROUND 7 (M1): a state of unproven owner - in the slot or set aside - is offered ONLY to an
-    /// account that signed in on this install before. A brand-new account measures none, and its
+    /// ROUNDS 7 AND 8 (M1): a state of unproven owner - in the slot or set aside - is offered ONLY to
+    /// an account a state has OPENED for on this install. A brand-new account measures none, and its
     /// sign-in sets one in the slot aside and starts fresh beside it.
     #[test]
     fn an_unproven_state_is_offered_only_to_an_account_known_here() {
         let _cold = cold();
         let dir = temp_dir("unproven-known-here");
+        no_seed(&dir);
         std::fs::write(dir.join("mls.bin"), b"nobody proven").unwrap();
 
-        assert_eq!(account_state_file(&dir, "user-c", false).unwrap(), None);
-        assert_eq!(account_state_size(&dir, "user-c", false).unwrap(), 0);
+        assert_eq!(account_state_file(&dir, "user-c").unwrap(), None);
+        assert_eq!(account_state_size(&dir, "user-c").unwrap(), 0);
         assert_eq!(
-            select_expecting(&dir, "user-c", false),
+            select(&dir, "user-c").unwrap(),
             Selection::Moved {
                 parked_other: false,
                 unparked: false
@@ -2426,13 +2645,14 @@ mod tests {
         );
 
         // Still not offered to a new account; offered to one known here.
-        assert_eq!(account_state_file(&dir, "user-d", false).unwrap(), None);
+        assert_eq!(account_state_file(&dir, "user-d").unwrap(), None);
+        known(&dir, "user-a");
         assert_eq!(
-            account_state_file(&dir, "user-a", true).unwrap(),
+            account_state_file(&dir, "user-a").unwrap(),
             Some(aside[0].join("mls.bin"))
         );
         assert_eq!(
-            select_expecting(&dir, "user-a", true),
+            select(&dir, "user-a").unwrap(),
             Selection::UnprovenLeftInSlot
         );
         assert_eq!(slot(&dir).unwrap(), b"nobody proven");
@@ -2446,6 +2666,7 @@ mod tests {
     fn unproven_residues_are_offered_in_turn_under_names_never_reused() {
         let _cold = cold();
         let dir = temp_dir("unproven-in-turn");
+        known(&dir, "user-a");
         let set_aside = |bytes: &[u8]| {
             std::fs::write(dir.join("mls.bin"), bytes).unwrap();
             set_unproven_slot_aside_held(&dir, next_unproven_dir(&dir).unwrap()).unwrap()
@@ -2459,7 +2680,7 @@ mod tests {
 
         // A is offered the earliest; it opens as another identity and goes back aside, last.
         assert_eq!(
-            select_expecting(&dir, "user-a", true),
+            select(&dir, "user-a").unwrap(),
             Selection::UnprovenLeftInSlot
         );
         assert_eq!(slot(&dir).unwrap(), b"Y's state");
@@ -2474,7 +2695,7 @@ mod tests {
 
         // The next offer is the next residue.
         assert_eq!(
-            select_expecting(&dir, "user-a", true),
+            select(&dir, "user-a").unwrap(),
             Selection::UnprovenLeftInSlot
         );
         assert_eq!(slot(&dir).unwrap(), b"Z's state");
@@ -2513,7 +2734,7 @@ mod tests {
 
         // The next look (B's login asks the size first) undoes it all.
         assert_eq!(
-            account_state_file(&dir, "user-b", true).unwrap(),
+            account_state_file(&dir, "user-b").unwrap(),
             Some(parked_dir(&dir, "user-b").join("mls.bin"))
         );
         assert!(!declined_accounts(&dir).unwrap().contains(&account));
@@ -2551,6 +2772,264 @@ mod tests {
         assert_eq!(
             std::fs::read(aside[0].join("mls.bin")).unwrap(),
             b"nobody proven"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (M-1), THE PROPERTY: what the WebView writes before a state opens never makes an
+    /// account "known". B mistypes its PIN - `resolveDeviceId` has written B's device identity into
+    /// `push_context.json` - and retries: A's unproven state is still not offered to B, at the size
+    /// query or at the selection.
+    #[test]
+    fn a_device_identity_written_before_a_state_opens_never_offers_the_unproven_state() {
+        let _cold = cold();
+        let dir = temp_dir("unproven-retry");
+        no_seed(&dir);
+        std::fs::write(dir.join("mls.bin"), b"A's state, never recorded").unwrap();
+        // B's first PIN check: the device identity is resolved and mirrored natively.
+        std::fs::write(
+            dir.join(crate::commands::push::PUSH_CONTEXT_FILE),
+            r#"{"userId":"user-b","deviceId":"device-b"}"#,
+        )
+        .unwrap();
+        // The retry.
+        assert_eq!(account_state_size(&dir, "user-b").unwrap(), 0);
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
+        assert!(matches!(
+            select(&dir, "user-b").unwrap(),
+            Selection::Moved { .. }
+        ));
+        assert_eq!(slot(&dir), None);
+        assert_eq!(unproven_residues(&dir).unwrap().len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (M-1): an install upgraded from before the owner record is SEEDED once - the account
+    /// the push context names is offered the slot's state, nobody else; and a marker written by an
+    /// account's install, removed with its state.
+    #[test]
+    fn an_upgraded_install_offers_its_state_to_the_account_its_push_context_names() {
+        let _cold = cold();
+        let dir = temp_dir("unproven-seed");
+        std::fs::write(dir.join("mls.bin"), b"A's state, never recorded").unwrap();
+        std::fs::write(
+            dir.join(crate::commands::push::PUSH_CONTEXT_FILE),
+            r#"{"userId":"user-a","deviceId":"device-a"}"#,
+        )
+        .unwrap();
+        seed_opened_markers(&dir);
+        // B resolving its identity afterwards does not move the seed.
+        std::fs::write(
+            dir.join(crate::commands::push::PUSH_CONTEXT_FILE),
+            r#"{"userId":"user-b","deviceId":"device-b"}"#,
+        )
+        .unwrap();
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
+        assert_eq!(
+            account_state_file(&dir, "user-a").unwrap(),
+            Some(dir.join("mls.bin"))
+        );
+
+        // A marker goes with its account's state.
+        known(&dir, "user-c");
+        remove_account_state(&dir, "user-c").unwrap();
+        let _guard = mls_bin_write_lock().lock().unwrap();
+        assert!(!account_known_here_held(&dir, "user-c").unwrap());
+        drop(_guard);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (M-3): a reload of the page that staged a reset releases it - the commit or rollback
+    /// lived in that page - and the next look undoes it from its journal, so neither the account's
+    /// state nor a new stage of it is stranded.
+    #[test]
+    fn a_reset_whose_page_reloaded_is_undone_and_can_be_staged_again() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-reload");
+        sign_in_and_save(&dir, "user-a", b"state-a");
+        stage_account_reset(&dir, "user-a").unwrap();
+
+        forget_resets_of_ended_page();
+        // The next look - the new page's login asks the size first.
+        account_state_file(&dir, "user-a").unwrap();
+
+        assert_eq!(slot(&dir).unwrap(), b"state-a");
+        assert_eq!(owner(&dir).as_deref(), Some("user-a"));
+        assert!(!declined_accounts(&dir)
+            .unwrap()
+            .contains(&parked_dir_name("user-a")));
+        // The new page stages again, and commits.
+        stage_account_reset(&dir, "user-a").unwrap();
+        commit_account_reset(&dir, "user-a").unwrap();
+        assert_eq!(slot(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (L-1): an empty or malformed counter is no refusal - the next name is taken above the
+    /// names on disk, a cut park among them.
+    #[test]
+    fn a_damaged_counter_falls_back_to_the_names_on_disk() {
+        let _cold = cold();
+        let dir = temp_dir("unproven-counter");
+        let root = dir.join(PARKED_STATES_DIR);
+        std::fs::create_dir_all(root.join("unproven.residue-4")).unwrap();
+        std::fs::create_dir_all(root.join("unproven.residue-6.parking")).unwrap();
+        for damaged in ["", "not a number"] {
+            std::fs::write(root.join(UNPROVEN_COUNTER_FILE), damaged).unwrap();
+            let next = next_unproven_dir(&dir).unwrap();
+            assert!(next.ends_with("unproven.residue-7"), "{next:?}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join(UNPROVEN_COUNTER_FILE)).unwrap(),
+            "8"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (L-2): a file left over when an unproven state goes back into the slot is set aside
+    /// under the counter's next name - never a freed one.
+    #[test]
+    fn a_leftover_of_an_unproven_state_takes_the_counters_next_name() {
+        let _cold = cold();
+        let dir = temp_dir("unproven-leftover");
+        known(&dir, "user-a");
+        std::fs::write(dir.join("mls.bin"), b"X's state").unwrap();
+        let aside = set_unproven_slot_aside_held(&dir, next_unproven_dir(&dir).unwrap()).unwrap();
+        std::fs::write(aside.join("unlisted.bin"), b"?").unwrap();
+        assert_eq!(
+            select(&dir, "user-a").unwrap(),
+            Selection::UnprovenLeftInSlot
+        );
+        let names: Vec<String> = unproven_residues(&dir)
+            .unwrap()
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["unproven.residue-1"],
+            "the freed residue-0 is not taken again"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (L-4, L-6): a set-aside or a bringing-back cut half-way is FINISHED by the next look -
+    /// `mls.bin` never stays on one side and its ledger on the other.
+    #[test]
+    fn an_unproven_move_cut_half_way_is_finished_whole() {
+        let _cold = cold();
+        let dir = temp_dir("unproven-cut");
+        let root = dir.join(PARKED_STATES_DIR);
+        std::fs::create_dir_all(&root).unwrap();
+        // A set-aside cut after `mls.bin` moved, before its ledger did.
+        let staging = root.join("unproven.residue-0.parking");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("mls.bin"), b"X's state").unwrap();
+        std::fs::write(dir.join("background_stages.json"), b"X's stages").unwrap();
+        assert_eq!(account_state_file(&dir, "user-z").unwrap(), None);
+        let aside = root.join("unproven.residue-0");
+        assert_eq!(std::fs::read(aside.join("mls.bin")).unwrap(), b"X's state");
+        assert_eq!(
+            std::fs::read(aside.join("background_stages.json")).unwrap(),
+            b"X's stages"
+        );
+        assert!(!dir.join("background_stages.json").exists());
+
+        // A bringing-back cut after `mls.bin` moved into the slot, before its ledger did.
+        std::fs::rename(&aside, root.join("unproven.unparking")).unwrap();
+        std::fs::rename(
+            root.join("unproven.unparking").join("mls.bin"),
+            dir.join("mls.bin"),
+        )
+        .unwrap();
+        assert_eq!(account_state_file(&dir, "user-z").unwrap(), None);
+        assert_eq!(slot(&dir).unwrap(), b"X's state");
+        assert_eq!(
+            std::fs::read(dir.join("background_stages.json")).unwrap(),
+            b"X's stages"
+        );
+        assert!(!root.join("unproven.unparking").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (L-6): the stage cut at each of its steps is undone whole by the next look - before
+    /// its journal, between the set-aside and the declined list, and in the middle of the undo.
+    #[test]
+    fn a_reset_cut_at_any_step_is_undone_whole() {
+        let _cold = cold();
+        let account = parked_dir_name("user-b");
+
+        // 1. Cut before the journal: B's state set apart, nothing else done.
+        let dir = temp_dir("pin-reset-cut-no-journal");
+        let resetting = with_suffix(&parked_dir(&dir, "user-b"), RESETTING_SUFFIX);
+        std::fs::create_dir_all(&resetting).unwrap();
+        std::fs::write(resetting.join("mls.bin"), b"state-b").unwrap();
+        assert_eq!(
+            account_state_file(&dir, "user-b").unwrap(),
+            Some(parked_dir(&dir, "user-b").join("mls.bin"))
+        );
+        assert!(!resetting.exists());
+        std::fs::remove_dir_all(&dir).ok();
+
+        // 2. Cut between the set-aside and the declined list: the journal names both, the declined
+        //    list does not hold B yet.
+        let dir = temp_dir("pin-reset-cut-before-decline");
+        let resetting = with_suffix(&parked_dir(&dir, "user-b"), RESETTING_SUFFIX);
+        std::fs::create_dir_all(&resetting).unwrap();
+        std::fs::write(resetting.join("mls.bin"), b"state-b").unwrap();
+        write_reset_journal(
+            &resetting,
+            &ResetJournal {
+                from_slot: false,
+                declined_added: true,
+                unproven: Some("unproven.residue-0".to_string()),
+            },
+        )
+        .unwrap();
+        let aside = dir.join(PARKED_STATES_DIR).join("unproven.residue-0");
+        std::fs::create_dir_all(&aside).unwrap();
+        std::fs::write(aside.join("mls.bin"), b"nobody proven").unwrap();
+        account_state_file(&dir, "user-b").unwrap();
+        assert_eq!(slot(&dir).unwrap(), b"nobody proven");
+        assert!(!declined_accounts(&dir).unwrap().contains(&account));
+        assert_eq!(
+            std::fs::read(parked_dir(&dir, "user-b").join("mls.bin")).unwrap(),
+            b"state-b"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+
+        // 3. Cut in the middle of the undo: the unproven state half back in the slot, B on the
+        //    declined list, the journal still there. The next look finishes the move whole, then the
+        //    undo.
+        let dir = temp_dir("pin-reset-cut-mid-undo");
+        let resetting = with_suffix(&parked_dir(&dir, "user-b"), RESETTING_SUFFIX);
+        std::fs::create_dir_all(&resetting).unwrap();
+        std::fs::write(resetting.join("mls.bin"), b"state-b").unwrap();
+        write_reset_journal(
+            &resetting,
+            &ResetJournal {
+                from_slot: false,
+                declined_added: true,
+                unproven: Some("unproven.residue-0".to_string()),
+            },
+        )
+        .unwrap();
+        write_declined_accounts(&dir, std::slice::from_ref(&account)).unwrap();
+        let unparking = dir.join(PARKED_STATES_DIR).join("unproven.unparking");
+        std::fs::create_dir_all(&unparking).unwrap();
+        std::fs::write(unparking.join("background_stages.json"), b"X's stages").unwrap();
+        std::fs::write(dir.join("mls.bin"), b"nobody proven").unwrap();
+        account_state_file(&dir, "user-b").unwrap();
+        assert_eq!(slot(&dir).unwrap(), b"nobody proven");
+        assert_eq!(
+            std::fs::read(dir.join("background_stages.json")).unwrap(),
+            b"X's stages"
+        );
+        assert!(!declined_accounts(&dir).unwrap().contains(&account));
+        assert!(!resetting.exists());
+        assert_eq!(
+            std::fs::read(parked_dir(&dir, "user-b").join("mls.bin")).unwrap(),
+            b"state-b"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2595,7 +3074,7 @@ mod tests {
         let journal = start_park_for_test(&dir, "user-a");
         std::fs::write(journal.join("mls.bin"), b"state-a-older").unwrap();
         assert!(matches!(
-            account_state_size(&dir, "user-a", true),
+            account_state_size(&dir, "user-a"),
             Err(SelectionRefused::MoveUnfinished(_))
         ));
         std::fs::remove_dir_all(&dir).ok();

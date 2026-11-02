@@ -17,6 +17,63 @@ import { isWipeableAccountId } from '$lib/utils/accountLocalKeys';
  */
 const PENDING_WIPES_KEY = 'canari_deleted_account_wipe_pending:v1';
 
+/**
+ * WHY a wipe is owed, for the ids it is not a deletion for (round 8 of the review of #2919): a device
+ * whose OWNER REVOKED it, on an install another account still uses, owes the same per-account wipe
+ * (`wipeAccountOfRevokedDevice`), resumed by the same mechanism - but the account still exists, and
+ * every line about it must say so. A separate key so the pending list keeps the shape every reader
+ * already has; an id absent from it is a deletion.
+ */
+const WIPE_REASONS_KEY = 'canari_account_wipe_pending_reason:v1';
+
+/** Why a per-account wipe is owed. */
+export type AccountWipeReason = 'deleted' | 'revoked';
+
+/** The tag every line about `reason`'s wipe carries: a revoked account is not a deleted one. */
+export function wipeLogTag(reason: AccountWipeReason): string {
+  return reason === 'revoked' ? '[REVOKED-LOCAL]' : '[DEL-LOCAL]';
+}
+
+function readWipeReasons(): Record<string, AccountWipeReason> {
+  const raw = localStorage.getItem(WIPE_REASONS_KEY);
+  if (raw === null) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('not an object');
+    }
+    const reasons: Record<string, AccountWipeReason> = {};
+    for (const [id, reason] of Object.entries(parsed)) {
+      if (reason === 'revoked' && isWipeableAccountId(id)) reasons[id] = reason;
+    }
+    return reasons;
+  } catch (e) {
+    console.error(
+      '[REVOKED-LOCAL] the wipe-reason record is malformed - every owed wipe reads as a deletion:',
+      e
+    );
+    return {};
+  }
+}
+
+/** Why `userId`'s owed wipe is owed: `revoked` when its device was revoked, `deleted` otherwise. */
+export function wipeReasonOf(userId: string): AccountWipeReason {
+  try {
+    return readWipeReasons()[userId] ?? 'deleted';
+  } catch (e) {
+    console.error(`[DEL-LOCAL] the wipe reason of ${userId.slice(0, 8)} cannot be read:`, e);
+    return 'deleted';
+  }
+}
+
+function writeWipeReason(userId: string, reason: AccountWipeReason | null): void {
+  const reasons = readWipeReasons();
+  if (reason === 'revoked') reasons[userId] = reason;
+  else delete reasons[userId];
+  if (Object.keys(reasons).length === 0) localStorage.removeItem(WIPE_REASONS_KEY);
+  else localStorage.setItem(WIPE_REASONS_KEY, JSON.stringify(reasons));
+}
+
 /** The account ids a wipe is still owed for. Unreadable or malformed entries are reported, never used. */
 export function pendingDeletedAccountWipes(): string[] {
   let raw: string | null;
@@ -50,15 +107,20 @@ function writePendingWipes(ids: string[]): void {
 
 /**
  * Records that `userId`'s local data is owed a wipe. Call ONLY after the server confirmed the
- * deletion. A marker that cannot be written is logged: the wipe still runs, it just cannot resume.
+ * deletion - or, with `reason: 'revoked'`, the owner's revocation of this device. A marker that cannot
+ * be written is logged: the wipe still runs, it just cannot resume.
  */
-export function markDeletedAccountWipePending(userId: string): void {
+export function markDeletedAccountWipePending(
+  userId: string,
+  reason: AccountWipeReason = 'deleted'
+): void {
   try {
+    writeWipeReason(userId, reason);
     const ids = pendingDeletedAccountWipes();
     if (!ids.includes(userId)) writePendingWipes([...ids, userId]);
   } catch (e) {
     console.error(
-      `[DEL-LOCAL] the pending-wipe marker for ${userId.slice(0, 8)} was not written - an interrupted wipe will not resume:`,
+      `${wipeLogTag(reason)} the pending-wipe marker for ${userId.slice(0, 8)} was not written - an interrupted wipe will not resume:`,
       e
     );
   }
@@ -68,6 +130,7 @@ export function markDeletedAccountWipePending(userId: string): void {
 export function clearDeletedAccountWipePending(userId: string): void {
   try {
     writePendingWipes(pendingDeletedAccountWipes().filter((id) => id !== userId));
+    writeWipeReason(userId, null);
   } catch (e) {
     console.error(
       `[DEL-LOCAL] the pending-wipe marker for ${userId.slice(0, 8)} was not cleared:`,
@@ -117,8 +180,17 @@ export function isDeletedAccountHere(userId: string): boolean {
 export function forgetDeletedAccountOnSignIn(userId: string): void {
   wipesStartedThisRun.delete(userId);
   if (!pendingDeletedAccountWipes().includes(userId)) return;
-  console.warn(
-    `[DEL-LOCAL] ${userId.slice(0, 8)} signed in again after its erasure - the owed wipe of the deleted account is dropped, this is a new account`
-  );
+  if (wipeReasonOf(userId) === 'revoked') {
+    // The account was never deleted: its owner revoked THIS DEVICE, and has now signed in on it again
+    // online - which enrols a new device. What is still owed belonged to the revoked one; the new
+    // session's data is not it.
+    console.warn(
+      `[REVOKED-LOCAL] ${userId.slice(0, 8)} signed in again online on this device after its revocation - the owed wipe of the revoked device's data is dropped, the new session keeps its own`
+    );
+  } else {
+    console.warn(
+      `[DEL-LOCAL] ${userId.slice(0, 8)} signed in again after its erasure - the owed wipe of the deleted account is dropped, this is a new account`
+    );
+  }
   clearDeletedAccountWipePending(userId);
 }

@@ -189,12 +189,7 @@ fn sign_in(
         // unfinished move is typed (`SLOT_MOVE_UNFINISHED`), anything else carries a `null` code.
         // The process is marked warm in the selection's own hold, and the claim that hold returns
         // is what every later step of THIS sign-in is checked against.
-        //
-        // A STATE OF UNPROVEN OWNER IS OFFERED ONLY TO A SIGN-IN THAT EXPECTS A STATE (round 7 of the
-        // review of #2919): its login measured one, which it does only for an account that signed in
-        // on this install before, or it hands bytes over. A brand-new account never meets one.
-        let expects_state = encrypted_state.is_some() || state_on_disk == Some(true);
-        let selection = install.select(data_dir, user_id, expects_state)?;
+        let selection = install.select(data_dir, user_id)?;
         let claim = install.claimed()?;
         // A FRESH START OVER A SAVED STATE IS REFUSED, whatever the selection (round 4): the caller
         // chose "no state" on an answer that did not see it. Only the rotation says it replaces one.
@@ -222,30 +217,7 @@ fn sign_in(
             }
         };
         install.starts_fresh = encrypted_state.is_none();
-        let loaded = load(encrypted_state, claim);
-        // AN UNPROVEN STATE THAT OPENED AS ANOTHER IDENTITY IS PROVABLY NOT THIS ACCOUNT'S (round 7):
-        // put back aside under the next name, so the next offer is the next residue and the identity
-        // rotation the frontend answers this with finds the slot free. Only on that verdict - a state
-        // sealed under another key may be this account's under its old PIN, whose recovery reads it
-        // from the slot.
-        if let Err(refusal) = &loaded {
-            if selection == crate::commands::mls_account_state::Selection::UnprovenLeftInSlot
-                && refusal.is_identity_mismatch()
-            {
-                match crate::concurrency::while_claim_current(claim, || {
-                    crate::commands::mls_account_state::return_unproven_aside_held(data_dir)
-                }) {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => log::error!(
-                        "[MLS] the unproven state that opened as another identity could not be put back aside: {e}"
-                    ),
-                    Err(superseded) => log::error!(
-                        "[MLS] the unproven state that opened as another identity is left in the slot: {superseded}"
-                    ),
-                }
-            }
-        }
-        loaded
+        load(encrypted_state, claim)
     };
     match attempt(&mut install) {
         Ok((manager, key)) => {
@@ -315,16 +287,12 @@ impl InstallGuard {
         &mut self,
         data_dir: &std::path::Path,
         user_id: &str,
-        expects_state: bool,
     ) -> Result<
         crate::commands::mls_account_state::Selection,
         crate::commands::mls_account_state::SelectionRefused,
     > {
-        let (selection, claim) = crate::commands::mls_account_state::select_account_state(
-            data_dir,
-            user_id,
-            expects_state,
-        )?;
+        let (selection, claim) =
+            crate::commands::mls_account_state::select_account_state(data_dir, user_id)?;
         self.claim = Some(claim);
         self.selected = Some((data_dir.to_path_buf(), user_id.to_string()));
         Ok(selection)
@@ -417,6 +385,14 @@ impl InstallGuard {
                         StateLoadRefusal::slot_owner_unrecorded(e)
                     },
                 )?;
+                // The fact that decides whether a state of unproven owner is ever offered to this
+                // account (round 8 of the review of #2919). Its loss costs only that offer - the
+                // account's own state is located by its owner record - so it is accused, not fatal.
+                if let Err(e) = crate::commands::mls_account_state::record_account_opened_held(
+                    &data_dir, &user_id,
+                ) {
+                    log::error!("[MLS] the account's opened marker was not written: {e}");
+                }
                 // A stage a background Welcome left in mls.bin is reported against what was loaded.
                 crate::commands::storage::report_background_stages_held(&data_dir, &manager);
                 *cached_key = Some(key);
@@ -538,14 +514,84 @@ fn load_state_with_key(
         _ => None,
     };
     let Some(resealed) = resealed else {
-        return Err(StateLoadRefusal::from(e));
+        let refusal = StateLoadRefusal::from(e);
+        // OPENED UNDER THIS ACCOUNT'S OWN KEY: the device key derives from the account id, the PIN and
+        // the salt (the hardware-held key is the account's keystore entry), so a state it opens was
+        // sealed by THIS account - and an identity mismatch can only be its own older device id.
+        if refusal.is_identity_mismatch() {
+            unproven_verdict(
+                data_dir,
+                claim,
+                user_id,
+                UnprovenVerdict::OwnUnderAnotherDevice,
+            );
+        }
+        return Err(refusal);
     };
     let manager = load_resealed_legacy_state(data_dir, claim, &resealed, |bytes| {
         MlsManager::load_with_key(user_id, device_id, Some(bytes), key)
+    })
+    .inspect_err(|refusal| {
+        // OPENED BY THE PIN ALONE: a legacy envelope is sealed under Argon2(PIN, salt), which says
+        // nothing of the account - another account with the same PIN opens it too. An identity
+        // mismatch is then not proof of whose it is, but it is proof it is not THIS sign-in's: set
+        // aside for the next account it is offered to.
+        if refusal.is_identity_mismatch() {
+            unproven_verdict(data_dir, claim, user_id, UnprovenVerdict::NotThisSignIns);
+        }
     })?
     .ok_or_else(|| StateLoadRefusal::from(e))?;
     log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
     Ok(manager)
+}
+
+/// What an `IDENTITY_MISMATCH` proves about a state of UNPROVEN owner (round 8 of the review of #2919),
+/// decided by WHICH KEY opened it - never by reading the identity out of the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnprovenVerdict {
+    /// The account's own key opened it: it is this account's, under an older device id. Its owner is
+    /// recorded, so the identity rotation the frontend answers with replaces it as the account's own
+    /// (`fresh_start_refusal` allows that only over `Selection::AlreadyInSlot`) - never stranded.
+    OwnUnderAnotherDevice,
+    /// The PIN alone opened it (a legacy envelope): it is not this sign-in's, whose it is unknown. Put
+    /// back aside under the next name, offered to the next account a state has opened for here.
+    NotThisSignIns,
+}
+
+/// Applies an [`UnprovenVerdict`] to the slot - only when it still holds a state NO owner record names
+/// (an account's own state already has its record), and only while this sign-in's session is current.
+fn unproven_verdict(
+    data_dir: &std::path::Path,
+    claim: crate::concurrency::SessionClaim,
+    user_id: &str,
+    verdict: UnprovenVerdict,
+) {
+    let applied = crate::concurrency::while_claim_current(claim, || -> Result<bool, String> {
+        if crate::commands::storage::read_mls_state_owner(data_dir)?.is_some()
+            || !crate::commands::mls_account_state::slot_holds_state(data_dir)?
+        {
+            return Ok(false);
+        }
+        match verdict {
+            UnprovenVerdict::OwnUnderAnotherDevice => {
+                crate::commands::storage::record_mls_state_owner(data_dir, user_id)?;
+                log::warn!(
+                    "[MLS] the unproven state opened under this account's key with an older device id - it is this account's, recorded as such"
+                );
+            }
+            UnprovenVerdict::NotThisSignIns => {
+                crate::commands::mls_account_state::return_unproven_aside_held(data_dir)?;
+            }
+        }
+        Ok(true)
+    });
+    match applied {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => log::error!("[MLS] the verdict on the unproven state was not applied: {e}"),
+        Err(superseded) => {
+            log::error!("[MLS] the verdict on the unproven state was not applied: {superseded}")
+        }
+    }
 }
 
 /// Opens a pre-v0.11.0 `mls.bin` (Argon2id, `[salt (16) || nonce (12) || ciphertext]`) with `pin`
@@ -2140,7 +2186,7 @@ mod tests {
     ) -> InstallGuard {
         crate::concurrency::forget_live_manager_for_test();
         let mut install = InstallGuard::new(manager.clone(), key.clone());
-        install.select(dir, user, true).unwrap();
+        install.select(dir, user).unwrap();
         install
     }
 
@@ -2256,7 +2302,7 @@ mod tests {
         let a = selected_attempt(&manager, &key, &dir, "guard-a");
         // B's sign-in is refused by the selection, and its guard drops.
         let mut b = InstallGuard::new(manager.clone(), key.clone());
-        assert!(b.select(&dir, "guard-b", true).is_err());
+        assert!(b.select(&dir, "guard-b").is_err());
         b.refused(&StateLoadRefusal::from(
             "a foreground MLS session is still open".to_string(),
         ));
@@ -2267,7 +2313,7 @@ mod tests {
         );
         // A third account is therefore still refused, with nothing moved.
         let mut c = InstallGuard::new(manager.clone(), key.clone());
-        assert!(c.select(&dir, "guard-c", true).is_err());
+        assert!(c.select(&dir, "guard-c").is_err());
         drop(c);
         assert!(crate::concurrency::live_manager_in_process());
 
@@ -2294,7 +2340,7 @@ mod tests {
 
         let first = selected_attempt(&manager, &key, &dir, "guard-a");
         let mut second = InstallGuard::new(manager.clone(), key.clone());
-        second.select(&dir, "guard-a", true).unwrap();
+        second.select(&dir, "guard-a").unwrap();
         second
             .install(
                 MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
@@ -2315,7 +2361,7 @@ mod tests {
         crate::concurrency::end_native_session(&manager, &key, None, "test sign-out").unwrap();
         let earlier = selected_attempt(&manager, &key, &dir, "guard-a");
         let mut later = InstallGuard::new(manager.clone(), key.clone());
-        later.select(&dir, "guard-a", true).unwrap();
+        later.select(&dir, "guard-a").unwrap();
         later.refused(&StateLoadRefusal::from(
             mls_core::MlsError::KeystoreKeyUnavailable("sheet cancelled".into()),
         ));
@@ -2361,7 +2407,13 @@ mod tests {
         blob
     }
 
-    /// The sign-in of an account that signed in here before, its load the command's own
+    /// What a successful install records for `user` on `dir`: an account a state has opened for.
+    fn known(dir: &std::path::Path, user: &str) {
+        let _guard = crate::concurrency::mls_bin_write_lock().lock().unwrap();
+        crate::commands::mls_account_state::record_account_opened_held(dir, user).unwrap();
+    }
+
+    /// The sign-in of an account a state has opened for here, its load the command's own
     /// ([`load_state_with_key`]) with the PIN that opens the legacy envelope.
     fn legacy_sign_in(
         dir: &std::path::Path,
@@ -2397,6 +2449,7 @@ mod tests {
         let key: KeySlot = Arc::new(Mutex::new(None));
 
         let dir = data_dir("legacy-other-identity");
+        known(&dir, "guard-a");
         let other = legacy_state_of("guard-other", "1234");
         std::fs::write(dir.join("mls.bin"), &other).unwrap();
         let refusal = legacy_sign_in(&dir, "guard-a", &manager, &key).unwrap_err();
@@ -2420,12 +2473,110 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
 
         let dir = data_dir("legacy-own-identity");
+        known(&dir, "guard-a");
         let own = legacy_state_of("guard-a", "1234");
         std::fs::write(dir.join("mls.bin"), &own).unwrap();
         legacy_sign_in(&dir, "guard-a", &manager, &key).unwrap();
         let written = std::fs::read(dir.join("mls.bin")).unwrap();
         assert_ne!(written, own, "the account's own legacy state is re-sealed");
         crate::concurrency::end_native_session(&manager, &key, None, "test: done").unwrap();
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (M-1), THROUGH THE COMMAND'S OWN SEQUENCE: a sign-in whose load FAILS records nothing,
+    /// so B, refused once, is still not offered A's unproven state at its retry; B's first SUCCESSFUL
+    /// install records it.
+    #[test]
+    fn only_an_installed_state_makes_an_account_known_here() {
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("known-only-once-installed");
+        known(&dir, "guard-a");
+        let marker_of = |user: &str| {
+            let _guard = crate::concurrency::mls_bin_write_lock().lock().unwrap();
+            crate::commands::mls_account_state::account_known_here_held(&dir, user).unwrap()
+        };
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| {
+                Err(StateLoadRefusal::from(
+                    "test: the load is refused".to_string(),
+                ))
+            },
+        );
+        assert!(refused.is_err());
+        assert!(
+            !marker_of("guard-b"),
+            "a refused sign-in made its account known"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+
+        sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| {
+                Ok((
+                    MlsManager::load_or_create("guard-b", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        )
+        .unwrap();
+        assert!(marker_of("guard-b"));
+        crate::concurrency::end_native_session(&manager, &key, None, "test: done").unwrap();
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (L-3): an unproven state the account's OWN key opens with an older device id is the
+    /// account's - its owner is recorded, so the identity rotation replaces it as its own instead of
+    /// it being set aside where nothing collects it.
+    #[test]
+    fn an_unproven_state_of_the_account_under_an_older_device_is_recognised_as_its_own() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("own-older-device");
+        known(&dir, "guard-a");
+        let plain = MlsManager::load_or_create("guard-a", "d-old", None)
+            .unwrap()
+            .save_state()
+            .unwrap();
+        let sealed = MlsManager::encrypt_state_blob_with_key(&plain, &KEY_A).unwrap();
+        std::fs::write(dir.join("mls.bin"), &sealed).unwrap();
+
+        let refusal = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            SignIn {
+                data_dir: &dir,
+                user_id: "guard-a",
+                encrypted_state: None,
+                state_on_disk: Some(true),
+                replaces_unopened_state: false,
+            },
+            |state, claim| {
+                load_state_with_key(&dir, claim, ("guard-a", "d-new"), state, None, &KEY_A)
+                    .map(|m| (m, KEY_A))
+            },
+        )
+        .unwrap_err();
+        assert!(refusal.is_identity_mismatch(), "{refusal:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(MLS_STATE_OWNER_FILE)).unwrap(),
+            "guard-a"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            sealed,
+            "left in place"
+        );
         crate::concurrency::forget_live_manager_for_test();
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2452,7 +2603,7 @@ mod tests {
                 crate::concurrency::end_native_session(&manager, &key, None, "test: unclaimed end")
                     .unwrap();
                 let _session_of_b =
-                    crate::commands::mls_account_state::select_account_state(&dir, "guard-b", true)
+                    crate::commands::mls_account_state::select_account_state(&dir, "guard-b")
                         .unwrap();
                 std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "guard-b").unwrap();
                 std::fs::write(dir.join("mls.bin"), b"state-b").unwrap();

@@ -944,26 +944,44 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   `account_state_file` so the login expects it - and its load under the account's own key, the
   credential check, decides whose it is; the owner's load records it. An account that reset its PIN is
   listed in `mls_accounts/unproven.declined` and never offered one again.
-- **A state of unproven owner is offered ONLY to an account that signed in on this install before**
-  (round 7): its device id is recorded here (`mls_device_id_<userId>`). `mlsStateSize` reads that
-  record itself and passes it as `knownHere`; the size it answers becomes the sign-in's `stateOnDisk`,
-  and the selection brings a residue in - or leaves an unproven slot in place - only for a sign-in
-  that expects a state (`select_account_state`'s `expects_state`). Everyone else sets an unproven slot
-  aside and starts fresh beside it. Round 6 offered it to a brand-new account too, which met "sealed
-  under your old PIN" a minute after choosing its first PIN, and nothing ever collected the residue.
-  **Why the recorded device id and not a probe-open**: opening needs the account's key, which exists
-  only inside the sign-in's load, after the login's size query has already decided whether a state is
-  expected (a "yes" there makes a fresh start a refusal). The device id is a fact the frontend holds
-  before anything is asked, written by `resolveDeviceId` only AFTER the size query, so a first sign-in
-  reads "not known". Every upgraded install that predates the owner record wrote one for its user.
-- **Residues are offered in turn, under names never reused** (round 7): `mls_accounts/unproven.counter`
-  only grows (never below a name on disk), so `unproven.residue-<n>` is never handed out twice. A
-  residue whose load answers `IDENTITY_MISMATCH` - it opened and carries another identity, the one
-  verdict that proves it is not this account's - is put back aside under the NEXT name in the
-  sign-in's claimed hold (`return_unproven_aside_held`), so the next offer is the next residue and the
-  identity rotation that answers the refusal finds the slot free. A state sealed under another key
-  (`STATE_KEY_MISMATCH`, a legacy `STATE_UNDECRYPTABLE`) stays in the slot: it may be this account's
-  under its old PIN, whose recovery reads it there; the "forgot PIN" reset sets it aside and declines.
+- **A state of unproven owner is offered ONLY to an account a state has OPENED for on this install**
+  (rounds 7 and 8): `mls_opened/<hash>`, one empty file per account, written by `initialiser_mls` in
+  its claimed hold right after the owner record (`record_account_opened_held`), and removed with the
+  account's state (a reset's commit, `remove_account_state`). It is decided NATIVELY, by one
+  predicate (`account_known_here_held`) that the size query, `load_mls_state`, `mls_state_absent` and
+  the selection all read, so they never disagree; anyone else sets an unproven slot aside and starts
+  fresh beside it - and a kept device id whose state is gone now proves the state absent, so the
+  device re-enrols. Round 6 offered the state to a brand-new account, which met "sealed under your old
+  PIN" a minute after choosing its first PIN. **Round 7 asked the WebView's device id, and that was
+  wrong**: `resolveDeviceId` writes `mls_device_id_<userId>` - and its native copy in
+  `push_context.json` - at the PIN check and the revocation check, BEFORE any state opens, so a new
+  account that mistyped its PIN once was "known" at its retry and met the same symptom. **Why not a
+  probe-open**: opening needs the account's key, which exists only inside the sign-in's load, after
+  the size query has already decided whether a state is expected. **The one install the marker cannot
+  be written for** - one upgraded from a build before the owner record, whose state no sign-in of this
+  build has opened - is SEEDED once, at start-up before the WebView can resolve an identity
+  (`seed_opened_markers`, `lib.rs` setup): the account `push_context.json` names then, the account the
+  previous build last resolved, is marked. Eligibility, never attribution: its load decides.
+- **Residues are offered in turn, under names never reused** (rounds 7 and 8):
+  `mls_accounts/unproven.counter` only grows and never goes below a name on disk, a cut `.parking`
+  included; EVERY name under the unproven stem comes from it - a set-aside, a leftover of a state going
+  back into the slot, a file at both ends of such a move (`next_residue_dir`). An empty or malformed
+  counter is no refusal: the next name is taken above the names on disk, said at WARN.
+- **`IDENTITY_MISMATCH` compares `user:device`, and which half differs is decided by the KEY that
+  opened the state** (round 8), never by the message: under the account's OWN key (the device key
+  derives from the account id, the PIN and the salt; the hardware-held one is the account's keystore
+  entry) the state is this account's with an older device id, so its owner is RECORDED and the identity
+  rotation the frontend answers with replaces it as its own (`fresh_start_refusal` allows that over
+  `Selection::AlreadyInSlot`) - never stranded aside. Under a legacy envelope, which the PIN alone
+  opens, it may be another account's: it goes back aside under the NEXT name
+  (`return_unproven_aside_held`), so the next offer is the next residue. A state sealed under another
+  key (`STATE_KEY_MISMATCH`, a legacy `STATE_UNDECRYPTABLE`) stays in the slot: it may be this
+  account's under its old PIN, whose recovery reads it there; the "forgot PIN" reset sets it aside and
+  declines.
+- **No move of an unproven state can be split by a crash** (round 8): it is set aside as a park
+  (`unproven.residue-<n>.parking`) and brought back as an unpark (`unproven.unparking`), each finished
+  by the next look - `mls.bin` never on one side and its ledgers on the other. The reset journal, the
+  counter and the declined list are written to a flushed `.tmp` renamed into place (`write_durably`).
 - **A legacy (pre-v0.11.0) state is re-sealed in memory and written only once it LOADED as this
   account** (round 7, `load_state_with_key` -> `load_resealed_legacy_state`). A legacy blob opens under
   any account's PIN that matches, so an unproven state offered to the wrong account used to be
@@ -991,8 +1009,13 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   exists while a reset does (empty when B had no state here) and holds `reset.journal` - whether B's
   state came from the slot, whether the stage added B to the declined list, and the name of the
   unproven residue it set aside, written BEFORE each of those is done. ONE undo (`undo_reset_held`)
-  serves the rollback and crash recovery. A `<hash>.resetting` no reset of THIS process owns
-  (`RESETS_IN_FLIGHT`, account names only) was left by a process that died mid-reset; the server's
+  serves the rollback and crash recovery, and it undoes the journal's own steps (the unproven state,
+  the declined entry) BEFORE removing the journal and moving B's state back, so an undo cut anywhere is
+  finished by the next one. **The registry is the PAGE's** (round 8): the commit or rollback lives in
+  the WebView, so a document load (`on_page_load`, `forget_resets_of_ended_page`) releases every reset
+  staged before it - a reload during the server call used to strand the reset, skipped by the settle
+  as in flight and refused when staged again. A `<hash>.resetting` no reset of THIS page owns
+  (`RESETS_IN_FLIGHT`, account names only) was left by a page or process that died mid-reset; the server's
   answer is not known, so the next look UNDOES IT from its journal - B's state back into the slot it
   came from (or parked), the unproven state back into the free slot, B off the declined list - after
   the cut parks and unparks are finished, never removing anything. Round 6 put back only B's state: B
@@ -1022,7 +1045,11 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   each step that fails at ERROR; the marker stays until a wipe finishes with nothing failed, and the
   next start resumes it (`resumePendingDeletedAccountWipes`). Until then an offline unlock of B is
   refused (`isDeletedAccountHere`, the `account_deleted` gate); an online sign-in of B drops the marker
-  (`forgetDeletedAccountOnSignIn`), its data then being a new session's.
+  (`forgetDeletedAccountOnSignIn`), its data then being a new session's. The marker carries its
+  REASON (`canari_account_wipe_pending_reason:v1`, round 8): every line of a revoked account's wipe
+  and its resume is tagged `[REVOKED-LOCAL]`, its login refusal says this device was removed from the
+  account (`auth_device_revoked_here`), and its online sign-in says so - never the deleted-account
+  wording, which named an account that still exists.
 
   The factory wipe's items, scoped:
 
@@ -1073,17 +1100,22 @@ written fails with its own code); the PIN reset (`mls_account_state.rs`: only it
 removed; a server refusal rolled back byte for byte; a reset cut before it settled put back; an
 unproven state set aside by B's reset going back to A end to end, out of reach of every allowlist;
 another account's state seen wherever it lies; the size query types an unfinished move; an unproven
-state offered only to an account known here; residues offered in turn under names never reused; a reset
-cut between its stage and the server undone from its journal; removing an account mid-reset removes and
-cancels the reset); `commands/mls.rs` (a legacy state of another identity is never rewritten, and the
-account's own still migrates);
+state offered only to an account a state opened for; a device identity written before a state opens
+never offering it, the property of round 8; an upgraded install seeded from its push context; residues
+offered in turn under names never reused; a damaged counter falling back to the disk; a leftover taking
+the counter's next name; an unproven move cut half-way finished whole; a reset cut between its stage and
+the server, before its journal, before its declined entry or in the middle of its undo, undone whole; a
+reset whose page reloaded undone and staged again; removing an account mid-reset removes and cancels the
+reset); `commands/mls.rs` (a legacy state of another identity is never rewritten, and the account's own
+still migrates; only an installed state makes an account known; an unproven state under the account's
+older device id recognised as its own);
 `commands/storage.rs` (`save_mls_state` writes only its own account's slot, records the owner of an
 empty one, finishes a cut park first, and refuses on an unreadable owner record); `mobile/key_group_join.rs` (a join writes nothing into a
 slot that is not its account's); `services/TauriMlsService.initQueue.test.ts` (a second sign-in starts
 only after the first has failed, no session is ended from the page, a reloaded page's refused sign-in
 ends nothing, and only the rotation asks to replace a state); `services/TauriMlsService.stateOwner.test.ts`
 (an unfinished move and an unrecorded owner are answered with nothing); `mls-client/mlsStateLoadError.test.ts` (both codes are typed);
-`utils/hex.mlsStateSize.test.ts` (the size query's typed rejection and its `knownHere`; the stage, commit and rollback
+`utils/hex.mlsStateSize.test.ts` (the size query's typed rejection, and no WebView fact about whether the account is known; the stage, commit and rollback
 never sweep and name their account); `composables/session/pinReset.test.ts` (the order; a refused
 stage asks no server; a server failure rolls back; a failed commit leaves first setup);
 `composables/session/revokedDeviceReset.test.ts` (a refusing `removeMlsState` cannot stop the revoked

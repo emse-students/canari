@@ -66,7 +66,8 @@ vi.mock('$lib/stores/user', async (importOriginal) => ({
 }));
 
 const { ACCOUNT_KEY, keystoreAlias } = await import('$lib/utils/accountLocalKeys');
-const { pendingDeletedAccountWipes } = await import('$lib/utils/deletedAccountMarker');
+const { pendingDeletedAccountWipes, wipeReasonOf, forgetDeletedAccountOnSignIn } =
+  await import('$lib/utils/deletedAccountMarker');
 const { wipeRevokedDevice } = await import('./sessionAuth');
 
 function session(): { ctx: SessionContext; cb: ChatSessionCallbacks; logs: () => string } {
@@ -141,6 +142,16 @@ describe('the revoked wipe of ONE account on an install another account uses', (
     await wipeRevokedDevice(s.ctx, s.cb);
 
     expect(pendingDeletedAccountWipes()).toEqual(['alice']);
+    expect(wipeReasonOf('alice')).toBe('revoked');
     expect(s.logs()).toContain("the revoked account's wipe did not finish: the parked MLS state");
+    // ROUND 8 (L-5): a revoked account is not a deleted one, and no line says it is.
+    expect(s.logs()).toContain('[REVOKED-LOCAL] alice');
+    expect(s.logs()).not.toContain('[DEL-LOCAL]');
+
+    // Its owner signs in online on this device again: the owed wipe is dropped, told as a revocation.
+    forgetDeletedAccountOnSignIn('alice');
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+    expect(s.logs()).toContain('signed in again online on this device after its revocation');
+    expect(s.logs()).not.toContain('after its erasure');
   });
 });

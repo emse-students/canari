@@ -95,8 +95,9 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
     const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
     expect(tryAt).toBeGreaterThan(-1);
     expect(tryAt).toBeLessThan(refusal);
+    expect(loginImplBody).toContain("throw new LoginFailure(\n        'account_deleted',");
     expect(loginImplBody).toContain(
-      "throw new LoginFailure('account_deleted', m.auth_account_deleted_here());"
+      'revoked ? m.auth_device_revoked_here() : m.auth_account_deleted_here()'
     );
   });
 });

@@ -1158,8 +1158,10 @@ lines.
 4c. **An unproven state is never shown to a new account, and goes back to its owner.** On a SECOND
    install (or after steps 5-7 below are read: this step leaves A's state where steps 1-4 did not),
    install a build from before the owner record, sign A in, then install the pre-release over it (A's
-   `mls.bin`, no `mls.owner`). Sign in as B, who never signed in on this install: expect `the slot's
-   state of UNPROVEN owner set aside as unproven.residue-<n>` at B's sign-in, and B's PIN gate is B's
+   `mls.bin`, no `mls.owner`; at the first start expect `the account its push context names is marked
+   as one a state opened for`). Sign in as B, who never signed in on this install, and MISTYPE B's PIN
+   once before typing it right: expect `the slot's state of UNPROVEN owner set aside as
+   unproven.residue-<n>` at B's sign-in, and B's PIN gate is B's
    ordinary one - "Créer mon PIN" when B has no PIN yet, "Déverrouiller" otherwise - which opens with
    B's own PIN on a fresh state. B never sees "Mon PIN a changé sur un autre appareil → Récupérer mes
    messages", nor any failure to open a saved state (round 6 offered B A's state, and B met it). Sign out,
@@ -1169,14 +1171,14 @@ lines.
    in, note B's keystore alias (`<B's userId>_<B's deviceId>`, in `keystore_aliases.xml` on Android, the
    `[DEL-LOCAL]` lines on iOS). Remove this phone from B's device list on another device. Expect
    `another account's MLS state is on this install - only the revoked account is wiped` (or `other
-   account(s) recorded`), never `wiping this device back to a fresh install`; then `[DEL-LOCAL] ... done`
-   for B. Afterwards B's alias is ABSENT from the keystore (`BiometricService.isKeyPresent` false; on
+   account(s) recorded`), never `wiping this device back to a fresh install`; then `[REVOKED-LOCAL] ...
+   done` for B, and no `[DEL-LOCAL]` line about B (B was revoked, not deleted). Afterwards B's alias is ABSENT from the keystore (`BiometricService.isKeyPresent` false; on
    Android no `<B's alias>` entry), and the run holds ZERO `no keystore entry can be named` lines and
    ZERO `the revoked account's wipe did not finish` lines. A then signs in with its history, its PIN and
    its biometric unlock.
 5. **The greps, over the whole run, each ZERO:** `TWO STATES`, `cut part-way`, `sign-in refused`,
    `superseded`, `not the push's account`, `a PIN reset was cut`, `no keystore entry can be named`,
-   `wipe did not finish`. `residue` appears ONLY on step 4c's install (`UNPROVEN owner set aside as
+   `wipe did not finish`, `[DEL-LOCAL]`, `after its erasure`. `residue` appears ONLY on step 4c's install (`UNPROVEN owner set aside as
    unproven.residue-<n>`), never on the install of steps 1-4.
 6. **The files** (`xcrun devicectl device info files` on the app container and the App Group), on the
    install of steps 1-4, once step 4d ended with A signed in: NO 64-hex directory under

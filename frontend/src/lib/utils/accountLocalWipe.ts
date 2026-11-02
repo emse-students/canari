@@ -15,9 +15,12 @@ import {
   SESSION_META_STORE,
 } from '$lib/utils/accountLocalKeys';
 import {
+  type AccountWipeReason,
   clearDeletedAccountWipePending,
   noteDeletedAccountWipeStarted,
   pendingDeletedAccountWipes,
+  wipeLogTag,
+  wipeReasonOf,
 } from '$lib/utils/deletedAccountMarker';
 
 // The marker's writers, where the deletion's callers already import the wipe from.
@@ -149,6 +152,8 @@ export async function resumePendingDeletedAccountWipes(live: AccountLiveness): P
     const failures = await wipeDeletedAccountLocalData(id, {
       closeThisRunsHandles: false,
       expectNativeDatabase: false,
+      // The revoked device's account still exists: the resume says so, as the live wipe did.
+      accountStillExists: wipeReasonOf(id) === 'revoked',
       stopIf: resumeStopFor(id, live),
     });
     if (failures.includes(STOPPED_BY_SIGN_IN)) {
@@ -237,7 +242,9 @@ export async function wipeDeletedAccountLocalData(
   userId: string,
   options: WipeDeletedAccountOptions
 ): Promise<string[]> {
-  const tag = `[DEL-LOCAL] ${userId.slice(0, 8)}`;
+  // A revoked device's account still exists: its lines say so (round 8 of the review of #2919).
+  const reason: AccountWipeReason = options.accountStillExists ? 'revoked' : 'deleted';
+  const tag = `${wipeLogTag(reason)} ${userId.slice(0, 8)}`;
   if (!isWipeableAccountId(userId)) {
     console.error(`${tag} refusing to wipe an account id outside the allowlist`);
     return ['the account id'];
@@ -291,7 +298,7 @@ export async function wipeDeletedAccountLocalData(
   // outbox blobs are IndexedDB), and are named by the account, so no other account is reachable.
   await step('the local IndexedDB databases', async () => {
     const results = await Promise.all(
-      accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, '[DEL-LOCAL]'))
+      accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, wipeLogTag(reason)))
     );
     if (results.includes(false)) throw new Error('an IndexedDB delete failed or is deferred');
   });

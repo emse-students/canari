@@ -261,7 +261,7 @@ import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
-import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
+import { isDeletedAccountHere, wipeReasonOf } from '$lib/utils/deletedAccountMarker';
 import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 
 /**
@@ -1385,10 +1385,18 @@ export async function loginImpl(
     // Lifted only by an online sign-in of that subject, which the server allows once the erasure
     // completed (`forgetDeletedAccountOnSignIn`).
     if (isDeletedAccountHere(ctx.getUserId()) || isDeletedAccountHere(userId.trim())) {
+      // THE SAME REFUSAL FOR A REVOKED DEVICE whose wipe is still owed, told as what it is (round 8 of
+      // the review of #2919): the account exists, this device was removed from it.
+      const revoked = wipeReasonOf(ctx.getUserId() || userId.trim()) === 'revoked';
       cb.log(
-        `[LOGIN] ${ctx.getUserId().slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
+        revoked
+          ? `[LOGIN] this device was revoked for ${ctx.getUserId().slice(0, 8)} and its wipe is still owed - refused, an online sign-in is required`
+          : `[LOGIN] ${ctx.getUserId().slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
       );
-      throw new LoginFailure('account_deleted', m.auth_account_deleted_here());
+      throw new LoginFailure(
+        'account_deleted',
+        revoked ? m.auth_device_revoked_here() : m.auth_account_deleted_here()
+      );
     }
     const mlsService = ctx.ensureMls();
     loginClient = mlsService;

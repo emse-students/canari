@@ -144,7 +144,7 @@ export async function wipeAccountOfRevokedDevice(userId: string): Promise<string
   // resumes the wipe (`resumePendingDeletedAccountWipes`); the wipe clears it once nothing failed.
   // Until then an offline unlock of this account is refused, as for a deleted one - and an online
   // sign-in of the account drops it (`forgetDeletedAccountOnSignIn`): its data is a new session's.
-  markDeletedAccountWipePending(userId);
+  markDeletedAccountWipePending(userId, 'revoked');
   const failures: string[] = [];
   try {
     // No sweep: the slot may be another account's. `delete_user_mls_state` refuses under a live

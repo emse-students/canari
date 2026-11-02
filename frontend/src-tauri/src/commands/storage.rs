@@ -796,7 +796,7 @@ fn account_state_path(
         .path()
         .app_data_dir()
         .map_err(|e| format!("app_data_dir: {e}"))?;
-    crate::commands::mls_account_state::account_state_file(&data_dir, user_id, true)
+    crate::commands::mls_account_state::account_state_file(&data_dir, user_id)
 }
 
 /// Reads `user_id`'s `mls.bin` and returns its encrypted contents, `None` when the account has none
@@ -876,21 +876,15 @@ pub(crate) fn mls_state_absent(app: tauri::AppHandle, user_id: String) -> Result
 /// It rejects like `initialiser_mls`, with a `{ code, message }` (round 5): an unfinished move of
 /// this account's own state is `SLOT_MOVE_UNFINISHED`, so the login - which asks this FIRST - reaches
 /// the same typed gate the sign-in would have.
-///
-/// `known_here`: the account signed in on this install before (its device id is recorded here). Only
-/// then is a state of unproven owner counted as its own (round 7 of the review of #2919) - a
-/// brand-new account is never offered another account's state.
 pub(crate) fn mls_state_size(
     app: tauri::AppHandle,
     user_id: String,
-    known_here: bool,
 ) -> Result<u64, mls_core::StateLoadRefusal> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| mls_core::StateLoadRefusal::from(format!("app_data_dir: {e}")))?;
-    let size =
-        crate::commands::mls_account_state::account_state_size(&data_dir, &user_id, known_here);
+    let size = crate::commands::mls_account_state::account_state_size(&data_dir, &user_id);
     match &size {
         Ok(n) => log::debug!("[MLS] mls_state_size: {n} bytes"),
         Err(e) => {
@@ -1778,7 +1772,7 @@ mod tests {
             Some("user-b")
         );
         let parked_a =
-            crate::commands::mls_account_state::account_state_file(&dir, "user-a", true).unwrap();
+            crate::commands::mls_account_state::account_state_file(&dir, "user-a").unwrap();
         assert_eq!(std::fs::read(parked_a.unwrap()).unwrap(), b"state-a");
         std::fs::remove_dir_all(&dir).ok();
     }

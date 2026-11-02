@@ -366,8 +366,11 @@ impl StateLoadRefusal {
         self.code == Some(SLOT_OWNER_UNRECORDED)
     }
 
-    /// True when the saved state OPENED and carries ANOTHER identity (`IDENTITY_MISMATCH`): the one
-    /// verdict that proves the bytes are not the signing-in account's, read from the `code` field.
+    /// True when the saved state OPENED and its credential names another `user:device` than the one
+    /// signing in (`IDENTITY_MISMATCH`), read from the `code` field. It does NOT say which half
+    /// differs: under the account's own key it is the account's own state with an older device id;
+    /// under a legacy PIN-only envelope it may be another account's. The caller decides by the key that
+    /// opened it (`load_state_with_key`, `src-tauri/src/commands/mls.rs`).
     pub fn is_identity_mismatch(&self) -> bool {
         self.code == Some("IDENTITY_MISMATCH")
     }

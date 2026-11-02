@@ -478,19 +478,16 @@ const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null 
  * size with no subject answered for whichever account used the install last
  * (`mls_account_state.rs`).
  *
- * **`knownHere`: WHETHER THE ACCOUNT SIGNED IN ON THIS INSTALL BEFORE** - its device id is recorded
- * here (`mls_device_id_<userId>`, written by `resolveDeviceId` after this is asked at login). Only
- * then may a state of unproven owner count as its own (round 7 of the review of #2919): a brand-new
- * account was offered another account's state, met "sealed under your old PIN" a minute after
- * choosing its first one, and nothing ever collected the state. Read HERE, the one place, so every
- * caller asks the same question the sign-in's selection then honours (`stateOnDisk`).
+ * WHETHER A STATE OF UNPROVEN OWNER COUNTS IS DECIDED NATIVELY (round 8 of the review of #2919): only
+ * for an account a state has OPENED for on this install (`mls_opened/<hash>`, written by
+ * `initialiser_mls` once it installed one). Nothing the WebView holds can answer it - the device id
+ * is written by `resolveDeviceId` at the PIN check, BEFORE any state opens.
  */
 export async function mlsStateSize(userId: string): Promise<number> {
   if (!isTauriRuntime()) return 0;
-  const knownHere = localStorage.getItem(ACCOUNT_KEY.deviceId(userId)) !== null;
   const { invoke } = await import('@tauri-apps/api/core');
   try {
-    return await invoke<number>('mls_state_size', { userId, knownHere });
+    return await invoke<number>('mls_state_size', { userId });
   } catch (e) {
     // TYPED at the boundary, like `initialiser_mls`'s refusals (`{ code, message }`): an unfinished
     // move of this account's own state is `MlsSlotMoveUnfinishedError`, which the gate answers.
