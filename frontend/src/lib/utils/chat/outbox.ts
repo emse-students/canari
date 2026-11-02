@@ -3,16 +3,30 @@ import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
-import type { OutboxResumableUpload, PendingGroupExit } from '$lib/db/types';
+import type {
+  OutboxAdoptedUpload,
+  OutboxReelTakeSend,
+  OutboxResumableUpload,
+  PendingGroupExit,
+  StoredMessage,
+} from '$lib/db/types';
 import { owedFor } from '$lib/utils/chat/pendingGroupExits';
-import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
+import {
+  OutboxPayloadUnreadableError,
+  outboxKindHoldsBlob,
+  REEL_TAKE_QUEUE,
+  REEL_TAKE_RECORDS,
+} from '$lib/db/outboxCodec';
+import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 import {
   OutboxBlobCorruptError,
   OutboxBlobMissingError,
   OutboxBlobWriteError,
 } from '$lib/db/outboxBlob';
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
-import type { MediaRef } from '$lib/media';
+import type { ChatReelHoldAnswer, MediaRef } from '$lib/media';
+import type { ReleaseAnswer } from './uploadReleaseMarks';
+import type { PublishedReelUpload } from '$lib/reels/publishReel';
 import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import {
@@ -60,9 +74,11 @@ import {
 } from '$lib/utils/uploadXhr';
 import {
   clearAllUploads,
-  clearUpload,
-  patchUpload,
+  clearUpload as clearUploadView,
+  patchUpload as patchUploadView,
+  setUnsentReason,
   setUploadRetry,
+  type UnsentReason,
   uploadViewOf as viewOfUpload,
 } from './uploadProgress.svelte';
 import {
@@ -75,8 +91,18 @@ import {
   publishOutboxEntrySent,
   publishOutboxEntryCancelled,
   publishOutboxEntryFailed,
+  publishOutboxEntryRetired,
   subscribeTabOutboxEvents,
+  forwardReelTakeWrite,
+  acknowledgeReelTakeAdoption,
 } from '$lib/mls-client/tabMessageSync';
+import { MessageWrittenError, OutboxEntryWrittenAloneError } from './messageWrittenError';
+import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
+import { mapStoredMessagesToChatMessages } from './messageUtils';
+import { noteServerTime } from './serverClock';
+
+/** How the queue left one message for now - see {@link OutboxController.awaitSettled}. */
+export type OutboxSettlement = 'sent' | 'failed' | 'pending';
 
 /**
  * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
@@ -232,6 +258,19 @@ export class OutboxEnqueueError extends Error {
 }
 
 /**
+ * A chat-reel take names more conversations than ONE take may reach on this client
+ * ({@link REEL_TAKE_MAX_SENDS}, the same on both engines): refused before anything is written. The
+ * sheet never offers more (it caps at the smaller of this and the server's `chatReelMaxTargets`),
+ * so meeting this is a caller's defect, typed so it is never read from a message.
+ */
+export class ReelTakeTooManySendsError extends OutboxEnqueueError {
+  constructor(readonly sends: number) {
+    super(`a chat-reel take for ${sends} conversations (at most ${REEL_TAKE_MAX_SENDS})`);
+    this.name = 'ReelTakeTooManySendsError';
+  }
+}
+
+/**
  * True when an enqueue failed because the device is out of storage (the attachment's blob was
  * refused with `QuotaExceededError`): the one enqueue failure a member can act on, read from the
  * TYPE of the cause chain and never from a message.
@@ -312,7 +351,8 @@ export function deliveryForOutboxEntry(entry: OutboxEntry): FrameDelivery {
  * by the flusher and the native-background mirror so both encode the exact same bytes.
  */
 export function buildOutboxProto(entry: OutboxEntry): Uint8Array | null {
-  if (entry.kind === 'media') return null;
+  // A take (RC-13) is no message at all, and a media message is built only once its file is uploaded.
+  if (entry.kind === 'media' || entry.kind === 'reel-take') return null;
   // Control events (reaction/edit/delete/pin/read-receipt) carry their AppMessage proto verbatim:
   // it was encoded once at enqueue time and is epoch-independent, so it is sent as-is.
   if (entry.kind === 'control') return entry.controlProto ?? null;
@@ -411,6 +451,18 @@ export interface OutboxDeps {
    */
   releaseUpload?: (uploadId: string, why: string) => Promise<void>;
   /**
+   * Places the CHAT HOLD on the file a chat-reel take ADOPTED from the CanaReels publish step
+   * (RC-13, reels-in-chat 15.5; `MediaService.holdChatReel`): `held` makes it the take's file,
+   * `refused` makes the take upload its own, `unanswered` holds the take for a retry. Never rejects.
+   */
+  holdChatReel?: (mediaId: string) => Promise<ChatReelHoldAnswer>;
+  /**
+   * Gives back the chat hold of a take's file (RC-13; `MediaService.releaseChatReel`): no send went,
+   * or the last message that cited it was deleted for everyone. `answered` lets the take row go;
+   * `unanswered` keeps it, owed, and asked again. Never rejects.
+   */
+  releaseChatReel?: (mediaId: string) => Promise<ReleaseAnswer>;
+  /**
    * True when the session is in a state where sending can succeed. Returns false for a session
    * unlocked offline that has no access token yet: the browser can report `online` before the
    * token is reissued, and a flush in that window fails every entry for a reason that has nothing
@@ -482,6 +534,37 @@ export interface OutboxController {
    * (no payload decode), `null` when the queue could not be read - which is NOT "absent".
    */
   hasEntry: (messageId: string) => Promise<boolean | null>;
+  /**
+   * The reason an own attachment was retired unsent, as its STORED row records it
+   * (`StoredMessage.unsentReason`) - the bubble's answer after a reload. `null` when none was
+   * recorded or the row cannot be read.
+   */
+  storedUnsentReason: (messageId: string) => Promise<UnsentReason | null>;
+  /**
+   * Resolves once the queue has SETTLED `messageId` for now: delivered (`sent`), out of the queue
+   * unsent with a failed or withdrawn row the page shows (`failed`), or still queued with no flush
+   * left running that could move it before a retry (`pending`). Decided by events - an attempt's
+   * outcome, the end of the last running flush - and by the queue and the row as they stand, never
+   * by a clock. For a caller that must know a message LEFT, not only that it was queued (the iOS
+   * quick reply holding its process, review of #2843, H1).
+   *
+   * IT ENDS, AND THIS IS WHY (round 4). A waiter is answered by the FIRST of:
+   * - its registration, when the controller is disposed (`pending`), the message is out of the
+   *   queue (read from its row), or nothing is running (`pending` - `releaseUnsettled`);
+   * - an attempt on it (`drainLane` settles with that attempt's outcome);
+   * - the end of whatever was running when it registered. Every thing that can be running answers
+   *   the waiters in a `finally` of its own: a flush (`runFlush`), a lane it started (which can
+   *   outlive it when a sibling lane threw), and the lane an exit claims (`drainForExit`). Each
+   *   calls `releaseUnsettled`, which answers them once NOTHING runs - so the last one to end does;
+   * - `dispose()` (a sign-out, a session swap), which answers every waiter left.
+   * The premise is that a running flush or lane ends, and an explicit deadline bounds it, not the
+   * transport: every POST a lane awaits in `mlsDeliveryApi.ts` (`postApplicationMessage`, the commit)
+   * runs under the `write` head deadline of `requestDeadline.ts` (30 s plus the body's upload time),
+   * whose expiry is a typed `RequestDeadlineError` (surfaced as `DeliveryUnreachableError`), and the
+   * key package round under `raceDeadline`, whose expiry is a `DeliveryDeadlineError`. No lane awaits
+   * a promise only a later flush would resolve.
+   */
+  awaitSettled: (messageId: string) => Promise<OutboxSettlement>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
   /**
@@ -503,6 +586,51 @@ export interface OutboxController {
   applyPendingStatuses: () => Promise<void>;
   /** Stop the internal backoff timer. */
   dispose: () => void;
+  /**
+   * Queues a CHAT-REEL TAKE and its sends (reels-in-chat RC-13, 15.2): the `reel-take` row holding
+   * the file and one `media` row per conversation naming it (`media.takeId`), with each send's
+   * optimistic message - ALL IN ONE TRANSACTION (`IStorage.saveReelTake`), so a kill leaves neither
+   * a take nobody sends nor a send with no take. The take is prepared and uploaded ONCE; each send
+   * goes into its conversation once the file is there, and fails, retries or is withdrawn on its own.
+   *
+   * `awaitsPublish`: the CanaReels publish step of the same press may upload the file first (15.5) -
+   * the take waits for {@link adoptPublishedUpload} or {@link endPublishWait}, in this page life only.
+   *
+   * @throws {OutboxEnqueueError} nothing was written; {@link MessageWrittenError} the rows are on disk.
+   */
+  enqueueTake: (
+    take: OutboxEntry,
+    sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+    opts?: { awaitsPublish?: boolean }
+  ) => Promise<void>;
+  /**
+   * The publish step uploaded the file (15.5, D-onefile): written on the take row BEFORE the post is
+   * created, so the chats keep that file however the post ends. The chat hold is placed by the take
+   * before its first send; until then the raw take is kept, so a refused hold costs an upload, never
+   * the take. A take whose sends are all gone answers nothing - the post keeps its own file.
+   */
+  adoptPublishedUpload: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
+  /** The publish step of `takeId` ended (posted, failed or cancelled): the take stops waiting for it. */
+  endPublishWait: (takeId: string) => void;
+  /**
+   * "Annuler partout": withdraws every send of the take that `sendId` belongs to and is still queued.
+   * The last withdrawal releases the take (its upload session, its file). Returns how many went.
+   */
+  cancelTakeEverywhere: (sendId: string) => Promise<number>;
+  /**
+   * The SENT-TAKE RECORD naming `messageId` (15.7): the take's id and its sends that went and were
+   * not deleted since - what "Supprimer partout" deletes. `null` for a message no take names (any
+   * other message, or a take whose record has expired).
+   */
+  sentTakeOf: (
+    messageId: string
+  ) => Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null>;
+  /**
+   * D-delete-one: the sender deleted `messageId` for everyone. The take's record marks it, and when
+   * no message citing the file is left (none queued, none sent and still standing), the file's chat
+   * hold is released. A message no take names is ignored.
+   */
+  reelSendDeleted: (messageId: string) => Promise<void>;
 }
 
 /**
@@ -518,7 +646,11 @@ type SettledUpload =
 
 /** One attachment's transfer, running OUTSIDE its conversation's lane (WP-OFF-9). */
 interface UploadTask {
-  conversationId: string;
+  /**
+   * The conversations whose lanes wait on this transfer: the attachment's own, or - for a chat-reel
+   * take (RC-13) - every conversation one of its sends is queued for.
+   */
+  conversationIds: string[];
   /** `null` while the transfer runs. */
   settled: SettledUpload | null;
   /**
@@ -577,8 +709,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * failed message could be overtaken by the next one.
    *
    * ONE EXCEPTION, BY DESIGN (WP-OFF-9): an attachment whose UPLOAD runs or is owed does not hold its
-   * successors - only what depends on it. Display order is `sentAt`, so it still sorts at its compose
-   * time on every device; only the wire order changes.
+   * successors - only what depends on it. Display order is the SERVER's acceptance time
+   * (`messageOrder.ts`, owner 2026-10-31), so a text sent after the file and accepted before it is
+   * drawn above it on every device - the author's included: until its send answers, the file sits
+   * below every dated row, and it then takes its `receivedAt`.
    */
   /**
    * Ids whose last attempt failed for want of an ANSWER (a transport failure or a deadline), as
@@ -647,6 +781,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const serverFailed = new Set<string>();
   const lanes = new Map<string, Promise<void>>();
+  /** The callers of {@link OutboxController.awaitSettled}, by message id. */
+  const settleWaiters = new Map<string, Array<(s: OutboxSettlement) => void>>();
+  /** `runFlush` calls in progress, from their first line (before any lane is claimed). */
+  let flushesRunning = 0;
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
   let activeSends = 0;
@@ -735,6 +873,65 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * Reasons: `'cancel'` (the member withdrew it) and `'retry'` (try again now, skip the backoff).
    */
   const uploads = new Map<string, AbortController>();
+
+  /**
+   * THE CHAT-REEL TAKES (RC-13), in memory - every one a VIEW of durable rows, rebuilt from them by
+   * `noteTake` on each flush, never a fact of its own: what a take's liveness reads is the queue.
+   * - `sendsOfTake`: a take's sends still queued, so the take's progress is drawn on every bubble
+   *   that carries its file (`viewIdsOf`);
+   * - `takeOfSend`: the reverse, so a send's Retry reaches its take while the file is not there;
+   * - `takeUploads`: the file a take's upload produced in this page life, with its description;
+   * - `takeWithdrawn`: takes withdrawn in this page life, so a transfer that ends afterwards gives
+   *   its file back instead of handing it on (never pruned: bounded by the takes of one session).
+   */
+  const sendsOfTake = new Map<string, Set<string>>();
+  const takeOfSend = new Map<string, string>();
+  const takeUploads = new Map<string, NonNullable<OutboxEntry['media']>>();
+  const takeWithdrawn = new Set<string>();
+  /**
+   * Takes whose CanaReels publish step is alive in THIS page life (15.5): each waits for it to adopt
+   * the post's upload or to end. In memory ON PURPOSE - after a relaunch nothing will adopt anything,
+   * and the take uploads its own.
+   */
+  const publishing = new Set<string>();
+  /**
+   * Takes whose chat hold on an adopted upload is IN FLIGHT: like a running transfer, it may yet
+   * produce a file, so a withdrawal meanwhile keeps the row (`releasing`) for that file's release.
+   */
+  const adopting = new Set<string>();
+  /**
+   * The `releasing` write of a take withdrawn while its transfer ran, when that write FAILED (L1): the
+   * patch is kept so the take drive writes it again, under the lock, from the row re-read there.
+   */
+  const releasingOwed = new Map<string, Partial<OutboxEntry>>();
+  /**
+   * Publish-step uploads this FOLLOWER tab forwarded to the leader and the leader has not yet
+   * acknowledged (L2). Read when the publish step ends: still here, the leader never took it.
+   */
+  const adoptionsForwarded = new Set<string>();
+  /** The leader kept its take records in this page life (`maintainTakeRecords`, once). */
+  let takeRecordsMaintained = false;
+  /** The one writer per take row at a time: its sends settle, are marked sent or deleted, in turn. */
+  const takeLocks = new Map<string, Promise<void>>();
+  /** A take drive is running; `takesRerun` asks it for one more pass (an event arrived meanwhile). */
+  let takesDriving = false;
+  let takesRerun = false;
+
+  /** The bubbles a progress or a status of `id` is drawn on: a take's live sends, or `id` itself. */
+  function viewIdsOf(id: string): string[] {
+    const sends = sendsOfTake.get(id);
+    return sends ? [...sends] : [id];
+  }
+
+  /** {@link patchUploadView} on every bubble of `id` ({@link viewIdsOf}). */
+  function patchUpload(id: string, patch: Parameters<typeof patchUploadView>[1]): void {
+    for (const view of viewIdsOf(id)) patchUploadView(view, patch);
+  }
+
+  /** {@link clearUploadView} on every bubble of `id` ({@link viewIdsOf}). */
+  function clearUpload(id: string): void {
+    for (const view of viewIdsOf(id)) clearUploadView(view);
+  }
 
   /**
    * Read the queue. A failure here is indistinguishable from an empty queue to every caller, so
@@ -832,6 +1029,30 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       runFlush();
       return;
     }
+    // A FOLLOWER'S WRITE TO A TAKE ROW (RC-13), done here: only the leader writes take rows.
+    if (event.type === 'outbox_reel_send_deleted' || event.type === 'outbox_reel_take_adopt') {
+      if (!getIsTabLeader()) return;
+      log(`[OUTBOX] ${event.type} forwarded by a follower tab - written here`);
+      void (
+        event.type === 'outbox_reel_send_deleted'
+          ? reelSendDeletedHere(event.messageId)
+          : adoptPublishedUploadHere(event.takeId, event.uploaded).then(() =>
+              acknowledgeReelTakeAdoption(event.takeId)
+            )
+      ).catch((e: unknown) =>
+        log(`[OUTBOX] ${event.type} forwarded by a follower tab FAILED: ${String(e)}`)
+      );
+      return;
+    }
+    // THE LEADER TOOK THIS TAB'S FORWARDED ADOPTION (L2): nothing is owed any more.
+    if (event.type === 'outbox_reel_take_adopt_ack') {
+      if (adoptionsForwarded.delete(event.takeId)) {
+        log(
+          `[OUTBOX] take ${event.takeId.slice(0, 8)}… its forwarded adoption was taken by the leader`
+        );
+      }
+      return;
+    }
     // Not leader-gated, and deliberately ahead of the one that is: the tab that must forget a
     // withdrawn entry is whichever one is draining, which is exactly the leader.
     if (event.type === 'outbox_entry_cancelled') {
@@ -846,6 +1067,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (getIsTabLeader()) return;
+    if (event.type === 'outbox_entry_retired') {
+      // ONLY A MESSAGE THIS TAB HOLDS: a reason for any other would sit in the map for the session,
+      // and the row, when it loads, reads its own reason from the store anyway.
+      if (!findMessage(event.messageId)) {
+        log(
+          `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - not held here, nothing to draw`
+        );
+        return;
+      }
+      log(
+        `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - shown failed here`
+      );
+      setUnsentReason(event.messageId, event.reason);
+      patchStatus(event.messageId, 'error');
+      return;
+    }
     if (event.type === 'outbox_entry_failed') {
       log(
         `[OUTBOX] ${event.messageId.slice(0, 8)}… failed on 5xx in the leader tab - shown failed here`
@@ -853,6 +1090,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       showServerFailure(event.messageId, event.serverErrors);
       return;
     }
+    // The server time FIRST, then the status: a row that left the "awaiting its server time" tier
+    // with no time would be placed at its `sentAt` for the length of one render.
+    if (typeof event.receivedAt === 'number')
+      patchServerTimestamp(event.messageId, event.receivedAt);
     patchStatus(event.messageId, 'sent');
     // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
     clearUpload(event.messageId);
@@ -870,22 +1111,134 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return null;
   }
 
-  /** Patch a message's status in the reactive map (in-memory; status is derived, not persisted). */
+  /**
+   * Patch a message's status in the reactive map (in-memory; status is derived, not persisted).
+   *
+   * MOVED, NOT ONLY PATCHED: an own row without a server time is ordered BELOW every dated row while
+   * it is unsent (`awaitsServerTime`), so a status change can change its place (`messageOrder.ts`).
+   */
   function patchStatus(messageId: string, status: ChatMessage['status']): void {
+    // A take (RC-13) is no message: its status is its live sends'.
+    const sends = sendsOfTake.get(messageId);
+    if (sends) {
+      for (const send of sends) patchStatus(send, status);
+      return;
+    }
     const found = findMessage(messageId);
     if (!found) return;
-    const messages = [...found.convo.messages];
-    if (messages[found.idx].status === status) return;
-    messages[found.idx] = { ...messages[found.idx], status };
+    if (found.convo.messages[found.idx].status === status) return;
+    const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
+      ...found.convo.messages[found.idx],
+      status,
+    });
     conversations.set(found.key, { ...found.convo, messages });
   }
 
-  /** Record the server's receive time on a sent message in the reactive map; `persistSent` writes it. */
+  /**
+   * Writes `reason` on the stored row of `messageId` and READS IT BACK. `updateMessage` writes
+   * nothing, and says nothing, for a row that is absent or undecryptable - so "it did not throw" is
+   * not "it is on disk", and only the read-back answers that (re-review of #2874). Every way it can
+   * fail is logged: a reload will then draw the file as never completed.
+   */
+  async function persistUnsentReason(messageId: string, reason: UnsentReason): Promise<void> {
+    const lost = (why: string) =>
+      log(
+        `[OUTBOX] ${messageId.slice(0, 8)}… unsent reason ${reason} NOT persisted (${why}) - a reload will show the file as never completed`
+      );
+    if (!storage) {
+      lost('no storage');
+      return;
+    }
+    try {
+      await storage.updateMessage(messageId, { unsentReason: reason }, deviceKey());
+      const back = await storage.getMessage(messageId, deviceKey());
+      if (!back) lost('its row is absent or undecryptable');
+      else if (back.unsentReason !== reason) lost('the row read back does not carry it');
+    } catch (e) {
+      lost(String(e).slice(0, 120));
+    }
+  }
+
+  /** See {@link OutboxController.storedUnsentReason}. */
+  async function storedUnsentReason(messageId: string): Promise<UnsentReason | null> {
+    if (!storage) return null;
+    try {
+      return (await storage.getMessage(messageId, deviceKey()))?.unsentReason ?? null;
+    } catch (e) {
+      log(
+        `[OUTBOX] storedUnsentReason ${messageId.slice(0, 8)}…: reading the row failed: ${String(e)}`
+      );
+      return null;
+    }
+  }
+
+  /** See {@link OutboxController.hasEntry}. */
+  async function hasEntry(messageId: string): Promise<boolean | null> {
+    if (!storage) return null;
+    try {
+      return (await storage.getOutboxQueue(deviceKey())).some((e) => e.id === messageId);
+    } catch (e) {
+      log(`[OUTBOX] hasEntry ${messageId.slice(0, 8)}…: reading the queue failed: ${String(e)}`);
+      return null;
+    }
+  }
+
+  /** Resolves every caller waiting on `messageId` with `settlement`; a second settle is a no-op. */
+  function settle(messageId: string, settlement: OutboxSettlement): void {
+    const waiters = settleWaiters.get(messageId);
+    if (!waiters) return;
+    settleWaiters.delete(messageId);
+    log(`[OUTBOX] ${messageId.slice(0, 8)}… settled for its waiter(s): ${settlement}`);
+    for (const resolve of waiters) resolve(settlement);
+  }
+
+  /** What one attempt's outcome means to a waiter. */
+  function settlementOf(outcome: FlushOutcome): OutboxSettlement {
+    if (outcome === 'sent') return 'sent';
+    // Out of the queue for good (failed, withdrawn) or parked for the member: a row the page shows.
+    if (outcome === 'error' || outcome === 'gone' || outcome === 'parked') return 'failed';
+    return 'pending';
+  }
+
+  /**
+   * NOTHING LEFT RUNNING CAN MOVE THEM: every waiter still unsettled is answered `pending`. Called
+   * when a flush ends and when a waiter arrives - never on a timer - and a no-op while any flush or
+   * lane still runs, since that one may yet settle them.
+   */
+  function releaseUnsettled(why: string): void {
+    if (flushesRunning > 0 || lanes.size > 0 || settleWaiters.size === 0) return;
+    for (const messageId of settleWaiters.keys()) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… still queued and ${why} - answered pending`);
+      settle(messageId, 'pending');
+    }
+  }
+
+  /** What a message out of the queue became, read from its row: sent, else failed. */
+  function settlementOfRow(messageId: string): OutboxSettlement {
+    const found = findMessage(messageId);
+    const status = found ? found.convo.messages[found.idx].status : undefined;
+    return status === 'pending' || status === 'sending'
+      ? 'pending'
+      : status === 'error' || !found
+        ? 'failed'
+        : 'sent';
+  }
+
+  /**
+   * Record the server's receive time on a sent message in the reactive map; `persistSent` writes it.
+   *
+   * THE ROW TAKES ITS PLACE HERE: until now it sat below every dated row, and from now it is ordered
+   * by this time on every device - above a peer's message the server accepted after it, below one it
+   * accepted before (`messageOrder.ts`, owner 2026-10-31).
+   */
   function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+    noteServerTime(deps.userId, serverTimestamp);
     const found = findMessage(messageId);
     if (!found) return;
-    const messages = [...found.convo.messages];
-    messages[found.idx] = { ...messages[found.idx], serverTimestamp };
+    const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
+      ...found.convo.messages[found.idx],
+      serverTimestamp,
+    });
     conversations.set(found.key, { ...found.convo, messages });
   }
 
@@ -1118,7 +1471,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   /** True while an attachment of `conversationId` is on the wire (or waiting for an upload slot). */
   function hasRunningUpload(conversationId: string): boolean {
     for (const task of uploadTasks.values()) {
-      if (task.conversationId === conversationId && task.settled === null) return true;
+      if (task.settled === null && task.conversationIds.includes(conversationId)) return true;
     }
     return false;
   }
@@ -1138,21 +1491,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * exactly the dispositions it took when the lane awaited the upload itself. A withdrawal is the one
    * outcome settled here: the row is already gone, so no lane pass will ever meet the entry again.
    */
-  function startUpload(queued: OutboxEntry, media: NonNullable<OutboxEntry['media']>): void {
+  function startUpload(
+    queued: OutboxEntry,
+    media: NonNullable<OutboxEntry['media']>,
+    conversationIds: string[] = [queued.conversationId]
+  ): void {
     // THE BYTES TRAVEL IN A HOLDER THE TASK EMPTIES, never in a closure that keeps them for the
     // whole transfer: a raw take replaced by its prepared file must not stay alive beside it (two
     // copies of a 90 s video through a weak-link upload, on a phone). Every closure below lives in
     // `launchUpload`'s scope, which sees the entry WITHOUT its payload.
-    launchUpload({ ...queued, media: undefined }, { media });
+    launchUpload({ ...queued, media: undefined }, { media }, conversationIds);
   }
 
   /** {@link startUpload}'s body, over an entry stripped of its payload (see there). */
   function launchUpload(
     entry: OutboxEntry,
-    payload: { media?: NonNullable<OutboxEntry['media']> }
+    payload: { media?: NonNullable<OutboxEntry['media']> },
+    conversationIds: string[]
   ): void {
+    const isTake = entry.kind === 'reel-take';
     const task: UploadTask = {
-      conversationId: entry.conversationId,
+      conversationIds,
       settled: null,
       sendDue: false,
     };
@@ -1161,9 +1520,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     uploads.set(entry.id, control);
     uploadOwed.add(entry.id);
     log(
-      `[OUTBOX] ${entry.id.slice(0, 8)}… upload started outside the lane of ${entry.conversationId.slice(0, 8)}…`
+      isTake
+        ? `[OUTBOX] take ${entry.id.slice(0, 8)}… upload started for its ${conversationIds.length} send(s)`
+        : `[OUTBOX] ${entry.id.slice(0, 8)}… upload started outside the lane of ${entry.conversationId.slice(0, 8)}…`
     );
-    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, payload, control))
+    void prepareOutsideSlot(entry, payload, control)
+      .then(() =>
+        withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, payload, control))
+      )
       .then(
         // The payload WITHOUT its bytes: nothing keeps a 13 MB file alive once it has left. It is
         // the payload as UPLOADED - a prepared reel's type, size and dimensions, not the raw take's.
@@ -1179,6 +1543,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // Uploaded: from now on its MLS send keeps lane order like any message's.
         if (settled.ok) uploadOwed.delete(entry.id);
         if (disposed) return;
+        // A TAKE'S FILE (RC-13) is what its sends carry: kept here, so a send finds it even when the
+        // row write of its ref failed (that loss costs a second upload only after a kill).
+        if (isTake && settled.ok && !takeWithdrawn.has(entry.id))
+          takeUploads.set(entry.id, settled.media);
         const abortedByCancel =
           !settled.ok &&
           settled.error instanceof UploadAbortedError &&
@@ -1186,12 +1554,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // WITHDRAWN, whether the abort reached the transfer or the withdrawal landed after the body
         // left (during the ref write, with nothing left to abort): the row is gone, no lane pass will
         // meet it again, so the task forgets itself here or never (review of #2061).
-        if (abortedByCancel || cancelled.has(entry.id)) {
+        if (abortedByCancel || cancelled.has(entry.id) || takeWithdrawn.has(entry.id)) {
           uploadTasks.delete(entry.id);
           uploadOwed.delete(entry.id);
           clearUpload(entry.id);
           // A session this transfer opened AFTER the withdrawal released what it knew (its init was
-          // in flight then): released here, the one place that learns of it.
+          // in flight then): released here, the one place that learns of it. A TAKE'S FILE that landed
+          // after its withdrawal is on its `releasing` row (`writeUploadState`): the take drive that
+          // `runFlush` starts below gives it back, durably.
           if (!settled.ok) releaseSessionOf(entry.id, undefined, 'opened during its withdrawal');
           log(
             abortedByCancel
@@ -1203,13 +1573,68 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             `[OUTBOX] ${entry.id.slice(0, 8)}… upload ${settled.ok ? 'ended' : 'failed'} - its lane is woken to ${settled.ok ? 'send the message' : 'classify the failure'}`
           );
         }
-        wakeLane(entry.conversationId);
+        // A take wakes every lane waiting on it, and the flush that classifies its failure (no lane
+        // holds a take): `runFlush` does both, waking a lane that runs and starting one that does not.
+        if (isTake) void runFlush();
+        else wakeLane(entry.conversationId);
       });
   }
 
   /**
+   * A RAW TAKE IS PREPARED BEFORE ITS UPLOAD SLOT IS TAKEN (RC-5, RC-13): its preparation waits for
+   * the encoder lease, which a publish step may hold for a minute, and a slot held through that wait
+   * would stall every other attachment behind an encode that has not even started. A cancel still
+   * reaches the encoder (the same signal). The prepared file replaces the raw take in the holder.
+   */
+  async function prepareOutsideSlot(
+    entry: OutboxEntry,
+    payload: { media?: NonNullable<OutboxEntry['media']> },
+    control: AbortController
+  ): Promise<void> {
+    const raw = payload.media;
+    if (!raw?.prepare) return;
+    try {
+      if (control.signal.aborted) throw new UploadAbortedError(control.signal.reason);
+      patchUpload(entry.id, {
+        phase: 'preparing',
+        loaded: 0,
+        total: 0,
+        attempt: entry.attempts + 1,
+        prepared: 0,
+      });
+      payload.media = undefined;
+      payload.media = await prepareQueued(entry, raw, control.signal);
+    } catch (e) {
+      // `uploadAttachment` never runs, so its `finally` never forgets the transfer: done here.
+      uploads.delete(entry.id);
+      throw e;
+    }
+  }
+
+  /**
+   * The upload task's own writes to its row: its resumable session, then its file's ref. A TAKE'S go
+   * through {@link writeTakeRow} - they still land on a `releasing` take, whose release owes exactly
+   * them (a session to give back, a file to release), and never on a sent record or a deleted row.
+   * Throws what the store throws.
+   */
+  async function writeUploadState(entry: OutboxEntry, patch: Partial<OutboxEntry>): Promise<void> {
+    if (!storage) return;
+    if (entry.kind !== 'reel-take') {
+      await storage.updateOutboxEntry(entry.id, patch, deviceKey());
+      return;
+    }
+    const written = await writeTakeRow(entry.id, (row) =>
+      row.take?.state === 'sent' ? null : patch
+    );
+    if (!written) {
+      log(`[OUTBOX] take ${entry.id.slice(0, 8)}… gone or recorded - its upload state not written`);
+    }
+  }
+
+  /**
    * Uploads a queued attachment and persists its server ref to the row BEFORE returning: a kill
-   * after the upload must never upload the same file again. Runs inside an upload slot.
+   * after the upload must never upload the same file again. Runs inside an upload slot, its raw take
+   * (if any) already prepared by {@link prepareOutsideSlot}.
    */
   async function uploadAttachment(
     entry: OutboxEntry,
@@ -1219,9 +1644,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>;
     media: NonNullable<OutboxEntry['media']>;
   }> {
-    // Taken out of the holder: from here the local is the ONLY reference this task keeps, and it is
-    // replaced by the prepared payload once a raw take is prepared.
-    let media = payload.media!;
+    // Taken out of the holder: from here the local is the ONLY reference this task keeps (a raw take
+    // was prepared before the slot, `prepareOutsideSlot`, and this is its prepared file).
+    const media = payload.media!;
     payload.media = undefined;
     const uploadMedia = deps.uploadMedia;
     let uploaded: MediaRef;
@@ -1239,11 +1664,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         loaded: 0,
         total: 0,
         attempt: entry.attempts + 1,
-        prepared: media.prepare ? 0 : undefined,
       });
-      // A RAW TAKE IS PREPARED HERE, in the upload task (RC-5): its slot is held, a cancel reaches
-      // the encoder, and the prepared file REPLACES the take on disk before a byte leaves.
-      if (media.prepare) media = await prepareQueued(entry, media, control.signal);
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
       // Started after the preparation, which moves no byte and is not a stall.
       let lastMoved = Date.now();
@@ -1271,13 +1692,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             // Known in memory even when the row write below fails, so a withdrawal in this page life
             // still releases it.
             if (state.uploadId) openSessions.set(entry.id, state.uploadId);
-            if (!storage) return;
-            await storage
-              .updateOutboxEntry(
-                entry.id,
-                mediaDescriptionPatch(described, { upload: state }),
-                deviceKey()
-              )
+            await writeUploadState(entry, mediaDescriptionPatch(described, { upload: state }))
               // Not fatal: losing it costs a re-upload after a kill, never a wrong byte (the digest
               // in the state refuses to resume other bytes).
               .catch((e) =>
@@ -1330,14 +1745,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Persist the ref + drop the raw bytes BEFORE sending: a crash after upload must not re-upload.
     // (A resumable reel's session would answer a re-ask from its memo anyway; the ref is what saves
     // even that round trip.)
-    await storage
-      ?.updateOutboxEntry(
-        entry.id,
-        // `fileBytes: undefined` explicitly: a row of the pre-blob format holds its bytes inline,
-        // and the merge would otherwise carry them over.
-        mediaDescriptionPatch(media, { uploadedRef: ref, upload: undefined, fileBytes: undefined }),
-        deviceKey()
-      )
+    await writeUploadState(
+      entry,
+      // `fileBytes: undefined` explicitly: a row of the pre-blob format holds its bytes inline,
+      // and the merge would otherwise carry them over.
+      mediaDescriptionPatch(media, { uploadedRef: ref, upload: undefined, fileBytes: undefined })
+    )
       // Losing this write means a crash before the send re-uploads the same file; the ref is kept
       // in memory by the task, so THIS page life still sends it without a second upload.
       .catch((e) => log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`));
@@ -1402,8 +1815,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       const { blob: _blob, ...withBytes } = next;
       try {
         // The bytes ARE in this patch: the store writes them to the other blob slot, then the row.
-        await storage.updateOutboxEntry(entry.id, { media: withBytes }, deviceKey());
+        if (entry.kind !== 'reel-take') {
+          await storage.updateOutboxEntry(entry.id, { media: withBytes }, deviceKey());
+        } else if (
+          !(await writeTakeRow(entry.id, (row) => (row.take?.state ? null : { media: withBytes })))
+        ) {
+          // WITHDRAWN DURING THE PREPARATION: nothing is uploaded that no send will cite.
+          log(`[OUTBOX] ${id}… its take was withdrawn while it was prepared - not uploaded`);
+          throw new UploadAbortedError('cancel');
+        }
       } catch (e) {
+        if (e instanceof UploadAbortedError) throw e;
         // NEVER UPLOAD BYTES THE ROW DOES NOT NAME: a kill after such an upload would prepare the
         // take again and send a second file under the same message.
         log(`[OUTBOX] ${id}… the prepared file could NOT be stored: ${String(e).slice(0, 160)}`);
@@ -1494,7 +1916,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       | 'too-large'
       | 'refused'
       | 'unpreparable'
-      | 'removed',
+      | 'removed'
+      | 'expired'
+      | 'take-lost'
+      | 'over-budget',
     /** The thread line for `unpreparable`: the preparer's own Paraglide sentence. */
     notice?: string
   ): Promise<FlushOutcome> {
@@ -1510,24 +1935,65 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
     patchStatus(entry.id, 'error');
     clearUpload(entry.id);
+    // AN ATTACHMENT RETIRED FOR THE GROUP'S SAKE SAYS SO IN ITS BUBBLE, not "refused by the server"
+    // (review of #2874, M4): its bytes go with the row below, and the bubble is all that is left.
+    // DURABLE, ON THE MESSAGE ROW, BEFORE THE ENTRY GOES: the in-memory reason serves this tab only
+    // while it lives, and a reload - or a follower tab, which never runs this - drew the orphan's
+    // "never completed" instead (re-review of #2874). The follower is told live as well.
+    const unsentReason: UnsentReason | undefined =
+      entry.kind !== 'media'
+        ? undefined
+        : cause === 'group-deleted'
+          ? 'group-deleted'
+          : cause === 'evicted' || cause === 'evicted-late' || cause === 'removed'
+            ? 'not-a-member'
+            : undefined;
+    if (unsentReason) {
+      setUnsentReason(entry.id, unsentReason);
+      await persistUnsentReason(entry.id, unsentReason);
+      publishOutboxEntryRetired(entry.id, unsentReason);
+    }
+    // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that
+    // deletes an ordinary chat upload (`DELETE /media/:id` is server-to-server), so it is said here,
+    // with its id, and left to the server's retention sweep of its class (review of #2874, L2).
+    const orphanedUpload = entry.kind === 'media' ? entry.media?.uploadedRef?.mediaId : undefined;
+    if (orphanedUpload) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… retired UNSENT after its upload (${cause}): media ${orphanedUpload} stays on the server until its retention sweep`;
+      console.warn(line);
+      log(line);
+    }
     uploadTasks.delete(entry.id);
     uploadOwed.delete(entry.id);
     repairHeld.delete(entry.id);
     // THE ROW GOES, SO ITS SESSION GOES: nothing will resume it. A refusal for good (`too-large`,
     // `refused`) was already released by the uploader that met it.
-    if (cause === 'too-large' || cause === 'refused') openSessions.delete(entry.id);
+    if (cause === 'too-large' || cause === 'refused' || cause === 'over-budget')
+      openSessions.delete(entry.id);
     else releaseSessionOf(entry.id, entry.media?.upload?.uploadId, cause);
     if (entry.kind !== 'control') {
-      if (cause === 'too-large' || cause === 'refused' || cause === 'unpreparable') {
+      if (
+        cause === 'too-large' ||
+        cause === 'refused' ||
+        cause === 'unpreparable' ||
+        cause === 'expired' ||
+        cause === 'take-lost' ||
+        cause === 'over-budget'
+      ) {
         // THE PERMANENT FAILURES THAT ARE ABOUT THE OBJECT, NOT THE GROUP: nothing about the
         // conversation changed, so no banner and no eviction - only a line in the thread that tells
         // the author which message will never go and what to do about it. Best-effort, and logged.
         const line =
           cause === 'too-large'
             ? m.outbox_upload_too_large()
-            : cause === 'unpreparable' && notice
-              ? notice
-              : m.outbox_upload_refused();
+            : cause === 'expired'
+              ? m.outbox_reel_send_expired()
+              : cause === 'take-lost'
+                ? m.outbox_reel_take_lost()
+                : cause === 'over-budget'
+                  ? m.outbox_reel_over_budget()
+                  : cause === 'unpreparable' && notice
+                    ? notice
+                    : m.outbox_upload_refused();
         await deps
           .addMessageToChat?.('system', line, entry.conversationId, { isSystem: true })
           .catch((e: unknown) =>
@@ -1547,6 +2013,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           conversations: deps.conversations,
           groupId: terminalId,
           evidence: cause === 'evicted' ? 'membership-check' : 'outbound-refusal',
+          askRemovedAt: () => mlsService.ownRemovalAt(terminalId),
+          ownerId: deps.userId,
           saveConversation: deps.saveConversation,
           addMessageToChat: deps.addMessageToChat,
           log,
@@ -1566,6 +2034,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       entryKind: entry.kind,
       cause,
     });
+    // A SEND OF A TAKE (RC-13) is gone: the take is settled - kept for its other sends, or released.
+    await settleTakeOfSend(entry, 'a send failed for good');
     return 'error';
   }
 
@@ -1620,7 +2090,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // An attachment still to upload shows that its next attempt is queued (and starts from zero -
     // except a chat reel's resumable session, which resumes at the parts the server lacks).
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
-    if (!opts.quiet && entry.kind === 'media' && !entry.media?.uploadedRef) {
+    if (!opts.quiet && outboxKindHoldsBlob(entry.kind) && !entry.media?.uploadedRef) {
       // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
       // network; a group repair and any other failure each say what they are.
       patchUpload(entry.id, {
@@ -1721,6 +2191,47 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * Draws a text failed on 5xx: status `error`, and the `failed` view that is how the bubble knows a
    * Retry exists for it (`retryUpload` is the one handler). ONE place for the three tabs' paths.
    */
+  /**
+   * Puts a queued message the screen does not hold back on it, read by id from the store.
+   *
+   * A page read holds the newest page only, and an own message still queued is ordered BELOW every
+   * dated row while it is unsent (`awaitsServerTime`) - by its `sentAt` on disk, so one older than a
+   * page was in no page after a reload: the send went on, or stayed failed, invisibly, until it
+   * landed (review of #2824, P2-3). Its conversation must be on screen; one that is not loads it
+   * with its page later, and this runs again then. Status is applied by the caller.
+   */
+  async function restoreQueuedRow(entry: OutboxEntry): Promise<void> {
+    // A control entry (reaction, edit, deletion, read mark) is no message of its own: its id is a
+    // fresh one, never a row, and what it mutates is restored as that row's own entry.
+    if (!storage || entry.kind === 'control') return;
+    const holder = [...conversations].find(([, convo]) => convo.id === entry.conversationId);
+    if (!holder) return;
+    let stored: Awaited<ReturnType<IStorage['getMessage']>>;
+    try {
+      stored = await storage.getMessage(entry.id, deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued row not read back: ${String(e)}`);
+      return;
+    }
+    if (!stored) {
+      console.error(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message - the send has nothing to show`
+      );
+      return;
+    }
+    // Read again after the await: a page or a live echo may have put the row there meanwhile.
+    if (findMessage(entry.id)) return;
+    const [key] = holder;
+    const convo = conversations.get(key);
+    if (!convo) return;
+    const [row] = mapStoredMessagesToChatMessages([stored], deps.userId);
+    conversations.set(key, {
+      ...convo,
+      messages: insertMessageOrdered(convo.messages, { ...row, status: 'pending' }),
+    });
+    log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued, older than the page held - put back on screen`);
+  }
+
   function showServerFailure(messageId: string, serverErrors: number): void {
     patchStatus(messageId, 'error');
     patchUpload(messageId, { phase: 'failed', attempt: serverErrors });
@@ -1769,7 +2280,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     describe?: (attempts: number) => string,
     opts: { transport?: boolean; repair?: boolean; quiet?: boolean } = {}
   ): Promise<FlushOutcome> | FlushOutcome {
-    const local = entry.kind === 'media' && isLocalAttachmentFailure(e);
+    const local = outboxKindHoldsBlob(entry.kind) && isLocalAttachmentFailure(e);
     if (local) {
       const count = (unexpected.get(entry.id) ?? 0) + 1;
       unexpected.set(entry.id, count);
@@ -1922,9 +2433,34 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
       }
     }
+    // A SEND OF A CHAT-REEL TAKE (RC-13) holds no file: it takes its take's once that is uploaded.
+    if (entry.kind === 'media' && entry.media?.takeId && !entry.media.uploadedRef) {
+      const resolved = await resolveTakeSend(entry);
+      if (typeof resolved === 'string') return resolved;
+      entry = resolved;
+    }
     if (entry.kind === 'media' && entry.media && !entry.media.uploadedRef) uploadOwed.add(entry.id);
 
     const terminalId = entry.conversationId;
+    // THE SEAL BARRIER COMES BEFORE THE GATES, FOR AN UPLOADED FILE. The flush's own barrier is an
+    // upload back - minutes on a weak link - and a lane woken by the upload's end does not pass it
+    // again, so commits that arrived meanwhile could still be unapplied: the file would be sealed at
+    // a stale epoch the up-to-date members cannot open (review of #2874, L1). ORDER, NOT A RE-CHECK:
+    // taken after the gates, a drained Remove naming this device (a real eviction, or the Remove half
+    // of a re-admission) was invisible to them, and the send then learnt it by FAILING - the file
+    // lost as `evicted-late`, a false "the Remove commit never reached it", and a permanent removal
+    // notice just before the Welcome. Taken here, the health and membership gates read the drained
+    // state and the send follows them with no await between. Free when the queue is idle, which is
+    // the steady state.
+    if (entry.kind === 'media' && entry.media?.uploadedRef) {
+      await mlsService
+        .waitForMessageQueueIdle('outbox media seal', null)
+        .catch((e) =>
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… incoming-queue barrier before the media seal failed, sealing at a possibly stale epoch: ${String(e)}`
+          )
+        );
+    }
     // Read BEFORE the gate: a ready announcement landing after it finds this entry in no set yet.
     const readySeen = readyAnnouncements.get(terminalId) ?? 0;
     const sendable = deps.isGroupHealthy(terminalId);
@@ -2034,6 +2570,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           startUpload(entry, media);
           return 'uploading';
         }
+        // NO AWAIT FROM THE GATES ABOVE TO THE SEND BELOW: the inbound-queue barrier this entry owes
+        // is taken BEFORE the gates (THE SEAL BARRIER above), so they read the post-drain state.
         const prepared = buildMediaMessage(entry, media, media.uploadedRef);
         proto = prepared.proto;
         mediaContent = prepared.content;
@@ -2096,7 +2634,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         uploadTasks.delete(entry.id);
         uploadOwed.delete(entry.id);
         // The tab that composed this may be a follower, whose own echo is still showing `pending`.
-        publishOutboxEntrySent(entry.id, mediaContent);
+        publishOutboxEntrySent(
+          entry.id,
+          mediaContent,
+          entry.kind !== 'control' ? sent.receivedAt : null
+        );
+        // A SEND OF A TAKE (RC-13) is marked on its take BEFORE its row goes, so the take knows it
+        // went even when this row was its last trace.
+        const takeId = entry.kind === 'media' ? entry.media?.takeId : undefined;
+        if (takeId) await markSendSent(takeId, entry.id);
         // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
         // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
         await storage
@@ -2115,6 +2661,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         latencyMs: Date.now() - entry.sentAt,
       });
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent in ${terminalId.slice(0, 8)}…`);
+      await settleTakeOfSend(entry, 'a send went');
       return 'sent';
     } catch (e) {
       const outcome = await settleFailure(entry, terminalId, e);
@@ -2402,7 +2949,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
   }
 
+  /** {@link runFlushOnce}, counted, so a waiter is answered once nothing running can settle it. */
   async function runFlush(): Promise<void> {
+    flushesRunning++;
+    try {
+      await runFlushOnce();
+    } finally {
+      flushesRunning--;
+      releaseUnsettled('no flush left running');
+    }
+  }
+
+  async function runFlushOnce(): Promise<void> {
     if (!storage) return;
     // LEADERSHIP HAS THREE STATES AND THIS USED TO READ TWO. `getIsTabLeader()` answers false while
     // the election is still running, and the follower branch below took that as "another tab will
@@ -2436,6 +2994,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       requestLeaderOutboxFlush();
       return;
     }
+    // THE TAKE RECORDS ARE THE LEADER'S, kept once per page life at its first flush (L2, L3).
+    if (!takeRecordsMaintained) {
+      takeRecordsMaintained = true;
+      void maintainTakeRecords().catch((e: unknown) =>
+        log(`[OUTBOX] take record maintenance failed: ${String(e)}`)
+      );
+    }
     // A flush needs a session that can actually send. Two different reasons it may not be able to:
     // there is no network at all, or the session was unlocked offline and holds no token yet
     // (promoteOfflineSession calls back here the moment it does). Attempting anyway is not merely
@@ -2452,23 +3017,33 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const queued = await readQueue('flush');
     pruneCancelled(queued);
     if (queued.length === 0) return;
+    // THE TAKES (RC-13) ARE DRIVEN BESIDE THE LANES, never in one: a take belongs to no conversation,
+    // and its sends wait in theirs for the file it makes. Started first, awaited with the lanes.
+    const hasTakes = queued.some((e) => e.kind === 'reel-take');
+    const takesDriven = hasTakes ? driveTakes(queued) : Promise.resolve();
     // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM: two wake-ups landing together must not both start
     // a lane for one conversation, because two lanes would send one entry twice.
     const started: Promise<void>[] = [];
-    for (const conversationId of new Set(queued.map((e) => e.conversationId))) {
+    const laneQueue = queued.filter((e) => e.kind !== 'reel-take');
+    for (const conversationId of new Set(laneQueue.map((e) => e.conversationId))) {
       if (lanes.has(conversationId)) {
         laneRerun.add(conversationId);
         // A lane waiting for its uploads must look at what was just queued behind them.
         laneWake.get(conversationId)?.();
         continue;
       }
-      const lane = drainLane(conversationId).finally(() => lanes.delete(conversationId));
+      const lane = drainLane(conversationId).finally(() => {
+        lanes.delete(conversationId);
+        // A lane may outlive the flush that started it (a sibling lane threw first, and
+        // `Promise.all` rejected): its own end answers the waiters too.
+        releaseUnsettled('a lane ended');
+      });
       lanes.set(conversationId, lane);
       started.push(lane);
     }
-    if (started.length === 0) return;
+    if (started.length === 0 && !hasTakes) return;
     try {
-      await Promise.all(started);
+      await Promise.all([...started, takesDriven]);
       // Re-read for backoff scheduling (statuses/attempts changed during the lanes).
       const remaining = await readQueue('backoff scheduling');
       if (remaining.length > 0) {
@@ -2544,6 +3119,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           continue;
         }
         const outcome = await withSendSlot(() => flushOne(entry));
+        settle(entry.id, settlementOf(outcome));
         // An attachment whose upload runs or is owed is unsent like a parked one: a reply quoting it
         // waits, an independent text goes (WP-OFF-9).
         if (outcome === 'parked' || outcome === 'uploading') heldBack.add(entry.id);
@@ -2689,6 +3265,834 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       );
   }
 
+  // ── Chat-reel takes (RC-13, reels-in-chat 15.2) ─────────────────────────────────────────────
+  //
+  // A TAKE IS ONE FILE FOR N CONVERSATIONS. Its `reel-take` row holds the file (raw, then prepared,
+  // then only its ref) and names its sends, FIXED at the press; each send is a `media` row of its
+  // conversation naming the take (`media.takeId`) and holding no bytes. The take is prepared and
+  // uploaded ONCE, outside every lane (it belongs to none), and each send goes into its conversation
+  // through its own lane once the file is there - failing, retrying and withdrawn on its own.
+  //
+  // THE TAKE LIVES WHILE ONE OF ITS SENDS IS QUEUED, READ FROM THE ROWS - never a counter. When the
+  // last send row goes (sent, failed for good, withdrawn), `settleTake` reads which went: if one did,
+  // the take becomes the small SENT-TAKE RECORD (kept to the expiry, for "Supprimer partout"); if none
+  // did, the take is withdrawn and its file given back.
+
+  /** The sends of `take` still queued and not yet marked sent - its liveness, read from the rows. */
+  function liveSendsOf(take: OutboxEntry, present: Set<string>): OutboxReelTakeSend[] {
+    return (take.take?.sends ?? []).filter((s) => !s.sent && present.has(s.id));
+  }
+
+  /** Rebuilds the in-memory views of `take` from its row and the queue (see `sendsOfTake`). */
+  function noteTake(take: OutboxEntry, present: Set<string>): void {
+    // A TAKE WITHDRAWN IN THIS PAGE LIFE is never re-noted from an older snapshot: its views went
+    // with it (`forgetTake`), and putting its sends back would draw a transfer that will not happen.
+    if (takeWithdrawn.has(take.id)) return;
+    const live = new Set(liveSendsOf(take, present).map((s) => s.id));
+    sendsOfTake.set(take.id, live);
+    for (const id of live) takeOfSend.set(id, take.id);
+  }
+
+  /** Forgets every in-memory view of a take that settled (a record, or withdrawn). */
+  function forgetTake(takeId: string): void {
+    for (const id of sendsOfTake.get(takeId) ?? []) takeOfSend.delete(id);
+    sendsOfTake.delete(takeId);
+    takeUploads.delete(takeId);
+    publishing.delete(takeId);
+  }
+
+  /** Runs `fn` as the one writer of take row `takeId` (its sends settle, are marked, in turn). */
+  async function withTakeLock<T>(takeId: string, fn: () => Promise<T>): Promise<T> {
+    const before = takeLocks.get(takeId) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chained = before.then(() => mine);
+    takeLocks.set(takeId, chained);
+    await before;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (takeLocks.get(takeId) === chained) takeLocks.delete(takeId);
+    }
+  }
+
+  /**
+   * The queue, or `null` when it cannot be read. A take's fate is decided on what is queued, and an
+   * unreadable queue is NOT an empty one - `readQueue` answers `[]` there, which here would withdraw
+   * a take whose sends are all still waiting.
+   */
+  async function queueOrNull(where: string): Promise<OutboxEntry[] | null> {
+    if (!storage) return null;
+    try {
+      return await storage.getOutboxQueue(deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] ${where}: the queue could not be read, nothing decided: ${String(e)}`);
+      return null;
+    }
+  }
+
+  /** A take row WITHOUT its file, `null` when absent. Throws when it cannot be read. */
+  async function readTake(takeId: string): Promise<OutboxEntry | null> {
+    if (!storage) return null;
+    const row = await storage.getOutboxEntry(takeId, deviceKey(), { withFile: false });
+    return row?.kind === 'reel-take' ? row : null;
+  }
+
+  /**
+   * WRITES A TAKE ROW from a path that is not a settle - its preparation, its upload session, its
+   * file, its adopted upload - under the take's lock and from the row RE-READ there: a write that was
+   * in flight when the take was withdrawn never puts back a row the withdrawal deleted (the store's
+   * merge is conditional on the row too), nor overwrites the `releasing` state it wrote. `decide`
+   * sees the row and returns the patch, or `null` to write nothing. Answers whether it wrote; throws
+   * what the store throws.
+   */
+  async function writeTakeRow(
+    takeId: string,
+    decide: (row: OutboxEntry) => Partial<OutboxEntry> | null
+  ): Promise<boolean> {
+    return withTakeLock(takeId, async () => {
+      const row = await readTake(takeId);
+      const patch = row ? decide(row) : null;
+      if (!patch || !storage) return false;
+      await storage.updateOutboxEntry(takeId, patch, deviceKey());
+      return true;
+    });
+  }
+
+  /**
+   * Whether THIS tab writes take rows (RC-13): the leader only. The lock that orders a take's writes
+   * (`withTakeLock`) lives in one tab's memory and the rows are shared (IndexedDB), so a follower
+   * writing a take would overwrite a `sent` mark the leader just made - it forwards instead
+   * (`forwardReelTakeWrite`). Waits out an undecided election; the app (one webview) is its own leader.
+   */
+  async function writesTakesHere(): Promise<boolean> {
+    return (await whenTabLeadershipDecided()) === 'leader';
+  }
+
+  /**
+   * A send of a take left the queue (sent, failed for good, withdrawn): its take is settled. `queue`
+   * finds the take of a send this page life never met (a light entry carries no `takeId`).
+   */
+  async function settleTakeOfSend(
+    entry: OutboxEntry,
+    why: string,
+    queue?: OutboxEntry[]
+  ): Promise<void> {
+    if (entry.kind !== 'media') return;
+    const takeId =
+      entry.media?.takeId ??
+      takeOfSend.get(entry.id) ??
+      queue?.find((e) => e.kind === 'reel-take' && e.take?.sends.some((s) => s.id === entry.id))
+        ?.id;
+    if (!takeId) return;
+    takeOfSend.delete(entry.id);
+    sendsOfTake.get(takeId)?.delete(entry.id);
+    if (!(await writesTakesHere())) {
+      // A FOLLOWER (a withdrawal pressed here) never settles a take: the leader's take drive does,
+      // from the rows - asked now rather than at its next flush.
+      log(`[OUTBOX] take ${takeId.slice(0, 8)}… ${why} - settled by the leader tab`);
+      requestLeaderOutboxFlush();
+      return;
+    }
+    // NEVER THROWS INTO ITS CALLER: a send that went must not be classified as a failure because
+    // its take could not be settled - the next drive settles it from the rows.
+    await settleTake(takeId, why).catch((e: unknown) =>
+      log(`[OUTBOX] take ${takeId.slice(0, 8)}… not settled (${why}): ${String(e)}`)
+    );
+  }
+
+  /**
+   * Decides a take whose send just went, from its ROW and the QUEUE: a send still queued keeps it;
+   * otherwise it becomes the sent-take record when a send went and still stands, and is withdrawn
+   * (its file given back) when none does. Under the take's lock, so two sends ending together are
+   * read one after the other and only the last decides.
+   */
+  async function settleTake(takeId: string, why: string): Promise<void> {
+    const short = takeId.slice(0, 8);
+    await withTakeLock(takeId, async () => {
+      let take: OutboxEntry | null;
+      try {
+        take = await readTake(takeId);
+      } catch (e) {
+        log(`[OUTBOX] take ${short}… unreadable when its send ended (${why}): ${String(e)}`);
+        return;
+      }
+      if (!take?.take || take.take.state) return;
+      const queue = await queueOrNull(`take ${short}… settle`);
+      if (!queue) return;
+      const live = liveSendsOf(take, new Set(queue.map((e) => e.id)));
+      if (live.length > 0) {
+        log(`[OUTBOX] take ${short}… ${why} - ${live.length} send(s) still queued, the take stays`);
+        return;
+      }
+      const standing = take.take.sends.filter((s) => s.sent && !s.deleted);
+      if (standing.length > 0) {
+        await storage
+          ?.updateOutboxEntry(
+            takeId,
+            // OUT OF THE QUEUE: a record is no queued work, so no flush reads, drives or counts it.
+            { conversationId: REEL_TAKE_RECORDS, take: { sends: take.take.sends, state: 'sent' } },
+            deviceKey()
+          )
+          .catch((e: unknown) =>
+            log(`[OUTBOX] take ${short}… its sent record NOT written: ${String(e)}`)
+          );
+        forgetTake(takeId);
+        log(
+          `[OUTBOX] take ${short}… ${why} - every send settled, ${standing.length} of ${take.take.sends.length} went; kept as its sent record`
+        );
+        return;
+      }
+      await withdrawTake(take, `${why}, and no send of it went`);
+    });
+  }
+
+  /**
+   * Withdraws a take no send names any more: its transfer aborted, its upload session released, and
+   * its file given back through a DURABLE `releasing` state, the row deleted only once the server
+   * answered. A transfer or a chat hold STILL UNDER WAY may yet produce a file: the row is kept
+   * `releasing` for it, that file is written onto it when it lands (`writeUploadState`,
+   * `holdAdopted`), and the take drive releases it - or deletes the row when none came. Under the
+   * take's lock.
+   */
+  async function withdrawTake(take: OutboxEntry, why: string): Promise<void> {
+    const id = take.id;
+    const short = id.slice(0, 8);
+    takeWithdrawn.add(id);
+    for (const set of [parked, uploadOwed, resuming, transportHeld] as Set<string>[])
+      set.delete(id);
+    noAnswer.delete(id);
+    bestLoaded.delete(id);
+    unexpected.delete(id);
+    uploads.get(id)?.abort('cancel');
+    if (uploadTasks.get(id)?.settled) uploadTasks.delete(id);
+    releaseSessionOf(id, take.media?.upload?.uploadId, 'its take was withdrawn');
+    const ref = take.media?.uploadedRef ?? takeUploads.get(id)?.uploadedRef;
+    const underWay = uploadTasks.get(id)?.settled === null || adopting.has(id);
+    clearUpload(id);
+    forgetTake(id);
+    if (!ref && !underWay) {
+      await storage
+        ?.deleteOutboxEntry(id)
+        .catch((e: unknown) => log(`[OUTBOX] take ${short}… NOT deleted: ${String(e)}`));
+      log(`[OUTBOX] take ${short}… withdrawn (${why}) - it held no uploaded file`);
+      return;
+    }
+    const patch: Partial<OutboxEntry> = {
+      // BACK IN THE QUEUE when it was a sent record: the release is queued work, driven and retried.
+      conversationId: REEL_TAKE_QUEUE,
+      take: { sends: take.take?.sends ?? [], state: 'releasing' },
+      // A FILE KNOWN IN MEMORY ONLY (its ref write failed) is written with the state: the release
+      // it owes must outlive a kill.
+      ...(ref && take.media && !take.media.uploadedRef
+        ? mediaDescriptionPatch(take.media, {
+            uploadedRef: ref,
+            upload: undefined,
+            fileBytes: undefined,
+          })
+        : {}),
+    };
+    const recorded = await storage
+      ?.updateOutboxEntry(id, patch, deviceKey())
+      .then(() => true)
+      .catch((e: unknown) => {
+        // OWED, NEVER DROPPED (L1): the drive meets this take in its no-state form and writes the
+        // state again (`writeReleasingOwed`); a relaunch would otherwise be the only way back.
+        console.warn(`[OUTBOX] take ${short}… its release NOT recorded, owed: ${String(e)}`);
+        log(`[OUTBOX] take ${short}… its release NOT recorded, owed: ${String(e)}`);
+        releasingOwed.set(id, patch);
+        return false;
+      });
+    if (recorded === false) {
+      void runFlush();
+      return;
+    }
+    if (!ref) {
+      log(
+        `[OUTBOX] take ${short}… withdrawn (${why}) - its transfer is still under way; what it produces is released`
+      );
+      // DRIVEN ONCE THE STATE IS ON DISK: a transfer that ended while it was written (its own drive
+      // read the row before the state) is released by this drive; one still running is waited for
+      // by it, and its end drives the takes again - after this write, so it reads `releasing`.
+      void runFlush();
+      return;
+    }
+    log(`[OUTBOX] take ${short}… withdrawn (${why}) - its file ${ref.mediaId} is released`);
+    await releaseTakeFile({ ...take, ...patch } as OutboxEntry, ref.mediaId);
+  }
+
+  /**
+   * Writes a take's owed `releasing` state again (L1), under its lock and from its row re-read there:
+   * a row already `releasing` or gone owes nothing more. Written, the takes are driven again, which
+   * releases it (or waits for its transfer, whose end drives them again).
+   */
+  async function writeReleasingOwed(id: string): Promise<void> {
+    const short = id.slice(0, 8);
+    const patch = releasingOwed.get(id);
+    if (!patch) return;
+    try {
+      const written = await writeTakeRow(id, (row) => (row.take?.state ? null : patch));
+      releasingOwed.delete(id);
+      log(`[OUTBOX] take ${short}… its owed release ${written ? 'recorded' : 'no longer owed'}`);
+      if (written) takesRerun = true;
+    } catch (e) {
+      log(`[OUTBOX] take ${short}… its owed release still NOT recorded: ${String(e)}`);
+    }
+  }
+
+  /**
+   * Gives back the chat hold of a take's file (`deps.releaseChatReel`) and deletes the row once the
+   * server ANSWERED; an unanswered release keeps the `releasing` row on the ladder, asked again.
+   * Under the take's lock, from a row read there.
+   */
+  async function releaseTakeFile(take: OutboxEntry, mediaId: string): Promise<void> {
+    const short = take.id.slice(0, 8);
+    if (!deps.releaseChatReel) {
+      log(`[OUTBOX] take ${short}… file ${mediaId} left to the server's sweep - no releaser`);
+    } else if ((await deps.releaseChatReel(mediaId)) !== 'answered') {
+      await holdForRetry(
+        take,
+        (attempts) =>
+          `[OUTBOX] take ${short}… the release of ${mediaId} got no answer (attempt ${attempts}) - still owed`,
+        { transport: true, quiet: true }
+      );
+      return;
+    }
+    await storage
+      ?.deleteOutboxEntry(take.id)
+      .catch((e: unknown) =>
+        log(`[OUTBOX] take ${short}… released, row NOT deleted: ${String(e)}`)
+      );
+  }
+
+  /**
+   * A `releasing` take, driven: under its lock and from its row RE-READ there (a drive over an older
+   * snapshot must never ask a second release, nor delete twice), its file is released; with no file,
+   * the session its row names is given back - unless this page life withdrew it and so already did -
+   * and the row deleted. A transfer or a chat hold still under way is waited for: its end drives the
+   * takes again.
+   */
+  async function driveReleasing(id: string): Promise<void> {
+    const short = id.slice(0, 8);
+    if (uploadTasks.get(id)?.settled === null || adopting.has(id)) return;
+    await withTakeLock(id, async () => {
+      let row: OutboxEntry | null;
+      try {
+        row = await readTake(id);
+      } catch (e) {
+        log(`[OUTBOX] take ${short}… releasing, its row unreadable - asked again: ${String(e)}`);
+        return;
+      }
+      if (row?.take?.state !== 'releasing') return;
+      const ref = row.media?.uploadedRef;
+      if (ref) {
+        await releaseTakeFile(row, ref.mediaId);
+        return;
+      }
+      if (!takeWithdrawn.has(id)) {
+        releaseSessionOf(
+          id,
+          row.media?.upload?.uploadId,
+          'its take was withdrawn before a restart'
+        );
+      }
+      await storage
+        ?.deleteOutboxEntry(id)
+        .catch((e: unknown) =>
+          log(`[OUTBOX] take ${short}… with no file, NOT deleted: ${String(e)}`)
+        );
+      log(`[OUTBOX] take ${short}… withdrawn - no file came of it, row deleted`);
+    });
+  }
+
+  /**
+   * Marks send `sendId` as SENT on its take, BEFORE its row is deleted: the take then knows it went
+   * even when the row is the last trace. Losing this write costs a second send of the same message
+   * after a kill (deduplicated by id), never a lost one - so it is logged, not thrown.
+   */
+  async function markSendSent(takeId: string, sendId: string): Promise<void> {
+    await withTakeLock(takeId, async () => {
+      try {
+        const take = await readTake(takeId);
+        if (!take?.take) return;
+        const sends = take.take.sends.map((s) =>
+          s.id === sendId ? { ...s, sent: true as const } : s
+        );
+        await storage?.updateOutboxEntry(takeId, { take: { ...take.take, sends } }, deviceKey());
+      } catch (e) {
+        log(
+          `[OUTBOX] take ${takeId.slice(0, 8)}… send ${sendId.slice(0, 8)}… NOT marked sent: ${String(e)}`
+        );
+      }
+    });
+  }
+
+  /** Drives every take of `queue` (see {@link driveTake}); one drive at a time, re-run on request. */
+  async function driveTakes(queue: OutboxEntry[]): Promise<void> {
+    if (takesDriving) {
+      takesRerun = true;
+      return;
+    }
+    takesDriving = true;
+    try {
+      let snapshot: OutboxEntry[] | null = queue;
+      do {
+        takesRerun = false;
+        const present = new Set(snapshot.map((e) => e.id));
+        for (const take of snapshot.filter((e) => e.kind === 'reel-take')) {
+          if (disposed) return;
+          await driveTake(take, snapshot, present).catch((e: unknown) =>
+            log(`[OUTBOX] take ${take.id.slice(0, 8)}… drive failed: ${String(e)}`)
+          );
+        }
+        snapshot = takesRerun && !disposed ? await queueOrNull('takes, again') : null;
+      } while (snapshot);
+    } finally {
+      takesDriving = false;
+    }
+  }
+
+  /**
+   * Moves one take along: a record is kept to its expiry, a `releasing` take asks its release again,
+   * a take no send names is settled, and a take whose file is not there yet ADOPTS the publish
+   * step's upload (15.5) or prepares and uploads its own - once, outside every lane.
+   */
+  async function driveTake(
+    take: OutboxEntry,
+    queue: OutboxEntry[],
+    present: Set<string>
+  ): Promise<void> {
+    const id = take.id;
+    const short = id.slice(0, 8);
+    const state = take.take?.state;
+    if (!take.take) {
+      console.error(`[OUTBOX] take ${short}… has no sends recorded - a malformed row, left as is`);
+      return;
+    }
+    const resumed = resuming.delete(id);
+    if (!resumed && take.nextAttemptAt && take.nextAttemptAt > Date.now()) return;
+    if (state === 'releasing') {
+      await driveReleasing(id);
+      return;
+    }
+    // WITHDRAWN IN THIS PAGE LIFE: nothing is left to move - but a `releasing` write that failed is
+    // written again here (L1), so the take is driven to its release in this page life.
+    if (takeWithdrawn.has(id)) {
+      if (releasingOwed.has(id)) await writeReleasingOwed(id);
+      return;
+    }
+    noteTake(take, present);
+    if (liveSendsOf(take, present).length === 0) {
+      await settleTake(id, 'no queued send names it');
+      return;
+    }
+    if (take.media?.uploadedRef || takeUploads.has(id)) return;
+    const task = uploadTasks.get(id);
+    if (task && task.settled === null) return;
+    if (task?.settled && !task.settled.ok) {
+      uploadTasks.delete(id);
+      await settleTakeFailure(take, queue, task.settled.error);
+      return;
+    }
+    const adopted = take.media?.adoptedRef;
+    if (!adopted && take.take.awaitsPublish && publishing.has(id)) {
+      log(`[OUTBOX] take ${short}… waits for its publish step's upload`);
+      return;
+    }
+    if (resumed) {
+      noAnswer.delete(id);
+      bestLoaded.delete(id);
+      unexpected.delete(id);
+    } else if (parked.has(id)) return;
+    parked.delete(id);
+    if (adopted) {
+      await holdAdopted(take, adopted, queue);
+      return;
+    }
+    let full: OutboxEntry | null;
+    try {
+      full = (await storage?.getOutboxEntry(id, deviceKey())) ?? null;
+    } catch (e) {
+      if (e instanceof OutboxPayloadUnreadableError) {
+        parkAsError(take, `its file is no longer readable on this device (${String(e.cause)})`);
+        return;
+      }
+      await countedHold(take, new LocalAttachmentError('the take could not be read', e));
+      return;
+    }
+    if (!full?.media) return;
+    if (!full.media.fileBytes?.length) {
+      parkAsError(take, 'its row holds no file');
+      return;
+    }
+    // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM: one file is never on the wire twice, and a take
+    // withdrawn while its row was read above never starts one (the withdrawal is synchronous).
+    if (uploadTasks.get(id)?.settled === null || takeUploads.has(id)) return;
+    if (takeWithdrawn.has(id) || disposed || full.take?.state) return;
+    startUpload(
+      full,
+      full.media,
+      take.take.sends.map((s) => s.conversationId)
+    );
+  }
+
+  /**
+   * Classifies a failed upload of a TAKE through the dispositions an attachment's upload takes - but
+   * a refusal for good fails EACH send still queued for good (its sentence in each thread), and the
+   * last one withdraws the take.
+   */
+  async function settleTakeFailure(
+    take: OutboxEntry,
+    queue: OutboxEntry[],
+    e: unknown
+  ): Promise<void> {
+    const id = take.id;
+    const short = id.slice(0, 8);
+    if (e instanceof UploadAbortedError) {
+      if (e.reason === 'retry') {
+        log(`[OUTBOX] take ${short}… upload restarted on request`);
+        resuming.add(id);
+        takesRerun = true;
+      }
+      return;
+    }
+    const refusal = uploadRefusalCause(e);
+    if (refusal === 'blocked' || e instanceof UploadGaveUpError) {
+      const line = `[OUTBOX] take ${short}… upload ${refusal === 'blocked' ? 'BLOCKED by the gateway' : `FAILED: no answer on ${(e as UploadGaveUpError).attempts} attempts`} (${String(e).slice(0, 120)}) - parked for a manual retry, take kept`;
+      console.error(line);
+      log(line);
+      parked.add(id);
+      transportHeld.delete(id);
+      patchStatus(id, 'pending');
+      patchUpload(id, { phase: refusal === 'blocked' ? 'blocked' : 'failed' });
+      return;
+    }
+    if (e instanceof OutboxPrepareError) {
+      parkAsError(take, `${e.message} (${String(e.cause).slice(0, 120)})`);
+      return;
+    }
+    if (e instanceof OutboxPrepareRefusedError || refusal) {
+      await failTakeSends(
+        take,
+        queue,
+        e instanceof OutboxPrepareRefusedError ? 'unpreparable' : refusal!,
+        String(e).slice(0, 120),
+        e instanceof OutboxPrepareRefusedError ? e.notice : undefined
+      );
+      return;
+    }
+    await countedHold(take, e, undefined, { transport: isTransportFailure(e) });
+  }
+
+  /**
+   * A VERDICT ON THE TAKE'S FILE (a refusal for good, today's budget spent): each send still queued
+   * fails for good, its sentence in its own thread, and the last one withdraws the take - the ONE
+   * disposition both the take's upload and its chat hold reach.
+   */
+  async function failTakeSends(
+    take: OutboxEntry,
+    queue: OutboxEntry[],
+    cause: 'too-large' | 'refused' | 'unpreparable' | 'over-budget',
+    detail: string,
+    notice?: string
+  ): Promise<void> {
+    const sendIds = new Set(liveSendsOf(take, new Set(queue.map((q) => q.id))).map((s) => s.id));
+    const sends = queue.filter((q) => sendIds.has(q.id));
+    const line = `[OUTBOX] take ${take.id.slice(0, 8)}… ${cause} (${detail}) - each of its ${sends.length} queued send(s) fails for good`;
+    console.error(line);
+    log(line);
+    for (const send of sends) await failPermanently(send, send.conversationId, cause, notice);
+  }
+
+  /**
+   * Places the chat hold on the publish step's upload the take adopted (15.5): held, it becomes the
+   * take's file and the raw take is let go; refused, the take forgets it and uploads its own; over
+   * today's budget, each queued send fails for good; no answer, the take waits on the ladder and asks
+   * again. The hold is IN FLIGHT for a withdrawal (`adopting`): a file held after it is written onto
+   * the `releasing` row, which then gives it back.
+   */
+  async function holdAdopted(
+    take: OutboxEntry,
+    adopted: OutboxAdoptedUpload,
+    queue: OutboxEntry[]
+  ): Promise<void> {
+    adopting.add(take.id);
+    try {
+      await holdAdoptedFile(take, adopted, queue);
+    } finally {
+      adopting.delete(take.id);
+      // Withdrawn meanwhile: its `releasing` row waited for this hold - driven again now.
+      if (takeWithdrawn.has(take.id)) takesRerun = true;
+    }
+  }
+
+  /** {@link holdAdopted}'s body, the hold marked in flight. */
+  async function holdAdoptedFile(
+    take: OutboxEntry,
+    adopted: OutboxAdoptedUpload,
+    queue: OutboxEntry[]
+  ): Promise<void> {
+    const id = take.id;
+    const short = id.slice(0, 8);
+    if (!deps.holdChatReel) log(`[OUTBOX] take ${short}… no chat-hold placer - it uploads its own`);
+    const answer: ChatReelHoldAnswer = deps.holdChatReel
+      ? await deps.holdChatReel(adopted.mediaId)
+      : 'refused';
+    if (answer === 'unanswered') {
+      await holdForRetry(
+        take,
+        (attempts) =>
+          `[OUTBOX] take ${short}… the chat hold on ${adopted.mediaId} got no answer (attempt ${attempts})`,
+        { transport: true }
+      );
+      return;
+    }
+    if (answer === 'over-budget') {
+      if (takeWithdrawn.has(id)) return;
+      await failTakeSends(take, queue, 'over-budget', `the chat hold on ${adopted.mediaId}`);
+      return;
+    }
+    if (answer === 'refused') {
+      console.warn(
+        `[OUTBOX] take ${short}… the chat hold on the published file ${adopted.mediaId} was REFUSED - the take uploads its own`
+      );
+      await writeTakeRow(id, (row) =>
+        row.take?.state || !row.media
+          ? null
+          : mediaDescriptionPatch(row.media, { adoptedRef: undefined })
+      ).catch((e: unknown) =>
+        log(`[OUTBOX] take ${short}… the refused adoption NOT forgotten: ${String(e)}`)
+      );
+      takesRerun = true;
+      return;
+    }
+    const { mimeType, size, fileName, width, height, durationMs, ...ref } = adopted;
+    const media: NonNullable<OutboxEntry['media']> = {
+      ...take.media!,
+      mimeType,
+      size,
+      fileName,
+      width,
+      height,
+      durationMs,
+      uploadedRef: ref,
+      adoptedRef: undefined,
+      prepare: undefined,
+      upload: undefined,
+      fileBytes: undefined,
+    };
+    // THE RAW TAKE GOES WITH THIS WRITE (the row now names an uploaded file, `outboxBlobReleased`).
+    // It lands on a `releasing` row too: the hold placed is then the file its release gives back.
+    await writeTakeRow(id, (row) =>
+      row.take?.state === 'sent' ? null : mediaDescriptionPatch(media, {})
+    ).catch((e: unknown) =>
+      log(`[OUTBOX] take ${short}… the held file NOT recorded (kept in memory): ${String(e)}`)
+    );
+    if (takeWithdrawn.has(id)) {
+      log(`[OUTBOX] take ${short}… held ${ref.mediaId} after its withdrawal - released with it`);
+      return;
+    }
+    takeUploads.set(id, media);
+    uploadOwed.delete(id);
+    clearUpload(id);
+    log(`[OUTBOX] take ${short}… adopted the published file ${ref.mediaId}, chat hold placed`);
+    for (const send of take.take?.sends ?? []) wakeLane(send.conversationId);
+  }
+
+  /**
+   * A SEND of a take (RC-13), its payload read: expired sends fail for good; one whose take holds
+   * its file gets that file as its own (`uploadedRef` and the file's description); one whose take is
+   * still making it waits ('uploading'), holding only what depends on it.
+   */
+  async function resolveTakeSend(entry: OutboxEntry): Promise<OutboxEntry | FlushOutcome> {
+    const media = entry.media!;
+    const takeId = media.takeId!;
+    if (!takeWithdrawn.has(takeId)) {
+      takeOfSend.set(entry.id, takeId);
+      if (!sendsOfTake.has(takeId)) sendsOfTake.set(takeId, new Set());
+      sendsOfTake.get(takeId)!.add(entry.id);
+    }
+    if (media.expiresAtMs !== undefined && media.expiresAtMs <= Date.now()) {
+      return failPermanently(entry, entry.conversationId, 'expired');
+    }
+    let file = takeUploads.get(takeId);
+    if (!file) {
+      let take: OutboxEntry | null;
+      try {
+        take = await readTake(takeId);
+      } catch (e) {
+        return countedHold(
+          entry,
+          new LocalAttachmentError('its take could not be read', e),
+          undefined,
+          {
+            quiet: true,
+          }
+        );
+      }
+      // A TAKE BEING RELEASED hands its file to nobody: that file is on its way back to the server.
+      if (!take || take.take?.state === 'releasing') {
+        return failPermanently(entry, entry.conversationId, 'take-lost');
+      }
+      if (take.media?.uploadedRef) file = take.media;
+    }
+    if (!file?.uploadedRef) {
+      uploadOwed.add(entry.id);
+      return 'uploading';
+    }
+    return {
+      ...entry,
+      media: {
+        ...media,
+        mimeType: file.mimeType,
+        size: file.size,
+        fileName: file.fileName,
+        width: file.width,
+        height: file.height,
+        ...(file.durationMs ? { durationMs: file.durationMs } : {}),
+        uploadedRef: file.uploadedRef,
+      },
+    };
+  }
+
+  /**
+   * The take naming send `messageId` (RC-13): its SENT-TAKE RECORD (an expired one is no record), or
+   * a take still queued. `null` when none does, or when the takes cannot be read - said.
+   */
+  async function takeNaming(messageId: string, why: string): Promise<OutboxEntry | null> {
+    if (!storage) return null;
+    let records: OutboxEntry[];
+    try {
+      records = await storage.getReelTakeRecords(deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] ${why}: the sent-take records could not be read: ${String(e)}`);
+      return null;
+    }
+    const now = Date.now();
+    const names = (e: OutboxEntry): boolean =>
+      e.kind === 'reel-take' && (e.take?.sends.some((s) => s.id === messageId) ?? false);
+    const record = records.find(names);
+    if (record) {
+      const until = record.media?.expiresAtMs;
+      return until !== undefined && until <= now ? null : record;
+    }
+    return (await readQueue(why)).find(names) ?? null;
+  }
+
+  /**
+   * Once per page life, at the LEADER's first flush (L3: never in a follower): the SENT-TAKE RECORDS are kept in step with what the
+   * device holds. A record past its expiry is deleted; a send it still counts as standing whose
+   * message is TOMBSTONED on this device (deleted for everyone, `isDeleted` on the stored message) is
+   * marked deleted - so a deletion pressed in a follower tab whose forwarded event no leader received
+   * (L2) is re-derived here, from durable state, and the last one releases the file. Each record under
+   * its take's lock; best effort, and every failure logged.
+   */
+  async function maintainTakeRecords(): Promise<void> {
+    if (!storage) return;
+    let records: OutboxEntry[];
+    try {
+      records = await storage.getReelTakeRecords(deviceKey());
+    } catch (e) {
+      log(`[OUTBOX] take records unreadable, not maintained: ${String(e)}`);
+      return;
+    }
+    const now = Date.now();
+    let expired = 0;
+    let rederived = 0;
+    for (const record of records) {
+      const until = record.media?.expiresAtMs;
+      try {
+        if (until !== undefined && until <= now) {
+          await withTakeLock(record.id, async () => {
+            const row = await readTake(record.id);
+            if (row?.take?.state === 'sent') await storage.deleteOutboxEntry(record.id);
+          });
+          expired++;
+          continue;
+        }
+        for (const send of record.take?.sends ?? []) {
+          if (!send.sent || send.deleted) continue;
+          const message = await storage.getMessage(send.id, deviceKey());
+          if (!message?.isDeleted) continue;
+          await reelSendDeletedHere(send.id);
+          rederived++;
+        }
+      } catch (e) {
+        log(`[OUTBOX] take record ${record.id.slice(0, 8)}… not maintained: ${String(e)}`);
+      }
+    }
+    if (expired > 0) log(`[OUTBOX] ${expired} expired take record(s) swept`);
+    if (rederived > 0) {
+      log(`[OUTBOX] ${rederived} reel deletion(s) re-derived from their tombstones`);
+    }
+  }
+
+  /**
+   * The publish step's upload, written on its take (15.5) - THE LEADER'S half of
+   * {@link OutboxController.adoptPublishedUpload}, a follower's forwarded here.
+   */
+  async function adoptPublishedUploadHere(
+    takeId: string,
+    uploaded: PublishedReelUpload
+  ): Promise<void> {
+    const short = takeId.slice(0, 8);
+    const { ref, durationMs } = uploaded;
+    const adopted: OutboxAdoptedUpload = {
+      mediaId: ref.mediaId,
+      key: ref.key,
+      iv: ref.iv,
+      ...(ref.encoding ? { encoding: ref.encoding } : {}),
+      mimeType: ref.mimeType,
+      size: ref.size,
+      ...(ref.fileName ? { fileName: ref.fileName } : {}),
+      ...(ref.width ? { width: ref.width } : {}),
+      ...(ref.height ? { height: ref.height } : {}),
+      durationMs,
+    };
+    const written = await writeTakeRow(takeId, (take) => {
+      if (!take.take || take.take.state || takeWithdrawn.has(takeId)) {
+        log(`[OUTBOX] take ${short}… gone before the publish step's upload - the post keeps it`);
+        return null;
+      }
+      if (take.media?.uploadedRef || takeUploads.has(takeId)) {
+        log(`[OUTBOX] take ${short}… already holds its own file - the post keeps its upload`);
+        return null;
+      }
+      return take.media ? mediaDescriptionPatch(take.media, { adoptedRef: adopted }) : null;
+    });
+    if (written) log(`[OUTBOX] take ${short}… adopts the published file ${ref.mediaId}`);
+    runFlush();
+  }
+
+  /**
+   * D-delete-one, THE LEADER'S half of {@link OutboxController.reelSendDeleted} (a follower's is
+   * forwarded here): the take's record marks the send deleted, and when no message citing the file
+   * is left, the file is released.
+   */
+  async function reelSendDeletedHere(messageId: string): Promise<void> {
+    const take = await takeNaming(messageId, 'reel deleted');
+    if (!take) return;
+    const short = take.id.slice(0, 8);
+    await withTakeLock(take.id, async () => {
+      const row = await readTake(take.id);
+      if (!row?.take || row.take.state === 'releasing') return;
+      const sends = row.take.sends.map((s) =>
+        s.id === messageId ? { ...s, deleted: true as const } : s
+      );
+      const marked: OutboxEntry = { ...row, take: { ...row.take, sends } };
+      // A TAKE STILL SENDING keeps its file for the sends still queued; it settles when they do.
+      if (row.take.state !== 'sent' || sends.some((s) => s.sent && !s.deleted)) {
+        await storage?.updateOutboxEntry(take.id, { take: marked.take }, deviceKey());
+        log(`[OUTBOX] take ${short}… send ${messageId.slice(0, 8)}… deleted for everyone`);
+        return;
+      }
+      await withdrawTake(marked, 'its last standing message was deleted for everyone');
+    });
+  }
+
   /**
    * The upload session id a queued row records, read WITHOUT its file (a withdrawal must not decrypt
    * a 90 s video to learn an id). `undefined` for a row with none, or one that cannot be read - said.
@@ -2732,7 +4136,26 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     snapshot?: OutboxEntry[]
   ): Promise<{ withdrawn: boolean; rowDeleted: boolean }> {
     if (!storage) return { withdrawn: false, rowDeleted: false };
-    const queued = (snapshot ?? (await readQueue('cancel'))).find((e) => e.id === messageId);
+    const queue = snapshot ?? (await readQueue('cancel'));
+    const result = await withdrawRow(messageId, reason, queue, snapshot !== undefined);
+    // A SEND OF A TAKE (RC-13) withdrawn: its take is settled - kept for its other sends, or released
+    // when this was the last (a cancel of the only send gives back the session and the file).
+    const queued = queue.find((e) => e.id === messageId);
+    if (result.rowDeleted && queued) {
+      await settleTakeOfSend(queued, `a send was withdrawn (${reason})`, queue);
+    }
+    return result;
+  }
+
+  /** {@link withdraw}'s body over the queue it read: the row, the snapshots, the mirror, the session. */
+  async function withdrawRow(
+    messageId: string,
+    reason: Exclude<WithdrawReason, 'other-tab'>,
+    queue: OutboxEntry[],
+    snapshotGiven: boolean
+  ): Promise<{ withdrawn: boolean; rowDeleted: boolean }> {
+    if (!storage) return { withdrawn: false, rowDeleted: false };
+    const queued = queue.find((e) => e.id === messageId);
     if (!queued) return { withdrawn: false, rowDeleted: false };
     const onWireAtStart = inFlight.has(messageId);
     // A 5xx IS NOT PROOF THAT NOTHING WAS STORED: a gateway may answer 502 after the delivery service
@@ -2775,7 +4198,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (getTabLeadership() === 'follower') cancelled.delete(messageId);
     // The mirror is the native background sender's own copy of the queue: leaving the entry in it
     // sends the message from Android after it was withdrawn here.
-    if (rowDeleted && !snapshot) await refreshMirror();
+    if (rowDeleted && !snapshotGiven) await refreshMirror();
     // The row is gone, so nothing will resume its session: give it back now. A transfer still
     // running is aborted below and keeps it no longer (an abort never releases by itself).
     if (rowDeleted) releaseSessionOf(messageId, sessionInRow, 'withdrawn');
@@ -2845,100 +4268,121 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // nothing would ever send it.
       if (!storage) {
         log(`[OUTBOX] Enqueue refused for ${entry.id.slice(0, 8)}…: no storage layer`);
-        throw new OutboxEnqueueError('no storage layer');
+        const refused = new OutboxEnqueueError('no storage layer');
+        // A row the caller already wrote beside its echo EXISTS: saying "nothing was written" would
+        // have it withdrawn and given back for a second send (review of #2874, L5).
+        throw opts.alreadyDurable ? new MessageWrittenError(entry.id, refused) : refused;
       }
-      // A GROUP THIS DEVICE IS LEAVING OR DELETING TAKES NOTHING NEW, read from the DURABLE owed
-      // exit (`pendingGroupExits`), which is written before the exit acts and outlives a reload. A
-      // frame queued from here on could only be refused once the membership ends - this is what
-      // closes the late read-mark writers (the debounce cleanup, the owed-mark drain) without a
-      // clock. RESOLVES, not rejects: the owed-mark ledger then drops the mark, which is the point,
-      // and there is no member-visible send to fail - the conversation is already retired.
-      // A read that fails proves nothing, so the entry is queued as before and the line says so.
-      if (await owedExitRefuses(entry, 'not queued')) {
-        // A send path that wrote the row beside its echo has ALREADY queued it: the row goes too,
-        // or the next flush would post it into the refusal this gate exists to prevent.
-        if (opts.alreadyDurable) await withdraw(entry.id, 'exit');
-        return;
-      }
-      let superseded: OutboxEntry[] = [];
-      // ONE READ OF THE QUEUE PER LATEST-WINS ENQUEUE: it decides the supersede, settles each
-      // withdrawal and rewrites the mirror. Reading it per step decrypted the whole queue 2 + 2n
-      // times for one read receipt (review of #1887).
-      let snapshot: OutboxEntry[] | null = null;
-      if (opts.latestWins) {
-        snapshot = await readQueue('supersede');
-        const found = supersededBy(entry, opts.latestWins, snapshot);
-        if (found === 'covered') {
-          log(
-            `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) not queued: an unsent entry for ${entry.conversationId.slice(0, 8)}… already carries ${opts.latestWins.value} or more`
-          );
+      // CLASSIFIED AT THE THROW (review of #2843, M1): a failure once the row is on disk - written
+      // here, or beside its echo by the caller (`alreadyDurable`) - is about a message that EXISTS
+      // and that this queue will send, so it is a `MessageWrittenError`, and nobody sends it again.
+      // A refusal before that point (`OutboxEnqueueError`) wrote nothing.
+      let durable = opts.alreadyDurable === true;
+      try {
+        // A GROUP THIS DEVICE IS LEAVING OR DELETING TAKES NOTHING NEW, read from the DURABLE owed
+        // exit (`pendingGroupExits`), which is written before the exit acts and outlives a reload. A
+        // frame queued from here on could only be refused once the membership ends - this is what
+        // closes the late read-mark writers (the debounce cleanup, the owed-mark drain) without a
+        // clock. RESOLVES, not rejects: the owed-mark ledger then drops the mark, which is the point,
+        // and there is no member-visible send to fail - the conversation is already retired.
+        // A read that fails proves nothing, so the entry is queued as before and the line says so.
+        if (await owedExitRefuses(entry, 'not queued')) {
+          // A send path that wrote the row beside its echo has ALREADY queued it: the row goes too,
+          // or the next flush would post it into the refusal this gate exists to prevent.
+          if (opts.alreadyDurable) await withdraw(entry.id, 'exit');
           return;
         }
-        superseded = found;
-      }
-      // The first trace of a message on this device: without it there is no way to tell a send that
-      // never reached the queue from one the queue accepted and lost.
-      log(
-        `[OUTBOX] Queued ${entry.id.slice(0, 8)}… (${entry.kind}) for ${entry.conversationId.slice(0, 8)}…`
-      );
-      // Already on disk beside its message when the send path wrote the pair atomically. Repeating
-      // the put would be idempotent but not free: a second encryption on the hot path, and a second
-      // way to fail AFTER the fact is durable - which is the state this argument exists to make
-      // impossible to reach.
-      if (!opts.alreadyDurable) {
-        try {
-          const writeFrom = Date.now();
-          await storage.saveOutboxEntry(entry, deviceKey());
-          log(
-            `[OUTBOX] ${entry.id.slice(0, 8)}… durable write took ${Date.now() - writeFrom} ms (${entry.media?.fileBytes?.length ?? 0} file bytes)`
-          );
-        } catch (e) {
-          log(`[OUTBOX] Enqueue failed for ${entry.id.slice(0, 8)}…: ${String(e)}`);
-          throw new OutboxEnqueueError('the durable write failed', e);
+        let superseded: OutboxEntry[] = [];
+        // ONE READ OF THE QUEUE PER LATEST-WINS ENQUEUE: it decides the supersede, settles each
+        // withdrawal and rewrites the mirror. Reading it per step decrypted the whole queue 2 + 2n
+        // times for one read receipt (review of #1887).
+        let snapshot: OutboxEntry[] | null = null;
+        if (opts.latestWins) {
+          snapshot = await readQueue('supersede');
+          const found = supersededBy(entry, opts.latestWins, snapshot);
+          if (found === 'covered') {
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) not queued: an unsent entry for ${entry.conversationId.slice(0, 8)}… already carries ${opts.latestWins.value} or more`
+            );
+            return;
+          }
+          superseded = found;
         }
-      }
-      // AND ASKED AGAIN ONCE THE ROW IS ON DISK. An exit recorded while this write ran may already
-      // have taken its last look at the queue, and would never see this row; so the writer looks
-      // instead. Whichever comes second sees the other, so no row of an exited group outlives both.
-      if (await owedExitRefuses(entry, 'withdrawn right after its write')) {
-        await withdraw(entry.id, 'exit');
-        return;
-      }
-      // WITHDRAWN ONLY NOW, AFTER THE NEW ROW IS ON DISK: a crash between the two leaves both rows,
-      // which send in order and merge as `max` - one spare frame. The other order loses both.
-      if (snapshot) {
-        const gone = new Set<string>();
-        for (const old of superseded) {
-          const { withdrawn, rowDeleted } = await withdraw(old.id, 'superseded', snapshot);
-          if (rowDeleted) gone.add(old.id);
-          log(
-            !rowDeleted
-              ? `[OUTBOX] ${old.id.slice(0, 8)}… NOT superseded: its row could not be deleted, so both go - the newer one after it`
-              : withdrawn
-                ? `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… before this tab sent it (a leader tab may already be sending it; the newer one follows)`
-                : `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… while on the wire here - not retried, the newer one follows it`
-          );
-        }
-        await syncOutboxMirror(
-          [...snapshot.filter((e) => !gone.has(e.id)), entry].sort(
-            (a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id)
-          )
+        // The first trace of a message on this device: without it there is no way to tell a send that
+        // never reached the queue from one the queue accepted and lost.
+        log(
+          `[OUTBOX] Queued ${entry.id.slice(0, 8)}… (${entry.kind}) for ${entry.conversationId.slice(0, 8)}…`
         );
-      } else {
-        await refreshMirror();
+        // Already on disk beside its message when the send path wrote the pair atomically. Repeating
+        // the put would be idempotent but not free: a second encryption on the hot path, and a second
+        // way to fail AFTER the fact is durable - which is the state this argument exists to make
+        // impossible to reach.
+        if (!opts.alreadyDurable) {
+          try {
+            const writeFrom = Date.now();
+            await storage.saveOutboxEntry(entry, deviceKey());
+            durable = true;
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… durable write took ${Date.now() - writeFrom} ms (${entry.media?.fileBytes?.length ?? 0} file bytes)`
+            );
+          } catch (e) {
+            log(`[OUTBOX] Enqueue failed for ${entry.id.slice(0, 8)}…: ${String(e)}`);
+            throw new OutboxEnqueueError('the durable write failed', e);
+          }
+        }
+        // AND ASKED AGAIN ONCE THE ROW IS ON DISK. An exit recorded while this write ran may already
+        // have taken its last look at the queue, and would never see this row; so the writer looks
+        // instead. Whichever comes second sees the other, so no row of an exited group outlives both.
+        if (await owedExitRefuses(entry, 'withdrawn right after its write')) {
+          await withdraw(entry.id, 'exit');
+          return;
+        }
+        // WITHDRAWN ONLY NOW, AFTER THE NEW ROW IS ON DISK: a crash between the two leaves both rows,
+        // which send in order and merge as `max` - one spare frame. The other order loses both.
+        if (snapshot) {
+          const gone = new Set<string>();
+          for (const old of superseded) {
+            const { withdrawn, rowDeleted } = await withdraw(old.id, 'superseded', snapshot);
+            if (rowDeleted) gone.add(old.id);
+            log(
+              !rowDeleted
+                ? `[OUTBOX] ${old.id.slice(0, 8)}… NOT superseded: its row could not be deleted, so both go - the newer one after it`
+                : withdrawn
+                  ? `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… before this tab sent it (a leader tab may already be sending it; the newer one follows)`
+                  : `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… while on the wire here - not retried, the newer one follows it`
+            );
+          }
+          await syncOutboxMirror(
+            [...snapshot.filter((e) => !gone.has(e.id)), entry].sort(
+              (a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id)
+            )
+          );
+        } else {
+          await refreshMirror();
+        }
+        runFlush();
+      } catch (e) {
+        if (durable && !(e instanceof MessageWrittenError))
+          throw new MessageWrittenError(entry.id, e);
+        throw e;
       }
-      runFlush();
     },
 
-    async hasEntry(messageId: string): Promise<boolean | null> {
-      if (!storage) return null;
-      try {
-        return (await storage.getOutboxQueue(deviceKey())).some((e) => e.id === messageId);
-      } catch (e) {
-        log(`[OUTBOX] hasEntry ${messageId.slice(0, 8)}…: reading the queue failed: ${String(e)}`);
-        return null;
-      }
+    async awaitSettled(messageId: string): Promise<OutboxSettlement> {
+      if (disposed) return 'pending';
+      const settled = new Promise<OutboxSettlement>((resolve) => {
+        settleWaiters.set(messageId, [...(settleWaiters.get(messageId) ?? []), resolve]);
+      });
+      // REGISTERED FIRST, THEN THE FACTS: an attempt that ends from here on settles the waiter, and
+      // one that ended before left its trace in the queue and the row, read now.
+      const queued = await hasEntry(messageId);
+      if (queued === false) settle(messageId, settlementOfRow(messageId));
+      else releaseUnsettled('no flush is running');
+      return settled;
     },
+
+    hasEntry,
+    storedUnsentReason,
 
     async cancelPending(messageId: string): Promise<boolean> {
       return (await withdraw(messageId, 'user')).withdrawn;
@@ -3000,6 +4444,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         } finally {
           lanes.delete(conversationId);
           release();
+          // The exit's lane was the last thing that could settle a waiter: answer them now.
+          releaseUnsettled('the exit drain ended');
         }
       } finally {
         exiting.delete(conversationId);
@@ -3029,7 +4475,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return runFlush();
     },
 
-    retryUpload(messageId: string): void {
+    retryUpload(bubbleId: string): void {
+      // A SEND WHOSE TAKE HAS NO FILE YET (RC-13) retries the TAKE: that is what is failing, and the
+      // one transfer every send of it waits on. Once the file is there, the send retries itself.
+      const takeId = takeOfSend.get(bubbleId);
+      const messageId = takeId && !takeUploads.has(takeId) ? takeId : bubbleId;
+      if (messageId !== bubbleId) {
+        log(
+          `[OUTBOX] ${bubbleId.slice(0, 8)}… retry: its take ${messageId.slice(0, 8)}… is retried`
+        );
+      }
       // Still waiting for an upload slot: nothing has left, so there is nothing to restart, and
       // aborting would only send it to the back of the queue (review of #2061). Answered BEFORE any
       // arming: a `resuming` mark left here would outlive this attempt and let a later failure of
@@ -3059,7 +4514,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     async applyPendingStatuses(): Promise<void> {
       if (!storage) return;
       const entries = await readQueue('pending statuses');
+      const present = new Set(entries.map((e) => e.id));
       for (const entry of entries) {
+        // A take (RC-13) is no message: its sends are, and its views are rebuilt for them.
+        if (entry.kind === 'reel-take') {
+          if (!entry.take?.state) noteTake(entry, present);
+          continue;
+        }
+        if (!findMessage(entry.id)) await restoreQueuedRow(entry);
         const found = findMessage(entry.id);
         // A text failed on 5xx stays FAILED across a reload: its durable count says so.
         if (found && isServerFailureTerminal(entry)) {
@@ -3071,6 +4533,131 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           patchStatus(entry.id, 'pending');
         }
       }
+    },
+
+    async enqueueTake(
+      take: OutboxEntry,
+      sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+      opts: { awaitsPublish?: boolean } = {}
+    ): Promise<void> {
+      const short = take.id.slice(0, 8);
+      if (!storage) {
+        log(`[OUTBOX] take ${short}… refused: no storage layer`);
+        throw new OutboxEnqueueError('no storage layer');
+      }
+      // THE TAKE NAMES EXACTLY ITS SENDS AND EACH SEND NAMES IT: one fact written from both ends, or
+      // a liveness read from the rows would be wrong from the first flush.
+      const named = new Set(take.take?.sends.map((s) => s.id));
+      if (
+        take.kind !== 'reel-take' ||
+        !take.media?.fileBytes?.length ||
+        sends.length === 0 ||
+        named.size !== sends.length ||
+        sends.some((s) => s.entry.media?.takeId !== take.id || !named.has(s.entry.id))
+      ) {
+        console.error(`[OUTBOX] take ${short}… refused: its sends and its rows do not match`);
+        throw new OutboxEnqueueError('a take whose sends do not match it');
+      }
+      if (sends.length > REEL_TAKE_MAX_SENDS) {
+        console.error(
+          `[OUTBOX] take ${short}… refused: ${sends.length} sends, at most ${REEL_TAKE_MAX_SENDS}`
+        );
+        throw new ReelTakeTooManySendsError(sends.length);
+      }
+      // THE PUBLISH STEP IS WAITED FOR ONLY IN THE TAB THAT DRIVES THE TAKE. Composed in a follower,
+      // the leader uploads the take's own file: a wait on another tab's publish step would hang on a
+      // tab that may close, and no message tells the leader it did. The publish step's upload is
+      // still forwarded, and adopted if it lands before the leader's own transfer starts.
+      const awaitsPublish = opts.awaitsPublish === true && (await writesTakesHere());
+      if (opts.awaitsPublish && !awaitsPublish) {
+        log(`[OUTBOX] take ${short}… composed in a follower tab - the leader uploads its own file`);
+      }
+      if (awaitsPublish) publishing.add(take.id);
+      const row: OutboxEntry = {
+        ...take,
+        take: { sends: take.take!.sends, ...(awaitsPublish ? { awaitsPublish: true } : {}) },
+      };
+      try {
+        const writeFrom = Date.now();
+        await storage.saveReelTake(row, sends, deviceKey());
+        log(
+          `[OUTBOX] Queued take ${short}… (${take.media.fileBytes.length} bytes) for ${sends.length} conversation(s) in ${Date.now() - writeFrom} ms${awaitsPublish ? ', awaiting its publish step' : ''}`
+        );
+      } catch (e) {
+        if (e instanceof OutboxEntryWrittenAloneError) {
+          // THE ROWS ARE ON DISK, their messages are not: the queue owns them and sends them.
+          runFlush();
+          throw new MessageWrittenError(take.id, e);
+        }
+        publishing.delete(take.id);
+        log(`[OUTBOX] take ${short}… NOT queued: ${String(e)}`);
+        throw new OutboxEnqueueError('the durable write failed', e);
+      }
+      try {
+        noteTake(row, new Set(sends.map((s) => s.entry.id)));
+        // A GROUP THIS DEVICE IS LEAVING TAKES NOTHING NEW, asked once the rows are on disk (as for
+        // `enqueue`): such a send is withdrawn, and its take settled with it.
+        for (const { entry } of sends) {
+          if (await owedExitRefuses(entry, 'withdrawn right after its write')) {
+            await withdraw(entry.id, 'exit');
+          }
+        }
+        await refreshMirror();
+        runFlush();
+      } catch (e) {
+        throw new MessageWrittenError(take.id, e);
+      }
+    },
+
+    async adoptPublishedUpload(takeId: string, uploaded: PublishedReelUpload): Promise<void> {
+      if (await writesTakesHere()) return adoptPublishedUploadHere(takeId, uploaded);
+      log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish upload forwarded to the leader tab`);
+      adoptionsForwarded.add(takeId);
+      forwardReelTakeWrite({ type: 'outbox_reel_take_adopt', takeId, uploaded });
+    },
+
+    endPublishWait(takeId: string): void {
+      // AN ADOPTION THIS FOLLOWER FORWARDED, NOT TAKEN by the end of its publish step (L2): no leader
+      // received it. Said with its cost - the take uploads its own file, a second upload - and read
+      // at an EVENT (the publish step's end, which RC-12 owes in a `finally`), never a clock.
+      if (adoptionsForwarded.delete(takeId)) {
+        const line = `[OUTBOX] take ${takeId.slice(0, 8)}… its forwarded publish upload was NOT taken by a leader tab before the publish step ended - the take uploads its own file (a second upload)`;
+        console.warn(line);
+        log(line);
+      }
+      if (!publishing.delete(takeId)) return;
+      log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish step ended`);
+      runFlush();
+    },
+
+    async cancelTakeEverywhere(sendId: string): Promise<number> {
+      const queue = await readQueue('cancel everywhere');
+      const take = queue.find(
+        (e) => e.kind === 'reel-take' && e.take?.sends.some((s) => s.id === sendId)
+      );
+      if (!take) return 0;
+      let withdrawn = 0;
+      for (const send of liveSendsOf(take, new Set(queue.map((e) => e.id)))) {
+        if ((await withdraw(send.id, 'user')).rowDeleted) withdrawn++;
+      }
+      log(
+        `[OUTBOX] take ${take.id.slice(0, 8)}… cancelled everywhere: ${withdrawn} send(s) withdrawn`
+      );
+      return withdrawn;
+    },
+
+    async sentTakeOf(
+      messageId: string
+    ): Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null> {
+      const take = await takeNaming(messageId, 'sent take');
+      if (!take?.take) return null;
+      return { takeId: take.id, sends: take.take.sends.filter((s) => s.sent && !s.deleted) };
+    },
+
+    async reelSendDeleted(messageId: string): Promise<void> {
+      if (await writesTakesHere()) return reelSendDeletedHere(messageId);
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… deleted for everyone - forwarded to the leader tab`);
+      forwardReelTakeWrite({ type: 'outbox_reel_send_deleted', messageId });
     },
 
     dispose(): void {
@@ -3087,6 +4674,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       unsubscribeReconnect();
       if (typeof window !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisible);
+      }
+      // NOTHING OF THIS CONTROLLER WILL SETTLE ANYTHING AGAIN (a sign-out, a session swap): every
+      // waiter is answered now. Still queued, the row waits for the next session's queue.
+      for (const messageId of settleWaiters.keys()) {
+        log(`[OUTBOX] ${messageId.slice(0, 8)}… still queued at dispose - answered pending`);
+        settle(messageId, 'pending');
       }
     },
   };
@@ -3211,9 +4804,21 @@ export function resumeOutboxGroup(conversationId: string): void {
 /** Enqueue a message on the active controller. Rejects with {@link OutboxEnqueueError} when it cannot. */
 export function enqueueOutboxMessage(entry: OutboxEntry, opts?: EnqueueOptions): Promise<void> {
   if (!active) {
-    return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+    const refused = new OutboxEnqueueError('no active outbox controller');
+    // A row the caller already wrote beside its echo EXISTS, and the next session's queue sends it.
+    return Promise.reject(
+      opts?.alreadyDurable ? new MessageWrittenError(entry.id, refused) : refused
+    );
   }
   return active.enqueue(entry, opts);
+}
+
+/**
+ * {@link OutboxController.awaitSettled} on the active controller; `pending` with none - the row,
+ * if written, waits for the next session's queue.
+ */
+export function awaitOutboxSettled(messageId: string): Promise<OutboxSettlement> {
+  return active ? active.awaitSettled(messageId) : Promise.resolve('pending');
 }
 
 /**
@@ -3222,6 +4827,11 @@ export function enqueueOutboxMessage(entry: OutboxEntry, opts?: EnqueueOptions):
  */
 export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> {
   return active ? active.hasEntry(messageId) : Promise.resolve(null);
+}
+
+/** {@link OutboxController.storedUnsentReason} on the active controller; `null` with none. */
+export function storedUnsentReasonOf(messageId: string): Promise<UnsentReason | null> {
+  return active ? active.storedUnsentReason(messageId) : Promise.resolve(null);
 }
 
 /**
@@ -3252,4 +4862,56 @@ export function drainOutboxForExit(
 /** Mark loaded messages still queued as `pending` (no-op when none). */
 export function applyOutboxPendingStatuses(): Promise<void> {
   return active ? active.applyPendingStatuses() : Promise.resolve();
+}
+
+/**
+ * Queue a chat-reel take and its sends on the active controller (RC-13) - see
+ * {@link OutboxController.enqueueTake}. Rejects with {@link OutboxEnqueueError} when there is none.
+ */
+export function enqueueOutboxTake(
+  take: OutboxEntry,
+  sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+  opts?: { awaitsPublish?: boolean }
+): Promise<void> {
+  if (!active) return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+  return active.enqueueTake(take, sends, opts).finally(bumpOutboxQueueVersion);
+}
+
+/**
+ * The publish step's upload, adopted by take `takeId` (15.5) - see
+ * {@link OutboxController.adoptPublishedUpload}. Rejects when there is no controller: the publish
+ * step logs it, and the take uploads its own at the next sign-in.
+ */
+export function adoptOutboxPublishedUpload(
+  takeId: string,
+  uploaded: PublishedReelUpload
+): Promise<void> {
+  if (!active) return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+  return active.adoptPublishedUpload(takeId, uploaded);
+}
+
+/** The publish step of take `takeId` ended - see {@link OutboxController.endPublishWait}. */
+export function endOutboxPublishWait(takeId: string): void {
+  active?.endPublishWait(takeId);
+}
+
+/** "Annuler partout" on the active controller (0 with none) - see {@link OutboxController.cancelTakeEverywhere}. */
+export function cancelOutboxTakeEverywhere(sendId: string): Promise<number> {
+  if (!active) return Promise.resolve(0);
+  return active.cancelTakeEverywhere(sendId).finally(bumpOutboxQueueVersion);
+}
+
+/** The sent-take record naming `messageId` (`null` with no controller) - see {@link OutboxController.sentTakeOf}. */
+export function sentOutboxTakeOf(
+  messageId: string
+): Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null> {
+  return active ? active.sentTakeOf(messageId) : Promise.resolve(null);
+}
+
+/**
+ * D-delete-one on the active controller - see {@link OutboxController.reelSendDeleted}. With no
+ * controller the record stays as it is: the file is then kept to its retention, never lost early.
+ */
+export function outboxReelSendDeleted(messageId: string): Promise<void> {
+  return active ? active.reelSendDeleted(messageId) : Promise.resolve();
 }

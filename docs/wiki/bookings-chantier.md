@@ -83,12 +83,13 @@ see who else booked.
 | D44 | One visible level (user, 2026-10-23) | A space has ONE hidden default column; an **"Ajouter une colonne"** action reveals the columns level. Supersedes the visible space/resource split of D10 **in the UI only**: the data model is unchanged. |
 | D45 | Poster (2026-10-23) | Shown as a **banner on the space page** and a **thumbnail in the spaces list**. |
 | D46 | Desktop main view (2026-10-23) | **Days as columns, like the agenda week**; a column selector when there are several columns; the duration is chosen by click-drag. |
-| D47 | "Prochains creneaux" (2026-10-23) | **Removed.** Supersedes D14's planning. |
-| D48 | Phone view (2026-10-23) | **One day at a time, with a week strip.** |
+| D47 | "Prochains creneaux" (2026-10-23) | **Removed.** Supersedes D14's planning. **Partly reversed on phones, 2026-11-01 (D55): a planning list is back there, as the week, not as "next free slots".** |
+| D48 | Phone view (2026-10-23) | **One day at a time, with a week strip.** **Superseded on phones, 2026-11-01 (D55): the strip stays, the one-day grid is replaced by a planning list.** |
 | D49 | Availability editing (2026-10-23) | A **visual week to paint**, with start templates: Toujours ouvert, Jours ouvres 8h-20h, Evenement ponctuel, Vide. |
 | D50 | Organiser dashboard (2026-10-23) | Upcoming bookings, who booked, quick cancel; **blocking a slot by dragging on the grid**. |
 | D51 | Settings (2026-10-23) | **Five collapsible sections in plain words.** D35 is kept, only its words are made clearer. |
 | D52 | Creation wizard (2026-10-23) | An optional **3-step wizard** as a variant. |
+| D55 | Phone planning (owner, 2026-11-01: "Oui, j'ai pu voir les maquettes, c'est très bien") | **Below `md`, the week is a planning list on the agenda's model - a day-by-day list of bookings, blocks and free stretches - with a "+" that opens a form (column, day, start, end) and a tap on a free stretch that opens it prefilled. The form's answer opens the SAME booking sheet (the organiser's: the block sheet). The grid with drag stays from `md` up.** Supersedes D48 on phones, partly reverses D47. |
 | D53 | Notifications (2026-10-23) | **YES now**: organiser cancellation, confirmation to an added participant, a reminder before the slot with an adjustable delay. Supersedes D13's "no notification in v1". |
 | D54 | Method (2026-10-23) | **Mockups first**, built in parallel with the stable (user: *"Tout de suite, en parallele de la stable"*). |
 
@@ -1396,3 +1397,54 @@ the cross-client rig (nothing there asserts the module yet).
 ## The space page and the booking sheet against the mockup (2026-10-30)
 
 The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. Not drawn: the owner line under the title (`BookerSpace` carries no owner name).
+
+## The rolling week and the narrow block (2026-11-01, owner)
+
+Front only (`SpaceGrid`, `SpaceWeek`, `grid.ts`, `gridRuns.ts`). Nothing above is contradicted: D46 says
+"days as columns, like the agenda week", not "starting Monday"; the grid-hours lever named under the
+denser grid ("the hours shown") is taken the other way, below.
+
+- **Narrow blocks stack, they do not vanish.** A `@max-[6rem]:hidden` on the text hid the name and hours
+  of any booked block narrower than ~96 px whatever its height. Now width only picks the layout (a
+  row from 7rem, a stack under it, the hours split start / end under 5rem) and height alone decides
+  how many lines exist (`stackedLines`). Test: `SpaceGrid.narrow.svelte.test.ts`.
+- **The week rolls**: `weekDates(start)` is the seven days FROM `start` (today at first); prev / next
+  move by 7, "Aujourd'hui" restores `start = today`. The ISO week survives only in quotas.
+- **One hour height (`HOUR_REM` = 3 rem) and a whole-day axis (00:00-24:00)**, never derived from a
+  week's units: that stretched and shifted the grid week to week and on every booking. **Trimming the
+  unbookable hours was NOT built**: the booker is never sent the availability rules (only managers
+  read them), so "never bookable" cannot be computed exactly there. Re-open it only with a server field
+  carrying the space's bookable hours. The grid scrolls in its own capped box (sticky day header) and
+  opens once on the first hour a booker may take (`firstUsefulMin`).
+- The page uses the `grid` width shape (the grid is a fixed 7 columns, like the agenda month) and the
+  poster is capped on a desktop.
+- **Review of #2882**: the box is capped at `75dvh`; a drag near its top or bottom edge scrolls it
+  (`EDGE_PX`), so a range can reach units beyond the visible part; the grid's scroll lives in
+  `SpaceWeek` (`gridScroll`) so a week with nothing offered, which unmounts the grid, does not lose
+  it; the opening hour follows the organiser's rule in block mode; the dashboard counters say "Sur
+  les 7 jours affichés". Pinned by `SpaceWeek.rolling.svelte.test.ts`.
+
+## The phone's planning (D55, 2026-11-01, owner)
+
+Front only, no route and no migration: it reads the SAME week read as the grid (`SpaceWeek`), so there
+is still one request per week.
+
+- **`planning.ts` (pure)**: `planningDays` turns the week's layout into the grid's own runs per day
+  (`buildRuns`; the stretches already over are dropped), `planningKind` reads a unit (taken, blocked,
+  over, free, free-but-not-offered-now), `startChoices` / `endChoices` / `unitKey` draw the form's
+  choices FROM THE FREE RUNS: a day with nothing free is not offered, a start is a free unit the
+  booking window takes (`isOfferedStart`, the ONE rule shared by the grid, the rows and the form: in block mode a unit must START after now, because the server freezes history), an end is the end of
+  a contiguous free unit within what one booking may cover. **The form cannot name a range the grid
+  would refuse; the server stays the judge** (`slot-taken`, `notice`, `beyond-horizon`, ... are said in plain
+  words by the sheet that follows, `refusals.ts`).
+- **Components**: `PlanningList` (rows; a taken row opens the reading sheet, a free row opens the form
+  prefilled with its stretch, the sticky "+" opens it blank), `RangeForm` (the sheet; its answer is
+  `SpaceWeek.pick`, so the booking sheet keeps the answers, participants and reminder), `HolderAvatar`
+  (shared with the grid). The strip, its week arrows and "Aujourd'hui" stay and scroll the list to the day.
+- **Organiser's block mode** gets the same "+" (the form's limit is `BLOCK_LENGTH_CHOICES`; every free
+  unit that has not begun may start a block); it opens the block sheet.
+- **Kept**: the 7-column grid with drag from `md` up; D44's column selector (the form also picks the
+  column); the rolling week. **Removed**: the one-day grid on phones and `bookings_day_empty`.
+- **Keys and prefill**: a start is keyed by its WHOLE unit (`unitKey`: start and end), since two slots may start at the same instant, and is labelled with its full range; an end past midnight reads "(lendemain)"; after a column change the prefill follows the stretch where the new column has it free, else the first choice.
+- **Edge scroll** (grid, drag): the box edges are clamped to the viewport (`edgeScrollDirection`) and the scroll continues while the pointer is held at an edge (frame loop).
+- **Proof**: `planning.test.ts`, `SpaceWeek.planning.svelte.test.ts`, `grid.test.ts` (`isOfferedStart`), `gridRuns.test.ts` (edge), `SpaceGrid.narrow` (dvh box), `Modal.unmount`. **Not yet seen on a phone.**

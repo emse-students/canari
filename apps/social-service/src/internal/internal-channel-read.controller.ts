@@ -6,9 +6,11 @@ import {
   HttpCode,
   Logger,
   Param,
+  ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
 import { ChannelService } from '../channels/channel.service';
+import { RepeatCounter } from '../common/log-repeat';
 import { assertInternalSecret } from './internal-secret.util';
 
 interface ChannelReadBody {
@@ -19,6 +21,8 @@ interface ChannelReadBody {
 }
 
 /**
+ * The salon questions chat-delivery asks on a device's behalf. `reader` below is the second one.
+ *
  * "Mark as read" on a SALON notification, from a phone whose app is shut (Android quick action).
  *
  * Internal-only, like every route in this module. The caller is chat-delivery's PushSecret route
@@ -36,6 +40,8 @@ interface ChannelReadBody {
 @Controller('internal/channels')
 export class InternalChannelReadController {
   private readonly logger = new Logger(InternalChannelReadController.name);
+  /** Repeats of one user's "not a reader" in one salon: a client can react in a loop. */
+  private readonly notAReaderRepeats = new RepeatCounter();
 
   constructor(private readonly channels: ChannelService) {}
 
@@ -69,5 +75,43 @@ export class InternalChannelReadController {
       `[CHANNEL_READ_PUSH] user=${userId.slice(0, 8)} channel=${channelId.slice(0, 8)} moved=${moved !== null}`
     );
     return { at: moved?.at ?? null };
+  }
+
+  /**
+   * "May this person read this salon" - asked by chat-delivery before it pushes a salon reaction to
+   * the message's author (`POST /api/mls/notify-reaction`, whose `groupId` is `channel_<id>`). A
+   * salon's roster is held here, so chat-delivery has no seat of its own to answer it with.
+   *
+   * The answer is a boolean, never a refusal: "not a reader" is a fact the caller turns into its own
+   * 403. An id that is not a uuid is a malformed question (400), never a 500 from the uuid column.
+   */
+  @Post(':channelId/reader')
+  @HttpCode(200)
+  async reader(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Param('channelId', ParseUUIDPipe) channelId: string,
+    @Body() body: { userId?: unknown }
+  ): Promise<{ reader: boolean }> {
+    assertInternalSecret(secret);
+    const userId = String(body?.userId ?? '')
+      .trim()
+      .toLowerCase();
+    if (!userId) {
+      this.logger.warn(`[SALON_READER] refused: no userId channel=${channelId.slice(0, 8)}`);
+      throw new BadRequestException('userId is required');
+    }
+    const reader = await this.channels.isReaderOfChannel(channelId, userId);
+    if (!reader) {
+      // Only the refusal speaks: a reader is every reaction in a salon, a non-reader is a caller
+      // chat-delivery is about to refuse, and that is worth a line on both sides - once per user and
+      // salon, then at each power of ten, since one client can ask again and again.
+      const n = this.notAReaderRepeats.hit(`${userId}:${channelId}`);
+      if (n !== null) {
+        this.logger.warn(
+          `[SALON_READER] user=${userId.slice(0, 8)} channel=${channelId.slice(0, 8)} is not a reader (occurrence ${n})`
+        );
+      }
+    }
+    return { reader };
   }
 }

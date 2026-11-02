@@ -21,6 +21,7 @@ import { CoorganisationModule } from './coorganisation/coorganisation.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { LivesModule } from './lives/lives.module';
 import { HealthController } from './health.controller';
+import { typeormSynchronize } from './typeorm-synchronize';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
@@ -44,7 +45,7 @@ import { HealthController } from './health.controller';
         database: process.env.DB_DATABASE || 'canari_social',
         url: process.env.DATABASE_URL,
         autoLoadEntities: true,
-        synchronize: process.env.NODE_ENV !== 'production',
+        synchronize: typeormSynchronize(),
         // node-postgres waits FOREVER for a free pool connection by default (0). A request that
         // cannot get one in 10 s fails alone, instead of the whole service hanging for good once
         // the pool (10) is held by transactions each waiting for a second connection

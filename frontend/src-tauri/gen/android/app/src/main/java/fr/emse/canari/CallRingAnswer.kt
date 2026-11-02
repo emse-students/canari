@@ -3,6 +3,7 @@ package fr.emse.canari
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import fr.emse.canari.call.RingClosed
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -93,6 +94,9 @@ internal object CallRingAnswer {
             return false
         }
         forget(context, callId)
+        // ANSWERED: neither ring may ring it again - not the page restarting its ring on the resume
+        // this answer causes, nor a late `call_ring` redelivery (review of #2877).
+        CallRingPlayer.rings.close(callId, RingClosed.ANSWERED, "answered on the native ring")
         val pending = JSONObject()
             .put("groupId", entry.optString("groupId"))
             .put("callId", callId)

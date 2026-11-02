@@ -54,8 +54,10 @@ export async function republishersOf(
 
 /**
  * What a HIDDEN post loses (D38, user 2026-10-04: "hiding or deleting the original removes every
- * republication"): every republication, and every repost proposal still pending for it -
- * an association's request to the AUTHOR of a personal post (D38b) included.
+ * republication"): every republication, every repost proposal still pending for it -
+ * an association's request to the AUTHOR of a personal post (D38b) included - and every MEMBER
+ * repost of it (WP-F6, owner 2026-11-01: "hiding, deleting or erasing the original removes every
+ * repost", `dropMemberRepostsOf`).
  *
  * A plain function over a query runner rather than a service method, because two places hide a post
  * - a moderator (`PostsService.hidePostByModeration`) and the report threshold
@@ -68,7 +70,7 @@ export async function republishersOf(
 export async function dropRepublicationsOf(
   manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
   postId: string
-): Promise<{ republications: number; proposals: number }> {
+): Promise<{ republications: number; proposals: number; memberReposts: number }> {
   const count = (result: unknown): number =>
     Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
   const republications = count(
@@ -81,7 +83,26 @@ export async function dropRepublicationsOf(
       [postId]
     )
   );
-  return { republications, proposals };
+  const memberReposts = (await dropMemberRepostsOf(manager, postId)).length;
+  return { republications, proposals, memberReposts };
+}
+
+/**
+ * Deletes every member repost of a post (WP-F6) - the hide's share, through `dropRepublicationsOf`,
+ * and a withdrawn per-post consent's (`MemberRepostsService.setPostConsent`). A DELETED post needs
+ * it not: its foreign key cascades. Answers the reposters whose row went (one row per reposter, the
+ * key), so a caller can drop exactly their audiences' cached feeds.
+ */
+export async function dropMemberRepostsOf(
+  manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+  postId: string
+): Promise<string[]> {
+  const rows = await manager.query(
+    `WITH gone AS (DELETE FROM member_reposts WHERE "postId" = $1 RETURNING "reposterId")
+     SELECT "reposterId" FROM gone`,
+    [postId]
+  );
+  return Array.isArray(rows) ? (rows as { reposterId: string }[]).map((r) => r.reposterId) : [];
 }
 
 /**

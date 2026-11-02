@@ -76,7 +76,7 @@
   use:nearViewport={{ onnear: () => (near = true) }}
   class="bg-cn-bg relative overflow-hidden {cover
     ? 'h-full w-full'
-    : `border-cn-border/60 rounded-xl border ${thumb ? 'size-12 shrink-0' : 'max-h-80 w-full'}`}"
+    : `border-cn-border/60 rounded-xl border ${thumb ? 'size-12 shrink-0' : 'max-h-80 w-full md:max-h-56'}`}"
   style:aspect-ratio={thumb || cover ? undefined : ratio}
 >
   {#if url}

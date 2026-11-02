@@ -128,6 +128,9 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
       NODE_ENV: development
+      # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
+      # production and dev compose files never set it, and a service refuses it next to production.
+      TYPEORM_SYNCHRONIZE: "1"
       # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
       # never sent back - so the refresh cookie drops it here, and ONLY here. There is
       # no default: the value decides whether a credential crosses the network
@@ -281,6 +284,9 @@ services:
     environment:
       PORT: "3012"
       NODE_ENV: development
+      # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
+      # production and dev compose files never set it, and a service refuses it next to production.
+      TYPEORM_SYNCHRONIZE: "1"
       # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
       # never sent back - so the refresh cookie drops it here, and ONLY here. There is
       # no default: the value decides whether a credential crosses the network
@@ -350,6 +356,9 @@ services:
     environment:
       PORT: "3014"
       NODE_ENV: development
+      # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
+      # production and dev compose files never set it, and a service refuses it next to production.
+      TYPEORM_SYNCHRONIZE: "1"
       # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
       # never sent back - so the refresh cookie drops it here, and ONLY here. There is
       # no default: the value decides whether a credential crosses the network

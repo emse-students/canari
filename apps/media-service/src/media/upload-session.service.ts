@@ -601,6 +601,31 @@ export class UploadSessionService {
     });
   }
 
+  /**
+   * THE ACCOUNT ERASURE ENDS THE OWNER'S OPEN SESSIONS (core-service's fan-out, `DELETE
+   * /media/internal/users/:id`). A deleted member's device wipes its outbox and keeps no token, so no
+   * client can ever release what it had open: without this the staging, the slot and the reservation
+   * of each session would wait for the 24 h sweep. Each is ended under the same lock as `cancel`; a
+   * session that completed meanwhile is left (its blob is the media erasure's). Idempotent: a retry
+   * of the fan-out finds nothing left to end.
+   *
+   * @returns How many sessions were ended.
+   */
+  async cancelAllOwnedBy(ownerId: string): Promise<number> {
+    await this.ensureLoaded();
+    let ended = 0;
+    for (const session of this.sessions.values()) {
+      if (session.ownerId !== ownerId) continue;
+      await this.mutex.run(`${session.id}:complete`, async () => {
+        if (session.completed || !this.sessions.has(session.id)) return;
+        await this.dispose(session, 'cancelled');
+        ended += 1;
+      });
+    }
+    if (ended > 0) this.logger.log(`Account erasure ended ${ended} open upload session(s)`);
+    return ended;
+  }
+
   /** Removes every expired session (and the memo of an expired completion). */
   async sweep(): Promise<number> {
     await this.ensureLoaded();

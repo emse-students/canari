@@ -97,6 +97,14 @@ export function setPendingCallAccept(intent: PendingCallAccept): void {
 }
 
 /**
+ * Whether an answer from the native ring waits for `callId` - read, not taken. The in-app ring asks
+ * before it restarts on the app's return: that return IS the answer's (`utils/callRing.ts`).
+ */
+export function hasPendingCallAccept(callId: string): boolean {
+  return pending?.callId === callId;
+}
+
+/**
  * Takes the pending intent, if one is fresh. Leaves nothing behind either way: an intent is acted on
  * once, and an expired one is dropped, said.
  */

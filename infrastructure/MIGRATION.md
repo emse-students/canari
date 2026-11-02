@@ -220,7 +220,14 @@ Test: `sudo -u canari ssh <backup-user>@<offsite-host> 'echo ok'`.
 the first bootstrap of a production box wants a stable one. The run will:
 
 1. generate `infrastructure/.env` from secrets (regenerated from the template);
-2. deploy the Canari stack (`docker compose -f infrastructure/docker-compose.prod.yml up -d`);
+2. write the proxies' replica lists, `infrastructure/edge/rotation/{frontend,edge}.conf` (each
+   service by its DNS name), BEFORE any container starts - then deploy the Canari stack through
+   `infrastructure/deploy/deploy-environment.sh`, one service at a time
+   ([cicd](../docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)). The frontend and
+   the edge include their list unconditionally, so on a fresh checkout **a hand-run
+   `docker compose -f infrastructure/docker-compose.prod.yml up -d` before the first deploy leaves
+   both unable to start** (`open() ".../rotation/frontend.conf" failed`): let the release run it, and
+   if the directory is ever lost, the next deploy writes the lists again;
 3. apply MiConnect's configuration (`infrastructure/authentik/blueprints/`) to the running MiConnect -
    the `miconnect` stack itself is deployed BY HAND, its `.env` included (see [authentik/](authentik/));
 4. apply SQL migrations (see below) and verify service health.
@@ -230,7 +237,13 @@ the first bootstrap of a production box wants a stable one. The run will:
 Production runs TypeORM with `synchronize: false`, so **an entity change without a matching SQL file
 never reaches production**. The CD step "Run database migrations" collects
 `apps/*/src/migrations/*.sql`, sorts by path, and applies every file not yet listed in the
-`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`.
+`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`. A file
+carrying `-- canari:hold-for-owner`, or a statement that is not plainly additive, is REFUSED - the
+release preflight refuses the tag, and the deploy fails before applying anything - until
+`infrastructure/migration-approvals.txt` names it with its sha256 (a line the owner merges by hand);
+the deploy then dumps the database into `<backup dir>/pre-migration/` right before applying it, the
+directory read from the `BACKUP_DIR=` line of the DEPLOY ACCOUNT's crontab, with no default (section 7)
+([cicd](../docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
 
 Writing one: idempotent statements only (`IF NOT EXISTS` / `IF EXISTS`, or a `DO $$ ... $$` guard),
 camelCase columns double-quoted, a fresh number in that service's directory, and no edits to a file
@@ -271,6 +284,12 @@ BACKUP_SSH_HOST=<backup-user>@<offsite-host>
 ```
 
 (Alternative via root: systemd timer, see [backup/README.md](backup/README.md).)
+
+**THE CRONTAB MUST BE THE DEPLOY ACCOUNT'S, AND IT MUST SET `BACKUP_DIR=`** (an absolute directory
+that account can write). The deploy reads that line, and only that line, to place the dump it takes
+right before a migration the owner approved; without it such a migration is refused with an
+`::error::`, never dumped somewhere guessed ([cicd](../docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01),
+[backup](../docs/wiki/infrastructure/backup.md#retention)).
 
 The egress probe is a MEASUREMENT, not a backup: it answers whether outbound stalls arrive together
 or independently, which no one-shot probe can. It writes timings only - the repository is public -

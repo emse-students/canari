@@ -54,7 +54,10 @@
         {/if}
         {#if toast.dismissible !== false}
           <button
-            onclick={() => dismissToast(toast.id)}
+            onclick={() => {
+              dismissToast(toast.id);
+              toast.onClose?.();
+            }}
             class="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"
             aria-label={m.common_close_label()}
           >

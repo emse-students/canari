@@ -17,6 +17,7 @@ import {
   openMlsStateBlobV2,
   type MlsStateVerdictCode,
 } from './mlsStateSeal';
+import { mlsStateLoadErrorOf } from './mlsStateLoadError';
 import {
   packGraineSignatureChecks,
   type GraineSignatureEngine,
@@ -226,7 +227,11 @@ function verdictOfDeterministicReader(
     console.error(
       `[MLS] state open v2: WebCrypto refused (${refusal.errorName}, ${refusal.blobBytes} B) and mls-core's deterministic reader gives the verdict ${answer}`
     );
-    return new MlsStateVerdictError(answer, refusal);
+    return new MlsStateVerdictError(
+      answer,
+      `mls-core's deterministic reader judged the v2 state blob WebCrypto refused (${refusal.blobBytes} B, ${refusal.errorName})`,
+      refusal
+    );
   }
   // An answer outside the contract means these bindings and `state_blob_verdict` disagree - a build
   // defect, never a verdict, so it destroys nothing and says so.
@@ -275,7 +280,7 @@ export async function loadAndInitWasm(
   // A v2 blob is opened by WebCrypto and the WASM is handed plain CBOR (no key): the WASM's
   // software AES opened it ~2.5x slower than it opens ChaCha (mlsStateSeal.ts says why and how
   // much). Every other shape goes in sealed, so `mls-core` still decides legacy, v1 and unknown
-  // versions. A rejection carries mls-core's own code and propagates exactly as its throw would.
+  // versions. The opener's own rejections are already typed (`MlsStateVerdictError`) and propagate.
   let input = state;
   let key = deviceKeyB64;
   if (state && deviceKeyB64 && isMlsStateBlobV2(state)) {
@@ -289,9 +294,13 @@ export async function loadAndInitWasm(
     key = undefined;
   }
   // The constructor is synchronous, so begin/end around it is exact rather than a promise boundary.
+  // It rejects with `mls-core`'s `{ code, message }` (`StateLoadRefusal`), typed HERE, at the
+  // boundary, so no caller reads a recovery out of a message.
   beginBootSpan('wasm-client-construct');
   try {
     return new initWasm.WasmMlsClient(userId, deviceId, input, key, stateWasExpected);
+  } catch (e) {
+    throw mlsStateLoadErrorOf(e);
   } finally {
     endBootSpan('wasm-client-construct');
   }

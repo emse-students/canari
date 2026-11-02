@@ -39,6 +39,18 @@ describe('republishedByLine', () => {
     expect(republishedByLine(five)).toEqual({ names: ['a'], extra: 4 });
     expect(republishedByLine(five.slice(0, 1))).toEqual({ names: ['a'], extra: 0 });
   });
+
+  it('names the people the reader follows who reposted it after the associations (WP-F6)', () => {
+    const bde = [{ id: 'b', name: 'BDE', slug: 'b', logoUrl: null }];
+    expect(republishedByLine([], [{ id: 'u', name: 'Yann' }])).toEqual({
+      names: ['Yann'],
+      extra: 0,
+    });
+    expect(republishedByLine(bde, [{ id: 'u', name: 'Yann' }])).toEqual({
+      names: ['BDE'],
+      extra: 1,
+    });
+  });
 });
 
 describe('republishCandidates', () => {

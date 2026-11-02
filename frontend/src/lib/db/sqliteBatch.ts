@@ -35,7 +35,7 @@ import type { SealedStore } from './types';
 export const MAX_BOUND_PARAMETERS = 999;
 
 /** Columns bound per message row in {@link messageInsertSql}. */
-export const MESSAGE_COLUMNS = 5;
+export const MESSAGE_COLUMNS = 7;
 
 /** Rows per INSERT statement: the largest batch that cannot exceed the parameter ceiling. */
 export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESSAGE_COLUMNS);
@@ -43,7 +43,7 @@ export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESS
 /**
  * `INSERT OR REPLACE` for `rows` message rows, with positional placeholders.
  *
- * The placeholders are numbered across the whole statement (`$1…$5`, `$6…$10`, …) because that is
+ * The placeholders are numbered across the whole statement (`$1…$6`, `$7…$12`, …) because that is
  * what the plugin's SQLite binding expects; a repeated `$1` per tuple would bind every row to the
  * first message.
  */
@@ -60,7 +60,57 @@ export function messageInsertSql(rows: number): string {
     return `(${placeholders.join(', ')})`;
   });
   return (
-    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ' +
+    'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
+    tuples.join(', ')
+  );
+}
+
+/** Columns bound per outbox row in {@link outboxInsertSql}. */
+export const OUTBOX_COLUMNS = 12;
+
+/**
+ * Outbox rows ONE statement can carry. A chat-reel take and its sends (RC-13) must fit in one: they
+ * are written atomically or not at all, never split across statements.
+ */
+export const OUTBOX_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / OUTBOX_COLUMNS);
+
+/**
+ * The most conversations ONE chat-reel take may be sent to on THIS client, whatever the engine: the
+ * sends that fit beside their take in one SQLite statement (82). IndexedDB has no such bound, and is
+ * held to the same one on purpose, so a take never queues on the web and is refused on a phone. The
+ * server's `chatReelMaxTargets` (15) is the tighter bound in practice; the sheet honours the SMALLER
+ * of the two (`chatReelTargetCap`).
+ */
+export const REEL_TAKE_MAX_SENDS = OUTBOX_ROWS_PER_STATEMENT - 1;
+
+/**
+ * Rewrites EVERY column of one outbox row, by id, and only if it is still there: the store's merge
+ * (`updateOutboxEntry`) writes with it so a patch that lands after the row was deleted (a withdrawal,
+ * a send) puts nothing back - `INSERT OR REPLACE` would resurrect it. Parameters in
+ * {@link outboxInsertSql}'s column order, `id` first.
+ */
+export const OUTBOX_UPDATE_ROW_SQL =
+  'UPDATE outbox SET conversation_id = $2, sent_at = $3, kind = $4, status = $5, attempts = $6, last_attempt_at = $7, next_attempt_at = $8, server_errors = $9, created_at = $10, iv = $11, cipher_text = $12 WHERE id = $1';
+
+/**
+ * `INSERT OR REPLACE` for `rows` outbox rows, placeholders numbered across the whole statement like
+ * {@link messageInsertSql}. One row is the ordinary queued entry; several are a chat-reel take and
+ * its sends, which ONE statement makes atomic.
+ */
+export function outboxInsertSql(rows: number): string {
+  if (!Number.isInteger(rows) || rows < 1 || rows > OUTBOX_ROWS_PER_STATEMENT) {
+    throw new Error(`outboxInsertSql takes 1 to ${OUTBOX_ROWS_PER_STATEMENT} rows, got ${rows}`);
+  }
+  const tuples = Array.from({ length: rows }, (_, row) => {
+    const base = row * OUTBOX_COLUMNS;
+    const placeholders = Array.from(
+      { length: OUTBOX_COLUMNS },
+      (_, column) => `$${base + column + 1}`
+    );
+    return `(${placeholders.join(', ')})`;
+  });
+  return (
+    'INSERT OR REPLACE INTO outbox (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at, iv, cipher_text) VALUES ' +
     tuples.join(', ')
   );
 }
@@ -122,6 +172,39 @@ export function sealedSwapStatement(
     sql:
       `UPDATE ${table} SET iv = CASE ${key} ${ivCase} END, ` +
       `cipher_text = CASE ${key} ${cipherCase} END WHERE ${where}`,
+    params,
+  };
+}
+
+/** Parameters bound per row in {@link orderAtFillStatement}: id+key in the CASE, id in the IN list. */
+export const ORDER_AT_FILL_COLUMNS = 3;
+
+/** Rows per order-key fill statement: the largest batch that cannot exceed the parameter ceiling. */
+export const ORDER_AT_FILL_ROWS_PER_STATEMENT = Math.floor(
+  MAX_BOUND_PARAMETERS / ORDER_AT_FILL_COLUMNS
+);
+
+/**
+ * ONE statement that writes the derived `order_at` of `rows.length` messages and clears their
+ * `order_pending`, touching only the rows STILL pending: a row the app rewrote between the read and
+ * this write already carries the key its own save computed, and the fill must not replace a fresher
+ * value with the one it derived from the older ciphertext. Placeholders numbered in the order they
+ * appear, like {@link sealedSwapStatement}.
+ */
+export function orderAtFillStatement(rows: ReadonlyArray<{ id: string; orderAt: number }>): {
+  sql: string;
+  params: Array<string | number>;
+} {
+  if (rows.length < 1) throw new Error('orderAtFillStatement needs at least one row');
+  const params: Array<string | number> = [];
+  const next = (value: string | number): string => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  const cases = rows.map((r) => `WHEN ${next(r.id)} THEN ${next(r.orderAt)}`).join(' ');
+  const ids = rows.map((r) => next(r.id)).join(', ');
+  return {
+    sql: `UPDATE messages SET order_at = CASE id ${cases} END, order_pending = NULL WHERE order_pending = 1 AND id IN (${ids})`,
     params,
   };
 }

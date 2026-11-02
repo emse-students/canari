@@ -7,12 +7,15 @@ import {
   invalidateHistoryStateKey,
 } from '$lib/utils/chat/historyStateKey';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
+import { OutboxEntryWrittenAloneError } from '$lib/utils/chat/messageWrittenError';
 import type {
   ConversationMeta,
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
+  OutboxBlobRef,
   OutboxEntry,
+  PageKey,
   PendingGroupExit,
   SealedPayload,
   SealedPayloadSwap,
@@ -39,6 +42,8 @@ import {
   mergeOutboxEntry,
   OutboxPayloadUnreadableError,
   outboxClearColumns,
+  outboxKindHoldsBlob,
+  REEL_TAKE_RECORDS,
   type OutboxClearColumns,
 } from './outboxCodec';
 import type { GraineClearColumns } from './graineCodec';
@@ -53,16 +58,40 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
+  conversationServerReadWatermarksStatement,
+  conversationStartedAtStatement,
   isFreshDatabase,
   legacyBlobPurgeStatement,
+  LEGACY_MESSAGE_TIME_INDEX_DROP,
+  MESSAGE_ORDER_INDEX_STATEMENT,
+  MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
+  MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
+  MESSAGE_PROVISIONAL_ORDER_FILL,
+  messageOrderColumnsStatements,
   outboxServerErrorsStatement,
 } from './sqliteMigrations';
-import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
+import {
+  compareStoredOrder,
+  fromMessagePayload,
+  mergeStoredMessage,
+  storedOrderAt,
+  toMessagePayload,
+} from './messagePayload';
+import {
+  deriveOrderKeysInChunks,
+  OrderKeyDerivations,
+  type OrderKeyDerivation,
+} from './orderKeyDerivation';
 import {
   MESSAGE_ROWS_PER_STATEMENT,
+  ORDER_AT_FILL_ROWS_PER_STATEMENT,
   SEALED_SWAP_ROWS_PER_STATEMENT,
   chunk,
   messageInsertSql,
+  OUTBOX_ROWS_PER_STATEMENT,
+  OUTBOX_UPDATE_ROW_SQL,
+  outboxInsertSql,
+  orderAtFillStatement,
   sealedStoreTable,
   sealedSwapStatement,
 } from './sqliteBatch';
@@ -114,6 +143,8 @@ export class SqliteStorage implements IStorage {
   private readonly dbPath: string;
   /** The bytes of queued attachments: IndexedDB, never the SQL bridge (see outboxBlob.ts). */
   private readonly blobs: OutboxBlobStore;
+  /** One order-key derivation in flight per conversation (`$lib/db/orderKeyDerivation`). */
+  private readonly orderKeyDerivations = new OrderKeyDerivations();
 
   /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
@@ -177,7 +208,9 @@ export class SqliteStorage implements IStorage {
                 read_watermarks  TEXT,
                 history_floor    INTEGER,
                 image_media_id   TEXT,
-                awaiting_admission INTEGER
+                awaiting_admission INTEGER,
+                server_read_watermarks TEXT,
+                started_at       INTEGER
             )
         `);
 
@@ -193,6 +226,8 @@ export class SqliteStorage implements IStorage {
                 timestamp       INTEGER,
                 iv              TEXT,
                 cipher_text     TEXT,
+                order_at        INTEGER,
+                order_pending   INTEGER,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
         `);
@@ -200,13 +235,10 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
     );
-    // The page read's index (`getMessagesPage`): with it, `WHERE conversation_id = ? ORDER BY
-    // timestamp DESC LIMIT n` walks n entries backwards; without it SQLite collected the whole
-    // conversation into a temp B-tree to sort it (`EXPLAIN QUERY PLAN`: USE TEMP B-TREE FOR ORDER BY).
-    // Unconditional like the one above, so an existing database gains it on its next open.
-    await this.db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, timestamp)'
-    );
+    // The page read's index (`idx_messages_conv_order`, on `order_at`) and the pending rows' index are
+    // NOT created here: an older file has neither column until the v16 step below adds them. The
+    // fresh branch and that step create them (`MESSAGE_ORDER_INDEX_STATEMENT`,
+    // `MESSAGE_ORDER_PENDING_INDEX_STATEMENT`).
 
     // Outbox: queued outgoing messages. Cleartext columns so sorting/re-keying works without the
     // device key; the sensitive payload (text/replyTo/media) is encrypted in cipher_text
@@ -288,6 +320,9 @@ export class SqliteStorage implements IStorage {
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
     if (fresh) {
+      await this.db.execute(MESSAGE_ORDER_INDEX_STATEMENT);
+      await this.db.execute(MESSAGE_ORDER_PENDING_INDEX_STATEMENT);
+      await this.db.execute(MESSAGE_ORDER_MISSING_INDEX_STATEMENT);
       await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       return;
     }
@@ -458,6 +493,48 @@ export class SqliteStorage implements IStorage {
       // Stamped at 15, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 15');
     }
+
+    if (currentVersion < 16) {
+      // v15->v16: the read marks on the SERVER's clock get their own column (`readState.ts`), next
+      // to the stamped ones it does not replace. Additive and NULL on arrival.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const add = conversationServerReadWatermarksStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // ...and the message rows get the key a page is read on, the same key the timeline sorts on
+      // (`storedOrderAt`). It is derived from the ciphertext, so the rows already stored are keyed
+      // PROVISIONALLY on their `timestamp` in one statement and derived behind the page reads
+      // (`$lib/db/orderKeyDerivation`). The `timestamp` index it replaces goes.
+      const messageCols: any[] = await this.db.select('PRAGMA table_info(messages)');
+      for (const add of messageOrderColumnsStatements(messageCols.map((c) => String(c.name)))) {
+        await this.db.execute(add);
+      }
+      await this.db.execute(MESSAGE_PROVISIONAL_ORDER_FILL);
+      await this.db.execute(LEGACY_MESSAGE_TIME_INDEX_DROP);
+      await this.db.execute(MESSAGE_ORDER_INDEX_STATEMENT);
+      await this.db.execute(MESSAGE_ORDER_PENDING_INDEX_STATEMENT);
+      await this.db.execute(MESSAGE_ORDER_MISSING_INDEX_STATEMENT);
+      // Stamped at 16, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 16');
+    }
+
+    if (currentVersion < 17) {
+      // v16->v17: the conversation keeps the server's record of the group's creation (`started_at`),
+      // which this backend dropped on every save while IndexedDB kept it. Additive and NULL on
+      // arrival, read as unknown: the next group sweep fills it (`recordGroupStart`).
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const add = conversationStartedAtStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // Stamped at 17, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 17');
+    }
+
+    // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
+    // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
+    // them. Re-keyed provisionally through the partial index - nothing read when there are none. The
+    // same build recreated its `timestamp` page index unconditionally: dropped again, since every
+    // write would otherwise keep paying for an index nothing reads.
+    await this.db.execute(MESSAGE_PROVISIONAL_ORDER_FILL);
+    await this.db.execute(LEGACY_MESSAGE_TIME_INDEX_DROP);
   }
 
   // -- Conversations -------------------------------------------------------
@@ -465,7 +542,7 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
       [
         conv.id,
         conv.name,
@@ -475,6 +552,8 @@ export class SqliteStorage implements IStorage {
         conv.historyFloor ?? null,
         conv.imageMediaId ?? null,
         conv.awaitingAdmission === true ? 1 : 0,
+        conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
+        conv.startedAt ?? null,
       ]
     );
   }
@@ -491,11 +570,14 @@ export class SqliteStorage implements IStorage {
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.is_ready === 1),
       updatedAt: r.updated_at,
       readWatermarks: parseReadWatermarks(r.read_watermarks),
+      serverReadWatermarks: parseReadWatermarks(r.server_read_watermarks),
       historyFloor: parseHistoryFloor(r.history_floor),
       imageMediaId:
         typeof r.image_media_id === 'string' && r.image_media_id ? r.image_media_id : null,
       // On Android the plugin returns INTEGER columns as strings.
       awaitingAdmission: Number(r.awaiting_admission) === 1,
+      // INTEGER, so a string on Android too; absent or unusable reads as unknown.
+      ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
     };
   }
 
@@ -581,6 +663,9 @@ export class SqliteStorage implements IStorage {
           item.msg.timestamp,
           uint8ToBase64(item.encrypted.iv),
           uint8ToBase64(item.encrypted.cipherText),
+          storedOrderAt(item.msg),
+          // The key above is the real one: a save is never provisional.
+          null,
         ])
       );
     }
@@ -656,7 +741,7 @@ export class SqliteStorage implements IStorage {
         console.warn('Failed to decrypt SQLite row', row.id);
       }
     }
-    return results;
+    return results.sort(compareStoredOrder);
   }
 
   /** Rows held for `conversationId`, counted on `idx_messages_conv` - nothing is decrypted. */
@@ -683,32 +768,69 @@ export class SqliteStorage implements IStorage {
   }
 
   /**
-   * Decrypt and return a paginated slice of messages using a server-side LIMIT clause.
-   * Rows are fetched in descending timestamp order (most recent first) then re-sorted
-   * ascending before return so callers always receive chronological order.
-   * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
-   * Both statements are answered by `idx_messages_conv_time` with no sort step.
+   * Decrypt and return a paginated slice of messages using a server-side LIMIT clause, on the ORDER
+   * KEY (`order_at`, {@link storedOrderAt}) with ties broken by id: the newest `limit` rows, or those
+   * strictly below `before` on that pair for "load older", handed back oldest first
+   * ({@link compareStoredOrder}), each with its {@link PageKey}. Every statement is answered by
+   * `idx_messages_conv_order` with no sort step.
+   *
+   * NEVER WAITS FOR A DERIVATION ON A FIRST PAGE. Rows still keyed provisionally on their `sentAt`
+   * are paged with that key, and their derivation starts behind the read ({@link orderKeysDerived}):
+   * the cost of a first page is the page, whatever the conversation holds. A `before` read while the
+   * conversation was provisional waits for the derivation (the reader is scrolling, off the first
+   * paint), then also returns every row at or above `before`: a row whose real key rose past the
+   * boundary is in neither page otherwise.
    */
   async getMessagesPage(
     conversationId: string,
     deviceKeyB64: string,
     limit: number,
-    beforeTimestamp?: number
+    before?: PageKey
   ): Promise<StoredMessage[]> {
+    const derive = () => this.deriveOrderKeys(conversationId, deviceKeyB64);
+    // A conversation whose run deferred a row this session reads as keyed (`OrderKeyDerivations`).
+    const provisionalNow = async () =>
+      !this.orderKeyDerivations.gaveUp(conversationId) &&
+      (await this.hasProvisionalOrderKeys(conversationId));
+    let provisional = await provisionalNow();
+    if (provisional && before?.provisional) {
+      try {
+        await this.orderKeyDerivations.run(conversationId, derive);
+      } catch (e) {
+        console.error(
+          `[STORE] load-older of ${conversationId.slice(0, 8)} read over provisional keys - the derivation failed: ${String(e)}`
+        );
+      }
+      provisional = await provisionalNow();
+    } else if (provisional) {
+      this.orderKeyDerivations.startInBackground(conversationId, derive);
+    }
+
     let rows: any[];
-    if (beforeTimestamp !== undefined) {
+    if (before === undefined) {
       rows = await this.db.select(
-        'SELECT * FROM messages WHERE conversation_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3',
-        [conversationId, beforeTimestamp, limit]
+        'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY order_at DESC, id DESC LIMIT $2',
+        [conversationId, limit]
       );
     } else {
       rows = await this.db.select(
-        'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY timestamp DESC LIMIT $2',
-        [conversationId, limit]
+        'SELECT * FROM messages WHERE conversation_id = $1 AND (order_at, id) < ($2, $3) ORDER BY order_at DESC, id DESC LIMIT $4',
+        [conversationId, before.orderAt, before.id, limit]
       );
+      if (before.provisional) {
+        const above: any[] = await this.db.select(
+          'SELECT * FROM messages WHERE conversation_id = $1 AND (order_at, id) >= ($2, $3) ORDER BY order_at DESC, id DESC',
+          [conversationId, before.orderAt, before.id]
+        );
+        appendLog(
+          `[STORE] load-older of ${conversationId.slice(0, 8)} below a provisional boundary - ${above.length} row(s) above it re-read`
+        );
+        rows = [...above, ...rows];
+      }
     }
 
     const results: StoredMessage[] = [];
+    let readPending = false;
     for (const row of rows) {
       try {
         const iv = base64ToUint8(row.iv);
@@ -717,21 +839,75 @@ export class SqliteStorage implements IStorage {
           string,
           unknown
         >;
-        results.push(
-          fromMessagePayload(
-            {
-              id: row.id,
-              conversationId: row.conversation_id,
-              timestamp: rowTimestampMs(row.timestamp),
-            },
-            payload
-          )
+        const msg = fromMessagePayload(
+          {
+            id: row.id,
+            conversationId: row.conversation_id,
+            timestamp: rowTimestampMs(row.timestamp),
+          },
+          payload
         );
+        msg.pageKey = { orderAt: rowTimestampMs(row.order_at), id: String(row.id), provisional };
+        results.push(msg);
+        if (Number(row.order_pending) === 1) readPending = true;
       } catch {
         console.warn('Failed to decrypt SQLite row', row.id);
       }
     }
-    return results.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+    // A deferred row that decrypts now re-arms the conversation (`OrderKeyDerivations.readableAgain`).
+    if (readPending) this.orderKeyDerivations.readableAgain(conversationId, results, derive);
+    return results.sort(compareStoredOrder);
+  }
+
+  /** Whether `conversationId` still holds a row keyed provisionally - one probe of the partial index. */
+  private async hasProvisionalOrderKeys(conversationId: string): Promise<boolean> {
+    const rows: any[] = await this.db.select(
+      'SELECT 1 AS p FROM messages WHERE conversation_id = $1 AND order_pending = 1 LIMIT 1',
+      [conversationId]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * The derivation of `conversationId`'s provisional keys: the run in flight, or a new one. Page
+   * reads start it on their own; exposed so a caller (and the tests) can wait for the keys to settle.
+   */
+  orderKeysDerived(conversationId: string, deviceKeyB64: string): Promise<OrderKeyDerivation> {
+    return this.orderKeyDerivations.run(conversationId, () =>
+      this.deriveOrderKeys(conversationId, deviceKeyB64)
+    );
+  }
+
+  /**
+   * One run of `$lib/db/orderKeyDerivation` over this table: the pending rows read through
+   * `idx_messages_order_pending` by id, the keys written in statements that touch only rows still
+   * pending ({@link orderAtFillStatement}).
+   */
+  private deriveOrderKeys(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<OrderKeyDerivation> {
+    return deriveOrderKeysInChunks(conversationId, deviceKeyB64, {
+      readChunk: async (after, limit) => {
+        const rows: any[] = await this.db.select(
+          'SELECT id, timestamp, iv, cipher_text FROM messages WHERE conversation_id = $1 AND order_pending = 1 AND id > $2 ORDER BY id LIMIT $3',
+          [conversationId, after ?? '', limit]
+        );
+        return rows.map((row) => ({
+          id: String(row.id),
+          timestamp: rowTimestampMs(row.timestamp),
+          iv: base64ToUint8(row.iv),
+          cipherText: base64ToUint8(row.cipher_text),
+        }));
+      },
+      writeChunk: async (keyed) => {
+        invalidateHistoryStateKey(conversationId);
+        for (const batch of chunk([...keyed], ORDER_AT_FILL_ROWS_PER_STATEMENT)) {
+          const { sql, params } = orderAtFillStatement(batch);
+          await this.db.execute(sql, params);
+        }
+      },
+    });
   }
 
   // -- Backup helpers ------------------------------------------------------
@@ -754,7 +930,7 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
       [
         conv.id,
         conv.name,
@@ -764,6 +940,8 @@ export class SqliteStorage implements IStorage {
         conv.historyFloor ?? null,
         conv.imageMediaId ?? null,
         conv.awaitingAdmission === true ? 1 : 0,
+        conv.serverReadWatermarks ? JSON.stringify(conv.serverReadWatermarks) : null,
+        conv.startedAt ?? null,
       ]
     );
   }
@@ -771,17 +949,15 @@ export class SqliteStorage implements IStorage {
   /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */
   async importEncryptedRow(row: EncryptedMessageRow): Promise<void> {
     invalidateHistoryStateKey(row.conversationId);
+    this.orderKeyDerivations.rearm(row.conversationId);
     // INSERT OR IGNORE: skip rows that already exist on this device so that
-    // messages received after the backup was taken are never overwritten.
+    // messages received after the backup was taken are never overwritten. The row is ciphertext, so
+    // its order key is PROVISIONAL - its `timestamp`, flagged - and the next page read of its
+    // conversation derives the real one (`$lib/db/orderKeyDerivation`).
+    const timestamp = rowTimestampMs(row.timestamp);
     await this.db.execute(
-      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ($1, $2, $3, $4, $5)',
-      [
-        row.id,
-        row.conversationId,
-        row.timestamp,
-        uint8ToBase64(row.iv),
-        uint8ToBase64(row.cipherText),
-      ]
+      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ($1, $2, $3, $4, $5, $3, 1)',
+      [row.id, row.conversationId, timestamp, uint8ToBase64(row.iv), uint8ToBase64(row.cipherText)]
     );
   }
 
@@ -844,6 +1020,12 @@ export class SqliteStorage implements IStorage {
    * retries, nothing reports, and the author keeps a message no one else will ever have (TAB-5,
    * 2026-09-05). The first is recoverable in the only direction that matters, so the entry is
    * written first and the message second.
+   *
+   * **AND THE TEAR IS REPORTED AS WHAT IT IS.** A message write that fails after the entry landed
+   * throws {@link OutboxEntryWrittenAloneError}: the caller must not write the entry a second time
+   * (a second blob in its slot) nor give the file back for another send (a duplicate) - the queue
+   * already owns it (review of #2874, M2). A failure of the entry write throws as it comes: nothing
+   * is on disk.
    */
   async saveMessageWithOutboxEntry(
     msg: StoredMessage,
@@ -851,7 +1033,15 @@ export class SqliteStorage implements IStorage {
     deviceKeyB64: string
   ): Promise<void> {
     await this.saveOutboxEntry(entry, deviceKeyB64);
-    await this.saveMessages([msg], deviceKeyB64);
+    try {
+      await this.saveMessages([msg], deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[DB] ${msg.id.slice(0, 8)}… outbox entry written, its message row NOT - the queue sends it, the echo is missing:`,
+        e
+      );
+      throw new OutboxEntryWrittenAloneError(msg.id, e);
+    }
   }
 
   /**
@@ -861,28 +1051,75 @@ export class SqliteStorage implements IStorage {
    */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     await writeOutboxWithBlob(this.blobs, entry, async (blobKeyB64) => {
-      const encrypted = await encryptData(encodeOutboxSensitive(entry, blobKeyB64), deviceKeyB64);
-      const c = outboxClearColumns(entry);
       await this.db.execute(
-        `INSERT OR REPLACE INTO outbox
-         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at, iv, cipher_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [
-          c.id,
-          c.conversationId,
-          c.sentAt,
-          c.kind,
-          c.status,
-          c.attempts,
-          c.lastAttemptAt ?? null,
-          c.nextAttemptAt ?? null,
-          c.serverErrors ?? 0,
-          c.createdAt,
-          uint8ToBase64(encrypted.iv),
-          uint8ToBase64(encrypted.cipherText),
-        ]
+        outboxInsertSql(1),
+        await this.outboxRowParams(entry, blobKeyB64, deviceKeyB64)
       );
     });
+  }
+
+  /**
+   * See {@link IStorage.saveReelTake}. The take and its sends are ONE `INSERT` (the plugin's largest
+   * atomic unit), so no kill leaves one without the other; the messages follow in a second write,
+   * the entries first as for a single send (`saveMessageWithOutboxEntry`).
+   */
+  async saveReelTake(
+    take: OutboxEntry,
+    sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+    deviceKeyB64: string
+  ): Promise<void> {
+    const rows = 1 + sends.length;
+    // NEVER SPLIT: two statements would be two transactions, and the point is one.
+    if (rows > OUTBOX_ROWS_PER_STATEMENT) {
+      throw new Error(`a reel take with ${sends.length} sends does not fit one outbox statement`);
+    }
+    await writeOutboxWithBlob(this.blobs, take, async (blobKeyB64) => {
+      const params = [
+        ...(await this.outboxRowParams(take, blobKeyB64, deviceKeyB64)),
+        ...(
+          await Promise.all(
+            sends.map((s) => this.outboxRowParams(s.entry, undefined, deviceKeyB64))
+          )
+        ).flat(),
+      ];
+      await this.db.execute(outboxInsertSql(rows), params);
+    });
+    try {
+      await this.saveMessages(
+        sends.map((s) => s.message),
+        deviceKeyB64
+      );
+    } catch (e) {
+      console.error(
+        `[DB] reel take ${take.id.slice(0, 8)}… and its ${sends.length} send(s) written, their messages NOT - the queue sends them, the echoes are missing:`,
+        e
+      );
+      throw new OutboxEntryWrittenAloneError(take.id, e);
+    }
+  }
+
+  /** The `OUTBOX_COLUMNS` parameters of one outbox row, its payload sealed under the device key. */
+  private async outboxRowParams(
+    entry: OutboxEntry,
+    blob: OutboxBlobRef | undefined,
+    deviceKeyB64: string
+  ): Promise<unknown[]> {
+    const encrypted = await encryptData(encodeOutboxSensitive(entry, blob), deviceKeyB64);
+    const c = outboxClearColumns(entry);
+    return [
+      c.id,
+      c.conversationId,
+      c.sentAt,
+      c.kind,
+      c.status,
+      c.attempts,
+      c.lastAttemptAt ?? null,
+      c.nextAttemptAt ?? null,
+      c.serverErrors ?? 0,
+      c.createdAt,
+      uint8ToBase64(encrypted.iv),
+      uint8ToBase64(encrypted.cipherText),
+    ];
   }
 
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
@@ -912,7 +1149,9 @@ export class SqliteStorage implements IStorage {
       `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at,
          CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
          CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
-       FROM outbox ORDER BY sent_at ASC, id ASC`
+       FROM outbox WHERE conversation_id <> $1 ORDER BY sent_at ASC, id ASC`,
+      // A SENT-TAKE RECORD IS NOT QUEUED WORK (RC-13): no flush decrypts, drives or counts it.
+      [REEL_TAKE_RECORDS]
     );
     const out: OutboxEntry[] = [];
     for (const row of rows) {
@@ -920,6 +1159,20 @@ export class SqliteStorage implements IStorage {
         row.kind === 'media'
           ? decodeOutboxEntry(this.outboxClearOf(row), undefined)
           : await this.decodeOutboxRow(row, deviceKeyB64);
+      if (entry) out.push(entry);
+    }
+    return out;
+  }
+
+  /** See {@link IStorage.getReelTakeRecords}: the records the queue read leaves out. */
+  async getReelTakeRecords(deviceKeyB64: string): Promise<OutboxEntry[]> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM outbox WHERE conversation_id = $1 ORDER BY sent_at ASC, id ASC',
+      [REEL_TAKE_RECORDS]
+    );
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      const entry = await this.decodeOutboxRow(row, deviceKeyB64);
       if (entry) out.push(entry);
     }
     return out;
@@ -952,7 +1205,10 @@ export class SqliteStorage implements IStorage {
     });
   }
 
-  /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
+  /**
+   * Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent - and
+   * still a no-op when the row is deleted between the read and the write (see the write below).
+   */
   async updateOutboxEntry(
     id: string,
     patch: Partial<OutboxEntry>,
@@ -986,7 +1242,23 @@ export class SqliteStorage implements IStorage {
     // The row read above is the small one: a blob-format row carries a key, not the file, so the
     // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
     const merged = mergeOutboxEntry(entry, patch);
-    await this.saveOutboxEntry(merged, deviceKeyB64);
+    // AN UPDATE, NEVER AN `INSERT OR REPLACE`: a row deleted while this merge was decrypting (a
+    // withdrawal, a send) stays deleted - the replace would put it back, and the flusher would then
+    // send a message the member withdrew. One statement: the existence check and the write are one.
+    let gone = false;
+    await writeOutboxWithBlob(this.blobs, merged, async (blobKeyB64) => {
+      const res = await this.db.execute(
+        OUTBOX_UPDATE_ROW_SQL,
+        await this.outboxRowParams(merged, blobKeyB64, deviceKeyB64)
+      );
+      gone = res.rowsAffected === 0;
+    });
+    if (gone) {
+      appendLog(`[DB] outbox ${id.slice(0, 8)}… deleted during its update - not written back`);
+      // Bytes this patch carried went to a blob slot no row names: given back now.
+      if (merged.media?.fileBytes?.length) await deleteOutboxBlobQuietly(this.blobs, id);
+      return;
+    }
     if (outboxBlobReleased(merged)) await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
@@ -1007,7 +1279,8 @@ export class SqliteStorage implements IStorage {
       );
     }
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
-    if (kind === 'media' || kind === 'unknown') await deleteOutboxBlobQuietly(this.blobs, id);
+    if (outboxKindHoldsBlob(kind) || kind === 'unknown')
+      await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
   /** See {@link IStorage.sweepOutboxBlobs}. */

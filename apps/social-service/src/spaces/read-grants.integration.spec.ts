@@ -164,7 +164,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
@@ -183,9 +183,14 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       '073_republications.sql',
       '074_coorganise.sql',
       '078_read_grants.sql',
+      '121_member_reposts.sql',
     ]) {
       await client.query(migration(name));
     }
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     for (const [id, name] of [
       [A1, 'A1'],
       [A2, 'A2'],

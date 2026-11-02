@@ -845,9 +845,9 @@ describe('discoverMissingGroups - a 1v1 pending deletion must not block its repl
 /**
  * A CONVERSATION THIS ACCOUNT WAS NEVER ADMITTED TO: a declined joiner, or a link ask nobody
  * answered, kept a sidebar row captioned as an established channel that never existed. The server's
- * list says, of this device's seat, whether it is an invitation-link ask
- * (`deviceMembership.awaitingAdmission`); the row carries it durably, and a never-admitted row the
- * list stops naming goes.
+ * list says, of the account's seat, whether it is an invitation-link ask (`awaitingAdmission` on the
+ * row, said whether or not this device holds a device row there); the row carries it durably, and a
+ * never-admitted row the list stops naming goes.
  */
 describe('discoverMissingGroups - a never-admitted conversation', () => {
   const row = (id: string, awaitingAdmission?: boolean): Conversation => ({
@@ -871,6 +871,7 @@ describe('discoverMissingGroups - a never-admitted conversation', () => {
       admitted: false,
       awaitingAdmission,
     },
+    awaitingAdmission,
   });
   const run = (
     conversations: Map<string, Conversation>,

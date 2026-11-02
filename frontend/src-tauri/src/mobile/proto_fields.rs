@@ -758,7 +758,7 @@ pub(crate) fn build_graine_v2_app_message(
     msg
 }
 
-/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`
+/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at", "serverAt"?} } }`
 /// proto for the "mark as read" notification quick action, and for a quick reply - which means the
 /// same thing, since a user who answered a conversation has read it.
 ///
@@ -773,11 +773,23 @@ pub(crate) fn build_graine_v2_app_message(
 /// whose clock runs fast would mark future messages read permanently and unfixably. That is the
 /// same rule `watermarkAfterReading` (readState.ts) states for the foreground path.
 ///
+/// `server_at` is the SERVER's `createdAt` of that same message, when the notification carries it
+/// (Android since 2026-10-31; 0 otherwise). The conversation is ordered and read on the server's
+/// clock (readState.ts), and a frame carrying it is the shape `readWatermarkFrameData` sends from
+/// the app: `serverAt` AND `at`, the same value, `at` kept for a client that reads it alone. With
+/// no server time the frame is the older shape, `{at}` on the sender's clock, which every client
+/// reads into its stamped map (`readWatermarkFrameMark`).
+///
 /// `message_id`/`sent_at` on the envelope are left unset like every other control event
 /// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
 /// caller, so it reaches peers and our own other devices without ringing any of them.
-pub fn build_read_watermark_app_message(at: i64) -> Vec<u8> {
-    let data = serde_json::json!({ "at": at }).to_string();
+pub fn build_read_watermark_app_message(at: i64, server_at: i64) -> Vec<u8> {
+    let data = if server_at > 0 {
+        serde_json::json!({ "at": server_at, "serverAt": server_at })
+    } else {
+        serde_json::json!({ "at": at })
+    }
+    .to_string();
     let mut system_msg = Vec::with_capacity(data.len() + 24);
     write_string_field(&mut system_msg, 1, "read_watermark");
     write_string_field(&mut system_msg, 2, &data);
@@ -1084,7 +1096,7 @@ mod tests {
 
     #[test]
     fn build_read_watermark_app_message_carries_the_instant_and_stays_silent() {
-        let bytes = build_read_watermark_app_message(1_700_000_000_000);
+        let bytes = build_read_watermark_app_message(1_700_000_000_000, 0);
         // Silent like every control frame: no preview may be fabricated for it.
         assert_eq!(
             extract_full_message_info(&bytes, PushLanguage::French)["ok"],
@@ -1098,6 +1110,24 @@ mod tests {
         // The number, not a string: `systemMessageHandler` reads it as `Number(data.at)` and a
         // quoted instant would parse the same, which is exactly how such a drift stays invisible.
         assert_eq!(data_json["at"], serde_json::json!(1_700_000_000_000i64));
+        // No server time known: the older shape, read into the stamped map.
+        assert!(data_json.get("serverAt").is_none());
+    }
+
+    /// With the server's `createdAt` the frame is the one the app sends (`readWatermarkFrameData`):
+    /// the server instant under both names, so the shade's mark lands on the clock the
+    /// conversation is ordered by, and an older client still reads `at`.
+    #[test]
+    fn build_read_watermark_app_message_states_the_server_clock_when_known() {
+        let bytes = build_read_watermark_app_message(1_700_000_000_000, 1_700_000_060_000);
+        let system_msg = find_length_delimited_field(&bytes, 5).expect("system field present");
+        let data = find_length_delimited_field(&system_msg, 2).unwrap();
+        let data_json: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        assert_eq!(
+            data_json["serverAt"],
+            serde_json::json!(1_700_000_060_000i64)
+        );
+        assert_eq!(data_json["at"], serde_json::json!(1_700_000_060_000i64));
     }
 
     /// EVERY name the app can send as a system event must be classified, because the fallback arm

@@ -297,7 +297,7 @@ export type FeedRefreshOutcome =
  *
  * THE TAB IS TAKEN BEFORE THE AWAIT, AND AN ANSWER FOR A TAB THE READER HAS LEFT IS DROPPED (review
  * of the reconnect refresh, 2026-10-15). The page used to read `data.feedParams` after its await: a
- * refresh of "Suivis" landing after a switch to "Tout" was drawn over "Tout" and written into its
+ * refresh of "Suivis" landing after a switch to the all tab (then "Tout") was drawn over it and written into its
  * cache and its stored page. The reconnect made that race ordinary - it fires whenever it fires.
  *
  * @param stillCurrent - Whether the tab this refresh was issued for is still the one on screen,
