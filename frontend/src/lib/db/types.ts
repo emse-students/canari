@@ -110,6 +110,17 @@ export interface StoredMessage {
   editProof?: RecordedAuthorship | null;
   /** The author's signed `delete_message` behind the tombstone. */
   deleteProof?: RecordedAuthorship;
+  /**
+   * A TOMBSTONE WRITTEN BEFORE ITS TARGET ARRIVED (2026-11-02). A `delete_message` can reach this
+   * device before the message it names: both in one catch-up drain, the message still in the bulk
+   * buffer when its deletion is handled, or the message reaching this device later (a bundle, a
+   * replay). Dropping the deletion then lost it for good - its frame is consumed and never replays -
+   * so it is kept as this row, under the target's id. `senderId` is the DELETER's claim, not a
+   * proven author: when the body arrives from that same author it is absorbed (the tombstone stays
+   * and takes the body's place in the order); from another author the claim was not the author's
+   * and the body replaces this row (`bodyMeetsTombstone`, `messageMerge.ts`).
+   */
+  deletedBeforeArrival?: boolean;
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
   /**
@@ -646,6 +657,17 @@ export interface IStorage {
 
   /** Encrypt and persist a single message to the local store. */
   saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
+  /**
+   * Persist `msg` ONLY if no row is stored under its id - one atomic insert, never a replace.
+   *
+   * For a row that must never overwrite anything: a tombstone written before its target arrived
+   * (`StoredMessage.deletedBeforeArrival`). An absent row and an undecryptable one both read back as
+   * `null` from {@link getMessage}, and only the first may be written over - so the absence is
+   * decided by the store's own key constraint, in the same statement as the write.
+   *
+   * @returns `true` when the row was written, `false` when one already stood under that id
+   */
+  saveMessageIfAbsent(msg: StoredMessage, deviceKeyB64: string): Promise<boolean>;
   /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /**

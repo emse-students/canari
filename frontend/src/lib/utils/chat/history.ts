@@ -594,8 +594,22 @@ export function replayedStoredRow(
   if (prev && !prev.restoredUnverified && pm.restoredUnverified) {
     return provenRowUnderMarkedCopy(prev, pm);
   }
+  // A tombstone written before its target arrived (`deletedBeforeArrival`) names the DELETER, whose
+  // claim is checked now that the body is here: the author's own deletion holds and the row is built
+  // from the body's sender and time; anybody else's is dropped, and the body is written whole.
+  const unauthorisedEarlyDeletion =
+    prev?.deletedBeforeArrival === true &&
+    canonicalUserId(prev.senderId) !== canonicalUserId(pm.senderId);
+  if (unauthorisedEarlyDeletion) {
+    console.error(
+      `[HISTORY_REPLAY] ${at8(at.id)}: a deletion that arrived before it was claimed by ${prev.senderId.slice(0, 8)}, not its author - the message replaces the tombstone`
+    );
+  }
   const base =
-    prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted ? undefined : prev;
+    unauthorisedEarlyDeletion ||
+    (prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted)
+      ? undefined
+      : prev;
   const deleted = base?.isDeleted === true || pm.isDeleted === true;
   const edited = base?.isEdited === true || pm.isEdited === true;
   const authorship = pm.authorship ?? base?.authorship;

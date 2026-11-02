@@ -1543,6 +1543,47 @@ tombstone, in memory and in the row it writes. It used to set the flag alone, so
 original plaintext of a deleted message straight back on disk - and the next bundle this device
 answered read that row and sent the original text on to somebody else.
 
+**A deletion reaches its target wherever the target is - or is not yet (2026-11-02).** The owner
+reported a message the other person deleted still shown on a device he signed in AFTER the deletion.
+The live `delete_message` handler (`systemMessageHandler.ts`, `applyDeletion`) looked for its target
+in MEMORY alone, and memory is a window: the boot restore seeds every conversation with
+`messages: []`, and an opened one holds its last page. Two shapes dropped the deletion, acknowledged
+and gone for good - its frame is consumed (`noteFrameConsumed`), so the archive replay skips it:
+
+- **the target stored but not shown** - the message arrived before the device went away;
+- **the target not here yet** - the device was away for both, and one catch-up drain carried the
+  message and its deletion: the drain buffers inbound BODIES until it ends
+  (`beginBulkMessageIngest`) but handles the `delete_message` at once, so at that instant the body is
+  in neither memory nor the store. The flush then rendered and persisted the deleted text. The same
+  shape covers a body that reaches the device only later, through a bundle or a replay.
+
+The handler now asks the store when memory has no row (`getMessage`), authorises against the stored
+row, and tombstones it at rest. When neither holds the target, the deletion is KEPT as a tombstone
+row under the target's id, flagged `deletedBeforeArrival`, written only where no row stands
+(`saveMessageIfAbsent` - an insert the store's key constraint refuses, because `getMessage` reads an
+undecryptable row as `null` like an absent one). Its `senderId` is the DELETER's claim. Every seam
+that materialises a body settles it there (`bodyMeetsTombstone`, `messageMerge.ts`): the live add and
+the batch flush (`useMessaging.svelte.ts`) and the replay's row builder (`replayedStoredRow`). The
+deleter's own body is ABSORBED - the tombstone stays and takes the body's place in the order
+(`absorbedTombstone`); anybody else's REPLACES it, because only an author may delete and the claim is
+checked the moment there is something to check it against. A deleted notification preview is never
+upgraded back into its body either (`shouldUpgradeMessage`). Pinned by
+`useMessaging.deletionInOneDrain.svelte.test.ts` (the report's shape, failing before the fix),
+`systemMessageHandler.deletionReach.test.ts` and `saveMessageIfAbsent.test.ts`.
+
+**What this does NOT cover, measured in code on the same day:**
+
+- the edit and reaction handlers have the same memory-only lookup, so an edit or a reaction whose
+  target is stored but not shown is dropped the same way;
+- `addMessageToChat` and `batchAddMessages` deduplicate against memory only and write with a
+  full-row `put`, so a body re-delivered for a row stored but not shown (a broadcast or join bundle
+  restating old history) replaces that row - a stored tombstone included;
+- an ADDRESSED bundle (a reconciliation answer, `addOnly`) never applies a tombstone to a held row,
+  while the state key counts `deleted`: two devices that disagree only on a deletion keep
+  disagreeing, and keep exchanging digests;
+- a `deletedBeforeArrival` tombstone met by a bundle keeps the deletion frame's date - only the three
+  seams above move it to the body's place.
+
 **The shared-log half is not, and it needs a decision.** The server holds ciphertext and cannot tell
 which stream entry carries a given message, so nothing there can act on a deletion by itself. Three
 ways to give it one, none of them free:

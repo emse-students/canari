@@ -628,6 +628,27 @@ export class SqliteStorage implements IStorage {
     return this.saveMessages([msg], deviceKeyB64);
   }
 
+  /** See {@link IStorage.saveMessageIfAbsent}: `INSERT OR IGNORE`, which a held id turns into nothing. */
+  async saveMessageIfAbsent(msg: StoredMessage, deviceKeyB64: string): Promise<boolean> {
+    const encrypted = await encryptData(toMessagePayload(msg), deviceKeyB64);
+    const result = await this.db.execute(
+      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [
+        msg.id,
+        msg.conversationId,
+        msg.timestamp,
+        uint8ToBase64(encrypted.iv),
+        uint8ToBase64(encrypted.cipherText),
+        storedOrderAt(msg),
+        // The key above is the real one: a save is never provisional.
+        null,
+      ]
+    );
+    const written = (result?.rowsAffected ?? 0) > 0;
+    if (written) invalidateHistoryStateKey(msg.conversationId);
+    return written;
+  }
+
   /**
    * Encrypt and persist a batch of messages wrapped in a single SQLite transaction.
    * Binary iv/cipherText are stored as base64 TEXT to avoid a Tauri SQL plugin

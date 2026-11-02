@@ -135,7 +135,12 @@ import {
 import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
-import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import {
+  absorbedTombstone,
+  bodyMeetsTombstone,
+  shouldUpgradeMessage,
+  mergeMessageUpgrade,
+} from '$lib/utils/chat/messageMerge';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
@@ -965,7 +970,15 @@ export function useMessaging() {
        * jank to avoid, and there IS a write to do that only the live path performs.
        */
       const upgrades = held !== undefined && shouldUpgradeMessage(held, content);
-      if (!upgrades && (existing.some((m) => m.messageId === id) || held !== undefined)) {
+      // A TOMBSTONE AWAITING THIS BODY is not a duplicate either: the deletion reached this device
+      // first (`deletedBeforeArrival`), and only the live path below settles the two - it adds no
+      // row, so there is nothing for the buffer to batch.
+      const awaited = held !== undefined && bodyMeetsTombstone(held, senderId) !== 'none';
+      if (
+        !upgrades &&
+        !awaited &&
+        (existing.some((m) => m.messageId === id) || held !== undefined)
+      ) {
         // A duplicate is ordinary and this is not an accusation - but it is the FIRST of two silent
         // returns on the only path an inbound message can take, and between them they can absorb a
         // message without leaving anything behind. A card that never appeared has to be explainable
@@ -973,7 +986,7 @@ export function useMessaging() {
         console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}`);
         return;
       }
-      if (!upgrades) {
+      if (!upgrades && !awaited) {
         existing.push({
           senderId,
           content,
@@ -988,12 +1001,14 @@ export function useMessaging() {
       console.log(`[ADD_MSG] Preview upgrade during a bulk ingest id=${id} - taking the live path`);
     }
 
-    const convo = ctx.conversations.get(normalized);
-    if (!convo) {
+    const found = ctx.conversations.get(normalized);
+    if (!found) {
       console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
       bufferOrphan(normalized, senderId, content, contactName, options);
       return;
     }
+    // Reassigned once, when a tombstone the body overrules leaves the thread (`bodyMeetsTombstone`).
+    let convo: Conversation = found;
 
     const isOwn = isOwnMessage(senderId, ctx.userId);
     // ONE BELIEF, ONE DERIVATION - and this is the seam that MATERIALISES the row, so it is derived
@@ -1036,6 +1051,21 @@ export function useMessaging() {
       ...(options.authorship ? { authorship: options.authorship } : {}),
       ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
     };
+
+    // THE DELETION CAME FIRST (`deletedBeforeArrival`): the body is settled against it here, never
+    // added beside it and never written over it unless its author says otherwise.
+    const awaitingTombstone = convo.messages.find((m) => m.id === newMsg.id);
+    const meets = awaitingTombstone ? bodyMeetsTombstone(awaitingTombstone, senderId) : 'none';
+    if (awaitingTombstone && meets === 'absorb') {
+      await absorbBodyIntoTombstone(normalized, awaitingTombstone, newMsg, ctx);
+      return;
+    }
+    if (meets === 'replace') {
+      console.error(
+        `[ADD_MSG] ${newMsg.id.slice(0, 8)}: a deletion that arrived before it was claimed by ${awaitingTombstone?.senderId.slice(0, 8)}, and its author is ${newMsg.senderId.slice(0, 8)} - only an author may delete, the message replaces the tombstone`
+      );
+      convo = { ...convo, messages: convo.messages.filter((m) => m.id !== newMsg.id) };
+    }
 
     const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
     if (dupIdx !== -1) {
@@ -1258,6 +1288,53 @@ export function useMessaging() {
    * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
    * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
+  /**
+   * Writes a tombstone that has just absorbed its body (`absorbedTombstone`): the body's position,
+   * and no longer awaiting anything. The tombstone's content and its deletion proof stay as stored.
+   */
+  async function persistAbsorbedTombstone(absorbed: ChatMessage, ctx: MessagingContext) {
+    console.log(
+      `[ADD_MSG] ${absorbed.id.slice(0, 8)} reached this device after its deletion - the tombstone stays, at the message's place`
+    );
+    if (!ctx.storage) return;
+    try {
+      await ctx.storage.updateMessage(
+        absorbed.id,
+        {
+          timestamp: absorbed.timestamp.getTime(),
+          ...(absorbed.serverTimestamp !== undefined
+            ? { serverTimestamp: absorbed.serverTimestamp }
+            : {}),
+          deletedBeforeArrival: false,
+        },
+        ctx.deviceKeyB64
+      );
+    } catch (e) {
+      console.error(`[DB] the absorbed tombstone ${absorbed.id.slice(0, 8)} was not persisted:`, e);
+    }
+  }
+
+  /** The live path's half of {@link persistAbsorbedTombstone}: memory first, then the row. */
+  async function absorbBodyIntoTombstone(
+    normalized: string,
+    tombstone: ChatMessage,
+    body: ChatMessage,
+    ctx: MessagingContext
+  ) {
+    const absorbed = absorbedTombstone(tombstone, body);
+    const current = ctx.conversations.get(normalized);
+    if (current) {
+      ctx.conversations.set(normalized, {
+        ...current,
+        messages: insertMessageOrdered(
+          current.messages.filter((m) => m.id !== absorbed.id),
+          absorbed
+        ),
+      });
+    }
+    await persistAbsorbedTombstone(absorbed, ctx);
+  }
+
   async function batchAddMessages(
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
@@ -1292,6 +1369,10 @@ export function useMessaging() {
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
     // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
     const authorProvenIds = new SvelteSet<string>();
+    // Tombstones written before their target that this batch settled (`bodyMeetsTombstone`): the
+    // absorbed keep their row and take the body's place, the replaced give their row to the body.
+    const absorbedIds = new SvelteSet<string>();
+    const replacedIds = new SvelteSet<string>();
 
     let processedCount = 0;
     for (const pm of messages) {
@@ -1303,6 +1384,34 @@ export function useMessaging() {
       // Derived per row, for the reason spelt out in `addMessageToChat` above: this is the OTHER
       // seam that materialises a row, and the `history_bundle` reaches BOTH of them.
       const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);
+      const heldMsg = byId.get(id);
+      // THE DELETION CAME FIRST (`deletedBeforeArrival`) - the case a catch-up drain produces when it
+      // carries a message and its deletion together: the body was buffered when the deletion was
+      // handled. Its author's body is absorbed; anybody else's replaces the tombstone.
+      const meets = heldMsg ? bodyMeetsTombstone(heldMsg, pm.senderId) : 'none';
+      if (heldMsg && meets === 'absorb') {
+        const absorbed = absorbedTombstone(heldMsg, {
+          timestamp: new SvelteDate(
+            resolveMessageTimestamp(
+              pm,
+              (mid) => byId.get(mid),
+              isOwnMessage(pm.senderId, ctx.userId)
+            )
+          ),
+          serverTimestamp: pm.serverTimestamp,
+        });
+        upgradedById.set(id, absorbed);
+        byId.set(id, absorbed);
+        absorbedIds.add(id);
+        continue;
+      }
+      if (meets === 'replace') {
+        console.error(
+          `[ADD_MSG] ${id.slice(0, 8)}: a deletion that arrived before it was claimed by ${heldMsg?.senderId.slice(0, 8)}, and its author is ${pm.senderId.toLowerCase().slice(0, 8)} - only an author may delete, the message replaces the tombstone`
+        );
+        replacedIds.add(id);
+        byId.delete(id);
+      }
       const existingMsg = byId.get(id);
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
         const upgraded = mergeMessageUpgrade(existingMsg, {
@@ -1395,7 +1504,9 @@ export function useMessaging() {
     const current = ctx.conversations.get(normalized);
     const base = current ?? convo;
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
-    const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
+    const toAdd = heldNow
+      ? brandNew.filter((m) => !heldNow.has(m.id) || replacedIds.has(m.id))
+      : brandNew;
     const mine = readPointFor(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
@@ -1403,7 +1514,9 @@ export function useMessaging() {
       : toAdd.filter((msg) => isUnreadForUser(msg, mine.stamped, mine.server)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
-    const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
+    const withUpgrades = base.messages
+      .filter((m) => !replacedIds.has(m.id))
+      .map((m) => upgradedById.get(m.id) ?? m);
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
 
     if (current) {
@@ -1518,6 +1631,13 @@ export function useMessaging() {
       } catch (e) {
         console.error('[DB] batchAddMessages failed:', e);
       }
+    }
+
+    // The tombstones this batch settled keep their row - their deletion proof included - and take
+    // the body's place in the order. A patch, never a rewrite.
+    for (const id of absorbedIds) {
+      const absorbed = upgradedById.get(id);
+      if (absorbed) await persistAbsorbedTombstone(absorbed, ctx);
     }
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare

@@ -799,6 +799,36 @@ export class IndexedDbStorage implements IStorage {
     return this.saveMessages([msg], deviceKeyB64);
   }
 
+  /** See {@link IStorage.saveMessageIfAbsent}: `add`, which the key constraint refuses on a held id. */
+  async saveMessageIfAbsent(msg: StoredMessage, deviceKeyB64: string): Promise<boolean> {
+    const db = this.ensureDb();
+    const encrypted = await encryptData(toMessagePayload(msg), deviceKeyB64);
+    const row = {
+      id: msg.id,
+      conversationId: msg.conversationId,
+      timestamp: msg.timestamp,
+      orderAt: storedOrderAt(msg),
+      ...encrypted,
+    };
+    const written = await new Promise<boolean>((resolve, reject) => {
+      const tx = db.transaction('messages', 'readwrite');
+      const req = tx.objectStore('messages').add(row);
+      let refused = false;
+      req.onerror = (event) => {
+        if (req.error?.name === 'ConstraintError') {
+          // A held id is an answer, not a failure: keep the transaction alive and report it.
+          refused = true;
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      };
+      tx.oncomplete = () => resolve(!refused);
+      tx.onerror = () => reject('saveMessageIfAbsent error: ' + tx.error);
+    });
+    if (written) invalidateHistoryStateKey(msg.conversationId);
+    return written;
+  }
+
   /**
    * Encrypt and persist a batch of messages in a single IndexedDB transaction.
    * Each message's senderId, content, reactions, and flags are JSON-serialized and

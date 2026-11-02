@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { provenRowsIntoMemory, replayedStoredRow } from './history';
 import type { ChatMessage } from '$lib/types';
 import type { StoredMessage } from '$lib/db';
@@ -27,6 +27,39 @@ function stored(extra: Partial<StoredMessage> = {}): StoredMessage {
 }
 
 describe('replayedStoredRow', () => {
+  it("keeps a deletion that arrived before its message, at the replayed message's place", () => {
+    const prev = stored({
+      isDeleted: true,
+      deletedBeforeArrival: true,
+      content: 'x',
+      timestamp: 9,
+      deleteProof: PROOF('del'),
+    });
+    const row = replayedStoredRow(
+      { senderId: 'alice', content: 'hello', timestamp: new Date(2), authorship: PROOF('msg') },
+      prev,
+      at
+    );
+    expect(row.isDeleted).toBe(true);
+    expect(row.content).toBe(chat_system_message_deleted());
+    expect(row.timestamp).toBe(2);
+    expect(row.deleteProof).toEqual(PROOF('del'));
+    expect(row.authorship).toBeUndefined();
+    // Settled: the tombstone no longer awaits its message.
+    expect(row.deletedBeforeArrival).toBeUndefined();
+  });
+
+  it('drops such a deletion when it was not claimed by the message author', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const prev = stored({ senderId: 'mallory', isDeleted: true, deletedBeforeArrival: true });
+    const row = replayedStoredRow({ senderId: 'alice', content: 'hello' }, prev, at);
+    expect(row.isDeleted).toBeUndefined();
+    expect(row.content).toBe('hello');
+    expect(row.senderId).toBe('alice');
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('not its author'));
+    errors.mockRestore();
+  });
+
   it('keeps the stored tombstone proof when the incoming deleted copy carries none', () => {
     const prev = stored({ isDeleted: true, content: 'x', deleteProof: PROOF('del') });
     const row = replayedStoredRow({ senderId: 'alice', content: 'x', isDeleted: true }, prev, at);

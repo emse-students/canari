@@ -1,4 +1,5 @@
 import type { ChatMessage } from '$lib/types';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { compareMessageOrder } from './messageOrder';
 
 /** Returns true when `content` is a serialized MessageEnvelope JSON object. */
@@ -24,10 +25,14 @@ export function isFcmPreviewContent(content: string): boolean {
  * Upgrades FCM/plain previews when the incoming payload is a full envelope.
  */
 export function shouldUpgradeMessage(
-  existing: Pick<ChatMessage, 'content' | 'isFcmPreview'>,
+  existing: Pick<ChatMessage, 'content' | 'isFcmPreview' | 'isDeleted'>,
   incomingContent: string
 ): boolean {
   if (!isEnvelopeContent(incomingContent)) return false;
+  // A DELETE IS ABSORBING, AND A PREVIEW CAN BE DELETED. A notification's caption is in memory
+  // before the drain reaches the body, and a `delete_message` in the same drain tombstones that
+  // caption - which still carries `isFcmPreview`. Upgrading it then wrote the deleted body back.
+  if (existing.isDeleted) return false;
   if (existing.isFcmPreview) return true;
   return isFcmPreviewContent(existing.content);
 }
@@ -50,6 +55,45 @@ export function mergeMessageUpgrade(
     isFcmPreview: false,
     serverTimestamp: incoming.serverTimestamp ?? existing.serverTimestamp,
   };
+}
+
+/**
+ * What an arriving BODY does to a row already held under its id.
+ *
+ * - `none`: the row is not a tombstone written before its target (`deletedBeforeArrival`), and the
+ *   caller's ordinary rule applies (a duplicate, an FCM upgrade - never an un-delete).
+ * - `absorb`: the row is such a tombstone and the body is by the author who deleted it - the deletion
+ *   holds, and the body only gives the tombstone its place in the order ({@link absorbedTombstone}).
+ * - `replace`: the row is such a tombstone and the body is by SOMEBODY ELSE. Only an author may
+ *   delete a message, and the deleter's claim could not be checked while the target was absent: it
+ *   is checked now, and it fails. The body replaces the row.
+ */
+export function bodyMeetsTombstone(
+  existing: Pick<ChatMessage, 'isDeleted' | 'deletedBeforeArrival' | 'senderId'>,
+  incomingSenderId: string
+): 'none' | 'absorb' | 'replace' {
+  if (!existing.isDeleted || !existing.deletedBeforeArrival) return 'none';
+  return canonicalUserId(existing.senderId) === canonicalUserId(incomingSenderId)
+    ? 'absorb'
+    : 'replace';
+}
+
+/**
+ * A tombstone written before its target, once the target's body has arrived from its own author: the
+ * tombstone stays, takes the body's position (its `timestamp` and `serverTimestamp`, which the
+ * deletion frame could not know), and is no longer awaiting anything.
+ */
+export function absorbedTombstone(
+  existing: ChatMessage,
+  body: { timestamp: Date; serverTimestamp?: number }
+): ChatMessage {
+  const absorbed: ChatMessage = {
+    ...existing,
+    timestamp: body.timestamp,
+    ...(body.serverTimestamp !== undefined ? { serverTimestamp: body.serverTimestamp } : {}),
+  };
+  delete absorbed.deletedBeforeArrival;
+  return absorbed;
 }
 
 /** True when a message has been composed but not yet confirmed by the server. */

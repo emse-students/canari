@@ -63,6 +63,8 @@ import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
+import type { StoredMessage } from '$lib/db/types';
+import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -134,6 +136,138 @@ function mutationIsAuthorised(
     `[MLS] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
   );
   return false;
+}
+
+/**
+ * Applies one `delete_message` to this device, wherever its target is - or is not yet.
+ *
+ * **THE TARGET IS LOOKED FOR WHERE IT IS KEPT, NOT ONLY WHERE IT IS SHOWN** (owner's report,
+ * 2026-11-02: a message the other person deleted was still shown on a device signed in after the
+ * deletion). Memory holds a WINDOW - nothing at all for a conversation the boot restore has not
+ * reached (`loadExistingConversations` seeds every row with `messages: []`), the last page for one
+ * that was opened - and this handler used to look there alone. A deletion whose target was stored
+ * but not shown was acknowledged and forgotten, and nothing brings it back: its frame is consumed
+ * (`noteFrameConsumed`), so the archive replay skips it. So the store is asked next.
+ *
+ * **AND A DELETION CAN ARRIVE BEFORE ITS TARGET.** A device that was away receives the message and
+ * its deletion in ONE catch-up drain, and the drain buffers inbound bodies until it ends
+ * (`beginBulkMessageIngest`) while it handles this frame at once: the body is in neither memory nor
+ * the store yet. A body may also reach this device only later, through a bundle or the archive
+ * replay. Dropping the deletion then had the same ending, so it is KEPT, as a tombstone row under the
+ * target's id (`deletedBeforeArrival`), written only where no row stands (`saveMessageIfAbsent`).
+ * Every seam that materialises a body meets it there (`bodyMeetsTombstone`): the target's author
+ * leaves the tombstone in place, anybody else's body replaces it - the deleter's claim is checked the
+ * moment there is something to check it against.
+ *
+ * Only the author may delete (`mutationIsAuthorised`) - against the held row when there is one.
+ */
+async function applyDeletion(targetId: string, ctx: SystemEventContext): Promise<void> {
+  const { storage, deviceKey, conversations, convoKey, senderNorm, log, authorship, deliveryMeta } =
+    ctx;
+  const c = conversations.get(convoKey);
+  const held = c?.messages.find((row) => row.id === targetId);
+  let stored: StoredMessage | null = null;
+  if (!held && storage) {
+    try {
+      stored = await storage.getMessage(targetId, deviceKey());
+    } catch (e) {
+      log(`[DELETE] stored row of ${targetId.slice(0, 8)} could not be read: ${String(e)}`);
+    }
+  }
+  const target = held ?? stored;
+  if (target && !mutationIsAuthorised(target, senderNorm, 'delete', log)) return;
+  const tombstoneBody = m.chat_system_message_deleted();
+
+  if (target) {
+    if (held && c) {
+      conversations.set(convoKey, {
+        ...c,
+        messages: c.messages.map((row) =>
+          row.id === targetId ? { ...row, isDeleted: true, content: tombstoneBody } : row
+        ),
+      });
+    }
+    // Deleted by another of the author's devices: a refused act on it has nothing left to retry.
+    clearMessageControlRefusals(targetId);
+    log(
+      `[DELETE] ${targetId.slice(0, 8)} deleted by its author ${senderNorm.slice(0, 8)} - ${held ? 'shown and stored' : 'stored, not shown'}`
+    );
+    if (!storage) return;
+    try {
+      // The tombstone and the replacement body, nothing else: the edit flags and the read state of
+      // the message being deleted are not this handler's to rewrite. The original signed bytes go
+      // with the body (`authorship`/`editProof: null`), and the author's signed deletion stays, so a
+      // bundle can prove the tombstone to a device that missed it.
+      await storage.updateMessage(
+        targetId,
+        {
+          isDeleted: true,
+          content: tombstoneBody,
+          authorship: null,
+          editProof: null,
+          ...(authorship ? { deleteProof: authorship } : {}),
+        },
+        deviceKey()
+      );
+    } catch (e) {
+      // Non-blocking: the tombstone holds in memory, a reload shows the message again.
+      log(`[DELETE] tombstone of ${targetId.slice(0, 8)} not persisted: ${String(e)}`);
+    }
+    return;
+  }
+
+  // Neither shown nor stored: the deletion arrived first. Dated by the deletion frame, the only
+  // clock it carries, until its body gives the tombstone the body's own place (`absorbedTombstone`).
+  const serverTimestamp = deliveryMeta?.queuedCreatedAt;
+  const at = serverTimestamp ?? Date.now();
+  const placeholder: StoredMessage = {
+    id: targetId,
+    conversationId: convoKey,
+    senderId: senderNorm,
+    content: tombstoneBody,
+    timestamp: at,
+    ...(serverTimestamp !== undefined ? { serverTimestamp } : {}),
+    isDeleted: true,
+    deletedBeforeArrival: true,
+    ...(authorship ? { deleteProof: authorship } : {}),
+  };
+  let written = !storage;
+  if (storage) {
+    try {
+      written = await storage.saveMessageIfAbsent(placeholder, deviceKey());
+    } catch (e) {
+      console.error(
+        `[DELETE] the deletion of ${targetId.slice(0, 8)}, which arrived before its message, could not be kept: ${String(e)}`
+      );
+    }
+  }
+  if (!written && storage) {
+    // A row stood under the id after all - one this device cannot read (`getMessage` answers `null`
+    // for it too), or one written between the read and the insert. It is not overwritten.
+    log(
+      `[DELETE] ${targetId.slice(0, 8)}: a row this read did not return stands under the id - left as it is`
+    );
+    return;
+  }
+  log(
+    `[DELETE] ${targetId.slice(0, 8)} deleted by ${senderNorm.slice(0, 8)} before its message reached this device - kept as a tombstone awaiting it`
+  );
+  const now = conversations.get(convoKey);
+  if (now && !now.messages.some((row) => row.id === targetId)) {
+    conversations.set(convoKey, {
+      ...now,
+      messages: insertMessageOrdered(now.messages, {
+        id: targetId,
+        senderId: senderNorm,
+        content: tombstoneBody,
+        timestamp: new Date(at),
+        isOwn: canonicalUserId(senderNorm) === canonicalUserId(ctx.userId),
+        isDeleted: true,
+        deletedBeforeArrival: true,
+        ...(serverTimestamp !== undefined ? { serverTimestamp } : {}),
+      }),
+    });
+  }
 }
 
 /**
@@ -802,47 +936,12 @@ export async function handleSystemEvent(
   }
 
   if (event === 'delete_message') {
-    const c = conversations.get(convoKey);
-    if (c && data.messageId) {
-      const idx = c.messages.findIndex((m) => m.id === data.messageId);
-      if (idx !== -1 && !mutationIsAuthorised(c.messages[idx], senderNorm, 'delete', log))
-        return true;
-      if (idx !== -1) {
-        const orig = c.messages[idx];
-        const deletedMsg = {
-          ...orig,
-          isDeleted: true,
-          content: m.chat_system_message_deleted(),
-        };
-        conversations.set(convoKey, {
-          ...c,
-          messages: c.messages.map((m, i) => (i === idx ? deletedMsg : m)),
-        });
-        // Deleted by another of the author's devices: a refused act on it has nothing left to retry.
-        clearMessageControlRefusals(deletedMsg.id);
-        if (storage) {
-          try {
-            // The tombstone and the replacement body, nothing else: the edit flags and the read
-            // state of the message being deleted are not this handler's to rewrite. The original
-            // signed bytes go with the body (`authorship`/`editProof: null`), and the author's
-            // signed deletion stays, so a bundle can prove the tombstone to a device that missed it.
-            await storage.updateMessage(
-              deletedMsg.id,
-              {
-                isDeleted: true,
-                content: deletedMsg.content,
-                authorship: null,
-                editProof: null,
-                ...(authorship ? { deleteProof: authorship } : {}),
-              },
-              deviceKey()
-            );
-          } catch (e) {
-            // Non-blocking: the tombstone holds in memory, a reload shows the message again.
-            log(`[DELETE] tombstone of ${deletedMsg.id.slice(0, 8)} not persisted: ${String(e)}`);
-          }
-        }
-      }
+    if (data.messageId) {
+      await applyDeletion(String(data.messageId), ctx);
+    } else {
+      log(
+        `[DELETE] a delete_message from ${senderNorm.slice(0, 8)} names no message - nothing to do`
+      );
     }
     return true;
   }
