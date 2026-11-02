@@ -45,6 +45,7 @@ import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
+import fr.emse.canari.push.WakeAnswer
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -3154,6 +3155,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val data = remoteMessage.data
         Log.d(TAG, "onMessageReceived: type=${data["type"]} action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
+        // A CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`): Google carried only an opaque id. The
+        // frame is fetched from our server and then goes through EXACTLY the path below - one
+        // dispatcher, never a second handler that could drift from it.
+        if (data["type"] == WakeAnswer.WAKE_TYPE) {
+            onWakePush(data)
+            return
+        }
+        dispatchPush(data)
+    }
+
+    /**
+     * Everything a push's data map can ask of this service, whether it arrived in the push itself
+     * or was fetched for a wake-up push ([onWakePush]). The map is the same in both cases - the
+     * server builds both from one description (`describeQueuedFrame`).
+     */
+    private fun dispatchPush(data: Map<String, String>) {
         val msgType = data["type"]
 
         // A REACTION RIDES ON `social` WITHOUT BEING ONE. Its wire type stays `social` on purpose:
@@ -4315,6 +4332,131 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } finally {
             MlsStateLock.LOCK.unlock()
         }
+    }
+
+    /**
+     * A CONTENT-FREE WAKE-UP PUSH: fetch what the server kept, then dispatch it as the full push
+     * (owner, 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+     *
+     * ON THE MLS LANE, so wake-ups are dispatched in the order FCM delivered them: each fetch runs in
+     * its turn and enqueues its frame's own work behind the wake-ups already waiting, so A's work
+     * still precedes B's. One request, no retry and no timer: the transport's own timeout bounds it.
+     *
+     * A FAILED FETCH IS NEVER DRAWN AS THE GENERIC TEXT. It is logged at ERROR with its stage, and a
+     * visible frame gets a notification that SAYS the message could not be loaded; a silent one gets
+     * the line only - its row stays queued and the next open drains it.
+     */
+    private fun onWakePush(data: Map<String, String>) {
+        val queuedMessageId = data["queuedMessageId"].orEmpty()
+        val silent = data["silent"] == "true"
+        if (PushRegistrationEnd.isSignedOut(this)) {
+            Log.w(TAG, "[PUSH_WAKE] dropped queued=$queuedMessageId - this device is signed out, no account owns its pushes")
+            return
+        }
+        // The foreground engine drains the queue over its WebSocket; fetching here would only race it.
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "[PUSH_WAKE] app in foreground -> the WebSocket delivers queued=$queuedMessageId, nothing fetched")
+            return
+        }
+        if (queuedMessageId.isEmpty()) {
+            Log.e(TAG, "[PUSH_WAKE] a wake push without queuedMessageId - nothing to fetch (server defect) silent=$silent")
+            if (!silent) runWithWakeLock("fcm_wake_unavailable") { showWakeUnavailableNotification() }
+            return
+        }
+        runSerializedWithWakeLock("fcm_wake") {
+            when (val outcome = fetchWakeFrame(queuedMessageId, silent)) {
+                is WakeAnswer.Outcome.Frame -> {
+                    Log.d(TAG, "[PUSH_WAKE] fetched queued=$queuedMessageId type=${outcome.fields["type"]} silent=$silent -> dispatched as the full push")
+                    dispatchPush(outcome.fields)
+                }
+                WakeAnswer.Outcome.Gone ->
+                    Log.i(TAG, "[PUSH_WAKE] gone queued=$queuedMessageId - drained or acknowledged since the push, nothing to draw")
+                is WakeAnswer.Outcome.Failed -> {
+                    Log.e(TAG, "[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent - " +
+                        if (silent) "nothing drawn, the frame stays queued" else "drawn as not loaded")
+                    if (!silent) showWakeUnavailableNotification()
+                }
+            }
+        }
+    }
+
+    /**
+     * `GET /api/mls/push/wake` for one queued row, with the device's own ids and PushSecret - the
+     * auth `fetch-proto` uses. The decision on what came back is [WakeAnswer.classify]'s.
+     */
+    private fun fetchWakeFrame(queuedMessageId: String, silent: Boolean): WakeAnswer.Outcome {
+        val ctx = MlsContextLoader.loadPushContext(this) ?: return WakeAnswer.Outcome.Failed("no-push-context")
+        val secret = retrievePushSecret(this) ?: return WakeAnswer.Outcome.Failed("no-push-secret")
+        val url = URL(
+            "${ctx.baseUrl}/api/mls/push/wake" +
+                "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
+                "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}" +
+                "&silent=$silent"
+        )
+        val conn = try {
+            (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "GET"
+                setRequestProperty("Authorization", "PushSecret $secret")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[PUSH_WAKE] cannot open the connection: ${e.javaClass.simpleName}")
+            return WakeAnswer.Outcome.Failed("transport")
+        }
+        try {
+            val code = try {
+                conn.responseCode
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH_WAKE] no response: ${e.javaClass.simpleName}")
+                return WakeAnswer.classify(null, null, null)
+            }
+            if (code != 200) return WakeAnswer.classify(code, null, null)
+            val json = try {
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH_WAKE] unreadable body: ${e.javaClass.simpleName}")
+                return WakeAnswer.Outcome.Failed("unreadable-body")
+            }
+            val fields = json.optJSONObject("fields")?.let { obj ->
+                buildMap { obj.keys().forEach { key -> (obj.opt(key) as? String)?.let { put(key, it) } } }
+            }
+            return WakeAnswer.classify(code, json.optString("status").takeIf { it.isNotEmpty() }, fields)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * The notification a visible wake-up gets when its message could not be fetched: it says so and
+     * asks to open Canari, which drains the queue. In the app's chosen language ([appLocaleContext]);
+     * the tap opens the app, since nothing here knows which conversation the message belongs to.
+     */
+    private fun showWakeUnavailableNotification() {
+        val res = appLocaleContext(this)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannels(manager)
+        val notifId = notificationIdCounter.incrementAndGet()
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, notifId, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val body = res.getString(R.string.notif_wake_unavailable)
+        val notification = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(res.getString(R.string.app_name))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setSilent(callHoldsSound())
+            .build()
+        Log.d(TAG, "[PUSH_WAKE] not-loaded notification posted notifId=$notifId")
+        manager.notify(notifId, notification)
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {

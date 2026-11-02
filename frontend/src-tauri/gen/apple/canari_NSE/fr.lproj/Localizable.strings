@@ -91,3 +91,8 @@
    merged in memory (2026-10-22). */
 "notif.device.added.title" = "Nouvel appareil";
 "notif.device.added.body" = "Un nouvel appareil a été ajouté à votre compte. Si ce n'est pas vous, ouvrez Canari.";
+
+/* A content-free wake-up push whose message could not be fetched from the server, and one whose
+   message the app had already received (push_mode = wake, 2026-11-02). */
+"notif.wake.unavailable" = "Un message n'a pas pu être chargé. Ouvrez Canari pour le lire.";
+"notif.wake.gone" = "Message déjà reçu dans Canari.";

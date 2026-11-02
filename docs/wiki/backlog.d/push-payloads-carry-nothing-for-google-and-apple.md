@@ -108,7 +108,18 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
   (`commands/nse_outcomes.rs`, `nseOutcomes.ts`) is unchanged: `kind=wake` and the two new causes are
   code tokens it already accepts; the new stage is added to both stage lists.
 
-### Readings owed (the code is verified only by COMPILING on both native platforms)
+### Where it stands (2026-11-02)
+
+- Server half: #2915 (the switch, the capability column, the wake send, `GET /mls/push/wake`).
+- Client half: the stacked draft after it (Android `onWakePush` + `WakeAnswer`, the iOS extension's
+  `handleWake`, the iOS app's `CanariHandleWakeBackgroundFrame`, `PUSH_WAKE_COMPILED` sent as `wake`).
+- **What is verified, and how**: the server by its jest suites; Android by compiling the app
+  (`:app:compileArmDebugKotlin`) and the JVM `WakeAnswerTest`; the TS by vitest
+  (`pushWakeCompiled.test.ts` reads the three native receivers as text). **The Swift and the
+  Objective-C++ are not compiled by any pull-request job** - only a release's `ios.yml` builds them -
+  and nothing native has RUN. The switch stays `full` until the readings below.
+
+### Readings owed (the code is verified only by COMPILING, and iOS not even that before a release)
 
 1. Dev estate, `push_mode = wake`, Mi 9T on a build carrying the client half: three texts (1:1,
    group, salon - the salon stays `full`, step 2), app backgrounded then killed. Each 1:1 and group

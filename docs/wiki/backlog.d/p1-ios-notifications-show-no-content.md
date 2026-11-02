@@ -71,6 +71,11 @@ the tethered Mac):**
    counted only after a reboot (the marker's `boot` stamp) or lost to the 64-marker cap, and the
    proof must move to a lock the run holds for its life (released by the kernel at its death).
 
+**The wake-up push waits on this entry** ([push-payloads-carry-nothing](push-payloads-carry-nothing-for-google-and-apple.md)):
+with `push_mode = wake` the extension is the ONLY source of content on iOS, so the switch stays
+`full` until rows 1-6 above read `decrypted`. A wake run logs `kind=wake` and the stage `wake-fetch`
+before `push-context`, so its kills and expiries are told apart from this entry's.
+
 Closed when a release carrying this change shows content on the bench and the user's phone, or
 the outcome log names a cause that then gets its own fix.
 

@@ -4607,6 +4607,10 @@ static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
   return wakes && aps[@"alert"] == nil;
 }
 
+/// Defined after `CanariHandleBackgroundFrame`, which it hands the fetched frame to.
+static void CanariHandleWakeBackgroundFrame(NSDictionary *data,
+                                            void (^done)(UIBackgroundFetchResult));
+
 /**
  * WHAT A SILENT FRAME MAY DO WHEN IT WAKES THIS PROCESS - AN ALLOWLIST OF KINDS, each a dismissal.
  *
@@ -4615,6 +4619,8 @@ static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
  *   copy from another device - clear that conversation's notification. Decided on the cleartext
  *   `senderId`, so no frame is decrypted to learn it carries nothing.
  * - `call_ring_end`: end the CallKit ring of that call (a no-op when none rings for it).
+ * - `wake`: a content-free wake-up push - its frame is fetched (`CanariHandleWakeBackgroundFrame`)
+ *   and comes back through THIS allowlist, never around it.
  *
  * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
  * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and
@@ -4627,6 +4633,11 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
   NSString *msgType = [data[@"type"] isKindOfClass:[NSString class]] ? data[@"type"] : @"";
   NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
   NSLog(@"[CanariPush] onMessage background frame type=%@ groupId=%@", msgType, groupId);
+
+  if ([msgType isEqualToString:@"wake"]) {
+    CanariHandleWakeBackgroundFrame(data, done);
+    return;
+  }
 
   if ([msgType isEqualToString:@"channel_read"]) {
     NSString *channelId =
@@ -4707,6 +4718,97 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
         @"background allowlist (canari_push.mm, CanariHandleBackgroundFrame)",
         msgType, isWelcome);
   done(UIBackgroundFetchResultNoData);
+}
+
+/**
+ * A SILENT CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`, owner 2026-11-02;
+ * docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md): Apple carried only
+ * `type`, `queuedMessageId` and `silent`. The frame is fetched with the device's PushSecret
+ * (`GET /api/mls/push/wake`, the auth `fetch-proto` uses) and handed to `CanariHandleBackgroundFrame`
+ * - the same allowlist a full silent frame meets, never a second one.
+ *
+ * One request, no retry, no timer beyond the request's own timeout. A failure is logged at ERROR with
+ * its stage and acts on nothing: the one thing it loses is an own-device dismissal, and app activation
+ * clears message notifications anyway (`CanariPushCancelMessageNotifications`). `done` is called
+ * exactly once, on every path.
+ */
+static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void (^done)(UIBackgroundFetchResult)) {
+  NSString *queuedMessageId =
+      [data[@"queuedMessageId"] isKindOfClass:[NSString class]] ? data[@"queuedMessageId"] : @"";
+  NSString *silent = [data[@"silent"] isEqual:@"true"] ? @"true" : @"false";
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR push_context.json absent - the frame cannot be fetched");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  NSString *secret = CanariRetrievePushSecret();
+  if (secret == nil) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR pushSecret absent - the frame cannot be fetched");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  if (queuedMessageId.length == 0) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR a wake push without queuedMessageId (server defect)");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  NSCharacterSet *allowed = [NSCharacterSet URLQueryAllowedCharacterSet];
+  NSString *urlStr = [NSString
+      stringWithFormat:@"%@/api/mls/push/wake?messageId=%@&userId=%@&deviceId=%@&silent=%@",
+                       ctx.baseUrl,
+                       [queuedMessageId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
+                       [ctx.userId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
+                       [ctx.deviceId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
+                       silent];
+  NSURL *url = [NSURL URLWithString:urlStr];
+  if (url == nil) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR the fetch URL does not parse");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  req.HTTPMethod = @"GET";
+  [req setValue:[NSString stringWithFormat:@"PushSecret %@", secret]
+      forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 5.0;
+  [[[NSURLSession sharedSession]
+      dataTaskWithRequest:req
+        completionHandler:^(NSData *body, NSURLResponse *response, NSError *error) {
+          NSInteger status = [response isKindOfClass:[NSHTTPURLResponse class]]
+                                 ? ((NSHTTPURLResponse *)response).statusCode
+                                 : 0;
+          if (error != nil || body == nil || status != 200) {
+            NSLog(@"[CanariPush] [PUSH_WAKE] ERROR fetch failed stage=%@ status=%ld - nothing acted on",
+                  error != nil ? @"transport" : @"http", (long)status);
+            done(UIBackgroundFetchResultFailed);
+            return;
+          }
+          id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
+          NSDictionary *answer = [json isKindOfClass:[NSDictionary class]] ? json : nil;
+          id answerStatus = answer[@"status"];
+          if ([answerStatus isEqual:@"gone"]) {
+            NSLog(@"[CanariPush] [PUSH_WAKE] gone - drained or acknowledged since the push");
+            done(UIBackgroundFetchResultNoData);
+            return;
+          }
+          NSDictionary *raw = [answer[@"fields"] isKindOfClass:[NSDictionary class]] ? answer[@"fields"] : nil;
+          NSMutableDictionary<NSString *, NSString *> *fields = [NSMutableDictionary dictionary];
+          [raw enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+            if ([key isKindOfClass:[NSString class]] && [obj isKindOfClass:[NSString class]]) {
+              fields[key] = obj;
+            }
+          }];
+          NSString *type = fields[@"type"];
+          // A frame that is itself a wake would loop back into a fetch.
+          if (![answerStatus isEqual:@"frame"] || type.length == 0 || [type isEqualToString:@"wake"]) {
+            NSLog(@"[CanariPush] [PUSH_WAKE] ERROR fetch failed stage=unreadable-answer - nothing acted on");
+            done(UIBackgroundFetchResultFailed);
+            return;
+          }
+          NSLog(@"[CanariPush] [PUSH_WAKE] fetched type=%@ - handled as the full silent frame", type);
+          CanariHandleBackgroundFrame(fields, done);
+        }] resume];
 }
 
 /**

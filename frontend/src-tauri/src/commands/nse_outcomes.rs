@@ -66,6 +66,7 @@ const OUTCOMES: &[&str] = &[
 const STAGES: &[&str] = &[
     "start",
     "push-context",
+    "wake-fetch",
     "fetch-proto",
     "load-state",
     "decrypt",

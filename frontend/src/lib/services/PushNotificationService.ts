@@ -24,7 +24,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/i18n';
-import { CALLS_NATIVE_RING_COMPILED } from '$lib/features';
+import { CALLS_NATIVE_RING_COMPILED, PUSH_WAKE_COMPILED } from '$lib/features';
 import { voipRegistrationField } from '$lib/mobile/voipRegistration';
 import { readApiJson } from '$lib/utils/apiJson';
 
@@ -257,6 +257,9 @@ export async function startPushService(
           // single sentence it still composes, shown when the iOS extension cannot run.
           locale: getLocale(),
           ...voipRegistrationField(platform, CALLS_NATIVE_RING_COMPILED, voipToken),
+          // Whether this binary's native push code understands a content-free wake-up push; the
+          // server writes `push_token.wakeCapable` from it on every registration (false if absent).
+          wake: PUSH_WAKE_COMPILED,
         }),
       });
       if (!response.ok) {
