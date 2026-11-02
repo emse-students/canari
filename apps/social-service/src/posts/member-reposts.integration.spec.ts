@@ -19,8 +19,8 @@ import { DataSource } from 'typeorm';
 import { HttpException } from '@nestjs/common';
 import type { RedisService } from '../common/redis/redis.service';
 import {
-  RECORD_ANNOUNCED_THROUGH_REPOST_SQL,
-  announceRecipientsSql,
+  ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+  NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import { postListCacheKey } from './post-list-cache';
@@ -529,6 +529,25 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       expect(await sees(P(22), 'fo')).toBe(false);
       await q(`DELETE FROM member_reposts WHERE "postId" = ANY($1::uuid[])`, [[P(22), P(23)]]);
     });
+
+    it("the write's newly-reached set repeats the rule, so a rule removed after its check pushes nobody", async () => {
+      const newly = async (postId: string): Promise<string[]> =>
+        ((await q(NEWLY_REACHED_BY_MEMBER_REPOST_SQL, [postId, 'rp'])) as { id: string }[])
+          .map((r) => r.id)
+          .sort();
+      // The list, and the members-only association: nobody, though fo, fa and sb cannot see them.
+      expect(await newly(P(22))).toEqual([]);
+      expect(await newly(P(23))).toEqual([]);
+      // Read from state in the SAME statement as the "before": with a rule, A3's post reaches them.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
+        [A3]
+      );
+      expect(await newly(P(22))).toEqual(['fa', 'fo', 'sb']);
+      // The officer removes it - as if between the write's refusal check and this read.
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A3]);
+      expect(await newly(P(22))).toEqual([]);
+    });
   });
 
   describe("TOLD ONCE, EVER, AND ONLY THE AUDIENCE'S FEEDS DROPPED", () => {
@@ -588,11 +607,12 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
     it('an entity post reposted BEFORE its announcement: the sweep records whom the repost reached, and no later repost tells them again', async () => {
       await reposts.repost(P(24), 'rp');
       expect(told).toEqual([]); // not announced yet: the sweep will tell them
-      // The sweep, as `PostAnnounceScheduler.stampAndReadRecipients` runs it.
-      const audience: { id: string }[] = await q(announceRecipientsSql(false), [P(24)]);
+      // The sweep, as `PostAnnounceScheduler.stampAndReadRecipients` runs it: ONE statement.
+      const audience: { id: string }[] = await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [
+        P(24),
+      ]);
       const recipientIds = audience.map((r) => r.id);
       expect(recipientIds).toEqual(expect.arrayContaining(['fo', 'fa', 'sb', 'rp']));
-      await q(RECORD_ANNOUNCED_THROUGH_REPOST_SQL, [P(24), recipientIds]);
       await q(`UPDATE posts SET "feedNotifiedAt" = now() WHERE id = $1`, [P(24)]);
       // Only the readers who see it through the repost alone; rp sees it first-hand.
       expect(await notices(P(24))).toEqual(['fa', 'fo', 'sb']);
@@ -600,9 +620,34 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       await reposts.unrepost(P(24), 'rp');
       await reposts.repost(P(24), 'rp');
       expect(told).toEqual([]);
-      // A replay of the sweep's write adds nothing.
-      await q(RECORD_ANNOUNCED_THROUGH_REPOST_SQL, [P(24), recipientIds]);
+      // A replay of the sweep's statement adds nothing.
+      await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [P(24)]);
       expect(await notices(P(24))).toEqual(['fa', 'fo', 'sb']);
+    });
+
+    it('the sweep records EXACTLY the readers it hands the bell through a repost: with the repost gone, neither', async () => {
+      // The take-back the two-statement version could interleave: whatever the statement's snapshot
+      // holds, the recipients and the ledger agree, because they are read from the same one.
+      await q(`UPDATE posts SET "feedNotifiedAt" = NULL WHERE id = $1`, [P(24)]);
+      await q(`DELETE FROM member_repost_notices WHERE "postId" = $1`, [P(24)]);
+      await reposts.unrepost(P(24), 'rp');
+      const without: { id: string }[] = await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [
+        P(24),
+      ]);
+      expect(without.map((r) => r.id)).not.toContain('fo');
+      expect(await notices(P(24))).toEqual([]);
+      await reposts.repost(P(24), 'rp');
+      const withRepost: { id: string }[] = await q(
+        ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+        [P(24)]
+      );
+      const reachedThroughRepost = withRepost
+        .map((r) => r.id)
+        .filter((id) => !without.some((w) => w.id === id))
+        .sort();
+      expect(reachedThroughRepost).toEqual(['fa', 'fo', 'sb']);
+      expect(await notices(P(24))).toEqual(reachedThroughRepost);
+      await q(`UPDATE posts SET "feedNotifiedAt" = now() WHERE id = $1`, [P(24)]);
     });
 
     it('Suivis admits and places a row at the latest followed repost that still carries it, in ONE lateral', async () => {

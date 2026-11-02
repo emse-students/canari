@@ -6,7 +6,7 @@ import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { previewOf } from '../push/push-content';
 import {
-  RECORD_ANNOUNCED_THROUGH_REPOST_SQL,
+  ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
   announceRecipientsSql,
 } from '../spaces/reader-spaces';
 
@@ -191,16 +191,17 @@ export class PostAnnounceScheduler {
         return null;
       }
       if (!post.associationId && post.anonymous) return [];
-      const rows: unknown = await manager.query(announceRecipientsSql(!post.associationId), [
-        post.id,
-      ]);
-      const recipientIds = Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
-      // The readers this announcement reaches through a member repost are told NOW, so a later
-      // repost of the post must not tell them again: the ledger the repost path reads.
-      if (recipientIds.length > 0) {
-        await manager.query(RECORD_ANNOUNCED_THROUGH_REPOST_SQL, [post.id, recipientIds]);
-      }
-      return recipientIds;
+      // An ENTITY post: the recipients and the told-once ledger rows of the readers it reaches
+      // through a member repost, in ONE statement - one snapshot, so a concurrent take-back cannot
+      // leave a reader told here and missing from the ledger the repost path reads. A personal
+      // post's followers see it first-hand: no ledger share, so only the recipients are asked.
+      const entity = !!post.associationId;
+      const rows: unknown = await manager.query(
+        entity ? ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL : announceRecipientsSql(true),
+        [post.id]
+      );
+      // Logged by the caller, per post, with its kind and count.
+      return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
     });
   }
 }

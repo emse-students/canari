@@ -1566,11 +1566,12 @@ security review before arming.
   step of reach, not an unbounded chain. The write and the card ask the predicate with
   `memberReposts: false` (`FIRST_HAND`, `member-reposts.service.ts`).
 - **NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)**: an entity
-  post is repostable only when its association is not a list (`type = 'list'`) and addresses at
+  post is repostable only when its association's type is ALLOWED - `type IN ('association',
+  'institution')`, an allowlist, so a type added later stays refused until listed - and addresses at
   least one space (an `association_audiences` row); an association with no rule is read by its
   members only, and a member's repost would carry its post past that circle. One clause,
   `memberRepostablePostSql` (`spaces/reader-spaces.ts`), read by the write (the 404 of a post not
-  seen, nothing confirmed), by the card's `repostable` offer, and inside `memberRepostCarriesSql` -
+  seen, nothing confirmed, and again inside its newly-reached set), by the card's `repostable` offer, and inside `memberRepostCarriesSql` -
   so a repost written before the decision, or before its association lost its last rule, reaches,
   names and dates nothing, with no row deleted; read from state, so an association that gains a rule
   makes its posts repostable again. Production held 0 member reposts at the decision (0 of a list,
@@ -1598,9 +1599,17 @@ security review before arming.
   of who was reached. **The announcement writes its share (2026-11-02, review of #2917)**: an
   entity post not yet announced is told nothing at the repost, and the sweep tells everyone who
   sees it - so in its stamp transaction the sweep records in the same ledger the readers it reaches
-  ONLY through a member repost (`RECORD_ANNOUNCED_THROUGH_REPOST_SQL`, `post-announce.scheduler.ts`).
-  Without it, a take-back then a repost found them newly reached and told them a second time,
-  `member_repost` after `association_post`. Migration 123 holds a SHARE ROW EXCLUSIVE lock on
+  ONLY through a member repost (`ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL`,
+  `post-announce.scheduler.ts`). Without it, a take-back then a repost found them newly reached and
+  told them a second time, `member_repost` after `association_post`. **The recipients and the
+  ledger rows are ONE statement** (a CTE whose INSERT selects from the recipients): as two READ
+  COMMITTED statements, an `unrepost` - which takes no lock - committing between them left a reader
+  told but unrecorded. Only an entity post asks it: a personal post's followers see it first-hand.
+  A reader who sees the post first-hand is not recorded, so one who LOSES that access later and is
+  reached by a repost is told then - a new reach, not the same one twice. **The write's
+  newly-reached set repeats the repost rule** (`memberRepostablePostSql`), so an officer removing
+  an association's last audience rule after the write's check cannot get a `member_repost` pushed
+  for a post its rows no longer carry. Migration 123 holds a SHARE ROW EXCLUSIVE lock on
   `posts` until its COMMIT, backfill included: writes to `posts` (reactions and comments live in the
   row) wait for it, reads do not - its comment says so since the same date.
 - **Suivis at the repost's time**: the followed arm admits a post a followed person reposted and

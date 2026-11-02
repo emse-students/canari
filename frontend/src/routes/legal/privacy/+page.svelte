@@ -192,8 +192,8 @@
           leur a envoyée n'est plus affichée. Sont conservés : la republication (la publication,
           votre compte et sa date), le réglage de chaque auteur, le choix fait pour chaque
           publication et, pour ne jamais notifier deux fois la même personne, le fait qu'un lecteur
-          a déjà été notifié d'une publication republiée, et sa date, jusqu'à l'effacement de la
-          publication ou de son compte.
+          a déjà été notifié d'une publication, ou qu'elle lui a déjà été annoncée, par une
+          republication, et sa date, jusqu'à l'effacement de la publication ou de son compte.
         </dd>
       </div>
       <div>

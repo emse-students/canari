@@ -4,10 +4,12 @@
 -- A repost tells the readers it reaches for the FIRST time (`NEWLY_REACHED_BY_MEMBER_REPOST_SQL`),
 -- and that set is read from visibility, which a take-back undoes: without a record, every repost of
 -- the same post - by the same person after an "Annuler", or by another follower's followed person -
--- would announce it again to the same reader. One row per (post, recipient), written in the repost's
--- own transaction the first time that reader is told about that post through a repost; a reader
--- whose pair exists is never told again, whoever reposts it. It is not a repost, and nothing reads it
--- but that decision.
+-- would announce it again to the same reader. One row per (post, recipient), written the first time
+-- that reader is told about that post through a repost - by the repost's own transaction, or by the
+-- announcement sweep's statement for the readers an entity post reaches only through a repost
+-- (`ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL`); a reader whose pair exists is never told
+-- again through a repost, whoever reposts it. It is not a repost, and nothing reads it but that
+-- decision.
 --
 -- The post's foreign key cascades, so a deleted post takes its ledger with it; the recipient's
 -- account erasure deletes their rows (`account-erasure.ts`). `recipientId` carries no foreign key:

@@ -123,8 +123,9 @@ async function lockAuthorConsent(manager: EntityManager, authorId: string): Prom
  *
  * - a PERSONAL post with its author's consent - an account setting "Autoriser mes abonnes a republier
  *   mes posts", ON by default, and a per-post override either way;
- * - an ENTITY post (association, list, institution) without consent, still reaching only the
- *   reposter's ACCEPTED followers (Q2);
+ * - an ENTITY post (association, institution) without consent when it addresses at least one space,
+ *   still reaching only the reposter's ACCEPTED followers (Q2); never the post of a list or of a
+ *   members-only association (`memberRepostablePostSql`, owner 2026-11-02);
  * - never an anonymous post; never across a block, both ways;
  * - a post the reposter sees WITHOUT a read grant and without the administrator's by-id reach (the
  *   same predicate D38b's request passes).

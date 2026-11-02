@@ -1,4 +1,5 @@
 import {
+  NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
   memberRepostablePostSql,
   memberRepostCarriesSql,
   postVisibleToViewerSql,
@@ -11,10 +12,12 @@ import {
  * against PostgreSQL in `member-reposts.integration.spec.ts`.
  */
 describe('memberRepostablePostSql', () => {
-  it('admits a personal post, and an entity post only of a non-list association with a rule', () => {
+  it('admits a personal post, and an entity post only of an ALLOWED type with a rule', () => {
     const sql = memberRepostablePostSql('p');
     expect(sql).toContain('p."associationId" IS NULL OR EXISTS');
-    expect(sql).toContain(`vis_mrep_asso.type <> 'list'`);
+    // An allowlist: a type added later (`CHK_associations_type`) stays refused until listed.
+    expect(sql).toContain(`vis_mrep_asso.type IN ('association', 'institution')`);
+    expect(sql).not.toContain(`<> 'list'`);
     expect(sql).toContain('FROM association_audiences vis_mrep_arule');
     expect(sql).toContain('vis_mrep_asso.id = p."associationId"');
   });
@@ -23,6 +26,10 @@ describe('memberRepostablePostSql', () => {
     expect(memberRepostCarriesSql('p', 'r', '$1')).toContain(memberRepostablePostSql('p'));
     // ...and through it, of the reader predicate's repost door.
     expect(postVisibleToViewerSql('posts', '$1')).toContain(memberRepostablePostSql('posts'));
+  });
+
+  it("is read by the repost write's newly-reached set, in the same statement as its 'before'", () => {
+    expect(NEWLY_REACHED_BY_MEMBER_REPOST_SQL).toContain(memberRepostablePostSql('nr_post'));
   });
 
   it('is not read where member reposts are left out', () => {
