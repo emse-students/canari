@@ -1406,6 +1406,16 @@ hint tombstone, the conversation viewer on one slide, no forward, no share). Thi
   ciphertext (`evictCachedReelCiphertext`) once per media id per page life; the next page life asks
   again, a delete of an absent entry being a no-op. Without it a purged reel would replay from the
   cache with no `410` ever asked.
+- **A known imprecision, and it touches the LABEL only.** `mediaPurgedAt` is when THIS device's
+  viewer first met the `410` - the member's first TAP after the loss, on the phone's clock - not when
+  the server lost the file, which no client is told. It is compared with the SENDER's hint, set on
+  the sender's clock. So a reel purged early but first tapped after its hint reads "expire", and two
+  clocks that disagree can move the boundary by their skew. Nothing else reads the instant: the tile
+  is a tombstone either way, nothing is fetched, nothing is deleted on it.
+- **Kept across every rewrite of the row**: the history replay (`replayedStoredRow`, read from the
+  stored row even when a proven copy replaces a marked one), the FCM-preview upgrade in
+  `addMessageToChat` and in `batchAddMessages` (both rewrite the row whole), and a second record,
+  which reads the STORED row first and never overwrites its instant (memory is aligned to it).
 - **Reduced motion** needs nothing of its own: the global `prefers-reduced-motion` rule of
   `app.css` takes every transition and animation of the tile to nothing.
 - **"Copy" stays** in the action sheet: it copies the CAPTION text, never the `MediaRef` - 3.3's
@@ -1419,7 +1429,10 @@ hint tombstone, the conversation viewer on one slide, no forward, no share). Thi
   (the viewer's `410` draws "supprime" and is reported ONCE; a recorded one draws it after a reload
   with no tap; after the hint it reads "expire"; the cache drop once and never for a live reel) and
   `useMessaging.reelPurged.svelte.test.ts` (memory and row, another conversation, the first instant
-  kept, a lost write said).
+  kept in memory AND on the stored row, a message no conversation holds, a lost write said),
+  `history.replayedStoredRow.test.ts` and `useMessaging.bulkIngest.svelte.test.ts` (the record
+  survives a replay and both upgrade rewrites), and `MessageBubble.reel.svelte.test.ts` (the bubble
+  hands the viewer's `410` up with its message id, and draws a recorded one with no tap).
 - **Owed on devices:** with the writer on, a reel purged by its sender (`Supprimer pour tout le
   monde`) read on the other phone as "CanaReel supprime" after one tap, and still so after a
   relaunch with the network cut.

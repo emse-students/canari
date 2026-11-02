@@ -1068,6 +1068,8 @@ export function useMessaging() {
                 isDeleted: upgraded.isDeleted,
                 isEdited: upgraded.isEdited,
                 ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
+                // A reel's recorded 410 is this device's own fact (RC-6): kept across the rewrite.
+                ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
                 isFcmPreview: false,
                 ...proofFields,
               },
@@ -1321,6 +1323,8 @@ export function useMessaging() {
             isFcmPreview: false,
             ...(pm.authorship ? { authorship: pm.authorship } : {}),
             ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            // This device's record of a reel's 410 (RC-6), carried over the wholesale rewrite.
+            ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
           });
         }
         continue;
@@ -2647,9 +2651,24 @@ export function useMessaging() {
       return;
     }
     try {
+      // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
+      // hold it from before a reload of another tab), so "already recorded" is asked of the row
+      // itself, and an existing record is never overwritten - memory is aligned to it instead.
+      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      if (!stored) {
+        ctx.log(
+          `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+        );
+        return;
+      }
+      if (stored.mediaPurgedAt) {
+        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx);
+        ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
+        return;
+      }
       await ctx.storage.updateMessage(messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
-      // `updateMessage` writes nothing on an absent or unreadable row, and says nothing: the read
-      // back is what tells "on disk" from "asked".
+      // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
+      // what tells "on disk" from "asked".
       const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
       ctx.log(
         back?.mediaPurgedAt
@@ -2660,6 +2679,19 @@ export function useMessaging() {
       ctx.log(
         `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (${String(e).slice(0, 120)}) - a reload asks again`
       );
+    }
+  }
+
+  /** Sets memory's copy of a message's recorded 410 to the stored instant, read from the map NOW. */
+  function alignMemoryPurge(messageId: string, atMs: number, ctx: MessagingContext): void {
+    for (const [key, convo] of ctx.conversations) {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (idx === -1) continue;
+      if (convo.messages[idx].mediaPurgedAt === atMs) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+      return;
     }
   }
 

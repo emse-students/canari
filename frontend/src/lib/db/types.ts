@@ -122,7 +122,9 @@ export interface StoredMessage {
    * When THIS device met the `410` of the conversation reel this message carries (Unix ms, its own
    * clock), RC-6. A LOCAL fact - never relayed, never a peer's - read by the tile to draw "CanaReel
    * supprime" (before the sender's expiry hint) or "expire" (after) across reloads, so the `410` is
-   * asked once per message per device, never once per scroll.
+   * asked once per message per device, never once per scroll. It is the viewer's FIRST-TAP clock
+   * after the loss, compared with the sender's hint on the sender's clock: an imprecision that only
+   * moves the label between the two words, never whether the tile is a tombstone.
    */
   mediaPurgedAt?: number;
   /**

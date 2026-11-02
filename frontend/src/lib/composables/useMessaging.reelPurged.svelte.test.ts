@@ -93,6 +93,30 @@ describe('recordReelPurged', () => {
     expect(storage.updateMessage).not.toHaveBeenCalled();
   });
 
+  it('a second record never overwrites the STORED first, even when memory does not hold it', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const storage = fakeStorage([row('r1', DM)]);
+    const messaging = useMessaging();
+    await messaging.recordReelPurged('r1', 100, ctxFor({ [DM]: [msg('r1')] }, storage));
+    // Another page life: memory no longer carries it (a reload not yet re-read, another tab).
+    const later = ctxFor({ [DM]: [msg('r1')] }, storage);
+    await messaging.recordReelPurged('r1', 900, later);
+    expect(storage.rows.get('r1')!.mediaPurgedAt).toBe(100);
+    expect(storage.updateMessage).toHaveBeenCalledTimes(1);
+    // Memory is aligned to the stored first instant, not left on the later one.
+    expect(later.conversations.get(DM)!.messages[0].mediaPurgedAt).toBe(100);
+    expect(later.log).toHaveBeenCalledWith(expect.stringContaining('the first kept'));
+  });
+
+  it('with the message in no loaded conversation, still records it on the row, once', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const storage = fakeStorage([row('r5', DM, { mediaPurgedAt: 3 })]);
+    const ctx = ctxFor({ [DM]: [] }, storage);
+    await useMessaging().recordReelPurged('r5', 8, ctx);
+    expect(storage.rows.get('r5')!.mediaPurgedAt).toBe(3);
+    expect(storage.updateMessage).not.toHaveBeenCalled();
+  });
+
   it('says, with its cost, a row it could not write (absent or unreadable)', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([]);
