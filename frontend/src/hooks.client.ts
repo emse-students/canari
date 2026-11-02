@@ -14,6 +14,7 @@ import type { AppPath } from '$lib/utils/internalPath';
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { listenForNativeNotificationTaps } from '$lib/mobile/notificationTapDrain';
 import { chatTargetOfLink } from '$lib/mobile/chatLinkTarget';
+import { noteOpenRoutedNowhere } from '$lib/utils/chat/resumeOpening.svelte';
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { appRouteForDeepLink, proposalQueueAssociationId } from '$lib/mobile/deepLinkRoutes';
 import { m } from '$lib/paraglide/messages';
@@ -180,6 +181,7 @@ if (isTauriRuntime()) {
               '[hooks] open link names no claimed Canari page, ignoring:',
               describeDeepLink(target)
             );
+            noteOpenRoutedNowhere('an open link to no claimed page');
           }
           continue;
         }
@@ -188,6 +190,7 @@ if (isTauriRuntime()) {
         // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
         if (u.protocol === MOBILE_APP_PROTOCOL && u.host === 'chat') {
           const groupId = chatTargetOfLink(u.href);
+          if (!groupId) noteOpenRoutedNowhere('a chat link naming no conversation');
           // A LINK NAVIGATES, IT NEVER ANSWERS A CALL. The native answer is carried by a
           // private intent (`pending_call_accept.json`, `$lib/stores/pendingCallAccept`); a
           // parameter of this URL is never read as one, whoever opened it.
@@ -247,6 +250,7 @@ if (isTauriRuntime()) {
               // Unreachable for `repost_proposed` (it always has a slug route); kept because the
               // signature is `string | null` and a null must never reach `goto`.
               if (!route) {
+                noteOpenRoutedNowhere('a proposals link with no destination');
                 console.warn('[hooks] proposals queue has no destination');
                 return;
               }
@@ -327,6 +331,8 @@ if (isTauriRuntime()) {
         // browser, so there is nothing to route - only the proof to record, since nothing else
         // tells a sign-out that reached MiConnect from one whose browser was closed by hand.
         if (u.protocol === MOBILE_APP_PROTOCOL && u.host === OIDC_SIGNED_OUT_HOST) {
+          // Nothing to route: the app already stands on `/login`.
+          noteOpenRoutedNowhere('the sign-out browser coming back');
           import('$lib/stores/globalChatSingleton.svelte')
             .then(({ appendLog }) =>
               appendLog('[AUTH] MiConnect session ended - the sign-out browser came back')
@@ -350,6 +356,7 @@ if (isTauriRuntime()) {
         // Only handle OIDC callback scheme
         if (u.protocol !== MOBILE_APP_PROTOCOL || u.host !== 'callback') {
           console.log('[hooks] URL is not our deep link, ignoring');
+          noteOpenRoutedNowhere('a link that is not ours');
           continue;
         }
 
@@ -393,8 +400,10 @@ if (isTauriRuntime()) {
         }
 
         console.warn('[hooks] Missing code or state in callback URL');
+        noteOpenRoutedNowhere('a callback with no code or state');
       } catch (err) {
         console.error('[hooks] Error processing deep link URL:', describeDeepLink(url), err);
+        noteOpenRoutedNowhere('a link that could not be processed');
       }
     }
   };

@@ -4321,29 +4321,50 @@ was the one that moved only the first.
   per browser, and a `conversation_read` from a tab of another account would otherwise advance this
   account's watermark. The lock stays global: an origin holds ONE refresh credential, so two accounts
   never hold live sessions side by side ([sessions](../../sessions.md#a-token-that-names-another-account-than-the-local-identity-is-refused-2026-10-10)),
-  and the stamp covers the moments between a second sign-in and the first tab learning of it.
+  and the stamp covers the moments between a second sign-in and the first tab learning of it. An
+  UNSTAMPED event (`account` absent: a tab still on the bundle from before the stamp) is ACCEPTED -
+  dropping it cut a mixed-version browser's tabs off from each other; the window it leaves (an old tab
+  of another account) closes with that tab's next load. An empty stamp (a signed-out tab) is dropped.
 - `conversationBeingRead` (`arrivalRuntime.ts`): both callers of the server count hand it the salon
   being READ, never the bare selection.
 - **A resume that opens something does not read what was left open** (`resumeOpening.svelte.ts`,
   owner 2026-11-02). The shell knows, when it announces the foreground, that the resume is a
   notification tap, so it sends the link WITH the edge (`canari:foreground`, `detail.opening`):
   Android takes it in `onNewIntent`, which always precedes `onResume`. The page records, in that same
-  dispatch and before any effect re-runs, that the conversation on screen (X) is held
-  (`createAppForegroundState`'s `onResume` hook -> `noteResumeOpening`). The receipt effect and
-  `isReadingConversationNow` both ask `resumeOpeningHolds`. The hold ends on an event, never a clock:
-  the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
-  effect runs once), Y's landing is published and then released or abandoned (read from `notifNav`),
-  a page link navigated (`afterNavigate`), the app left again, or a resume carried no link. A tap for
-  X itself holds nothing; a plain resume still marks X. **A tap on a notification the PAGE raised**
-  follows the same rule: on Android the page's message notifications are built natively
-  (`notifyMessageFromWebSocket`) and tap as an ordinary chat link, so `onNewIntent` carries them; on
-  iOS they are the notification plugin's, which carry no link, so the shell sends the marker
-  `PAGE_NOTIFICATION_OPENING` and the hold waits for the landing the page's own `onAction` publishes
-  - or for that handler to say the tap routes nowhere (`endResumeOpeningUnrouted`). A cold start
-  needs nothing: no conversation is open, so nothing is held, and only Y is read. The chat link is parsed in ONE place
-  (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
-  `resumeOpening.svelte.test.ts` (both orders of the edge and the link, a plain resume, an abandoned
-  landing, a page link, the reader choosing, a page notification's tap, a cold start).
+  dispatch and before any effect re-runs, that the conversation on screen (X) is held. ONE wiring,
+  `createResumeReadGate`, is what `MainChatPage`'s receipt effect asks and what the tests drive;
+  `isReadingConversationNow` asks the same hold. A tap for X itself holds nothing; a plain resume
+  still marks X. The hold ends on an event, never a clock:
+  - the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
+    effect runs once);
+  - Y's landing is published and then released or abandoned (read from `notifNav`);
+  - a page link navigated (`noteOpenNavigated`, from `afterNavigate`);
+  - the open was routed NOWHERE (`noteOpenRoutedNowhere`): the router's every non-routing branch (an
+    unclaimed `open?url=`, an unknown link, a callback with no code), a native tap record that is not
+    a link, a page notification's tap with no identity or not posted by this session;
+  - the app left again, or a resume carried no link.
+
+  **Either order, the same answer.** The link reaches the router (and its landing, navigation or
+  "nowhere") through its own channel, before OR after the edge, so every outcome is a SEQUENCE,
+  snapshotted when the app LEAVES the screen (a module-level listener, whatever page is mounted): at
+  the edge an outcome counted since the leave is this open's, one counted after ends the hold.
+  **Keys, not ids:** a link and `notifNav.pending` carry a GROUP id, the selection a MAP key, and the
+  two differ for every DM and group; every comparison resolves through `resolveConversationKey`, as
+  the landing does (review of #2937 - compared raw, a tap on a DM's own notification held it for
+  good). **A reload drops the hold, and nothing it covered survives:** the selection lives in memory
+  only, and the one selection carried across a load (`canari_pending_contact`) is written only by an
+  explicit "open this conversation", never by a resume.
+
+  **A tap on a notification the PAGE raised** follows the same rule: on Android the page's message
+  notifications are built natively (`notifyMessageFromWebSocket`) and tap as an ordinary chat link,
+  so `onNewIntent` carries them; on iOS they are the notification plugin's, which carry no link, so
+  the shell sends the marker `PAGE_NOTIFICATION_OPENING` and the hold waits for the landing the page's
+  tap handler (`routePageNotificationTap`) publishes, or for it to say the tap routes nowhere. A cold
+  start needs nothing: no conversation is open, so nothing is held, and only Y is read. The chat link
+  is parsed in ONE place (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
+  `resumeOpening.svelte.test.ts` - keys that are not group ids, each outcome in both orders against
+  the edge, Y already selected before the edge, a DM's own notification, a non-navigating link, the
+  page notification's tap, a cold start, the arrival rule.
 
 **The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
 server answer that moved a count (one entry per moved salon). Neither grows with a conversation's

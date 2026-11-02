@@ -1,33 +1,35 @@
 // @vitest-environment happy-dom
 import { readFileSync } from 'node:fs';
 import { flushSync } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
-import { chatTargetOfLink } from '$lib/mobile/chatLinkTarget';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import type { Conversation } from '$lib/types';
 import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
-import { createAppForegroundState } from '$lib/utils/appForegroundState.svelte';
+import { isReadingConversationNow } from './arrivalRuntime';
+import { resolveConversationKey } from './openConversationFromId';
+import { routePageNotificationTap } from './pageNotificationTap';
 import {
-  endResumeOpening,
-  endResumeOpeningOnNavigation,
-  endResumeOpeningUnrouted,
+  createResumeReadGate,
+  noteOpenNavigated,
+  noteOpenRoutedNowhere,
   PAGE_NOTIFICATION_OPENING,
-  followResumeSelection,
-  noteResumeOpening,
-  resumeOpeningHolds,
 } from './resumeOpening.svelte';
 
 /**
  * A RESUME FROM A NOTIFICATION FOR Y DOES NOT READ X, THE CONVERSATION LEFT OPEN (owner, 2026-11-02).
  *
- * The receipt effect of `MainChatPage` is reproduced here with its real gate: the foreground state
- * built with the same hooks, `followResumeSelection` in a `pre` effect, then `resumeOpeningHolds`. The shells are
- * driven through the event they dispatch (`canari:foreground` with `detail.opening`), which is the
- * whole of what either platform tells the page - Android from `onResume` with the link `onNewIntent`
- * took, iOS from the resume with the link its notification delegate took. The landing is the real
- * `notifNav`, moved the way `hooks.client.ts` and the landing effect move it.
+ * The receipt effect's gate is the REAL one `MainChatPage` uses, `createResumeReadGate`, over a real
+ * conversation map whose KEYS ARE NOT THE GROUP IDS (a DM's key is not its group id - the case a raw
+ * comparison got wrong). The shells are driven through the event they dispatch (`canari:foreground`
+ * with `detail.opening`); the router's outcomes through what it calls: `notifNav.navigate` (a
+ * landing), `noteOpenNavigated` (`afterNavigate`), `noteOpenRoutedNowhere`, and the page's own tap
+ * handler, `routePageNotificationTap`. Each in both orders against the edge.
  */
 
-const link = (id: string) => `${MOBILE_APP_PROTOCOL}//chat/${id}`;
+const X = { key: 'dm:xavier', group: 'grp-x' };
+const Y = { key: 'dm:yann', group: 'grp-y' };
+const link = (group: string) => `${MOBILE_APP_PROTOCOL}//chat/${group}`;
 
 function announce(foreground: boolean, opening?: string) {
   (window as unknown as Record<string, unknown>).__canariForeground = foreground;
@@ -37,21 +39,29 @@ function announce(foreground: boolean, opening?: string) {
   flushSync();
 }
 
-/** The receipt effect's gate, as `MainChatPage` composes it; `marked` is every conversation read. */
+/** A message landing in the open conversation: what re-runs the receipt effect. */
+const tick = $state({ n: 0 });
+function messageLands() {
+  tick.n += 1;
+  flushSync();
+}
+
+/** The receipt effect, gated as `MainChatPage` gates it; `marked` lists every conversation read. */
 function mountReader(initial: string | null) {
+  const conversations = new SvelteMap<string, Conversation>();
+  for (const c of [X, Y]) conversations.set(c.key, { id: c.group } as Conversation);
   const selection = $state({ key: initial });
   const marked: string[] = [];
-  const foreground = createAppForegroundState({
-    onResume: (opening) => noteResumeOpening(opening, selection.key),
-    onLeave: endResumeOpening,
-  });
+  let gate!: ReturnType<typeof createResumeReadGate>;
   const stop = $effect.root(() => {
-    $effect.pre(() => followResumeSelection(selection.key));
+    gate = createResumeReadGate(
+      () => selection.key,
+      (id) => resolveConversationKey(conversations, id)
+    );
     $effect(() => {
       const selected = selection.key;
-      if (!selected || !foreground.current) return;
-      if (resumeOpeningHolds(selected)) return;
-      // A message landing re-runs the real effect; `tick` stands for it here.
+      if (!selected || !gate.current) return;
+      if (gate.holds(selected)) return;
       void tick.n;
       marked.push(selected);
     });
@@ -59,281 +69,294 @@ function mountReader(initial: string | null) {
   flushSync();
   return {
     marked,
-    select(key: string) {
+    gate,
+    select(key: string | null) {
       selection.key = key;
       flushSync();
     },
     destroy() {
       stop();
-      foreground.destroy();
+      gate.destroy();
     },
   };
 }
 
-/** A message landing in the open conversation: what re-runs the effect while the app is in front. */
-const tick = $state({ n: 0 });
-function messageLands() {
-  tick.n += 1;
-  flushSync();
+/** The landing effect's work: the target is selected (by its map key). */
+function landingSelects(r: ReturnType<typeof mountReader>, c: { key: string }) {
+  r.select(c.key);
+}
+
+let reader: ReturnType<typeof mountReader> | null = null;
+function open(initial: string | null) {
+  reader = mountReader(initial);
+  return reader;
 }
 
 beforeEach(() => {
-  announce(true);
+  announce(false);
   notifNav.clear();
-  endResumeOpening();
+  announce(true);
 });
 
 afterEach(() => {
+  reader?.destroy();
+  reader = null;
   delete (window as unknown as Record<string, unknown>).__canariForeground;
 });
 
-describe('a resume that opens a notification for Y, with X left open', () => {
-  it('Android order (the edge first, the link reaching the router after): X is not marked, Y is', () => {
-    const r = mountReader('X');
-    try {
-      expect(r.marked).toEqual(['X']);
-      announce(false);
-      announce(true, link('Y'));
-      messageLands(); // something lands in X while the landing is on its way
-      expect(r.marked).toEqual(['X']);
-      notifNav.navigate(chatTargetOfLink(link('Y'))!); // `hooks.client.ts` publishes the target
-      flushSync();
-      messageLands();
-      expect(r.marked).toEqual(['X']);
-      r.select('Y'); // the landing selects it
-      expect(r.marked).toEqual(['X', 'Y']);
-    } finally {
-      r.destroy();
-    }
+describe('a resume that opens a chat link for Y, with X left open (keys are not group ids)', () => {
+  it('the edge first, the link reaching the router after (Android): X is not marked, Y is', () => {
+    const r = open(X.key);
+    expect(r.marked).toEqual([X.key]);
+    announce(false);
+    announce(true, link(Y.group));
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    notifNav.navigate(Y.group);
+    flushSync();
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    landingSelects(r, Y);
+    expect(r.marked).toEqual([X.key, Y.key]);
   });
 
-  it('iOS order (the tap reaching the router before the edge): X is not marked, Y is', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      notifNav.navigate('Y'); // the tap file drained before the resume's edge was dispatched
-      flushSync();
-      announce(true, link('Y'));
-      messageLands();
-      expect(r.marked).toEqual(['X']);
-      r.select('Y');
-      expect(r.marked).toEqual(['X', 'Y']);
-    } finally {
-      r.destroy();
-    }
+  it('the landing published before the edge: X is not marked, Y is', () => {
+    const r = open(X.key);
+    announce(false);
+    notifNav.navigate(Y.group);
+    flushSync();
+    announce(true, link(Y.group));
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    landingSelects(r, Y);
+    expect(r.marked).toEqual([X.key, Y.key]);
+  });
+
+  it('Y already SELECTED before the edge: Y is read at the edge, nothing is held', () => {
+    const r = open(X.key);
+    announce(false);
+    notifNav.navigate(Y.group);
+    flushSync();
+    landingSelects(r, Y); // the landing ran while the app was still in the background
+    announce(true, link(Y.group));
+    expect(r.marked).toEqual([X.key, Y.key]);
+    expect(r.gate.holds(Y.key)).toBe(false);
+  });
+
+  it("a tap on X's OWN notification (a DM) reads X at once, landing pending or not", () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, link(X.group));
+    expect(r.marked).toEqual([X.key, X.key]);
+    // The landing sees X already on screen and leaves its target pending: still read.
+    notifNav.navigate(X.group);
+    flushSync();
+    messageLands();
+    expect(r.marked).toEqual([X.key, X.key, X.key]);
   });
 
   it('a PLAIN resume (no notification) still marks X', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true);
-      expect(r.marked).toEqual(['X', 'X']);
-    } finally {
-      r.destroy();
-    }
+    const r = open(X.key);
+    announce(false);
+    announce(true);
+    expect(r.marked).toEqual([X.key, X.key]);
   });
 
-  it('a tap on a notification for X itself marks X', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, link('X'));
-      expect(r.marked).toEqual(['X', 'X']);
-    } finally {
-      r.destroy();
-    }
-  });
-
-  it('a landing that is abandoned (Y unknown) releases X, which is what is on screen', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, link('Y'));
-      notifNav.navigate('Y');
-      flushSync();
-      expect(r.marked).toEqual(['X']);
-      notifNav.clear();
-      flushSync();
-      expect(r.marked).toEqual(['X', 'X']);
-    } finally {
-      r.destroy();
-    }
-  });
-
-  it('a link to a page holds X until it has navigated', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, `${MOBILE_APP_PROTOCOL}//post/p1`);
-      messageLands();
-      expect(r.marked).toEqual(['X']);
-      endResumeOpeningOnNavigation();
-      flushSync();
-      expect(r.marked).toEqual(['X', 'X']);
-    } finally {
-      r.destroy();
-    }
+  it('a landing that is abandoned releases X, which is what is on screen', () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, link(Y.group));
+    notifNav.navigate(Y.group);
+    flushSync();
+    expect(r.marked).toEqual([X.key]);
+    notifNav.clear();
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
   });
 
   it('the reader picking another conversation ends the hold, and coming back to X reads it', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, link('Y'));
-      r.select('Z');
-      r.select('X');
-      expect(r.marked).toEqual(['X', 'Z', 'X']);
-    } finally {
-      r.destroy();
-    }
+    const r = open(X.key);
+    announce(false);
+    announce(true, link(Y.group));
+    r.select('dm:zoe');
+    r.select(X.key);
+    expect(r.marked).toEqual([X.key, 'dm:zoe', X.key]);
   });
 
   it('leaving again during the hold, then a plain resume, marks X', () => {
-    const r = mountReader('X');
+    const r = open(X.key);
+    announce(false);
+    announce(true, link(Y.group));
+    announce(false);
+    announce(true);
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('an arrival in X during the hold is not read on arrival', () => {
+    window.history.replaceState(null, '', '/chat');
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     try {
+      const r = open(X.key);
+      expect(isReadingConversationNow(X.key, X.key)).toBe(true);
       announce(false);
-      announce(true, link('Y'));
-      announce(false);
-      announce(true);
-      expect(r.marked).toEqual(['X', 'X']);
+      announce(true, link(Y.group));
+      expect(isReadingConversationNow(X.key, X.key)).toBe(false);
+      landingSelects(r, Y);
+      expect(isReadingConversationNow(Y.key, Y.key)).toBe(true);
     } finally {
-      r.destroy();
+      focus.mockRestore();
     }
+  });
+});
+
+describe('a resume that opens a link to anything else', () => {
+  it('a page link holds X until it has navigated', () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, `${MOBILE_APP_PROTOCOL}//post/p1`);
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    noteOpenNavigated();
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('a page link that navigated BEFORE the edge holds nothing', () => {
+    const r = open(X.key);
+    announce(false);
+    noteOpenNavigated();
+    announce(true, `${MOBILE_APP_PROTOCOL}//post/p1`);
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('a link the router routes NOWHERE (an unclaimed open?url) releases X, after the edge', () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, `${MOBILE_APP_PROTOCOL}//open?url=https%3A%2F%2Fexample.org`);
+    expect(r.marked).toEqual([X.key]);
+    noteOpenRoutedNowhere('an open link to no claimed page');
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('... and holds nothing when it was routed nowhere BEFORE the edge', () => {
+    const r = open(X.key);
+    announce(false);
+    noteOpenRoutedNowhere('a link that is not ours');
+    announce(true, `${MOBILE_APP_PROTOCOL}//unknown-host`);
+    expect(r.marked).toEqual([X.key, X.key]);
   });
 });
 
 describe('a tap on a notification the PAGE raised (the plugin, iOS), with X left open', () => {
-  it('the landing its handler publishes after the edge: X is not marked, Y is', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, PAGE_NOTIFICATION_OPENING);
-      messageLands();
-      expect(r.marked).toEqual(['X']);
-      notifNav.navigate('Y'); // `useNotifications`' onAction publishes the landing
-      flushSync();
-      messageLands();
-      expect(r.marked).toEqual(['X']);
-      r.select('Y');
-      expect(r.marked).toEqual(['X', 'Y']);
-    } finally {
-      r.destroy();
-    }
+  const posted = new Map([[7, Y.group]]);
+  const tap = (id: number | null) =>
+    routePageNotificationTap(
+      id === null ? { notification: null } : { notification: { id } },
+      posted,
+      (t) => notifNav.navigate(t)
+    );
+
+  it('its landing published after the edge: X is not marked, Y is', () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, PAGE_NOTIFICATION_OPENING);
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    expect(tap(7)).toBe('landed');
+    flushSync();
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    landingSelects(r, Y);
+    expect(r.marked).toEqual([X.key, Y.key]);
   });
 
-  it('the landing published BEFORE the edge reached the page: X is not marked, Y is', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      notifNav.navigate('Y');
-      flushSync();
-      announce(true, PAGE_NOTIFICATION_OPENING);
-      messageLands();
-      expect(r.marked).toEqual(['X']);
-      r.select('Y');
-      expect(r.marked).toEqual(['X', 'Y']);
-    } finally {
-      r.destroy();
-    }
+  it('its landing published BEFORE the edge: X is not marked, Y is', () => {
+    const r = open(X.key);
+    announce(false);
+    tap(7);
+    flushSync();
+    announce(true, PAGE_NOTIFICATION_OPENING);
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    landingSelects(r, Y);
+    expect(r.marked).toEqual([X.key, Y.key]);
   });
 
-  it('a tap the handler routes nowhere releases X, which is what is on screen', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, PAGE_NOTIFICATION_OPENING);
-      expect(r.marked).toEqual(['X']);
-      endResumeOpeningUnrouted('a notification this session did not post');
-      flushSync();
-      expect(r.marked).toEqual(['X', 'X']);
-    } finally {
-      r.destroy();
-    }
+  it.each([
+    ['no identity', null],
+    ['a notification this session did not post', 99],
+  ])('routed nowhere (%s) AFTER the edge: X is released', (_why, id) => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, PAGE_NOTIFICATION_OPENING);
+    expect(r.marked).toEqual([X.key]);
+    expect(tap(id)).not.toBe('landed');
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it.each([
+    ['no identity', null],
+    ['a notification this session did not post', 99],
+  ])('routed nowhere (%s) BEFORE the edge: nothing is held', (_why, id) => {
+    const r = open(X.key);
+    announce(false);
+    tap(id);
+    announce(true, PAGE_NOTIFICATION_OPENING);
+    expect(r.marked).toEqual([X.key, X.key]);
   });
 
   it('a page notification for X itself marks X once it lands', () => {
-    const r = mountReader('X');
-    try {
-      announce(false);
-      announce(true, PAGE_NOTIFICATION_OPENING);
-      notifNav.navigate('X');
-      flushSync();
-      expect(r.marked).toEqual(['X', 'X']);
-    } finally {
-      r.destroy();
-    }
+    const r = open(X.key);
+    announce(false);
+    announce(true, PAGE_NOTIFICATION_OPENING);
+    routePageNotificationTap({ notification: { id: 3 } }, new Map([[3, X.group]]), (t) =>
+      notifNav.navigate(t)
+    );
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
   });
 });
 
 describe('a cold start from a tap', () => {
   it.each([
-    ['a chat link', link('Y')],
+    ['a chat link', link(Y.group)],
     ['a page notification', PAGE_NOTIFICATION_OPENING],
   ])('(%s) marks only Y: no conversation was open, so nothing is held', (_what, opening) => {
-    // The page loads in the background (a launch by the tap), with nothing selected.
-    announce(false);
-    const r = mountReader(null);
-    try {
-      announce(true, opening);
-      notifNav.navigate('Y');
-      flushSync();
-      r.select('Y');
-      messageLands();
-      expect(r.marked[0]).toBe('Y');
-      expect(new Set(r.marked)).toEqual(new Set(['Y']));
-    } finally {
-      r.destroy();
-    }
+    announce(false); // the page loads in the background, a launch by the tap, nothing selected
+    const r = open(null);
+    announce(true, opening);
+    notifNav.navigate(Y.group);
+    flushSync();
+    landingSelects(r, Y);
+    messageLands();
+    expect(new Set(r.marked)).toEqual(new Set([Y.key]));
   });
 });
 
-describe('the wiring', () => {
-  it('the receipt effect asks the hold, and the arrival rule does too', () => {
-    const page = readFileSync('src/lib/components/MainChatPage.svelte', 'utf8');
-    expect(page).toMatch(
-      /onResume: \(opening\) => noteResumeOpening\(opening, convs\.selectedContact\)/
-    );
-    expect(page).toMatch(/onLeave: endResumeOpening/);
-    expect(page).toMatch(
-      /\$effect\.pre\(\(\) => followResumeSelection\(convs\.selectedContact\)\);/
-    );
-    expect(page).toMatch(/if \(resumeOpeningHolds\(convs\.selectedContact\)\) return;/);
-    const arrival = readFileSync('src/lib/utils/chat/arrivalRuntime.ts', 'utf8');
-    expect(arrival).toMatch(/if \(resumeOpeningHolds\(conversationKey\)\) return false;/);
-    const layout = readFileSync('src/lib/components/layout/ChatBackgroundService.svelte', 'utf8');
-    expect(layout).toMatch(/endResumeOpeningOnNavigation\(\);/);
-    const hooks = readFileSync('src/hooks.client.ts', 'utf8');
-    expect(hooks).toMatch(/const groupId = chatTargetOfLink\(u\.href\);/);
-  });
+/**
+ * THE KOTLIN HALF, which cannot run here: a source contract only. The page's half is the behaviour
+ * above; the iOS half is pinned in `appForeground.contract.test.ts` on the iOS branch.
+ */
+describe('the Android shell', () => {
+  const read = (file: string) =>
+    readFileSync(`src-tauri/gen/android/app/src/main/java/fr/emse/canari/${file}`, 'utf8');
 
-  it("the page's tap handler releases the hold on every branch that publishes no landing", () => {
-    const source = readFileSync('src/lib/composables/useNotifications.svelte.ts', 'utf8');
-    expect(source.match(/endResumeOpeningUnrouted\(/g)?.length).toBe(2);
-  });
-
-  it("Android's page notifications are built natively and tap as a chat link to the activity", () => {
-    // `notifyMessageFromWebSocket` (the page's builder) posts through `showMessageNotification`,
-    // whose tap is ACTION_VIEW on the chat link - the intent `onNewIntent` carries into the edge.
-    const fms = readFileSync(
-      'src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt',
-      'utf8'
-    );
-    expect(fms).toContain('fun notifyMessageFromWebSocket(');
-    expect(fms).toMatch(
-      /action = Intent\.ACTION_VIEW\s+setData\(android\.net\.Uri\.parse\("fr\.emse\.canari:\/\/chat\/\$groupId"\)\)/
-    );
-  });
-
-  it('Android sends the link onNewIntent took with the edge onResume dispatches', () => {
-    const activity = readFileSync(
-      'src-tauri/gen/android/app/src/main/java/fr/emse/canari/MainActivity.kt',
-      'utf8'
-    );
+  it('sends the link onNewIntent took with the edge onResume dispatches', () => {
+    const activity = read('MainActivity.kt');
     expect(activity).toMatch(
       /resumeOpening = if \(intent\.action == Intent\.ACTION_VIEW\) intent\.dataString else null/
     );
     expect(activity).toMatch(/pushForeground\(true, opening\)/);
     expect(activity).toMatch(/detail:\{foreground:\$foreground,opening:\$openingJs\}/);
+  });
+
+  it("builds the page's notifications natively, so their tap is a chat link to the activity", () => {
+    const fms = read('CanariFirebaseMessagingService.kt');
+    expect(fms).toContain('fun notifyMessageFromWebSocket(');
+    expect(fms).toMatch(
+      /action = Intent\.ACTION_VIEW\s+setData\(android\.net\.Uri\.parse\("fr\.emse\.canari:\/\/chat\/\$groupId"\)\)/
+    );
   });
 });

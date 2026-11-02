@@ -22,13 +22,7 @@
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { onAppScreenChange } from '$lib/utils/appForeground';
-  import { createAppForegroundState } from '$lib/utils/appForegroundState.svelte';
-  import {
-    endResumeOpening,
-    followResumeSelection,
-    noteResumeOpening,
-    resumeOpeningHolds,
-  } from '$lib/utils/chat/resumeOpening.svelte';
+  import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
   import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
@@ -318,10 +312,10 @@
   // A resume that opens a notification for another conversation does not read the one left open:
   // decided in the dispatch that announces the foreground, before this effect can see it (owner,
   // 2026-11-02, `resumeOpening.svelte.ts`).
-  const appForeground = createAppForegroundState({
-    onResume: (opening) => noteResumeOpening(opening, convs.selectedContact),
-    onLeave: endResumeOpening,
-  });
+  const appForeground = createResumeReadGate(
+    () => convs.selectedContact,
+    (id) => resolveConversationKey(convs.conversations, id)
+  );
   onDestroy(() => appForeground.destroy());
 
   /**
@@ -730,10 +724,6 @@
     );
   }
 
-  // A resume's hold on the conversation it found on screen ends when the selection moves. A `pre`
-  // effect, so the receipt effect below runs ONCE on the new selection with the hold already gone.
-  $effect.pre(() => followResumeSelection(convs.selectedContact));
-
   $effect(() => {
     // LEAVING INSIDE THE WINDOW DELIVERS THE MARK, AND IT IS DETECTED HERE, FIRST, BEFORE ANY RETURN.
     // The left conversation's own callback runs: a DM's hands its mark to the outbox, a salon's
@@ -756,7 +746,7 @@
     if (!isWindowFocused || !isTabVisible || !appForeground.current) return;
     // The app came back to open something else (a tapped notification): what it shows until the
     // landing selects that is not being read (`resumeOpening.svelte.ts`).
-    if (resumeOpeningHolds(convs.selectedContact)) return;
+    if (appForeground.holds(convs.selectedContact)) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
