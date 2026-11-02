@@ -456,11 +456,12 @@ export class PushController {
    *
    * Answers `{status: 'frame', fields}` or `{status: 'gone'}` (`WakeAnswer`); one line per fetch, so
    * `[PUSH_SEND] mode=wake` minus `[PUSH_WAKE] served|gone` is the wakes no device acted on.
+   *
+   * `Cache-Control: no-store`: a per-device answer about a queue that changes under it, so no
+   * client, proxy or OS cache may replay it - a stale `frame` would draw a message already read.
    */
   @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
   @Throttle({ default: { limit: WAKE_FETCH_LIMIT_PER_MINUTE, ttl: 60_000 } })
-  // A per-device answer about a queue that changes under it: no client, proxy or OS cache may
-  // replay it (a stale `frame` would draw a message already read).
   @Header('Cache-Control', 'no-store')
   @Get('mls/push/wake')
   async fetchWakeFrame(
