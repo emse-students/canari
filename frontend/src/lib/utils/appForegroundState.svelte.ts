@@ -16,11 +16,24 @@ import { Log } from './Log';
  * runtime that writes neither, it is `true` and never changes - the document's own visibility and
  * focus decide there, as before.
  */
-export function createAppForegroundState(): { readonly current: boolean; destroy(): void } {
+export function createAppForegroundState(
+  hooks: {
+    /**
+     * Runs on each foreground edge BEFORE `current` changes, in the same dispatch, with the link the
+     * resume opens (or `null`): whatever must be decided before an effect sees the app in front is
+     * decided here.
+     */
+    onResume?: (opening: string | null) => void;
+    /** Runs on each background edge. */
+    onLeave?: () => void;
+  } = {}
+): { readonly current: boolean; destroy(): void } {
   let current = $state(isAppInForeground());
-  const off = onAppForegroundChange((foreground) => {
+  const off = onAppForegroundChange((foreground, opening) => {
     if (foreground === current) return;
     Log.d(`[FOREGROUND] app ${foreground ? 'back in the foreground' : 'in the background'}`);
+    if (foreground) hooks.onResume?.(opening);
+    else hooks.onLeave?.();
     current = foreground;
   });
   return {

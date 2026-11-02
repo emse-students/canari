@@ -4284,6 +4284,7 @@ was not up, and every one of these paths is decided in the client.
 | iOS resumed on an open conversation | iOS | works | WKWebView fires `visibilitychange`, which the effect follows |
 | **a frame arriving in the seconds before iOS suspends the app** | iOS | **FAILED** | `isAppInForeground()` was always `true` on iOS, so the arrival counted as read - fixed by the iOS follow-up ([below](#read-state-between-devices---the-census-2026-11-02)) |
 | **a read made inside the 2 s window before leaving the app** | iOS | **FAILED** (late, never lost) | the delivery was handed to the outbox and nothing held the process; it left at the next open - fixed by the iOS follow-up |
+| **resumed from a notification for Y with X left open** | Android (and iOS) | **FAILED** | the foreground edge re-ran the receipt effect on X before the tap's link selected Y, so X was marked read - a conversation nobody looked at. Owner, 2026-11-02: X must not be marked, the same on both platforms (below) |
 | web tab hidden, then shown / window refocused | web | works | `isTabVisible` / `isWindowFocused` are state |
 | **any read (own other device, or the peer's receipt) -> a FOLLOWER tab** | web, desktop | **FAILED** | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded |
 | **salon counts re-read by the leader (reconnect, a community cleared elsewhere) -> a follower tab** | web, desktop | **FAILED** | same: only the leader asks, and it relayed nothing |
@@ -4323,6 +4324,20 @@ was the one that moved only the first.
   and the stamp covers the moments between a second sign-in and the first tab learning of it.
 - `conversationBeingRead` (`arrivalRuntime.ts`): both callers of the server count hand it the salon
   being READ, never the bare selection.
+- **A resume that opens something does not read what was left open** (`resumeOpening.svelte.ts`,
+  owner 2026-11-02). The shell knows, when it announces the foreground, that the resume is a
+  notification tap, so it sends the link WITH the edge (`canari:foreground`, `detail.opening`):
+  Android takes it in `onNewIntent`, which always precedes `onResume`. The page records, in that same
+  dispatch and before any effect re-runs, that the conversation on screen (X) is held
+  (`createAppForegroundState`'s `onResume` hook -> `noteResumeOpening`). The receipt effect and
+  `isReadingConversationNow` both ask `resumeOpeningHolds`. The hold ends on an event, never a clock:
+  the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
+  effect runs once), Y's landing is published and then released or abandoned (read from `notifNav`),
+  a page link navigated (`afterNavigate`), the app left again, or a resume carried no link. A tap for
+  X itself holds nothing; a plain resume still marks X. The chat link is parsed in ONE place
+  (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
+  `resumeOpening.svelte.test.ts` (both orders of the edge and the link, a plain resume, an abandoned
+  landing, a page link, the reader choosing).
 
 **The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
 server answer that moved a count (one entry per moved salon). Neither grows with a conversation's

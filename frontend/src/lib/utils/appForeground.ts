@@ -50,14 +50,25 @@ export function isAppInForeground(): boolean {
 /**
  * Calls `onChange` whenever the app moves between foreground and background.
  *
+ * `opening` is the app link the shell says THIS resume opens (a tapped notification), carried by the
+ * event itself so the page knows it before anything reacts to the edge (`resumeOpening.svelte.ts`);
+ * `null` for a plain resume, a background edge, or a shell that sends none.
+ *
  * Returns the unsubscribe. No-op off the platforms that emit it, which is what makes it safe to
  * register unconditionally rather than behind a runtime check at every call site.
  */
-export function onAppForegroundChange(onChange: (foreground: boolean) => void): () => void {
+export function onAppForegroundChange(
+  onChange: (foreground: boolean, opening: string | null) => void
+): () => void {
   if (typeof window === 'undefined') return () => {};
   const handler = (e: Event) => {
-    const detail = (e as CustomEvent<{ foreground?: unknown }>).detail;
-    if (typeof detail?.foreground === 'boolean') onChange(detail.foreground);
+    const detail = (e as CustomEvent<{ foreground?: unknown; opening?: unknown }>).detail;
+    if (typeof detail?.foreground !== 'boolean') return;
+    const opening =
+      detail.foreground && typeof detail.opening === 'string' && detail.opening
+        ? detail.opening
+        : null;
+    onChange(detail.foreground, opening);
   };
   window.addEventListener(APP_FOREGROUND_EVENT, handler);
   return () => window.removeEventListener(APP_FOREGROUND_EVENT, handler);
