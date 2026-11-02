@@ -1366,6 +1366,48 @@ seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.tes
 `groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
 (`onGroupReady` on both Welcome paths).
 
+### A salon attachment is drawn at the tap, and its row carries its upload (2026-11-02)
+
+**The report (owner, 2026-11-02):** a file sent in a conversation, a heavy one above all, disappeared
+for a long time and came back, with nothing in between. **The cause, in a community salon:** the
+channel branch of `handleSendChat` uploaded the whole file INLINE (`encryptAndUpload`, no progress)
+and drew NO row: the staged file left the composer at the tap and the message existed on screen only
+when the server's `channel.message.created` frame came back - the POST's reply was discarded. The only
+sign of life was a spinner on the attach button (`isUploadingMedia`), which a phone-width web viewport
+does not show at all. Every platform took this path (web, Android, iOS share it).
+
+**Now (`utils/chat/salonAttachmentSend.ts`):**
+
+- **At the tap** the salon ECHO is drawn (the salon text's `awaitingServerId` row, memory only) with
+  the placeholder envelope (`mediaId: ''`, the caption, the ThumbHash), and the send returns.
+- **The upload is the row's.** The module waits for the salon's send gate (the row says `queued`),
+  then uploads with the real transfer's events written into the SAME upload view the DM outbox writes
+  (`uploadProgress.svelte.ts`): one ring, one caption, one `UploadAction` for every attachment. One
+  upload at a time per salon, in tap order, because the server dates a row by its arrival.
+- **Its real envelope is swapped into the echo BEFORE the POST** (`SalonEchoChange` `content`), so
+  whichever answer settles the echo first - the reply or the broadcast frame - leaves a row naming its
+  blob. The sealed message is then handed to the salon text's machinery (`deliverSalonAttachment` ->
+  `deliverSalonSend`): the offline hold, `unconfirmed`, Retry and Discard are the text's.
+- **Until that hand-off the module owns the row's Retry and cancel** (`setUploadOwner`): a salon echo
+  has no delete (no server row), so the bubble's cancel is the owner's (`uploadCancelOf`). A cancel
+  aborts the transfer and withdraws the row; a late progress event of the aborted request is dropped.
+- **A failure is classified at its throw and the row stays:** no answer while offline is `waiting`
+  and owed to the reconnect (`salonOwed.ts`), no answer online is `stalled`, a status is `refused`
+  (the banner says the server's reason), anything else is a local `error`. Each offers Retry.
+- **Not offered:** "put back in the composer" (`takeBackSalonSend` refuses an attachment - it could
+  give back the caption, not the file). **Memory only**, as the salon text in flight: a reload
+  mid-upload loses the row and the file together, never a row naming nothing.
+
+`useMessaging.salonAttachmentVisible.svelte.test.ts` holds the upload open with a promise and asserts
+the row from the tap through each progress event to the re-keyed server row, plus the refusal with
+its Retry, the cancel, and the gate wait; on the code before, the send never returned while the
+upload was held and no row existed.
+
+**The DM / group path left one sub-second window**, out of this change: the file is read
+(`File.arrayBuffer()`, bounded by the 50 MB ceiling) BEFORE its placeholder is drawn, because the
+placeholder and its entry are one write in `addMessageToChat`. Drawing first needs that function to
+adopt a row already drawn, which waits for the rewrite of its storage path (#2936).
+
 ### A file is queued at the tap, like a text (2026-11-01)
 
 A DM/group attachment used to wait, in `handleSendChat`, for `waitForMessageQueueIdle('media send')`
@@ -4406,7 +4448,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 **No duplicate on reload.** A held send has sent nothing. A reload loses the row (memory only, as before) and the ledger hands the text back to the composer. Held sends to the same salon are released in arrival order, and each one exactly once (the resolvers are removed before they run). A Retry on a refused row asks the gate again, so it waits if a listing is in flight. The banner of an answer that arrives after the member moved to another conversation is not shown there: the row keeps the state, and the log says so.
 
-**A salon upload waits too** (the channel branch of `handleSendChat`), BEFORE the upload so a salon that never loads leaves no orphan blob. The upload indicator stays up meanwhile. A refusal throws `SalonNotLoadableError`, the file is re-staged and the banner names the cause - **only if the same conversation is still on screen**: staging is one queue for every conversation, so otherwise the file is dropped and the banner of the conversation on screen says so with the cause (`chat_media_dropped_other_conversation`) - and the caption falls through to a text send in the salon the upload was MADE in (`sentFrom`, never the conversation on screen). **Except `session-ended`:** `globalMessaging` outlives a sign-out, so a re-staged file would sit in the NEXT account's composer and the caption would be held by the next session's gate and sealed as whoever signs in; both are dropped, and the log says so. There is still no echo row for a salon upload.
+**A salon upload waits too**, BEFORE the upload so a salon that never loads leaves no orphan blob - but since 2026-11-02 it waits ON ITS ROW, after the send has returned ([a salon attachment is drawn at the tap](#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02)). The row says `queued` meanwhile; a refusal parks it in `error` with its Retry and the banner names the cause, only if the same conversation is still on screen. Nothing is re-staged (the row holds the file) and the caption is never sent alone (it is in the file's own message). **`session-ended`** withdraws the row and uploads nothing: `globalMessaging` outlives a sign-out, and nothing of the leaving account may go out under the next.
 
 **A salon entered in-session holds too.** `registerJoinedChannel` brackets its joins with `beginSalonEntry` / `settleSalonEntry`: the event draws the salon before the joins end, and a send typed then would otherwise be refused by a listing that settled before the salon existed. An entry ends without changing the last listing's outcome.
 

@@ -26,6 +26,23 @@ describe('nextEchoMessages', () => {
     expect(next?.[1]).toMatchObject({ id: 'local', status: 'error', awaitingServerId: true });
   });
 
+  it('swaps the envelope of an uploaded attachment into the echo, still flagged and in place', () => {
+    const other = row('other');
+    const next = nextEchoMessages([echo('local', 'pending'), other], 'local', {
+      kind: 'content',
+      content: 'real-envelope',
+    });
+    expect(next?.map((m) => m.id)).toEqual(['local', 'other']);
+    expect(next?.[0]).toMatchObject({
+      content: 'real-envelope',
+      status: 'pending',
+      awaitingServerId: true,
+    });
+    expect(
+      nextEchoMessages(next!, 'local', { kind: 'content', content: 'real-envelope' })
+    ).toBeNull();
+  });
+
   it('re-keys in place on the server id, clearing the flag', () => {
     const next = nextEchoMessages([row('a'), echo(), row('b')], 'local', {
       kind: 'settled',

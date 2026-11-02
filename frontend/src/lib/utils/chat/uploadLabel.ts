@@ -34,6 +34,8 @@ export function uploadCaption(view: UploadView, declaredSize: number): string {
       return m.upload_retrying();
     case 'blocked':
       return m.upload_blocked();
+    case 'refused':
+      return m.upload_refused();
     case 'error':
       return m.upload_error();
     case 'failed':

@@ -12,6 +12,12 @@
  * cancel is the ordinary delete of an unsent message (`deleteMessage` withdraws the entry, and the
  * outbox aborts the transfer when it does); its retry goes back through {@link setUploadRetry},
  * registered by the outbox, so the component never imports the queue.
+ *
+ * A SALON ATTACHMENT IS THE OTHER WRITER (2026-11-02). A community salon is server-authoritative and
+ * has no outbox: its attachment is uploaded by `salonAttachmentSend.ts`, which writes the same view
+ * under its echo's id and registers its own retry and cancel for that one message
+ * ({@link setUploadOwner}). One view, one ring, one caption for every attachment, whichever path
+ * carries it.
  */
 
 import { SvelteMap } from 'svelte/reactivity';
@@ -27,6 +33,9 @@ import type { UnsentReason } from '$lib/db/types';
  *   front of it, never replied). Terminal until the member retries or deletes; nothing runs on its own.
  *   On a TEXT (no upload at all) it is the one view the outbox writes: the server answered 5xx
  *   `MAX_CONSECUTIVE_SERVER_ERRORS` times in a row, and the bubble offers its Retry from it.
+ * - `refused`: the server ANSWERED the upload with a refusal (a status). Written only by a salon
+ *   attachment (`salonAttachmentSend.ts`), whose banner says the server's reason; the outbox retires
+ *   a refused DM file for good instead. Terminal until the member retries or deletes.
  * - `error`: the attempts kept failing for a reason that is not the network (an unreadable file, an
  *   unexpected error) - terminal until the member retries or deletes; nothing runs on its own.
  * - `queued`: the entry is in the queue and has not started (its turn has not come, or the file is
@@ -50,6 +59,7 @@ export type UploadPhase =
   | 'retrying'
   | 'blocked'
   | 'failed'
+  | 'refused'
   | 'error';
 
 export interface UploadView {
@@ -75,6 +85,28 @@ export function preparePercent(view: UploadView): number | null {
 
 const views = new SvelteMap<string, UploadView>();
 let retryHandler: ((messageId: string) => void) | null = null;
+
+/** What a writer other than the outbox does for ONE message's retry and cancel. */
+export interface UploadOwner {
+  retry: () => void;
+  cancel: () => void;
+}
+const owners = new SvelteMap<string, UploadOwner>();
+
+/**
+ * Registers (or, with `null`, forgets) the owner of `messageId`'s upload when it is not the outbox:
+ * its retry then goes there, and its cancel replaces the bubble's delete (a salon echo has none - it
+ * has no server row to delete).
+ */
+export function setUploadOwner(messageId: string, owner: UploadOwner | null): void {
+  if (owner) owners.set(messageId, owner);
+  else owners.delete(messageId);
+}
+
+/** Reactive read: the cancel of `messageId`'s upload owner, when one is registered. */
+export function uploadCancelOf(messageId: string): (() => void) | undefined {
+  return owners.get(messageId)?.cancel;
+}
 
 /** Reactive read: the bubble of `messageId` re-renders as its entry's progress moves. */
 export function uploadViewOf(messageId: string): UploadView | undefined {
@@ -118,6 +150,8 @@ export function setUnsentReason(messageId: string, reason: UnsentReason): void {
 export function clearAllUploads(): void {
   views.clear();
   unsentReasons.clear();
+  // The owners are NOT the outbox's: each forgets its own (`forgetSalonAttachments`), so an outbox
+  // torn down never strands a salon upload without its cancel.
 }
 
 /**
@@ -128,9 +162,14 @@ export function setUploadRetry(next: ((messageId: string) => void) | null): void
   retryHandler = next;
 }
 
-/** Retry from a bubble. A no-op without a registered outbox (logged out). */
+/**
+ * Retry from a bubble: the message's own upload owner when it has one (a salon attachment), the
+ * outbox otherwise. A no-op with neither (logged out).
+ */
 export function retryUpload(messageId: string): void {
-  retryHandler?.(messageId);
+  const owner = owners.get(messageId);
+  if (owner) owner.retry();
+  else retryHandler?.(messageId);
 }
 
 /**
@@ -148,6 +187,7 @@ export function uploadPercent(view: UploadView): number | null {
     view.phase === 'retrying' ||
     view.phase === 'blocked' ||
     view.phase === 'failed' ||
+    view.phase === 'refused' ||
     view.phase === 'error'
   )
     return null;
