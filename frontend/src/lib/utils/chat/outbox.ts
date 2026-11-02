@@ -1684,6 +1684,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         {
           signal: control.signal,
           onProgress: ({ loaded, total }) => {
+            // A WITHDRAWN TRANSFER REPORTS NOTHING: a late progress event of a request that has not
+            // yet answered its abort would recreate the view `clearUpload` just removed, for an entry
+            // that is gone. (`persist` below is NOT guarded the same way: a session opened after the
+            // abort must still be remembered in `openSessions`, because that is what releases it.)
+            if (control.signal.aborted) return;
             lastMoved = Date.now();
             attemptLoaded = Math.max(attemptLoaded, loaded);
             patchUpload(entry.id, { phase: 'uploading', loaded, total });

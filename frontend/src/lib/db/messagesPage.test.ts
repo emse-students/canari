@@ -18,9 +18,6 @@ import { SqliteStorage } from './sqlite';
 import { ORDER_AT_FILL_ROWS_PER_STATEMENT } from './sqliteBatch';
 import { MESSAGE_PROVISIONAL_ORDER_FILL } from './sqliteMigrations';
 import type { PageKey, StoredMessage } from './types';
-import { useLoadBounds } from '../../test/loadBound';
-
-useLoadBounds();
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const T0 = 1_700_000_000_000;

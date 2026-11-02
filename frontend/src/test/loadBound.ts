@@ -22,3 +22,26 @@ export function useLoadBounds(): void {
 export function waitForEvent<T>(check: () => T | Promise<T>): Promise<T> {
   return vi.waitFor(check, { timeout: EVENT_BOUND_MS, interval: 20 });
 }
+
+/** The most event-loop turns {@link waitForEventNoClock} gives an event (no clock reads them). */
+export const EVENT_TURNS = 200_000;
+
+/**
+ * {@link waitForEvent} for a case that FAKES TIMERS: `vi.waitFor` advances a faked clock by its
+ * interval on every poll, so a loaded machine (many polls) moves time by itself and can cross a
+ * backoff the case drives by hand. This one polls once per macrotask turn and touches no clock, real
+ * or faked; its bound is a count of turns, never a duration.
+ */
+export async function waitForEventNoClock(check: () => unknown | Promise<unknown>): Promise<void> {
+  let last: unknown;
+  for (let turn = 0; turn < EVENT_TURNS; turn++) {
+    try {
+      await check();
+      return;
+    } catch (e) {
+      last = e;
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw last;
+}

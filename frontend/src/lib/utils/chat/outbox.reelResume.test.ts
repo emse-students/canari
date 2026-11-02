@@ -53,6 +53,7 @@ import {
   createOutbox,
   type OutboxController,
   type OutboxDeps,
+  UPLOAD_STALL_HINT_MS,
   type PreparedOutboxMedia,
 } from './outbox';
 import { clearAllUploads, uploadViewOf } from './uploadProgress.svelte';
@@ -80,7 +81,7 @@ import type { PreparedVideo } from '$lib/video/prepareVideoForUpload';
 import { m } from '$lib/paraglide/messages';
 import { attachFakeOutboxSql } from '../../../test/outboxSqlFake';
 import { FakeSessionServer } from '../../../test/fakeUploadSessionServer';
-import { useLoadBounds, waitForEvent } from '../../../test/loadBound';
+import { useLoadBounds, waitForEvent, waitForEventNoClock } from '../../../test/loadBound';
 
 useLoadBounds();
 
@@ -191,6 +192,8 @@ interface LifeOptions {
   afterFullRead?: () => Promise<void>;
   /** Messages TOMBSTONED on this device (deleted for everyone): their stored row says `isDeleted`. */
   tombstones?: string[];
+  /** Replaces the whole transfer, for a transport that answers neither progress nor its own abort. */
+  uploadMedia?: OutboxDeps['uploadMedia'];
 }
 
 const ACCEPT = async () => undefined;
@@ -336,7 +339,7 @@ function life(w: World, opts: LifeOptions = {}) {
     recoverRosterDisagreement: vi.fn(async () => undefined),
     isGroupHealthy: (id: string) => !opts.deleted?.includes(id),
     markDeletedRemotely: vi.fn(),
-    uploadMedia,
+    uploadMedia: opts.uploadMedia ?? uploadMedia,
     prepareMedia,
     releaseUpload: (uploadId, why) =>
       live(async () => {
@@ -730,7 +733,9 @@ describe.each([1, 3])(
     it('a cancel of an entry PARKED AS FAILED (no answer, three attempts) releases its session', async () => {
       // THE LADDER IS WHAT REACHES THE PARK (a member's Retry starts the no-answer count again), so its
       // timer is driven by hand - advanced, never waited for, and no time is asserted. Only the timer
-      // and the clock it reads are faked; fake-IndexedDB keeps its own real scheduling.
+      // and the clock it reads are faked; fake-IndexedDB keeps its own real scheduling. EVERY WAIT
+      // HERE IS `waitForEventNoClock`: `vi.waitFor` advances a faked clock by its interval on each
+      // poll, and a loaded machine polls enough times for that to cross the backoff by itself.
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
       try {
         const w = world();
@@ -739,8 +744,8 @@ describe.each([1, 3])(
           method === 'PUT' && path.endsWith('/parts/1') ? 'reset' : undefined;
         await enqueueTake(l, N);
         for (let attempt = 1; attempt <= 3; attempt++) {
-          await waitForEvent(() => expect(w.settled).toBeGreaterThanOrEqual(attempt));
-          await waitForEvent(() =>
+          await waitForEventNoClock(() => expect(w.settled).toBeGreaterThanOrEqual(attempt));
+          await waitForEventNoClock(() =>
             expect(['waiting', 'failed']).toContain(uploadViewOf(VIEW)?.phase)
           );
           // To the backoff timer and NEVER PAST IT: overshooting moved the faked clock under the next
@@ -753,16 +758,60 @@ describe.each([1, 3])(
             await new Promise((resolve) => setImmediate(resolve));
           }
         }
-        await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('failed'));
+        await waitForEventNoClock(() => expect(uploadViewOf(VIEW)?.phase).toBe('failed'));
         const [session] = [...w.server.sessions.keys()];
         expect(w.server.sessions.size).toBe(1);
         expect(w.server.sessions.get(session)!.closed).toBeUndefined();
         await cancelAll(l, N);
-        await waitForEvent(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+        await waitForEventNoClock(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
         l.kill();
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe('a disposed transfer whose transport answers nothing, not even its abort', () => {
+      /**
+       * Enters the upload with a transfer that never settles and ignores its signal, then ends the
+       * life (a sign-out: `dispose` aborts it and clears the views). The sends stay queued, so the
+       * take's views still resolve - which is what lets a stray write recreate one. Every wait is the
+       * clock-free one: no time passes but what a case advances.
+       */
+      async function disposedStuckTransfer() {
+        const w = world();
+        let transport: Parameters<NonNullable<LifeOptions['uploadMedia']>>[1] | undefined;
+        const l = life(w, {
+          uploadMedia: (_media, t) => {
+            transport = t;
+            return new Promise(() => undefined);
+          },
+        });
+        await enqueueTake(l, N);
+        await waitForEventNoClock(() => expect(transport).toBeDefined());
+        expect(uploadViewOf(VIEW)?.phase).toBe('preparing');
+        l.kill();
+        expect(transport!.signal?.aborted).toBe(true);
+        expect(uploadViewOf(VIEW)).toBeUndefined();
+        return transport!;
+      }
+
+      it('its stall hint stops with the abort: the view never becomes `stalled` again', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+        try {
+          await disposedStuckTransfer();
+          // Past the hint's threshold and several of its ticks: only the abort stops them.
+          await vi.advanceTimersByTimeAsync(UPLOAD_STALL_HINT_MS + 3 * 2_000);
+          expect(uploadViewOf(VIEW)).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('a late progress event of it shows nothing', async () => {
+        const transport = await disposedStuckTransfer();
+        transport.onProgress?.({ loaded: 4096, total: 8192 });
+        expect(uploadViewOf(VIEW)).toBeUndefined();
+      });
     });
 
     it('a cancel AFTER A RELAUNCH, before any transfer restarted, releases the session the row recorded', async () => {
@@ -1369,7 +1418,7 @@ describe('one take, several conversations (RC-13)', () => {
     const first = life(w);
     await first.outbox.enqueueTake(rows.take, rows.sends);
     await waitForEvent(() => expect(sends(first)).toBe(1));
-    await waitForEvent(async () => expect((await takeRow(w))?.take?.state).toBe('sent'));
+    await takeRecordSent(w);
     first.kill();
 
     tab.role = 'follower';
