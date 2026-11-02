@@ -536,3 +536,181 @@ list data: none in production, so no question.
 1. **Les listes gardent-elles le coffre-fort de documents ?**
    - (Recommandé) Oui, comme aujourd'hui : il ne touche pas à l'argent, et la correction sur Lydia ne le concerne pas.
    - Non : on le retire aux listes (aucune liste n'a de document aujourd'hui, donc rien à supprimer).
+
+## 10. Settings audit - every edit section, per entity type (2026-11-02)
+
+Read-only, from `origin/main` at `aa77c2ee1`. Paths are relative to `frontend/src/` (client) and
+`apps/social-service/src/` (server) unless they name another app. Two open drafts change this
+ground and are named where they do: **#2949** (grant ceiling; an institution's roster is the platform
+admin's) and **#2953** (scoped `MODERATE`; an institution is deleted by the platform admin only).
+Owner answers used here: lists keep every paid feature and the vault, hold no Lydia account of their
+own, and are paid through a delegate that ACCEPTS; the profile right is decided (E7) and granted by
+migration; republication is open to every type (E6).
+
+**Read this first - section 8.1 point 4 does not hold on `main`.** Since 2026-10-31 a list SELLS
+NOTHING, on both sides: `associations/selling-kinds.ts:13` allows `association` only, and
+`assertKindMaySell` refuses a list's delegation request (`associations.service.ts:4349`), approval
+(`:4424`), cotisation enable (`:708`) and provisioning (`products.service.ts:2078`), product create and
+update (`products.service.ts:1272`, `:1502`) and a form price (`forms/forms.service.ts:262`).
+`writablePermissions` (`selling-kinds.ts:52`) strips `MANAGE_PRODUCTS` from every member row written
+on a list, so no list officer can hold the right the delegation routes ask. On the client,
+`EDIT_SECTIONS_BY_KIND.list` (`lib/associations/editSections.ts:149-164`) has no `payments`,
+`achats`, `cotisations` or `delegation`. **A list cannot set its delegation today, neither in the UI
+nor through the API** - even the platform admin calling the route is refused by `assertKindMaySell`.
+WP-L is therefore the WIDENING of a gate that already exists, not a narrowing (10.2).
+
+### 10.1 The sections, their gates and the routes behind them
+
+Client gate = `editRights` + `mayOpenEditSection` (`lib/associations/editSections.ts:70-123`); the
+roster of keys per kind = `EDIT_SECTIONS_BY_KIND` (`:149-164`). A = association (a BDE included),
+L = list, I = institution. Server routes are in `associations/associations.controller.ts` unless said.
+
+| Section | Kinds | Client gate | Server route and guard | Agree? |
+| --- | --- | --- | --- | --- |
+| `profile` | A L I | section always drawn; editing = `MANAGE_MEMBERS` (`routes/associations/[slug]/edit/[[section]]/+page.svelte:354`, `routes/lists/[slug]/edit/[[section]]/+page.svelte:238`) | `PATCH :id` at `MANAGE_MEMBERS` (`:769-811`); cotisation fields add `MANAGE_PRODUCTS` (`:788-801`); quota dropped silently for a non-admin (`:780-783`); `POST`/`DELETE :id/logo` at `MANAGE_MEMBERS` (`:822-862`) | yes - but the right is the wrong one (E7, 10.4), and the list form writes `parentAssociationId` (F1) |
+| `members` | A L I | `MANAGE_MEMBERS` | `POST/PATCH/DELETE :id/members*` and reorder at `MANAGE_MEMBERS` (`:476`, `:864-910`) | yes on `main`; **institution: G6 not enforced on `main`** - #2949 makes add/update/remove platform-admin only (`INSTITUTION_MEMBERS_ADMIN_ONLY`) and draws the section for the admin only |
+| `payments` | A | `MANAGE_PAYOUT_ACCOUNT` or `MANAGE_PRODUCTS` | Lydia card: core-service `POST payments/onboarding` -> `GET :id/manage-permission` (`:536-547`, `canManagePayoutAccount`); `GET :id/payout-account` (`:556-570`); disconnect and hand validation **platform admin only** (core-service `payment/payment.controller.ts:772-775`, `:803-805`, #2946). Boutique card: `:id/products*` at `MANAGE_PRODUCTS` (`:1381-1540`) | yes |
+| `documents` | A L I | `MANAGE_DOCUMENTS` | `:id/vault-key`, `:id/documents*`, `:id/notes` at `MANAGE_DOCUMENTS` (`:1102-1186`); no kind check | yes; the list KEEPS it (owner, 2026-11-02) - section 9 question 1 is answered |
+| `achats` | A | `MANAGE_PRODUCTS` | purchases, export, close at `MANAGE_PRODUCTS` (`:1389-1472`); refunds and statement at `MANAGE_PAYOUT_ACCOUNT` (`associations/refunds/refunds.controller.ts:29-95`, `assertPayoutManager`) | **partly** - the tab learns the refund right by a 403 (`EditAchatsTab.svelte:125-132`) although `rights.payoutAccount` is known (F6) |
+| `cotisations` | A | `MANAGE_MEMBERS` or `MANAGE_PRODUCTS` | roster, tags, tiers at `MANAGE_MEMBERS` (`:1198-1330`); config through `PATCH :id` = `MANAGE_MEMBERS` (route) AND `MANAGE_PRODUCTS` (handler); tier products at `MANAGE_PRODUCTS` | **no** - a `MANAGE_PRODUCTS`-only holder is offered the config editor (`EditCotisationsTab.svelte:738`) and refused by the route guard (F5) |
+| `delegation` | A | `MANAGE_PRODUCTS` | `:id/payment-delegation*` at `MANAGE_PRODUCTS` (`:1745-1838`) + `assertKindMaySell` | yes for A; absent for L (10.2) |
+| `formulaires` | A L I | `MANAGE_FORMS` | `GET :id/forms` at `MANAGE_FORMS` (`:1188-1196`); writes through `assertFormManager` (`forms/forms.service.ts:747-750`) | yes; the list tab is handed a hard-coded `onlinePaymentsReady={false}` (`lists/.../+page.svelte:263`) |
+| `reservations` | A L I | `MANAGE_BOOKINGS` | `BookingsService.mayManage` -> `mayAct(MANAGE_BOOKINGS)` (`bookings/bookings.service.ts:150-165`) | yes |
+| `partnerships` | A L I | `MANAGE_PARTNERSHIPS` | `:id/partnerships*` at `MANAGE_PARTNERSHIPS` (`:1623-1711`) | yes |
+| `republications` | A L I | `POST_AS_ASSO` or `PROPOSE_EVENT` | `proposals/proposals.controller.ts:25-50` -> `mayAct(senderFlag / acceptorFlag)` (`proposals/proposals.service.ts:547-556`) | yes; E6 (every type) is another agent's |
+| `audience` | A I | global admin, or this entity's BDE super-admin when not an institution | `associations/:id/audiences` GET/PUT (`spaces/spaces.controller.ts:53-80`): admin, or a BDE star within its campus (per space in #2949); institution admin-only (`spaces/audience-policy.ts:97`) | **no for lists** - the server lets the BDE write a list's audience; no edit page draws it (`editSections.ts:141-143` says "written from the association edit tooling", but that page redirects every list to `/lists`) (F4) |
+| `danger` | A L I | archive = `MANAGE_MEMBERS`; delete card = global admin or this entity's super-admin (`editSections.ts:88`) | archive = `PATCH :id {archived}` at `MANAGE_MEMBERS`; `DELETE :id` = admin or `isAssociationSuperAdminOf` (`:743-757`) | yes on `main`; **institution: a BDE may delete it on `main`** - #2953 adds `INSTITUTION_DELETE_ADMIN_ONLY` and the client follows |
+
+### 10.2 Payment delegation for a list - the exact gaps
+
+The routing itself is type-blind and correct: `resolvePaymentTarget`
+(`associations/payment-delegation.util.ts:92-140`) sends an APPROVED delegate's money to the
+parent's Lydia Business and fails closed when the parent is gone (`:111-121`) - it never falls back
+to the child's own account. Every paid path asks it: paid forms (`forms/forms.service.ts:277`,
+`:1728-1729`, `:1874`, `:2259`, `:2422`, and `forms/lydia-reconciliation.service.ts:396`), the shop
+and the cotisation product (`products.service.ts:612-634`, `:1350`, `:1547`, `:2089`), the release of
+withheld products (`:787-815`, `approvedDelegateIds`), and refunds, which the PARENT's payout managers
+issue (`associations/refunds/refunds.service.ts:338-366`). Nothing on that path reads the entity's
+type. What stops a list is the gate around it:
+
+| # | Gap | Where | What WP-L must do |
+| --- | --- | --- | --- |
+| G1 | A list may not sell at all | `selling-kinds.ts:13` and its nine callers above | replace "may this KIND sell" by "may this ENTITY collect now": an association always; a list only through an APPROVED delegate (`isDelegating`); an institution as decided (question 1). The delegation REQUEST must be open to a list - it is how it gets there |
+| G2 | No list officer can hold `MANAGE_PRODUCTS` | `writablePermissions`, `SELLING_ONLY_FLAGS` (`selling-kinds.ts:46-53`) | for a list strip `MANAGE_PAYOUT_ACCOUNT` only. This is where section 8.1 point 1's `TYPE_EXCLUDED_FLAGS` belongs - one map, not two |
+| G3 | The client draws no paid section for a list | `EDIT_SECTIONS_BY_KIND.list` (`editSections.ts:149-164`); `kindOffersFlag` derives the role editor from it | add `achats`, `cotisations`, `delegation`, and a list `payments` holding the boutique only. `SECTION_FLAGS.payments` (`:170-173`) carries `MANAGE_PAYOUT_ACCOUNT`, so adding `payments` as it is would OFFER the bank-account checkbox on a list: the offered flags must pass through the kind map (G2) |
+| G4 | The client's readiness ignores delegation | `isPaymentAccountReady` / `canAssociationReceiveFormPayments` (`lib/associations/api.ts:2564-2580`) read the entity's OWN `lydiaOnboardingComplete` | a delegating entity - association or list - is told "payments not configured" by the forms editor (`routes/forms/create/+page.svelte:107`, `routes/forms/[id]/edit/+page.svelte:102`, `lib/components/forms/FormPaymentSection.svelte:94-99`) and the boutique (`EditBoutiqueTab.svelte:308`) while the server would accept. Serve one resolved field (`paymentsReady`, from `resolvePaymentTarget`) on the entity read and draw from it. **This gap exists TODAY for delegating associations** |
+| G5 | A Lydia Business can still be created for a list | `canManagePayoutAccount` (`associations.service.ts:4510-4519`) has no kind check; core-service onboarding asks only it, then calls Lydia's `business/create`; the LINK is refused afterwards (`associations.service.ts:3207-3208`) | refuse in `canManagePayoutAccount` through the G2 map, so no Business is created at Lydia that Canari then refuses to link. Reachable today by the platform admin, or a member row written before 2026-10-31 |
+| G6 | A list without a delegate meets a generic refusal | `assertPaymentsReady` (`associations.service.ts:4285-4300`) | 8.1 point 3's typed `LIST_DELEGATE_REQUIRED`, raised inside the readiness answer so every path inherits it |
+| G7 | A revoked delegation, or a receiver that loses its Lydia, leaves the products on sale | 10.3 | withhold in the same transaction (10.3) |
+| G8 | Refunds and the statement of a list's payments | `assertPayoutManager` on the LIST, a right a list will not hold | correct once G2 lands: the parent refunds its delegates' payments (`refunds.service.ts:359-366`). The list's `achats` tab shows the purchases without refund controls, from `rights.payoutAccount` (F6) |
+
+Each gap is a test: G1 a list with an approved delegate creates a priced product, enables the
+cotisation and publishes a paid form, and without one is refused `LIST_DELEGATE_REQUIRED`; G2 a list's
+`MANAGE_PRODUCTS` survives a write, `MANAGE_PAYOUT_ACCOUNT` does not; G4 a delegating entity's form
+editor offers payment; G5 `GET :id/manage-permission` answers `ok: false` on a list for the platform
+admin; G7 a rejection and an unlink each withhold the child's products.
+
+### 10.3 Is "the receiver accepts" already the delegation pattern? Yes.
+
+The owner asked: *"ce n'est pas le motif actuellement en place pour la délégation ?"* - it is.
+
+- **Request.** The CHILD asks: `POST :id/payment-delegation` at `MANAGE_PRODUCTS` on the child
+  (`associations.controller.ts:1756-1762`) -> `requestPaymentDelegation` writes status `pending`
+  (`associations.service.ts:4335-4372`, the write at `:4366-4369`). It refuses self-delegation, chains
+  (a parent that itself delegates) and a requester that already receives delegations.
+- **Accept.** The RECEIVER accepts: `POST :id/payment-delegation/children/:childId/approve` at
+  `MANAGE_PRODUCTS` on the PARENT (`associations.controller.ts:1818-1826`) -> `approvePaymentDelegation`
+  (`associations.service.ts:4415-4440`) requires a `pending` request naming this parent (`:4425-4430`)
+  and the parent's own Lydia onboarding complete (`:4431-4435`), then writes `approved` (`:4436`).
+  Until then `resolvePaymentTarget` routes nothing (`isDelegating` needs `approved`,
+  `payment-delegation.util.ts:44-48`).
+- **No path to `approved` without that call.** `:4436` is the only writer of `approved` outside the
+  migration that created the column (`migrations/017_payment_delegation.sql`); `PATCH :id` cannot
+  write the delegation columns (`UpdateAssociationDto` has none, `dto/association.dto.ts:113-206`).
+  **But two tiers may make that call on the receiver's behalf**: the platform admin (`mayAct`
+  answers true for every flag, `associations.service.ts:2024`) and a BDE super-admin governing the
+  receiver (`MANAGE_PRODUCTS` is not in `SUPER_ADMIN_EXCLUDED_FLAGS`, `:2025-2033`). Neither is the
+  receiver's treasurer, and nothing logs that the acceptance came from such a tier (question 2).
+- **The child may switch or cancel alone**: a new request overwrites an approved one back to
+  `pending` for the new parent (`:4366-4369`), and `DELETE :id/payment-delegation` clears it
+  (`:4374-4385`) - its money then stops, it is never routed elsewhere without a new acceptance.
+- **The receiver revokes**: `POST .../children/:childId/reject` (`associations.controller.ts:1828-1832`)
+  -> `rejectPaymentDelegation` (`associations.service.ts:4443-4459`) clears both columns. The child's
+  products stay `isActive`; its checkouts then resolve to its own account and refuse (fail closed,
+  `payment-delegation.util.ts:132-140`). No money goes astray, but buyers meet active products that
+  refuse, and nobody is told.
+- **The receiver loses its Lydia**: a readiness REVERT withholds the receiver's products AND its
+  approved delegates' (`setLydiaReadiness`, `associations.service.ts:3343`, via `approvedDelegateIds`)
+  - correct. An UNLINK by the platform admin (`clearLydiaAccount`, `:4129-4160`) only nulls the
+  account columns: nothing is withheld, neither its own products nor its delegates', and the
+  delegation stays `approved`. Checkouts fail closed (`ready` false), so again no money goes astray,
+  but every product stays visible and refuses.
+
+So the consent step exists and is the receiver's; what is missing is the symmetric withhold on
+reject, cancel and unlink (G7), and an audit of who accepted (question 2).
+
+### 10.4 The profile permission (E7) - the fields, and the concerns
+
+`PATCH :id` writes `UpdateAssociationDto` (`associations/dto/association.dto.ts:113-206`):
+
+| Field | Goes to the new profile right | Stays where |
+| --- | --- | --- |
+| `name`, `description`, `bioMarkdown`, `color`, `contactEmail`, `logoUrl` | yes | - |
+| `categoryId` (the carte's thematic category - the nearest thing to "tags" a profile has) | yes | - |
+| `promo`, `name2` (lists) and `logoMediaId2`; `POST`/`DELETE :id/logo` (`?slot=second` included) | yes | - |
+| `documentQuotaBytes` | no | platform admin; today SILENTLY dropped (`associations.controller.ts:780-783`) - it should be a typed refusal, the client never sends it |
+| `cotisationEnabled`, `cotisationMode`, `cotisationExpiresAt` | no | `MANAGE_PRODUCTS` |
+| `archived` | no | `MANAGE_MEMBERS` (the Danger section; a lifecycle act, not the profile) |
+| `parentAssociationId` | **no** | platform admin only (A4, B1) - today ANY `MANAGE_MEMBERS` holder of ANY kind may rewrite it: the list profile form sends it (`lib/components/associations/edit/EditProfileTab.svelte:128`) and nothing checks the kind or the caller (F1) |
+
+There are no "links" fields: links live in `bioMarkdown`. The `:id/tags` routes are the COTISATION
+tags granted to people (`associations.controller.ts:1198-1240`), not profile tags - they stay
+`MANAGE_MEMBERS`.
+
+Concerns for whoever builds it:
+- **The route can no longer carry one flag.** Today the guard asks `MANAGE_MEMBERS` and the handler
+  adds `MANAGE_PRODUCTS`, so the cotisation config needs BOTH (F5). Map each field to the right it
+  needs, in one table, and ask `mayAct` once per distinct right the body touches.
+- **Bit 12 (4096), deploy order.** `ALL_PERMISSION_FLAGS` bounds the member DTOs, so an old server
+  answers 400 to a mask carrying it: deploy the server first, as for `MANAGE_BOOKINGS`.
+- **Presets.** `ALL_CORE_FLAGS` gains it on both sides (`association-member.entity.ts`,
+  `lib/associations/api.ts:43-55`); `SECTION_FLAGS.profile` (`editSections.ts:168`) becomes the new
+  flag, so `permissionMaskFor` offers it on every kind. Not in `SUPER_ADMIN_EXCLUDED_FLAGS`.
+- **The migration** (decided), same shape as 083 for `MANAGE_BOOKINGS`. Its count, read-only, before
+  it runs: `SELECT a.type, count(*) FROM association_members m JOIN associations a ON a.id =
+  m."associationId" WHERE m.permissions & 4 <> 0 GROUP BY a.type;`
+- **#2949's grant ceiling** applies: a member grants the new bit only if it holds it, which the
+  migration ensures for every current `MANAGE_MEMBERS` holder.
+
+### 10.5 Inconsistencies across the three types
+
+| # | Finding | Where | Proposed |
+| --- | --- | --- | --- |
+| F1 | A list officer rewrites the list's governing parent from the profile form | `EditProfileTab.svelte:128`, DTO `:176` | platform admin only, with the dependency journal (WP-D1); a typed refusal until then |
+| F2 | **A BDE super-admin who is not a member cannot open a list's management area**, so E3 (the BDE deletes its lists) has no UI | `routes/lists/[slug]/edit/[[section]]/+page.svelte:158` and `:195` omit `isSuperAdminUser`, which the association page includes; the BDE reach is fetched without `await` (`:172`), so the decision races it | read the tier exactly as the association page does (awaited); better, one loader for both pages |
+| F3 | `MANAGE_PAYOUT_ACCOUNT` is offered wherever `payments` is - after the decision it means nothing on a list | `SECTION_FLAGS.payments` (`editSections.ts:170-173`) | through the kind map (G2, G3) |
+| F4 | A list's audience is writable on the server, drawable nowhere | `spaces/spaces.service.ts:224-235` vs `editSections.ts:141-143` | the Audience panel of `/admin/spaces` (#2951) or a list `audience` section; the comment corrected either way |
+| F5 | Cotisation config: a `MANAGE_PRODUCTS`-only holder is offered an edit the route refuses | `EditCotisationsTab.svelte:738` vs `associations.controller.ts:769-801` | the per-field map of 10.4 |
+| F6 | The Achats tab learns a right by failing | `EditAchatsTab.svelte:125-132` | pass `rights.payoutAccount` down; a 403 is then a defect, logged as one |
+| F7 | Wording: `kindWording.list.editTitle` says "Gestion de l'association" while the list page says "Gestion de la liste"; `asso_flag_post_as` says "Publier au nom de l'asso" on lists and institutions | `lib/associations/kindWording.ts:76`, `frontend/messages/fr.json:1612` | `editTitle` from `list_edit_page_title`; a kind-neutral "Publier en son nom" |
+| F8 | Presets per type: association Admin = 3871 (bank account included); list and institution Admin = 3103 (`adminPresetFor` masks the shop and the bank account); institution default = Publisher. After WP-L a list Admin is 3359 (shop, no bank account) | `EditMembersTab.svelte:40-47`, `editSections.ts:200-202` | follows from G2/G3 |
+| F9 | A BDE association sees the same sections; only its member editor adds `VALIDATE_EVENTS`, `MANAGE_ASSO`, `MODERATE` (`AssociationMemberRow.svelte:67-72`). The Admin preset grants none of them, and nothing on its edit page shows the spaces it governs or the entities that depend on it | - | a "BDE" preset (Admin + the three), and a read-only dependencies row linking to `/admin/spaces` (WP-D1) |
+| F10 | Institutions on `main`: governed by any reaching BDE for members and deletion (G6, E5) | `mayAct`, `DELETE :id` | #2949 and #2953, both open |
+| F11 | Institutions sell nothing on `main` (`selling-kinds.ts:13`), while section 6 rows 16-18 still say "yes" | section 6 of this page | question 1; the table corrected once answered |
+| F12 | The `MANAGE_ASSO` comment says it does not delete an association | `association-member.entity.ts:20-24` | WP-R5 (known) |
+
+### 10.6 Questions for the owner from this audit
+
+1. **Les institutions doivent-elles pouvoir encaisser de l'argent (boutique, formulaires payants, cotisation) ?** Aujourd'hui le code le leur interdit totalement depuis le 31 octobre ; une ligne de cette page dit le contraire.
+   - (Recommandé) Non, comme aujourd'hui : rien ne change dans le code, on corrige seulement cette page.
+   - Oui, comme une liste : seulement via le compte Lydia d'une autre entité qui accepte.
+   - Oui, comme une association : avec leur propre compte Lydia.
+2. **Qui peut accepter, au nom de l'entité qui reçoit l'argent, la délégation de paiement d'une liste ?** Aujourd'hui, c'est quiconque a le droit « Gérer la boutique et les cotisations » sur l'entité qui reçoit, mais aussi l'admin plateforme et un membre du BDE qui gère cette entité, sans que personne ne voie qui a accepté.
+   - (Recommandé) Les gestionnaires de l'entité qui reçoit et l'admin plateforme seulement, chaque acceptation étant tracée ; le BDE n'accepte plus à la place d'une entité qu'il gère.
+   - Comme aujourd'hui, en ajoutant seulement la trace de qui a accepté.
+3. **Quand l'entité qui reçoit l'argent retire sa délégation, ou perd son compte Lydia, que deviennent les produits et formulaires payants de la liste ?** Aujourd'hui ils restent affichés mais tout paiement est refusé, et personne n'est prévenu.
+   - (Recommandé) Ils sont mis en pause automatiquement (comme quand Lydia bloque un compte) et les gestionnaires de la liste sont prévenus ; ils reviennent dès qu'une nouvelle délégation est acceptée.
+   - Comme aujourd'hui : visibles, mais le paiement est refusé.
+4. **L'entité qui reçoit l'argent d'une liste doit-elle être le BDE dont dépend la liste ?** Aujourd'hui la liste peut choisir n'importe quelle association dont le compte Lydia est prêt.
+   - (Recommandé) N'importe quelle association qui accepte, comme aujourd'hui : le BDE n'a pas forcément de compte Lydia.
+   - Seulement le BDE dont dépend la liste.
