@@ -29,6 +29,7 @@
   import ReelShutter from './ReelShutter.svelte';
   import ReelReview from './ReelReview.svelte';
   import ReelPublishSheet from './ReelPublishSheet.svelte';
+  import ReelSendSheet from './ReelSendSheet.svelte';
   import { CameraSession, type CameraOpener } from '$lib/reels/cameraSession.svelte';
   import { openPhotoCamera, openReelCamera, postCameraOpener } from '$lib/reels/cameraAccess';
   import {
@@ -69,7 +70,15 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
-  import { captureCapMs, markChatReelTake } from '$lib/reels/chatReelWriter';
+  import {
+    captureCapMs,
+    chatReelAllowed,
+    chatReelTargetCap,
+    markChatReelTake,
+    servedChatCapMs,
+  } from '$lib/reels/chatReelWriter';
+  import { reelSendPlan } from '$lib/reels/reelSendTargets';
+  import { reelSendHost, type ReelSendHost } from '$lib/reels/reelSendBridge';
 
   interface Props {
     /** The session, injectable for tests. */
@@ -127,6 +136,22 @@
   /** The take's cap for THIS destination: the chat cap in a conversation (RC-3), the reel cap elsewhere. */
   const capMs = $derived(limits ? captureCapMs(limits, destination) : null);
   /**
+   * "Envoyer a..." (RC-12) replaces "Suivant" on the TAB's review of a VIDEO - and only while the chat
+   * writer is on AND the server served both its chat cap and its target count (never a guessed
+   * number). Off, the review is byte-identical to before. A photo keeps publishing (see section 15.1
+   * of reels-in-chat.md: its chat send is not built).
+   */
+  const sendTargetCap = $derived(limits ? chatReelTargetCap(limits) : null);
+  const chatCapMs = $derived(limits ? servedChatCapMs(limits) : null);
+  const sendToOffered = $derived(
+    destination === 'feed' &&
+      chatReelAllowed(false) &&
+      sendTargetCap !== null &&
+      chatCapMs !== null &&
+      capture.kind === 'review' &&
+      capture.clip.blob.type.startsWith('video/')
+  );
+  /**
    * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
    * (`postCameraOpener`); a cap not read yet (offline) keeps them too - a photo needs neither.
    */
@@ -165,6 +190,17 @@
   let elapsedMs = $state(0);
   /** The publish step is open over the review (its own history entry, above the take's). */
   let publishOpen = $state(false);
+  /** The "Envoyer a..." sheet is open over the review (its own history entry, above the take's). */
+  let sendOpen = $state(false);
+  /** A press is writing the take's rows: a second press waits for it. */
+  let sendingTake = $state(false);
+  /**
+   * The take already queued for conversations while the publish step is open over it (feed AND chats,
+   * 15.5): that step uploads the file the take adopts, and its Back never withdraws the sends.
+   */
+  let chatTake = $state<{ id: string; host: ReelSendHost } | null>(null);
+  /** The messaging layer read when the sheet was opened (`null`: no session, the sheet is not offered). */
+  let sendHost = $state<ReelSendHost | null>(null);
 
   let recorder: ReelRecorder | null = null;
   /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
@@ -323,6 +359,8 @@
       zoomBase = null;
       session.resetZoom();
       publishOpen = false;
+      sendOpen = false;
+      chatTake = null;
       releaseTakeEntry();
     }
   }
@@ -406,11 +444,87 @@
     leaveWithTake();
   }
 
+  /**
+   * The press of "Envoyer a..." (RC-12, 15.1). CanaReels alone is today's path byte for byte (the
+   * publish step). Conversations write ONE take and N sends through the messaging layer and free the
+   * camera at once; CanaReels AND conversations write them first, WAITING for the publish step's
+   * upload (15.5), then open that step. A refusal leaves the sheet up: nothing was written.
+   */
+  async function sendTakeTo(choice: { feed: boolean; targetKeys: string[] }) {
+    if (capture.kind !== 'review' || sendingTake) return;
+    const clip = capture.clip;
+    const plan = reelSendPlan(choice.feed, choice.targetKeys.length);
+    console.debug(`[reel-capture] send-to: ${plan}, ${choice.targetKeys.length} conversation(s)`);
+    if (plan === 'none') return;
+    if (plan === 'feed') {
+      sendOpen = false;
+      publishOpen = true;
+      return;
+    }
+    sendingTake = true;
+    try {
+      const file = captureFileFrom(clip.blob);
+      if (clip.poster) attachCapturePoster(file, clip.poster);
+      const takeId = plan === 'both' ? crypto.randomUUID() : undefined;
+      const host = sendHost;
+      if (!host) {
+        showToast(m.reel_sendto_sheet_unavailable(), 'warning');
+        return;
+      }
+      const queued = await host.send(file, choice.targetKeys, {
+        takeId,
+        awaitsPublish: plan === 'both',
+      });
+      if (queued === null) {
+        showToast(m.reel_sendto_failed(), 'error');
+        return;
+      }
+      showToast(m.reel_sendto_sending({ count: queued.queued }), 'info');
+      sendOpen = false;
+      if (plan === 'both') {
+        chatTake = { id: queued.takeId, host };
+        publishOpen = true;
+      } else {
+        // Chats only: the camera is free at once, every target shows its own bubble.
+        dismissTake();
+      }
+    } finally {
+      sendingTake = false;
+    }
+  }
+
+  /**
+   * Opens "Envoyer a..." - or, with no messaging layer registered (no session), says so and leaves
+   * the review as it is: the take is never sent into a void.
+   */
+  function openSendSheet() {
+    sendHost = reelSendHost();
+    if (!sendHost) {
+      console.warn('[reel-capture] send-to: no messaging layer is registered');
+      showToast(m.reel_sendto_sheet_unavailable(), 'warning');
+      return;
+    }
+    sendOpen = true;
+  }
+
+  /** The publish step was left (Back): with sends already queued the take is over, else the review returns. */
+  function closePublish() {
+    publishOpen = false;
+    if (chatTake) {
+      console.debug(
+        '[reel-capture] the publish step was left: the queued sends go on, the take ends'
+      );
+      dismissTake();
+    }
+  }
+
   /** A recording is thrown away, a review discarded: the take is over. */
   function dismissTake() {
     console.debug('[reel-capture] the take was dismissed');
     abandonRecording();
     publishOpen = false;
+    sendOpen = false;
+    chatTake = null;
     if (capture.kind !== 'ready') capture = { kind: 'ready' };
   }
 
@@ -531,7 +645,10 @@
     takePoster = null;
     try {
       const blob = await ending.stop();
-      send({ type: 'stopped', clip: { blob, source: 'camera', poster } });
+      send({
+        type: 'stopped',
+        clip: { blob, source: 'camera', poster, durationMs: elapsedMs },
+      });
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'record';
       console.error(`[reel-capture] the take could not be kept (${fault})`, err);
@@ -637,7 +754,10 @@
       showToast(m.reels_capture_too_long({ seconds: Math.round(capMs / 1000) }), 'error');
       return;
     }
-    send({ type: 'picked', clip: { blob: file, source: 'gallery' } });
+    send({
+      type: 'picked',
+      clip: { blob: file, source: 'gallery', ...(durationMs !== null ? { durationMs } : {}) },
+    });
   }
 
   /**
@@ -801,12 +921,24 @@
           : m.reels_review_add()}
         onnext={() => handBack(clip.blob, clip.poster)}
       />
+    {:else if sendOpen && sendHost && sendTargetCap !== null && chatCapMs !== null}
+      <ReelSendSheet
+        {clip}
+        host={sendHost}
+        cap={sendTargetCap}
+        {chatCapMs}
+        onclose={() => (sendOpen = false)}
+        onsend={(choice) => void sendTakeTo(choice)}
+      />
     {:else if publishOpen && limits}
       <ReelPublishSheet
         {clip}
         {limits}
         deps={publishDeps}
-        onclose={() => (publishOpen = false)}
+        chatTake={chatTake
+          ? { id: chatTake.id, adopt: chatTake.host.adopt, endWait: chatTake.host.endWait }
+          : null}
+        onclose={closePublish}
         composer={rules.fromComposer
           ? {
               caption: composerCaption,
@@ -831,7 +963,8 @@
             capture = { kind: 'review', clip: { ...capture.clip, soundRemoved } };
           }
         }}
-        onnext={() => (publishOpen = true)}
+        nextLabel={sendToOffered ? m.reel_sendto_action() : undefined}
+        onnext={() => (sendToOffered ? openSendSheet() : (publishOpen = true))}
       />
     {/if}
   {/if}
@@ -851,7 +984,8 @@
         }
         if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };
         editorOpen = false;
-        publishOpen = true;
+        if (sendToOffered) openSendSheet();
+        else publishOpen = true;
       }}
     />
   {/if}

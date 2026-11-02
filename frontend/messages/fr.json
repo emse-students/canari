@@ -3945,6 +3945,43 @@
   "reels_review_edit": "Modifier la photo ou la vidéo",
   "reels_review_add": "Ajouter",
   "reel_chat_send": "Envoyer",
+  "reel_sendto_action": "Envoyer à...",
+  "reel_sendto_title": "Envoyer à",
+  "reel_sendto_back": "Revenir à la vidéo",
+  "reel_sendto_feed_row": "Publier sur CanaReels",
+  "reel_sendto_feed_muted": "Vous ne pouvez pas publier pour le moment : votre compte est mis en sourdine.",
+  "reel_sendto_search": "Rechercher une conversation",
+  "reel_sendto_empty": "Aucune conversation où envoyer cette vidéo.",
+  "reel_sendto_no_match": "Aucune conversation ne correspond.",
+  "reel_sendto_kind_direct": "conversation",
+  "reel_sendto_kind_group": "conversation de groupe",
+  "reel_sendto_row_label": "{name}, {kind}",
+  "reel_sendto_chip_remove": "Retirer {name}",
+  "reel_sendto_cap": "Vous pouvez choisir {count} conversations au plus.",
+  "reel_sendto_sound_removed_chats": "Le son retiré ne peut pas s'appliquer à un envoi en conversation : cette vidéo ne peut être que publiée.",
+  "reel_sendto_sheet_unavailable": "L'envoi en conversation n'est pas prêt, réessayez dans un instant.",
+  "reel_sendto_too_long_for_chats": "Cette vidéo dépasse {seconds} s : elle ne peut être que publiée, pas envoyée en conversation.",
+  "reel_sendto_failed": "L'envoi n'a pas pu être mis en file.",
+  "reel_sendto_send": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Envoyer ({count})",
+        "countPlural=other": "Envoyer ({count})"
+      }
+    }
+  ],
+  "reel_sendto_sending": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Envoi à {count} conversation",
+        "countPlural=other": "Envoi à {count} conversations"
+      }
+    }
+  ],
   "reels_review_next": "Suivant",
   "reels_editor_title": "Modifier la capture",
   "reels_editor_back": "Revenir à l'aperçu",

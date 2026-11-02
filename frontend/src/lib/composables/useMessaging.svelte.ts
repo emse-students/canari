@@ -78,7 +78,7 @@ import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import { isChatReelTake } from '$lib/reels/chatReelWriter';
 import { capturePosterOf } from '$lib/reels/capturePoster';
-import { buildChatReelTake } from '$lib/reels/chatReelTake';
+import { buildChatReelTake, type ChatReelTarget } from '$lib/reels/chatReelTake';
 import {
   applyEditToBody,
   envelopeBodyText,
@@ -2177,18 +2177,50 @@ export function useMessaging() {
 
   /**
    * Queues the chat camera's RAW take, at once, as a TAKE with ONE SEND (reels-in-chat RC-5, RC-13):
-   * the single conversation is the one-target case of "Envoyer à...", through the same rows and the
-   * same transaction. Nothing is prepared here: the outbox prepares the take inside its upload task,
-   * where a kill, a cancel and a weak link are already handled, and the bubble shows the progress.
-   * Only the ThumbHash of the camera's first picture is computed now, so the tile has its picture
-   * from the first frame.
+   * the single conversation is the one-target case of "Envoyer a...", through the same rows and the
+   * same transaction ({@link sendChatReelTakeTo}).
    */
   async function sendChatReelTake(file: File, ctx: MessagingContext) {
     const sendKey = ctx.selectedContact;
-    const convo = sendKey ? ctx.conversations.get(sendKey) : undefined;
-    if (!sendKey || !convo) {
+    if (!sendKey) {
       ctx.log(`[MEDIA] a chat reel take was NOT sent: no conversation is open`);
       return;
+    }
+    await sendChatReelTakeTo(file, [sendKey], ctx);
+  }
+
+  /**
+   * Queues a RAW take as ONE take and one send per conversation in `targetKeys` (reels-in-chat RC-12,
+   * 15.1): written in ONE outbox transaction, every target drawing its own bubble from the press.
+   * Nothing is prepared here: the outbox prepares the take inside its upload task, where a kill, a
+   * cancel and a weak link are already handled. Only the ThumbHash of the camera's first picture is
+   * computed now, so every tile has its picture from the first frame.
+   *
+   * `opts.takeId` and `opts.awaitsPublish` are for a take ALSO published on CanaReels (15.5): the
+   * outbox then waits for the publish step's upload instead of making its own.
+   *
+   * @returns what was queued (`takeId`, the conversations written), or `null` when nothing was -
+   *   no target is held, a sign-out came in between, or the write was refused (the member is told
+   *   through `setSendError`).
+   */
+  async function sendChatReelTakeTo(
+    file: File,
+    targetKeys: readonly string[],
+    ctx: MessagingContext,
+    opts: { takeId?: string; awaitsPublish?: boolean } = {}
+  ): Promise<{ takeId: string; queued: number } | null> {
+    const targets: ChatReelTarget[] = [];
+    for (const key of targetKeys.filter((k, i) => targetKeys.indexOf(k) === i)) {
+      const convo = ctx.conversations.get(key);
+      if (!convo) {
+        ctx.log(`[MEDIA] chat reel target ${key.slice(0, 8)}… skipped: no such conversation here`);
+        continue;
+      }
+      targets.push({ messageId: crypto.randomUUID(), groupId: convo.id, conversationKey: key });
+    }
+    if (targets.length === 0) {
+      ctx.log(`[MEDIA] a chat reel take was NOT sent: no target conversation is held`);
+      return null;
     }
     const tapGeneration = signOutGeneration();
     let placeholder: string | undefined;
@@ -2200,57 +2232,65 @@ export function useMessaging() {
         undefined;
     }
     const sentAt = Date.now();
-    const messageId = crypto.randomUUID();
-    // IN FLIGHT FROM BEFORE THE ROWS: the bubble must not read the outbox's "absent" during the
+    const takeId = opts.takeId ?? crypto.randomUUID();
+    // IN FLIGHT FROM BEFORE THE ROWS: a bubble must not read the outbox's "absent" during the
     // durable write as an orphan (outboxActivity).
-    const endInflight = beginOutboxEnqueue(messageId);
+    const endInflights = targets.map((t) => beginOutboxEnqueue(t.messageId));
     try {
       const rows = buildChatReelTake({
-        takeId: crypto.randomUUID(),
+        takeId,
         sentAt,
         senderId: ctx.userId,
         bytes: new Uint8Array(await file.arrayBuffer()),
         mimeType: file.type,
         fileName: file.name,
         placeholder,
-        targets: [{ messageId, groupId: convo.id, conversationKey: sendKey }],
+        targets,
       });
       // THE ACCOUNT IS ASKED BEFORE THE WRITE: a sign-out during the reads above would hand this take
       // to the next account's queue (review of #2874, M1).
       if (signOutGeneration() !== tapGeneration) {
-        ctx.log(`[MEDIA] chat reel ${messageId.slice(0, 8)}… dropped: signed out since the tap`);
-        return;
+        ctx.log(`[MEDIA] chat reel ${takeId.slice(0, 8)}… dropped: signed out since the tap`);
+        return null;
       }
       try {
-        await enqueueOutboxTake(rows.take, rows.sends);
+        await enqueueOutboxTake(
+          rows.take,
+          rows.sends,
+          opts.awaitsPublish ? { awaitsPublish: true } : undefined
+        );
       } catch (e) {
         // THE ROWS ARE ON DISK (their echo may not be): the queue owns the take and sends it, so the
-        // bubble is drawn below. Anything else wrote nothing, and the member is told.
+        // bubbles are drawn below. Anything else wrote nothing, and the member is told.
         if (!(e instanceof MessageWrittenError)) {
-          ctx.log(`[MEDIA] chat reel ${messageId.slice(0, 8)}… NOT queued: ${String(e)}`);
+          ctx.log(`[MEDIA] chat reel ${takeId.slice(0, 8)}… NOT queued: ${String(e)}`);
           ctx.setSendError(
             isEnqueueQuotaFailure(e)
               ? m.chat_media_send_error_storage_full()
               : m.chat_media_send_error_generic()
           );
-          return;
+          return null;
         }
-        console.error(`[MEDIA] chat reel ${messageId.slice(0, 8)}… queued, with a fault:`, e);
+        console.error(`[MEDIA] chat reel ${takeId.slice(0, 8)}… queued, with a fault:`, e);
       }
       ctx.log(
-        `[MEDIA] chat reel ${messageId.slice(0, 8)}… of ${file.size} bytes queued raw - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
+        `[MEDIA] chat reel ${takeId.slice(0, 8)}… of ${file.size} bytes queued raw to ${targets.length} conversation(s) - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
       );
-      // The echo's row is already on disk (written with the take): drawn only, never written again.
-      await addMessageToChat(ctx.userId, rows.sends[0].message.content, sendKey, ctx, {
-        messageId,
-        status: 'pending',
-        timestamp: new SvelteDate(sentAt),
-        skipDbSave: true,
-      });
-      await ctx.saveConversation(sendKey);
+      // The echoes' rows are already on disk (written with the take): drawn only, never written again.
+      for (const [i, send] of rows.sends.entries()) {
+        const key = targets[i].conversationKey;
+        await addMessageToChat(ctx.userId, send.message.content, key, ctx, {
+          messageId: send.message.id,
+          status: 'pending',
+          timestamp: new SvelteDate(sentAt),
+          skipDbSave: true,
+        });
+        await ctx.saveConversation(key);
+      }
       ctx.playSendTone?.();
+      return { takeId, queued: targets.length };
     } finally {
-      endInflight();
+      for (const end of endInflights) end();
     }
   }
 
@@ -2928,6 +2968,8 @@ export function useMessaging() {
     sendTextTo,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
+    /** Queues a raw reel take to several conversations at once (RC-12's send-to sheet). */
+    sendChatReelTakeTo,
     /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
     sendVoiceNote,
     /** Removes a staged file from the pending media queue by index. */
