@@ -95,9 +95,8 @@ describe('the call the page rings, told to the native side', () => {
     const service = new CallService(fakeMls);
     service.callState.set('incoming');
     expect(report).not.toHaveBeenCalled();
-    service.currentCallId = 'call-6';
-    service.currentCallId = 'call-7';
-    service.currentCallId = null;
+    // One write per id through the setter, so each is observed before the next replaces it.
+    for (const id of ['call-6', 'call-7', null]) service.currentCallId = id;
     expect(report.mock.calls.map((c) => c[1])).toEqual(['call-6', 'call-7', null]);
   });
 
