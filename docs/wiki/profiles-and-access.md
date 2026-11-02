@@ -157,6 +157,11 @@ application computed from the same profile, so no application keeps a hard-coded
   editing or removing an institution's member is a 403 `INSTITUTION_MEMBERS_ADMIN_ONLY` for anyone
   else, its own members and a BDE super-admin included
   ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+  **An institution has no governing BDE, ever** (owner, 2026-11-02: "une institution n'a personne au
+  dessus"): its audience reaching a BDE's space confers nothing - no super-admin tier (archive,
+  members, profile, audience, delete) and no event validation. `holdsBdeFlagOverSql` carries the
+  condition once, so every caller inherits it; only its own members, within their flags, and the
+  platform admin act on it.
 - **D21 - Joining an association of another space opens its content** to that member.
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces

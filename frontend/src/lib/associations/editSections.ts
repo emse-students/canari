@@ -71,14 +71,17 @@ export interface EditRights {
 }
 
 /**
- * Every right the management sections read, from one context. `assoType` matters for exactly two
- * things, both an institution's and both a global admin's alone: its audience
- * (`AUDIENCE_INSTITUTION_ADMIN_ONLY`) and its roster (`INSTITUTION_MEMBERS_ADMIN_ONLY`).
+ * Every right the management sections read, from one context. `assoType` matters for an
+ * institution, which has NO governing BDE (owner, 2026-11-02 - the server's `holdsBdeFlagOverSql`
+ * never grants the tier over one): the super-admin tier is dropped whatever the context says, and
+ * its roster and audience are the platform admin's alone (`INSTITUTION_MEMBERS_ADMIN_ONLY`,
+ * `AUDIENCE_INSTITUTION_ADMIN_ONLY`). Its own members keep their flags.
  */
 export function editRights(
-  ctx: EditPermissionContext,
+  given: EditPermissionContext,
   assoType: Association['type'] = 'association'
 ): EditRights {
+  const ctx = assoType === 'institution' ? { ...given, isSuperAdmin: false } : given;
   const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, ctx);
   const members = may(AssociationPermissionFlag.MANAGE_MEMBERS);
   return {
@@ -93,7 +96,7 @@ export function editRights(
     proposals:
       may(AssociationPermissionFlag.POST_AS_ASSO) || may(AssociationPermissionFlag.PROPOSE_EVENT),
     payoutAccount: may(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT),
-    audience: ctx.isGlobalAdmin || (ctx.isSuperAdmin && assoType !== 'institution'),
+    audience: ctx.isGlobalAdmin || ctx.isSuperAdmin,
     delete: ctx.isGlobalAdmin || ctx.isSuperAdmin,
   };
 }

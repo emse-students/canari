@@ -18,7 +18,11 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
-import { HttpException } from '@nestjs/common';
+import { ForbiddenException, HttpException, Logger } from '@nestjs/common';
+import type { ExecutionContext } from '@nestjs/common';
+import type { Reflector } from '@nestjs/core';
+import { AssociationsService } from '../associations/associations.service';
+import { GlobalAdminOrAssociationRoleGuard } from '../associations/guards/global-admin-or-association-role.guard';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { flagsBeyondCeiling, grantCeiling } from '../associations/member-flag-ceiling';
 import { assertBdeMayWriteAudience, type SpaceStanding } from './audience-policy';
@@ -36,6 +40,7 @@ const A = {
   bdeIsmin: '00000000-0000-4000-8000-0000000000d2', // BDE of every OTHER saint-etienne space
   clubIcm: '00000000-0000-4000-8000-0000000000e1', // reaches (ICM, saint-etienne) only
   clubIsmin: '00000000-0000-4000-8000-0000000000e2', // reaches (ISMIN, saint-etienne) only
+  school: '00000000-0000-4000-8000-0000000000e3', // an INSTITUTION reaching (ICM, saint-etienne)
 } as const;
 
 /** The refusal's typed code, or null when the call passed. */
@@ -72,13 +77,17 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     await client.query(`SET search_path TO ${schema}, public`);
     await client.query(`
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association');
       CREATE TABLE posts (id uuid PRIMARY KEY);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
     `);
     for (const [key, id] of Object.entries(A)) {
-      await client.query(`INSERT INTO associations (id, name) VALUES ($1, $2)`, [id, key]);
+      await client.query(`INSERT INTO associations (id, name, type) VALUES ($1, $2, $3)`, [
+        id,
+        key,
+        key === 'school' ? 'institution' : 'association',
+      ]);
     }
     await client.query(migration('071_spaces.sql'));
     await client.query(migration('072_drop_is_bde.sql'));
@@ -88,6 +97,7 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
       [A.bdeIsmin, 'ISMIN', 'saint-etienne'],
       [A.clubIcm, 'ICM', 'saint-etienne'],
       [A.clubIsmin, 'ISMIN', 'saint-etienne'],
+      [A.school, 'ICM', 'saint-etienne'],
     ];
     for (const [id, formation, campus] of rules) {
       await client.query(
@@ -171,5 +181,65 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
         ])
       )
     ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+  });
+
+  describe('an institution has no governing BDE (owner, 2026-11-02)', () => {
+    /**
+     * The real route guard over a service whose membership reads are this PostgreSQL: the officer is
+     * a member of neither entity, so only the BDE tier could admit it.
+     */
+    const guardFor = () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const memberRepo = {
+        query: (sql: string, params: unknown[]) => client.query(sql, params).then((r) => r.rows),
+        findOne: ({ where }: { where: { associationId: string; userId: string } }) =>
+          client
+            .query(
+              `SELECT * FROM association_members WHERE "associationId" = $1 AND "userId" = $2`,
+              [where.associationId, where.userId]
+            )
+            .then((r) => r.rows[0] ?? null),
+      };
+      const unused = undefined as never;
+      const service = new AssociationsService(
+        unused, // assoRepo
+        memberRepo as never, // memberRepo
+        unused, // calendarRepo
+        unused, // coOwnerRepo
+        unused, // docRepo
+        unused, // reviewerGrantRepo
+        unused, // postRepo
+        unused, // formRepo
+        unused, // productRepo
+        unused, // redis
+        unused, // httpService
+        unused, // notifications
+        unused, // userTagService
+        { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
+      );
+      // `PATCH :id { archived }` declares MANAGE_MEMBERS: the archive path.
+      const reflector = { get: () => MANAGE_MEMBERS } as unknown as Reflector;
+      return { guard: new GlobalAdminOrAssociationRoleGuard(reflector, service), service };
+    };
+    const archiveAs = (userId: string, id: string) =>
+      ({
+        switchToHttp: () => ({
+          getRequest: () => ({ headers: { 'x-user-id': userId }, params: { id } }),
+        }),
+        getHandler: () => undefined,
+      }) as unknown as ExecutionContext;
+
+    it('refuses the ICM BDE archiving an institution its space reaches', async () => {
+      const { guard, service } = guardFor();
+      expect(await service.isAssociationSuperAdminOf('icmOfficer', A.school)).toBe(false);
+      await expect(guard.canActivate(archiveAs('icmOfficer', A.school))).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+    });
+
+    it('still admits the same BDE on an association of its space', async () => {
+      const { guard } = guardFor();
+      await expect(guard.canActivate(archiveAs('icmOfficer', A.clubIcm))).resolves.toBe(true);
+    });
   });
 });

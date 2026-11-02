@@ -42,6 +42,8 @@ const A = {
   clubNone: '00000000-0000-4000-8000-0000000000c4', // no rule: reaches no space
   clubAll: '00000000-0000-4000-8000-0000000000c5', // rule (NULL, NULL): everyone
   clubFsssSe: '00000000-0000-4000-8000-0000000000c6', // (FSSS, saint-etienne): a space with no BDE
+  // An INSTITUTION reaching both BDEs' spaces: it has no governing BDE, ever (owner, 2026-11-02).
+  school: '00000000-0000-4000-8000-0000000000c7',
 } as const;
 type AssoKey = keyof typeof A;
 const NAME = Object.fromEntries(Object.entries(A).map(([k, v]) => [v, k])) as Record<
@@ -64,6 +66,10 @@ const RULES: Record<AssoKey, [string | null, string | null][]> = {
   clubNone: [],
   clubAll: [[null, null]],
   clubFsssSe: [['FSSS', 'saint-etienne']],
+  school: [
+    ['ICM', 'saint-etienne'],
+    ['ISMIN', 'gardanne'],
+  ],
 };
 
 /** Members: who holds which flag where. `clubVal` holds VALIDATE_EVENTS in a club - inert. */
@@ -88,6 +94,7 @@ const VALIDATORS: Record<AssoKey, string[]> = {
   clubNone: [],
   clubAll: ['bothVal', 'gaVal', 'seVal'],
   clubFsssSe: [],
+  school: [],
 };
 
 maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () => {
@@ -102,18 +109,17 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     // The shape 071 found in production: `isBDE` still a column, one association carrying it.
     await client.query(`
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association');
       CREATE TABLE posts (id uuid PRIMARY KEY);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
       CREATE TABLE association_calendar_events (id serial PRIMARY KEY, "associationId" uuid NOT NULL);
     `);
     for (const [key, id] of Object.entries(A)) {
-      await client.query(`INSERT INTO associations (id, name, "isBDE") VALUES ($1, $2, $3)`, [
-        id,
-        key,
-        key === 'bdeSe',
-      ]);
+      await client.query(
+        `INSERT INTO associations (id, name, "isBDE", type) VALUES ($1, $2, $3, $4)`,
+        [id, key, key === 'bdeSe', key === 'school' ? 'institution' : 'association']
+      );
     }
     await client.query(migration('071_spaces.sql'));
     await client.query(migration('072_drop_is_bde.sql'));
@@ -210,6 +216,17 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     expect(await reach('clubVal', VALIDATE_EVENTS)).toEqual([]);
     expect(await reach('clubVal', MANAGE_ASSO)).toEqual([]);
     expect(await reach('plain', VALIDATE_EVENTS)).toEqual([]);
+  });
+
+  it('never governs an institution, whatever spaces its audience reaches', async () => {
+    for (const userId of USERS) {
+      for (const flag of [VALIDATE_EVENTS, MANAGE_ASSO]) {
+        const { rows } = await client.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, A.school, flag]);
+        expect({ userId, flag, holds: rows[0].holds }).toEqual({ userId, flag, holds: false });
+      }
+    }
+    const reach = await client.query(ASSOCIATIONS_UNDER_BDE_FLAG_SQL, ['seManage', MANAGE_ASSO]);
+    expect(reach.rows.map((r) => r.id)).not.toContain(A.school);
   });
 
   it('filters a list of events by their association, as the pending queue splices it', async () => {

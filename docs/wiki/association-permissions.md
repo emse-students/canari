@@ -20,7 +20,7 @@ Three tiers, widest first:
 | Tier | Who | How it is known |
 | --- | --- | --- |
 | Platform administrator | Holds **every** association right, member or not | `X-Global-Admin: true`, set by nginx from the `auth_request` `$global_admin` variable |
-| Cross-association super-admin | `MANAGE_ASSO` in the BDE of a space THIS association reaches; administers the associations its spaces reach, no others (WP6c step 2) | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
+| Cross-association super-admin | `MANAGE_ASSO` in the BDE of a space THIS association reaches; administers the associations its spaces reach, no others (WP6c step 2), and never an institution (owner, 2026-11-02) | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
 | The association's own member | Judged on their `permissions` bitmask alone | `callerHasFlag` |
 
 The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
@@ -219,6 +219,13 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   Only an explicit row carries them, and every super-admin write that grants one is logged at info
   (`[MEMBER-CEILING] ... a BDE super-admin granted <FLAGS> on association <id>`, no user id), after
   the write lands.
+- **An institution has no governing BDE** (owner, 2026-11-02): `holdsBdeFlagOverSql` never holds
+  over an association of type `institution`, so neither the super-admin tier (`mayAct`,
+  `mayActOnAny`, `DELETE :id`, the archive at `MANAGE_MEMBERS`) nor event validation reaches one,
+  whatever spaces its audience reaches. One condition in the predicate, every caller inherits it;
+  `editRights` drops the tier for an institution on the client. Proven against real SQL in
+  `bde.integration.spec.ts` and through the real route guard in
+  `audience-takeover.integration.spec.ts`.
 - **Institutions are the platform admin's alone** (D20): add, update and remove answer 403
   `INSTITUTION_MEMBERS_ADMIN_ONLY` to anyone else. Reordering stays `MANAGE_MEMBERS` (it writes no
   right).

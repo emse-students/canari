@@ -31,12 +31,20 @@ export function isBdeAssociationSql(alias: string): string {
  *
  * Decided by the user (profiles-and-access, 6c): VALIDATE_EVENTS and MANAGE_ASSO are read through
  * this; MODERATE stays global and does not.
+ *
+ * AN INSTITUTION HAS NO GOVERNING BDE, EVER (owner, 2026-11-02: "une institution n'a personne au
+ * dessus"). Its audience may reach a BDE's space, and that must confer nothing: no super-admin tier
+ * (archive, members, profile, audience, delete), no event validation. Only its own members, within
+ * their flags, and the platform admin act on it. Written HERE, once, so every caller of the BDE
+ * tier - `mayAct`, `mayActOnAny`, the delete route, the validators - inherits it.
  */
 export function holdsBdeFlagOverSql(user: string, association: string, flag: string): string {
   return `EXISTS (SELECT 1 FROM association_members bde_member
     JOIN spaces bde_governed ON bde_governed."bdeAssociationId" = bde_member."associationId"
     JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}
+    JOIN associations bde_target ON bde_target.id = ${association}
     WHERE bde_member."userId" = ${user} AND (bde_member.permissions & ${flag}) <> 0
+      AND bde_target.type <> 'institution'
       AND ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
 }
 

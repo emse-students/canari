@@ -110,6 +110,16 @@ describe('which sections a reader may open', () => {
     expect(mayOpenEditSection('danger', editRights(manager, 'institution'))).toBe(true);
   });
 
+  it('gives a BDE super-admin nothing on an institution: it has no governing BDE', () => {
+    const star = editRights({ ...none, isSuperAdmin: true }, 'institution');
+    expect(visibleEditSections(star)).toEqual(['profile']);
+    expect(star.delete).toBe(false);
+    expect(mayOpenEditSection('danger', star)).toBe(false);
+    // Its own members keep their flags.
+    const own = editRights(withFlags(AssociationPermissionFlag.MANAGE_DOCUMENTS), 'institution');
+    expect(own.documents).toBe(true);
+  });
+
   it('keeps an institution audience to the global admin', () => {
     const star = editRights({ ...none, isSuperAdmin: true }, 'institution');
     expect(mayOpenEditSection('audience', star)).toBe(false);
