@@ -733,6 +733,33 @@ sits on the tap's critical path, and moving it blind could break the ordering th
 The `--profile` window of the tab tap, read against this page's sources, is the next step. The
 Mi 9T re-measure needs a build carrying this change (the installed APK holds `1.6.0`).
 
+### The budget reading on `1.6.3-alpha.2`, 2026-11-02: #2914 shipped, and the clock did not move
+
+**Bench.** Mi 9T, the dev pre-release `1.6.3-alpha.2 (100600302)` read in Paramètres > À propos,
+the build that carries #2914 (the salon mount above). Same dev estate, same rig account, same
+`BancOuverture-1` seed and target, same instrument and protocol as the `1.6.0` reading; no network
+shim, CPU 1x. The run was capped at 15 min and closed after **4 of 7 cold runs** (each run is a full
+cold start plus the gesture chain). Evidence: `<harness-dir>/a1-bench/r1102-budget-163a2/`
+(`runs.ndjson`, `log-cold-none-cpu1.txt`).
+
+| condition | build | n | tap>rail+salons | salon>pane | salon>msgs | switch>salons | reopen>msgs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| cold, Wi-Fi, 1x | `1.6.0` | 7 | 530 / 737 | 441 / 542 | 919 / 1093 | 176 / 190 | 328 / 344 |
+| cold, Wi-Fi, 1x | `1.6.3-alpha.2` | 4 | **529** / 669 (worst) | 414 / 455 | **918** / 966 | 174 / 206 | 330 / 365 |
+
+(median / p90 for `1.6.0`; median / worst for the four new runs.) Long tasks, median: hub open 209
+(was 172-225), salon open 537 (was 546-551), cached reopen 332 (was 340-348). Requests per run: 34,
+133 kB, one IPC call - unchanged.
+
+**Verdict: no row moved beyond the run-to-run spread, and the 200 ms budget is still met on none.**
+The salon open still costs one ~540 ms long task, and `salon>msgs` from the stored page is 918 ms
+against 919. The fill change of #2914 cuts the rows mounted BEFORE the reveal; the reading says the
+reveal's critical path is not where those rows were spent on this build, or that the widen's steps
+land inside the same window the instrument measures. Which of the two is owed a `--profile-salon`
+run on this build (and the DOM row count after the open) before any further change to the mount.
+**Owed:** the remaining three cold runs, the warm and airplane rows, and the `click>` columns of the
+report, on this build.
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):
