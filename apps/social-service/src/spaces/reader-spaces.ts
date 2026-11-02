@@ -316,16 +316,36 @@ export function memberRepostReachesUserSql(post: string, user: string): string {
 }
 
 /**
+ * Post row `post` is one a member repost may carry at all (owner, 2026-11-02): a personal post, or
+ * the post of an association that addresses at least one space (an `association_audiences` rule).
+ * NEVER the post of a LIST (`type = 'list'`), and never that of an association with no rule - one
+ * read by its MEMBERS ONLY: what such an entity publishes is meant for that circle, and a member's
+ * repost would carry it past it.
+ *
+ * Read by the write (refused with the 404 of a post not seen), by the card's offer, and inside
+ * `memberRepostCarriesSql` - so a repost written before the decision, or before the association lost
+ * its last rule, reaches, names and dates nothing, with no row deleted. Read from state at every
+ * query: an association that gains a rule makes its posts repostable again.
+ */
+export function memberRepostablePostSql(post: string): string {
+  return `(${post}."associationId" IS NULL OR EXISTS (SELECT 1 FROM associations vis_mrep_asso
+      WHERE vis_mrep_asso.id = ${post}."associationId" AND vis_mrep_asso.type <> 'list'
+        AND EXISTS (SELECT 1 FROM association_audiences vis_mrep_arule
+          WHERE vis_mrep_arule."associationId" = vis_mrep_asso.id)))`;
+}
+
+/**
  * Repost row by reposter row `reposter` (a `users` alias) of post row `post` still CARRIES the post
  * to the reader whose id is the expression `readerId` - every condition of
  * `memberRepostReachesUserSql` but the follow itself, so the card that NAMES a reposter
  * (`member-repost-card.ts`) names exactly the ones whose repost reaches that reader: the reposter on
- * the reader's side of the review cohort, not muted, still seeing the post first-hand, and no block
- * between any pair concerned.
+ * the reader's side of the review cohort, not muted, still seeing the post first-hand, no block
+ * between any pair concerned, and a post a repost may carry at all (`memberRepostablePostSql`).
  */
 export function memberRepostCarriesSql(post: string, reposter: string, readerId: string): string {
   const personal = `${post}."associationId" IS NULL`;
-  return `(${sameSideOfReviewCohortSql(`${reposter}.id`, readerId)}
+  return `(${memberRepostablePostSql(post)}
+    AND ${sameSideOfReviewCohortSql(`${reposter}.id`, readerId)}
     AND NOT EXISTS (SELECT 1 FROM user_moderation vis_mrep_mod
       WHERE vis_mrep_mod."userId" = ${reposter}.id AND vis_mrep_mod."isMuted" = true)
     AND ${postVisibleToUserSql(post, reposter, REPOSTER_FIRST_HAND)}

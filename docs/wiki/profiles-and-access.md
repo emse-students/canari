@@ -1562,6 +1562,17 @@ security review before arming.
   reader who sees it ONLY through another member's repost may not: the author's consent covers one
   step of reach, not an unbounded chain. The write and the card ask the predicate with
   `memberReposts: false` (`FIRST_HAND`, `member-reposts.service.ts`).
+- **NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)**: an entity
+  post is repostable only when its association is not a list (`type = 'list'`) and addresses at
+  least one space (an `association_audiences` row); an association with no rule is read by its
+  members only, and a member's repost would carry its post past that circle. One clause,
+  `memberRepostablePostSql` (`spaces/reader-spaces.ts`), read by the write (the 404 of a post not
+  seen, nothing confirmed), by the card's `repostable` offer, and inside `memberRepostCarriesSql` -
+  so a repost written before the decision, or before its association lost its last rule, reaches,
+  names and dates nothing, with no row deleted; read from state, so an association that gains a rule
+  makes its posts repostable again. Production held 0 member reposts at the decision (0 of a list,
+  0 of a members-only association; 44 lists, 0 members-only associations among 94), so nothing was
+  left to clean.
 - **Refusals, in order, each a typed `MEMBER_REPOST_*` code and an integration case**: absent,
   hidden, scheduled or expired (404); not seen FIRST-HAND without a grant and without the admin's
   by-id reach (404, nothing confirmed - a reader who sees it only through a repost included); anonymous (400); the reposter's own personal post (400); a block either
@@ -1607,7 +1618,10 @@ security review before arming.
   association left, muted) reaches nobody, names nobody and leaves no bell preview.
   `republications.integration.spec.ts` and `personal-republications.integration.spec.ts`: an
   officer who sees a post only through a repost cannot republish or ask, and is offered nothing.
-  The six PostgreSQL specs that share the predicate apply 121.
+  The six PostgreSQL specs that share the predicate apply 121. The post of a list or of a
+  members-only association (2026-11-02): the write's 404 is byte-for-byte a not-seen one, the card
+  offers nothing, and a row written before carries nothing until the association gains a rule
+  (`member-reposts.integration.spec.ts`; the clause itself in `spaces/member-repostable.spec.ts`).
 
 ### The review cohort - store reviewers in a world of their own (2026-10-31)
 

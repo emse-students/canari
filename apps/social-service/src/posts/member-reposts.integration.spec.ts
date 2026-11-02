@@ -54,7 +54,7 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
   b2: { campus: 'saint-etienne', formation: 'ICM' },
   // An author who withdraws consent account-wide.
   nc: { campus: 'saint-etienne', formation: 'ICM' },
-  // A Gardanne author rp cannot see; also the officer of the members-only A2.
+  // A Gardanne author rp cannot see; also the officer of A2, A3 and A4.
   gx: { campus: 'gardanne', formation: 'ISMIN' },
   // Authors in NO space, whom rp sees ONLY as their accepted follower: one removes rp, rp unfollows
   // the other.
@@ -63,7 +63,12 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
 };
 
 const A1 = '00000000-0000-4000-8000-0000000c0001'; // association, reaches ICM Saint-Etienne (071)
-const A2 = '00000000-0000-4000-8000-0000000c0002'; // created after 071: no rule, its members only
+// Created after 071 with ONE rule (ISMIN x saint-etienne) that reaches nobody in the cast: rp sees
+// its posts only as a member.
+const A2 = '00000000-0000-4000-8000-0000000c0002';
+// MEMBERS-ONLY (no rule) and a LIST: their posts are never repostable (owner, 2026-11-02).
+const A3 = '00000000-0000-4000-8000-0000000c0003';
+const A4 = '00000000-0000-4000-8000-0000000c0004'; // a list addressing ICM x saint-etienne
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -93,6 +98,8 @@ const POSTS: {
   { id: P(16), authorId: 'gy', announced: true }, // the author removes the reposter
   { id: P(17), authorId: 'gz', announced: true }, // the reposter unfollows the author
   { id: P(18), authorId: 'gx', associationId: A2, announced: true }, // the reposter leaves A2
+  { id: P(20), authorId: 'gx', associationId: A3, announced: true }, // members-only association
+  { id: P(21), authorId: 'gx', associationId: A4, announced: true }, // a list
   { id: P(19), authorId: 'au', announced: true }, // the reposter is muted
 ];
 
@@ -177,11 +184,24 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
     await q(migration('121_member_reposts.sql'));
     // A replay is a no-op (the deploy ledger may run it twice).
     await q(migration('121_member_reposts.sql'));
-    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2')`, [A2]);
+    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2'), ($2, 'A3', 'a3')`, [
+      A2,
+      A3,
+    ]);
+    await q(`INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A4', 'a4', 'list')`, [
+      A4,
+    ]);
     await q(
-      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
-      [A2]
+      `INSERT INTO association_audiences ("associationId", formation, campus)
+         VALUES ($1, 'ISMIN', 'saint-etienne'), ($2, 'ICM', 'saint-etienne')`,
+      [A2, A4]
     );
+    for (const a of [A2, A3, A4]) {
+      await q(
+        `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
+        [a]
+      );
+    }
     for (const [id, u] of Object.entries(USERS)) {
       await q(
         `INSERT INTO users (id, campus, cursus, "firstName", "lastName") VALUES ($1, $2, $3, $1, 'X')`,
@@ -420,6 +440,49 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
 
     it('only the author sets a post override (404 for anyone else)', async () => {
       expect((await refusedWith(reposts.setPostConsent(P(15), 'rp', true))).getStatus()).toBe(404);
+    });
+  });
+
+  describe('NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)', () => {
+    it('the write refuses it with the 404 of a post not seen, and writes nothing', async () => {
+      const unseen = await refusedWith(reposts.repost(P(4), 'rp'));
+      for (const id of [P(20), P(21)]) {
+        // rp sees it first-hand, as a member: only the rule refuses it.
+        expect(await sees(id, 'rp')).toBe(true);
+        const err = await refusedWith(reposts.repost(id, 'rp'));
+        expect(err.getStatus()).toBe(404);
+        expect(err.getResponse()).toEqual(unseen.getResponse());
+        expect(await repostRows(id)).toEqual([]);
+      }
+      expect(told).toEqual([]);
+    });
+
+    it('the card offers no repost of it', async () => {
+      const forRp = await memberRepostContext(ds.manager, [P(18), P(20), P(21)], 'rp');
+      expect([...forRp.repostable]).toEqual([P(18)]);
+    });
+
+    it('a row written before the decision carries nothing, names nobody, and is not deleted', async () => {
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'rp'), ($2, 'rp')`, [
+        P(20),
+        P(21),
+      ]);
+      for (const id of [P(20), P(21)]) {
+        expect(await sees(id, 'fo')).toBe(false);
+        expect(
+          (await memberRepostContext(ds.manager, [id], 'fo')).reposters.get(id)
+        ).toBeUndefined();
+        expect(await repostRows(id)).toEqual(['rp']);
+      }
+      // Read from state: the members-only association addresses a space, and the row carries again.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
+        [A3]
+      );
+      expect(await sees(P(20), 'fo')).toBe(true);
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A3]);
+      expect(await sees(P(20), 'fo')).toBe(false);
+      await q(`DELETE FROM member_reposts WHERE "postId" = ANY($1::uuid[])`, [[P(20), P(21)]]);
     });
   });
 
