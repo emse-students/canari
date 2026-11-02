@@ -66,6 +66,7 @@ const OUTCOMES: &[&str] = &[
 const STAGES: &[&str] = &[
     "start",
     "push-context",
+    "wake-fetch",
     "fetch-proto",
     "load-state",
     "decrypt",
@@ -658,9 +659,24 @@ mod token_tests {
             "catchup-failed;direct=not-attempted",
             "no-outcome-set",
             "load-state",
+            // The wake-up push's causes (NotificationService.swift `handleWake`), letter-only so
+            // the stage that failed survives the export.
+            "wake-no-push-context",
+            "wake-no-id",
+            "wake-no-push-secret",
+            "wake-transport",
+            "wake-http-forbidden",
+            "wake-http-throttled",
+            "wake-http-server-error",
+            "wake-unreadable-body",
+            "wake-frame-without-fields",
+            "wake-frame-is-a-wake",
+            "wake-unknown-status",
         ] {
             assert!(is_code_token(cause), "{cause}");
         }
+        // A status code in a cause is a digit, and the cause would be dropped with its evidence.
+        assert!(!is_code_token("wake-http-403"));
         assert!(is_code_token("call_ring") && is_code_token("form_reminder"));
         assert!(!is_code_token("group-absent;direct=a_b"));
         assert!(!is_code_token("cause;other=x"));

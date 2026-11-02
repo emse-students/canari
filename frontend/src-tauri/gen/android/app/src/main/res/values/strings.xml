@@ -59,6 +59,7 @@
          placeholder: a token is replaced by its label, whole. -->
     <string name="notif_mention_you">vous</string>
     <string name="notif_mention_someone">quelqu\'un</string>
+    <string name="notif_wake_unavailable">Un message n\'a pas pu être chargé. Ouvrez Canari pour le lire.</string>
 
     <!-- Rendered under the reactor's name in the conversation's notification, so it reads
          "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
