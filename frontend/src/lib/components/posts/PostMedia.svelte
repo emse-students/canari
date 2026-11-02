@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
-  import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
+  import { FileText, Download, Image as ImageIcon, LoaderCircle, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
   import { Log } from '$lib/utils/Log';
   import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
@@ -120,6 +120,13 @@
      * branches on it here.
      */
     onFailure?: (cause: MediaFailureCause) => void;
+    /**
+     * A FILE drawn as one row of a list - no preview, and NO DOWNLOAD UNTIL ASKED (owner,
+     * 2026-11-02: a post with several PDFs was one very long column). The row comes from the
+     * metadata the post already holds; the tap, or the download button, fetches the file and then
+     * does what was asked. Ignored for anything that is not a generic file.
+     */
+    compact?: boolean;
   }
 
   let {
@@ -137,6 +144,7 @@
     onLoaded,
     onPlaybackBlocked,
     onFailure,
+    compact = false,
   }: Props = $props();
 
   // A failed download is decided: the caller stops waiting on this media.
@@ -193,6 +201,9 @@
   // placeholder must take part in the flow instead of filling a parent that has
   // no height of its own.
   const fillsReservedBox = $derived(reservesAspectRatio(mediaType));
+
+  /** A compact row: drawn from metadata, the file fetched only once the reader asks for it. */
+  const compactFile = $derived(compact && mediaType === 'file');
 
   const isPdf = $derived(mediaType === 'file' && isPdfAttachment(media.mimeType, media.fileName));
 
@@ -258,9 +269,18 @@
       };
     }
 
+    // A compact row holds nothing until it is asked for: a post of ten PDFs is ten rows, not ten
+    // downloads the reader may never want (`activate`).
+    if (compactFile && !asked) {
+      loading = false;
+      failure = null;
+      return;
+    }
+
     // Still far from the viewport: the placeholder is already the right thing on screen, so the
-    // download waits rather than competing with the page the reader IS looking at.
-    if (deferred) return;
+    // download waits rather than competing with the page the reader IS looking at. A compact row
+    // the reader TAPPED is not deferred: they asked for it, whatever the observer thinks.
+    if (deferred && !(compactFile && asked)) return;
 
     let destroyed = false;
     let acquired = false;
@@ -350,6 +370,63 @@
     attempt += 1;
   }
 
+  /** A compact row's file was asked for (its tap or its download button): the download may start. */
+  let asked = $state(false);
+  /** What the reader asked of a compact row, to run once its file is in. */
+  let pendingAction = $state<'open' | 'download' | null>(null);
+
+  /** A compact row's file is being fetched because the reader asked: the row shows it. */
+  const busy = $derived(compactFile && asked && loading);
+  /** A compact row's file arrived for a SAVE: it waits for a tap of its own (see `activate`). */
+  let saveReady = $state(false);
+
+  /**
+   * Opens or saves the file.
+   *
+   * - Ready (a full card, a warm blob, or a row whose fetch is done): it happens now, inside the tap.
+   * - A compact row not yet fetched: the request is remembered and the fetch starts. THE FIRST
+   *   REQUEST WINS: while one is pending, further taps are ignored (they used to overwrite it).
+   *   An OPEN runs as soon as the file is in - showing the viewer needs no gesture. A SAVE does
+   *   not: a download started from an effect, long after the tap, is the call WKWebView and Tauri
+   *   may refuse, so the row turns to "ready - tap to save" and the save runs on THAT tap.
+   * - A failure drops the pending request. After "Reessayer" the file arrives and the row is
+   *   simply ready: the reader taps again, and the tap acts at once.
+   */
+  function activate(action: 'open' | 'download') {
+    Log.d('PostMedia.activate', {
+      action,
+      mediaId: media.mediaId,
+      ready: blobUrl !== null,
+      pending: pendingAction,
+    });
+    if (blobUrl) {
+      saveReady = false;
+      if (action === 'open') pdfViewerOpen = true;
+      else downloadBlob(blobUrl, media.fileName ?? (isPdf ? 'document.pdf' : 'file'));
+      return;
+    }
+    if (pendingAction) {
+      Log.d('PostMedia.activate', { ignored: action, kept: pendingAction });
+      return;
+    }
+    pendingAction = action;
+    asked = true;
+  }
+
+  $effect(() => {
+    if (!pendingAction) return;
+    if (failure) {
+      Log.d('PostMedia.activate', { dropped: pendingAction, after: failure });
+      pendingAction = null;
+      return;
+    }
+    if (!blobUrl) return;
+    const action = pendingAction;
+    pendingAction = null;
+    if (action === 'open') pdfViewerOpen = true;
+    else saveReady = true;
+  });
+
   let lightboxOpen = $state(false);
   let pdfViewerOpen = $state(false);
 
@@ -384,8 +461,7 @@
   function openPdfViewer(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (!blobUrl) return;
-    pdfViewerOpen = true;
+    activate('open');
   }
 </script>
 
@@ -442,7 +518,10 @@
   {/if}
 {:else}
   <!-- Standalone rendering -->
-  {#if loading}
+  {#if compactFile && !failure && !authMissing}
+    <!-- A compact row never waits on its download: it is drawn from metadata alone. -->
+    {@render fileCard()}
+  {:else if loading}
     {#if mediaType === 'image'}
       <div
         class="absolute inset-0 flex animate-pulse items-center justify-center bg-black/5 dark:bg-white/5"
@@ -570,77 +649,7 @@
         ></audio>
       </div>
     {:else}
-      <!-- ========== GENERIC FILE ========== -->
-      {#snippet fileRowContent()}
-        <div
-          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
-        >
-          <FileText size={22} strokeWidth={2} class="text-text-muted" />
-        </div>
-        <div class="min-w-0 flex-1 overflow-hidden text-left">
-          <p class="mb-0.5 truncate text-xs leading-tight font-bold">
-            {media.fileName ?? m.post_media_file_label()}
-          </p>
-          <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-          <p class="text-text-muted text-2xs font-semibold tracking-wider">
-            {formatFileSize(media.size)}
-          </p>
-        </div>
-      {/snippet}
-
-      <div
-        class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 transition-colors dark:border-white/10 dark:bg-white/10"
-      >
-        <div class="flex items-center gap-3.5 px-3.5 py-3">
-          {#if isPdf}
-            <!-- The whole header opens the document; only the download button is carved out
-                 of it, which is why it cannot simply wrap the row. -->
-            <button
-              type="button"
-              onclick={openPdfViewer}
-              class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-              aria-label={m.pdf_open_document_label()}
-            >
-              {@render fileRowContent()}
-            </button>
-          {:else}
-            {@render fileRowContent()}
-          {/if}
-          <button
-            type="button"
-            onclick={(e) => {
-              e.stopPropagation();
-              downloadBlob(blobUrl!, media.fileName ?? 'file');
-            }}
-            class="ui-icon-button rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
-            aria-label={m.post_download_label()}
-          >
-            <Download
-              size={18}
-              strokeWidth={2.5}
-              class="opacity-70 transition-opacity group-hover/file:opacity-100"
-            />
-          </button>
-        </div>
-        {#if isPdf}
-          <!-- A post is wide enough to show the page itself; the row keeps its
-               icon so the document is never rendered twice. The preview repeats the header's
-               action rather than adding a second tab stop, hence tabindex -1. -->
-          <button
-            type="button"
-            onclick={openPdfViewer}
-            tabindex="-1"
-            aria-hidden="true"
-            class="block w-full cursor-pointer"
-          >
-            <PdfThumbnail
-              url={blobUrl!}
-              maxWidth={640}
-              imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
-            />
-          </button>
-        {/if}
-      </div>
+      {@render fileCard()}
     {/if}
   {/if}
 
@@ -696,3 +705,98 @@
     </MediaLightbox>
   {/if}
 {/if}
+
+<!-- THE FILE CARD: a header row (icon, name, size, download) and, for a lone PDF, the first page.
+     `compact` is a document among several (owner, 2026-11-02): the row alone, no preview. -->
+{#snippet fileCard()}
+  {#snippet fileRowContent()}
+    <div
+      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
+    >
+      <FileText size={22} strokeWidth={2} class="text-text-muted" />
+    </div>
+    <div class="min-w-0 flex-1 overflow-hidden text-left">
+      <p class="mb-0.5 truncate text-xs leading-tight font-bold">
+        {media.fileName ?? m.post_media_file_label()}
+      </p>
+      <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
+      <p class="text-text-muted text-2xs font-semibold tracking-wider">
+        {formatFileSize(media.size)}
+      </p>
+      {#if saveReady}
+        <p class="text-2xs font-semibold text-amber-700 dark:text-amber-400" data-save-ready-hint>
+          {m.post_file_ready_to_save()}
+        </p>
+      {/if}
+    </div>
+  {/snippet}
+
+  <div
+    class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 transition-colors dark:border-white/10 dark:bg-white/10"
+    aria-busy={busy}
+    data-file-card
+    data-busy={busy ? '' : undefined}
+    data-save-ready={saveReady ? '' : undefined}
+  >
+    <div class="flex items-center gap-3.5 px-3.5 {compactFile ? 'py-2' : 'py-3'}">
+      {#if isPdf}
+        <!-- The whole header opens the document; only the download button is carved out
+             of it, which is why it cannot simply wrap the row. -->
+        <button
+          type="button"
+          onclick={openPdfViewer}
+          class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          aria-label={m.pdf_open_document_label()}
+        >
+          {@render fileRowContent()}
+        </button>
+      {:else}
+        {@render fileRowContent()}
+      {/if}
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation();
+          activate('download');
+        }}
+        class="ui-icon-button rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
+        aria-label={m.post_download_label()}
+      >
+        {#if busy}
+          <LoaderCircle
+            size={18}
+            strokeWidth={2.5}
+            class="animate-spin opacity-70"
+            data-file-spinner
+          />
+        {:else}
+          <Download
+            size={18}
+            strokeWidth={2.5}
+            class="{saveReady
+              ? 'text-amber-700 dark:text-amber-400'
+              : 'opacity-70'} transition-opacity group-hover/file:opacity-100"
+          />
+        {/if}
+      </button>
+    </div>
+    {#if isPdf && !compactFile}
+      <!-- A post is wide enough to show the page itself; the row keeps its
+           icon so the document is never rendered twice. The preview repeats the header's
+           action rather than adding a second tab stop, hence tabindex -1. -->
+      <button
+        type="button"
+        onclick={openPdfViewer}
+        tabindex="-1"
+        aria-hidden="true"
+        class="block w-full cursor-pointer"
+      >
+        <PdfThumbnail
+          url={blobUrl!}
+          maxWidth={640}
+          imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
+        />
+      </button>
+    {/if}
+  </div>
+{/snippet}

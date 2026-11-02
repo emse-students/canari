@@ -22,6 +22,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
+  import { POST_ATTACHMENTS_MAX, attachmentsFull } from '$lib/posts/attachmentCap';
 
   /**
    * The bottom bar of the post composer and of the post editor: what can be attached, how the text
@@ -62,6 +63,12 @@
     onFiles: (files: File[]) => void;
     /** Applies a Markdown format to the editor this bar belongs to. */
     onFormat: (type: string) => void;
+    /**
+     * How many attachments the post holds or is about to hold (kept and pending alike). At the
+     * cap (`POST_ATTACHMENTS_MAX`) the attach chips are disabled; `onFiles`' owner also trims what
+     * a drop or a paste brings, since those never pass through a chip.
+     */
+    attachmentCount?: number;
     pollActive: boolean;
     onTogglePoll: () => void;
     formActive: boolean;
@@ -94,6 +101,7 @@
   let {
     onFiles,
     onFormat,
+    attachmentCount = 0,
     pollActive,
     onTogglePoll,
     formActive,
@@ -106,6 +114,18 @@
   }: Props = $props();
 
   let formatting = $state(false);
+  /** The post holds the most attachments it may: nothing more can be added. */
+  const full = $derived(attachmentsFull(attachmentCount));
+  /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
+  const statusLine = $derived.by(() => {
+    if (attachmentCount === 0) return status;
+    const counter = m.post_attachments_counter({
+      count: attachmentCount,
+      max: POST_ATTACHMENTS_MAX,
+    });
+    return status ? m.post_attachments_counter_with_status({ counter, status }) : counter;
+  });
+  const fullChip = 'pointer-events-none opacity-50';
   /** The in-app camera is open over the composer. */
   let cameraOpen = $state(false);
   /** The photo library is the native picker (the iOS app), never a file input. */
@@ -196,21 +216,23 @@
         {#if nativeLibrary}
           <button
             type="button"
-            class="{chipClass} {idleChip}"
+            class="{chipClass} {idleChip} {full ? fullChip : ''}"
             data-post-library
+            disabled={full}
             onclick={pickLibraryNatively}
           >
             <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
             {m.post_composer_photo_video()}
           </button>
         {:else}
-          <label class="{chipClass} {idleChip}">
+          <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
             <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
             {m.post_composer_photo_video()}
             <input
               type="file"
               accept="image/*,video/*"
               multiple
+              disabled={full}
               class="sr-only"
               onchange={(e) => takeFiles(e, 'gallery')}
             />
@@ -218,8 +240,9 @@
         {/if}
         <button
           type="button"
-          class="{chipClass} {idleChip} pointer-fine:hidden"
+          class="{chipClass} {idleChip} pointer-fine:hidden {full ? fullChip : ''}"
           data-post-camera
+          disabled={full}
           onclick={() => {
             Log.d('POST_COMPOSER', 'in-app camera opened');
             cameraOpen = true;
@@ -264,13 +287,14 @@
           />
           {m.post_form_fallback_title()}
         </button>
-        <label class="{chipClass} {idleChip}">
+        <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
           <Paperclip size={16} strokeWidth={2.25} class="text-text-muted" />
           {m.post_composer_file()}
           <input
             type="file"
             accept={DOCUMENT_ACCEPT}
             multiple
+            disabled={full}
             class="sr-only"
             onchange={(e) => takeFiles(e, 'documents')}
           />
@@ -317,7 +341,12 @@
     >
       <ALargeSmall size={20} strokeWidth={2.25} />
     </button>
-    <span class="text-text-muted text-2xs min-w-0 flex-1 truncate font-semibold">{status}</span>
+    <span
+      class="text-2xs min-w-0 flex-1 truncate font-semibold {full
+        ? 'text-amber-700 dark:text-amber-400'
+        : 'text-text-muted'}"
+      data-attachment-counter={attachmentCount > 0 ? '' : undefined}>{statusLine}</span
+    >
     {@render action()}
   </div>
 </div>
