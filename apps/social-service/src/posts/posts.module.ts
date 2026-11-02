@@ -19,6 +19,7 @@ import { RepublicationsService } from './republications.service';
 import { RepublicationsController } from './republications.controller';
 import { PersonalRepublicationsService } from './personal-republications.service';
 import { MemberRepost } from './entities/member-repost.entity';
+import { MemberRepostNotice } from './entities/member-repost-notice.entity';
 import { UserRepostSetting } from './entities/user-repost-setting.entity';
 import { MemberRepostsService } from './member-reposts.service';
 import { MemberRepostsController } from './member-reposts.controller';
@@ -35,6 +36,7 @@ import { ModerationModule } from '../moderation/moderation.module';
       PostNotification,
       PostRepublication,
       MemberRepost,
+      MemberRepostNotice,
       UserRepostSetting,
     ]),
     ConfigModule,

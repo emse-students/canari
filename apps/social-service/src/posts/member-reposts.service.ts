@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, type EntityManager } from 'typeorm';
 import { isBlockedBetween } from '../common/user-blocks';
 import { RedisService } from '../common/redis/redis.service';
+import { acceptedFollowSql } from '../follows/follow-status';
 import { previewOf } from '../push/push-content';
 import {
   NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
@@ -17,7 +18,7 @@ import {
 } from '../spaces/reader-spaces';
 import { MemberRepost } from './entities/member-repost.entity';
 import { MEMBER_REPOST_NOTIFICATION, PostNotificationsService } from './post-notifications.service';
-import { invalidatePostListCache } from './post-list-cache';
+import { invalidatePostListCacheFor } from './post-list-cache';
 import { dropMemberRepostsOf, lockPostRow } from './republication-sql';
 import { isWithheldPost, type PostRow } from './republications.service';
 
@@ -30,8 +31,6 @@ export const MEMBER_REPOST_CODES = {
   anonymous: 'MEMBER_REPOST_ANONYMOUS',
   /** The reposter wrote the post: their followers already see it. */
   ownPost: 'MEMBER_REPOST_OWN_POST',
-  /** A block stands between the reposter and the author, in either direction. */
-  blocked: 'MEMBER_REPOST_BLOCKED',
   /** The author does not consent (their account setting, or the post's own override). */
   notAllowed: 'MEMBER_REPOST_NOT_ALLOWED',
   /** The reposter already reposted this post. */
@@ -96,6 +95,16 @@ export async function severMemberRepostsBetween(
 }
 
 /**
+ * The 404 of a repost refused for a post the actor may not act on - absent, withheld, not seen
+ * first-hand, or across a block with a personal post's author. ONE answer for all of them, so a
+ * refusal never tells the actor which: in particular, never that a block stands (a private gesture,
+ * `moderation-and-blocking.md`).
+ */
+function postNotFound(): NotFoundException {
+  return new NotFoundException('Post not found');
+}
+
+/**
  * The author's consent lock: every write that reads or changes a person's consent - a repost of one
  * of their personal posts, their account setting, a post override - takes it first (then the post
  * row, for the writes that have one), so a repost cannot read "yes" while a "no" deletes the rows
@@ -140,15 +149,19 @@ export class MemberRepostsService {
   /**
    * `actorId` reposts `postId` to their accepted followers. Refusals, in this order, each with an
    * integration case: absent, hidden, scheduled or expired (404); not seen without a grant (404,
-   * nothing confirmed); anonymous (400); own post (400); a block with a personal post's author
-   * (403); no consent (403); already reposted (409). A muted actor is refused at the route.
+   * nothing confirmed); anonymous (400); own post (400); a block with a personal post's author (the
+   * SAME 404, so the answer does not reveal the block); no consent (403); already reposted (409). A
+   * muted actor is refused at the route, and the route is throttled per caller.
+   *
+   * The answer carries no count of who was reached: the reposter learns nothing about their
+   * followers' access from it.
    */
-  async repost(postId: string, actorId: string): Promise<{ postId: string; newlyReached: number }> {
+  async repost(postId: string, actorId: string): Promise<{ postId: string }> {
     let recipients: string[] = [];
     let post: PostRow | null = null;
     await this.repo.manager.transaction(async (manager) => {
       post = await this.loadPost(manager, postId);
-      if (!post || isWithheldPost(post)) throw new NotFoundException('Post not found');
+      if (!post || isWithheldPost(post)) throw postNotFound();
       // Seen FIRST, so nothing below confirms a post the actor cannot see - not even that it is
       // anonymous.
       await this.assertVisibleWithoutGrant(manager, postId, actorId);
@@ -162,7 +175,7 @@ export class MemberRepostsService {
       }
       if (personal && (await isBlockedBetween(manager, actorId, post.authorId))) {
         this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} refused: a block with its author`);
-        throw refusal(ForbiddenException, MEMBER_REPOST_CODES.blocked, 'A block stands');
+        throw postNotFound();
       }
       // The consent lock, then the post row: the order `setAccountConsent` / `setPostConsent` take.
       if (personal) await lockAuthorConsent(manager, post.authorId);
@@ -171,7 +184,7 @@ export class MemberRepostsService {
            FROM posts WHERE posts.id = $1 FOR UPDATE`,
         [postId]
       );
-      if (locked.length === 0) throw new NotFoundException('Post not found');
+      if (locked.length === 0) throw postNotFound();
       if (locked[0].consents !== true) {
         this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} refused: its author does not consent`);
         throw refusal(ForbiddenException, MEMBER_REPOST_CODES.notAllowed, 'Reposts not allowed');
@@ -191,15 +204,23 @@ export class MemberRepostsService {
       if (inserted.length === 0) {
         throw refusal(ConflictException, MEMBER_REPOST_CODES.already, 'Already reposted');
       }
-      recipients = newly.map((r) => r.id);
+      // AT MOST ONCE PER (post, reader), EVER: the ledger keeps the readers already told about this
+      // post through a repost - whoever reposted it, however many times it was taken back - and only
+      // the pairs written NOW are told. Durable state, in this transaction; never a clock.
+      recipients = await recordNotices(
+        manager,
+        postId,
+        newly.map((r) => r.id)
+      );
       this.logger.log(
         `[REPOST-M] ${postId.slice(0, 8)} reposted by ${actorId.slice(0, 8)} ` +
-          `(personal=${personal}, announced=${announced}, newly reached=${recipients.length})`
+          `(personal=${personal}, announced=${announced}, newly reached=${newly.length}, ` +
+          `told=${recipients.length})`
       );
     });
-    await this.dropFeedCache();
+    await this.dropFeedCacheOf([actorId]);
     await this.tellNewlyReached(post as unknown as PostRow, actorId, recipients);
-    return { postId, newlyReached: recipients.length };
+    return { postId };
   }
 
   /** The reposter takes their own repost back. 404 when there is none. */
@@ -211,7 +232,7 @@ export class MemberRepostsService {
     const removed = Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
     if (removed === 0) throw new NotFoundException('Repost not found');
     this.logger.log(`[REPOST-M] ${postId.slice(0, 8)} unreposted by ${actorId.slice(0, 8)}`);
-    await this.dropFeedCache();
+    await this.dropFeedCacheOf([actorId]);
     return { ok: true };
   }
 
@@ -233,7 +254,7 @@ export class MemberRepostsService {
     userId: string,
     allowReposts: boolean
   ): Promise<{ allowReposts: boolean; removed: number }> {
-    let removed = 0;
+    let reposters: string[] = [];
     await this.repo.manager.transaction(async (manager) => {
       await lockAuthorConsent(manager, userId);
       await manager.query(
@@ -242,19 +263,24 @@ export class MemberRepostsService {
         [userId, allowReposts]
       );
       if (!allowReposts) {
-        const result: unknown = await manager.query(
-          `DELETE FROM member_reposts mr USING posts p
-            WHERE p.id = mr."postId" AND p."authorId" = $1 AND p."associationId" IS NULL
-              AND p."allowReposts" IS NOT TRUE`,
+        const rows: { reposterId: string }[] = await manager.query(
+          `WITH gone AS (
+             DELETE FROM member_reposts mr USING posts p
+              WHERE p.id = mr."postId" AND p."authorId" = $1 AND p."associationId" IS NULL
+                AND p."allowReposts" IS NOT TRUE
+             RETURNING mr."reposterId")
+           SELECT "reposterId" FROM gone`,
           [userId]
         );
-        removed = Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
+        reposters = rows.map((r) => r.reposterId);
       }
     });
+    const removed = reposters.length;
     this.logger.log(
       `[REPOST-M] ${userId.slice(0, 8)} account consent=${allowReposts} (removed ${removed})`
     );
-    if (removed > 0) await this.dropFeedCache();
+    // The author's own cards carry their consent; the removed reposts' audiences lose the posts.
+    await this.dropFeedCacheOf([userId, ...reposters]);
     return { allowReposts, removed };
   }
 
@@ -268,11 +294,11 @@ export class MemberRepostsService {
     actorId: string,
     allowReposts: boolean | null
   ): Promise<RepostConsent & { removed: number }> {
-    let removed = 0;
+    let reposters: string[] = [];
     let effective = true;
     await this.repo.manager.transaction(async (manager) => {
       const post = await this.loadPost(manager, postId);
-      if (!post || post.authorId !== actorId) throw new NotFoundException('Post not found');
+      if (!post || post.authorId !== actorId) throw postNotFound();
       if (post.associationId) {
         throw refusal(BadRequestException, MEMBER_REPOST_CODES.notAuthor, 'Not a personal post');
       }
@@ -287,12 +313,13 @@ export class MemberRepostsService {
         [postId]
       );
       effective = rows[0]?.consents === true;
-      if (!effective) removed = await dropMemberRepostsOf(manager, postId);
+      if (!effective) reposters = await dropMemberRepostsOf(manager, postId);
     });
+    const removed = reposters.length;
     this.logger.log(
       `[REPOST-M] ${postId.slice(0, 8)} override=${allowReposts} effective=${effective} (removed ${removed})`
     );
-    if (removed > 0) await this.dropFeedCache();
+    await this.dropFeedCacheOf([actorId, ...reposters]);
     return { override: allowReposts, effective, removed };
   }
 
@@ -341,17 +368,60 @@ export class MemberRepostsService {
     );
     if (rows[0]?.visible !== true) {
       this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} not visible to ${actorId.slice(0, 8)}`);
-      throw new NotFoundException('Post not found');
+      throw postNotFound();
     }
   }
 
-  private async dropFeedCache(): Promise<void> {
+  /**
+   * Drops the cached feed pages a repost write can change, and only those: the pages of `people`
+   * themselves (a reposter's `repostedByMe`, an author's `repostConsent`) and of each one's ACCEPTED
+   * followers - the only readers `memberRepostReachesUserSql` opens a post to through a reposter and
+   * the only ones the card names them to; for an author, the readers whose `canRepost` offer on
+   * their posts most often reads the consent. Every other reader's page is untouched. What it
+   * leaves is that offer on a reader who sees the author's post through a shared space: a hint the
+   * write re-checks under the consent lock, stale for at most the page's TTL - as before this
+   * narrowing, whose full sweep ran only when rows were removed. Best effort, logged.
+   */
+  private async dropFeedCacheOf(people: string[]): Promise<void> {
+    const unique = [...new Set(people)];
     try {
-      await invalidatePostListCache(this.redis);
+      const followers: { id: string }[] = await this.repo.manager.query(
+        `SELECT DISTINCT uf."followerUserId" AS id FROM user_follows uf
+          WHERE uf."followedUserId" = ANY($1::text[]) AND ${acceptedFollowSql('uf')}`,
+        [unique]
+      );
+      const dropped = await invalidatePostListCacheFor(this.redis, [
+        ...unique,
+        ...followers.map((f) => f.id),
+      ]);
+      this.logger.debug(
+        `[CACHE] member repost write: ${dropped} feed page(s) of ${unique.length} person(s) ` +
+          `and ${followers.length} follower(s) dropped`
+      );
     } catch (e: unknown) {
-      this.logger.warn('[CACHE] feed cache sweep failed after a member repost', e);
+      this.logger.warn('[CACHE] feed cache drop failed after a member repost write', e);
     }
   }
+}
+
+/**
+ * Writes the (post, reader) pairs of `recipientIds` not yet in `member_repost_notices` and answers
+ * those readers - the ones to tell now. A pair already present is a reader told before, by any
+ * repost of this post, and is told nothing again.
+ */
+async function recordNotices(
+  manager: EntityManager,
+  postId: string,
+  recipientIds: string[]
+): Promise<string[]> {
+  if (recipientIds.length === 0) return [];
+  const rows: { recipientId: string }[] = await manager.query(
+    `INSERT INTO member_repost_notices ("postId", "recipientId")
+     SELECT $1, r FROM unnest($2::text[]) AS r
+     ON CONFLICT DO NOTHING RETURNING "recipientId"`,
+    [postId, [...new Set(recipientIds)]]
+  );
+  return rows.map((r) => r.recipientId);
 }
 
 /** An HTTP refusal carrying a stable `code` - the client maps the code, never the message. */

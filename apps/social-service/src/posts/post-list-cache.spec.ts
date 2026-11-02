@@ -1,6 +1,11 @@
 /// <reference types="jest" />
 
-import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
+import {
+  POST_LIST_CACHE_PREFIX,
+  invalidatePostListCache,
+  invalidatePostListCacheFor,
+  postListCacheKey,
+} from './post-list-cache';
 import type { RedisService } from '../common/redis/redis.service';
 
 /**
@@ -64,5 +69,74 @@ describe('invalidatePostListCache', () => {
     // `AssociationsService` (which also sweeps them). A change here without one there is the
     // divergence this module was extracted to make impossible.
     expect(POST_LIST_CACHE_PREFIX).toBe('posts:list:v2:');
+  });
+});
+
+/**
+ * A MEMBER REPOST USED TO THROW AWAY EVERY READER'S FEED. Its effect is bounded by a known set of
+ * readers (the reposter and their accepted followers), so it drops THEIR pages, every feed and
+ * page of theirs, and leaves everyone else's - asserted on the keys a real cache holds, built by
+ * the one builder the feed itself uses.
+ */
+describe('invalidatePostListCacheFor', () => {
+  const page = (viewer: string | undefined, feed = 'all', offset = 0) =>
+    postListCacheKey({
+      feed,
+      viewerUserId: viewer,
+      promo: feed === 'custom' ? 2027 : undefined,
+      formation: undefined,
+      limit: 20,
+      offset,
+      kind: feed === 'followed' ? 'reel' : undefined,
+      singlePhotos: feed === 'followed',
+    });
+
+  /** A Redis whose SCAN honours the prefix glob and hands every match to the selector. */
+  function fakeRedis(store: Set<string>) {
+    return {
+      deleteMatching: (match: string, select: (key: string) => boolean) => {
+        const prefix = match.replace(/\*$/, '');
+        const doomed = Array.from(store).filter((k) => k.startsWith(prefix) && select(k));
+        for (const key of doomed) store.delete(key);
+        return Promise.resolve(doomed.length);
+      },
+    } as unknown as RedisService;
+  }
+
+  it("drops every page of the named readers, and nobody else's", async () => {
+    const mine = [
+      page('rp'),
+      page('rp', 'followed'),
+      page('rp', 'associations', 20),
+      page('fo', 'custom'),
+    ];
+    const others = [page(undefined), page('out'), page('out', 'followed'), page('rpx')];
+    const store = new Set([...mine, ...others, 'posts:single:rp']);
+
+    const dropped = await invalidatePostListCacheFor(fakeRedis(store), ['rp', 'fo']);
+
+    expect(dropped).toBe(mine.length);
+    expect([...store].sort()).toEqual([...others, 'posts:single:rp'].sort());
+  });
+
+  it('touches nothing for an empty set of readers', async () => {
+    const store = new Set([page('rp')]);
+    let scanned = false;
+    const redis = {
+      deleteMatching: () => {
+        scanned = true;
+        return Promise.resolve(0);
+      },
+    } as unknown as RedisService;
+    expect(await invalidatePostListCacheFor(redis, [])).toBe(0);
+    expect(scanned).toBe(false);
+    expect(store.size).toBe(1);
+  });
+
+  it('builds the key the feed has always used, so a deploy orphans no live entry', () => {
+    expect(page('7f1e0a44')).toBe(`${POST_LIST_CACHE_PREFIX}all:7f1e0a44:-:-:20:0:-`);
+    expect(page(undefined, 'followed')).toBe(
+      `${POST_LIST_CACHE_PREFIX}followed:anon:-:-:20:0:reel+photos`
+    );
   });
 });

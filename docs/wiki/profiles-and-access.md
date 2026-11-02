@@ -1521,7 +1521,8 @@ security review before arming.
 - **Migration 121, additive**: `member_reposts (postId, reposterId, repostedAt)`, keyed by the pair,
   the post's foreign key `ON DELETE CASCADE`; `user_repost_settings (userId, allowReposts)` - NO
   ROW IS THE DEFAULT, ON, so nothing is backfilled; `posts."allowReposts"` (NULL follows the
-  setting).
+  setting). **Migration 123, additive** (hardening, 2026-11-02): `member_repost_notices (postId,
+  recipientId)`, the told ledger below, backfilled from the `member_repost` bell rows.
 - **One disjunct, both branches**: `memberRepostReachesUserSql` (`spaces/reader-spaces.ts`) is ORed
   into the personal AND the association branch of `postVisibleToUserSql` (Q2: a repost of an entity
   post widens it to the reposter's followers). It holds when an ACCEPTED `user_follows` row links
@@ -1531,8 +1532,10 @@ security review before arming.
   for an entity post on purpose: its `authorId` is the officer who wrote it, and a feed that
   changed when a reader blocked that person would name them (the oracle `blockedAuthorSql`
   documents). Blocks are CHECKED, never trusted to the severing. Left out with `followers: false`:
-  Tout and the promo browse stay feeds of spaces (decision 5). Never a read grant. Monotone in
-  reposts.
+  Tout and the promo browse stay feeds of spaces (decision 5). **Left out of the Associations feed
+  too (`memberReposts: false`, 2026-11-02)**: that feed lists what associations publish and
+  republish, and a repost's reach shows in Suivis only - an entity post a reader sees only through a
+  followed person's repost is not in it. Never a read grant. Monotone in reposts.
 - **A repost never outlives what its reposter holds (Opus review, 2026-11-01)**: the row alone
   carries nothing. `memberRepostCarriesSql` also asks that the reposter STILL sees the post
   FIRST-HAND (`postVisibleToUserSql` with `memberReposts: false, readGrants: false` - it never
@@ -1540,7 +1543,7 @@ security review before arming.
   social-service holds, the one D38b's `senderSpeaksSql` reads). An author who removes the
   follower, a reposter who unfollows or leaves a members-only association, a muted reposter: the
   row stays and reaches nobody until the access comes back. The SAME helper filters the card's
-  "Republié par" names and the Suivis arm (`memberRepostedAmongSql`, `republishedFeedAtSql`), so a
+  "Republié par" names and the Suivis arm (`followedRepostLateralSql`, `republishedFeedAtSql`), so a
   stale row neither names, surfaces nor dates a post.
 - **An association is never the second step**: every D38/D38b path asks the predicate with
   `memberReposts: false` - the republication's `assertVisibleTo`, the request's
@@ -1565,8 +1568,9 @@ security review before arming.
 - **Refusals, in order, each a typed `MEMBER_REPOST_*` code and an integration case**: absent,
   hidden, scheduled or expired (404); not seen FIRST-HAND without a grant and without the admin's
   by-id reach (404, nothing confirmed - a reader who sees it only through a repost included); anonymous (400); the reposter's own personal post (400); a block either
-  way with a personal post's author (403); no consent (403); already reposted (409, the key). A
-  muted account is refused at the route. An entity post the reposter wrote is NOT refused as "own":
+  way with a personal post's author (**the SAME 404 as a post not seen, body included**, since
+  2026-11-02: a refusal no longer distinguishes a block); no
+  consent (403); already reposted (409, the key). A muted account is refused at the route. An entity post the reposter wrote is NOT refused as "own":
   the refusal would tell them whose it is.
 - **Who is told (the D38 rule)**: `NEWLY_REACHED_BY_MEMBER_REPOST_SQL`, asked under the post row's
   lock BEFORE the row exists - the reposter's accepted followers who cannot see the post now, minus
@@ -1574,11 +1578,35 @@ security review before arming.
   announcement goes to the author's followers only); an ENTITY post not yet announced is told
   nothing - the sweep tells everyone who sees it by then. Type `member_repost`, push
   `social_member_repost` (Kotlin, the NSE and `canari_push.mm`, fr and en), category `posts`.
-- **Suivis at the repost's time**: the followed arm admits a post a followed person reposted
-  (`memberRepostedAmongSql`, never anonymous) and places it at the latest of its publication, its
-  counted republications and its reposts by people the reader follows (`republishedFeedAtSql`).
+  **ONCE PER (post, reader), EVER (2026-11-02)**: the newly-reached set is read from visibility,
+  which an "Annuler" undoes, so it alone cannot say who was already told. The repost's transaction
+  inserts the pairs into
+  `member_repost_notices` (`ON CONFLICT DO NOTHING RETURNING`) and tells only the pairs it wrote -
+  whoever reposts the post, however often. At most once: a pair is recorded even if the push after
+  the commit fails (that loss is logged). The repost's answer is `{ postId }` and carries no count
+  of who was reached.
+- **Suivis at the repost's time**: the followed arm admits a post a followed person reposted and
+  places it at the latest of its publication, its counted republications and its reposts by people
+  the reader follows (`republishedFeedAtSql`). **One `LEFT JOIN LATERAL` per candidate
+  (`followedRepostLateralSql`, 2026-11-02)** computes that latest carrying repost, never for an
+  anonymous post; admission (`MEMBER_REPOSTED_BY_FOLLOWED_SQL`) and placement (`FOLLOWED_REPOST_AT`)
+  read its column. It replaced two subqueries that each ran `memberRepostCarriesSql` on every
+  followed repost of every candidate; the third evaluation, inside the visibility predicate, stays -
+  it is the read gate. Measured on a SYNTHETIC seed (3 000 users, 30 000 posts, 3 000 reposts, a
+  reader following 60; not the dev estate): the query without its visibility clause went from about
+  5.4 s to 3.8 s (median of 5), and the whole query stays dominated by the per-candidate visibility
+  predicate, which this change does not touch.
+- **The feed cache (2026-11-02)**: a repost write used to sweep EVERY reader's cached pages. It now
+  drops the pages of the people concerned - the reposter, or the author of a consent change, plus
+  the reposters whose rows the change deleted - and of each one's ACCEPTED followers, nobody else's
+  (`invalidatePostListCacheFor`, one SCAN that deletes only the selected viewers' keys; the key's
+  builder and reader are side by side in `post-list-cache.ts`). What stays stale for up to the
+  page's TTL is the `canRepost` offer of a reader who sees an author's post through a shared space
+  after that author's consent changed - a hint the write re-checks under the consent lock, as
+  before (the old sweep ran only when rows were removed).
 - **Removal**: a hide (`dropRepublicationsOf` -> `dropMemberRepostsOf`, both moderation paths); a
-  delete (the foreign key); the reposter's erasure (`member_reposts`, `user_repost_settings`) and
+  delete (the foreign key, which takes `member_repost_notices` too); the reposter's erasure
+  (`member_reposts`, `user_repost_settings`), a reader's (`member_repost_notices`) and
   the author's (their personal posts are deleted, the key cascades); a block
   (`severFollowsBetween` -> `severMemberRepostsBetween`, personal posts only; core-service's unblock
   severs again before it lifts); a withdrawn consent; the reposter's own "Annuler".
@@ -1588,7 +1616,10 @@ security review before arming.
   `allowReposts`. Two queries a page (`member-repost-card.ts`), restating the write's refusals.
 - **Routes**: `POST|DELETE /api/posts/:id/reposts`, `GET|PUT /api/posts/me/repost-settings`,
   `PUT /api/posts/:id/repost-consent {allowReposts: boolean | null}` (the author of a personal
-  post; 404 to anyone else).
+  post; 404 to anyone else). **Every one is throttled per caller (2026-11-02)**,
+  `UserResourceThrottlerGuard` (the routes name `:postId`, which it does not read, so the bucket is
+  the caller alone across every post): 20 reposts or take-backs a minute, 10 consent changes, 60
+  reads of the setting (`member-reposts.controller.ts`, asserted by its throttle spec).
 - **The client**: the share sheet's "Republier pour mes abonnés" / "Annuler ma republication" row
   (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
   ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the
@@ -1604,7 +1635,13 @@ security review before arming.
   either way and a left-over row, the newly reached only (announced or not, personal or entity),
   hide, delete and severing, the setting OFF and the override both ways, the card against the
   write; a repost that outlives its reposter's access (removed follower, unfollow, members-only
-  association left, muted) reaches nobody, names nobody and leaves no bell preview.
+  association left, muted) reaches nobody, names nobody and leaves no bell preview. Since
+  2026-11-02 also: a block's refusal is byte-for-byte the 404 of a post not seen; repost, take back
+  and repost three times tells the newly reached once; migration 123's backfill (and its replay)
+  keeps a reader told before it from being told again; a repost and a consent change drop exactly
+  the expected readers' cached pages; the Suivis lateral admits and dates a carried repost and
+  neither for a blocked reader or a muted reposter. `member-reposts.controller.throttle.spec.ts`,
+  `post-list-cache.spec.ts` and `posts.service.republished-feed.spec.ts` hold the rest.
   `republications.integration.spec.ts` and `personal-republications.integration.spec.ts`: an
   officer who sees a post only through a repost cannot republish or ask, and is offered nothing.
   The six PostgreSQL specs that share the predicate apply 121.

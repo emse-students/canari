@@ -632,9 +632,7 @@ export async function requestPersonalRepublication(
  * WP-F6: reposts the post to the caller's ACCEPTED followers. A refusal carries a typed `code`
  * (`MEMBER_REPOST_*`), read with `refusalCode`.
  */
-export async function repostToFollowers(
-  postId: string
-): Promise<{ postId: string; newlyReached: number }> {
+export async function repostToFollowers(postId: string): Promise<{ postId: string }> {
   return request(`/api/posts/${postId}/reposts`, { method: 'POST' });
 }
 

@@ -25,7 +25,7 @@ vi.mock('$lib/stores/toast.svelte', () => ({
   showToast: (...args: unknown[]) => showToast(...args),
 }));
 vi.mock('$lib/mobile/sharedInbox', () => ({ discardSharedFiles: async () => {} }));
-const repostToFollowers = vi.fn(async (_id: string): Promise<unknown> => ({ newlyReached: 1 }));
+const repostToFollowers = vi.fn(async (id: string): Promise<unknown> => ({ postId: id }));
 const undoRepost = vi.fn(async (_id: string): Promise<unknown> => ({ ok: true }));
 vi.mock('./api', () => ({
   repostToFollowers: (id: string) => repostToFollowers(id),
@@ -85,12 +85,7 @@ describe('member reposts (WP-F6)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('maps every refusal code to its own sentence, never the message', () => {
-    const codes = [
-      'MEMBER_REPOST_ANONYMOUS',
-      'MEMBER_REPOST_BLOCKED',
-      'MEMBER_REPOST_NOT_ALLOWED',
-      'MEMBER_REPOST_ALREADY',
-    ];
+    const codes = ['MEMBER_REPOST_ANONYMOUS', 'MEMBER_REPOST_NOT_ALLOWED', 'MEMBER_REPOST_ALREADY'];
     const sentences = new Set(codes.map((c) => repostRefusalMessage(c, 400)));
     expect(sentences.size).toBe(codes.length);
     expect(repostRefusalMessage(null, 404)).not.toBe(repostRefusalMessage(null, 500));
