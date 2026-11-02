@@ -1651,8 +1651,9 @@ security review before arming.
   memory - N replicas allow up to N times each limit, and a restart forgets them. It bounds a loop,
   it is not a quota; the told-once ledger, not the throttle, is what keeps a reader from a second
   notice.
-- **The client**: the share sheet's "Republier pour mes abonnés" / "Annuler ma republication" row
-  (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
+- **The client**: the "Republier pour mes abonnés" / "Annuler ma republication" row, in the share sheet
+  AND (owner, 2026-11-02) in the post's "..." menu, just above the association republications, both
+  through `toggleMyRepost` (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
   ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the
   "Republié par" line names reposters after associations; the bell row `member_repost`.
 - **Not built**: no list of who reposted for the author; the author cannot remove ONE repost (they
