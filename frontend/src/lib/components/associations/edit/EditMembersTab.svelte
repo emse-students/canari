@@ -56,7 +56,9 @@
   /**
    * The presets the viewer may hand out. The publisher preset is all-or-nothing (half of it is not
    * a publisher), so it is offered only when every bit is grantable; the admin preset is cut down
-   * to what the viewer holds - a BDE super-admin's admin speaks for nobody and points no payout.
+   * to what the viewer may grant (`grantableFlags`). The platform admin and a BDE super-admin of
+   * this association may grant every flag, so they see it whole; an ordinary member sees it cut to
+   * its own row.
    */
   const permissionOptions = $derived.by<PickerOption[]>(() => {
     const options: PickerOption[] = [{ value: '0', label: m.asso_members_role_member() }];

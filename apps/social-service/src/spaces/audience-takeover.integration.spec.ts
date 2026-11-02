@@ -1,0 +1,175 @@
+/**
+ * ONE CAMPUS, TWO BDEs: A BDE CANNOT TAKE OVER THE OTHER'S ASSOCIATION, against a REAL PostgreSQL.
+ *
+ * Governance is per SPACE (`holdsBdeFlagOverSql`); the audience bound used to be per CAMPUS. So an
+ * officer of the BDE governing (ICM, saint-etienne) could rewrite the audience of an association
+ * reaching only (ISMIN, saint-etienne) - governed by another BDE - into its own space, become its
+ * super-admin, then seat itself there. This file runs the real standing SQL
+ * (`BDE_SPACE_STANDINGS_SQL`) and the real governance SQL (`HOLDS_BDE_FLAG_OVER_SQL`) and feeds them
+ * to the policies that decide (`assertBdeMayWriteAudience`, `grantCeiling`).
+ *
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like `bde.integration.spec.ts`; CI's `test-social-integration`
+ * sets it. Locally:
+ *
+ *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- audience-takeover.integration
+ *
+ * Everything happens in a throwaway schema, dropped at the end.
+ */
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { Client } from 'pg';
+import { HttpException } from '@nestjs/common';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
+import { flagsBeyondCeiling, grantCeiling } from '../associations/member-flag-ceiling';
+import { assertBdeMayWriteAudience, type SpaceStanding } from './audience-policy';
+import { BDE_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
+
+const URL = process.env.SOCIAL_IT_DATABASE_URL;
+const maybe = URL ? describe : describe.skip;
+
+const migration = (name: string) => readFileSync(join(__dirname, '..', 'migrations', name), 'utf8');
+
+const { MANAGE_ASSO, MANAGE_MEMBERS, POST_AS_ASSO } = AssociationPermissionFlag;
+
+const A = {
+  bdeIcm: '00000000-0000-4000-8000-0000000000d1', // BDE of (ICM, saint-etienne)
+  bdeIsmin: '00000000-0000-4000-8000-0000000000d2', // BDE of every OTHER saint-etienne space
+  clubIcm: '00000000-0000-4000-8000-0000000000e1', // reaches (ICM, saint-etienne) only
+  clubIsmin: '00000000-0000-4000-8000-0000000000e2', // reaches (ISMIN, saint-etienne) only
+} as const;
+
+/** The refusal's typed code, or null when the call passed. */
+const codeOf = (fn: () => void): string | null => {
+  try {
+    fn();
+    return null;
+  } catch (e) {
+    if (!(e instanceof HttpException)) throw e;
+    return (e.getResponse() as { code: string }).code;
+  }
+};
+
+maybe('one campus with two BDEs, against PostgreSQL', () => {
+  const schema = `takeover_it_${Math.random().toString(36).slice(2, 10)}`;
+  let client: Client;
+
+  const standings = async (userId: string): Promise<SpaceStanding[]> =>
+    (await client.query(BDE_SPACE_STANDINGS_SQL, [userId, MANAGE_ASSO])).rows as SpaceStanding[];
+  const rulesOf = async (id: string) =>
+    (
+      await client.query(
+        `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
+        [id]
+      )
+    ).rows as { formation: string | null; campus: string | null }[];
+  const governs = async (userId: string, id: string): Promise<boolean> =>
+    (await client.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, id, MANAGE_ASSO])).rows[0].holds === true;
+
+  beforeAll(async () => {
+    client = new Client({ connectionString: URL });
+    await client.connect();
+    await client.query(`CREATE SCHEMA ${schema}`);
+    await client.query(`SET search_path TO ${schema}, public`);
+    await client.query(`
+      CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
+        "isBDE" boolean NOT NULL DEFAULT false);
+      CREATE TABLE posts (id uuid PRIMARY KEY);
+      CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
+        "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
+    `);
+    for (const [key, id] of Object.entries(A)) {
+      await client.query(`INSERT INTO associations (id, name) VALUES ($1, $2)`, [id, key]);
+    }
+    await client.query(migration('071_spaces.sql'));
+    await client.query(migration('072_drop_is_bde.sql'));
+    await client.query(`DELETE FROM association_audiences`);
+    const rules: [string, string, string][] = [
+      [A.bdeIcm, 'ICM', 'saint-etienne'],
+      [A.bdeIsmin, 'ISMIN', 'saint-etienne'],
+      [A.clubIcm, 'ICM', 'saint-etienne'],
+      [A.clubIsmin, 'ISMIN', 'saint-etienne'],
+    ];
+    for (const [id, formation, campus] of rules) {
+      await client.query(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, $2, $3)`,
+        [id, formation, campus]
+      );
+    }
+    await client.query(
+      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'ICM'`,
+      [A.bdeIcm]
+    );
+    await client.query(
+      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation <> 'ICM'`,
+      [A.bdeIsmin]
+    );
+    await client.query(
+      `INSERT INTO association_members ("associationId", "userId", permissions) VALUES
+        ($1, 'icmOfficer', $3), ($2, 'isminOfficer', $3)`,
+      [A.bdeIcm, A.bdeIsmin, MANAGE_ASSO | MANAGE_MEMBERS]
+    );
+  });
+
+  afterAll(async () => {
+    if (!client) return;
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await client.end();
+  });
+
+  it('the ICM BDE does not govern the ISMIN club, so it seats nobody there with any flag', async () => {
+    expect(await governs('icmOfficer', A.clubIsmin)).toBe(false);
+    expect(await governs('isminOfficer', A.clubIsmin)).toBe(true);
+    // Not a member of the club either: its ceiling there is empty, so a self-grant is beyond it.
+    const ceiling = grantCeiling({
+      isGlobalAdmin: false,
+      isSuperAdminOf: await governs('icmOfficer', A.clubIsmin),
+      ownPermissions: 0,
+    });
+    expect(flagsBeyondCeiling(ceiling, 0, POST_AS_ASSO)).toBe(POST_AS_ASSO);
+  });
+
+  it("refuses the takeover: the ICM BDE rewriting the ISMIN club's audience into its own space", async () => {
+    const spaces = await standings('icmOfficer');
+    const current = await rulesOf(A.clubIsmin);
+    expect(
+      codeOf(() =>
+        assertBdeMayWriteAudience('association', spaces, current, [
+          { formation: 'ICM', campus: 'saint-etienne' },
+        ])
+      )
+    ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+  });
+
+  it('refuses a whole-campus rule to a BDE that governs only part of the campus', async () => {
+    const spaces = await standings('icmOfficer');
+    const current = await rulesOf(A.clubIcm);
+    expect(
+      codeOf(() =>
+        assertBdeMayWriteAudience('association', spaces, current, [
+          { formation: null, campus: 'saint-etienne' },
+        ])
+      )
+    ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+  });
+
+  it('lets a BDE edit its own association within its spaces', async () => {
+    const spaces = await standings('icmOfficer');
+    const current = await rulesOf(A.clubIcm);
+    expect(
+      codeOf(() =>
+        assertBdeMayWriteAudience('association', spaces, current, [
+          { formation: 'ICM', campus: 'saint-etienne' },
+        ])
+      )
+    ).toBeNull();
+    // ... and not push it into the other BDE's space.
+    expect(
+      codeOf(() =>
+        assertBdeMayWriteAudience('association', spaces, current, [
+          { formation: 'ICM', campus: 'saint-etienne' },
+          { formation: 'ISMIN', campus: 'saint-etienne' },
+        ])
+      )
+    ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+  });
+});

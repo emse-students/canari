@@ -25,13 +25,14 @@ import {
  *   grants an excluded flag is logged for audit (`logSuperAdminExcludedGrant`).
  * - **an ordinary member holding `MANAGE_MEMBERS`**: capped at its own row.
  *
- * ONE RULE COVERS GRANTING AND REVOKING: the bits a write CHANGES (`before XOR after`) must all sit
- * under the ceiling. A bit outside it is neither added nor removed - it is not the granter's to
- * decide either way. Revoking is held to the same rule because a flag a granter does not hold is one
- * it cannot judge the removal of (the treasurer's payout right), and because an editor that could
- * clear bits it does not hold would let a member strip every right above its own. REMOVING A WHOLE
- * MEMBERSHIP is a different act and stays `MANAGE_MEMBERS` (with the last-admin guard): it raises
- * nobody's rights, and an association must be able to part with someone whatever they hold.
+ * ONE RULE COVERS GRANTING, REVOKING AND REMOVING: the bits a write CHANGES (`before XOR after`)
+ * must all sit under the ceiling. A bit outside it is neither added nor removed - it is not the
+ * granter's to decide either way. Revoking is held to the same rule because a flag a granter does
+ * not hold is one it cannot judge the removal of (the treasurer's payout right). REMOVING A MEMBER
+ * is a revocation of everything it holds (`before` = its flags, `after` = 0): otherwise a member
+ * holding only `MANAGE_MEMBERS` could remove the treasurer and re-add them with nothing. So removing
+ * a target above the remover's ceiling takes a super-admin or the platform admin; LEAVING (removing
+ * oneself) stays free, and the last-admin guard is unchanged.
  */
 
 /** The typed code of a write that changes a flag outside the granter's ceiling. */
@@ -85,12 +86,12 @@ export function assertWithinGrantCeiling(
   ceiling: number,
   before: number,
   after: number,
-  ctx: { associationId: string; granterId: string; targetUserId: string; what: string }
+  ctx: { associationId: string; what: string }
 ): void {
   const beyond = flagsBeyondCeiling(ceiling, before, after);
   if (beyond === 0) return;
   logger.warn(
-    `[MEMBER-CEILING] ${ctx.what} refused: granter=${ctx.granterId.slice(0, 8)} target=${ctx.targetUserId.slice(0, 8)} association=${ctx.associationId.slice(0, 8)} beyond=${flagNames(beyond).join('|')}`
+    `[MEMBER-CEILING] ${ctx.what} refused: association=${ctx.associationId} beyond=${flagNames(beyond).join('|')}`
   );
   throw new ForbiddenException({
     code: MEMBER_FLAGS_BEYOND_GRANTER,
@@ -133,7 +134,7 @@ export function assertInstitutionMemberWrite(
 ): void {
   if (kind !== 'institution' || granter.isGlobalAdmin) return;
   logger.warn(
-    `[MEMBER-CEILING] ${what} refused: institution ${associationId.slice(0, 8)} members are the platform admin's, granter=${granter.userId.slice(0, 8)}`
+    `[MEMBER-CEILING] ${what} refused: institution ${associationId} members are the platform admin's`
   );
   throw new ForbiddenException({
     code: INSTITUTION_MEMBERS_ADMIN_ONLY,

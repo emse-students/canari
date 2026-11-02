@@ -90,6 +90,7 @@ function makeService(rows: Row[]) {
     ),
   };
   const update = jest.fn(() => Promise.resolve({ affected: 1 }));
+  const remove = jest.fn(() => Promise.resolve({ affected: 1 }));
   const memberRepo = {
     findOne: jest.fn(({ where }: { where: { associationId: string; userId: string } }) =>
       Promise.resolve(
@@ -119,6 +120,7 @@ function makeService(rows: Row[]) {
       return qb;
     }),
     update,
+    delete: remove,
   };
 
   // POSITIONAL, AND FOURTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
@@ -138,7 +140,14 @@ function makeService(rows: Row[]) {
     undefined as never, // userTagService
     { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
-  return { service, update };
+  // A removal sweeps the feed caches; that sweep is not this spec's subject.
+  jest
+    .spyOn(
+      service as unknown as { invalidatePostListCaches: () => Promise<void> },
+      'invalidatePostListCaches'
+    )
+    .mockResolvedValue(undefined);
+  return { service, update, remove };
 }
 
 /** A refusal's typed code, or the outcome itself when the call did not throw a typed one. */
@@ -362,6 +371,67 @@ describe("AssociationsService - an institution's members are the platform admin'
         service.updateMemberRole(SCHOOL, 'target', undefined, POST_AS_ASSO | PROPOSE_EVENT, {
           granter: PLATFORM,
         })
+      )
+    ).toBe('written');
+  });
+});
+
+describe('AssociationsService - removing a member is a revocation of everything it holds', () => {
+  const treasurer = MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO;
+  const rows = (): Row[] => [
+    superAdmin,
+    { userId: 'sec', associationId: ASSO, permissions: MANAGE_MEMBERS },
+    { userId: 'treasurer', associationId: ASSO, permissions: treasurer },
+  ];
+
+  it('refuses a member removing someone holding a flag it lacks', async () => {
+    const { service, remove } = makeService(rows());
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'treasurer', {
+          granter: { userId: 'sec', isGlobalAdmin: false },
+        })
+      )
+    ).toBe(MEMBER_FLAGS_BEYOND_GRANTER);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('lets a super-admin remove them', async () => {
+    const { service, remove } = makeService(rows());
+    expect(await settle(service.removeMember(ASSO, 'treasurer', { granter: SUPER }))).toBe(
+      'written'
+    );
+    expect(remove).toHaveBeenCalledWith({ id: undefined, permissions: treasurer });
+  });
+
+  it('lets the platform administrator remove them', async () => {
+    const { service, remove } = makeService(rows());
+    expect(await settle(service.removeMember(ASSO, 'treasurer', { granter: PLATFORM }))).toBe(
+      'written'
+    );
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a member leave whatever it holds', async () => {
+    const { service, remove } = makeService(rows());
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'treasurer', {
+          granter: { userId: 'treasurer', isGlobalAdmin: false },
+        })
+      )
+    ).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a member remove someone within its own flags', async () => {
+    const { service } = makeService([
+      ...rows(),
+      { userId: 'plain', associationId: ASSO, permissions: 0 },
+    ]);
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'plain', { granter: { userId: 'sec', isGlobalAdmin: false } })
       )
     ).toBe('written');
   });

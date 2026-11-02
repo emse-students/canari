@@ -46,8 +46,9 @@ Le champ texte a cote sert a changer le libelle du role ("Tresoriere"). Il ne ch
 Trois garde-fous :
 
 - Vous ne pouvez **accorder ni retirer** que les droits que vous possedez vous-meme : une case que
-  vous n'avez pas est grisee. Seuls l'administrateur de la plateforme et le BDE (section 3)
-  echappent a cette limite.
+  vous n'avez pas est grisee. Pour la meme raison, vous ne pouvez pas retirer de l'association un
+  membre qui a un droit que vous n'avez pas (quitter l'association vous-meme reste toujours
+  possible). Seuls l'administrateur de la plateforme et le BDE (section 3) echappent a cette limite.
 - Vous ne pouvez pas retirer *Gerer les membres* au **dernier** membre qui le possede : l'association
   se retrouverait sans personne pour gerer ses membres. Nommez d'abord son remplacant.
 - A l'ajout d'un membre, le bouton **"Administrateur"** coche d'un coup tous les droits non-BDE,

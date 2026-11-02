@@ -10,8 +10,9 @@ import {
   assertAudienceAllowedForType,
   assertBdeMayReadAudience,
   assertBdeMayWriteAudience,
+  type SpaceStanding,
 } from './audience-policy';
-import { BDE_GOVERNED_CAMPUSES_SQL } from './bde';
+import { BDE_SPACE_STANDINGS_SQL } from './bde';
 import type { AudienceRuleDto } from './dto/space.dto';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
@@ -198,8 +199,8 @@ export class SpacesService {
     const association = await this.requireAssociation(associationId);
     const current = await this.getAudiences(associationId);
     if (!actor.isGlobalAdmin) {
-      const governed = await this.bdeGovernedCampuses(actor.userId);
-      assertBdeMayReadAudience(association.type, governed, current);
+      const spaces = await this.bdeSpaceStandings(actor.userId);
+      assertBdeMayReadAudience(association.type, spaces, current);
     }
     return current;
   }
@@ -230,9 +231,9 @@ export class SpacesService {
     const rules = normaliseRules(submitted);
     assertAudienceAllowedForType(association.type, rules);
     if (!actor.isGlobalAdmin) {
-      const governed = await this.bdeGovernedCampuses(actor.userId);
+      const spaces = await this.bdeSpaceStandings(actor.userId);
       const current = await this.getAudiences(associationId);
-      assertBdeMayWriteAudience(association.type, governed, current, rules);
+      assertBdeMayWriteAudience(association.type, spaces, current, rules);
     }
     this.logger.log(
       `[spaces] audiences of ${associationId} by ${actor.userId.slice(0, 8)}${actor.isGlobalAdmin ? ' (admin)' : ' (BDE)'}: ${rules.length} rule(s)`
@@ -257,13 +258,19 @@ export class SpacesService {
     return stored;
   }
 
-  /** The campuses whose BDE `userId` holds MANAGE_ASSO in: the borders of a BDE star's powers. */
-  private async bdeGovernedCampuses(userId: string): Promise<string[]> {
-    const rows: { campus: string }[] = await this.dataSource.query(BDE_GOVERNED_CAMPUSES_SQL, [
+  /**
+   * Every opened space and whether a BDE where `userId` holds MANAGE_ASSO governs it: the borders
+   * of a BDE star's audience powers, per space (`ruleInsideGovernedSpaces`).
+   */
+  private async bdeSpaceStandings(userId: string): Promise<SpaceStanding[]> {
+    const rows: SpaceStanding[] = await this.dataSource.query(BDE_SPACE_STANDINGS_SQL, [
       userId,
       AssociationPermissionFlag.MANAGE_ASSO,
     ]);
-    return rows.map((r) => r.campus);
+    this.logger.debug(
+      `[spaces] BDE star standing: ${rows.filter((r) => r.governed).length}/${rows.length} spaces governed`
+    );
+    return rows;
   }
 
   private async requireAssociation(id: string): Promise<Association> {

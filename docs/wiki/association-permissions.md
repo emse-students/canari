@@ -181,8 +181,8 @@ round trips. `associations.service.may-act.spec.ts` asserts the two agree id by 
 
 `MANAGE_MEMBERS` answers WHO may write a member's bitmask; until 2026-11-02 nothing answered WHICH
 bits, so a granter could grant flags it did not hold. `apps/social-service/src/associations/member-flag-ceiling.ts`
-is the second half, judged in the service at the write (`addMember`, `updateMemberRole`), so no
-route reaches a bitmask without it. Those two, plus `removeMember`, are the only writers of
+is the second half, judged in the service at the write (`addMember`, `updateMemberRole`,
+`removeMember`), so no route reaches a bitmask without it. Those three are the only writers of
 `association_members` outside migrations and the dev seed: there is no invitation, accept,
 transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
 
@@ -197,8 +197,22 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   could strip every right above its own (the treasurer's payout right). A role rename sends the
   bitmask unchanged and passes. Bits the server strips by kind (`writablePermissions`) are compared
   through the same filter, so they never count as the granter's change.
-- **Removing a whole membership is not held to it**: it raises nobody's rights, and an association
-  must be able to part with anyone; the last-admin guard still applies.
+- **Removing a member is a revocation of everything it holds** (`before` = its flags, `after` = 0):
+  otherwise a member holding only `MANAGE_MEMBERS` could remove the treasurer and re-add them with
+  nothing. Removing a target above the remover's ceiling takes a super-admin or the platform admin;
+  leaving (removing oneself) stays free; the last-admin guard is unchanged. The delete is
+  conditioned on the bitmask judged, like the update (`MEMBER_CHANGED_MEANWHILE` otherwise).
+- **The super-admin tier cannot be acquired through the audience.** A BDE becomes an association's
+  super-admin by governing a space its rules reach, and a BDE may write audiences - so the audience
+  bound must have the same granularity as governance. It was per CAMPUS while governance is per
+  SPACE, and one campus holds two BDEs: a BDE could rewrite another BDE's association into its own
+  space, then seat itself there. Since 2026-11-02 the bound is per space
+  (`audience-policy.ts` `ruleInsideGovernedSpaces`, fed by `BDE_SPACE_STANDINGS_SQL`): a BDE writes
+  the audience only of an association whose current rules all sit in spaces it governs, every rule
+  it writes must too, and a whole-campus rule counts as inside only when it governs EVERY opened
+  space of that campus. This closes the two-granularity gap until the governance reform lands
+  (WP-R1 of `docs/wiki/spaces-and-audiences-reform.md`, on draft PR #2948). Proven against real
+  SQL in `spaces/audience-takeover.integration.spec.ts`.
 - **The super-admin is uncapped on purpose.** `SUPER_ADMIN_EXCLUDED_FLAGS` is about INHERITANCE:
   the tier never EXERCISES `POST_AS_ASSO` or `MANAGE_PAYOUT_ACCOUNT` through `mayAct`. It may still
   WRITE them into a row, its own included - a BDE officer is often another association's president.
@@ -208,8 +222,9 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
 - **Institutions are the platform admin's alone** (D20): add, update and remove answer 403
   `INSTITUTION_MEMBERS_ADMIN_ONLY` to anyone else. Reordering stays `MANAGE_MEMBERS` (it writes no
   right).
-- **Refusals are typed**: 403 `MEMBER_FLAGS_BEYOND_GRANTER`, logged at WARN (the editor never offers
-  such a bit; an older installed client still can).
+- **Refusals are typed**: 403 `MEMBER_FLAGS_BEYOND_GRANTER`, logged at WARN with the association
+  and the flag names, never a user (the editor never offers such a bit; an older installed client
+  still can).
 - **The client mirrors it** with `grantableFlags(ctx)` in `frontend/src/lib/associations/api.ts`:
   the row editor disables a box outside it, the add presets are cut to it, and the members section
   of an institution is drawn for the platform admin only (`editRights(...).memberRoster`).

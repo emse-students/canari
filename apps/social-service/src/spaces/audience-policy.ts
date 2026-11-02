@@ -19,7 +19,10 @@ export const AUDIENCE_ERROR = {
   CREATOR_CAMPUS_REQUIRED: 'AUDIENCE_CREATOR_CAMPUS_REQUIRED',
   /** A BDE star touching an institution (decision 7). */
   INSTITUTION_ADMIN_ONLY: 'AUDIENCE_INSTITUTION_ADMIN_ONLY',
-  /** A BDE star touching a campus it does not govern, on the entity's current rules or the new ones. */
+  /**
+   * A BDE star touching a space it does not govern, on the entity's current rules or the new ones.
+   * The name predates the per-space bound (2026-11-02) and is kept: clients read it.
+   */
   OUTSIDE_BDE_CAMPUS: 'AUDIENCE_OUTSIDE_BDE_CAMPUS',
   /** Neither a global admin nor the holder of MANAGE_ASSO in any BDE. */
   ADMIN_OR_BDE_REQUIRED: 'AUDIENCE_ADMIN_OR_BDE_REQUIRED',
@@ -68,30 +71,55 @@ export function defaultCampusRules(
 }
 
 /**
- * The BDE star's bound (decision 7): it may write the audience of an association or list of ITS
- * campus(es) only. `governed` are the campuses of the spaces whose BDE the caller holds MANAGE_ASSO
- * in. Both what the entity addresses NOW and what is submitted must sit inside them, so a star can
- * neither take over an entity of another campus nor push its own beyond its borders. An entity with
- * no rule at all is governed by nobody and stays a global admin's.
+ * One opened space as a BDE star sees it: its pair, and whether a BDE in which the star holds
+ * MANAGE_ASSO governs it (`BDE_SPACE_STANDINGS_SQL`). Every opened space is listed, governed or
+ * not, because a whole-campus rule is judged against all of its campus.
  */
-export function assertBdeMayWriteAudience(
-  type: string,
-  governed: readonly string[],
-  current: readonly RuleLike[],
-  submitted: readonly RuleLike[]
-): void {
-  assertBdeMayReadAudience(type, governed, current);
-  if (!submitted.every((r) => ruleInsideCampuses(r, governed))) throw outsideBdeCampus();
+export interface SpaceStanding {
+  formation: string;
+  campus: string;
+  governed: boolean;
 }
 
 /**
- * The BDE star's READ bound (user, 2026-10-08: "campus de l'etoile seulement"): it may read the
- * rules of an entity whose CURRENT rules all lie within the campuses it governs - the same bound
- * and codes as the write path, so the editor can preselect what is in force.
+ * Does `r` stay inside the spaces the star governs? PER SPACE, the granularity governance has
+ * (`holdsBdeFlagOverSql`), never per campus (2026-11-02): a (formation, campus) rule is inside when
+ * that space is governed; a whole-campus rule only when EVERY opened space of the campus is (one
+ * campus may hold two BDEs); an `everyone` rule never. A campus with no opened space is outside.
+ */
+export function ruleInsideGovernedSpaces(r: RuleLike, spaces: readonly SpaceStanding[]): boolean {
+  if (r.campus === null) return false;
+  const ofCampus = spaces.filter((s) => s.campus === r.campus);
+  if (r.formation === null) return ofCampus.length > 0 && ofCampus.every((s) => s.governed);
+  return ofCampus.some((s) => s.formation === r.formation && s.governed);
+}
+
+/**
+ * The BDE star's bound (decision 7, scoped per SPACE since 2026-11-02): it may write the audience
+ * of an association or list it ALREADY governs, and only inside the spaces it governs. Both what the
+ * entity addresses NOW and what is submitted must sit inside them, so a star can neither take over
+ * an entity another BDE governs (one campus can hold two BDEs) nor push its own beyond its borders.
+ * An entity with no rule at all is governed by nobody and stays a global admin's.
+ */
+export function assertBdeMayWriteAudience(
+  type: string,
+  spaces: readonly SpaceStanding[],
+  current: readonly RuleLike[],
+  submitted: readonly RuleLike[]
+): void {
+  assertBdeMayReadAudience(type, spaces, current);
+  if (!submitted.every((r) => ruleInsideGovernedSpaces(r, spaces))) throw outsideBdeCampus();
+}
+
+/**
+ * The BDE star's READ bound (user, 2026-10-08: "campus de l'etoile seulement", per space since
+ * 2026-11-02): it may read the rules of an entity whose CURRENT rules all lie within the spaces it
+ * governs - the same bound and codes as the write path, so the editor can preselect what is in
+ * force.
  */
 export function assertBdeMayReadAudience(
   type: string,
-  governed: readonly string[],
+  spaces: readonly SpaceStanding[],
   current: readonly RuleLike[]
 ): void {
   if (type === 'institution') {
@@ -100,25 +128,21 @@ export function assertBdeMayReadAudience(
       message: 'Only a global admin sets the audience of an institution.',
     });
   }
-  if (governed.length === 0) {
+  if (!spaces.some((s) => s.governed)) {
     throw new ForbiddenException({
       code: AUDIENCE_ERROR.ADMIN_OR_BDE_REQUIRED,
       message: 'Global admin or MANAGE_ASSO in a BDE required.',
     });
   }
-  if (current.length === 0 || !current.every((r) => ruleInsideCampuses(r, governed))) {
+  if (current.length === 0 || !current.every((r) => ruleInsideGovernedSpaces(r, spaces))) {
     throw outsideBdeCampus();
   }
-}
-
-function ruleInsideCampuses(r: RuleLike, governed: readonly string[]): boolean {
-  return r.campus !== null && governed.includes(r.campus);
 }
 
 function outsideBdeCampus(): ForbiddenException {
   return new ForbiddenException({
     code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
-    message: 'A BDE sets the audience of the associations and lists of its own campus only.',
+    message: 'A BDE sets the audience of the associations and lists of its own spaces only.',
   });
 }
 

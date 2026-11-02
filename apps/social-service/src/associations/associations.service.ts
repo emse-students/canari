@@ -1196,7 +1196,6 @@ export class AssociationsService {
     const standing = await this.judgeMemberFlags(
       granter,
       associationId,
-      userId,
       0,
       permissions,
       'addMember'
@@ -1288,7 +1287,6 @@ export class AssociationsService {
         standing: await this.judgeMemberFlags(
           opts.granter,
           associationId,
-          targetUserId,
           before,
           permissions,
           'updateMemberRole'
@@ -1342,7 +1340,10 @@ export class AssociationsService {
   /**
    * Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin
    * is true (global admin or BDE), and an institution's member to anyone but the platform admin.
-   * NOT held to the grant ceiling: parting with a member raises nobody's rights.
+   * HELD TO THE GRANT CEILING like a revocation: removing a member takes away every flag it holds,
+   * and a remover that could part with a member above its own rights could re-add them with 0 and
+   * strip what it may not revoke. So a target holding a flag beyond the remover's ceiling needs a
+   * super-admin or the platform admin. Leaving (removing oneself) stays free.
    */
   async removeMember(
     associationId: string,
@@ -1362,6 +1363,15 @@ export class AssociationsService {
       associationId,
       'removeMember'
     );
+    if (opts.granter.userId !== targetUserId) {
+      await this.judgeMemberFlags(
+        opts.granter,
+        associationId,
+        membership.permissions,
+        0,
+        'removeMember'
+      );
+    }
     // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag.
     const holdsManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
@@ -1369,7 +1379,21 @@ export class AssociationsService {
       await this.assertNotLastAdminRemoval(associationId);
     }
 
-    await this.memberRepo.delete(membership.id);
+    // CONDITIONED on the permissions judged above, as `updateMemberRole` is: a row granted more
+    // since its read is not the one the ceiling judged.
+    const deleted = await this.memberRepo.delete({
+      id: membership.id,
+      permissions: membership.permissions,
+    });
+    if (deleted.affected !== 1) {
+      this.logger.warn(
+        `removeMember: membership changed or gone since its read association=${associationId} affected=${deleted.affected ?? 'unknown'}`
+      );
+      throw new ConflictException({
+        code: MEMBER_CHANGED_MEANWHILE,
+        message: 'This member changed meanwhile, retry.',
+      });
+    }
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
     return { ok: true };
@@ -1384,7 +1408,6 @@ export class AssociationsService {
   private async judgeMemberFlags(
     granter: MemberGranter,
     associationId: string,
-    targetUserId: string,
     before: number,
     after: number,
     what: string
@@ -1405,12 +1428,7 @@ export class AssociationsService {
     this.logger.debug(
       `[MEMBER-CEILING] ${what} association=${associationId.slice(0, 8)} admin=${standing.isGlobalAdmin} superAdmin=${standing.isSuperAdminOf} ceiling=${ceiling}`
     );
-    assertWithinGrantCeiling(this.logger, ceiling, before, after, {
-      associationId,
-      granterId: granter.userId,
-      targetUserId,
-      what,
-    });
+    assertWithinGrantCeiling(this.logger, ceiling, before, after, { associationId, what });
     return standing;
   }
 

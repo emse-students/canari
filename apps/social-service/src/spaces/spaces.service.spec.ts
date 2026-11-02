@@ -85,7 +85,7 @@ describe('SpacesService', () => {
     rules?: Partial<AssociationAudience>[];
     /** The spaces the association governs, as the transaction reads them. */
     governed?: Partial<Space>[];
-    /** The campuses whose BDE the caller holds MANAGE_ASSO in (the BDE star's borders). */
+    /** The campuses whose every space a BDE where the caller holds MANAGE_ASSO governs. */
     bdeCampuses?: string[];
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
@@ -117,7 +117,16 @@ describe('SpacesService', () => {
     };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => cb(manager)),
-      query: jest.fn().mockResolvedValue((opts.bdeCampuses ?? []).map((campus) => ({ campus }))),
+      // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`.
+      query: jest.fn().mockResolvedValue(
+        SPACE_CAMPUSES.flatMap((campus) =>
+          SPACE_FORMATIONS.map((formation) => ({
+            formation,
+            campus,
+            governed: (opts.bdeCampuses ?? []).includes(campus),
+          }))
+        )
+      ),
     } as unknown as DataSource;
     const redis = { deleteByPattern: jest.fn().mockResolvedValue(3) };
     return {

@@ -48,6 +48,18 @@ export const BDE_GOVERNED_CAMPUSES_SQL = `SELECT DISTINCT bde_space.campus FROM 
   JOIN spaces bde_space ON bde_space."bdeAssociationId" = bde_star."associationId"
   WHERE bde_star."userId" = $1 AND (bde_star.permissions & $2) <> 0 ORDER BY bde_space.campus`;
 
+/**
+ * Every opened space, with whether a BDE in which user `$1` holds flag `$2` governs it. Answers
+ * `formation`, `campus`, `governed`. The borders of a BDE star's audience powers PER SPACE
+ * (`audience-policy.ts` `ruleInsideGovernedSpaces`): the campus-level `BDE_GOVERNED_CAMPUSES_SQL`
+ * let a star write over a space another BDE of the same campus governs.
+ */
+export const BDE_SPACE_STANDINGS_SQL = `SELECT bde_space.formation, bde_space.campus,
+    EXISTS (SELECT 1 FROM association_members bde_star
+      WHERE bde_star."associationId" = bde_space."bdeAssociationId"
+        AND bde_star."userId" = $1 AND (bde_star.permissions & $2) <> 0) AS "governed"
+  FROM spaces bde_space ORDER BY bde_space.campus, bde_space.formation`;
+
 /** Does user `$1` hold flag `$3` in a BDE governing association `$2`? Answers `holds`. */
 export const HOLDS_BDE_FLAG_OVER_SQL = `SELECT ${holdsBdeFlagOverSql('$1', '$2', '$3')} AS "holds"`;
 
