@@ -69,8 +69,9 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 ### The decisions
 
 1. **Member reposts.** A member may republish another member's post to THEIR OWN followers, with
-   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an entity
-   (association, list, institution) is reposted without asking. Never an anonymous post. A block
+   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an
+   association or an institution that addresses at least one space is reposted without asking;
+   never the post of a list or of a members-only association (owner, 2026-11-02). Never an anonymous post. A block
    applies both ways. Hiding the original removes every repost. Same rules for reels. A repost
    enters the Suivis feed of the reposter's followers at the time of the repost; a notification goes
    only to readers who NEWLY see the post (the D38 rule).

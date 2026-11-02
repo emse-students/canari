@@ -18,7 +18,11 @@ import { join } from 'path';
 import { DataSource } from 'typeorm';
 import { HttpException } from '@nestjs/common';
 import type { RedisService } from '../common/redis/redis.service';
-import { postVisibleToViewerSql } from '../spaces/reader-spaces';
+import {
+  ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+  NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
+  postVisibleToViewerSql,
+} from '../spaces/reader-spaces';
 import { postListCacheKey } from './post-list-cache';
 import {
   FOLLOWED_REPOST_AT,
@@ -60,7 +64,7 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
   b2: { campus: 'saint-etienne', formation: 'ICM' },
   // An author who withdraws consent account-wide.
   nc: { campus: 'saint-etienne', formation: 'ICM' },
-  // A Gardanne author rp cannot see; also the officer of the members-only A2.
+  // A Gardanne author rp cannot see; also the officer of A2, A3 and A4.
   gx: { campus: 'gardanne', formation: 'ISMIN' },
   // Authors in NO space, whom rp sees ONLY as their accepted follower: one removes rp, rp unfollows
   // the other.
@@ -69,7 +73,12 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
 };
 
 const A1 = '00000000-0000-4000-8000-0000000c0001'; // association, reaches ICM Saint-Etienne (071)
-const A2 = '00000000-0000-4000-8000-0000000c0002'; // created after 071: no rule, its members only
+// Created after 071 with ONE rule (ISMIN x saint-etienne) that reaches nobody in the cast: rp sees
+// its posts only as a member.
+const A2 = '00000000-0000-4000-8000-0000000c0002';
+// MEMBERS-ONLY (no rule) and a LIST: their posts are never repostable (owner, 2026-11-02).
+const A3 = '00000000-0000-4000-8000-0000000c0003';
+const A4 = '00000000-0000-4000-8000-0000000c0004'; // a list addressing ICM x saint-etienne
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -102,6 +111,9 @@ const POSTS: {
   { id: P(19), authorId: 'au', announced: true }, // the reposter is muted
   { id: P(20), authorId: 'au', announced: true }, // told once, ever; the cache of its audience only
   { id: P(21), authorId: 'au', announced: true }, // told before migration 123 (the backfill)
+  { id: P(22), authorId: 'gx', associationId: A3, announced: true }, // members-only association
+  { id: P(23), authorId: 'gx', associationId: A4, announced: true }, // a list
+  { id: P(24), authorId: 'au', associationId: A1, announced: false }, // reposted, then announced
 ];
 
 function codeOf(err: unknown): string | undefined {
@@ -205,11 +217,24 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
     // A replay is a no-op (the deploy ledger may run it twice).
     await q(migration('121_member_reposts.sql'));
     await q(migration('123_member_repost_notices.sql'));
-    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2')`, [A2]);
+    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2'), ($2, 'A3', 'a3')`, [
+      A2,
+      A3,
+    ]);
+    await q(`INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A4', 'a4', 'list')`, [
+      A4,
+    ]);
     await q(
-      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
-      [A2]
+      `INSERT INTO association_audiences ("associationId", formation, campus)
+         VALUES ($1, 'ISMIN', 'saint-etienne'), ($2, 'ICM', 'saint-etienne')`,
+      [A2, A4]
     );
+    for (const a of [A2, A3, A4]) {
+      await q(
+        `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
+        [a]
+      );
+    }
     for (const [id, u] of Object.entries(USERS)) {
       await q(
         `INSERT INTO users (id, campus, cursus, "firstName", "lastName") VALUES ($1, $2, $3, $1, 'X')`,
@@ -363,6 +388,7 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
         P(19),
         P(20),
         P(21),
+        P(24),
       ]);
       const forFo = await memberRepostContext(ds.manager, [P(1)], 'fo');
       expect(forFo.reposters.get(P(1))).toEqual([{ id: 'rp', name: 'rp X' }]);
@@ -462,6 +488,68 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
     });
   });
 
+  describe('NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)', () => {
+    it('the write refuses it with the 404 of a post not seen, and writes nothing', async () => {
+      const unseen = await refusedWith(reposts.repost(P(4), 'rp'));
+      for (const id of [P(22), P(23)]) {
+        // rp sees it first-hand, as a member: only the rule refuses it.
+        expect(await sees(id, 'rp')).toBe(true);
+        const err = await refusedWith(reposts.repost(id, 'rp'));
+        expect(err.getStatus()).toBe(404);
+        expect(err.getResponse()).toEqual(unseen.getResponse());
+        expect(await repostRows(id)).toEqual([]);
+      }
+      expect(told).toEqual([]);
+    });
+
+    it('the card offers no repost of it', async () => {
+      const forRp = await memberRepostContext(ds.manager, [P(18), P(22), P(23)], 'rp');
+      expect([...forRp.repostable]).toEqual([P(18)]);
+    });
+
+    it('a row written before the decision carries nothing, names nobody, and is not deleted', async () => {
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'rp'), ($2, 'rp')`, [
+        P(22),
+        P(23),
+      ]);
+      for (const id of [P(22), P(23)]) {
+        expect(await sees(id, 'fo')).toBe(false);
+        expect(
+          (await memberRepostContext(ds.manager, [id], 'fo')).reposters.get(id)
+        ).toBeUndefined();
+        expect(await repostRows(id)).toEqual(['rp']);
+      }
+      // Read from state: the members-only association addresses a space, and the row carries again.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
+        [A3]
+      );
+      expect(await sees(P(22), 'fo')).toBe(true);
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A3]);
+      expect(await sees(P(22), 'fo')).toBe(false);
+      await q(`DELETE FROM member_reposts WHERE "postId" = ANY($1::uuid[])`, [[P(22), P(23)]]);
+    });
+
+    it("the write's newly-reached set repeats the rule, so a rule removed after its check pushes nobody", async () => {
+      const newly = async (postId: string): Promise<string[]> =>
+        ((await q(NEWLY_REACHED_BY_MEMBER_REPOST_SQL, [postId, 'rp'])) as { id: string }[])
+          .map((r) => r.id)
+          .sort();
+      // The list, and the members-only association: nobody, though fo, fa and sb cannot see them.
+      expect(await newly(P(22))).toEqual([]);
+      expect(await newly(P(23))).toEqual([]);
+      // Read from state in the SAME statement as the "before": with a rule, A3's post reaches them.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
+        [A3]
+      );
+      expect(await newly(P(22))).toEqual(['fa', 'fo', 'sb']);
+      // The officer removes it - as if between the write's refusal check and this read.
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A3]);
+      expect(await newly(P(22))).toEqual([]);
+    });
+  });
+
   describe("TOLD ONCE, EVER, AND ONLY THE AUDIENCE'S FEEDS DROPPED", () => {
     async function notices(postId: string): Promise<string[]> {
       const rows: { recipientId: string }[] = await q(
@@ -514,6 +602,52 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       await reposts.repost(P(21), 'rp');
       expect(told).toEqual([]);
       expect(await sees(P(21), 'fo')).toBe(true);
+    });
+
+    it('an entity post reposted BEFORE its announcement: the sweep records whom the repost reached, and no later repost tells them again', async () => {
+      await reposts.repost(P(24), 'rp');
+      expect(told).toEqual([]); // not announced yet: the sweep will tell them
+      // The sweep, as `PostAnnounceScheduler.stampAndReadRecipients` runs it: ONE statement.
+      const audience: { id: string }[] = await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [
+        P(24),
+      ]);
+      const recipientIds = audience.map((r) => r.id);
+      expect(recipientIds).toEqual(expect.arrayContaining(['fo', 'fa', 'sb', 'rp']));
+      await q(`UPDATE posts SET "feedNotifiedAt" = now() WHERE id = $1`, [P(24)]);
+      // Only the readers who see it through the repost alone; rp sees it first-hand.
+      expect(await notices(P(24))).toEqual(['fa', 'fo', 'sb']);
+      // A take-back makes them newly reached again; the ledger keeps them from a second notice.
+      await reposts.unrepost(P(24), 'rp');
+      await reposts.repost(P(24), 'rp');
+      expect(told).toEqual([]);
+      // A replay of the sweep's statement adds nothing.
+      await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [P(24)]);
+      expect(await notices(P(24))).toEqual(['fa', 'fo', 'sb']);
+    });
+
+    it('the sweep records EXACTLY the readers it hands the bell through a repost: with the repost gone, neither', async () => {
+      // The take-back the two-statement version could interleave: whatever the statement's snapshot
+      // holds, the recipients and the ledger agree, because they are read from the same one.
+      await q(`UPDATE posts SET "feedNotifiedAt" = NULL WHERE id = $1`, [P(24)]);
+      await q(`DELETE FROM member_repost_notices WHERE "postId" = $1`, [P(24)]);
+      await reposts.unrepost(P(24), 'rp');
+      const without: { id: string }[] = await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [
+        P(24),
+      ]);
+      expect(without.map((r) => r.id)).not.toContain('fo');
+      expect(await notices(P(24))).toEqual([]);
+      await reposts.repost(P(24), 'rp');
+      const withRepost: { id: string }[] = await q(
+        ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+        [P(24)]
+      );
+      const reachedThroughRepost = withRepost
+        .map((r) => r.id)
+        .filter((id) => !without.some((w) => w.id === id))
+        .sort();
+      expect(reachedThroughRepost).toEqual(['fa', 'fo', 'sb']);
+      expect(await notices(P(24))).toEqual(reachedThroughRepost);
+      await q(`UPDATE posts SET "feedNotifiedAt" = now() WHERE id = $1`, [P(24)]);
     });
 
     it('Suivis admits and places a row at the latest followed repost that still carries it, in ONE lateral', async () => {

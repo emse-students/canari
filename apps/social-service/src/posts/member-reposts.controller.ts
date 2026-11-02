@@ -24,6 +24,10 @@ import { RepostAccountConsentDto, RepostPostConsentDto } from './dto/post.dto';
  * caller alone. A person reposting a few posts in a row stays far below; a loop - a stuck tab, a
  * script - is stopped. Who is TOLD is once per (post, reader) from durable state
  * (`member_repost_notices`); this bounds the WRITES and the feed-cache drops they cause.
+ *
+ * PER REPLICA: `ThrottlerModule.forRoot` (`app.module.ts`) names no storage, so every count lives
+ * in one process's memory. With N social-service replicas behind nginx, a caller can reach up to
+ * N times each limit here, and a restart forgets the counts. It bounds a loop; it is not a quota.
  */
 export const MEMBER_REPOST_WRITES_PER_MINUTE = 20;
 
