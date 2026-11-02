@@ -33,6 +33,8 @@
  *   --profile             a V8 CPU profile (200 us sampling) from the tab tap to the salon rows,
  *                         written to `<out>/profile-<label>-<run>.cpuprofile` - what the first
  *                         mount of the page is made of (`profile-summary.mjs` reads it)
+ *   --profile-salon       a V8 CPU profile of each salon open (first and reopen), the tap on the row
+ *                         to the first bubble: `profile-<label>-<run>-first|reopen.cpuprofile`
  *   --before-tap <js>     an expression evaluated in the page once the nav is on screen, before the
  *                         tap: a CSS or DOM change tried on the INSTALLED build (an APK carries its
  *                         own bundle, so this is the only way to read a candidate on the phone
@@ -72,6 +74,7 @@ const PORT = Number(opt('port', 9333));
 const PROFILE = args.includes('--profile');
 const BEFORE_TAP = opt('before-tap', null);
 const TRACE = args.includes('--trace');
+const PROFILE_SALON = args.includes('--profile-salon');
 /** What `--trace` records: the renderer's timeline (input, script, style, layout, paint) and V8's script work. */
 const TRACE_CATEGORIES = [
   'devtools.timeline',
@@ -308,13 +311,30 @@ async function setNetwork(on) {
   }
 }
 
-/** Opens `name`'s first salon from the hub; returns [tap, pane, messages?]. */
-async function openFirstSalon(cx, key, withMessages) {
+/**
+ * Opens `name`'s first salon from the hub; returns [tap, pane, messages?]. With `--profile-salon`
+ * and `withMessages`, a V8 CPU profile spans exactly this tap to the first bubble
+ * (`profile-<label>-<run>-<key>.cpuprofile`): the salon mount, which `--profile` does not cover.
+ */
+async function openFirstSalon(cx, key, withMessages, runIndex = 0) {
   await arm(cx, `${key}Pane`, PRED.pane);
   if (withMessages) await arm(cx, `${key}Messages`, PRED.messages);
+  const profiled = PROFILE_SALON && withMessages;
+  if (profiled) {
+    await cx.send('Profiler.enable');
+    await cx.send('Profiler.setSamplingInterval', { interval: 200 });
+    await cx.send('Profiler.start');
+  }
   const tapped = await tap(cx, FIRST_ROW);
   const pane = await until(cx, `${key}Pane`, null, tapped);
   const messages = withMessages ? await until(cx, `${key}Messages`, null, tapped) : null;
+  if (profiled) {
+    const { profile } = await cx.send('Profiler.stop');
+    writeFileSync(
+      join(OUT, `profile-${LABEL}-${runIndex}-${key}.cpuprofile`),
+      JSON.stringify(profile)
+    );
+  }
   return [tapped, pane, messages];
 }
 
@@ -432,7 +452,7 @@ async function oneRun(index, warmCx) {
       JSON.stringify({ traceEvents, marks })
     );
   }
-  [row.tapSalon, row.pane, row.messages] = await openFirstSalon(cx, 'first', true);
+  [row.tapSalon, row.pane, row.messages] = await openFirstSalon(cx, 'first', true, index);
   say(`salon pane ${row.pane} messages ${row.messages}`);
 
   // ANOTHER COMMUNITY: the in-session switch.
@@ -448,7 +468,7 @@ async function oneRun(index, warmCx) {
     await backToHub(cx, 'b2');
     await tap(cx, railButton(TARGET));
     await until(cx, 'targetAgain', hubOf(TARGET));
-    [row.tapReopen, row.reopenPane, row.reopenMessages] = await openFirstSalon(cx, 'reopen', true);
+    [row.tapReopen, row.reopenPane, row.reopenMessages] = await openFirstSalon(cx, 'reopen', true, index);
   }
   say('collecting');
   await waitMs(1500);
