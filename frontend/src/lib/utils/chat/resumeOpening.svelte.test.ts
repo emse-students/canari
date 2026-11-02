@@ -9,6 +9,8 @@ import { createAppForegroundState } from '$lib/utils/appForegroundState.svelte';
 import {
   endResumeOpening,
   endResumeOpeningOnNavigation,
+  endResumeOpeningUnrouted,
+  PAGE_NOTIFICATION_OPENING,
   followResumeSelection,
   noteResumeOpening,
   resumeOpeningHolds,
@@ -36,8 +38,8 @@ function announce(foreground: boolean, opening?: string) {
 }
 
 /** The receipt effect's gate, as `MainChatPage` composes it; `marked` is every conversation read. */
-function mountReader(initial: string) {
-  const selection = $state({ key: initial as string | null });
+function mountReader(initial: string | null) {
+  const selection = $state({ key: initial });
   const marked: string[] = [];
   const foreground = createAppForegroundState({
     onResume: (opening) => noteResumeOpening(opening, selection.key),
@@ -201,6 +203,91 @@ describe('a resume that opens a notification for Y, with X left open', () => {
   });
 });
 
+describe('a tap on a notification the PAGE raised (the plugin, iOS), with X left open', () => {
+  it('the landing its handler publishes after the edge: X is not marked, Y is', () => {
+    const r = mountReader('X');
+    try {
+      announce(false);
+      announce(true, PAGE_NOTIFICATION_OPENING);
+      messageLands();
+      expect(r.marked).toEqual(['X']);
+      notifNav.navigate('Y'); // `useNotifications`' onAction publishes the landing
+      flushSync();
+      messageLands();
+      expect(r.marked).toEqual(['X']);
+      r.select('Y');
+      expect(r.marked).toEqual(['X', 'Y']);
+    } finally {
+      r.destroy();
+    }
+  });
+
+  it('the landing published BEFORE the edge reached the page: X is not marked, Y is', () => {
+    const r = mountReader('X');
+    try {
+      announce(false);
+      notifNav.navigate('Y');
+      flushSync();
+      announce(true, PAGE_NOTIFICATION_OPENING);
+      messageLands();
+      expect(r.marked).toEqual(['X']);
+      r.select('Y');
+      expect(r.marked).toEqual(['X', 'Y']);
+    } finally {
+      r.destroy();
+    }
+  });
+
+  it('a tap the handler routes nowhere releases X, which is what is on screen', () => {
+    const r = mountReader('X');
+    try {
+      announce(false);
+      announce(true, PAGE_NOTIFICATION_OPENING);
+      expect(r.marked).toEqual(['X']);
+      endResumeOpeningUnrouted('a notification this session did not post');
+      flushSync();
+      expect(r.marked).toEqual(['X', 'X']);
+    } finally {
+      r.destroy();
+    }
+  });
+
+  it('a page notification for X itself marks X once it lands', () => {
+    const r = mountReader('X');
+    try {
+      announce(false);
+      announce(true, PAGE_NOTIFICATION_OPENING);
+      notifNav.navigate('X');
+      flushSync();
+      expect(r.marked).toEqual(['X', 'X']);
+    } finally {
+      r.destroy();
+    }
+  });
+});
+
+describe('a cold start from a tap', () => {
+  it.each([
+    ['a chat link', link('Y')],
+    ['a page notification', PAGE_NOTIFICATION_OPENING],
+  ])('(%s) marks only Y: no conversation was open, so nothing is held', (_what, opening) => {
+    // The page loads in the background (a launch by the tap), with nothing selected.
+    announce(false);
+    const r = mountReader(null);
+    try {
+      announce(true, opening);
+      notifNav.navigate('Y');
+      flushSync();
+      r.select('Y');
+      messageLands();
+      expect(r.marked[0]).toBe('Y');
+      expect(new Set(r.marked)).toEqual(new Set(['Y']));
+    } finally {
+      r.destroy();
+    }
+  });
+});
+
 describe('the wiring', () => {
   it('the receipt effect asks the hold, and the arrival rule does too', () => {
     const page = readFileSync('src/lib/components/MainChatPage.svelte', 'utf8');
@@ -218,6 +305,24 @@ describe('the wiring', () => {
     expect(layout).toMatch(/endResumeOpeningOnNavigation\(\);/);
     const hooks = readFileSync('src/hooks.client.ts', 'utf8');
     expect(hooks).toMatch(/const groupId = chatTargetOfLink\(u\.href\);/);
+  });
+
+  it("the page's tap handler releases the hold on every branch that publishes no landing", () => {
+    const source = readFileSync('src/lib/composables/useNotifications.svelte.ts', 'utf8');
+    expect(source.match(/endResumeOpeningUnrouted\(/g)?.length).toBe(2);
+  });
+
+  it("Android's page notifications are built natively and tap as a chat link to the activity", () => {
+    // `notifyMessageFromWebSocket` (the page's builder) posts through `showMessageNotification`,
+    // whose tap is ACTION_VIEW on the chat link - the intent `onNewIntent` carries into the edge.
+    const fms = readFileSync(
+      'src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt',
+      'utf8'
+    );
+    expect(fms).toContain('fun notifyMessageFromWebSocket(');
+    expect(fms).toMatch(
+      /action = Intent\.ACTION_VIEW\s+setData\(android\.net\.Uri\.parse\("fr\.emse\.canari:\/\/chat\/\$groupId"\)\)/
+    );
   });
 
   it('Android sends the link onNewIntent took with the edge onResume dispatches', () => {

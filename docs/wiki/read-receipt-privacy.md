@@ -85,7 +85,8 @@ writer and every door in the code, the server suites, and production COUNTS (no 
   the link the resume opens WITH the foreground edge (`detail.opening`: Android from the intent
   `onNewIntent` took before `onResume`, iOS from its notification delegate), and the page holds X
   until the landing selects Y, is abandoned, or the link navigates (`resumeOpening.svelte.ts`). A
-  plain resume still marks X. The hold only withholds a mark - door 1 is narrowed, never widened.
+  plain resume still marks X, and a tap on a notification the page raised itself follows the same
+  rule. The hold only withholds a mark - door 1 is narrowed, never widened.
 
 ## The fix (2026-10-14)
 

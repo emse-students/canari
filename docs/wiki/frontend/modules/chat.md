@@ -4331,10 +4331,16 @@ was the one that moved only the first.
   the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
   effect runs once), Y's landing is published and then released or abandoned (read from `notifNav`),
   a page link navigated (`afterNavigate`), the app left again, or a resume carried no link. A tap for
-  X itself holds nothing; a plain resume still marks X. The chat link is parsed in ONE place
+  X itself holds nothing; a plain resume still marks X. **A tap on a notification the PAGE raised**
+  follows the same rule: on Android the page's message notifications are built natively
+  (`notifyMessageFromWebSocket`) and tap as an ordinary chat link, so `onNewIntent` carries them; on
+  iOS they are the notification plugin's, which carry no link, so the shell sends the marker
+  `PAGE_NOTIFICATION_OPENING` and the hold waits for the landing the page's own `onAction` publishes
+  - or for that handler to say the tap routes nowhere (`endResumeOpeningUnrouted`). A cold start
+  needs nothing: no conversation is open, so nothing is held, and only Y is read. The chat link is parsed in ONE place
   (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
   `resumeOpening.svelte.test.ts` (both orders of the edge and the link, a plain resume, an abandoned
-  landing, a page link, the reader choosing).
+  landing, a page link, the reader choosing, a page notification's tap, a cold start).
 
 **The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
 server answer that moved a count (one entry per moved salon). Neither grows with a conversation's
