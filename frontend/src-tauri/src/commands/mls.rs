@@ -94,13 +94,38 @@ pub(crate) async fn initialiser_mls(
             // under the write lock: a background engine (a key-group join from a push, channel-encryption
             // section 26) then either wrote before this read or sees the mark and gives up - never lands
             // between the read and this manager's first persist, which would erase it.
+            let data_dir = tauri::Manager::path(&app)
+                .app_data_dir()
+                .map_err(|e| e.to_string())?;
+            // THE SLOT IS GIVEN TO THIS ACCOUNT BEFORE ANYTHING READS OR SEALS IT, ON EVERY PATH
+            // (`mls_account_state.rs`): the previous account's state is parked under the account its
+            // owner record names and this account's own parked state comes back - renamed, never
+            // rewritten. A fresh start is the path that needs it most: without it, the new state's
+            // first save would land on the previous account's file. A refusal stops the sign-in with
+            // nothing moved and nothing written (`null` code: it proves nothing about the bytes).
+            let selection = crate::commands::mls_account_state::select_account_state(
+                &data_dir, &user_id,
+            )?;
+            // A FRESH START DECIDED WITHOUT SEEING THIS ACCOUNT'S PARKED STATE IS REFUSED. The caller
+            // chose "no state" on `mls_state_size`; if the switch has just brought one back, that
+            // answer was wrong, and a fresh state saved now would replace it.
+            if encrypted_state.is_none()
+                && state_on_disk != Some(true)
+                && matches!(
+                    selection,
+                    crate::commands::mls_account_state::Selection::Moved { unparked: true, .. }
+                )
+            {
+                log::error!(
+                    "[MLS] a fresh start was asked while this account's parked state was just moved into the slot - refused, nothing sealed over it"
+                );
+                return Err(StateLoadRefusal::from(
+                    "a fresh start was asked over this account's saved state".to_string(),
+                ));
+            }
             let encrypted_state = match (encrypted_state, state_on_disk) {
                 (None, Some(true)) => {
-                    let path = tauri::Manager::path(&app)
-                        .app_data_dir()
-                        .map_err(|e| e.to_string())?
-                        .join("mls.bin");
-                    crate::concurrency::foreground_load_mls_bin(&path)?
+                    crate::concurrency::foreground_load_mls_bin(&data_dir.join("mls.bin"))?
                 }
                 (supplied, _) => {
                     crate::concurrency::mark_foreground_manager_loading();
@@ -152,14 +177,7 @@ pub(crate) async fn initialiser_mls(
                 log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
             }
             // A stage a background Welcome left in mls.bin is reported against what was loaded.
-            match tauri::Manager::path(&app).app_data_dir() {
-                Ok(dir) => {
-                    crate::commands::storage::report_background_stages(&dir, &manager);
-                }
-                Err(e) => {
-                    log::warn!("[MLS] app_data_dir() failed ({e}) - background stages not reported")
-                }
-            }
+            crate::commands::storage::report_background_stages(&data_dir, &manager);
             Ok((manager, key))
         };
         match attempt() {

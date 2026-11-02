@@ -1331,7 +1331,7 @@ export async function loginImpl(
       { bytes?: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
       if (isTauriRuntime()) {
-        const size = await mlsStateSize();
+        const size = await mlsStateSize(ctx.getUserId());
         return size > 0 ? { source: 'native' } : undefined;
       }
       const loaded = await loadMlsState(ctx.getUserId());

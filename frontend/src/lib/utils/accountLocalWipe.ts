@@ -213,8 +213,9 @@ export const REFUSED_CASE_COLLISION = 'the account id (it differs from another o
  * Removes what ONE deleted account left on this device: its local message database, its slot of the
  * device-key vault, its platform-keystore entry and its per-account `localStorage` keys. NOT a device
  * reset - another account signed in on the same install keeps its database, its vault slot, the
- * in-app log, the preferences and `mls.bin` (one file per install, which may hold another account's
- * state, so it is deliberately left alone).
+ * in-app log, the preferences and the `mls.bin` slot (the signed-in account's state). On a native
+ * install the deleted account's own PARKED MLS state goes (`delete_user_mls_state`); the slot is
+ * left alone, since only the teardown that ends a session may sweep it.
  *
  * A sign-out keeps all of this on purpose ("keep the state"); a DELETION is the one exit after which
  * nobody can ever open it again, so leaving it is only a cost: every message row stays under the
@@ -297,6 +298,13 @@ export async function wipeDeletedAccountLocalData(
         expectDatabase: expectNativeDatabase,
       });
       console.log(`${tag} native database: ${removed} file(s) removed`);
+    });
+    // The account's MLS state parked aside when another account took the install's slot
+    // (`mls_account_state.rs`) - ONLY that account's directory, never the slot.
+    await step('the parked MLS state', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('delete_user_mls_state', { userId });
+      console.log(`${tag} parked MLS state: ${removed} file(s) removed`);
     });
     // The push side's plaintext (unsent protos, push-decrypted messages, the bearer push token),
     // removed natively ONLY when `push_context.json` names this account - see `push.rs`.

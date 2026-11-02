@@ -758,8 +758,10 @@ export class TauriMlsService extends BaseMlsService {
       // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
-      // `mls.bin` IS ONE FILE PER INSTALL, AND A RECORD BESIDE IT SAYS WHOSE IT IS. When that record
-      // names another account, this account's key was never going to open it - and every branch
+      // THE SLOT `mls.bin` HOLDS ONE ACCOUNT'S STATE, AND A RECORD BESIDE IT SAYS WHOSE IT IS. Since
+      // 2026-11-02 `initialiser_mls` parks the previous account's state before it reads the slot
+      // (`mls_account_state.rs`), so a record naming another account here means that switch was
+      // refused - and this account's key was never going to open the state. Every branch
       // below either writes (the re-seal, the rotation) or hands the gate a reset that deletes it. So
       // it is refused first, whatever the cause, and NOTHING is written. Only a record naming someone
       // else proves it: no record is absence of proof (`mls_state_owner`).
@@ -1406,12 +1408,12 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
-   * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
-   * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
-   * which answers 0 for it.
+   * `mls_state_absent`: `true` only when THIS ACCOUNT's `mls.bin` does not exist or is empty. An
+   * unreadable data directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike
+   * `mls_state_size`, which answers 0 for it.
    */
   protected async savedStateProvenAbsent(): Promise<boolean> {
-    return invoke<boolean>('mls_state_absent');
+    return invoke<boolean>('mls_state_absent', { userId: this.userId });
   }
 
   /** Tauri-native `invoke` wrapper - `verifier_key_package`, the Rust verdict on binding and pin. */

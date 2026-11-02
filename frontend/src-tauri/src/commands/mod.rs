@@ -11,6 +11,8 @@ pub mod cookies;
 pub mod display_names;
 pub mod handoff;
 pub mod mls;
+// One MLS state per account on a shared install: the slot, the parked states, the switch.
+pub mod mls_account_state;
 pub mod notifications;
 // The iOS notification extension's outcome log, carried into the app log (2026-11-01).
 pub mod nse_outcomes;

@@ -471,12 +471,16 @@ const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null 
  *
  * Throws nothing: an unreadable answer is reported as 0 by the command, which is the same verdict
  * as a first install - the only safe one, since the alternative is refusing a login on a stat.
+ *
+ * THE ACCOUNT IS AN ARGUMENT (owner, 2026-11-02): an install keeps one state per account, and a
+ * size with no subject answered for whichever account used the install last
+ * (`mls_account_state.rs`).
  */
-export async function mlsStateSize(): Promise<number> {
+export async function mlsStateSize(userId: string): Promise<number> {
   if (!isTauriRuntime()) return 0;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    return (await invoke<number>('mls_state_size')) ?? 0;
+    return (await invoke<number>('mls_state_size', { userId })) ?? 0;
   } catch (e) {
     console.warn('[MLS] mls_state_size failed:', e);
     return 0;
@@ -496,7 +500,7 @@ export async function mlsStateSize(): Promise<number> {
  * way each store can answer it.
  */
 export async function hasMlsState(userId: string): Promise<boolean> {
-  if (isTauriRuntime()) return (await mlsStateSize()) > 0;
+  if (isTauriRuntime()) return (await mlsStateSize(userId)) > 0;
   return !!(await loadMlsState(userId));
 }
 
@@ -510,7 +514,7 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const res = await invoke<number[] | null>('load_mls_state');
+      const res = await invoke<number[] | null>('load_mls_state', { userId });
       return res && Array.isArray(res) ? stateOrAbsent(Uint8Array.from(res)) : null;
     } catch (e) {
       console.warn('[MLS] load_mls_state failed:', e);

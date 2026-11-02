@@ -126,7 +126,9 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(4);
+    expect(invokeMock).toHaveBeenCalledTimes(5);
+    // The account's PARKED MLS state - its own directory only, never the install's slot.
+    expect(invokeMock).toHaveBeenCalledWith('delete_user_mls_state', { userId: 'user-a' });
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
     // And this account's waiting quick replies - its lines only, never the whole file.

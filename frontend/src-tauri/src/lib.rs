@@ -58,6 +58,7 @@ use crate::commands::mls::{
     soumission_en_attente, terminer_session_mls, trailer_welcome, verifier_key_package,
     welcome_remis, welcomes_dus,
 };
+use crate::commands::mls_account_state::delete_user_mls_state;
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
@@ -1729,6 +1730,7 @@ pub fn run() {
             complete_owed_push_token_deletion,
             clear_app_data,
             delete_user_database,
+            delete_user_mls_state,
             delete_user_push_files,
             remove_native_flag,
             set_native_flag,
