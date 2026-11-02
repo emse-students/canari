@@ -68,7 +68,15 @@ pub const LEDGER_CAPACITY: usize = 64;
 /// the answer holds for the write that follows it. A slot with no record is nobody's: written before
 /// the record existed and not opened since, or swept by a deleted account's wipe.
 fn slot_is_accounts_held(data_dir: &Path, account: &str) -> bool {
-    let owner = crate::commands::storage::read_mls_state_owner(data_dir);
+    let owner = match crate::commands::storage::read_mls_state_owner(data_dir) {
+        Ok(owner) => owner,
+        Err(e) => {
+            log::error!(
+                "[KG_PUSH_JOIN] the slot's owner record could not be read ({e}) - nothing of the join is written"
+            );
+            return false;
+        }
+    };
     let is = !account.is_empty() && owner.as_deref() == Some(account);
     if !is {
         log::warn!(

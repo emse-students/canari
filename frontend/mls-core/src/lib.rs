@@ -291,7 +291,7 @@ impl MlsError {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StateLoadRefusal {
     /// One of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`,
-    /// `KEYSTORE_KEY_UNAVAILABLE`, `SLOT_MOVE_UNFINISHED`, or `None`.
+    /// `KEYSTORE_KEY_UNAVAILABLE`, `SLOT_MOVE_UNFINISHED`, `SLOT_OWNER_UNRECORDED`, or `None`.
     pub code: Option<&'static str>,
     /// The failure's own text - evidence for a reader of the logs, never a discriminator. For a
     /// coded refusal it is the variant's DETAIL, without the code its `Display` leads with: the
@@ -316,6 +316,12 @@ const STATE_KEY_MISMATCH: &str = "STATE_KEY_MISMATCH";
 /// NOT a verdict about any state's bytes - nothing was opened - so the frontend destroys nothing,
 /// offers no reset, and tells the user a restart retries the move.
 const SLOT_MOVE_UNFINISHED: &str = "SLOT_MOVE_UNFINISHED";
+
+/// The code of a sign-in that opened its state but could not record, beside it, which account the
+/// state is (the per-account slot's owner record - every later switch, push join and save is bound by
+/// it). NOT a verdict about the state - it opened - and nothing was installed or destroyed: the cause is
+/// the device's storage, and the next sign-in records it again.
+const SLOT_OWNER_UNRECORDED: &str = "SLOT_OWNER_UNRECORDED";
 
 impl StateLoadRefusal {
     /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
@@ -344,6 +350,20 @@ impl StateLoadRefusal {
     /// True for a [`Self::slot_move_unfinished`] refusal, read from the `code` field.
     pub fn is_slot_move_unfinished(&self) -> bool {
         self.code == Some(SLOT_MOVE_UNFINISHED)
+    }
+
+    /// A sign-in refused because the owner record of the state it opened could not be written
+    /// ([`SLOT_OWNER_UNRECORDED`]); `message` says why, for the logs.
+    pub fn slot_owner_unrecorded(message: String) -> Self {
+        Self {
+            code: Some(SLOT_OWNER_UNRECORDED),
+            message,
+        }
+    }
+
+    /// True for a [`Self::slot_owner_unrecorded`] refusal, read from the `code` field.
+    pub fn is_slot_owner_unrecorded(&self) -> bool {
+        self.code == Some(SLOT_OWNER_UNRECORDED)
     }
 }
 

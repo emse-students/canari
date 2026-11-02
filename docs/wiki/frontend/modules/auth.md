@@ -893,11 +893,20 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   ledger (`sign_in`, `InstallGuard::install`). Outside it, a sign-in ended while it loaded (a page
   reload, then another account's sign-in) wrote its owner over the next account's slot and cleared
   that account's ledger. The owner record is load-bearing (the switch parks by it, a push join and
-  `save_mls_state` are bound by it), so a failure to write it fails the install.
-- **One page never runs two `initialiser_mls` at once, and the page ends no session after one fails.**
-  `TauriMlsService` queues every attempt (`queueNativeInit`); the native install guard alone ends the
-  session its selection claimed. The page's own unclaimed `terminer_session_mls` after a failed attempt
-  is gone (round 4): after a reload it ended the previous page's sign-in still loading natively.
+  `save_mls_state` are bound by it), so a failure to write it fails the install with ITS OWN code
+  (round 5: `SLOT_OWNER_UNRECORDED`, `MlsSlotOwnerUnrecordedError`, gate
+  `local_state_owner_unrecorded` - the device's storage, not "unknown" on every retry). In that same
+  hold the install is refused when the record names ANOTHER account, and a FRESH start (no state was
+  read) is refused when the slot now holds one - a backup restored into the empty slot while the fresh
+  sign-in loaded is neither re-owned nor sealed over (round 5).
+- **One page never runs two `initialiser_mls` at once, and the SERVICE ends no session after one
+  fails.** `TauriMlsService` queues every attempt (`queueNativeInit`); the native install guard ends
+  the session its selection claimed. The service's own unclaimed `terminer_session_mls` after a failed
+  attempt is gone (round 4). **The LOGIN still ends the process session once it has failed** -
+  `mlsHolder` `client reset`, unclaimed - and that is DELIBERATE (round 5, option (a)): it is the one
+  thing that clears a manager an orphaned sign-in of a reloaded page installed, so the next attempt can
+  take the slot; a sign-in it ends while loading writes nothing (the claim checks above). Pinned at the
+  login level by `composables/session/signOutDuringLogin.test.ts`.
 - **A frontend write of `mls.bin` names its account.** `save_mls_state` takes the `userId` and writes
   only when the slot's owner record names it or the slot holds no state (`write_account_mls_state`,
   `AccountStateWriteRefused::NotThisAccountsSlot`), the check and the write in one hold of the state
@@ -910,12 +919,32 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   (`slot_holds_state` is `state_file_absent` negated, a `Result`). The third REFUSES - the write, the
   fresh start, the move - never reads as "no". `mls_state_size` locates and measures in one hold of the
   state lock and rejects when it cannot answer (`mlsStateSize` propagates it) instead of answering 0.
+  Its rejection is TYPED like the sign-in's (round 5): an unfinished move of the account's own state is
+  `SLOT_MOVE_UNFINISHED`, so the login's state lookup reaches `local_state_move_unfinished` too.
+- **"Whose is the slot" has three answers as well** (round 5): `read_mls_state_owner` is a
+  `Result<Option<String>>` - an owner record that exists but cannot be read is an ERROR, never "no
+  owner", and every caller refuses on it (the selection, the frontend write, a join's
+  `slot_is_accounts_held`). A directory entry of `mls_accounts/` that cannot be read is accused at
+  ERROR and counted as an unfinished move, never skipped.
 - **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
   into the slot just handed over), a parked state to unpark into a slot holding an unrecorded one, and
   a fresh start over a slot holding a state, WHATEVER the selection (round 4; the caller decided "no
   state" on an answer that did not see it). The one fresh start that means to replace the state - the
   device identity rotation, after a cause no PIN repairs - says so (`replacesUnopenedState`,
-  `loadFreshStateReplacingUnopened`), and is still refused over a state an unpark just brought back.
+  `loadFreshStateReplacingUnopened`), and is honoured ONLY when the slot already held this account's
+  state (`Selection::AlreadyInSlot`, round 5): never over a state an unpark just brought back, nor over
+  an unproven one left in the slot.
+- **The "forgot PIN" reset is THE ACCOUNT'S** (round 5). It used to end the native session WITH A
+  SWEEP, which removes the slot whoever it belongs to: B's reset, from B's PIN gate with A in the slot,
+  deleted A's state. `removeMlsState` now ends the session without a sweep and calls
+  `reset_user_mls_state`, which removes B's parked state, B's residue, and the slot only when its owner
+  record names B. It is REFUSED - and asked first, BEFORE the server resets the PIN
+  (`mls_state_reset_refusal`, `handlePinReset`), so the old PIN keeps working - when B's own move is
+  unfinished, or when the slot holds a state NO owner record names: it may be another account's. The
+  gate says `auth_pin_reset_blocked_unproven_state`. The cost, taken knowingly: an install whose state
+  predates the owner record cannot use "forgot PIN" until the owning account signs in once on this
+  build (or the app's data is cleared). The sweep (`sweepState: true`) now has ONE caller, the factory
+  wipe of a revoked device (`deviceReset.ts`), whole-install by design.
 - **Every query takes its account**: `mls_state_size`, `mls_state_absent` and `load_mls_state` answer
   for `userId` (`account_state_file`), never for whichever account used the install last.
 - The `device_holds_other_account` gate above stays: it is what a REFUSED switch meets.
@@ -940,13 +969,19 @@ state and its residue, the fresh-start guard, the extension copy, the activation
 switch); `commands/mls.rs` (a sign-in refused by a loading one does not end it, through the guard AND
 through the command's own sequence `sign_in`; a superseded claim ends nothing, in both orders; a
 sign-out during a load refuses the install; a sign-in ended while it loaded writes neither its owner
-nor the stage report into the next account's slot; an unfinished move refuses with its typed code);
+nor the stage report into the next account's slot; an unfinished move refuses with its typed code;
+a fresh start is not installed over a state written while it loaded; an owner record that cannot be
+written fails with its own code); the PIN reset (`mls_account_state.rs`: only its own account's state
+removed, refused over a state of unproven owner; the size query types an unfinished move);
 `commands/storage.rs` (`save_mls_state` writes only its own account's slot, records the owner of an
-empty one, and finishes a cut park first); `mobile/key_group_join.rs` (a join writes nothing into a
+empty one, finishes a cut park first, and refuses on an unreadable owner record); `mobile/key_group_join.rs` (a join writes nothing into a
 slot that is not its account's); `services/TauriMlsService.initQueue.test.ts` (a second sign-in starts
 only after the first has failed, no session is ended from the page, a reloaded page's refused sign-in
 ends nothing, and only the rotation asks to replace a state); `services/TauriMlsService.stateOwner.test.ts`
-(an unfinished move is answered with nothing); `mls-client/mlsStateLoadError.test.ts` (the code is typed). **Native, verified by
+(an unfinished move and an unrecorded owner are answered with nothing); `mls-client/mlsStateLoadError.test.ts` (both codes are typed);
+`utils/hex.mlsStateSize.test.ts` (the size query's typed rejection; `removeMlsState` never sweeps and
+names its account); `composables/session/signOutDuringLogin.test.ts` (a refused sign-in's login ends
+the process session, the one end that clears an orphan). **Native, verified by
 compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
 [device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),
 is owed after a pre-release and before a stable

@@ -180,8 +180,8 @@ pub(crate) fn slot_holds_state(data_dir: &Path) -> Result<bool, String> {
 ///
 /// **THE ONE FRESH START THAT REPLACES A STATE SAYS SO** (`replaces_unopened_state`): the device
 /// identity rotation, after this account's state failed to open under a cause no PIN repairs. It is
-/// allowed only over a slot this attempt did not just fill - never over a state an unpark brought
-/// back, which nothing has tried to open yet.
+/// allowed only over THIS ACCOUNT'S OWN state (`Selection::AlreadyInSlot`, its owner record naming
+/// it) - never over a state of unproven owner, nor one an unpark just brought back (round 5).
 pub(crate) fn fresh_start_refusal(
     selection: Selection,
     caller_says_no_state: bool,
@@ -196,10 +196,9 @@ pub(crate) fn fresh_start_refusal(
             "a fresh start was asked and the slot could not be examined: {e}"
         )),
         Ok(false) => None,
-        Ok(true)
-            if replaces_unopened_state
-                && !matches!(selection, Selection::Moved { unparked: true, .. }) =>
-        {
+        // ONLY over this account's OWN state (round 5): the slot's owner record names it. Never over a
+        // state of unproven owner, nor one an unpark just brought back that nothing has tried to open.
+        Ok(true) if replaces_unopened_state && selection == Selection::AlreadyInSlot => {
             log::warn!(
                 "[MLS_ACCOUNT] a fresh start replaces the state that did not open (the device identity rotation asked for it)"
             );
@@ -400,7 +399,19 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
     };
     let mut parking = Vec::new();
     let mut unparking = Vec::new();
-    for entry in entries.filter_map(|e| e.ok()) {
+    let mut unreadable = 0usize;
+    for entry in entries {
+        // AN ENTRY THAT COULD NOT BE READ MAY BE A JOURNAL (round 5 of the review of #2919): skipped,
+        // a cut move would go unseen and a sign-in be admitted over it. Accused, and counted as an
+        // unfinished move against no account in particular - which refuses every sign-in.
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                log::error!("[MLS_ACCOUNT] an entry of {PARKED_STATES_DIR} could not be read: {e}");
+                unreadable += 1;
+                continue;
+            }
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         if let Some(account) = name.strip_suffix(UNPARKING_SUFFIX) {
             unparking.push((account.to_string(), entry.path()));
@@ -416,6 +427,12 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
         );
     }
     let mut unfinished = Vec::new();
+    if unreadable > 0 {
+        unfinished.push(UnfinishedMove {
+            account: String::new(),
+            park: true,
+        });
+    }
     for (account, staging) in parking {
         if let Err(e) = finish_park(data_dir, &staging) {
             log::error!("[MLS_ACCOUNT] a cut park could not be finished: {e}");
@@ -483,18 +500,23 @@ pub(crate) fn account_state_file(
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    account_state_file_held(data_dir, user_id)
+    account_state_file_held(data_dir, user_id).map_err(|e| e.to_string())
 }
 
-/// [`account_state_file`] for a caller holding [`mls_bin_write_lock`].
-fn account_state_file_held(data_dir: &Path, user_id: &str) -> Result<Option<PathBuf>, String> {
+/// [`account_state_file`] for a caller holding [`mls_bin_write_lock`]. An unfinished move of this
+/// account's own state is TYPED (`SelectionRefused::MoveUnfinished`, round 5): the login asks the
+/// state's size before it signs in, and the gate must meet the same code either way.
+fn account_state_file_held(
+    data_dir: &Path,
+    user_id: &str,
+) -> Result<Option<PathBuf>, SelectionRefused> {
     let unfinished = settle_pending_moves_held(data_dir);
     if let Some(refusal) = refusal_for(&unfinished, user_id, false) {
-        return Err(refusal);
+        return Err(SelectionRefused::MoveUnfinished(refusal));
     }
     let parked = parked_dir(data_dir, user_id);
     let slot_has_state = slot_holds_state(data_dir)?;
-    let located = match read_mls_state_owner(data_dir) {
+    let located = match read_mls_state_owner(data_dir)? {
         Some(owner) if owner == user_id => Some(data_dir.join("mls.bin")),
         _ if parked.exists() => Some(parked.join("mls.bin")),
         // NOT while a move stands unfinished: the unowned state may be the moving account's, its
@@ -522,20 +544,20 @@ fn account_state_file_held(data_dir: &Path, user_id: &str) -> Result<Option<Path
 /// one hold of [`mls_bin_write_lock`], so a switch cannot move the file between the two. A state that
 /// could not be located or examined is an `Err`, never a 0 (round 4 of the review of #2919): 0 is "no
 /// state", and a login that believed it would start fresh.
-pub(crate) fn account_state_size(data_dir: &Path, user_id: &str) -> Result<u64, String> {
+pub(crate) fn account_state_size(data_dir: &Path, user_id: &str) -> Result<u64, SelectionRefused> {
     if user_id.is_empty() {
-        return Err("no account named".to_string());
+        return Err("no account named".to_string().into());
     }
     let _guard = mls_bin_write_lock()
         .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        .map_err(|_| SelectionRefused::Other("mls_bin write lock poisoned".to_string()))?;
     let Some(path) = account_state_file_held(data_dir, user_id)? else {
         return Ok(0);
     };
     match std::fs::metadata(&path) {
         Ok(m) => Ok(m.len()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(e) => Err(format!("stat mls.bin: {e}")),
+        Err(e) => Err(format!("stat mls.bin: {e}").into()),
     }
 }
 
@@ -601,7 +623,7 @@ fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, SelectionRef
         log::error!("[MLS_ACCOUNT] sign-in refused: {refusal}");
         return Err(SelectionRefused::MoveUnfinished(refusal));
     }
-    let owner = read_mls_state_owner(data_dir);
+    let owner = read_mls_state_owner(data_dir)?;
     if owner.as_deref() != Some(user_id) && live_manager_in_process() {
         log::error!(
             "[MLS_ACCOUNT] a foreground manager is loaded or loading in this process - the slot is NOT switched under it"
@@ -820,12 +842,74 @@ pub(crate) struct Removed {
 /// account, matched exactly ([`is_residue_of`]) - an allowlist, so no other account's directory, and
 /// no unlisted entry of [`PARKED_STATES_DIR`], is ever reached.
 pub(crate) fn remove_account_state(data_dir: &Path, user_id: &str) -> Result<Removed, String> {
+    remove_account_state_with(data_dir, user_id, UnownedSlot::Leave)
+}
+
+/// What [`remove_account_state_with`] does with a slot holding a state NO owner record names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnownedSlot {
+    /// The deleted-account wipe: it is not the account's to judge, so it stays where it is.
+    Leave,
+    /// The PIN reset: the reset exists to give the account a fresh state, and a fresh start is
+    /// refused over a state in the slot - so the whole reset is REFUSED, before anything is removed,
+    /// rather than half-done over a state that may be another account's.
+    Refuse,
+}
+
+/// Why `user_id`'s PIN reset must not run on this install, `None` when it may - the check
+/// [`reset_account_state`] makes before it removes anything, asked by the frontend BEFORE it resets
+/// the PIN on the server, so a refused reset leaves the old PIN working.
+pub(crate) fn reset_refusal(data_dir: &Path, user_id: &str) -> Result<Option<String>, String> {
     if user_id.is_empty() {
         return Err("no account named".to_string());
     }
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    reset_refusal_held(data_dir, user_id)
+}
+
+/// [`reset_refusal`] under the lock.
+fn reset_refusal_held(data_dir: &Path, user_id: &str) -> Result<Option<String>, String> {
+    if let Some(refusal) = refusal_for(&settle_pending_moves_held(data_dir), user_id, false) {
+        return Ok(Some(refusal));
+    }
+    if read_mls_state_owner(data_dir)?.is_none() && slot_holds_state(data_dir)? {
+        log::error!(
+            "[MLS_ACCOUNT] the PIN reset is refused: the slot holds a state no owner record names - it may be another account's"
+        );
+        return Ok(Some("the slot holds a state of unproven owner".to_string()));
+    }
+    Ok(None)
+}
+
+/// THE "FORGOT PIN" RESET OF `user_id`, AND ONLY OF `user_id` (round 5 of the review of #2919): its
+/// parked state, its residue, and the slot ONLY when the slot's owner record names it. It used to end
+/// the native session WITH A SWEEP, which removes the slot whoever it belongs to - so account B's reset,
+/// from B's PIN gate with account A in the slot, deleted A's state and left B's parked one, which B's
+/// new PIN could not open. Refused, with nothing removed, over a slot holding a state of unproven owner
+/// ([`reset_refusal`]).
+pub(crate) fn reset_account_state(data_dir: &Path, user_id: &str) -> Result<Removed, String> {
+    remove_account_state_with(data_dir, user_id, UnownedSlot::Refuse)
+}
+
+/// [`remove_account_state`] and [`reset_account_state`], told what to do with an unowned slot.
+fn remove_account_state_with(
+    data_dir: &Path,
+    user_id: &str,
+    unowned: UnownedSlot,
+) -> Result<Removed, String> {
+    if user_id.is_empty() {
+        return Err("no account named".to_string());
+    }
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    if unowned == UnownedSlot::Refuse {
+        if let Some(refusal) = reset_refusal_held(data_dir, user_id)? {
+            return Err(refusal);
+        }
+    }
     let unfinished = settle_pending_moves_held(data_dir);
     if let Some(refusal) = refusal_for(&unfinished, user_id, false) {
         return Err(refusal);
@@ -835,7 +919,7 @@ pub(crate) fn remove_account_state(data_dir: &Path, user_id: &str) -> Result<Rem
         slot: false,
         residue_dirs: 0,
     };
-    if read_mls_state_owner(data_dir).as_deref() == Some(user_id) {
+    if read_mls_state_owner(data_dir)?.as_deref() == Some(user_id) {
         if live_manager_in_process() {
             log::error!(
                 "[MLS_ACCOUNT] the deleted account's state is in the slot under a loaded manager - not swept"
@@ -910,6 +994,41 @@ pub(crate) fn delete_user_mls_state(
     Ok(removed.parked_files + usize::from(removed.slot) + removed.residue_dirs)
 }
 
+/// The frontend's "forgot PIN" reset of `user_id`'s local MLS state ([`reset_account_state`]): the
+/// number of state files removed, counted as [`delete_user_mls_state`] counts them. The caller ends
+/// the native session first, WITHOUT a sweep.
+#[tauri::command]
+pub(crate) fn reset_user_mls_state(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<usize, String> {
+    use tauri::Manager;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    log::info!("[MLS_ACCOUNT] the PIN reset removes the account's local MLS state");
+    let removed = reset_account_state(&data_dir, &user_id)?;
+    Ok(removed.parked_files + usize::from(removed.slot) + removed.residue_dirs)
+}
+
+/// Why `user_id`'s PIN reset would be refused on this install, `None` when it may run - asked BEFORE
+/// the server resets the PIN ([`reset_refusal`]).
+#[tauri::command]
+pub(crate) fn mls_state_reset_refusal(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let refusal = reset_refusal(&data_dir, &user_id)?;
+    log::debug!("[MLS_ACCOUNT] the PIN reset may run: {}", refusal.is_none());
+    Ok(refusal)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -956,7 +1075,7 @@ mod tests {
     }
 
     fn owner(dir: &Path) -> Option<String> {
-        read_mls_state_owner(dir)
+        read_mls_state_owner(dir).unwrap()
     }
 
     /// Serialises with every other test that reads or flips the process-wide live-manager flag.
@@ -1536,11 +1655,84 @@ mod tests {
             "a fresh start over the slot's state is refused whatever the selection"
         );
         assert!(fresh_start_refusal(Selection::UnprovenLeftInSlot, true, false, &dir).is_some());
+        assert!(
+            fresh_start_refusal(Selection::UnprovenLeftInSlot, true, true, &dir).is_some(),
+            "a rotation never replaces a state of unproven owner"
+        );
         assert_eq!(
             fresh_start_refusal(Selection::AlreadyInSlot, true, true, &dir),
             None,
             "the rotation replaces the state that did not open"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (H1): B's "forgot PIN" reset, from B's PIN gate with A in the slot, removes B's parked
+    /// state and leaves A's slot - its bytes, its owner record, its ledgers - exactly as it was.
+    #[test]
+    fn a_pin_reset_removes_only_its_own_accounts_state() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-scoped");
+        sign_in_and_save(&dir, "user-b", b"state-b");
+        select(&dir, "user-a").unwrap();
+        sign_in_and_save(&dir, "user-a", b"state-a");
+        std::fs::write(dir.join("channel_keys.json"), b"{}").unwrap();
+
+        assert_eq!(reset_refusal(&dir, "user-b").unwrap(), None);
+        let removed = reset_account_state(&dir, "user-b").unwrap();
+        assert!(!removed.slot, "the slot is A's");
+        assert!(removed.parked_files > 0);
+        assert!(!parked_dir(&dir, "user-b").exists());
+        assert_eq!(slot(&dir).unwrap(), b"state-a");
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-a")
+        );
+        assert!(dir.join("channel_keys.json").exists());
+
+        // B's own reset over B's own slot does remove it.
+        let removed = reset_account_state(&dir, "user-a").unwrap();
+        assert!(removed.slot);
+        assert_eq!(slot(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (H1): over a slot holding a state NO record names, the reset is refused before
+    /// anything is removed - the account's parked state included.
+    #[test]
+    fn a_pin_reset_is_refused_over_a_state_of_unproven_owner() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-unproven");
+        sign_in_and_save(&dir, "user-b", b"state-b");
+        select(&dir, "user-a").unwrap();
+        std::fs::write(dir.join("mls.bin"), b"state-of-nobody-proven").unwrap();
+
+        assert!(reset_refusal(&dir, "user-b").unwrap().is_some());
+        assert!(reset_account_state(&dir, "user-b").is_err());
+        assert!(
+            parked_dir(&dir, "user-b").exists(),
+            "nothing removed on a refusal"
+        );
+        assert_eq!(slot(&dir).unwrap(), b"state-of-nobody-proven");
+        // The deleted-account wipe still leaves it in place and goes on.
+        assert!(remove_account_state(&dir, "user-b").is_ok());
+        assert_eq!(slot(&dir).unwrap(), b"state-of-nobody-proven");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (L3): an unfinished move of the account's OWN state is typed where the login meets it
+    /// first - the size it asks before signing in.
+    #[test]
+    fn the_size_query_types_an_unfinished_move_of_the_accounts_own_state() {
+        let _cold = cold();
+        let dir = temp_dir("size-own-unfinished");
+        sign_in_and_save(&dir, "user-a", b"state-a");
+        let journal = start_park_for_test(&dir, "user-a");
+        std::fs::write(journal.join("mls.bin"), b"state-a-older").unwrap();
+        assert!(matches!(
+            account_state_size(&dir, "user-a"),
+            Err(SelectionRefused::MoveUnfinished(_))
+        ));
         std::fs::remove_dir_all(&dir).ok();
     }
 

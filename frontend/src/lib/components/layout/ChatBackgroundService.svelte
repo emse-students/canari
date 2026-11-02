@@ -2186,6 +2186,22 @@
       pinError = m.auth_pin_reset_withheld_key_unreadable();
       return;
     }
+    // ASKED BEFORE THE SERVER RESETS THE PIN (round 5 of the review of #2919): a local reset the
+    // native side would refuse - a saved state no owner record names, maybe another account's - must
+    // leave the old PIN working, not half-reset the account.
+    try {
+      const { mlsStateResetRefusal } = await import('$lib/utils/hex');
+      const refusal = await mlsStateResetRefusal(uid);
+      if (refusal) {
+        appendLog(`[PIN_RESET] REFUSED locally, the server not asked - ${refusal}`);
+        pinError = m.auth_pin_reset_blocked_unproven_state();
+        return;
+      }
+    } catch (e) {
+      appendLog(`[PIN_RESET] REFUSED - whether the reset may run could not be read: ${String(e)}`);
+      pinError = m.auth_pin_reset_failed();
+      return;
+    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();

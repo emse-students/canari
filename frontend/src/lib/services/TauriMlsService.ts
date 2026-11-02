@@ -50,7 +50,11 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
-import { MlsSlotMoveUnfinishedError, mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
+import {
+  MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
+  mlsStateLoadErrorOf,
+} from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
@@ -67,7 +71,8 @@ import { conformPluginFetch } from '$lib/utils/transportFailure';
  * attempt selects, loads, and installs or is refused before the next one starts. A page that RELOADS
  * gets a new queue while its previous page's attempt may still be loading natively; that one is
  * covered on the native side, where every step of an attempt is checked against the session it
- * claimed and an attempt whose session ended writes nothing (round 4).
+ * claimed and an attempt whose session ended writes nothing (round 4). The SERVICE ends no session
+ * after a failed attempt; the LOGIN does, once it has failed - see `mlsHolder` (`client reset`).
  */
 let nativeInitQueue: Promise<unknown> = Promise.resolve();
 
@@ -777,7 +782,9 @@ export class TauriMlsService extends BaseMlsService {
       // AN UNFINISHED MOVE BETWEEN TWO ACCOUNTS' STATES IS NO VERDICT ON ANY STATE: nothing was opened,
       // so nothing below - a re-seal, a rotation, a reset offered by the gate - may answer it. The
       // move is retried at the next sign-in (`mls_account_state.rs`).
-      if (e instanceof MlsSlotMoveUnfinishedError) throw e;
+      if (e instanceof MlsSlotMoveUnfinishedError || e instanceof MlsSlotOwnerUnrecordedError) {
+        throw e;
+      }
       // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
       // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
       // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
@@ -1143,10 +1150,10 @@ export class TauriMlsService extends BaseMlsService {
   /**
    * The account `mls.bin` was last opened for, `null` when none is recorded (`mls_state_owner`).
    *
-   * Asked only once a load has FAILED, so a sign-in that opens its state pays nothing for it. The
-   * command never rejects for a missing or unreadable record (it answers `null` and logs natively);
-   * a rejection here is the bridge itself failing, and it propagates - read as "no owner", it would
-   * hand the gate a reset that may delete another account's state.
+   * Asked only once a load has FAILED, so a sign-in that opens its state pays nothing for it. A
+   * missing record answers `null`; a record that exists and could not be READ rejects (round 5 of the
+   * review of #2919), and so does the bridge failing - either propagates, because read as "no owner"
+   * it would hand the gate a reset that may delete another account's state.
    */
   private async savedStateOwner(): Promise<string | null> {
     return (await invoke<string | null>('mls_state_owner')) ?? null;
@@ -1237,12 +1244,15 @@ export class TauriMlsService extends BaseMlsService {
         },
       });
     } catch (e) {
-      // A FAILED INSTALL LEAVES NO SESSION BEHIND, AND THE NATIVE INSTALL GUARD ALONE ENDS IT: on
-      // every exit that did not install, it ends exactly the session ITS selection claimed - and
-      // nothing when it was refused before claiming one, because the session that refused it is
-      // another sign-in's (round 4 of the review of #2919). The page used to end the native session
-      // here too, UNCLAIMED: after a reload, that ended a previous page's sign-in still loading
-      // natively. The install's own error propagates, typed HERE at the invoke boundary: the
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND: the native install guard ends exactly the
+      // session ITS selection claimed, on every exit that did not install - and nothing when it was
+      // refused before claiming one. THIS SERVICE ends nothing more here (round 4 of the review of
+      // #2919): an unclaimed end at this point ran inside every failed attempt, the legacy-migration
+      // retry's included. The LOGIN, once it has failed as a whole, still ends the process session
+      // unclaimed (`mlsHolder` `client reset`) - deliberately: that is what clears a manager an
+      // orphaned sign-in of a reloaded page installed, and an attempt whose session that end
+      // supersedes writes nothing into the slot (round 5). The install's own error propagates, typed
+      // HERE at the invoke boundary: the
       // command rejects with `{ code, message }` (`StateLoadRefusal`), so `classifyStateLoadFailure`
       // and the login read a TYPE, never the message. No older string shape is understood: the app
       // embeds this frontend, so the native half that answers is always the one built with it.

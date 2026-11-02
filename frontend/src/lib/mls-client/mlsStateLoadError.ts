@@ -29,6 +29,22 @@ const KEYSTORE_KEY_UNAVAILABLE = 'KEYSTORE_KEY_UNAVAILABLE';
 /** The code of a sign-in refused over an unfinished move between two accounts' state places. */
 const SLOT_MOVE_UNFINISHED = 'SLOT_MOVE_UNFINISHED';
 
+/** The code of a sign-in whose opened state's owner record could not be written. */
+const SLOT_OWNER_UNRECORDED = 'SLOT_OWNER_UNRECORDED';
+
+/**
+ * The sign-in opened its state but could not record, beside it, which account it is
+ * (`StateLoadRefusal::slot_owner_unrecorded`): the device's storage refused a small write. NOT a
+ * verdict on the state - it opened - and nothing was installed or destroyed; the next sign-in writes
+ * the record again.
+ */
+export class MlsSlotOwnerUnrecordedError extends Error {
+  constructor(detail: string, cause?: unknown) {
+    super(`${SLOT_OWNER_UNRECORDED}: ${detail}`, { cause });
+    this.name = 'MlsSlotOwnerUnrecordedError';
+  }
+}
+
 /**
  * The native app keeps one MLS state per account, and a move of one between two accounts' places was
  * cut part-way and could not be finished (`StateLoadRefusal::slot_move_unfinished`, the per-account
@@ -113,6 +129,12 @@ export function mlsStateLoadErrorOf(rejection: unknown): Error {
       `[MLS] The sign-in was refused: a move of a local state between two accounts is unfinished - nothing destroyed, retried at the next sign-in: ${message.slice(0, 200)}`
     );
     return new MlsSlotMoveUnfinishedError(message, rejection);
+  }
+  if (code === SLOT_OWNER_UNRECORDED) {
+    console.error(
+      `[MLS] The sign-in opened its state but could not record its owner - nothing installed, nothing destroyed: ${message.slice(0, 200)}`
+    );
+    return new MlsSlotOwnerUnrecordedError(message, rejection);
   }
   console.error(
     `[MLS] A state load failed with the code '${code.slice(0, 60)}', outside the closed set - a bindings mismatch; untyped, nothing will be destroyed on account of it`

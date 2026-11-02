@@ -69,6 +69,13 @@ export type LoginErrorCode =
    * predicates below.
    */
   | 'local_state_move_unfinished'
+  /**
+   * PIN accepted, the native app OPENED this device's local MLS state, and could not record beside it
+   * which account it is (`MlsSlotOwnerUnrecordedError`): the device's storage refused a small write.
+   * Nothing was installed, rotated or deleted; the sentence names the storage and says to retry, and
+   * no reset is offered. In NONE of the predicates below.
+   */
+  | 'local_state_owner_unrecorded'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */

@@ -1150,6 +1150,10 @@ lines.
    relaunch it once: `[CanariPush] mirror to App Group done` appears, and no
    `[CanariPush] mirror mls.bin failed`.
 4. **Reboot.** Unlock once, lock, the third device writes to B: the content shows.
+4b. **B's "forgot PIN" leaves A intact.** With A having signed in last, sign in as B and take "forgot
+   PIN" at B's PIN gate. Expect `[MLS_ACCOUNT] the PIN reset removes the account's local MLS state`
+   and no `terminer_session_mls` with a sweep; A's state - in the slot with `mls.owner` naming A, or
+   parked under A's directory - has the same sha256 as before, and A then signs in with its history.
 5. **The greps, over the whole run, each ZERO:** `residue`, `TWO STATES`, `cut part-way`,
    `unproven owner`, `sign-in refused`, `superseded`, `not the push's account`.
 6. **The files** (`xcrun devicectl device info files` on the app container and the App Group): ONE

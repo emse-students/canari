@@ -18,6 +18,7 @@ import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
 import {
   KeystoreKeyUnavailableError,
   MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
 } from '$lib/mls-client/mlsStateLoadError';
 import { TauriMlsService } from './TauriMlsService';
 
@@ -118,6 +119,17 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     expect(err).toBeInstanceOf(MlsSlotMoveUnfinishedError);
     expect(rotate).not.toHaveBeenCalled();
     expect(calls('initialiser_mls')).toBe(1);
+    expect(calls('mls_state_owner')).toBe(0);
+  });
+
+  it('answers an owner record that could not be written with nothing either', async () => {
+    disk({ code: 'SLOT_OWNER_UNRECORDED', message: 'disk full' }, 'alice');
+    const { svc, rotate } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, { stateOnDisk: true }));
+
+    expect(err).toBeInstanceOf(MlsSlotOwnerUnrecordedError);
+    expect(rotate).not.toHaveBeenCalled();
     expect(calls('mls_state_owner')).toBe(0);
   });
 

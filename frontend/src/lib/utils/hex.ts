@@ -1,3 +1,4 @@
+import { mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
@@ -483,9 +484,24 @@ export async function mlsStateSize(userId: string): Promise<number> {
   try {
     return await invoke<number>('mls_state_size', { userId });
   } catch (e) {
+    // TYPED at the boundary, like `initialiser_mls`'s refusals (`{ code, message }`): an unfinished
+    // move of this account's own state is `MlsSlotMoveUnfinishedError`, which the gate answers.
     console.error('[MLS] mls_state_size failed - the saved state is not known, not absent:', e);
-    throw e;
+    throw mlsStateLoadErrorOf(e);
   }
+}
+
+/**
+ * Why the "forgot PIN" reset of `userId` must not run on this device, `null` when it may - asked
+ * BEFORE the server resets the PIN, so a reset refused here leaves the old PIN working (round 5 of
+ * the review of #2919). On a phone, refused when the slot holds a saved state no owner record names:
+ * it may be another account's, and the reset would erase it (`mls_state_reset_refusal`). The web keeps
+ * one store per account and has nothing to refuse.
+ */
+export async function mlsStateResetRefusal(userId: string): Promise<string | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return (await invoke<string | null>('mls_state_reset_refusal', { userId })) ?? null;
 }
 
 /**
@@ -567,12 +583,16 @@ export async function removeMlsState(userId: string): Promise<void> {
   }
 
   if (isTauriRuntime()) {
-    // The native session ends in the same hold as the sweep, so no manager outlives its files.
-    try {
-      await endNativeMlsSession('state reset', { sweepState: true });
-    } catch (e) {
-      console.warn('[MLS] ending the native MLS session with its state failed:', e);
-    }
+    // THIS ACCOUNT'S STATE, AND ONLY ITS (round 5 of the review of #2919): the native session ends
+    // WITHOUT a sweep - a sweep removes the slot whoever it belongs to, and the "forgot PIN" reset of
+    // account B, from B's PIN gate with account A in the slot, deleted A's state - then the native
+    // side removes B's parked state, B's residue, and the slot only when its owner record names B
+    // (`reset_user_mls_state`). A refusal propagates: a reset that removed nothing must not be
+    // reported as done.
+    await endNativeMlsSession('state reset', { sweepState: false });
+    const { invoke } = await import('@tauri-apps/api/core');
+    const removed = await invoke<number>('reset_user_mls_state', { userId });
+    console.log(`[MLS] the account's local MLS state reset: ${removed} file(s) removed`);
     return;
   }
 

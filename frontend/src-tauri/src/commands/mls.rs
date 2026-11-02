@@ -232,6 +232,7 @@ fn sign_in(
                 supplied
             }
         };
+        install.starts_fresh = encrypted_state.is_none();
         load(encrypted_state, claim)
     };
     match attempt(&mut install) {
@@ -255,6 +256,9 @@ struct InstallGuard {
     /// The data directory and the account the selection gave the slot to - where the install records
     /// the owner and reports the background stages.
     selected: Option<(std::path::PathBuf, String)>,
+    /// This attempt loaded no state: its manager is a FRESH one, whose install requires the slot to
+    /// be still empty.
+    starts_fresh: bool,
 }
 
 /// How an [`initialiser_mls`] attempt ended, as [`InstallGuard`] knows it when it drops - a TYPE, so
@@ -288,6 +292,7 @@ impl InstallGuard {
             outcome: InstallOutcome::Unreported,
             claim: None,
             selected: None,
+            starts_fresh: false,
         }
     }
 
@@ -345,12 +350,19 @@ impl InstallGuard {
     /// a sign-in ended while it loaded wrote its owner over the NEXT account's slot and cleared that
     /// account's stage ledger. **THE OWNER RECORD IS LOAD-BEARING** (the switch parks by it, a push
     /// join is bound by it, `save_mls_state` writes by it), so a failure to write it fails the install.
-    fn install(mut self, manager: MlsManager, key: [u8; 32]) -> Result<(), String> {
+    ///
+    /// **AND ONLY OVER THE SLOT IT LOADED** (round 5): in the same hold, the slot's owner record must
+    /// not name another account, and a FRESH start's slot must still hold no state. A write that
+    /// reached the slot while this sign-in loaded - a backup restored by `save_mls_state` into the
+    /// empty slot, which records its own account - would otherwise have its owner overwritten here
+    /// and its bytes overwritten by this manager's first checkpoint. Refused, nothing is written.
+    fn install(mut self, manager: MlsManager, key: [u8; 32]) -> Result<(), StateLoadRefusal> {
         let claim = self.claimed()?;
         let (data_dir, user_id) = self
             .selected
             .clone()
             .ok_or_else(|| "initialiser_mls reached its install without a selection".to_string())?;
+        let starts_fresh = self.starts_fresh;
         let installed = {
             let mut slot = self
                 .manager_state
@@ -360,8 +372,35 @@ impl InstallGuard {
                 .device_key_state
                 .lock()
                 .map_err(|_| "Failed to lock device key".to_string())?;
-            crate::concurrency::while_claim_current(claim, || -> Result<(), String> {
-                crate::commands::storage::record_mls_state_owner(&data_dir, &user_id)?;
+            crate::concurrency::while_claim_current(claim, || -> Result<(), StateLoadRefusal> {
+                let owner = crate::commands::storage::read_mls_state_owner(&data_dir)?;
+                if owner.as_deref().is_some_and(|owner| owner != user_id) {
+                    log::error!(
+                        "[MLS] the slot's owner record names another account since this sign-in selected it - not installed"
+                    );
+                    return Err("the slot changed hands while this sign-in loaded"
+                        .to_string()
+                        .into());
+                }
+                if starts_fresh && crate::commands::mls_account_state::slot_holds_state(&data_dir)?
+                {
+                    log::error!(
+                        "[MLS] a state was written into the slot while this fresh start loaded - not installed, nothing sealed over it"
+                    );
+                    return Err(
+                        "a state was written into the slot while this sign-in loaded"
+                            .to_string()
+                            .into(),
+                    );
+                }
+                crate::commands::storage::record_mls_state_owner(&data_dir, &user_id).map_err(
+                    |e| {
+                        log::error!(
+                            "[MLS] initialiser_mls NOT installed: the owner of mls.bin could not be recorded ({e}) - the manager is dropped"
+                        );
+                        StateLoadRefusal::slot_owner_unrecorded(e)
+                    },
+                )?;
                 // A stage a background Welcome left in mls.bin is reported against what was loaded.
                 crate::commands::storage::report_background_stages_held(&data_dir, &manager);
                 *cached_key = Some(key);
@@ -374,14 +413,9 @@ impl InstallGuard {
                 log::error!(
                     "[MLS] initialiser_mls NOT installed: {superseded} - the manager is dropped, nothing of this sign-in was written"
                 );
-                return Err(superseded.to_string());
+                return Err(superseded.to_string().into());
             }
-            Ok(Err(e)) => {
-                log::error!(
-                    "[MLS] initialiser_mls NOT installed: the owner of mls.bin could not be recorded ({e}) - the manager is dropped"
-                );
-                return Err(format!("recording the owner of mls.bin: {e}"));
-            }
+            Ok(Err(refusal)) => return Err(refusal),
             Ok(Ok(())) => {}
         }
         self.outcome = InstallOutcome::Installed;
@@ -2315,9 +2349,11 @@ mod tests {
     }
 
     /// ROUND 4 (H1), THROUGH THE COMMAND'S OWN SEQUENCE: a sign-in refused AT ITS SELECTION because
-    /// another one is loading ends nothing - the loading one then installs, its owner recorded. The
-    /// page no longer ends a session after a failed `initialiser_mls` either (`TauriMlsService`, pinned
-    /// by `TauriMlsService.stateOwner.test.ts`): the guard alone ends exactly the session it claimed.
+    /// another one is loading ends nothing BY ITSELF - the loading one then installs, its owner
+    /// recorded. What this pins is the command: the full login flow, on a failed login, DOES end the
+    /// process session afterwards, unclaimed (`mlsHolder` `client reset`, pinned at the login level by
+    /// `signOutDuringLogin.test.ts`) - deliberately, it is what clears an orphan's installed manager,
+    /// and an attempt it ends writes nothing (`a_sign_in_ended_while_it_loaded_writes_nothing_into_the_slot`).
     #[test]
     fn a_sign_in_refused_at_its_selection_does_not_end_the_loading_one() {
         let _s = serialise();
@@ -2364,10 +2400,81 @@ mod tests {
         assert!(manager.lock().unwrap().is_some());
         assert_eq!(*key.lock().unwrap(), Some(KEY_A));
         assert_eq!(
-            crate::commands::storage::read_mls_state_owner(&dir).as_deref(),
+            crate::commands::storage::read_mls_state_owner(&dir)
+                .unwrap()
+                .as_deref(),
             Some("guard-a")
         );
         crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (L4): a backup restored into the EMPTY slot while a fresh sign-in of another account
+    /// loads (`save_mls_state`, which records its own account) is neither re-owned nor sealed over: the
+    /// fresh sign-in's install is refused and writes nothing.
+    #[test]
+    fn a_fresh_start_is_not_installed_over_a_state_written_while_it_loaded() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("restored-while-fresh");
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-a"),
+            |_, _| {
+                crate::commands::storage::write_account_mls_state(&dir, "guard-b", b"restored-b")
+                    .unwrap();
+                Ok((
+                    MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        )
+        .unwrap_err();
+
+        assert!(!refused.is_slot_owner_unrecorded());
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"restored-b");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(MLS_STATE_OWNER_FILE)).unwrap(),
+            "guard-b"
+        );
+        assert!(manager.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (L2): an owner record that cannot be WRITTEN fails the install with its own code - the
+    /// gate says the device's storage is the cause, not "unknown" on every retry - and installs nothing.
+    #[test]
+    fn an_owner_record_that_cannot_be_written_fails_the_install_with_its_own_code() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("owner-unwritable");
+        // A directory where the record's temporary file goes: the write fails, the read does not.
+        std::fs::create_dir_all(dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp"))).unwrap();
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-a"),
+            |_, _| {
+                Ok((
+                    MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        )
+        .unwrap_err();
+
+        assert!(refused.is_slot_owner_unrecorded());
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -1,6 +1,7 @@
 import {
   KeystoreKeyUnavailableError,
   MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
   MlsStateLoadUntypedError,
   mlsStateLoadErrorOf,
 } from './mlsStateLoadError';
@@ -44,6 +45,13 @@ describe('mlsStateLoadErrorOf', () => {
     expect(typed).toBeInstanceOf(MlsSlotMoveUnfinishedError);
     expect(typed).not.toBeInstanceOf(MlsStateVerdictError);
     expect(typed.message).toBe('SLOT_MOVE_UNFINISHED: a cut park');
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it('types an owner record that could not be written as MlsSlotOwnerUnrecordedError, accused once', () => {
+    const typed = mlsStateLoadErrorOf({ code: 'SLOT_OWNER_UNRECORDED', message: 'disk full' });
+    expect(typed).toBeInstanceOf(MlsSlotOwnerUnrecordedError);
+    expect(typed.message).toBe('SLOT_OWNER_UNRECORDED: disk full');
     expect(error).toHaveBeenCalledTimes(1);
   });
 

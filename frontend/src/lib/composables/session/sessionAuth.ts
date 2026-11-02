@@ -69,7 +69,10 @@ import {
   type VaultRefusal,
 } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
-import { MlsSlotMoveUnfinishedError } from '$lib/mls-client/mlsStateLoadError';
+import {
+  MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
+} from '$lib/mls-client/mlsStateLoadError';
 import {
   getToken,
   clearAuth,
@@ -650,6 +653,22 @@ export async function forgetAtRestMarkerOnceDataIsGone(
   } catch (e) {
     log(`[SECURITY] ERROR: the at-rest key marker could not be forgotten: ${String(e)}`);
   }
+}
+
+/**
+ * The gate's answer to a refusal of the native per-account slot - typed by the native side, never
+ * read from a message - or `null` for anything else. Neither is a verdict on a state, so neither
+ * offers anything destructive: an unfinished move is resumed by a restart, an owner record that could
+ * not be written is the device's storage.
+ */
+function loginFailureOfSlotRefusal(reason: unknown): LoginFailure | null {
+  if (reason instanceof MlsSlotMoveUnfinishedError) {
+    return new LoginFailure('local_state_move_unfinished', m.auth_local_state_move_unfinished());
+  }
+  if (reason instanceof MlsSlotOwnerUnrecordedError) {
+    return new LoginFailure('local_state_owner_unrecorded', m.auth_local_state_owner_unrecorded());
+  }
+  return null;
 }
 
 /**
@@ -1332,13 +1351,21 @@ export async function loginImpl(
       { bytes?: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
       if (isTauriRuntime()) {
-        const size = await mlsStateSize(ctx.getUserId());
+        // THE SIZE IS ASKED FIRST, so the per-account slot's typed refusals (an unfinished move of
+        // this account's own state) are met HERE before the sign-in can meet them - and must reach
+        // the same gate (round 5 of the review of #2919).
+        const size = await mlsStateSize(ctx.getUserId()).catch((e: unknown) => {
+          throw loginFailureOfSlotRefusal(e) ?? e;
+        });
         return size > 0 ? { source: 'native' } : undefined;
       }
       const loaded = await loadMlsState(ctx.getUserId());
       if (!loaded) return undefined;
       return { bytes: loaded, source: 'indexeddb' };
     })();
+    // Awaited further down, after the token: a rejection before then must not surface as an
+    // unhandled one. The `await` below still throws it.
+    mlsStatePromise.catch(() => undefined);
 
     let accessToken: string;
     try {
@@ -1678,11 +1705,8 @@ export async function loginImpl(
       const reason = mlsInitSettled.reason;
       // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
-      // A move between two accounts' local states could not be finished: nothing was opened, and a
-      // restart retries it - the gate says so and offers nothing destructive.
-      if (reason instanceof MlsSlotMoveUnfinishedError) {
-        throw new LoginFailure('local_state_move_unfinished', m.auth_local_state_move_unfinished());
-      }
+      const slotRefusal = loginFailureOfSlotRefusal(reason);
+      if (slotRefusal) throw slotRefusal;
       if (
         reason instanceof SavedStateUnopenedError ||
         reason instanceof SavedStateOfAnotherAccountError ||
