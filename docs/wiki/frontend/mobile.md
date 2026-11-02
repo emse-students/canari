@@ -2322,7 +2322,7 @@ push.** With `platform_config.push_mode = wake` and a registration that declared
 carries only `type`, `queuedMessageId`, `silent` and, for a mentions-only conversation,
 `notifLevel`. Each native receiver fetches `GET /api/mls/push/wake` with the PushSecret and runs the
 answer through its ONE existing path: Android `onWakePush` fetches OFF the MLS lane and
-`WakeOrder` hands the lane every push, wake or full, in ARRIVAL order (a full push cannot overtake an earlier wake still fetching; the fetch is held to a 20 s overall deadline) -> `dispatchPush` (`WakeAnswer.classify`
+`WakeOrder` hands the lane every push, wake or full, in ARRIVAL order (a full push cannot overtake an earlier wake still fetching; every wake ticket is settled at most 20 s after it ARRIVED, so nothing waits longer than that behind it) -> `dispatchPush` (`WakeAnswer.classify`
 decides frame / gone / failed), the iOS extension `handleWake` -> `dispatch` (the fetched map merged
 into `userInfo`, stage `wake-fetch`, the run re-kinded to the fetched type, causes `wake-<stage>`
 letter-only), the iOS app

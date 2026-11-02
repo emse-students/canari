@@ -3,7 +3,7 @@ package fr.emse.canari.push
 import java.util.TreeMap
 
 /**
- * ARRIVAL ORDER, FOR EVERY PUSH BOUND FOR THE MLS LANE - WAKE-UP OR FULL
+ * ARRIVAL ORDER, FOR EVERY PUSH BOUND FOR THE MLS LANE - WAKE-UP OR FULL - WITHIN A BOUND
  * (docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
  *
  * The lane is the device's single writer of `mls.bin`, and the order it runs work in is load-bearing:
@@ -14,56 +14,73 @@ import java.util.TreeMap
  *
  * So every push takes a ticket ON ARRIVAL, and nothing reaches the lane but in ticket order:
  *
- * - a full push: [inOrder] - a ticket taken and completed at once; it is released as soon as every
- *   earlier ticket is;
- * - a wake-up push: [take] on arrival, [complete] when its fetch returns, whatever it returned;
+ * - a full push, or new work a lane task spawns: [inOrder] - a ticket taken and settled at once;
+ * - a wake-up push: [arrive], settled by whichever comes first - its fetch's result ([settle]) or
+ *   its deadline, [deadlineMs] after ARRIVAL, which settles it with the action given to [arrive];
  * - work queued from INSIDE a release (the fetched frame's own dispatch) is already in its turn:
- *   [inOrder] hands it straight to the lane, under no new ticket.
+ *   [inOrder] hands it straight on, under no new ticket.
  *
- * Releases run under this object's monitor, so two completions can never interleave theirs.
+ * THE BOUND, BY CONSTRUCTION: every wake ticket is settled at most [deadlineMs] after it arrived,
+ * whether its fetch is queued, running or stuck, because the deadline is scheduled at arrival and
+ * does not wait for the fetch to start. So a push is released at most [deadlineMs] after the LATEST
+ * arrival among the wakes ahead of it - never "N stalled wakes times the fetch timeout". A fetch
+ * that returns after its ticket was settled finds [settle] answering `null`: its result is dropped,
+ * and the caller logs that.
  *
- * TERMINATION IS A PROOF, NOT A CLOCK: a ticket is held up only by an earlier wake whose fetch has
- * not returned; every fetch returns within its overall deadline (`WAKE_FETCH_DEADLINE_MS`), and its
- * ticket is completed on EVERY path - the fetch thread's `finally`, and the arrival thread itself if
- * the fetch could not even be scheduled.
+ * Actions run in ticket order under this object's monitor, so two settlements can never interleave
+ * theirs; an action that throws does not strand the ones behind it. No action may WAIT on the order.
  *
  * Compiled by the JVM test project too, so nothing here may import Android (see [PushRecoveryLadder]).
+ *
+ * @param deadlineMs How long after its arrival a wake ticket may stay unsettled.
+ * @param schedule Runs a task once, `delayMs` from now (production: a single-thread scheduled
+ *   executor; tests: a recorder they fire by hand, so no test asserts a wall clock).
  */
-class WakeOrder {
+class WakeOrder(
+    private val deadlineMs: Long,
+    private val schedule: (delayMs: Long, task: () -> Unit) -> Unit,
+) {
     private var nextTicket = 0L
     private var nextToRelease = 0L
-    private val completed = TreeMap<Long, () -> Unit>()
+    private val settled = TreeMap<Long, () -> Unit>()
 
     /** Whether THIS thread is running a release right now. */
     private val releasing = ThreadLocal.withInitial { false }
 
-    /** The next ticket, in arrival order. */
-    @Synchronized
-    fun take(): Long = nextTicket++
+    /**
+     * A wake-up push arrives: its ticket, in arrival order, with its deadline scheduled NOW. Unless
+     * [settle] came first, [onDeadline] is what the ticket is settled with [deadlineMs] from now.
+     */
+    fun arrive(onDeadline: () -> Unit): Long {
+        val ticket = synchronized(this) { nextTicket++ }
+        schedule(deadlineMs) { settle(ticket, onDeadline) }
+        return ticket
+    }
 
     /**
-     * Records [action] as ticket [ticket]'s result and hands every action now at the head to
-     * [release], in ticket order, under this object's monitor.
+     * Settles [ticket] with [action] - the FIRST settlement wins - and runs every action now at the
+     * head, in ticket order, under this object's monitor.
      *
-     * @return how many actions were released by this call (0 while an earlier ticket is still out).
+     * @return how many actions ran (0 while an earlier ticket is still out), or `null` when the
+     *   ticket was already settled - a late fetch after its deadline - and [action] was dropped.
      */
     @Synchronized
-    fun complete(ticket: Long, action: () -> Unit, release: (() -> Unit) -> Unit): Int {
-        require(ticket in nextToRelease until nextTicket) { "ticket $ticket was not handed out or was already released" }
-        require(!completed.containsKey(ticket)) { "ticket $ticket completed twice" }
-        completed[ticket] = action
+    fun settle(ticket: Long, action: () -> Unit): Int? {
+        require(ticket < nextTicket) { "ticket $ticket was never handed out" }
+        if (ticket < nextToRelease || settled.containsKey(ticket)) return null
+        settled[ticket] = action
         var released = 0
         // One action that throws must not strand the ones behind it: the loop runs to the end and
         // the first failure is rethrown after it, for the caller to log.
         var failure: Throwable? = null
         while (true) {
-            val head = completed.remove(nextToRelease) ?: break
+            val head = settled.remove(nextToRelease) ?: break
             nextToRelease++
             released++
             val outer = releasing.get() == true
             releasing.set(true)
             try {
-                release(head)
+                head()
             } catch (e: Throwable) {
                 if (failure == null) failure = e
             } finally {
@@ -75,20 +92,20 @@ class WakeOrder {
     }
 
     /**
-     * A push that needs no fetch: released in arrival order - at once when nothing earlier is out,
-     * after the earlier wakes otherwise. Called from inside a release, it is already in its turn and
-     * goes straight to [release].
+     * Work that needs no fetch: run in arrival order - at once when nothing earlier is out, after
+     * the earlier wakes otherwise (within their bound). Called from inside a release, it is already
+     * in its turn and runs straight away.
      *
-     * @return true when [action] was released by this call, false when it waits on an earlier ticket.
+     * @return true when [action] ran in this call, false when it waits on an earlier ticket.
      */
-    fun inOrder(action: () -> Unit, release: (() -> Unit) -> Unit): Boolean {
+    fun inOrder(action: () -> Unit): Boolean {
         if (releasing.get() == true) {
-            release(action)
+            action()
             return true
         }
         synchronized(this) {
-            val ticket = take()
-            complete(ticket, action, release)
+            val ticket = nextTicket++
+            settle(ticket, action)
             return ticket < nextToRelease
         }
     }

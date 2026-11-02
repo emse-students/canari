@@ -108,10 +108,14 @@ drawn as the generic text:
   thing lost, and the next activation clears every conversation's notifications anyway).
 
 No retry: one request. On iOS it is bounded by the transport's own timeout (5 s, as `fetch-proto`);
-on Android the WHOLE fetch, DNS lookup to last byte, is held to `WAKE_FETCH_DEADLINE_MS` = 20 s
-(`connectTimeout` does not cover DNS, and `readTimeout` bounds each read, not the response): past it
-the connection is disconnected, the call abandoned on its own pool, and the fetch is a failure logged
-at ERROR as `stage=deadline`. The fetch's wake lock is that deadline plus 10 s. Every client asks
+on Android a wake is bounded FROM ITS ARRIVAL: `WAKE_FETCH_DEADLINE_MS` = 20 s covers the wait for a
+fetch thread, the DNS lookup (which `connectTimeout` does not cover), the connect and the last byte
+(which `readTimeout`, per read, does not bound). Its ticket's deadline is scheduled when the push
+arrives and settles the ticket as not loaded, logged at ERROR, whatever the fetch is doing - queued,
+running or stuck; the fetch itself gets only what is left of the 20 s (none: not started), is
+disconnected and abandoned when that runs out (`phase=connecting|awaiting-response|reading-body`),
+and a result that comes back after its ticket was settled is dropped and logged. The fetch's wake
+lock is its remaining budget plus 10 s. Every client asks
 with caching off (`useCaches = false`, `reloadIgnoringLocalCacheData`), and the server answers
 `Cache-Control: no-store`.
 
@@ -124,13 +128,23 @@ overtake it. So every push bound for the lane takes a `WakeOrder` ticket on arri
 is completed at once (`WakeOrder.inOrder`, inside `runSerializedWithWakeLock`), a wake's when its
 fetch returns, and the lane is handed work only in ticket order. Work queued ON the lane (a frame
 re-queued behind its Welcome) or from inside a release (the fetched frame's own dispatch) is
-already in its turn and goes straight to the lane. Termination is a proof, not a clock: a ticket
-waits only on an earlier wake, every fetch ends within its deadline, and the ticket is settled on
-every path - the fetch's `finally`, and the arrival thread itself if the fetch could not be
-scheduled; an action that throws does not strand the ones behind it (`WakeOrderTest`).
+already in its turn and goes straight to the lane. New work a lane task spawns (a key-group join
+queued behind its banner) takes a ticket like an arrival - the lane never waits on the order, a
+ticket that cannot run yet is stored and run by the settlement that releases it - and only the
+re-queue of the SAME frame behind its Welcome goes straight back. `WELCOMES_ON_LANE` is counted
+right before the Welcome's task is handed to the lane, so it still means "on the lane".
+
+**The bound, by construction**: every wake ticket is settled at most 20 s after it ARRIVED, so a
+push - wake or full - is handed to the lane at most 20 s after the latest wake ahead of it arrived,
+never "N stalled wakes times the fetch timeout" (four fetch threads, any queue length). The ticket
+is also settled by the fetch's `finally`, or by the arrival thread if the fetch could not be
+scheduled; an action that throws does not strand the ones behind it (`WakeOrderTest`, with the
+clock as a recorder fired by hand, so no test asserts a wall clock).
 
 The one "could not be loaded" notification is cancelled by id when the app comes to the foreground
-(`cancelAllMessageNotifications`), and is not counted as an unread conversation.
+(`cancelAllMessageNotifications`), and is not counted as an unread conversation. Its id, 9995, sits
+with every other fixed notification id in `FixedNotifIds`, which the conversation-id counter
+(`getStableNotifId`, from 1000, only growing) now steps over, so no conversation can be handed it.
 The server writes `[PUSH_WAKE] served|gone` per fetch, so **sends with `mode=wake` minus fetches
 served** is the population of wakes no device acted on - the one rate that says whether the switch
 can stay on.

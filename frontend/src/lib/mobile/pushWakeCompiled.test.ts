@@ -48,14 +48,14 @@ describe('the wake-up push the registration promises', () => {
     );
     // The round trip is on the fetch pool; the lane only ever sees the released, ordered action.
     expect(wake).toContain('WAKE_FETCH_POOL.execute');
-    expect(wake).toContain('val ticket = WAKE_ORDER.take()');
-    expect(wake).toContain('fetchWakeFrameWithinDeadline(queuedMessageId, silent)');
+    expect(wake).toContain('val ticket = WAKE_ORDER.arrive {');
+    expect(wake).toContain('fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)');
     // The ticket is settled on every path, the unschedulable fetch included.
     expect(wake).toMatch(/finally \{\s*settle\(outcome\)/);
     expect(wake).toMatch(/catch \(e: RejectedExecutionException\) \{[\s\S]*settle\(/);
     // EVERY push bound for the lane takes its turn in the same order (a full push included).
     const runner = service.slice(service.indexOf('private fun runSerializedWithWakeLock('));
-    expect(runner.slice(0, 1500)).toContain('WAKE_ORDER.inOrder(');
+    expect(runner.slice(0, 2500)).toContain('WAKE_ORDER.inOrder {');
     expect(service.match(/MLS_PUSH_LANE\.execute/g)).toHaveLength(1);
     // A failure for a mentions-only conversation is posted silently, under one id for all of them.
     expect(service).toContain('.setSilent(mentionsOnly || callHoldsSound())');
