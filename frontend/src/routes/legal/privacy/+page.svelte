@@ -174,7 +174,8 @@
           republiez devient visible de vos abonnés acceptés (jamais d'une demande en attente), quels
           que soient leur campus, leur formation ou leur espace, dans leur onglet « Suivis » à la
           date de votre republication et dans la recherche, jamais dans « Mon espace » ; ceux qui ne
-          la voyaient pas encore reçoivent une notification à votre nom. Ils voient que vous l'avez
+          la voyaient pas encore reçoivent une notification à votre nom, une seule fois par
+          publication, quel que soit le nombre de republications. Ils voient que vous l'avez
           republiée ; une personne qui ne vous suit pas ne le voit pas. Une publication personnelle
           n'est republiée qu'avec l'accord de son auteur : le réglage « Autoriser mes abonnés à
           republier mes posts » est activé par défaut, et l'auteur peut le changer pour tout son
@@ -187,8 +188,10 @@
           dès que vous ne voyez plus vous-même la publication (l'auteur vous retire de ses abonnés,
           vous cessez de le suivre, vous quittez l'association qui la porte) ou que votre compte est
           restreint, et la notification qu'elle leur a envoyée n'est plus affichée. Sont conservés :
-          la republication (la publication, votre compte et sa date), le réglage de chaque auteur et
-          le choix fait pour chaque publication.
+          la republication (la publication, votre compte et sa date), le réglage de chaque auteur,
+          le choix fait pour chaque publication et, pour ne jamais notifier deux fois la même
+          personne, le fait qu'un lecteur a déjà été notifié d'une publication republiée, et sa
+          date, jusqu'à l'effacement de la publication ou de son compte.
         </dd>
       </div>
       <div>
