@@ -64,7 +64,6 @@ function makeContext(seed?: number) {
     ensureMls: vi.fn(),
     log: vi.fn(),
     saveConversation: vi.fn().mockResolvedValue(undefined),
-    verifyCurrentUserMembership: vi.fn().mockResolvedValue(true),
     playNotificationTone: vi.fn(),
     playReceiveTone: vi.fn(),
     sendSystemNotification: vi.fn().mockResolvedValue(undefined),

@@ -52,6 +52,9 @@ const d = (a, b) => (a == null || b == null ? null : a - b);
 /** Main-thread time lost to long tasks that STARTED between two marks. */
 const sumTasks = (r, from, to) =>
   from == null || to == null ? null : r.longTasks.filter(([t]) => t >= from && t <= to).reduce((x, [, dur]) => x + dur, 0);
+/** What the instrument's own per-frame predicates cost between two marks (rows from before the probe timed itself: null). */
+const sumProbe = (r, from, to) =>
+  from == null || to == null || !r.probe ? null : Math.round(r.probe.filter(([t]) => t >= from && t <= to).reduce((x, [, dur]) => x + dur, 0) * 10) / 10;
 
 /** One run's milestones and chain links, each a duration in ms. */
 function measure(r) {
@@ -62,6 +65,9 @@ function measure(r) {
   const session = logAt(r, /refresh✓/);
   const mlsReady = logAt(r, /\[INIT\] MLS ready/);
   return {
+    'click>rail': d(r.rail, r.clickHub),
+    'click>salon msgs': d(r.messages, r.clickSalon),
+    'click>reopen msgs': d(r.reopenMessages, r.clickReopen),
     'tap>rail': d(r.rail, r.tapHub),
     'tap>salons': d(r.salons, r.tapHub),
     'tap>target salons': d(r.targetSalons, r.tapHub),
@@ -70,6 +76,11 @@ function measure(r) {
     'switch>salons': d(r.otherSalons, r.tapOther),
     'switch salon>pane': d(r.otherPane, r.tapOtherSalon),
     'reopen>msgs': d(r.reopenMessages, r.tapReopen),
+    // What the instrument itself spent inside each window (its per-frame predicates): subtract it
+    // from the matching tap>/click> reading to get the app's own time.
+    'probe ms, hub open': sumProbe(r, r.tapHub, r.targetSalons),
+    'probe ms, salon open': sumProbe(r, r.tapSalon, r.messages),
+    'probe ms, cached reopen': sumProbe(r, r.tapReopen, r.reopenMessages),
     'longtask ms, hub open': sumTasks(r, r.tapHub, r.targetSalons),
     'longtask ms, salon open': sumTasks(r, r.tapSalon, r.messages),
     'longtask ms, cached reopen': sumTasks(r, r.tapReopen, r.reopenMessages),

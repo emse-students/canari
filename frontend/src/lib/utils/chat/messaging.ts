@@ -756,8 +756,12 @@ export async function sendChatMessage(
     });
   } catch (e) {
     if (!(e instanceof MessagePairWriteError)) throw e;
+    // The entry reached disk alone (SQLite writes it first): the queue owns it already.
+    pairWritten = e.entryWritten;
     deps.log(
-      `[SEND] ${messageId.slice(0, 8)}… its echo and entry were NOT written together - the outbox writes its own row: ${String(e.cause)}`
+      e.entryWritten
+        ? `[SEND] ${messageId.slice(0, 8)}… its entry was written WITHOUT its echo - the queue sends it: ${String(e.cause)}`
+        : `[SEND] ${messageId.slice(0, 8)}… its echo and entry were NOT written together - the outbox writes its own row: ${String(e.cause)}`
     );
   }
   // Written beside the echo: only the mirror and the flush are owed. Otherwise the outbox writes the

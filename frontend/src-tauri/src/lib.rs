@@ -66,7 +66,7 @@ use crate::commands::push::{
     ack_fcm_cache, acknowledge_quick_reply, check_push_secret_health, claim_device_notices,
     delete_user_push_files, delete_user_quick_replies, forget_graine_channel,
     forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
-    read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
+    preclaim_device_notices, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
     read_and_clear_pending_notification_tap, read_and_clear_pending_quick_replies,
     read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
     set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
@@ -355,9 +355,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
 
 /// Claims the `ownDeviceAdded` keys a push decrypt or a background Add answered in the shared
 /// device-notice ledger under `dataDir` (`MlsContextLoader.tauriDataDir`, the directory the app's
-/// own claim uses) and returns, as a JSON array, the keys nobody announced before - the ones the
-/// service raises its "a new device was added to your account" notification for. `[]` when the
-/// arguments cannot be read. See `mobile::device_notice`.
+/// own claim uses) through the engines' gated door (`engine_claim_device_notices`) and answers
+/// `{"claimed": [...], "held": n}`: the keys nobody announced before - the ones the service raises
+/// its "a new device was added to your account" notification for - and how many were held because
+/// the app has not pre-claimed their account since the update. An empty claim when the arguments
+/// cannot be read. See `mobile::device_notice`.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeClaimDeviceNotices<
@@ -371,17 +373,17 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     let claimed = (|| -> Option<String> {
         let dir: String = env.get_string(&data_dir).ok()?.into();
         let json: String = env.get_string(&keys_json).ok()?.into();
-        Some(mobile::device_notice::claim_device_notices_json(
+        Some(mobile::device_notice::engine_claim_device_notices_json(
             std::path::Path::new(&dir),
             &json,
         ))
     })()
     .unwrap_or_else(|| {
         log::error!("[DEVICE_NOTICE] jni arguments unreadable - nothing claimed");
-        "[]".to_string()
+        r#"{"claimed":[],"held":0}"#.to_string()
     });
     env.new_string(&claimed)
-        .unwrap_or_else(|_| env.new_string("[]").unwrap())
+        .unwrap_or_else(|_| env.new_string(r#"{"claimed":[],"held":0}"#).unwrap())
 }
 
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
@@ -1722,6 +1724,7 @@ pub fn run() {
             mls_state_owner,
             store_push_secret,
             claim_device_notices,
+            preclaim_device_notices,
             end_push_registration,
             complete_owed_push_token_deletion,
             clear_app_data,

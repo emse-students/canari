@@ -79,7 +79,7 @@ Portail-etu since 2026-09-04, minus the bump and the two stores.
    gh pr create                                             |
         |                                          release.yml, ONE run
         +--> CI ------------------+                         |
-        |     tests + security    |                  5 gates (no bypass)
+        |     tests + security    |                  6 gates (no bypass)
         |     -> `CI passed`      |                         |
         +--> arm-auto-merge ------+                    bump + push
               (IN PARALLEL)       |                         |
@@ -123,13 +123,13 @@ gh release create v0.16.2-alpha.1 --prerelease --generate-notes   # -> dev + tes
 gh release create v0.16.2 --generate-notes                        # -> production + both stores
 ```
 
-**The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
+**The six gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; `main` contains the commit (merging after the cut is free: every bump pushes
 `release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)) and a pre-release is the newest release (no tag has a higher store build); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
 rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY, AND ONLY WHILE NOTHING NEWER SHIPPED** - it re-reads the SAME tag, so once a later pre-release is out the rerun is REFUSED (it would move dev and the store build back) and the answer is a NEW tag at the current head; dev has served it
-(stables); the notes name it. *A skip flag is a fallback, and the fix belongs where the primary path
+(stables); the notes name it; no migration the owner must approve ships without his hand-merged approval ([held](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)). *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
 **Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,
@@ -207,7 +207,7 @@ audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergenc
 **A HEADLINE AND A LINK EACH, AND NOTHING ELSE** - the detail lives where the link says. Order = priority.
 
 1. **P1 - iOS notifications show no content (owner, 2026-11-01): the extension's 18.2 target lowered to 16.0, its outcome logged as `[NSE_OUTCOME]`, the tap freed from it; the bench readings decide the cause** ([backlog](docs/wiki/backlog.d/p1-ios-notifications-show-no-content.md)).
-2. **P1 - opening a community, the next big chantier after `1.5.5` (owner, 2026-11-01): F1-F7 built, the 200 ms budget measurement is left** ([community-open-budget](docs/wiki/frontend/community-open-budget.md), [backlog](docs/wiki/backlog.md#p1---opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026-10-14-state-re-read-2026-10-22)).
+2. **P1 - opening a community, the next big chantier after `1.5.5` (owner, 2026-11-01): F1-F7 built, the budget measured 2026-11-02 on `1.6.0`: over on every row, the salon-page mount and boot work on the main thread are next** ([community-open-budget](docs/wiki/frontend/community-open-budget.md), [backlog](docs/wiki/backlog.md#p1---opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026-10-14-state-re-read-2026-10-22)).
 3. **P3 - one `mls.bin` per install, shared by every account on it** ([backlog](docs/wiki/backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
 4. **`canari.emse.fr` is Canari's name; the old one serves apps only, a cost taken knowingly** ([estate-migration](docs/wiki/infrastructure/estate-migration.md#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)); SEO residue in [backlog](docs/wiki/backlog.d/three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md).
 5. **P1 - communities (user, 2026-09-27): shipped; readings, one user decision, three test pairs and one native log fix are owed** ([backlog](docs/wiki/backlog.md#reported-by-the-user-on-2026-09-27---the-community-settings-panels-and-two-community-defects-behind-them)).
@@ -232,7 +232,9 @@ audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergenc
 24. **P1 - WP-KEYGROUP-JOIN-GATE: built, owed its `503` rate** ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)); **and P2 - a new device's join before its KeyPackage: shipped (#1666 `v1.2.2`, #1700 `v1.2.3`), the production read owed** ([backlog](docs/wiki/backlog.md#p2---a-new-devices-join-of-a-communitys-key-group-reaches-the-commit-gate-before-its-keypackage-2026-08-29-cause-measured-on-production-2026-10-09)).
 25. **P3 - MiConnect: one string and one signed-in observation; the profile reform, WP5 next** ([backlog](docs/wiki/backlog.md#p3---miconnect-one-string-left-after-the-french-pass), [profiles-and-access](docs/wiki/profiles-and-access.md)). **And follow requests, member reposts and follower visibility across spaces (user, 2026-10-25): F1-F5 merged (WP-F5 is #2827), WP-F6 (member reposts) and WP-F7 (register and policy) decided, not built** ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
 26. **P2 - Graine rotates on every key-group epoch: the three fixes merged (#2263, #2255, #2260), owed the rig rows, the production ratio and the writer switch** ([backlog](docs/wiki/backlog.md#p2---graine-rotates-on-every-key-group-epoch-so-a-growing-community-mints-a-seed-per-message-measured-2026-10-21), [comparison](docs/wiki/protocols/dm-vs-community-encryption.md)).
-27. **P2 - a DM/group file is queued at the tap like a text, and the pre-send media barrier goes** ([backlog](docs/wiki/backlog.d/media-send-queued-at-the-tap.md)).
-28. **The owner's decisions of 2026-11-01 (what `1.5.5` carries) and a migration with no gate** ([decisions](docs/wiki/backlog.d/owner-decisions-of-2026-11-01-for-1-5-5.md), [gate](docs/wiki/backlog.d/a-migration-the-owner-must-approve-has-no-gate-2026-11-01.md)).
+27. **The owner's decisions of 2026-11-01 (what `1.5.5` carries)** ([decisions](docs/wiki/backlog.d/owner-decisions-of-2026-11-01-for-1-5-5.md)).
+28. **P2 - push payloads carry nothing for Google and Apple: a content-free wake-up push, recorded 2026-11-01, not built** ([backlog](docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)).
+29. **P2 - orphan devices refill the queue: no reaper (#2880 closed, owner, 2026-11-01); a daily `[ORPHAN_DEVICES]` count watches, the hand procedure cleans; the regrowth rate is owed** ([backlog](docs/wiki/backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)).
+30. **P2 - a service-to-service call can still be reset while its peer is retired: the replica lists cover only nginx** ([backlog](docs/wiki/backlog.d/p2-service-to-service-calls-bypass-the-rotation.md)).
 
 **Closed without a fix, readings owed** - each a row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), not queue work: a returner's community past (`v0.18.26`), the member who could not publish, a first contact's notification, a salon seed after its message and the iOS silent frames (#2000), the first iOS feedback (scroll, emoji). #752's two P2s are closed ([backlog](docs/wiki/backlog.md)).

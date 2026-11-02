@@ -2,6 +2,7 @@ import {
   resolveMlsPublicUrls,
   assertOkMlsDeliveryResponse,
   deliveryKeepalivePost,
+  DeliveryRefusal,
 } from './mlsDeliveryHttp';
 import { deliveryUrl, gatewayUrl } from '$lib/utils/apiUrl';
 import { NotFromApiError } from '$lib/utils/apiJson';
@@ -126,8 +127,59 @@ describe('deliveryKeepalivePost', () => {
     ['a JSON array', new Response('[1,2]', { status: 200 })],
   ])('reports NO answer on %s, which is never the same as a negative one', async (_label, res) => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(res);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(deliveryKeepalivePost('https://d.test', 'ping', {}, {})).resolves.toBeNull();
     fetchSpy.mockRestore();
+    warn.mockRestore();
+  });
+
+  it.each([
+    [
+      'a 403 NOT_A_MEMBER',
+      new Response(JSON.stringify({ code: 'NOT_A_MEMBER', message: 'anything' }), { status: 403 }),
+      'not_a_member',
+      403,
+    ],
+    [
+      'a 409 awaiting_admission',
+      new Response(JSON.stringify({ error: 'awaiting_admission', message: 'x' }), { status: 409 }),
+      'awaiting_admission',
+      409,
+    ],
+  ])('types %s as a refusal - an answer, never "no answer"', async (_l, res, reason, status) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(res);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const answer = await deliveryKeepalivePost('https://d.test', 'history-request', {}, {});
+
+    expect(answer).toBeInstanceOf(DeliveryRefusal);
+    expect(answer).toMatchObject({ reason, httpStatus: status });
+    expect(warn.mock.calls.flat().join(' ')).toContain(`history-request answered ${status}`);
+    fetchSpy.mockRestore();
+    warn.mockRestore();
+  });
+
+  it.each([
+    [
+      'a 403 with no contract code',
+      new Response(JSON.stringify({ message: 'x' }), { status: 403 }),
+    ],
+    [
+      'a 403 whose MESSAGE names the refusal',
+      new Response(JSON.stringify({ message: 'NOT_A_MEMBER' }), { status: 403 }),
+    ],
+    [
+      'a 409 that is another conflict',
+      new Response(JSON.stringify({ error: 'other' }), { status: 409 }),
+    ],
+  ])('reads %s as no answer - from the status and code, never the message', async (_l, res) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(res);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(deliveryKeepalivePost('https://d.test', 'ping', {}, {})).resolves.toBeNull();
+    expect(warn.mock.calls.flat().join(' ')).toContain('ping answered');
+    fetchSpy.mockRestore();
+    warn.mockRestore();
   });
 });
 

@@ -79,6 +79,30 @@ object ConversationShortcuts {
         return ids.size
     }
 
+    /**
+     * Removes the RECORDED conversation shortcuts whose id starts with [prefix] - an allowlist read
+     * from the record, never a match against whatever the launcher holds - and drops them from the
+     * record. Returns how many (0 when none is recorded), or null when the record is unreadable or
+     * the removal failed - both already logged, and neither may be taken for done.
+     *
+     * A shortcut the user PINNED to the home screen is disabled too ([disablePinnedShortcuts]): it
+     * stays on the launcher, greyed, and tapping it says it is no longer available.
+     *
+     * Its one caller retires the salon shortcuts (`chat_channel_<id>`) the socket trigger published
+     * before 2026-11-01: a salon no longer takes one, and those already out would otherwise stay
+     * in the shared dynamic budget until the next sign-out.
+     */
+    @Synchronized
+    fun removeRecordedWithPrefix(context: Context, prefix: String): Int? {
+        val ids = record.readOrNull(context) ?: return null
+        val doomed = ids.filter { it.startsWith(prefix) }
+        if (doomed.isEmpty()) return 0
+        if (!remove(context, doomed)) return null
+        record.write(context, ids - doomed.toSet())
+        Log.i(TAG, "removeRecordedWithPrefix: ${doomed.size} conversation shortcut(s) under $prefix removed")
+        return doomed.size
+    }
+
     private fun remove(context: Context, ids: List<String>): Boolean = try {
         ShortcutManagerCompat.removeLongLivedShortcuts(context, ids)
         disablePinnedShortcuts(context, ids, TAG)

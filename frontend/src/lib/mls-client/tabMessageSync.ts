@@ -1,5 +1,7 @@
 import type { ChatMessage } from '$lib/types';
+import type { UnsentReason } from '$lib/db/types';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import type { PublishedReelUpload } from '$lib/reels/publishReel';
 
 const TAB_MESSAGES_CHANNEL = 'canari-tab-messages';
 
@@ -81,13 +83,23 @@ export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
   | { type: 'outbox_entry_sent'; messageId: string; content?: string; receivedAt?: number }
   | { type: 'outbox_entry_cancelled'; messageId: string }
-  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number };
+  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number }
+  | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason }
+  /** A follower's write to a chat-reel take (RC-13), done by the leader: see {@link forwardReelTakeWrite}. */
+  | { type: 'outbox_reel_send_deleted'; messageId: string }
+  | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload }
+  /** The leader took a forwarded adoption: the follower owes nothing more for it. */
+  | { type: 'outbox_reel_take_adopt_ack'; takeId: string };
 
 const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_flush_request',
   'outbox_entry_sent',
   'outbox_entry_cancelled',
   'outbox_entry_failed',
+  'outbox_entry_retired',
+  'outbox_reel_send_deleted',
+  'outbox_reel_take_adopt',
+  'outbox_reel_take_adopt_ack',
 ]);
 
 let messageChannel: BroadcastChannel | null = null;
@@ -165,6 +177,34 @@ export function requestLeaderOutboxFlush(): void {
 }
 
 /**
+ * From a follower tab: hands a write to a chat-reel TAKE ROW (RC-13) to the leader, which does it.
+ *
+ * ONLY THE LEADER WRITES A TAKE ROW: its sends are marked sent there, under a lock that lives in
+ * that tab's memory, so a follower writing the same row would overwrite a `sent` mark it never saw
+ * (and could give back a file recipients still cite). The row is shared (IndexedDB), the lock is
+ * not - so the follower forwards the INSTRUCTION, as {@link requestLeaderOutboxFlush} does. A no-op
+ * in the leader, which writes for itself.
+ */
+export function forwardReelTakeWrite(
+  event: Extract<TabOutboxEvent, { type: 'outbox_reel_send_deleted' | 'outbox_reel_take_adopt' }>
+): void {
+  if (getIsTabLeader()) return;
+  ensureChannel()?.postMessage(event satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a follower's forwarded adoption ({@link forwardReelTakeWrite}) was taken. The
+ * follower would otherwise end its publish step not knowing, and says so with its cost.
+ */
+export function acknowledgeReelTakeAdoption(takeId: string): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_reel_take_adopt_ack',
+    takeId,
+  } satisfies TabOutboxEvent);
+}
+
+/**
  * From the leader tab: tells the follower that composed a message that it went out, so the
  * follower can settle its optimistic echo. Without it the echo keeps the `pending` clock for as
  * long as that tab lives - the follower never runs the flush that would have patched the status,
@@ -200,6 +240,20 @@ export function publishOutboxEntryFailed(messageId: string, serverErrors: number
     type: 'outbox_entry_failed',
     messageId,
     serverErrors,
+  } satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a queued attachment was retired UNSENT for the group's sake (deleted, or this
+ * device no longer a member). A follower draws the failed bubble with that reason; it never flushes,
+ * so it would otherwise keep the queued spinner until its next reload.
+ */
+export function publishOutboxEntryRetired(messageId: string, reason: UnsentReason): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_entry_retired',
+    messageId,
+    reason,
   } satisfies TabOutboxEvent);
 }
 

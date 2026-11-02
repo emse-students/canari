@@ -697,3 +697,23 @@ tests first reported - **the class is real, the victims are random.** Four cause
   oversubscription fails whichever test it was in. Nothing in those files can be fixed; the lever is
   the load (fewer workers per run when several runs share a machine, `--maxWorkers`), and a per-file
   timeout would only hide the next victim.
+
+**Second reading, 2026-11-02** (CI shard 4/4 of #2908, an unrelated CSS change, failed
+`outbox.reelResume`; reproduced with 48 busy threads and 6 concurrent runs of the file: about half the
+runs failed, 8 different cases). Three causes - two in the test, one in the product:
+(a) `expectDeliveredOnce` and a few cases read the take record once after the sends count and the row's
+presence were true, but the record says `sent` one write later (`expected undefined to be 'sent'`, the
+most frequent victim) - `takeRecordSent` now waits for the state;
+(b) every `vi.waitFor` ran on its 1 s default and every case on the 5 s test deadline, both tighter than
+a starved worker. `src/test/loadBound.ts` gives `waitForEvent` (20 s ceiling) and `useLoadBounds()`
+(30 s test deadline), used by `outbox.reelResume` ONLY - the other files keep the 1 s default, and a
+per-file timeout elsewhere is still refused (the first reading above). A ceiling is only how long a test
+accepts being told an event never comes - nothing asserts a duration, and a real hang still fails.
+The one case that fakes timers uses `waitForEventNoClock`, since `vi.waitFor` advances a faked clock by
+its interval on every poll and a loaded machine polls enough to cross the backoff by itself;
+(c) **PRODUCT CODE CHANGED (`outbox.ts`, `uploadAttachment`)**: the stall-hint interval was cleared only
+when the upload settled, so a disposed or withdrawn transfer stuck behind a dead socket kept writing
+`stalled` into the view of whatever took the id next. It now clears on abort, and `onProgress` ignores a
+late event of an aborted transfer (`persist` is deliberately not guarded: a session opened after the
+abort must still reach `openSessions`, which is what releases it). Two cases prove both and fail without
+the code (checked by removing each).

@@ -24,6 +24,7 @@ import { VersionModule } from './version/version.module';
 import { ExternalModule } from './external/external.module';
 import { InternalModule } from './internal/internal.module';
 import { SkyModule } from './sky/sky.module';
+import { typeormSynchronize } from './typeorm-synchronize';
 
 /** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
@@ -61,7 +62,7 @@ import { SkyModule } from './sky/sky.module';
           PlatformAnnouncementSeen,
           AccountErasureJob,
         ],
-        synchronize: process.env.NODE_ENV !== 'production',
+        synchronize: typeormSynchronize(),
       }),
       inject: [ConfigService],
     }),

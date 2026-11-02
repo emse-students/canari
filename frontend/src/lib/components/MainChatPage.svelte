@@ -395,8 +395,6 @@
       storage: session.storage,
       log,
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
-      verifyCurrentUserMembership: (name: string) =>
-        convs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: notifs.playNotificationTone,
       playSendTone: notifs.playSendTone,
       playReceiveTone: notifs.playReceiveTone,
@@ -1667,6 +1665,7 @@
                 )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
+          onReelPurged={(msgId, at) => void messaging.recordReelPurged(msgId, at, msgCtx())}
           onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}

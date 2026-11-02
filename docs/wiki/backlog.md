@@ -43,37 +43,6 @@ no `bookings` host on Android - a cost accepted on 2026-10-29
 release on both estates (the owner's gesture), read it back from the public version endpoint, and
 delete this entry.
 
-## Cotisation-disabled follow-ups (after the tier stack lands)
-
-Left by the review of #2584. Start after the tier stack has merged.
-
-- **P2 - a paid form that grants a cotisation still takes money after its association disables
-  cotisations** (already on `main`, not caused by the stack). The grant then refuses with the "not
-  enabled" 400 (`UserTagService.grantCotisantIfARise`), `FormsService.grantCotisationIfConfigured`
-  answers `failed`, the claim is released and every replay fails the same way. On `main` the record
-  is written `paid`; with #2597 it is written `paid_not_granted` (the tier is not held when the
-  record is written), but the grant is still retried as if it could succeed. Fix it like the
-  product path: refuse opening the payment of a granting form while the association has no
-  cotisation mode, and treat "cotisation not enabled" as FINAL (`not-granted`), not retryable.
-- **P3 - `assertMembershipGrantable` does not check that `grantedTagName` is set.** A legacy
-  membership product with a cotisation mode but no stored tag opens a checkout, then ends
-  `paid_not_granted`: refuse it at the opening. How many such products exist is owed to the
-  operator, privately.
-- **P3 - no integration case for a sweeper-settled tier that re-ranks to `paid_not_granted`**:
-  `lydia-reconciliation.integration.spec.ts` settles a checkout the callback never confirmed, but
-  never one whose tier is no longer a rise when the sweep settles it.
-- **P3 - the social unit run ends with "A worker process has failed to exit gracefully"**: some test
-  leaves a handle open (a timer, a pool); find it (`--detectOpenHandles`) and tear it down.
-- **P3 - `account-erasure.integration.spec.ts` needs the schema CI synchronizes**: a fresh scratch
-  database lacks tables it touches (`association_calendar_events` among them), so it fails on a
-  local fresh-database run only - CI never shows it. Make the spec create what it reads.
-- **P3 - retagging a tier leaves the forms that grant the old key behind.** Changing a tier's key
-  does not update the `cotisationVariantKey` of the forms granting the old one: those forms then
-  refuse every new answer (the tier ranks `unranked`) and an answer already in flight ends
-  `paid_not_granted`. Either carry the new key to those forms in the retag's transaction, or refuse
-  the retag while a form still names the old key; the hourly `[PAID_NOT_GRANTED]` line is what
-  names a payment it already caught.
-
 ## Display follow-ups to the shop pricing (after the tier stack lands)
 
 Left by the review of #2544. Start after the tier stack (#2544 and its followers) has merged.
@@ -100,8 +69,9 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 ### The decisions
 
 1. **Member reposts.** A member may republish another member's post to THEIR OWN followers, with
-   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an entity
-   (association, list, institution) is reposted without asking. Never an anonymous post. A block
+   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an
+   association or an institution that addresses at least one space is reposted without asking;
+   never the post of a list or of a members-only association (owner, 2026-11-02). Never an anonymous post. A block
    applies both ways. Hiding the original removes every repost. Same rules for reels. A repost
    enters the Suivis feed of the reposter's followers at the time of the repost; a notification goes
    only to readers who NEWLY see the post (the D38 rule).
@@ -1121,18 +1091,6 @@ A fallback is a signal, not a path. What is owed:
 - keep the empty-pool WARN as the accusing line it is.
 Not before the stable.
 
-## P2 - The nightly archive is mostly one group's undelivered queue (measured 2026-10-24)
-
-The archive went from 80 MB (10-11) to 716 MB (10-13) and holds ~650 MB since. The cause is
-`queued_message`: 189 205 rows of community key group `1b1687d0`, written 10-12 and 10-13 by the
-broadcast seed answers #1768 has since stopped, and **172 060 of them (728 MB) are owed to 109
-devices with neither a session nor a push token**. They belong in the archive while they are owed,
-so nothing was excluded. **Decision owed to the user:** whether to delete the rows of devices that
-can no longer fetch them (a production deletion, the same predicate family as the
-[queue audit](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md)'s reaper), or let them leave
-at the 90-day bound around 2027-01-10. Numbers and SQL shape:
-[backup](infrastructure/backup.md#why-the-archive-went-from-80-mb-to-700-mb-2026-10-13).
-
 ## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
 
 On the phone apps the local at-rest key is held by the device's secure hardware, the PIN only
@@ -1164,19 +1122,9 @@ member's Add); and an entry no member made is written in the conversation and re
 [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Migration 038 is applied in production; owed: `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
 than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
-production once the build serves both stores; the four review findings below. The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
+production once the build serves both stores; of the four review findings, the removed member's surviving leaf closed with ADM-3, the relay routes with #2870, the joiner's second device with no device row with the account-seat flag (`UserGroupRow.awaitingAdmission`, 2026-11-01), and the waiting-seat exclusion of calls owes one ring on dev (below). The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
 see [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23); what it owes is in
 [backlog.d](backlog.d/p1-the-admission-rule-fix-forward.md).
-
-## P2 - Three delivery routes check no membership at all (re-review of #2358, already on main)
-
-`POST mls/history-request`, `POST mls/base-refresh-request` and `POST mls/notify-reaction` relay to
-a group's members without asking whether the caller holds a seat in it, admitted or not: anyone
-authenticated can make the members' devices answer, or notify them, in a group they are not in. The
-waiting seat of #2358 is only one such caller. Owed: the same caller predicate as the other routes
-(`callerSeatStanding`, `utils/group-membership.ts`), an integration case per route, and a look at
-what an older client sends there before it is refused -
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
 
 ## P3 - Calls: the waiting-seat exclusion is built and has never run against a live call (re-review of #2358)
 
@@ -1185,14 +1133,6 @@ admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.i
 `calls_mode` is `off` on production, so no ring has gone through it. Owed: one ring on dev with a
 pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
 admitted seat`) - [calls](frontend/modules/calls.md).
-
-## P3 - A joiner's device with no device row is never marked awaiting admission (review of #2442)
-
-The groups list marks a never-admitted conversation per DEVICE seat (`deviceMembership.awaitingAdmission`).
-A joiner's second device that holds no device row in the group when it reads the list is never marked,
-so its row reads as an ordinary `pending` conversation rather than "waiting for a member". Owed: decide
-whether the flag is the user seat's (any device of an awaiting user) and test the second-device case -
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23).
 
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 
@@ -1891,6 +1831,7 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 
 | What | The measurement that closes it |
 | --- | --- |
+| a salon banner names its SPEAKER - a v2 author the phone names - with their face or initials, "Quelqu'un" and a "?" otherwise, never the salon's letter (Android #2881, iOS NSE and `canari_push.mm` 2026-11-01; JVM tests and text pins only, [mobile](frontend/mobile.md#notification-service-extension-nse)) | one salon banner on the Mi 9T and one on the iPhone 12 (app killed, then backgrounded), from a member the app has named and one it has not: the name above the line and their initials, then "Quelqu'un" with a "?" and the `[SALON_AUTHOR]` line in the log |
 | the checkpoint every commit awaits under the MLS lock before its first request (`checkpointStageBeforeSend`, the leaf-refresh PR #2269): ~1.4-2 s per commit on a Mi 9T DEBUG capture, a burst of N commits ~2N checkpoints ([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)) | in the pre-release carrying #2269, on a RELEASE build on the Mi 9T AND the iPhone 12: the `[COMMIT]` stage-checkpoint duration of one commit (a leaf refresh or an invite), and of a burst (a group creation adding several devices), read from the device log; the rig rows LEAF-REFRESH-1..4 ([cross-client-testing](cross-client-testing.md)) on the same build |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true`) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
 | a video filmed with the new-post composer's camera is a CanaReel, with a deletion notice and "Garder comme post" (user, 2026-10-19: one camera, one behaviour; component tests only) | check CR on the Mi 9T and the iPhone 12, next pre-release ([device-verification](device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones)) |
@@ -2039,7 +1980,7 @@ searches), `HEAD` content-length.
 
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
-**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5, F6 and F7 (one engine call for a page's signatures, 2026-10-22, native: a lead review) are built; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** a re-measure against the budget on the Mi 9T (F7's gain included, from the next pre-release), a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
+**User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5, F6 and F7 (one engine call for a page's signatures, 2026-10-22, native: a lead review) are built; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Measured 2026-11-02 on `1.6.0`, Mi 9T: the budget is NOT met on any row** (cold tab 530 Wi-Fi / 376 offline vs 200, warm 319 vs 150, a salon opened in a previous process 919 vs 200, a cached reopen 328 vs 200; the biggest cost is the 340-550 ms mount of a salon page, then boot work sharing the main thread with the tab; [readings](frontend/community-open-budget.md#the-budget-reading-on-160-2026-11-0102-over-budget-on-every-row)). **Left:** the F7 signatures batch isolated (before/after on one build), a never-opened salon, slow3g, the visible-rows-first mount and the boot-work deferral the readings point at, a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
 
 ## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
 

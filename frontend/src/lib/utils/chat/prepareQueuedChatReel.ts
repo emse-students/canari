@@ -50,12 +50,14 @@ export async function prepareQueuedChatReel(
     { UploadAbortedError },
     messages,
     { chatReelPrepareOptions },
+    { withEncoderLease, EncoderLeaseAbortedError },
   ] = await Promise.all([
     depsIn ?? defaultDeps(),
     import('$lib/video/prepareVideoForUpload'),
     import('$lib/utils/uploadXhr'),
     import('$lib/video/videoPrepareMessages'),
     import('$lib/reels/chatReelWriter'),
+    import('$lib/video/encoderLease'),
   ]);
   const [limits, reelLimits] = await Promise.all([deps.uploadLimits(), deps.reelLimits()]);
   // Throws `ChatReelCapMissingError` (ordinary: the take is parked) before a frame is encoded.
@@ -65,11 +67,15 @@ export async function prepareQueuedChatReel(
     type: media.mimeType,
   });
   try {
-    const prepared = await deps.prepare(source, {
-      ...capOptions,
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
+    // THE ENCODER LEASE IS SHARED WITH `publishReel` (RC-13, 15.2): a publish step encoding the same
+    // take, or another, finishes first - two encodes at once are unmeasured on either phone.
+    const prepared = await withEncoderLease('chat reel take', opts.signal, () =>
+      deps.prepare(source, {
+        ...capOptions,
+        signal: opts.signal,
+        onProgress: opts.onProgress,
+      })
+    );
     return {
       bytes: new Uint8Array(await prepared.file.arrayBuffer()),
       mimeType: prepared.file.type,
@@ -79,7 +85,11 @@ export async function prepareQueuedChatReel(
       durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
     };
   } catch (e) {
-    if (isVideoPrepareError(e) && e.fault === 'aborted') {
+    // Cancelled while it waited for the encoder: the member's act, exactly like a cancel mid-encode.
+    if (
+      e instanceof EncoderLeaseAbortedError ||
+      (isVideoPrepareError(e) && e.fault === 'aborted')
+    ) {
       throw new UploadAbortedError(opts.signal.reason);
     }
     // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for

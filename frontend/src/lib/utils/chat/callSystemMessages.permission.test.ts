@@ -33,6 +33,9 @@ import { notificationPreferences } from '$lib/stores/notificationPreferences.sve
 import { parseEnvelope } from '$lib/envelope';
 import type { Conversation } from '$lib/types';
 
+/** When the call event happened, as its frame dates it (`receivedNoticeTime`). */
+const AT = { timestamp: new Date(1_700_000_000_000), serverTimestamp: 1_700_000_000_040 };
+
 const G = '0b9f3d7e-1111-4222-8333-444455556666';
 
 function makeCtx() {
@@ -61,7 +64,7 @@ describe('handleCallSignalForChat - the conversation call permission', () => {
 
   it('writes the call as started where calls may ring', async () => {
     const { ctx, addMessageToChat } = makeCtx();
-    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me', AT);
     const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
     const env = parseEnvelope(content);
     expect(env.kind === 'system' && env.callEvent?.endedAt).toBeFalsy();
@@ -75,7 +78,7 @@ describe('handleCallSignalForChat - the conversation call permission', () => {
     };
     try {
       const { ctx, addMessageToChat } = makeCtx();
-      await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+      await handleCallSignalForChat(ctx, 'caller', G, invite, 'me', AT);
       expect(addMessageToChat).toHaveBeenCalledTimes(1);
       const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
       const env = parseEnvelope(content);
@@ -90,7 +93,7 @@ describe('handleCallSignalForChat - the conversation call permission', () => {
   it('writes it as MISSED at once where calls are not allowed, instead of a ring', async () => {
     await notificationPreferences.setGroupCallsAllowed(G, false);
     const { ctx, addMessageToChat } = makeCtx();
-    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me', AT);
     expect(addMessageToChat).toHaveBeenCalledTimes(1);
     const [, content, groupId, options] = addMessageToChat.mock.calls[0] as unknown as [
       string,
@@ -108,7 +111,7 @@ describe('handleCallSignalForChat - the conversation call permission', () => {
   it('follows a conversation set to none when the account never chose', async () => {
     await notificationPreferences.setGroupLevel(G, 'none');
     const { ctx, addMessageToChat } = makeCtx();
-    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me', AT);
     const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
     const env = parseEnvelope(content);
     expect(env.kind === 'system' && env.callEvent?.endedAt).toBeTruthy();

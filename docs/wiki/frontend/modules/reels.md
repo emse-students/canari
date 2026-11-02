@@ -103,9 +103,12 @@ What that decided:
   lens the device lacks is still a typed `unavailable`. The rest of this item is the phone case
   (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
   WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
-  camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
-  persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
-  reports another lens than asked is `console.error`ed. Nothing ever retries on the other lens.
+  camera opens on the FRONT one by default. Since 2026-11-01 it opens on the lens last used anywhere in the
+  app, one memory per device, written once a flip's open succeeded (`reels/cameraLens.ts`,
+  [reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). A lens the phone lacks is an
+  `OverconstrainedError` -> `unavailable`, logged; a track that reports another lens than asked is
+  `console.error`ed. A flip never retries on the other lens; only the FIRST open on a remembered rear lens
+  falls back, once, logged.
 - **The torch is a capability of the LENS**, read from the open track - so its button exists on the
   back lens and not on the Mi 9T's front one.
 - **Releasing a lens before opening the other** is what the session does anyway (a recorder cannot
@@ -420,7 +423,7 @@ web page cannot remove.
 | | Swipe from the feed (`/camera` tab) | "+" -> new post -> "Caméra" chip | The post editor's camera |
 | --- | --- | --- | --- |
 | Component | `ReelCapture destination="feed"` | `PostComposerBar reel` -> `CameraOverlay` -> `ReelCapture destination="post"` | `PostComposerBar` (no `reel`) -> `destination="post-edit"` |
-| Capture | front lens, the preview's crop, 90 s ring from `reel-limits` | the same | the same |
+| Capture | the lens last used (front by default), the preview's crop, 90 s ring from `reel-limits` | the same | the same |
 | Microphone | with the lens: refused = no camera | asked apart: refused = photos only | asked apart |
 | A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (30 days) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
 | What the step adds from the composer | - | an amber notice "CanaReel : supprimé au bout de 30 jours" BEFORE "Publier", and "Garder comme post", which hands the video back to the composer as before | - |

@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
@@ -227,9 +228,11 @@ import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
+  patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
   setCallSystemMessageContext,
+  type CallEndTime,
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -403,6 +406,12 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
  * the eventual re-encode happen at the right epoch.
  */
 export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  // THE OWNER IS BOUND HERE, ONCE: these deps serve one session's outbox, whose rows are that
+  // account's. Read at call time, an account switch in the middle of a drive would hold, release or
+  // give back the first account's files under the second's identity (owner-bound, so refused - and
+  // the release owed to the first account would then be lost with its outbox).
+  const ownerId = ctx.getUserId();
+  const ownerToken = ownerTokenOf(ownerId);
   return {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
@@ -467,10 +476,24 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
     // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
-      const ownerId = ctx.getUserId();
       await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
     },
+    // A CHAT-REEL TAKE'S FILE (RC-13), under the same owner-bound token: the hold on an adopted feed
+    // upload, and its release once no message cites it. Both owed in the take row, not here.
+    holdChatReel: async (mediaId: string) => {
+      const { MediaService } = await import('$lib/media');
+      return new MediaService().holdChatReel(mediaId, ownerToken);
+    },
+    releaseChatReel: async (mediaId: string) => {
+      const { MediaService } = await import('$lib/media');
+      return new MediaService().releaseChatReel(mediaId, ownerToken);
+    },
   };
+}
+
+/** A token that is `ownerId`'s and nobody else's (`ownerBoundToken`): another account's is refused. */
+function ownerTokenOf(ownerId: string): () => Promise<string> {
+  return ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
 }
 
 /**
@@ -479,7 +502,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
  * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
  */
 function releaserFor(ownerId: string): SessionReleaser {
-  const token = ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+  const token = ownerTokenOf(ownerId);
   return async (uploadId, why) => {
     const { MediaService } = await import('$lib/media');
     return new MediaService().releaseResumableUpload(uploadId, token, why);
@@ -1985,16 +2008,25 @@ export async function loginImpl(
     };
     setCallSystemMessageContext(callSystemCtx);
     ctx.getCallService()?.setChatNotifier({
-      onCallStarted: (groupId: string, callId: string) =>
-        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
-      onCallEnded: (groupId: string, callId: string, outcome?: CallEndReason, starterId?: string) =>
+      onCallStarted: (groupId: string, callId: string, at: EventTime) =>
+        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId(), at),
+      onCallEnded: (
+        groupId: string,
+        callId: string,
+        at: CallEndTime,
+        outcome?: CallEndReason,
+        starterId?: string
+      ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
           groupId,
           callId,
+          at,
           outcome,
           starterId ?? ctx.getUserId()
         ),
+      onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
+        patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
 
     setupMessageHandler({
@@ -2043,13 +2075,14 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg) => {
+      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
-          ctx.getUserId()
+          ctx.getUserId(),
+          at
         );
         void ctx
           .getCallService()

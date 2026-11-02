@@ -7,7 +7,8 @@ import type {
   ReadWatermarks,
 } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
@@ -754,13 +755,26 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   }
 
   if (systemContent) {
-    const systemServerMs = parseServerTimestampMs(msg.timestamp);
+    // DATED BY THE FRAME, AS THE LIVE PATH DATES IT (`receivedNoticeTime`): the frame's `sentAt`
+    // stamped, the archive row's server time as the order key. An undated row used to fall through
+    // `resolveMessageTimestamp` to THIS device's clock at replay time, and a replay can run days after
+    // the event - the notice then sank below everything that followed it.
+    const dated = receivedNoticeTime(
+      appMessageSentAtMs(parsed.sentAt),
+      parseServerTimestampMs(msg.timestamp)
+    );
+    if (!dated) {
+      console.error(
+        `[HISTORY_REPLAY] REFUSED to draw '${parsed.system.event}' in ${conversationId.slice(0, 8)}… (id ${systemMessageId?.slice(0, 8) ?? 'none'}): the frame carries no sentAt and the archive row no readable server time (${String(msg.timestamp).slice(0, 40)}) - no durable instant dates it, and this device's clock is not one`
+      );
+      return;
+    }
     pushPendingMessage({
       senderId: 'system',
       content: systemContent,
       isSystem: true,
       messageId: systemMessageId,
-      timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
+      ...dated,
     });
   }
 }

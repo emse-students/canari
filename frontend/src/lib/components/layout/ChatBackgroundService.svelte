@@ -184,7 +184,12 @@
       if (lastIncomingRingCallId !== callId) {
         lastIncomingRingCallId = callId;
         const callerName = getUserDisplayNameSync(callerId ?? '');
-        globalNotifs.startIncomingCallRingtone();
+        globalNotifs.startIncomingCallRingtone({
+          callId,
+          groupId,
+          callerId: callerId ?? '',
+          hasVideo: globalSession.callService?.incomingHasVideo ?? false,
+        });
         globalNotifs.startBlinkingTitle();
         void globalNotifs.notifyIncomingCall(callerName, groupId);
       }
@@ -194,7 +199,7 @@
     if (lastIncomingRingCallId !== null) {
       lastIncomingRingCallId = null;
     }
-    globalNotifs.stopIncomingCallRingtone();
+    globalNotifs.stopIncomingCallRingtone(`the call left the incoming state (${state})`);
     globalNotifs.stopBlinkingTitle();
     // Call left the "incoming" state (answered on any device, declined, or ended):
     // dismiss the lingering incoming-call OS notification.
@@ -937,8 +942,6 @@
       storage: globalSession.storage,
       log: appendLog,
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
-      verifyCurrentUserMembership: (name: string) =>
-        globalConvs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: globalNotifs.playNotificationTone,
       playSendTone: globalNotifs.playSendTone,
       playReceiveTone: globalNotifs.playReceiveTone,

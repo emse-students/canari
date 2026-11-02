@@ -97,6 +97,7 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
+| `CHAT_REEL_WRITER_ENABLED` (`reels/chatReelWriter.ts`, [reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order) item 6) | `minClientVersion` on the estate the writer writes to >= `v1.2.2`, the first stable carrying the reader (#1659, RC-1: a reel message is drawn as a tile, never as a downloadable chat video); a push says "CanaReel" from `v1.3.1` (#2112, RC-7), below it "video" - a softer line, not a misread. RC-6's "CanaReel supprime" (#2911) is NOT part of the floor: an older reader draws the player's expired state on the same `410` | YES on both estates, read 2026-11-02 from `GET /api/version`: production `1.5.1`, dev `1.2.7` (the push half too on production; on dev a `1.2.7`-`1.3.0` device would announce a reel as "video") | none | the floor is a precondition, nothing to remove | MET - the switch waits only for its other items (section 7) and the bench readings; how it turns on for dev only is the switch's own PR |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor `1.5.1` on production, read 2026-10-31) |
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
@@ -108,11 +109,13 @@ REST: those rows need a count, then a migration.
 | Send-ledger entry with no epoch (`sendRatchetLedger.ts`, `parseKey`) | floor past the first stable carrying #2269 | NO (unreleased) | `mls_send_ledger_<user>` in `localStorage` on devices not yet updated | 1 parse branch + 1 debt arm | waits for the floor ([diary](#no-date-yet---a-send-ledger-entry-with-no-epoch-written-by-a-client-older-than-2026-10-23)) |
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
+| The account-seat `awaitingAdmission` on the groups list read off `deviceMembership.awaitingAdmission` when a row lacks it (`syncAdmissionFlags`, `admissionState.ts`; #2894) | production's chat-delivery serves the top-level field (one read of `GET mls/users/:userId/groups` on production showing it) | not a client version question: a deploy-order WINDOW, a store build ahead of production | none | the `??` arm and its WARN line | remove once production serves the field; until then each pass that takes it logs `[DISCOVERY] [WARN] ... read off this device's seat` |
 | A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
 | `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 | A `closed` admission classification dropped at load (`drop_closed_admission_policies`, `mls-core` `state.rs`; review of #2817) | every device that ran a dev build of #2815 has loaded its state once on a later build - dev and alpha builds only, nothing shipped `closed` to a store | not a version question (dev/alphas) | `PersistedState.admission` in `mls.bin` | 1 function + 1 call + 1 test | remove 2027-02-01, or when the fix-forward re-arms the rule - whichever is first, since a re-armed rule writes `closed` again and must not have it dropped ([mls-protocol](protocols/mls-protocol.md)) |
 | `canari_admission_frozen` removed at session setup (`forgetLegacyAdmissionFreeze`, `setupMessageHandler.ts`; review of #2817) | every device that ran a dev build of #2815 has opened a session on a later build | not a version question (dev/alphas) | one device-global `localStorage` key, read by nothing | 1 function + 1 call + 1 test | remove 2027-02-01 ([mls-protocol](protocols/mls-protocol.md)) |
+| `internal/reel-purge` with NO `reason` read as the pre-RC-14 delete (`purgeReels`, `media.service.ts`; review of #2898) | BOTH estates run the social-service carrying RC-14, which always names one | not a client version question: a deploy-order WINDOW (media-service may be replaced before social-service, or rolled back past it) | none | the `undefined` arm, its warn and the controller's absent-reason branch | remove once both estates deploy RC-14: then a missing reason is a `400`. Until then the old caller gets the old delete for a file no LIVE chat hold keeps; for a file a live chat hold keeps, the post hold is RELEASED and the answer is `refused` (the old caller drops its post row on any answer, and an older reel worker counts outcomes by name, so `released` would read as NaN), since that caller cannot say moderator from post end and the release is the safe reading - each call logs `Reel purge ... with NO reason - an older social-service` ([media-service](services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
@@ -170,6 +173,27 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 **Condition:** production has run the release carrying the check for longer than one access-token
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
+
+### No date yet - a frontend image older than the replica lists, drained by DNS (2026-11-01)
+
+**Site:** `rotation_is_legacy` and the `legacy` branch of `rotation_apply` in
+`infrastructure/lib/rolling.sh`.
+**What it humours:** a frontend nginx from before the lists, which reads no `rotation/frontend.conf`
+and names every service by `<service>:<port>`. The first deploy carrying the lists finds one running,
+and so does every deploy after a rollback to a release older than them. Its retiring replica is kept
+up `ROLLING_RESOLVER_TTL_SECONDS + 1` while that nginx re-resolves - the drain every deploy made
+before the lists - with a `::warning` naming it, rather than refused
+([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
+**Only a transition takes it:** the branch compares the proxy's running image with the one the plan
+says this release deploys (`rotation_runs_this_release`, the plan's fifth field). The previous
+release's image is the transition, warned and drained; THIS release's own image reading no list is a
+release built wrong, refused at `::error`; an image that cannot be compared is drained and logged at
+`::error`. `deploy-replace.test.sh` asserts the first two.
+**Condition, and its trigger:** no release a rollback may still target predates the lists - the GHCR
+prune keeps 30 pushes, so once the 30 newest releases of each estate carry them. Measured, not
+remembered: `git tag --contains <the squash commit of #2866> | grep -cE '^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$'`
+reaching 30. Then delete the branch, so a proxy that reads no list is refused like any other. The
+resting DNS form of the lists is NOT part of this entry: it is the design, and stays.
 
 ### No date yet - the Lydia key paste field of a build older than enrolment lot 1
 
@@ -575,6 +599,40 @@ until the app updates.
 estates, with both stores serving it. No floor client writes plaintext then, and every install
 that ran the new build once has had its files sealed. After that the `Plaintext` arms become a
 refusal (`SealError`), and the three migration functions go. A client floor, not a server version.
+
+### No date yet - a device-notice marker named by the key in hex, written by a build before 1.6.1
+
+**Site:** `announced_by_an_older_build` and `legacy_marker_name` in
+`frontend/src-tauri/src/mobile/device_notice.rs`, and the legacy half of `remove_device_notices_of`
+(with `device_notice_legacy_name`) in `frontend/src-tauri/src/commands/push.rs`.
+**Shim (2026-11-01):** the device-notice ledger names a marker by the SHA-256 of its key since 1.6.1;
+before, by the whole key in hex, which the filesystem refused for any key over 127 bytes
+([mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)).
+So an old marker exists only for a SHORT key: **the shim applies only to accounts with a short user
+id** (a key of at most 127 bytes, so a user id of roughly 40 characters or fewer); every other
+account never had a marker written. The claim reads such a marker as "already announced", so the
+upgrade posts nothing twice, and on that hit MIGRATES it: the digest marker is created
+(`create_new`) in the account's directory. It is never written under the old name; an account's
+deletion removes its own legacy markers from the ledger's root.
+**Removal condition:** `minClientVersion` at or above 1.6.1, on both estates, with both stores
+serving it, AND every installed build has run since and migrated its legacy markers. The
+registration pre-claim does NOT settle it: it skips devices idle for 30 days (absent from the device
+list) and keys still "new" by `isNewToItsOwner`, so a legacy marker can outlive it; only the
+migration on a hit retires one. Data at rest, so the floor alone does not retire this.
+
+### No date yet - a call record with no start clocks, written by a build before the derived-notices fix (2026-11-01)
+
+**Site:** the last branch of `callDurationMs` in `frontend/src/lib/utils/chat/callSystemMessages.ts`.
+**Shim:** a call's duration is measured on ONE clock - the server's two acceptances, or, for an end
+that is this device's own act, its own two instants - read from the `startClocks` the start row
+carries ([chat](frontend/modules/chat.md)). A start row an older build wrote carries none, so its end
+is measured as the hangup's instant minus the inviter's `startedAt`: two devices' clocks. Logged at
+`console.error` every time it runs, and so is the other reason it runs (a received end with no server
+time, which every delivery route carries - a fault, not a shim).
+**Removal condition:** no call row without `startClocks` is still open on any device - a call row is
+finalised when its call ends, so this lasts only for a call in flight across the upgrade. Removable
+once `minClientVersion` is at or above the build that ships this, on both estates; the branch then
+stays only as the accusing log of a received end with no server time.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 

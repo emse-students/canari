@@ -1,4 +1,8 @@
-import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
+import {
+  assertOkMlsDeliveryResponse,
+  deliveryKeepalivePost,
+  type DeliveryRefusal,
+} from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
@@ -18,6 +22,7 @@ import {
   refusalOrigin,
 } from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { readServerInstant, type ServerInstant } from './serverInstant';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
 import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
@@ -1072,11 +1077,14 @@ export class MlsDeliveryApi {
    * The headers every `/api/mls/*` request carries: the bearer token, and WHICH DEVICE IS ASKING.
    *
    * `X-Canari-Device` is here rather than at a call site because the device id is known in exactly
-   * one place and every future log line that wants it would otherwise need its own plumbing. It is
-   * self-asserted and DIAGNOSTIC ONLY - nginx authenticates the USER alongside it and no server
-   * decision reads it, so the most a client can do by lying is misattribute its own request inside
-   * its own account. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id` and
-   * friends from the auth subrequest, and client headers it does not name pass through.
+   * one place and every route that reads it would otherwise need its own plumbing. It is
+   * self-asserted, and nginx authenticates only the USER alongside it - so it is never proof of a
+   * device, only a choice among the authenticated user's OWN devices. Some server decisions do read
+   * it: the commit-time floor of `fetchCommitAcceptedAt` is read off the seat it names (a 400
+   * without it), and the own-removal date off that device's row. Lying can therefore only pick
+   * another of the user's own seats - never another account's - and a seat's floor is no wider than
+   * that seat's admission. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id`
+   * and friends from the auth subrequest, and client headers it does not name pass through.
    *
    * `'pending'` travels like any other value. It is the client's own literal for an unresolved
    * identity, the server already knows it as one, and a log line reading `device=pending` names a
@@ -1097,13 +1105,14 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, or
-   * `null` when it sent none (transport failure, non-2xx, non-JSON) - see `deliveryKeepalivePost`.
+   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, a
+   * {@link DeliveryRefusal} when it refused the caller on membership, or `null` when it sent neither
+   * (transport failure, any other non-2xx, non-JSON) - see `deliveryKeepalivePost`.
    */
   async deliveryPost(
     path: string,
     body: Record<string, unknown>
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown> | DeliveryRefusal | null> {
     return deliveryKeepalivePost(
       this.historyUrl,
       path,
@@ -1823,6 +1832,36 @@ export class MlsDeliveryApi {
       refusedAdmits?: RefusedAdmit[];
       userIds?: string[];
     };
+  }
+
+  /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch`
+   * (`GET /api/mls/commits/:groupId/accepted-at`, members only), as a {@link ServerInstant}.
+   * Throws when the server gave no answer about the commit (transport, 5xx, 429).
+   */
+  async fetchCommitAcceptedAt(groupId: string, baseEpoch: number): Promise<ServerInstant> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/commits/${encodeURIComponent(groupId)}/accepted-at?baseEpoch=${baseEpoch}`,
+      { headers: await this.auth() }
+    );
+    const answer = await readServerInstant(res, 'acceptedAt');
+    if (!answer) throw await refusalFromResponse(res, 'Commit accepted-at HTTP error');
+    return answer;
+  }
+
+  /**
+   * When THIS device's own seat in `groupId` was removed (`GET /api/mls/groups/:groupId/own-removal`,
+   * read of the requester's own rows, so a removed device may ask), as a {@link ServerInstant}.
+   * Throws when the server gave no answer (transport, 5xx, 429).
+   */
+  async fetchOwnRemovalAt(groupId: string): Promise<ServerInstant> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/own-removal`,
+      { headers: await this.auth() }
+    );
+    const answer = await readServerInstant(res, 'removedAt');
+    if (!answer) throw await refusalFromResponse(res, 'Own removal HTTP error');
+    return answer;
   }
 
   /**

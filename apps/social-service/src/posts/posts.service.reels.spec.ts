@@ -361,10 +361,37 @@ describe('deletePost - a reel deleted by hand', () => {
 
     await service.deletePost('r1', 'alice', false);
 
-    expect(retention.purgeReelBlobs).toHaveBeenCalledWith([
-      { mediaId: BLOB, ownerId: 'alice' },
-      { mediaId: COMMENT_BLOB, ownerId: 'bob' },
-    ]);
+    // The publisher's own delete: `author` releases the post's hold alone (D-postdelete).
+    expect(retention.purgeReelBlobs).toHaveBeenCalledWith(
+      [
+        { mediaId: BLOB, ownerId: 'alice' },
+        { mediaId: COMMENT_BLOB, ownerId: 'bob' },
+      ],
+      'author'
+    );
+    expect(retention.release).not.toHaveBeenCalled();
+  });
+
+  it("a moderator's delete purges with reason `moderation`, so a file sent to chats goes too (15.4)", async () => {
+    const { service, retention } = makeService({
+      existing: reel,
+      purge: () => Promise.resolve({ [BLOB]: 'deleted', [COMMENT_BLOB]: 'deleted' }),
+    });
+
+    // A global admin acting on Alice's reel.
+    await service.deletePost('r1', 'admin-user', true);
+
+    expect(retention.purgeReelBlobs).toHaveBeenCalledWith(expect.any(Array), 'moderation');
+  });
+
+  it('treats a `released` file (a chat still holds it) as done: nothing goes to the idle clock', async () => {
+    const { service, retention } = makeService({
+      existing: reel,
+      purge: () => Promise.resolve({ [BLOB]: 'released', [COMMENT_BLOB]: 'deleted' }),
+    });
+
+    await service.deletePost('r1', 'alice', false);
+
     expect(retention.release).not.toHaveBeenCalled();
   });
 

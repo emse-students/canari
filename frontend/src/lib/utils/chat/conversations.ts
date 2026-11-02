@@ -195,6 +195,27 @@ export function findConversationKeyByGroupId(
 }
 
 /**
+ * The key and row of the DIRECT conversation with `peerId`, or `undefined`.
+ *
+ * THE ONE PREDICATE A DUPLICATE-GROUP MERGE RE-KEYS ON (`setupMessageHandler`, the Welcome of a DM
+ * whose peer already has a row): the row is moved to the key of the group just joined. A send made
+ * under the old key follows it by asking the same question (`handleSendChat`), so the two cannot
+ * disagree about which row a DM is.
+ */
+export function findDirectConversationByPeer(
+  conversations: Map<string, Conversation>,
+  peerId: string
+): [string, Conversation] | undefined {
+  const peer = peerId.toLowerCase();
+  for (const entry of conversations) {
+    const convo = entry[1];
+    if ((convo.conversationType ?? 'group') !== 'direct') continue;
+    if ((convo.directPeerId ?? convo.contactName).toLowerCase() === peer) return entry;
+  }
+  return undefined;
+}
+
+/**
  * Retires a conversation: marks the row `removed` and forgets everything else keyed by its group.
  *
  * THIS IS THE ONLY PLACE `lifecycle: 'removed'` MAY BE WRITTEN, and that is the substance of it.

@@ -3,6 +3,9 @@
   import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
   import { mineHere } from '$lib/bookings/mineHere';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
+  import PlanningList from '$lib/components/bookings/booker/PlanningList.svelte';
+  import RangeForm from '$lib/components/bookings/booker/RangeForm.svelte';
+  import { planningDays, planningKind } from '$lib/bookings/planning';
   import ColumnSelect from '$lib/components/bookings/booker/ColumnSelect.svelte';
   import DayStrip from '$lib/components/bookings/booker/DayStrip.svelte';
   import WeekBar from '$lib/components/bookings/booker/WeekBar.svelte';
@@ -44,10 +47,11 @@
 
   /**
    * THE WEEK OF ONE SPACE, ONE COLUMN AT A TIME (WP-B5, WP-R2, WP-R5): days as columns on a desktop
-   * and one day under a week strip on a phone (D46, D48; the width decides, as the agenda's does),
-   * the column selector, and the sheets that book, block and read a taken unit. ONE read holds the
-   * week and the day before it, so the strip's dots, the day and the column counts come from the
-   * same answer. The booker's page and the organiser's dashboard both draw it - the dashboard in
+   * and a planning list under a week strip on a phone (D46, D55; the width decides, as the agenda's
+   * does), the column selector, and the sheets that book, block and read a taken unit. THE WEEK
+   * ROLLS: seven days from today (owner, 2026-11-01), moved by sevens. ONE read holds the week and
+   * the day before it, so the strip's dots, the planning rows, the grid and the column counts come
+   * from the same answer. The booker's page and the organiser's dashboard both draw it - the dashboard in
    * `block` mode, where a drag or a tap on free units opens "Indisponible" (D50) instead of a booking.
    */
   interface Props {
@@ -85,10 +89,12 @@
   let loaded = $state<{ from: string; to: string } | null>(null);
   let mine = $state<Map<string, MyBooking>>(new Map());
   let slotsError = $state('');
-  /** A phone draws one day under the strip; wider screens draw the week. */
+  /** A phone draws the planning list under the strip; wider screens draw the grid. */
   let narrow = $state(isScheduleAgendaViewport());
-  /** The day shown (a phone), and with it the week shown. */
+  /** The day the phone's strip marks, and the planning list scrolls to. */
   let date = $state(untrack(() => localDate(nowMs, space.timeZone)));
+  /** The first day of the rolling week shown: today at first (owner, 2026-11-01), then moved by sevens. */
+  let start = $state(untrack(() => localDate(nowMs, space.timeZone)));
   /** The column shown: a space with several columns shows one at a time (D44, D46). */
   let resourceId = $state(untrack(() => space.resources[0]?.id ?? ''));
   let sheet = $state<Sheet | null>(null);
@@ -99,18 +105,18 @@
    * It holds for the life of this view, whatever the device's clock says.
    */
   let lastRefusedStart = $state<number | null>(null);
+  /** The grid's scroll, kept here so a week with nothing offered (which unmounts the grid) does not lose it. */
+  let gridScroll = $state<number | null>(null);
 
   const today = $derived(localDate(nowMs, space.timeZone));
   const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
-  const weekAll = $derived(date ? weekDates(date) : []);
+  const weekAll = $derived(start ? weekDates(start) : []);
   const columnUnits = $derived(resource ? unitsInOrder(slots, resource.id) : []);
-  /** The week of the chosen column: the strip's dots, and the desktop grid. */
+  /** The week of the chosen column: the strip's dots, the planning rows and the grid. */
   const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
-  /** What the grid draws: the week, or on a phone the chosen day alone on its own axis. */
-  const layout = $derived(narrow ? weekLayout(columnUnits, [date], space, nowMs) : week);
   /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
   const weekHeld = $derived.by(() => {
-    const want = weekReadRange(date);
+    const want = weekReadRange(start);
     return loaded !== null && loaded.from <= want.from && want.to <= loaded.to;
   });
   /**
@@ -118,11 +124,21 @@
    * moved to loads. Dropping it for the empty line collapsed the page, and the browser clamped the
    * scroll to the top on every arrow (owner, 2026-10-31): the page must stay where the reader is.
    */
-  let lastDrawn: typeof layout | null = null;
+  let lastDrawn: typeof week | null = null;
   const drawn = $derived.by(() => {
-    if (weekHeld || !lastDrawn) lastDrawn = layout;
+    if (weekHeld || !lastDrawn) lastDrawn = week;
     return lastDrawn;
   });
+  /** The phone's planning: the same week, one list of rows per day. */
+  const planning = $derived(
+    planningDays(
+      drawn,
+      planningKind(space, nowMs, lastRefusedStart, mode === 'block'),
+      space.slotMode === 'slots'
+    )
+  );
+  /** The range form (the planning's "+" or a tapped free row), or null while closed. */
+  let range = $state<{ resourceId: string; unit?: SlotUnit; endMs?: number } | null>(null);
   const freeCounts = $derived(
     new Map(
       space.resources.map((r) => [
@@ -179,7 +195,7 @@
     // Bumped on EVERY call, the cache hit included: a slow read for a week left behind must not
     // land once the view came back to a week already held.
     const ticket = ++slotsRead;
-    const { from, to } = weekReadRange(date);
+    const { from, to } = weekReadRange(start);
     if (!force && loaded && loaded.from <= from && to <= loaded.to) return;
     slotsError = '';
     try {
@@ -195,14 +211,24 @@
     }
   }
 
-  /** A whole week at a time: the same weekday on a phone, so the strip keeps its place. */
+  /** Seven days at a time: the day shown moves with the window, so a phone strip keeps its place. */
   function moveWeek(weeks: number) {
+    start = addDays(start, weeks * WEEK_DAYS);
     date = addDays(date, weeks * WEEK_DAYS);
     void ensureSlots();
   }
 
+  /** A day of the strip's window; one outside it starts a new window. */
   function chooseDate(next: string) {
     date = next;
+    if (!weekAll.includes(next)) start = next;
+    void ensureSlots();
+  }
+
+  /** "Aujourd'hui": the window starts on today again, whichever of its days holds today now. */
+  function goToday() {
+    start = today;
+    date = today;
     void ensureSlots();
   }
 
@@ -283,16 +309,16 @@
           onSelect={chooseDate}
           onPrevious={() => moveWeek(-1)}
           onNext={() => moveWeek(1)}
-          away={date !== today}
-          onToday={() => chooseDate(today)}
+          away={date !== today || start !== today}
+          onToday={goToday}
         />
       {:else}
         <WeekBar
           label={weekLabel}
-          away={!weekAll.includes(today)}
+          away={start !== today}
           onPrevious={() => moveWeek(-1)}
           onNext={() => moveWeek(1)}
-          onToday={() => chooseDate(today)}
+          onToday={goToday}
         />
       {/if}
       <div
@@ -302,17 +328,37 @@
       >
         {#if drawn.endMin === drawn.startMin}
           <p class="text-text-muted py-8 text-center text-sm">
-            {narrow ? m.bookings_day_empty() : m.bookings_week_empty()}
+            {m.bookings_week_empty()}
           </p>
+        {:else if narrow}
+          <PlanningList
+            days={planning}
+            {space}
+            {resource}
+            {nowMs}
+            {lastRefusedStart}
+            blockMode={mode === 'block'}
+            focusDate={date}
+            {today}
+            onOpen={(unit) => pick(resource, unit)}
+            onFree={(run) => {
+              Log.d('BOOKINGS', 'planning: a free row opens the range form');
+              range = { resourceId: resource.id, unit: run.units[0], endMs: run.endMs };
+            }}
+            onAdd={() => {
+              Log.d('BOOKINGS', 'planning: the "+" opens the range form blank');
+              range = { resourceId: resource.id };
+            }}
+          />
         {:else}
           <SpaceGrid
             {space}
             {resource}
             layout={drawn}
-            mode={narrow ? 'day' : 'week'}
             blockMode={mode === 'block'}
             {nowMs}
             {lastRefusedStart}
+            bind:scrollTop={gridScroll}
             onPick={pick}
           />
         {/if}
@@ -326,6 +372,24 @@
     </aside>
   {/if}
 </div>
+
+{#if range}
+  <RangeForm
+    {space}
+    resources={space.resources}
+    unitsOf={(id) => unitsInOrder(slots, id)}
+    dates={weekAll}
+    {nowMs}
+    {lastRefusedStart}
+    blockMode={mode === 'block'}
+    initial={range}
+    onSubmit={(picked, first, count) => {
+      range = null;
+      pick(picked, first, count);
+    }}
+    onClose={() => (range = null)}
+  />
+{/if}
 
 {#if sheet}
   {#if sheet.kind === 'book'}

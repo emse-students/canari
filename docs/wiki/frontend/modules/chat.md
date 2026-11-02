@@ -1296,8 +1296,8 @@ Four defects of one seam, found by a read-only review and fixed together:
   branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
   `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
   a group this device does not hold. A send in the window meets an unsendable group and is HELD
-  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
-  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+  (`holdForGroup`) with a re-add asked - a file too, since it is queued at the tap like a text
+  ([below](#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
 - **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
   fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
   `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
@@ -1365,6 +1365,92 @@ seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.tes
 `admissionState.test.ts` (an `active` row over a group this device is out of waits on the server),
 `groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
 (`onGroupReady` on both Welcome paths).
+
+### A file is queued at the tap, like a text (2026-11-01)
+
+A DM/group attachment used to wait, in `handleSendChat`, for `waitForMessageQueueIdle('media send')`
+and a `verifyCurrentUserMembership` round trip BEFORE anything was written: 18 s on a stalled link
+(2026-10-31), with no bubble and no clock on screen, and a refusal ("session establishing") for a row
+awaiting re-admission. That barrier answered the questions this queue already asks before every send,
+earlier and slower, and its answer could go stale before the flush ran. It is deleted, with its
+refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.verifyCurrentUserMembership`.
+
+- **At the tap**: the staged files are claimed before the first await (a second Send finds nothing),
+  each file is READ, then its `mediaId: ''` placeholder and its media entry (`fileBytes` included) are
+  written in ONE write (`saveMessageWithOutboxEntry`, `alreadyDurable`), as a text's echo and entry
+  are. A failed pair write lets the queue write its own row (`MessagePairWriteError`); a refused
+  enqueue (`OutboxEnqueueError`) withdraws the placeholder and re-stages the file; a
+  `MessageWrittenError` (the row is on disk, the live queue refused it) keeps both - the next flush
+  sends it. The one refusal left is the text path's: a `removed` row takes nothing new.
+- **"Pair" is atomic on IndexedDB only.** SQLite through `tauri-plugin-sql` cannot hold a transaction
+  across two statements ([sqliteBatch](../../../../frontend/src/lib/db/sqliteBatch.ts)), so it writes the
+  entry first and a tear after it throws `OutboxEntryWrittenAloneError`; `MessagePairWriteError.entryWritten`
+  carries it to both send paths, which then tell the queue the row is durable instead of writing it
+  a second time (a second blob in its slot) and giving the file back (a duplicate). Review of #2874, M2.
+- **The account is asked before EACH write**, not once at the tap: `enqueueOutboxMessage` reaches the
+  module's ACTIVE controller, so a sign-out inside the read or the pair write would hand the file to
+  the NEXT account's queue, which sends it as itself. On a sign-out since the tap the file is dropped
+  with a log line, nothing is re-staged, and the caption is not sent (review of #2874, M1).
+- **A caption belongs to the first file**: a refused first file given back to the staging takes it
+  back too (the send answers `false`, the composer restores the draft) instead of sending it alone as
+  a text that captions nothing (L3). A file DROPPED because the member moved on (below) still lets its
+  caption go, so the words are not lost with it.
+- **A refusal after the member moved to another conversation drops the file** and says so on the
+  banner of the conversation now on screen (`chat_media_dropped_other_conversation`); re-staging it
+  where the member is not looking was judged worse. Accepted as is (review of #2874, L4).
+- **What the barrier guarded is the flush's**: the queue-idle barrier before any lane (the file is
+  sealed at the current epoch), then per entry `isGroupHealthy` (a re-admission is HELD, its bubble
+  showing `repairing`, and resumed by its Welcome), the deleted-group read and `isGroupActive` (an
+  evicted group retires it) - all before the upload is paid, so a file for a group that cannot take it
+  costs no transfer. **And again for an uploaded file, BEFORE the gates** (`outbox media seal`): the
+  flush's barrier is an upload back, and a lane woken by the upload's end does not pass it again (L1).
+  Its place is the fix, not a re-check: taken after the gates, a Remove it drained (a real eviction,
+  or the Remove half of a re-admission) was invisible to them and the send learnt it by FAILING - the
+  file retired as `evicted-late`, a false "the Remove commit never reached it", a permanent removal
+  notice before the Welcome. Taken first, the gates read the drained state and nothing is awaited
+  between them and `sendMessage`. A re-admission's Remove has its group state DROPPED by
+  `retireIfEvicted` (the `reAddInFlight` branch) before the barrier returns, so `isGroupHealthy`
+  reads false and the file is HELD for the Welcome; a real eviction leaves the state held and
+  `isGroupActive` false, so it retires as `evicted` (evidence `membership-check`) (re-review of #2874).
+  The CEK is still
+  generated on the device, by the upload the flush starts (`encryptAndUpload`); the entry holds the
+  plaintext under the device key until then.
+- **A file the group will never take says why in its bubble.** Retired for `group-deleted`, or for
+  `evicted`/`evicted-late`/`removed`, its bytes go with the row and the bubble read "refused by the
+  server", the file's failure and not this one. `failPermanently` now records an `UnsentReason`
+  (`uploadProgress.svelte.ts`) and the bubble says `upload_unsent_group_deleted` or
+  `upload_unsent_not_a_member` in the place of `upload_failed_label` (M4). **Durable**: the reason is
+  written on the stored message row (`StoredMessage.unsentReason`, inside the encrypted payload)
+  before the entry is deleted, and the bubble of an own attachment absent from the queue reads it
+  (`storedUnsentReasonOf`) before it draws the orphan's "never completed"; a follower tab holding the
+  message is told live (`outbox_entry_retired`). The write is READ BACK: `updateMessage` writes
+  nothing, and says nothing, for an absent or undecryptable row, so every way the reason fails to
+  reach disk is logged. Re-review of #2874.
+- **A send never rides the orphan buffer.** A conversation that left the map since the tap has two
+  answers before the write. A DM RE-KEYED by a duplicate-group merge (the Welcome path of
+  `setupMessageHandler` moves the row to the group just joined) is FOLLOWED: the file goes to the new
+  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses. A
+  conversation truly GONE (deleted, left) drops the file and TELLS THE MEMBER
+  (`chat_media_conversation_gone` on the send banner); with nothing sent the send answers `false`, so
+  the caption goes back to its draft. And `addMessageToChat`'s orphan buffer strips
+  `outboxEntry`/`onPairWritten` - and an own send's tap-time `pending` - from what it keeps, so a
+  replay (`drainOrphanMessages`) never writes, and so never sends, an entry a second time; the
+  replayed own row then takes its status from the durable queue (`applyOutboxPendingStatuses`), as
+  at a reload. The buffer is cleared by `forgetAccount`, so nothing replays under the next account.
+- **An uploaded file retired unsent stays on the server.** There is no client route that deletes an
+  ordinary chat upload (`DELETE /media/:id` is server-to-server; the user route covers only the
+  sender's own chat reel), so `failPermanently` names its `mediaId` at `console.warn` and in the
+  in-app log, and the object waits for its retention class's sweep (`ephemeral` for a chat upload).
+  Owed if that is ever too slow: a sender's delete route for its own unsent upload (L2).
+- **Order**: every file of one tap is dated by the tap (`tappedAt + index`), so a text typed while a
+  long write runs is dated after all of them; a text sent before the file goes out before it. A text
+  sent AFTER it may still be accepted first while the upload runs (WP-OFF-9, below).
+- Pinned by `useMessaging.mediaEnqueue.svelte.test.ts` (no barrier, tap-then-kill durability, order,
+  the refusals, the sign-out and the caption), `sqlitePairWrite.test.ts` (the torn SQLite pair) and
+  `outbox.test.ts` ("a file queued at the tap": kill and resume, both barriers, a Remove drained by
+  the seal barrier, the held, evicted and deleted group and their persisted reasons, the follower,
+  the orphaned upload, failure then retry), `MessageBubble.orphan.svelte.test.ts` (the reason after a
+  reload) and `messagePayload.test.ts` (its round trip).
 
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 
@@ -1698,6 +1784,61 @@ every reader.
 Pinned by `systemMessageHandler.noticeIdentity.test.ts`, which asserts the convergence property
 directly: one frame handed to both paths produces one id. Old frames carry none and stay
 duplicate-prone - [legacy-compatibility](../../legacy-compatibility.md).
+
+### A visible notice is dated by its FRAME, never by when this device learnt of it
+
+**The sender's id was half of what the frame owed the row; its date was the other half, and the
+live path dropped it.** `mkVisibleSystem` mints `sentAt` beside `messageId`, and the delivery says
+when the server accepted the frame (`queuedCreatedAt`) - yet every notice branch of
+`handleSystemEvent` wrote `{ isSystem: true, messageId }` and nothing else, so `addMessageToChat`
+(`resolveMessageTimestamp`) dated the row `new Date()`: THIS device's clock at the moment its drain
+reached the frame. The live receiver was the visible defect, but not the only one: the acting device
+(`sendVisibleNotice`) wrote `frame.sentAt` with NO `serverTimestamp`, so its copy was ordered by a
+different key than every member's, and the archive replay wrote no `serverTimestamp` either and fell
+back to `new Date()` on an unreadable history time.
+
+**What that cost (owner, v1.6.0, iPhone, 2026-11-01).** A group created on the PC with two members,
+a conversation in it, and the phone opening the group for the FIRST time: its queue drained the
+`memberAdded` frame hours late, the notice took that instant as its order key, and "X a ajouté A, B
+au groupe" sat BELOW every message that followed the addition. The messages themselves were right,
+because a received text row has always carried its `sentAt` and `serverTimestamp`. The row was
+written once and the replay deduplicates by id, so the wrong date was durable.
+
+**The fix is `receivedNoticeTime(sentAt, queuedCreatedAt)` (`visibleNotices.ts`)**, read through ONE
+writer in `handleSystemEvent` (`writeNotice`) by every notice branch - the five membership notices,
+`groupDeleted`, and both channel invitation cards. It dates the row exactly as a received text row is
+dated: `timestamp` the frame's `sentAt` (the server acceptance for an older frame that carries none),
+`serverTimestamp` the server acceptance, which is the order key (`messageTime`). Both
+`setupMessageHandler` call sites (the live frame and the Welcome buffer) pass `sentAt` in the
+context. **With neither time the row is NOT drawn**, refused at ERROR (`[NOTICE] REFUSED to draw`):
+every delivery route of this build carries the server time, so reaching it means a route lost it, and
+the local clock is never a stand-in for when an event happened.
+
+**Every copy of a frame's notice now carries the same order key.** The acting device's own row takes
+`serverTimestamp` from its send's answer (`SentFrame.receivedAt`), exactly as an own text row gets it
+through `patchServerTimestamp`; an answer with no receive time is reported at ERROR. The archive
+replay (`historySystemEvents.ts`) dates through the same `receivedNoticeTime(sentAt, <history row
+time>)` and is REFUSED at ERROR (`[HISTORY_REPLAY] REFUSED`) when neither time is readable.
+
+**A row this device derives from SOMEONE ELSE's event is dated by that event - each with a named
+authority, and refused at ERROR when it has none. Never the local clock.** (A row recording this
+device's OWN act - an outbox failure line, a channel invitation it sent, the older-messages notice - is
+dated by that act, which is this device's clock by definition; it is out of this rule.)
+
+| Row | Authority | No authority |
+| --- | --- | --- |
+| Device line, uninvited-entry line (`deviceNotices.svelte.ts`) | The commit log row (`mls_commit_log.createdAt`) of the commit that admitted the device: `baseEpoch = event.epoch - 1`, read through `GET /api/mls/commits/:groupId/accepted-at` (members only, and never a commit older than the one that admitted the requester - a newcomer is not handed the past). **The floor is the commit that ADMITTED the requesting device, recorded on its seat by the commit gate** (`dm_device_group_memberships."admittedByBaseEpoch"`, migration 044, owner 2026-11-02): written with the advance on every admission - a member's Add (`admits`, and the target of the Welcome it carries), an external join (the committer's own commit), the group's creation (`0`), and a key group's creating publisher (the published epoch, only on a seat with none) - and never cleared by activation. Both kinds of group are floored per DEVICE. **It replaced a clock**: the floor was "the last commit accepted at or before the arrival" (the open stretch's `admittedAt ?? joinedAt`, a key-group row's `createdAt`), and both arrivals could predate the admission - a group conversation's `joinedAt` is written by the enrolment before the Add, so the floor landed one commit early, and a device kicked and re-added kept its first row, so it was answered the commit times from while it was out (review of #2890, LOW-D; acceptance times only, never content). A re-add now moves the floor past them. **A kick clears the admission** (`deactivateDeviceMembership` with `removedFromTreeAt`), a demotion with no kick (the stale-device cron, a self-report) leaves it, the leaf being still in the tree; a commit's DECLARED admission (`admits`, a Welcome target) is written on a `pending` seat only, so it cannot raise an active seat's floor. **An ACTIVE seat with no recorded admission is floored at its group's CURRENT epoch, and that is written once** (`admissionInferred = true`, refuse rather than leak, never refused for ever): migration 044 did it for every active seat at the deploy - the cost being that a line about a commit accepted before the deploy and merged after it is settled undated - and `commitFloorOf` does it at the first ask for an active seat the backfill could not reach (admitted by a replica still on the old code during a rollout, an aborted rollout, a rollback, or a seat the cron demoted and a report re-activated with no commit), ERROR once; the write is conditional on the seat still being active, unkicked and floorless, so a kick mid-ask wins. **A PENDING seat is never inferred** (owner's review, 2026-11-02): enrolled and not yet admitted, an inferred floor would hand it every commit time until its Add - the past a newcomer is not handed. It is floored only by the admission the gate wrote while it waits (`admittedAtEpoch - 1`, also 044's exact backfill), and otherwise refused quietly (`log`), as is a kicked seat. A refusal before an inferred floor is said at `log` (it refuses by design), before a recorded admission at WARN. Also refused at `log`: a member whose device holds no seat (a pending seat the 14-day cleanup purged while its owner stayed on the roster - it never processed a Welcome, so it has no commit of its own to ask about). **A rollback across 044 is the accepted cost, with a named roll-forward**: the old code neither clears a floor on a kick nor records one on a re-add, so a seat kicked and re-added while it ran keeps a stale LOW floor, and nothing distinguishes it afterwards - rolling forward means setting every floor back to NULL and re-running 044's two UPDATEs, a data change the owner approves then. Asked with no `X-Canari-Device` (either kind) is a 400. The floor is one row read by its unique key; no commit-log walk any more. Chosen over the commit frame's own `queuedCreatedAt` because it is ONE answer on every device and survives a restart, where the delivery time exists only for a device that drained the commit live (a Welcome-joined device never did). **A contact line in a DM or a group is dated by a commit of ANOTHER group** - the one where the device was first seen, often a community's key group - so it sits at the instant the device was admitted anywhere, not at an event of the conversation it is written in. Asked once per commit for the session (`cachedCommitInstants`): a log row never changes | The four answers are typed at the throw (`ServerInstant`, `serverInstant.ts`). No row (`none`): `[DEVICE_NOTICE] line settled UNDATED`, at the level of the server's `reason` - `pruned` at log (the retention working), `not-yet` at warn, `hole` (or no reason, an older server) at error. A 403 (`refused`: left the group, or a commit before the requester's arrival): settled, no warning - asking again could only be refused again. A 404 (`unserved`: this server does not serve the route, a build that shipped before its backend): ONE `[COMMIT_AT]` error for the session, the line PARKED - owed, not asked again. No answer (transport, 5xx): owed to the next delivery. An uninvited entry is reported (`[MLS] UNINVITED ENTRY`) only once its time is answered, so an entry kept owed is not accused at every drain |
+| Eviction notice (`recordEviction`) | The Remove commit's delivery time (`remove-commit` delivered live), or the removal announcement's (`system-event`). Every other evidence - a Remove commit applied through the replay (`commitReplay.ts` carries no delivery time), `inbound-frame`, `membership-check`, `outbound-refusal`, `server-refusal` - asks the server for its OWN seat's removal: `GET /api/mls/groups/:groupId/own-removal`, the person's closed membership stretch (`leftAt`) or this device's kick (`kickedAt`). It reads only the requester's own rows, so a removed device may ask; the members-only commit log could not answer it | The server holds no record (`none`, `refused`): `removal notice REFUSED`, said once per group (only the call that retired the row speaks), settled, and not asked again this session. **No answer - `unserved` (404), a throw, or a write that failed - leaves the line OWED, durably** (`removalNotice.ts`, `ACCOUNT_KEY.owedRemovalNotices`): the retired row receives no further evidence, so the next evidence for the group asks again and, at the latest, `drainOwedRemovalNotices` asks after the next session's restore (dropping a group re-admitted or gone). One write runs at a time per account and group, and **the row is re-read after every await**: the line is written only while the row is still `removed` and holds no line of THIS removal (the lines the thread held when the evidence retired the row are an earlier removal's, and kept in the owed record so the next session tells them apart), so a removal undone during the ask (a Welcome installing, which `retractEvictionNotice` cannot yet see) writes nothing - the 2026-09-22 rule kept across the ask - and two evidences landing together, whose instants differ (the Remove commit's delivery, the announcement's), write one row. The id is `evicted:<groupId>:<removedAt>`. An answered "no instant" is remembered per account and per session (cleared by the sign-out, said when it skips an ask), and the restore drain stops when its session ends; a live evidence whose row leaves the map during the ask (a sign-out clears it) keeps the line owed rather than settling it, and the next drain decides. The eviction itself and its banner never wait on either |
+| Call record (`callSystemMessages.ts`) | A received signal: its frame, `receivedNoticeTime(sentAt, queuedCreatedAt)`. This device's own act (`CallService`): the ONE instant the act is stamped with, shared with the frame's `sentAt`, plus the send's `receivedAt`. **The end record is written AT THE ACT, never held for the hangup's send** (a catch-up gate or an epoch barrier can hold a send for minutes, and a kill meanwhile left the row unfinalised); the server's acceptance is patched in when the send answers (`onCallEndAnswered` -> `patchCallRecordServerTime`, like `patchServerTimestamp`). **The duration is measured on ONE clock** (`callDurationMs`): the server's acceptances of the invite and of the end when both are known; otherwise, only for an end that is this device's own act (`ownAct`), its own two instants - the start row's `startClocks.local` and the act's stamp. Never the clock at finalisation: a remote end drained hours late would measure hours. The hangup's server time is patched only onto a row the END wrote (no started row on this device), never onto a started row whose invite's send answered none. **Known imprecision**: `startClocks.local` is when THIS device wrote its start row, so a callee launched cold by a native ring (iOS) starts its clock at the drain, possibly after the answer - its own-end duration then reads short by the cold launch, whenever the server time is missing on either side. `startedAt` is the inviter's clock, and subtracting this device's end from it measured one phone against another | A received signal with neither time: `[CallRecord] ... REFUSED`, no row. A duration with no single clock (a row with no `startClocks`, [legacy-compatibility](../../legacy-compatibility.md); or a received end with no server time) mixes two clocks and says so at `console.error` |
+
+A row already written with the wrong date by an older build keeps it. Pinned by
+`systemMessageHandler.noticeTime.test.ts` (a group drained six hours late keeps its notice above the
+conversation, in either processing order), `setupMessageHandler.noticeTime.test.ts` (both entry
+points of the pipeline, live and Welcome-buffered, and a call signal), `visibleNotices.test.ts` (the
+own row and the replay), `deviceNotices.svelte.test.ts` (each of the four answers),
+`serverInstant.test.ts` (the classification and the cache), `recordEviction.onePolicy.test.ts` (every
+site dated, and the refusal said once), `callSystemMessages.outcome.test.ts` (two skewed clocks) and
+`removalNotice.test.ts` (an unanswered removal kept owed and written by the next evidence or the next restore, one line for two evidences), and the server's `messaging.commit-log.spec.ts` (the arrival floor failing closed, the reasons, the own removal) and `commit-time.integration.spec.ts` (the floor against PostgreSQL: a key-group admission and a publisher that cannot lower it, a group admission whose enrolment predates the Add, a kick then re-add, and migration 044's backfill of the pre-column rows).
 
 ### A mutation event is authorised on RECEIPT, by the MLS sender
 
@@ -4414,3 +4555,9 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
   under an open conversation (a name resolved late, a rename) strands the draft under the old key:
   invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
   "vanishes" from a DM.
+
+### The scroll-to-bottom badge counts only what lies below the viewport (2026-11-01)
+
+The owner saw a yellow "1" on the floating arrow while scrolled up in a conversation with nothing new. The badge was `countUnreadForUser` over the WHOLE thread: any foreign row not covered by the read mark - above the viewport, in view, or held back by `serverMarkCeiling` or an unfocused window - raised it. Reactions, edits and pins are not rows and never counted. It is now `countUnreadBelow` (`readState.ts`): the unread rows after `lastVisibleMessageId`, measured by `ChatArea.measureScroll` next to `isNearBottom`; an unmeasured position counts nothing. `readState.test.ts`.
+
+The position (`utils/chat/visibleRow.ts`) is the last row above the scroller's bottom MINUS its padding (the floating composer's height), found by binary search over the display-ordered `messageRows`; it is re-measured when the thread or conversation changes, not only on scroll, a vanished anchor resolves to the nearest surviving row (logged once), and nothing is counted while pinned to the live end.

@@ -123,6 +123,11 @@ beforeEach(() => {
     update: record,
     stop: () => {},
     pageLoaded: () => {},
+    ringStart: () => {},
+    ringStop: () => {},
+    isDndRegrantOwed: () => false,
+    dndRegrantAnswered: () => {},
+    openCallChannelSettings: () => {},
   };
 });
 

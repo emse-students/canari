@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { SlotUnit } from './api';
 import type { PlacedUnit } from './grid';
-import { blockDensity, buildRuns, cutRange, spanOf, type RunKind } from './gridRuns';
+import {
+  blockDensity,
+  buildRuns,
+  cutRange,
+  spanOf,
+  type RunKind,
+  edgeScrollDirection,
+} from './gridRuns';
 
 const T0 = Date.parse('2026-11-02T08:00:00+01:00');
 const STEP = 30 * 60_000;
@@ -174,5 +181,21 @@ describe('blockDensity', () => {
     expect(blockDensity(2)).toBe('line');
     expect(blockDensity(1.75)).toBe('line');
     expect(blockDensity(1)).toBe('icon');
+  });
+});
+
+describe('edgeScrollDirection - a pointer can only reach an edge it can see', () => {
+  const box = { top: 100, bottom: 900 };
+  it('scrolls at the edges of a box that fits the viewport', () => {
+    expect(edgeScrollDirection(890, box, 1000, 40)).toBe(1);
+    expect(edgeScrollDirection(110, box, 1000, 40)).toBe(-1);
+    expect(edgeScrollDirection(500, box, 1000, 40)).toBe(0);
+  });
+  it('clamps a box taller than the viewport to the visible part', () => {
+    // The box ends at 900 but the screen at 600: the bottom edge is at 600, not 900.
+    expect(edgeScrollDirection(580, box, 600, 40)).toBe(1);
+    // And a box starting above the screen has its top edge at 0.
+    expect(edgeScrollDirection(10, { top: -300, bottom: 900 }, 1000, 40)).toBe(-1);
+    expect(edgeScrollDirection(300, { top: -300, bottom: 900 }, 1000, 40)).toBe(0);
   });
 });

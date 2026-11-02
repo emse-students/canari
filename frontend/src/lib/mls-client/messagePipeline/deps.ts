@@ -1,4 +1,5 @@
 import type { IMlsService } from '../IMlsService';
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import type { IStorage } from '$lib/db';
 import type {
   AddMessageToChatOptions,
@@ -137,7 +138,17 @@ export interface MessageHandlerDeps {
   onJoinAskSettled?: (settled: SettledJoinAsk) => void;
   /** A participant's read watermark moved forward - `at` is how far they have now read. */
   onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
-  onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
+  /**
+   * A call signal arrived. `at` is when its frame happened (`receivedNoticeTime`: the frame's
+   * `sentAt` and the server's acceptance), `null` when neither is known - the call record is dated
+   * by it, never by when this device processed the frame.
+   */
+  onCallSignal?: (
+    senderId: string,
+    groupId: string,
+    callMsg: unknown,
+    at: EventTime | null
+  ) => void;
   /**
    * Called when a Welcome is processed successfully and the group is ready: resumes what the outbox
    * held for it and re-runs the invitations skipped while it was not (`sessionAuth`'s

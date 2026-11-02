@@ -48,7 +48,6 @@ async function grid(blockMode: boolean) {
       space,
       resource,
       layout: weekLayout(units, ['2026-11-02'], space, START - 3600_000),
-      mode: 'day',
       blockMode,
       nowMs: START - 3600_000,
       onPick: vi.fn(),

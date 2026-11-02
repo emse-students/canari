@@ -134,6 +134,13 @@ export interface AddMessageToChatOptions {
    * would ever write the row again.
    */
   soleWriter?: boolean;
+  /**
+   * A salon message whose open PROVED its author (a Graine v2 session - `openChannelMessageProving`).
+   * Read by the notification only: the native builder names a salon banner's speaker under this
+   * fact, exactly as the push trigger does, so the two triggers of one message draw one speaker.
+   * Absent is not proven.
+   */
+  authorProven?: boolean;
 }
 
 /**
@@ -189,6 +196,8 @@ export interface ChatMessage {
   awaitingServerId?: boolean;
   /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
   restoredUnverified?: boolean;
+  /** When this device met this reel message's `410` - see `StoredMessage.mediaPurgedAt`. */
+  mediaPurgedAt?: number;
   /** Where the store's page read found this row (`StoredMessage.pageKey`); absent on a row that did not come from one. */
   pageKey?: PageKey;
 }

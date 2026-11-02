@@ -25,10 +25,13 @@ import {
   ValidateCommitBody,
 } from '../services/messaging.service';
 import {
+  canonicalUserId,
   sanitizeDevicePairLogValue,
   sanitizeEpoch,
   sanitizeLeafLogValue,
   sanitizeLogValue,
+  sanitizeOptionalQueryValue,
+  sanitizeQueryValue,
 } from '../utils/sanitize';
 
 /**
@@ -127,6 +130,55 @@ export class MessagingController {
       throw new BadRequestException('missing x-user-id');
     }
     return this.messagingService.getCommitsSince(groupId, sinceEpoch, authUserId);
+  }
+
+  /**
+   * When the server accepted the commit built on `baseEpoch` (`mls_commit_log.createdAt`), for a
+   * line a device derives from that commit - dated by the commit, never by when the device merged
+   * it. `{ acceptedAt: null }` when the log holds no such row. Membership-gated in the service.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/commits/:groupId/accepted-at')
+  async getCommitAcceptedAt(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') deviceId: string | undefined,
+    @Param('groupId') groupId: string,
+    @Query('baseEpoch') baseEpochRaw?: string
+  ) {
+    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked.
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    const baseEpoch = sanitizeEpoch(baseEpochRaw, 'baseEpoch');
+    return this.messagingService.getCommitAcceptedAt(
+      groupId,
+      baseEpoch,
+      authUserId,
+      sanitizeOptionalQueryValue(deviceId, 'x-canari-device')
+    );
+  }
+
+  /**
+   * When the REQUESTER'S OWN seat in a group was removed (`{ removedAt }`, `null` when nothing
+   * removed it) - the date of the "you were removed" line a device writes when it learns of its
+   * removal from an evidence that carries no time. Reads only the requester's own rows, so it is
+   * not membership-gated: a removed device is exactly who asks.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/groups/:groupId/own-removal')
+  async getOwnRemovalAt(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') deviceId: string | undefined,
+    @Param('groupId') groupId: string
+  ) {
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    return this.messagingService.getOwnRemovalAt(
+      groupId,
+      authUserId,
+      sanitizeOptionalQueryValue(deviceId, 'x-canari-device')
+    );
   }
 
   /**
@@ -534,6 +586,11 @@ export class MessagingController {
    *
    * Guard: no notification if the reactor is the message author (cross-device own-action - the
    * user already knows what they did).
+   *
+   * ONLY A MEMBER OF THE CONVERSATION MAY RING ITS AUTHOR (re-review of #2358): the caller must be
+   * an admitted member of the group, or a reader of the salon (`channel_<id>`), checked before
+   * anything is pushed - {@link MessagingService.assertCallerReactsIn}. A stranger, a removed member
+   * or an unknown id is the 403 `NOT_A_MEMBER`, a seat awaiting admission the 409.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/notify-reaction')
@@ -550,6 +607,8 @@ export class MessagingController {
     }
   ): Promise<{ sent: number; failed: number }> {
     if (!callerId) throw new BadRequestException('x-user-id header required');
+    const groupId = sanitizeQueryValue(body?.groupId, 'groupId');
+    await this.messagingService.assertCallerReactsIn(groupId, canonicalUserId(callerId));
 
     // Never notify if actor == message author (cross-device own-reaction)
     if (!body.targetSenderId || callerId === body.targetSenderId) {
@@ -558,7 +617,6 @@ export class MessagingController {
 
     const emoji = String(body.emoji ?? '').slice(0, 20);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
-    const groupId = String(body.groupId ?? '');
 
     // Legacy body only - carries the emoji and the actor, never the message. Clients that
     // understand `reaction` compose their own from `strings.xml` / `Localizable.strings`.
