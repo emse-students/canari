@@ -665,7 +665,9 @@ Objective-C was not compiled at all** (written on Windows; the iOS CI job is its
   auth key is team-wide. The production key has never sent a VoIP push: the first K7 proves it signs.
 
 **Still open:** `didInvalidatePushToken` tells the server nothing (the next APNs `410` clears it);
-a VoIP-pushed ring is announced as audio (`hasVideo = NO`) until the video lot decides otherwise.
+
+
+**A VOIP RING CARRIES THE CALL'S MEDIA KIND (2026-11-02, the `1.6.3-alpha.2` bench: a video call rang as audio and the answer joined with the camera off).** `voipRingPayload` takes `hasVideo` from the ring request (`CallsService.ringGroup`, which already holds it for the FCM payload) and emits it as the string `'true'`/`'false'`; `CanariReportVoipCall` reads it like the FCM path (`CanariReportIncomingCall`), sets `CXCallUpdate.hasVideo` and the ringing record, and the answer writes it into the pending accept, which the webview already turns into `incomingHasVideo` and a camera on join (`CallService`, gated by `CALLS_VIDEO_ENABLED`). **B2 holds on the server**: `assertCallsOpen` refuses a video ring unless `calls_mode = audio_video` BEFORE any push, so a video VoIP push never leaves for a server that forbids video (`calls.service.spec.ts`). **Old clients**: an iPhone build predating this reads only the keys it knew (`type`, `groupId`, `callId`, `callerId`, `ringUntil`), so the new value is ignored and it rings as audio, as before; a new build reading a push from an older server finds no `hasVideo` and reads audio. No shim, so no entry in legacy-compatibility. Owed: the iPhone 12 reading in [device-verification](../../device-verification.md#the-voip-ring-announces-a-video-call-as-video---owed).
 
 ### An answer from the ring joins on the ring's facts (2026-10-30)
 

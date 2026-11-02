@@ -339,6 +339,35 @@ Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
 
+## The VoIP ring announces a video call as video - owed
+
+**Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).
+Needs a dev build (`CALLS_VIDEO_ENABLED`, `calls_mode = audio_video` on the dev server), the iPhone 12
+locked and the app killed, and a second device calling it with VIDEO.
+
+1. Place a video call from the other device. **Expect** the CallKit screen to read as a video call
+   (the video-call label and the video button on the lock screen), and the log
+   `[CanariCallKit] voip push type=call_ring call=... video=1` then `ringing call=... video=1`.
+2. Answer, unlock. **Expect** the camera on in the call (`pending accept hasVideo` true, the local
+   preview visible) and the caller seeing video.
+3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
+4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
+
+## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
+
+**Method.** The WebView's DevTools socket (`adb forward` to `webview_devtools_remote_<pid>`) read `location.pathname`, `<html>` classes and the console (`[reel-capture]`, `[historyOverlay]`) after each press; no personal data.
+
+| Attempt (about 12 presses) | Result |
+| --- | --- |
+| Idle camera, Back (x4, then swipe back to the camera each time) | `/posts`, chrome back (`fullscreen-place-open` removed), camera reopens by swipe: **PASS** |
+| Hold the shutter 3-4 s, release (review), Back | the "Abandonner cette capture ?" question; `[historyOverlay] Back closed 1 overlay(s), 0 left open` |
+| Back DURING the recording | the camera returns idle on `/camera`, chrome as designed; one more Back goes to `/posts`: **PASS** |
+| Review, Back (question up), Back again (x2, 100 % repeatable) | **the app leaves** (`Setting back callback null`, task closed, no `[historyOverlay]` line for that press) instead of the feed |
+
+**The stuck `/camera` without chrome of alpha.2 did NOT reproduce.** Signature to watch for if it returns: `location.pathname` still `/camera` with `<html class="fullscreen-place-open">` and `[reel-capture] leaving (navigation) ... the camera stays closed` with NO `a navigation ended on this screen` / `did not happen` line after it. That is the same-URL popstate hypothesis (a drain by `beforeNavigate` that no `afterNavigate` follows), still untested.
+
+**Open finding, not fixed here.** A Back pressed while the discard question is up never reaches the page: the activity finishes. `ReelCapture.svelte.test.ts` pins that Back #2 closes the camera with the question up, which assumes the Back is delivered; on this phone it is not. Needs a look at how the confirm dialog interacts with Android's back dispatch.
+
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 
 **Proves** the half of the push cache no browser can reach. `consumeFcmCache` writes a placeholder

@@ -19,6 +19,12 @@ export interface VoipRingInput {
   groupId: string;
   callId: string;
   callerId: string;
+  /**
+   * The call's media kind, as the caller asked for it. The server has already refused a video ring
+   * unless `calls_mode` allows video (`assertCallsOpen`), so a `true` here never reaches a phone
+   * whose server forbids video (B2).
+   */
+  hasVideo: boolean;
   /** Epoch milliseconds at which the server stops accepting an answer. */
   ringUntilMs: number;
 }
@@ -27,9 +33,9 @@ export interface VoipRingInput {
 export const VOIP_RING_KEYS = ['type', 'groupId', 'callId', 'callerId', 'hasVideo', 'ringUntil'];
 
 /**
- * Builds the VoIP ring payload. `hasVideo` is always `false`: the native ring is audio-only until
- * the video lot decides how it rings (B2: a ring must never announce a video call an audio-only
- * build would answer as audio).
+ * Builds the VoIP ring payload. `hasVideo` is the call's media kind: CallKit announces it
+ * (`CXCallUpdate.hasVideo`) and the answer joins with the camera. An older iPhone build reads the key
+ * as it always did and ignores the value's meaning only in that it never carried `true` before.
  */
 export function voipRingPayload(input: VoipRingInput): Record<string, string> {
   return {
@@ -37,7 +43,7 @@ export function voipRingPayload(input: VoipRingInput): Record<string, string> {
     groupId: input.groupId,
     callId: input.callId,
     callerId: input.callerId,
-    hasVideo: 'false',
+    hasVideo: input.hasVideo ? 'true' : 'false',
     ringUntil: String(Math.floor(input.ringUntilMs)),
   };
 }

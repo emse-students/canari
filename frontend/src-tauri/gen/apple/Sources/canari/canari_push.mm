@@ -3823,9 +3823,11 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
 /// - A call already reported for `callId` (the FCM `call_ring` rang first) is reported AGAIN under the
 ///   same UUID: CallKit refuses it as a duplicate, which still honours the contract, and nothing
 ///   new rings.
-/// - Audio only (`hasVideo = NO`) until the video lot decides how the native ring announces video.
+/// - `hasVideo` is the call's media kind from the push (the server's `voipRingPayload`): CallKit
+///   announces it and the answer's pending accept carries it, so the join opens the camera. A
+///   payload without the key (a server older than this build) reads as audio.
 static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *callerId,
-                                 long long ringUntilMs) {
+                                 BOOL hasVideo, long long ringUntilMs) {
   CanariEnsureCallProvider();
   if (!kCanariCallsEnabled) {
     // Unreachable by construction: the registry is installed only when the ring is compiled. The
@@ -3853,14 +3855,14 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
       @"groupId" : groupId ?: @"",
       @"callId" : callId,
       @"callerId" : callerId ?: @"",
-      @"hasVideo" : @NO,
+      @"hasVideo" : @(hasVideo),
     };
   }
   NSString *display = CanariCallerDisplayName(callerId);
   CXCallUpdate *update = [[CXCallUpdate alloc] init];
   update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
   update.localizedCallerName = display;
-  update.hasVideo = NO;
+  update.hasVideo = hasVideo;
   update.supportsHolding = NO;
   update.supportsGrouping = NO;
   update.supportsUngrouping = NO;
@@ -3999,21 +4001,24 @@ static void CanariPersistVoipToken(NSString *hexToken) {
   long long ringUntilMs = [data[@"ringUntil"] isKindOfClass:[NSString class]]
                               ? [(NSString *)data[@"ringUntil"] longLongValue]
                               : 0;
-  NSLog(@"[CanariCallKit] voip push type=%@ call=%@", msgType, callId);
+  // A string "true" like the FCM data payload's; an absent key (an older server) is audio.
+  BOOL hasVideo = [data[@"hasVideo"] isKindOfClass:[NSString class]] &&
+                  [(NSString *)data[@"hasVideo"] isEqualToString:@"true"];
+  NSLog(@"[CanariCallKit] voip push type=%@ call=%@ video=%d", msgType, callId, hasVideo);
 
   if (CanariPushSignedOut()) {
     // A SIGNED-OUT DEVICE RINGS FOR NOBODY. PushKit still requires every VoIP push to be reported
     // to CallKit, so a placeholder with no caller and no conversation is reported and ended at once
     // (deadline 0) - nothing of the account that signed out is shown.
     NSLog(@"[CanariCallKit] voip push type=%@ while signed out - reported and ended", msgType);
-    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", 0);
+    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", NO, 0);
   } else if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
-    CanariReportVoipCall(groupId, callId, callerId, ringUntilMs);
+    CanariReportVoipCall(groupId, callId, callerId, hasVideo, ringUntilMs);
   } else {
     // Contract keeper: an unexpected payload still reports a call, ended at once (deadline 0).
     NSLog(@"[CanariCallKit] ERROR unexpected voip payload type=%@ - reported and ended", msgType);
     NSString *bogusId = callId.length > 0 ? callId : [[NSUUID UUID] UUIDString];
-    CanariReportVoipCall(groupId, bogusId, @"", 0);
+    CanariReportVoipCall(groupId, bogusId, @"", NO, 0);
   }
   completion();
 }

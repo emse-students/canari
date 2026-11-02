@@ -1113,6 +1113,10 @@ from it, designed:
    than ~9 at 60 s; nothing is fetched before a tap, 3.1). **The chat cap still holds**: with any
    chat row ticked, a take longer than `chatMaxDurationMs` (60 s) cannot be sent to the chats - the
    rows say so in the sheet, and CanaReels alone takes the 90 s.
+   **Checked and closed as designed (2026-11-02, the `1.6.3-alpha.2` bench):** the camera tab recorded 62 s
+   and the sheet then withheld the chats ("Cette video depasse 60 s ..."). That is this decision, not a
+   defect: the tab's take is also a feed reel (90 s), and nothing knows at the shutter which row will be
+   ticked. The `chat` destination (a composer's camera) arms its ring at `chatMaxDurationMs`.
 2. **One upload, the publish step's** (`reel-pending`, then claimed by the post). The take adopts it
    (15.2): the publish step writes its `uploadedRef` into the take's row DURABLY, right after the
    upload and BEFORE `POST /api/posts`, then the take puts its chat hold (15.3) and the sends go -

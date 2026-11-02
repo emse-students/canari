@@ -654,6 +654,21 @@ describe('CallsService', () => {
         expect(expiresAtSec).toBe(Math.floor(answerBy / 1000));
       });
 
+      it('carries the media kind the caller asked for (audio and video)', async () => {
+        await ringAndSettle(service, 'caller', 'group-1', 'call-1', false);
+        expect(apnsVoip.sendVoipPush.mock.calls[0][1].hasVideo).toBe('false');
+        apnsVoip.sendVoipPush.mockClear();
+        await ringAndSettle(service, 'caller', 'group-1', 'call-1', true);
+        expect(apnsVoip.sendVoipPush.mock.calls[0][1].hasVideo).toBe('true');
+      });
+
+      it('never announces video when calls_mode is audio only (B2): refused, no VoIP push', async () => {
+        callsMode = 'audio';
+        apnsVoip.sendVoipPush.mockClear();
+        await expect(service.ringGroup('caller', 'group-1', 'call-3', true)).rejects.toBeDefined();
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+      });
+
       it('is withheld once the ring has ended', async () => {
         await service.endRing('caller', 'group-1', 'call-1', 'cancelled');
         const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
