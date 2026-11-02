@@ -27,6 +27,7 @@
     publishCameraPhoto,
     publishReel,
     ReelPublishError,
+    type PublishedReelUpload,
     type PublishReelDeps,
   } from '$lib/reels/publishReel';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -66,9 +67,19 @@
     deps?: PublishReelDeps;
     /** Set when the take was filmed from the new-post composer; absent on the CanaReels tab. */
     composer?: ReelPublishFromComposer;
+    /**
+     * The take is ALSO sent to conversations (RC-12, 15.5): the outbox's take waiting for THIS step's
+     * upload. The upload is handed to it before the post exists, and the wait ends with the step. The
+     * outbox calls arrive as props so this step never imports the messaging engine.
+     */
+    chatTake?: {
+      id: string;
+      adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
+      endWait: (takeId: string) => void;
+    } | null;
   }
 
-  let { clip, limits, onclose, deps, composer }: Props = $props();
+  let { clip, limits, onclose, deps, composer, chatTake = null }: Props = $props();
 
   // Read once: the step starts from the composer and is the member's to change from there.
   let caption = $state(untrack(() => composer?.caption ?? ''));
@@ -151,6 +162,8 @@
 
   onDestroy(() => {
     if (previous) URL.revokeObjectURL(previous);
+    // Left (Back, navigation) before any publish: the same end of the wait.
+    chatTake?.endWait(chatTake.id);
   });
 
   async function publish() {
@@ -176,6 +189,12 @@
             maxDurationMs: limits.maxDurationMs,
             video: { onProgress: options.onProgress, signal: options.signal },
             onStage,
+            ...(chatTake
+              ? {
+                  onUploaded: (uploaded: PublishedReelUpload) =>
+                    chatTake.adopt(chatTake.id, uploaded),
+                }
+              : {}),
           },
           deps
         );
@@ -200,6 +219,8 @@
       preparation.finish();
       publishing = false;
       stage = null;
+      // The publish ended, however: the take stops waiting for an upload that will not come.
+      chatTake?.endWait(chatTake.id);
     }
   }
 

@@ -75,6 +75,23 @@ describe('iOS silent frames', () => {
     }
   });
 
+  it('a silent wake-up is fetched and handed back to the same allowlist, writing no MLS state', () => {
+    const frame = body('static void CanariHandleBackgroundFrame(');
+    expect(frame).toContain('CanariHandleWakeBackgroundFrame(data, done);');
+    const wake = body('static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void');
+    expect(wake).toContain('/api/mls/push/wake');
+    expect(wake).toContain('CanariHandleBackgroundFrame(fields, done);');
+    for (const forbidden of [
+      'CanariHandleFcmData',
+      'CanariHandleMlsMessage',
+      'CanariProcessReceivedWelcomeBackground',
+      'CanariProcessWelcomeRequestBackground',
+      'CanariTryDecrypt',
+    ]) {
+      expect(wake, `${forbidden} appele depuis un reveil sans contenu`).not.toContain(forbidden);
+    }
+  });
+
   it('channel_read has ONE handler, the background one', () => {
     expect(body('static void CanariHandleFcmData(')).not.toContain('@"channel_read"');
   });

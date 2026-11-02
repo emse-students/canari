@@ -108,3 +108,27 @@ export const CALLS_VIDEO_ENABLED = CALLS_ENABLED;
  * carry lives at all, with the server's `LIVE_ENABLED` in the same commit.
  */
 export const LIVE_ENABLED = true;
+
+/**
+ * Whether THIS build declares, per platform, that it takes a content-free wake-up push (owner,
+ * 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md). Sent as
+ * `wake` in every push registration, and the server writes `push_token.wakeCapable` from it - the
+ * second lock beside the estate's `push_mode`, so a platform declared `false` keeps the full push
+ * whatever the switch says.
+ *
+ * - `android: true` - the service's `onWakePush` takes it.
+ * - `ios: false` - **the owner's order of 2026-11-02**: the wake push goes on in production for
+ *   Android ONLY until the iOS "notifications without content" P1 is closed
+ *   (docs/wiki/backlog.d/p1-ios-notifications-show-no-content.md); the wake would make the
+ *   extension the only source of content and hide that measurement behind a second cause. The
+ *   handlers (`handleWake`, `CanariHandleWakeBackgroundFrame`) are built and stay built; turning
+ *   iOS on is this one value and a store build.
+ *
+ * A compile-time fact, honest only because the web bundle ships INSIDE the store binary
+ * (`frontendDist`): the TypeScript that registers is always the build whose native code receives.
+ * `pushWakeCompiled.test.ts` asserts the native handlers of every platform declared `true` exist.
+ */
+export const PUSH_WAKE_DECLARED: Readonly<Record<'android' | 'ios', boolean>> = {
+  android: true,
+  ios: false,
+};

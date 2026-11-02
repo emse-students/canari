@@ -173,6 +173,12 @@ describe('PushController - the wake-up push', () => {
       expect(guards).toEqual([PushSecretGuard, PushSecretThrottlerGuard]);
     });
 
+    it('tells every cache not to keep the answer', () => {
+      const route = Object.getOwnPropertyDescriptor(PushController.prototype, 'fetchWakeFrame');
+      const headers = Reflect.getMetadata('__headers__', route?.value as object) as unknown[];
+      expect(headers).toContainEqual({ name: 'Cache-Control', value: 'no-store' });
+    });
+
     it('carries no ciphertext for a Welcome, whose bundle comes from fetch-proto', async () => {
       queuedRepo.findOne.mockResolvedValue({ id: Q, groupId: 'g1', senderId: 'u2', proto: 'W' });
       describeQueuedFrame.mockResolvedValue(input({ isWelcome: true }));
