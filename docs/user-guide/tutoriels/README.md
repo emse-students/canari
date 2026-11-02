@@ -53,8 +53,8 @@ Ecrits des maintenant mais publies plus tard : appel video, sonnerie native, liv
 Faits, un dossier et un PDF chacun : 0 a 17 et 19 ci-dessus, plus (captures prises sur le Mi 9T,
 theme sombre de l'app) : camera et CanaReels (refait, mobile seulement, geste "glisser vers la
 droite" depuis le fil), passer en direct, appels audio, messages vocaux.
-Restent : annuaire, listes, tableau de bord, documents, aide (captures web a refaire : le profil
-Chrome de travail demande le PIN a chaque rechargement), puis la ligne "later" (appel video,
-sonnerie native, reel dans le chat : attendre alpha.2).
+Ajoutes ensuite (web, bureau) : annuaire, listes et institutions, tableau de bord.
+Restent : refaire les captures telephone en theme clair (Mi 9T a redemander a Master), puis la
+ligne "later" (appel video, sonnerie native, reel dans le chat : attendre alpha.2).
 Limites connues : l'export Docs n'applique ni l'en-tete ni le logo Les Rootz ; les captures
 telephone sont en theme sombre.
