@@ -19,6 +19,8 @@ import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
 import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
+import type { PublishedCarteCard, PublishedCarteUnit } from '../associations/published-carte';
+import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
 
 /**
@@ -77,14 +79,16 @@ function toPublic(
   };
 }
 
-/**
- * Ceiling on the shareable-post list, whatever `?limit=` asks for.
- *
- * Its one consumer is the sitemap, which caps itself at the same number
- * (`frontend/src/lib/seo/sitemap.ts`); this one exists so an anonymous caller cannot ask for the
- * whole table by widening a query parameter.
- */
-const MAX_PUBLIC_POST_LIST = 500;
+/** A card of the published carte, with the photo address of the public roster row behind it. */
+export type PublicCarteCard = PublishedCarteCard & { avatarUrl: string | null };
+
+/** The published carte as served without an account: every card carries {@link PublicCarteCard}. */
+export type PublicCarteResponse = Omit<PublishedCarteResponse, 'units'> & {
+  units: (Omit<PublishedCarteUnit, 'cards'> & { cards: PublicCarteCard[] })[];
+};
+
+/** How long the member-photo relay waits on core-service. One Docker-network hop. */
+const MEMBER_AVATAR_TIMEOUT_MS = 5_000;
 
 /**
  * Unauthenticated read-only API consumed by the portail-etu showcase, and since 2026-09-20 by the
@@ -92,6 +96,11 @@ const MAX_PUBLIC_POST_LIST = 500;
  * Reachable via the nginx `/api/public/` location, which - unlike every other
  * `/api/*` route - is NOT behind `auth_request`. Exposes associations, promo
  * lists, their public members and association-post previews; never any write.
+ *
+ * THE SHOWCASE IS THE CEILING (owner, 2026-11-02): nothing here may show more than
+ * portail-etu.emse.fr does, apart from the single-post link preview the owner kept the same day.
+ * The listing of recent posts that used to sit here was closed then. Route by route:
+ * docs/wiki/anonymous-surface.md.
  */
 @Controller('public')
 export class PublicController {
@@ -142,6 +151,62 @@ export class PublicController {
   async listMembers(@Param('id') id: string) {
     this.logger.debug(`public listMembers ${id}`);
     return this.associations.listMembersPublic(id);
+  }
+
+  /**
+   * The photo of one row of a public roster - the `avatarUrl` every public member carries.
+   *
+   * WHY A ROSTER ROW AND NOT AN ACCOUNT: the showcase draws each member's photo, and until
+   * 2026-11-02 it did so from the account id the roster handed out, which named the person to any
+   * system that keys on it. Keyed by the row, the photo stays exactly as public as the roster that
+   * lists it - a member who leaves the association takes their row, and so their photo, with them.
+   *
+   * Relayed from core-service's avatar route over the Docker network, its answer passed through as
+   * it is: the image with its ETag and caching, a bodyless 404 for no photo, a bodyless 502
+   * `no-store` for an upstream that did not answer. Throttled per address like the other public
+   * route that does work for a caller with no session.
+   */
+  @UseGuards(ClientIpThrottlerGuard)
+  @Get('members/:memberId/avatar')
+  async getMemberAvatar(
+    @Param('memberId') memberId: string,
+    @Headers('if-none-match') ifNoneMatch: string | undefined,
+    @Res() res: Response
+  ): Promise<void> {
+    const userId = await this.associations.publicMemberUserId(memberId);
+    if (!userId) {
+      res.set({ 'Cache-Control': 'no-store' });
+      res.status(404).end();
+      return;
+    }
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), MEMBER_AVATAR_TIMEOUT_MS);
+    try {
+      const upstream = await fetch(coreUrl(`users/${encodeURIComponent(userId)}/avatar`), {
+        headers: ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {},
+        signal: abort.signal,
+      });
+      for (const name of ['content-type', 'cache-control', 'etag']) {
+        const value = upstream.headers.get(name);
+        if (value) res.setHeader(name, value);
+      }
+      if (upstream.status !== 200) {
+        this.logger.debug(`[PUBLIC_AVATAR] ${memberId.slice(0, 8)} -> ${upstream.status}`);
+        res.status(upstream.status).end();
+        return;
+      }
+      const body = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader('Content-Length', body.length);
+      res.status(200).send(body);
+    } catch (err) {
+      this.logger.warn(
+        `[PUBLIC_AVATAR] core-service did not answer for ${memberId.slice(0, 8)}: ${(err as Error)?.message}`
+      );
+      res.set({ 'Cache-Control': 'no-store' });
+      res.status(502).end();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ── Link previews for shared posts ───────────────────────────────────────
@@ -198,25 +263,6 @@ export class PublicController {
   }
 
   /**
-   * Recent shareable post ids, newest first - read by the sitemap builder and nothing else.
-   *
-   * It exists because `/api/posts?feed=associations` moved behind the feed gate on 2026-09-10 and
-   * the sitemap has been answering `0 posts` to every crawler ever since, silently: the builder
-   * treats an empty list as a short sitemap rather than a failure, by design.
-   */
-  @Get('posts')
-  @Header('Cache-Control', 'public, max-age=300')
-  async listShareablePosts(@Query('limit') limit?: string) {
-    const parsed = Number.parseInt(limit ?? '', 10);
-    const capped = Number.isFinite(parsed)
-      ? Math.min(Math.max(parsed, 1), MAX_PUBLIC_POST_LIST)
-      : MAX_PUBLIC_POST_LIST;
-    const rows = await this.postPreviews.listShareable(capped);
-    this.logger.debug(`public shareable posts: ${rows.length}`);
-    return rows;
-  }
-
-  /**
    * The live "Carte de la Vie Asso", rendered interactively by the portail-etu showcase.
    *
    * Returns placement only - each bubble carries an `assoId` the consumer joins against
@@ -229,11 +275,28 @@ export class PublicController {
    */
   @Get('carte')
   @Header('Cache-Control', 'public, max-age=300')
-  async getPublishedCarte(): Promise<PublishedCarteResponse> {
+  async getPublishedCarte(): Promise<PublicCarteResponse> {
     this.logger.debug('public getPublishedCarte');
     const carte = await this.poster.getPublished();
     if (!carte) throw new NotFoundException('No published carte');
-    return carte;
+    // Each card's photo by its roster row, the address the public roster hands out. The card's
+    // `userId` is still served beside it: the showcase keys its card list on that field, so it
+    // moves to `avatarUrl` before the field can go (docs/wiki/anonymous-surface.md).
+    const avatars = await this.associations.publicAvatarUrlsFor(
+      carte.units.flatMap((u) =>
+        u.cards.map((c) => ({ associationId: u.assoId, userId: c.userId }))
+      )
+    );
+    return {
+      ...carte,
+      units: carte.units.map((u) => ({
+        ...u,
+        cards: u.cards.map((c) => ({
+          ...c,
+          avatarUrl: avatars.get(`${u.assoId}:${c.userId}`) ?? null,
+        })),
+      })),
+    };
   }
 
   /**

@@ -27,8 +27,7 @@ export const PUBLIC_SITEMAP_ENTRIES: SitemapEntry[] = [
   { path: '/legal/miconnect', changefreq: 'yearly', priority: 0.3 },
 ];
 
-/** Sitemaps cap at 50 000 URLs; these ceilings keep the document far below it and cheap to build. */
-export const SITEMAP_MAX_POSTS = 500;
+/** Sitemaps cap at 50 000 URLs; this ceiling keeps the document far below it and cheap to build. */
 export const SITEMAP_MAX_ASSOCIATIONS = 300;
 
 /** Builds a valid sitemap XML document. */
@@ -47,13 +46,6 @@ export function buildSitemapXml(origin: string, entries: SitemapEntry[]): string
     .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
-}
-
-/** `YYYY-MM-DD` for a sitemap `lastmod`, or undefined when the input is not a usable date. */
-export function toLastmod(value: string | null | undefined): string | undefined {
-  if (!value) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString().slice(0, 10);
 }
 
 function escapeXml(value: string): string {

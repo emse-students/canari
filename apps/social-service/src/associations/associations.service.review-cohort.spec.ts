@@ -9,8 +9,8 @@ import type { UserProfileService } from './user-profile.service';
 /**
  * A REVIEW ACCOUNT HAS NO PUBLIC IDENTITY, AND A PROFILE SHOWS NOTHING ACROSS THE BOUNDARY
  * (review-cohort.ts): the public roster of an association never lists one, and a profile's
- * memberships and roles read as empty across the boundary - and for a review account read with no
- * session.
+ * memberships and roles read as empty across the boundary. Since 2026-11-02 a profile is read with a
+ * session only (anonymous-surface-closed.spec.ts).
  */
 describe('association profiles and rosters and the review cohort', () => {
   const saved = process.env.SERVICE_ACCOUNT_USER_ID;
@@ -47,7 +47,10 @@ describe('association profiles and rosters and the review cohort', () => {
       { enabled: () => false, tell: async () => 0 } as never
     );
     const listed = await service.listMembersPublic('asso1');
-    expect(listed.map((m) => m.userId)).toEqual(['member']);
+    expect(listed.map((m) => m.id)).toEqual(['member']);
+    // No account id leaves on a public roster (anonymous-surface.md): the photo is the row's.
+    expect(listed[0]).not.toHaveProperty('userId');
+    expect(listed[0].avatarUrl).toBe('/api/public/members/member/avatar');
   });
 
   function profileController() {
@@ -68,7 +71,6 @@ describe('association profiles and rosters and the review cohort', () => {
   it.each([
     ['a member reading a review account', 'reviewer', 'member'],
     ['a review account reading a member', 'member', 'reviewer'],
-    ['nobody signed in reading a review account', 'reviewer', undefined],
   ])("reads %s's memberships and roles as empty", async (_case, target, viewer) => {
     const { controller, listMemberships, listRoleHistory } = profileController();
     expect(await controller.listUserMemberships(target, viewer)).toEqual([]);
@@ -77,9 +79,9 @@ describe('association profiles and rosters and the review cohort', () => {
     expect(listRoleHistory).not.toHaveBeenCalled();
   });
 
-  it("reads a member's memberships to a member and to nobody signed in", async () => {
+  it("reads a member's memberships and roles to another member", async () => {
     const { controller } = profileController();
     expect(await controller.listUserMemberships('member', 'other')).toHaveLength(1);
-    expect(await controller.listUserRoleHistory('member', undefined)).toHaveLength(1);
+    expect(await controller.listUserRoleHistory('member', 'other')).toHaveLength(1);
   });
 });
