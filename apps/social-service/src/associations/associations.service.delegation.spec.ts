@@ -123,7 +123,9 @@ describe('AssociationsService - the bitmask written for a member of a kind that 
         update,
       },
     });
-    await service.updateMemberRole('camp', 'user-1', undefined, MEMBERS | FORMS | SHOP | PAYOUT);
+    await service.updateMemberRole('camp', 'user-1', undefined, MEMBERS | FORMS | SHOP | PAYOUT, {
+      granter: { userId: 'platform-admin', isGlobalAdmin: true },
+    });
     return (update.mock.calls[0] as unknown[])[1] as { permissions: number };
   }
 

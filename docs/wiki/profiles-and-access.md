@@ -153,7 +153,10 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D20 - A new publishing entity type, "Institution"** (Ecole, ME, Alumni association), beside
   association and list, to publish in its own name and propose events. Its members are added
   NOMINATIVELY by an admin: declaring "personnel ME" proves nothing (D8) and only informs the
-  directory.
+  directory. Since 2026-11-02 the server holds "an admin" to the PLATFORM administrator: adding,
+  editing or removing an institution's member is a 403 `INSTITUTION_MEMBERS_ADMIN_ONLY` for anyone
+  else, its own members and a BDE super-admin included
+  ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 - **D21 - Joining an association of another space opens its content** to that member.
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces
@@ -630,6 +633,15 @@ reviewers - WP7's question. Table, routes and proof:
 saint-etienne) rule, the one BDE governs all of them and nothing changes; the scoping bites the day
 the grid gives an association a reach outside its BDE's spaces.
 
+**The super-admin writing a member row (owner, 2026-11-02).** The tier EXERCISES every right on
+the associations it governs except `SUPER_ADMIN_EXCLUDED_FLAGS` (`POST_AS_ASSO`,
+`MANAGE_PAYOUT_ACCOUNT`), but it may WRITE any flag into a membership row, its own included: a BDE
+officer is often the president of another association and seats themself there with full rights.
+Only an explicit row carries the two excluded rights, and every super-admin write that grants one is
+logged at info with the association and the flag names. An ordinary member holding `MANAGE_MEMBERS`
+is capped at its own flags, granting and revoking alike
+([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+
 **WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server
 read that serves a post, an event or an announcement asks ONE module,
 `social-service/src/spaces/reader-spaces.ts`; `posts/feed-audience.ts` ("ICM plus global admins")
@@ -751,7 +763,7 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a list or of a members-only association (WP-F6, since `v1.6.1`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
+| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a list or of a members-only association (WP-F6, built in #2859, released in `v1.6.0`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
@@ -1348,7 +1360,7 @@ An institution is an `associations` row of that type, so it reuses every mechani
 
 - **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
   member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
-- **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
+- **Members are added nominatively** by the platform administrator alone (since 2026-11-02, D20 above; it was the existing member admin until then); **publishing in its name needs membership of it**
   with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
   `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
 - **Republishing**: `REPUBLISHING_ASSOCIATION_TYPES` is now `association, institution` (a list still does not); the

@@ -9,6 +9,14 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { assertKindMaySell, writablePermissions } from './selling-kinds';
+import {
+  assertInstitutionMemberWrite,
+  assertWithinGrantCeiling,
+  grantCeiling,
+  logSuperAdminExcludedGrant,
+  type GranterStanding,
+  type MemberGranter,
+} from './member-flag-ceiling';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -1175,11 +1183,24 @@ export class AssociationsService {
       }));
   }
 
-  /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
-  async addMember(dto: AddMemberDto & { associationId: string }) {
+  /**
+   * Adds a user to an association with the given role and permission bitmask. Throws if they are
+   * already a member, if the association is an institution and `granter` is not the platform admin,
+   * or if the bitmask carries a flag `granter` does not hold (`member-flag-ceiling.ts`).
+   */
+  async addMember(dto: AddMemberDto & { associationId: string }, granter: MemberGranter) {
     const { associationId, userId, role } = dto;
     const target = await this.findById(associationId);
+    assertInstitutionMemberWrite(this.logger, target.type, granter, associationId, 'addMember');
     const permissions = writablePermissions(target.type, dto.permissions);
+    const standing = await this.judgeMemberFlags(
+      granter,
+      associationId,
+      userId,
+      0,
+      permissions,
+      'addMember'
+    );
 
     const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
@@ -1206,6 +1227,10 @@ export class AssociationsService {
       sortOrder,
     });
     const saved = await this.memberRepo.save(membership);
+    logSuperAdminExcludedGrant(this.logger, standing, 0, permissions, {
+      associationId,
+      what: 'addMember',
+    });
     // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
     // every cached feed page of that reader depends on.
     await this.invalidatePostListCaches();
@@ -1223,13 +1248,18 @@ export class AssociationsService {
     this.logger.debug(`reorderMembers: ${userIds.length} members reordered in ${associationId}`);
   }
 
-  /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  /**
+   * Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the
+   * last admin, unless bypassLastAdmin is true (global admin or BDE). Refuses an institution's
+   * member to anyone but the platform admin, and a bitmask that changes a flag `granter` does not
+   * hold - granted OR revoked (`member-flag-ceiling.ts` says why both).
+   */
   async updateMemberRole(
     associationId: string,
     targetUserId: string,
-    role?: string,
-    permissions?: number,
-    opts?: { bypassLastAdmin?: boolean }
+    role: string | undefined,
+    permissions: number | undefined,
+    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -1237,9 +1267,33 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
+    const kind = await this.kindOf(associationId);
+    assertInstitutionMemberWrite(
+      this.logger,
+      kind,
+      opts.granter,
+      associationId,
+      'updateMemberRole'
+    );
+    let flagWrite: { before: number; standing: GranterStanding } | null = null;
     if (permissions !== undefined) {
-      const kind = await this.kindOf(associationId);
       if (kind) permissions = writablePermissions(kind, permissions);
+      // Judged against the stored bitmask seen through the same kind filter, so a right the SERVER
+      // strips from a kind that sells nothing is never counted as the granter's change.
+      const before = kind
+        ? writablePermissions(kind, membership.permissions)
+        : membership.permissions;
+      flagWrite = {
+        before,
+        standing: await this.judgeMemberFlags(
+          opts.granter,
+          associationId,
+          targetUserId,
+          before,
+          permissions,
+          'updateMemberRole'
+        ),
+      };
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
@@ -1249,7 +1303,7 @@ export class AssociationsService {
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
     const willLoseManageMembers =
       permissions !== undefined && (permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0;
-    if (hadManageMembers && willLoseManageMembers && !opts?.bypassLastAdmin) {
+    if (hadManageMembers && willLoseManageMembers && !opts.bypassLastAdmin) {
       await this.assertNotLastAdminDemotion(associationId);
     }
     // ONE column update of the row judged above, never a save of it: a member write must never
@@ -1276,14 +1330,24 @@ export class AssociationsService {
     this.logger.debug(
       `updateMemberRole: association=${associationId} target=${targetUserId.slice(0, 8)} fields=${Object.keys(changes).join(',')}`
     );
+    if (flagWrite && permissions !== undefined) {
+      logSuperAdminExcludedGrant(this.logger, flagWrite.standing, flagWrite.before, permissions, {
+        associationId,
+        what: 'updateMemberRole',
+      });
+    }
     return { ...membership, ...changes };
   }
 
-  /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  /**
+   * Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin
+   * is true (global admin or BDE), and an institution's member to anyone but the platform admin.
+   * NOT held to the grant ceiling: parting with a member raises nobody's rights.
+   */
   async removeMember(
     associationId: string,
     targetUserId: string,
-    opts?: { bypassLastAdmin?: boolean }
+    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -1291,10 +1355,17 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
+    assertInstitutionMemberWrite(
+      this.logger,
+      await this.kindOf(associationId),
+      opts.granter,
+      associationId,
+      'removeMember'
+    );
     // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag.
     const holdsManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
-    if (holdsManageMembers && !opts?.bypassLastAdmin) {
+    if (holdsManageMembers && !opts.bypassLastAdmin) {
       await this.assertNotLastAdminRemoval(associationId);
     }
 
@@ -1302,6 +1373,45 @@ export class AssociationsService {
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
     return { ok: true };
+  }
+
+  /**
+   * Judges a member bitmask write from `before` to `after` against `granter`'s ceiling
+   * (`grantCeiling`) and returns the standing it read, so the caller can write the audit line once
+   * the write has landed. The platform admin asks nothing; anyone else is read from their own row
+   * and the super-admin tier.
+   */
+  private async judgeMemberFlags(
+    granter: MemberGranter,
+    associationId: string,
+    targetUserId: string,
+    before: number,
+    after: number,
+    what: string
+  ): Promise<GranterStanding> {
+    let standing: GranterStanding = {
+      isGlobalAdmin: true,
+      isSuperAdminOf: false,
+      ownPermissions: 0,
+    };
+    if (!granter.isGlobalAdmin) {
+      const [own, isSuperAdminOf] = await Promise.all([
+        this.memberRepo.findOne({ where: { associationId, userId: granter.userId } }),
+        this.isAssociationSuperAdminOf(granter.userId, associationId),
+      ]);
+      standing = { isGlobalAdmin: false, isSuperAdminOf, ownPermissions: own?.permissions ?? 0 };
+    }
+    const ceiling = grantCeiling(standing);
+    this.logger.debug(
+      `[MEMBER-CEILING] ${what} association=${associationId.slice(0, 8)} admin=${standing.isGlobalAdmin} superAdmin=${standing.isSuperAdminOf} ceiling=${ceiling}`
+    );
+    assertWithinGrantCeiling(this.logger, ceiling, before, after, {
+      associationId,
+      granterId: granter.userId,
+      targetUserId,
+      what,
+    });
+    return standing;
   }
 
   /**

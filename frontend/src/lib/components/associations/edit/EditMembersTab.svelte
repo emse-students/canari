@@ -5,7 +5,10 @@
     removeMember,
     updateMemberRole,
     reorderMembers,
+    INSTITUTION_MEMBERS_ADMIN_ONLY,
+    MEMBER_FLAGS_BEYOND_GRANTER,
     PUBLISHER_PRESET,
+    SocialApiError,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -26,9 +29,19 @@
     members: AssociationMember[];
     /** userId → resolved display name, shared with the parent. */
     resolvedMemberNames: Record<string, string>;
+    /**
+     * The flags the viewer may grant or revoke (`grantableFlags`): the server refuses a write that
+     * changes any other, so neither the presets nor the row editor offer one.
+     */
+    grantable: number;
   }
 
-  let { asso, members = $bindable(), resolvedMemberNames = $bindable() }: Props = $props();
+  let {
+    asso,
+    members = $bindable(),
+    resolvedMemberNames = $bindable(),
+    grantable,
+  }: Props = $props();
 
   let newMemberUserId = $state('');
   let newMemberRole = $state('Membre');
@@ -40,13 +53,35 @@
   const defaultPermissions = () => (asso.type === 'institution' ? PUBLISHER_PRESET : 0);
   // svelte-ignore state_referenced_locally
   let newMemberPermissions = $state(defaultPermissions());
-  const permissionOptions = $derived<PickerOption[]>([
-    { value: '0', label: m.asso_members_role_member() },
-    { value: String(PUBLISHER_PRESET), label: m.asso_members_role_publisher() },
-    { value: String(adminPresetFor(asso.type)), label: m.asso_members_role_admin() },
-  ]);
+  /**
+   * The presets the viewer may hand out. The publisher preset is all-or-nothing (half of it is not
+   * a publisher), so it is offered only when every bit is grantable; the admin preset is cut down
+   * to what the viewer holds - a BDE super-admin's admin speaks for nobody and points no payout.
+   */
+  const permissionOptions = $derived.by<PickerOption[]>(() => {
+    const options: PickerOption[] = [{ value: '0', label: m.asso_members_role_member() }];
+    if ((PUBLISHER_PRESET & ~grantable) === 0) {
+      options.push({ value: String(PUBLISHER_PRESET), label: m.asso_members_role_publisher() });
+    }
+    const admin = adminPresetFor(asso.type) & grantable;
+    if (admin !== 0 && admin !== PUBLISHER_PRESET) {
+      options.push({ value: String(admin), label: m.asso_members_role_admin() });
+    }
+    return options;
+  });
   let addingMember = $state(false);
   let memberError = $state('');
+
+  /** The two typed refusals of a member write get their own words; anything else is generic. */
+  function memberWriteError(err: unknown, fallback: string): string {
+    const code = err instanceof SocialApiError ? err.code : null;
+    if (code === MEMBER_FLAGS_BEYOND_GRANTER) return m.asso_member_flags_beyond_granter_error();
+    if (code === INSTITUTION_MEMBERS_ADMIN_ONLY) {
+      return m.asso_institution_members_admin_only_error();
+    }
+    console.error('[ASSO] member write failed', err);
+    return fallback;
+  }
 
   let exportingPdf = $state(false);
 
@@ -76,7 +111,7 @@
       newMemberRole = 'Membre';
       newMemberPermissions = defaultPermissions();
     } catch (err) {
-      memberError = m.common_save_error();
+      memberError = memberWriteError(err, m.common_save_error());
     } finally {
       addingMember = false;
     }
@@ -104,7 +139,7 @@
       await removeMember(asso.id, targetId);
       members = members.filter((m) => m.userId !== targetId);
     } catch (err) {
-      memberError = m.common_delete_error();
+      memberError = memberWriteError(err, m.common_delete_error());
     }
   }
 
@@ -126,7 +161,7 @@
           : m
       );
     } catch (err) {
-      memberError = m.common_save_error();
+      memberError = memberWriteError(err, m.common_save_error());
     }
   }
 
@@ -218,6 +253,7 @@
             manage={true}
             isBDE={asso.isBDE}
             kind={asso.type}
+            {grantable}
             onRoleChange={handleChangeRole}
             onRemove={handleRemoveMember}
           />

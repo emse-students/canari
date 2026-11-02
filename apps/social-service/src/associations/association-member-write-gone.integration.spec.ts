@@ -23,6 +23,8 @@ import { AssociationMember } from './entities/association-member.entity';
 import { MEMBER_CHANGED_MEANWHILE } from '../channels/permissions';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
+/** The platform admin writes here: the grant ceiling has its own spec (`member-flag-ceiling.spec.ts`). */
+const ADMIN = { userId: 'platform-admin', isGlobalAdmin: true };
 const maybe = URL ? describe : describe.skip;
 
 maybe('an association member write against PostgreSQL', () => {
@@ -110,12 +112,14 @@ maybe('an association member write against PostgreSQL', () => {
   it('a role change across a removal leaves no membership row', async () => {
     const asso = crypto.randomUUID();
     await seat(asso, 'target', 0);
-    const ran = afterNextRead(() => service.removeMember(asso, 'target'));
+    const ran = afterNextRead(() => service.removeMember(asso, 'target', { granter: ADMIN }));
 
-    const outcome = await service.updateMemberRole(asso, 'target', 'Tresorier', 1).then(
-      () => 'set',
-      (e: unknown) => e
-    );
+    const outcome = await service
+      .updateMemberRole(asso, 'target', 'Tresorier', 1, { granter: ADMIN })
+      .then(
+        () => 'set',
+        (e: unknown) => e
+      );
     expect(ran()).toBe(true);
     expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(asso, 'target')).toBeNull();
@@ -130,10 +134,12 @@ maybe('an association member write against PostgreSQL', () => {
       members.update({ associationId: asso, userId: 'target' }, { permissions: 4 })
     );
 
-    const outcome = await service.updateMemberRole(asso, 'target', 'Membre', 0).then(
-      () => 'set',
-      (e: unknown) => e
-    );
+    const outcome = await service
+      .updateMemberRole(asso, 'target', 'Membre', 0, { granter: ADMIN })
+      .then(
+        () => 'set',
+        (e: unknown) => e
+      );
     expect(ran()).toBe(true);
     expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(asso, 'target')).toMatchObject({ permissions: 4 });
@@ -142,7 +148,9 @@ maybe('an association member write against PostgreSQL', () => {
   it('a role change with no removal writes only what it names', async () => {
     const asso = crypto.randomUUID();
     await seat(asso, 'target', 4);
-    const answer = await service.updateMemberRole(asso, 'target', 'Tresorier');
+    const answer = await service.updateMemberRole(asso, 'target', 'Tresorier', undefined, {
+      granter: ADMIN,
+    });
     expect(answer).toMatchObject({ role: 'Tresorier', permissions: 4 });
     expect(await rowOf(asso, 'target')).toMatchObject({ role: 'Tresorier', permissions: 4 });
   });

@@ -11,6 +11,7 @@
     listMembers,
     isPaymentAccountReady,
     getMyBdeReach,
+    grantableFlags,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -400,8 +401,13 @@
         </div>
       {/if}
 
-      {#if editSection === 'members' && canManageMembers}
-        <EditMembersTab {asso} bind:members bind:resolvedMemberNames />
+      {#if editSection === 'members' && rights.memberRoster}
+        <EditMembersTab
+          {asso}
+          grantable={grantableFlags(permissionContext)}
+          bind:members
+          bind:resolvedMemberNames
+        />
       {/if}
 
       {#if editSection === 'documents' && canManageDocuments && asso}

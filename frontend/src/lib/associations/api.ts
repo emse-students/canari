@@ -110,6 +110,33 @@ export function mayActOnAssociation(
   return hasPermissionFlag(ctx.memberPermissions ?? 0, flag);
 }
 
+/** Every flag the enum defines, OR-ed together. Mirrors the backend `ALL_PERMISSION_FLAGS`. */
+export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
+  .filter((value): value is AssociationPermissionFlag => typeof value === 'number')
+  .reduce<number>((mask, flag) => mask | flag, 0);
+
+/** The refusal of a member write that changes a flag the writer does not hold itself. */
+export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
+/** The refusal of a member write on an institution by anyone but the platform administrator. */
+export const INSTITUTION_MEMBERS_ADMIN_ONLY = 'INSTITUTION_MEMBERS_ADMIN_ONLY';
+
+/**
+ * The flags the viewer may grant OR revoke on a member of one association - the client mirror of
+ * the server's `grantCeiling` (`member-flag-ceiling.ts`), so the editor never offers a box the
+ * server would refuse. Every flag for the platform administrator AND for this association's BDE
+ * super-admin (owner, 2026-11-02: a BDE officer may seat themself with full rights in an association
+ * they also run - `SUPER_ADMIN_EXCLUDED_FLAGS` is about what the tier EXERCISES, not what it may
+ * write into a row); otherwise the viewer's own row.
+ */
+export function grantableFlags(ctx: {
+  isGlobalAdmin: boolean;
+  isSuperAdmin: boolean;
+  memberPermissions?: number;
+}): number {
+  if (ctx.isGlobalAdmin || ctx.isSuperAdmin) return ALL_PERMISSION_FLAGS;
+  return (ctx.memberPermissions ?? 0) & ALL_PERMISSION_FLAGS;
+}
+
 /**
  * The user's BDE association granting `flag`, or undefined. The id matters as much as the verdict:
  * a BDE-wide right is exercised through the route of the BDE association that carries it, so the

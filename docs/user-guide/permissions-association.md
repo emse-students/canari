@@ -43,8 +43,11 @@ pas le BDE.
 
 Le champ texte a cote sert a changer le libelle du role ("Tresoriere"). Il ne change aucun droit.
 
-Deux garde-fous :
+Trois garde-fous :
 
+- Vous ne pouvez **accorder ni retirer** que les droits que vous possedez vous-meme : une case que
+  vous n'avez pas est grisee. Seuls l'administrateur de la plateforme et le BDE (section 3)
+  echappent a cette limite.
 - Vous ne pouvez pas retirer *Gerer les membres* au **dernier** membre qui le possede : l'association
   se retrouverait sans personne pour gerer ses membres. Nommez d'abord son remplacant.
 - A l'ajout d'un membre, le bouton **"Administrateur"** coche d'un coup tous les droits non-BDE,
@@ -67,6 +70,13 @@ association : membres, documents, formulaires, boutique. Deux exceptions, volont
 - il ne peut **pas** toucher a **Gerer le compte bancaire** : le compte bancaire reste entre vos mains
   et celles de l'administrateur de la plateforme ;
 - il ne peut **pas** publier au nom de votre association : parler en votre nom n'est pas administrer.
+
+Ces deux droits ne lui viennent pas de son role au BDE. Il peut en revanche **nommer un membre**
+(lui-meme compris, s'il preside aussi votre association) avec ces droits : c'est alors la ligne de
+membre qui les porte, et chaque attribution de ce genre est journalisee.
+
+Les membres d'une **institution** (l'Ecole, la ME...) ne sont ajoutes, modifies ou retires que par
+l'administrateur de la plateforme.
 
 Depuis le 10 septembre 2026, il peut aussi **supprimer** une association, comme il pouvait deja en
 creer une. Archiver et supprimer ne sont pas la meme chose et se trouvent dans le meme encadre

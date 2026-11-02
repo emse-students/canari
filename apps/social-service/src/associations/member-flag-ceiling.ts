@@ -1,0 +1,142 @@
+import { ForbiddenException, type Logger } from '@nestjs/common';
+import {
+  ALL_PERMISSION_FLAGS,
+  AssociationPermissionFlag,
+  SUPER_ADMIN_EXCLUDED_FLAGS,
+} from './entities/association-member.entity';
+
+/**
+ * THE GRANT CEILING: AN ORDINARY MEMBER MAY CHANGE ONLY THE FLAGS IT HOLDS ITSELF (2026-11-02).
+ *
+ * `MANAGE_MEMBERS` says WHO may write a member's bitmask; it never said WHICH bits. Until this file,
+ * a member holding it could write any bitmask, so it could hand out (to someone else or to itself) a
+ * flag it did not hold. The ceiling is the second half of the question, judged at the WRITE, in the
+ * service, so no route reaches a member bitmask without it.
+ *
+ * THREE STANDINGS (owner, 2026-11-02):
+ * - **the platform administrator**: no ceiling.
+ * - **a BDE super-admin of this association** (`MANAGE_ASSO` in the BDE of a space it reaches): NO
+ *   CEILING EITHER on member writes - it may grant any flag, to anyone, itself included. A BDE
+ *   officer is often also the president of another association and must be able to seat themself
+ *   there with full rights. `SUPER_ADMIN_EXCLUDED_FLAGS` keeps its meaning, which is about
+ *   INHERITANCE, not granting: the BDE role never EXERCISES `POST_AS_ASSO` or
+ *   `MANAGE_PAYOUT_ACCOUNT` on an association through `mayAct`; only an explicit membership row
+ *   carries them. Writing such a row is therefore a visible act, and every super-admin write that
+ *   grants an excluded flag is logged for audit (`logSuperAdminExcludedGrant`).
+ * - **an ordinary member holding `MANAGE_MEMBERS`**: capped at its own row.
+ *
+ * ONE RULE COVERS GRANTING AND REVOKING: the bits a write CHANGES (`before XOR after`) must all sit
+ * under the ceiling. A bit outside it is neither added nor removed - it is not the granter's to
+ * decide either way. Revoking is held to the same rule because a flag a granter does not hold is one
+ * it cannot judge the removal of (the treasurer's payout right), and because an editor that could
+ * clear bits it does not hold would let a member strip every right above its own. REMOVING A WHOLE
+ * MEMBERSHIP is a different act and stays `MANAGE_MEMBERS` (with the last-admin guard): it raises
+ * nobody's rights, and an association must be able to part with someone whatever they hold.
+ */
+
+/** The typed code of a write that changes a flag outside the granter's ceiling. */
+export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
+
+/** The typed code of a member write on an institution by anyone but the platform administrator. */
+export const INSTITUTION_MEMBERS_ADMIN_ONLY = 'INSTITUTION_MEMBERS_ADMIN_ONLY';
+
+/** Who is writing a member row - the identity the gateway vouched for. */
+export interface MemberGranter {
+  userId: string;
+  isGlobalAdmin: boolean;
+}
+
+/** The three facts a ceiling is computed from, read by the service. */
+export interface GranterStanding {
+  isGlobalAdmin: boolean;
+  /** `MANAGE_ASSO` in the BDE of a space this association reaches (`isAssociationSuperAdminOf`). */
+  isSuperAdminOf: boolean;
+  /** The granter's own bitmask in this association; 0 when not a member. */
+  ownPermissions: number;
+}
+
+/**
+ * The bits a granter may change on a member of one association: every flag for the platform
+ * administrator and for a BDE super-admin of it; otherwise the granter's own row.
+ */
+export function grantCeiling(standing: GranterStanding): number {
+  if (standing.isGlobalAdmin || standing.isSuperAdminOf) return ALL_PERMISSION_FLAGS;
+  return standing.ownPermissions & ALL_PERMISSION_FLAGS;
+}
+
+/** The bits a write from `before` to `after` changes that `ceiling` does not cover. */
+export function flagsBeyondCeiling(ceiling: number, before: number, after: number): number {
+  return (before ^ after) & ~ceiling;
+}
+
+/** The enum names of the bits set in `mask`, for a log line a reader can act on. */
+export function flagNames(mask: number): string[] {
+  return Object.entries(AssociationPermissionFlag)
+    .filter(([, value]) => typeof value === 'number' && (mask & value) !== 0)
+    .map(([name]) => name);
+}
+
+/**
+ * Refuses (403, typed) a member write that changes a bit outside the granter's ceiling. Logged at
+ * WARN: the current editor never offers such a bit, but an older installed client still does.
+ */
+export function assertWithinGrantCeiling(
+  logger: Logger,
+  ceiling: number,
+  before: number,
+  after: number,
+  ctx: { associationId: string; granterId: string; targetUserId: string; what: string }
+): void {
+  const beyond = flagsBeyondCeiling(ceiling, before, after);
+  if (beyond === 0) return;
+  logger.warn(
+    `[MEMBER-CEILING] ${ctx.what} refused: granter=${ctx.granterId.slice(0, 8)} target=${ctx.targetUserId.slice(0, 8)} association=${ctx.associationId.slice(0, 8)} beyond=${flagNames(beyond).join('|')}`
+  );
+  throw new ForbiddenException({
+    code: MEMBER_FLAGS_BEYOND_GRANTER,
+    message: 'A member right can only be granted or revoked by someone who holds it',
+  });
+}
+
+/**
+ * THE AUDIT LINE of a BDE super-admin writing a row that carries a right the BDE role does not
+ * inherit (`SUPER_ADMIN_EXCLUDED_FLAGS`): at INFO, naming the association and the flags, never a
+ * user. Logged only for a granter that is a super-admin of the association and not the platform
+ * administrator, and only for an excluded bit the write ADDS.
+ */
+export function logSuperAdminExcludedGrant(
+  logger: Logger,
+  standing: GranterStanding,
+  before: number,
+  after: number,
+  ctx: { associationId: string; what: string }
+): void {
+  if (standing.isGlobalAdmin || !standing.isSuperAdminOf) return;
+  const granted = after & ~before & SUPER_ADMIN_EXCLUDED_FLAGS;
+  if (granted === 0) return;
+  logger.log(
+    `[MEMBER-CEILING] ${ctx.what}: a BDE super-admin granted ${flagNames(granted).join('|')} on association ${ctx.associationId}`
+  );
+}
+
+/**
+ * Refuses (403, typed) a member write on an institution unless the writer is the platform
+ * administrator (D20: an institution's members are added nominatively by an admin - being personnel
+ * proves nothing, and its members speak as the School).
+ */
+export function assertInstitutionMemberWrite(
+  logger: Logger,
+  kind: string | null,
+  granter: MemberGranter,
+  associationId: string,
+  what: string
+): void {
+  if (kind !== 'institution' || granter.isGlobalAdmin) return;
+  logger.warn(
+    `[MEMBER-CEILING] ${what} refused: institution ${associationId.slice(0, 8)} members are the platform admin's, granter=${granter.userId.slice(0, 8)}`
+  );
+  throw new ForbiddenException({
+    code: INSTITUTION_MEMBERS_ADMIN_ONLY,
+    message: "Only a platform administrator edits an institution's members",
+  });
+}

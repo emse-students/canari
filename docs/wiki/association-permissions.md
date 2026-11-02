@@ -177,6 +177,49 @@ BDE super-admin is still excluded by `SUPER_ADMIN_EXCLUDED_FLAGS`, unchanged and
 three tiers, because a feed page decides a dozen rows per render and a per-row `mayAct` is a dozen
 round trips. `associations.service.may-act.spec.ts` asserts the two agree id by id.
 
+## The grant ceiling: who may write which bits (2026-11-02)
+
+`MANAGE_MEMBERS` answers WHO may write a member's bitmask; until 2026-11-02 nothing answered WHICH
+bits, so a granter could grant flags it did not hold. `apps/social-service/src/associations/member-flag-ceiling.ts`
+is the second half, judged in the service at the write (`addMember`, `updateMemberRole`), so no
+route reaches a bitmask without it. Those two, plus `removeMember`, are the only writers of
+`association_members` outside migrations and the dev seed: there is no invitation, accept,
+transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
+
+| Granter | Ceiling (`grantCeiling`) |
+| --- | --- |
+| Platform administrator | every flag |
+| BDE super-admin of this association | every flag (owner, 2026-11-02) - see below |
+| Ordinary member holding `MANAGE_MEMBERS` | its own row's flags |
+
+- **Granting and revoking are one rule.** The bits a write CHANGES (`before XOR after`) must sit
+  under the ceiling, so a member can neither add nor remove a flag it does not hold - otherwise it
+  could strip every right above its own (the treasurer's payout right). A role rename sends the
+  bitmask unchanged and passes. Bits the server strips by kind (`writablePermissions`) are compared
+  through the same filter, so they never count as the granter's change.
+- **Removing a whole membership is not held to it**: it raises nobody's rights, and an association
+  must be able to part with anyone; the last-admin guard still applies.
+- **The super-admin is uncapped on purpose.** `SUPER_ADMIN_EXCLUDED_FLAGS` is about INHERITANCE:
+  the tier never EXERCISES `POST_AS_ASSO` or `MANAGE_PAYOUT_ACCOUNT` through `mayAct`. It may still
+  WRITE them into a row, its own included - a BDE officer is often another association's president.
+  Only an explicit row carries them, and every super-admin write that grants one is logged at info
+  (`[MEMBER-CEILING] ... a BDE super-admin granted <FLAGS> on association <id>`, no user id), after
+  the write lands.
+- **Institutions are the platform admin's alone** (D20): add, update and remove answer 403
+  `INSTITUTION_MEMBERS_ADMIN_ONLY` to anyone else. Reordering stays `MANAGE_MEMBERS` (it writes no
+  right).
+- **Refusals are typed**: 403 `MEMBER_FLAGS_BEYOND_GRANTER`, logged at WARN (the editor never offers
+  such a bit; an older installed client still can).
+- **The client mirrors it** with `grantableFlags(ctx)` in `frontend/src/lib/associations/api.ts`:
+  the row editor disables a box outside it, the add presets are cut to it, and the members section
+  of an institution is drawn for the platform admin only (`editRights(...).memberRoster`).
+- **Known bound**: the ceiling reads the granter's row in the same request as the write, exactly as
+  the route guard reads `MANAGE_MEMBERS`; a concurrent demotion of the granter is not serialised
+  against it, as it is not against any guarded route.
+- **Rows written before** are not rewritten. The read-only count of rows whose flags exceed what
+  their path now allows is in the pull request that introduced the ceiling; any correction waits for
+  the owner.
+
 ## What is deliberately NOT `mayAct`
 
 Three shapes look like the same question and are not. Folding them in would have been wrong:

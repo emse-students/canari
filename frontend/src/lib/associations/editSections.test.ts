@@ -96,6 +96,20 @@ describe('which sections a reader may open', () => {
     expect(mayOpenEditSection('audience', editRights({ ...none, isSuperAdmin: true }))).toBe(true);
   });
 
+  it("keeps an institution's roster to the global admin, and an association's to MANAGE_MEMBERS", () => {
+    const manager = withFlags(AssociationPermissionFlag.MANAGE_MEMBERS);
+    expect(mayOpenEditSection('members', editRights(manager, 'institution'))).toBe(false);
+    expect(
+      mayOpenEditSection('members', editRights({ ...none, isSuperAdmin: true }, 'institution'))
+    ).toBe(false);
+    expect(
+      mayOpenEditSection('members', editRights({ ...none, isGlobalAdmin: true }, 'institution'))
+    ).toBe(true);
+    expect(mayOpenEditSection('members', editRights(manager))).toBe(true);
+    // Archiving still reads MANAGE_MEMBERS on an institution: only the roster moved.
+    expect(mayOpenEditSection('danger', editRights(manager, 'institution'))).toBe(true);
+  });
+
   it('keeps an institution audience to the global admin', () => {
     const star = editRights({ ...none, isSuperAdmin: true }, 'institution');
     expect(mayOpenEditSection('audience', star)).toBe(false);

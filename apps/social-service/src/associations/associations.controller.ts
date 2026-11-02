@@ -864,8 +864,16 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
-  addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
-    return this.service.addMember({ associationId: id, ...dto });
+  addMember(
+    @Param('id') id: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: AddMemberDto
+  ) {
+    return this.service.addMember(
+      { associationId: id, ...dto },
+      { userId: callerId.trim(), isGlobalAdmin: ga === 'true' }
+    );
   }
 
   /** Updates the role or permission bitmask of an existing association member. */
@@ -882,6 +890,7 @@ export class AssociationsController {
     const isGlobalAdmin = ga === 'true';
     const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,
     });
   }
@@ -898,7 +907,10 @@ export class AssociationsController {
   ) {
     const isGlobalAdmin = ga === 'true';
     const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
-    return this.service.removeMember(id, targetUserId, { bypassLastAdmin: isGlobalAdmin || isBde });
+    return this.service.removeMember(id, targetUserId, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
+      bypassLastAdmin: isGlobalAdmin || isBde,
+    });
   }
 
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────

@@ -8,6 +8,10 @@ import {
   AssociationPermissionFlag,
   BDE_ONLY_FLAGS,
   SUPER_ADMIN_EXCLUDED_FLAGS,
+  ALL_PERMISSION_FLAGS,
+  INSTITUTION_MEMBERS_ADMIN_ONLY,
+  MEMBER_FLAGS_BEYOND_GRANTER,
+  grantableFlags,
   findBdeAssociationWithFlag,
   hasPermissionFlag,
   holdsBdeFlag,
@@ -166,5 +170,70 @@ describe('the role editor', () => {
     expect(source).toMatch(/kindOffersFlag\(kind, flag\)/);
     // A toggle edits ITS bit: a hidden bit already held survives a save.
     expect(source).toMatch(/permissions & ~flag : permissions \| flag/);
+  });
+
+  it('disables a box the viewer may not change, and never toggles one', () => {
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../components/associations/AssociationMemberRow.svelte'
+      ),
+      'utf8'
+    );
+    expect(source).toMatch(/disabled=\{!mayToggle\}/);
+    expect(source).toMatch(/!hasPermissionFlag\(grantable, flag\)\) return;/);
+  });
+});
+
+describe('grantableFlags - the client mirror of the server grant ceiling', () => {
+  const { MANAGE_FORMS } = AssociationPermissionFlag;
+
+  it('gives the platform administrator every flag', () => {
+    expect(grantableFlags({ isGlobalAdmin: true, isSuperAdmin: false })).toBe(ALL_PERMISSION_FLAGS);
+  });
+
+  it('caps an ordinary member at its own bitmask, and a stranger at nothing', () => {
+    const own = MANAGE_MEMBERS | MANAGE_FORMS;
+    expect(
+      grantableFlags({ isGlobalAdmin: false, isSuperAdmin: false, memberPermissions: own })
+    ).toBe(own);
+    expect(grantableFlags({ isGlobalAdmin: false, isSuperAdmin: false })).toBe(0);
+  });
+
+  it('leaves the super-admin tier uncapped, the excluded flags included (owner, 2026-11-02)', () => {
+    const tier = grantableFlags({ isGlobalAdmin: false, isSuperAdmin: true });
+    expect(tier).toBe(ALL_PERMISSION_FLAGS);
+    expect(tier & SUPER_ADMIN_EXCLUDED_FLAGS).toBe(SUPER_ADMIN_EXCLUDED_FLAGS);
+    // ...while the tier still does not EXERCISE them: granting is not inheriting.
+    expect(mayActOnAssociation(POST_AS_ASSO, { isGlobalAdmin: false, isSuperAdmin: true })).toBe(
+      false
+    );
+  });
+
+  it('names the same refusal codes and the same tier as the server', () => {
+    const server = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '..',
+        '..',
+        '..',
+        '..',
+        'apps',
+        'social-service',
+        'src',
+        'associations',
+        'member-flag-ceiling.ts'
+      ),
+      'utf8'
+    );
+    expect(server).toContain(
+      `export const MEMBER_FLAGS_BEYOND_GRANTER = '${MEMBER_FLAGS_BEYOND_GRANTER}'`
+    );
+    expect(server).toContain(
+      `export const INSTITUTION_MEMBERS_ADMIN_ONLY = '${INSTITUTION_MEMBERS_ADMIN_ONLY}'`
+    );
+    expect(server).toMatch(
+      /if \(standing\.isGlobalAdmin \|\| standing\.isSuperAdminOf\) return ALL_PERMISSION_FLAGS;/
+    );
   });
 });

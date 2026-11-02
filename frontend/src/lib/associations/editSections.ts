@@ -50,7 +50,13 @@ export function parseEditSection(value: string | null | undefined): EditSection 
 
 /** The rights the sections gate on, gathered once. */
 export interface EditRights {
+  /** `MANAGE_MEMBERS`: archiving (`danger`) and the cotisations panel read it. */
   members: boolean;
+  /**
+   * Writing the roster (the `members` section): `members`, except on an institution, whose members
+   * are the platform admin's alone (D20, `INSTITUTION_MEMBERS_ADMIN_ONLY` on the server).
+   */
+  memberRoster: boolean;
   documents: boolean;
   products: boolean;
   forms: boolean;
@@ -65,16 +71,19 @@ export interface EditRights {
 }
 
 /**
- * Every right the management sections read, from one context. `assoType` matters for exactly one
- * thing: an institution's audience is a global admin's alone (`AUDIENCE_INSTITUTION_ADMIN_ONLY`).
+ * Every right the management sections read, from one context. `assoType` matters for exactly two
+ * things, both an institution's and both a global admin's alone: its audience
+ * (`AUDIENCE_INSTITUTION_ADMIN_ONLY`) and its roster (`INSTITUTION_MEMBERS_ADMIN_ONLY`).
  */
 export function editRights(
   ctx: EditPermissionContext,
   assoType: Association['type'] = 'association'
 ): EditRights {
   const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, ctx);
+  const members = may(AssociationPermissionFlag.MANAGE_MEMBERS);
   return {
-    members: may(AssociationPermissionFlag.MANAGE_MEMBERS),
+    members,
+    memberRoster: assoType === 'institution' ? ctx.isGlobalAdmin : members,
     documents: may(AssociationPermissionFlag.MANAGE_DOCUMENTS),
     products: may(AssociationPermissionFlag.MANAGE_PRODUCTS),
     forms: may(AssociationPermissionFlag.MANAGE_FORMS),
@@ -95,7 +104,7 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
     case 'profile':
       return true;
     case 'members':
-      return rights.members;
+      return rights.memberRoster;
     case 'payments':
       return rights.payoutAccount || rights.products;
     case 'documents':
