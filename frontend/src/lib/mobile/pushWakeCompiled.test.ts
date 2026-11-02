@@ -48,7 +48,7 @@ describe('the wake-up push the registration promises', () => {
     );
     // The round trip is on the fetch pool; the lane only ever sees the released, ordered action.
     expect(wake).toContain('WAKE_FETCH_POOL.execute');
-    expect(wake).toContain('val ticket = WAKE_ORDER.arrive {');
+    expect(wake).toContain('val ticket = WAKE_ORDER.arrive(');
     expect(wake).toContain('fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)');
     // The ticket is settled on every path, the unschedulable fetch included.
     expect(wake).toMatch(/finally \{\s*settle\(outcome\)/);
@@ -60,6 +60,50 @@ describe('the wake-up push the registration promises', () => {
     // A failure for a mentions-only conversation is posted silently, under one id for all of them.
     expect(service).toContain('.setSilent(mentionsOnly || callHoldsSound())');
     expect(service).toContain('val notifId = WAKE_UNAVAILABLE_NOTIF_ID');
+  });
+
+  it('only the re-queue of the SAME frame bypasses the order; new lane work takes a ticket (F3)', () => {
+    const service = read(ANDROID);
+    const runner = service.slice(
+      service.indexOf('private fun runSerializedWithWakeLock('),
+      service.indexOf('private fun executeOnLane(')
+    );
+    // The one bypass needs BOTH: the same-frame flag and the lane's own thread.
+    expect(runner).toMatch(
+      /if \(requeueOfThisFrame && Thread\.currentThread\(\) === mlsLaneThread\)/
+    );
+    expect(runner).toContain('WAKE_ORDER.inOrder {');
+    // The two same-frame re-queues say so; the key-group join a banner spawns does not.
+    expect(service.match(/requeueOfThisFrame = true/g)).toHaveLength(2);
+    expect(service).toMatch(
+      /runSerializedWithWakeLock\("fcm_decrypt", requeueOfThisFrame = true\)/
+    );
+    expect(service).toMatch(
+      /runSerializedWithWakeLock\("fcm_channel", requeueOfThisFrame = true\)/
+    );
+    expect(service).toMatch(/runSerializedWithWakeLock\("key_group_join", 90_000L\) \{/);
+  });
+
+  it('a Welcome is counted on its way to the lane, at release, before the batch hands anything over (F2)', () => {
+    const service = read(ANDROID);
+    // Counted by the hook, not at arrival.
+    expect(service).toMatch(
+      /"welcome_join", 90_000L,\s*onLane = \{ WELCOMES_ON_LANE\.merge\(groupId, 1, Int::plus\) \}/
+    );
+    expect(service).not.toMatch(
+      /WELCOMES_ON_LANE\.merge\(groupId, 1, Int::plus\)\s*runSerializedWithWakeLock\("welcome_join"/
+    );
+    const lane = service.slice(service.indexOf('private fun executeOnLane('));
+    const body = lane.slice(0, lane.indexOf('\n    }\n'));
+    // The count, then the hand-off through the batch, then the executor.
+    expect(body.indexOf('onLane()')).toBeLessThan(body.indexOf('WAKE_ORDER.handOff {'));
+    expect(body.indexOf('WAKE_ORDER.handOff {')).toBeLessThan(
+      body.indexOf('MLS_PUSH_LANE.execute {')
+    );
+    // A wake lock that cannot be taken never skips the block whose finally releases the count.
+    expect(body).toMatch(
+      /var wl: PowerManager\.WakeLock\? = null\s*try \{\s*\/\/[\s\S]*?wl\.acquire\(timeoutMs\)\s*\} catch/
+    );
   });
 
   it('the iOS extension dispatches it, and re-enters the same switch with what it fetched', () => {

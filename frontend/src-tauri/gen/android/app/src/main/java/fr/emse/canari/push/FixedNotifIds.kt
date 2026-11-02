@@ -9,8 +9,12 @@ package fr.emse.canari.push
  * wake-up push's notice. [skipReserved] is applied at allocation, so the counter steps over every
  * id here, deterministically; an id already persisted for a conversation is never changed.
  *
- * Every fixed id is named HERE and the services read it from here, so a new one cannot be added
- * without the counter learning to skip it.
+ * Every SINGLE fixed id is named here and the services read it from here, so a new one cannot be
+ * added without the counter learning to skip it. Two RANGES are not, and the counter does not skip
+ * them: the call rings' `CALL_NOTIF_ID_BASE` (700 000) + `callId.hashCode() and 0xFFFF`, which the
+ * counter reaches only after ~699 000 conversations on one install; and the per-post ids
+ * `notificationIdCounter` hands out from 10 000 per process, which a counter past 10 000 (some
+ * 9 000 conversations) can meet - a known overlap, not a guarantee this object gives.
  *
  * Compiled by the JVM test project too, so nothing here may import Android (see [PushRecoveryLadder]).
  */
