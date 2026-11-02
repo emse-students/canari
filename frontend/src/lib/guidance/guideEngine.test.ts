@@ -87,11 +87,6 @@ describe('planGuide', () => {
       { step: 'agenda', reason: 'not-rendered' },
     ]);
   });
-
-  it('keeps a step that waits for its anchor', () => {
-    const g = tour([step('a', 'later', { waitForAnchor: true })]);
-    expect(planGuide(g, PHONE, () => false).steps.map((s) => s.id)).toEqual(['a']);
-  });
 });
 
 describe('GuideEngine', () => {
@@ -175,6 +170,80 @@ describe('GuideEngine', () => {
     expect(h.engine.view?.position).toBe(2);
   });
 
+  it('re-plans when the layout crosses a breakpoint, so a `when` is read again', () => {
+    const g = harness(
+      [
+        tour([
+          step('one', null),
+          step('swipe-only', null, { when: (l) => l.swipe }),
+          step('three', null),
+        ]),
+      ],
+      { layout: DESKTOP }
+    );
+    g.engine.consider(true, '/posts');
+    expect(g.engine.view?.total).toBe(2);
+    // Narrowed to a phone: the swipe step exists now, and the reader stays where they were.
+    g.setLayout(PHONE);
+    g.engine.layoutChanged();
+    expect(g.stepId()).toBe('one');
+    expect(g.engine.view?.total).toBe(3);
+    g.engine.next();
+    expect(g.stepId()).toBe('swipe-only');
+    // Widened again ON that step: it leaves the plan, and the next declared step takes its place.
+    g.setLayout(DESKTOP);
+    g.engine.layoutChanged();
+    expect(g.stepId()).toBe('three');
+    expect(g.engine.view?.position).toBe(2);
+    expect(g.engine.view?.total).toBe(2);
+    // Back on a phone on the last step: the swipe step returns BEHIND the reader, who stays put.
+    g.setLayout(PHONE);
+    g.engine.layoutChanged();
+    expect(g.stepId()).toBe('three');
+    expect(g.engine.view?.position).toBe(3);
+    g.engine.next();
+    expect(g.engine.view).toBeNull();
+    expect(g.markSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes the help when a layout change leaves no step at or after the current one', () => {
+    const g = harness([
+      tour([step('one', null), step('swipe-only', null, { when: (l) => l.swipe })]),
+    ]);
+    g.engine.consider(true, '/posts');
+    g.engine.next();
+    expect(g.stepId()).toBe('swipe-only');
+    g.setLayout(DESKTOP);
+    g.engine.layoutChanged();
+    expect(g.engine.view).toBeNull();
+    expect(g.markSeen).toHaveBeenCalledWith('welcome-tour');
+  });
+
+  it('forgets the leaving account on reset: its suspended run never resumes for the next', () => {
+    // Account A: the tour runs, then is suspended (a call, a modal) - still active, not ended.
+    h.engine.consider(true, '/posts');
+    h.engine.next();
+    expect(h.stepId()).toBe('two');
+    h.engine.consider(false, '/posts');
+    expect(h.engine.activeId).toBe('welcome-tour');
+    // A signs out; B signs in, and B has seen the tour on another device.
+    h.engine.reset();
+    h.seen.add('welcome-tour');
+    h.engine.consider(true, '/posts');
+    expect(h.engine.view).toBeNull();
+    expect(h.engine.activeId).toBeNull();
+    expect(h.markSeen).not.toHaveBeenCalled();
+  });
+
+  it('a pending replay does not survive the account that asked for it', () => {
+    h.seen.add('welcome-tour');
+    h.engine.request('welcome-tour');
+    h.engine.reset();
+    h.engine.consider(true, '/posts');
+    expect(h.engine.view).toBeNull();
+    expect(h.engine.requestedId).toBeNull();
+  });
+
   it('moves on when the layout changes under the step on screen', () => {
     h.engine.consider(true, '/posts');
     h.engine.next();
@@ -199,38 +268,6 @@ describe('GuideEngine', () => {
     g.engine.consider(true, '/posts');
     expect(g.stepId()).toBe('only');
     expect(g.engine.view?.modal).toBe(false);
-  });
-
-  it('a waiting step is shown when its anchor registers, on that event alone', () => {
-    const g = harness([tour([step('w', 'later', { waitForAnchor: true })], 'hint')]);
-    g.engine.consider(true, '/posts');
-    expect(g.engine.view).toBeNull();
-    expect(g.engine.activeId).toBe('welcome-tour');
-    g.engine.anchorsChanged();
-    expect(g.engine.view).toBeNull();
-    g.rendered.add('later');
-    g.engine.anchorsChanged();
-    expect(g.stepId()).toBe('w');
-  });
-
-  it('a waiting step is dropped when the route changes, and a help that showed nothing is put back', () => {
-    const g = harness([tour([step('w', 'later', { waitForAnchor: true })], 'hint')]);
-    g.engine.consider(true, '/posts');
-    g.engine.routeSettled('/chat');
-    expect(g.engine.activeId).toBeNull();
-    expect(g.markSeen).not.toHaveBeenCalled();
-  });
-
-  it('a waiting step mid-tour is skipped by a route change, and the tour goes on', () => {
-    const g = harness([
-      tour([step('one', null), step('w', 'later', { waitForAnchor: true }), step('end', null)]),
-    ]);
-    g.engine.consider(true, '/posts');
-    g.engine.next();
-    expect(g.engine.view).toBeNull();
-    g.engine.routeSettled('/posts');
-    expect(g.stepId()).toBe('end');
-    expect(g.engine.view?.total).toBe(2);
   });
 
   it('refuses to replay an id no guide declares', () => {

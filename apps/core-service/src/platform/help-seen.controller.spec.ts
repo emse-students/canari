@@ -2,11 +2,8 @@
 
 import { BadRequestException, Logger } from '@nestjs/common';
 import { GUARDS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
-import {
-  HelpSeenController,
-  HELP_ID_UNKNOWN,
-  HELP_SEEN_LIMIT_PER_MINUTE,
-} from './help-seen.controller';
+import { HelpSeenController, HELP_SEEN_LIMIT_PER_MINUTE } from './help-seen.controller';
+import { HELP_ID_UNKNOWN } from './help-ids';
 import { HelpSeenService } from './help-seen.service';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AccountThrottlerGuard } from '../common/guards/account-throttler.guard';

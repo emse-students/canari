@@ -75,6 +75,9 @@ function answer(status: number, bytes: Uint8Array | string): Response {
     status,
     ok: status >= 200 && status < 300,
     statusText: '',
+    // Read by the connectivity store's count of the upload (`trackRequestOutcome`), as on a real
+    // answer: the API's own JSON.
+    headers: new Headers({ 'Content-Type': 'application/json' }),
     arrayBuffer: async () => body.slice().buffer,
     json: async () => JSON.parse(new TextDecoder().decode(body)),
     text: async () => new TextDecoder().decode(body),

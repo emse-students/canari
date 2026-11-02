@@ -68,6 +68,7 @@ describe('reelMessageAsPost', () => {
       messageId: 'msg-9',
       media: { ...video, intent: 'reel-message' },
       caption: 'hello',
+      senderId: 'user-ada',
       senderName: 'Ada',
       sentAt,
     });
@@ -76,6 +77,6 @@ describe('reelMessageAsPost', () => {
     expect(post.markdown).toBe('hello');
     expect(post.authorDisplayName).toBe('Ada');
     expect(post.createdAt).toBe(sentAt.toISOString());
-    expect(post.authorId).toBeUndefined();
+    expect(post.authorId).toBe('user-ada');
   });
 });

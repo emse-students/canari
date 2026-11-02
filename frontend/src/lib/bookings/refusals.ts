@@ -83,6 +83,54 @@ export const BOOKER_REFUSAL_CODES = [
 
 export type BookerRefusalCode = (typeof BOOKER_REFUSAL_CODES)[number];
 
+/**
+ * The FAMILY codes an edit is refused with (owner, 2026-11-02), each with the precise rule as
+ * `reason` beside it (`BookingsApiError.reason`): the code a booking would have been refused with,
+ * or `other-day` / `not-yours`. Refused, the booking is exactly as it was - every sentence says so.
+ */
+export const EDIT_REFUSAL_CODES = [
+  'BOOKING_EDIT_CONFLICT',
+  'BOOKING_EDIT_QUOTA',
+  'BOOKING_EDIT_OUTSIDE_RULES',
+  'BOOKING_EDIT_FORBIDDEN',
+] as const;
+
+export type EditRefusalCode = (typeof EDIT_REFUSAL_CODES)[number];
+
+/**
+ * An edit's refusal: the rule's own sentence when it says more than the family's (which ceiling,
+ * which setting), else the family's - then that the booking has not changed. `slot-taken` says
+ * nothing the family has not.
+ */
+function editSentenceFor(code: string, reason: string | null): string | null {
+  let family: string;
+  switch (code) {
+    case 'BOOKING_EDIT_CONFLICT':
+      family = m.bookings_edit_refusal_conflict();
+      break;
+    case 'BOOKING_EDIT_QUOTA':
+      family = m.bookings_edit_refusal_quota();
+      break;
+    case 'BOOKING_EDIT_OUTSIDE_RULES':
+      family = m.bookings_edit_refusal_outside_rules();
+      break;
+    case 'BOOKING_EDIT_FORBIDDEN':
+      return m.bookings_edit_refusal_forbidden();
+    default:
+      return null;
+  }
+  // Changed since the sheet opened: nothing to word about a rule - the sheet is reopened on it.
+  if (code === 'BOOKING_EDIT_CONFLICT' && reason === 'stale')
+    return m.bookings_edit_refusal_stale();
+  const detail =
+    reason === 'other-day'
+      ? m.bookings_edit_refusal_other_day()
+      : reason && reason !== 'slot-taken'
+        ? bookerSentenceFor(reason, 0)
+        : null;
+  return `${detail ?? family} ${m.bookings_edit_refusal_unchanged()}`;
+}
+
 function sentenceFor(code: string, count: number): string | null {
   switch (code) {
     case 'not-manager':
@@ -241,8 +289,9 @@ export function outcomeUnknown(error: unknown): boolean {
 export function describeBookingRefusal(error: unknown, action: string): string {
   const code = refusalCode(error);
   const count = error instanceof BookingsApiError ? error.bookingIds.length : 0;
+  const reason = error instanceof BookingsApiError ? error.reason : null;
   return (
-    (code ? sentenceFor(code, count) : null) ??
+    (code ? (editSentenceFor(code, reason) ?? sentenceFor(code, count)) : null) ??
     describeApiRefusal(refusalStatus(error), action) ??
     m.common_generic_error_label()
   );

@@ -5,7 +5,7 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { Log } from '$lib/utils/Log';
-import { isHelpId, type HelpId } from './helpIds';
+import { HELP_ID_UNKNOWN, isHelpId, type HelpId } from './helpIds';
 
 /**
  * WHICH FIRST-TIME HELPS THIS ACCOUNT HAS SEEN - the client half of core-service's `help_seen`
@@ -18,8 +18,10 @@ import { isHelpId, type HelpId } from './helpIds';
  *
  * NO RETRY TIMER. A write that met no answer is OWED, and two events deliver what is owed - the
  * reconnect (`connectivity.onReconnect`, the same trigger the salon writes use) and the next
- * {@link SeenHelps.load} (the next app opening, or the next account sign-in). A refusal by the
- * server (4xx) is not owed: no repeat can change its answer, so it is logged as the defect it is.
+ * {@link SeenHelps.load} (the next app opening, or the next account sign-in). ONE refusal is not
+ * owed: the 400 whose typed `code` is `HELP_ID_UNKNOWN` (an id the server does not list), which no
+ * repeat can change - it is logged as the release mismatch it is and dropped. Every other status - a
+ * 429, a 408, a 401, a 5xx - says nothing permanent about the id, so the write stays owed.
  *
  * AN UNSEEN HELP STARTS ONLY ONCE THE SERVER HAS ANSWERED ({@link SeenHelps.ready}): starting on the
  * local copy alone would replay, on a new device, a tour the account finished elsewhere. A device
@@ -29,6 +31,22 @@ import { isHelpId, type HelpId } from './helpIds';
 type Persisted = { seen: string[]; owed: string[] };
 
 const PATH = '/api/users/me/help-seen';
+
+/**
+ * Whether a failed write is the server's PERMANENT refusal of the id: a 400 carrying the typed
+ * `HELP_ID_UNKNOWN` code. Read from the body's `code`, never from a message; an unreadable body is
+ * not that refusal.
+ */
+async function isUnknownIdRefusal(res: Response): Promise<boolean> {
+  if (res.status !== 400) return false;
+  try {
+    const body = (await res.json()) as { code?: unknown } | null;
+    return body?.code === HELP_ID_UNKNOWN;
+  } catch (e) {
+    console.warn('[seenHelps] a 400 with no readable body - kept owed', e);
+    return false;
+  }
+}
 
 function readLocal(userId: string): { seen: HelpId[]; owed: HelpId[] } {
   try {
@@ -168,10 +186,14 @@ export class SeenHelps {
         Log.d('seenHelps', `${id} recorded on the account`);
         return;
       }
-      if (res.status >= 400 && res.status < 500) {
-        // The server will never take it (an id it does not list, a session it refuses): owing it
-        // would only repeat the refusal. Accused - it is a release mismatch or a defect.
-        console.error(`[seenHelps] the server refused ${id}: HTTP ${res.status} - kept local only`);
+      const permanent = await isUnknownIdRefusal(res);
+      if (generation !== this.#generation) return;
+      if (permanent) {
+        // The server does not list this id: owing it would only repeat the refusal. Accused - it is
+        // a release mismatch between this client and the server's allowlist.
+        console.error(
+          `[seenHelps] the server does not list ${id} (${HELP_ID_UNKNOWN}) - kept local only`
+        );
         this.#owed.delete(id);
         this.#persist();
         return;

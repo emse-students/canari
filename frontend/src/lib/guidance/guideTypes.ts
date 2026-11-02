@@ -61,15 +61,6 @@ export interface GuideStep {
    * help there - it is not counted in "n/N" and nothing is said about it.
    */
   readonly when?: (layout: GuideLayout) => boolean;
-  /**
-   * Wait for the anchor instead of skipping the step when it is not rendered yet - for a control
-   * drawn after data arrives (a list's first row, a button behind a load). The wait ends when the
-   * anchor registers, or when the route changes, which skips the step. Never a timer.
-   *
-   * Without it (the default), a step whose anchor is not rendered once the route has settled is
-   * skipped AT ONCE: the layout is known not to render it.
-   */
-  readonly waitForAnchor?: boolean;
   /** An icon drawn in the bubble, which also names a target the halo can only approximate. */
   readonly icon?: Component<{ size?: number }>;
   readonly gesture?: GuideGesture;

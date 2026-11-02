@@ -134,6 +134,11 @@ describe('lydiaEnrolmentView', () => {
     expect(v.active).toBe(true);
     expect(v.recordResponsable).toBe(true);
   });
+  it('unlinking is offered to the global admin only', () => {
+    const linkedAccount = { ...base, lydiaAccountId: 'v' };
+    expect(lydiaEnrolmentView(linkedAccount, true).adminCanDisconnect).toBe(true);
+    expect(lydiaEnrolmentView(linkedAccount, false).adminCanDisconnect).toBe(false);
+  });
   it('admin validate is offered only while linked and not ready', () => {
     expect(lydiaEnrolmentView(base, true).adminCanValidate).toBe(false);
     expect(lydiaEnrolmentView({ ...base, lydiaAccountId: 'v' }, true).adminCanValidate).toBe(true);

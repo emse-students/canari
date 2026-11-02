@@ -26,4 +26,9 @@ describe('sign-out forgets the account that left', () => {
     const logout = sessionAuth.slice(sessionAuth.indexOf('export function endSessionImpl'));
     expect(logout).toContain('resetSeenHelps();');
   });
+
+  it('resets the guide engine, so a suspended tour of the leaving account never resumes for the next', () => {
+    const logout = sessionAuth.slice(sessionAuth.indexOf('export function endSessionImpl'));
+    expect(logout).toContain('guideEngine.reset();');
+  });
 });

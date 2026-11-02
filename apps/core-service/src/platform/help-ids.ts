@@ -8,6 +8,12 @@
  */
 export const HELP_IDS = ['welcome-tour'] as const;
 
+/**
+ * The `code` of the 400 refusing an id outside {@link HELP_IDS} - the one answer a client treats
+ * as permanent (it drops the write); shared as `unknownIdCode` in the same contract.
+ */
+export const HELP_ID_UNKNOWN = 'HELP_ID_UNKNOWN';
+
 export type HelpId = (typeof HELP_IDS)[number];
 
 /** Narrows an untrusted string (a path segment) to a known help id. */

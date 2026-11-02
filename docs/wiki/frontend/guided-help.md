@@ -74,7 +74,6 @@ What a step can say:
 | `title`, `body` | Paraglide messages, called at render time |
 | `placement` | `auto` (default: the side with room, below then above, then beside), or a side |
 | `when(layout)` | whether the step exists on this layout at all (the camera step: `layout.swipe`) |
-| `waitForAnchor` | wait for a control drawn after data arrives; the wait ends on the anchor's registration or on a route change - never a timer |
 | `icon`, `gesture` | a glyph in the bubble; `swipe-right` mimes a swipe for a place reached by a gesture |
 
 `anchor`, `title`, `body` and `placement` take `{ byLayout: (layout) => value }` where a phone and a
@@ -106,11 +105,15 @@ Three refinements keep that exact:
 
 - **One id, several sources.** The bottom bar and the sidebar are BOTH mounted at every width - the
   breakpoint hides one with `display: none`. An anchor resolves to the source that has a client
-  rect, i.e. the one drawn. A viewport change (`onViewportChange`) re-reads the layout, and a step on
-  screen whose anchor stopped being drawn moves on.
-- **A control drawn after data** declares `waitForAnchor`: the step waits for the registry event, and
-  the route change is the event that abandons it. Nothing is blocked meanwhile - a waiting step draws
-  nothing and holds no history entry.
+  rect, i.e. the one drawn. A viewport change across a breakpoint (`onViewportChange`) PLANS THE
+  HELP AGAIN for the new layout (`GuideEngine.layoutChanged`): every `when` and every layout-dependent
+  anchor is read afresh, the reader stays on their step when the new layout has it, else moves to the
+  next declared step it has, and with none left the help is finished.
+- **No step waits for a control drawn after data.** An earlier draft had a `waitForAnchor` with a
+  waiting phase; no help used it, and a waiting run held the engine while drawing nothing - which also
+  blocked a replay from Settings - so it was deleted (review of #2952). A future help whose control
+  appears only after a load declares itself on a route where the control is drawn at the settle, or
+  brings the waiting phase back WITH its first user and its tests.
 - **The iOS native tab bar** is drawn above the WebView, so its tabs are not elements. `NativeTabBar`
   registers each place's id as a REGION - the band the bar covers, from the plugin's measured inset -
   and the step's icon names the tab. A slice per item was rejected: the plugin gives the band's
@@ -159,20 +162,31 @@ that cannot reach the server shows no new help; the next opening asks again.
 - **Back** closes a help like every overlay: its entry is pushed on the history overlay stack
   (`historyOverlayStack.ts`) while it is on screen and released - a ghost, no traversal - when it is
   hidden or ended from the bubble. The system Back (`popstate`) and the iOS edge-swipe Back
-  (`backHistoryOverlayFromGesture`) both end it. The Android native Back's second chance for an entry
-  pushed without user activation (the double-Back fix of draft PR #2942) will cover it like any
-  overlay once that lands: it acts on the stack, which this entry is on.
+  (`backHistoryOverlayFromGesture`) both end it. **Android's native Back** reads the stack's depth
+  synchronously (`window.canariBack.setOverlayDepth`, #2942): at 0 it finishes the activity. The
+  stack has ONE call at every change point, `stackChanged()`, which publishes that depth AND tells the
+  depth listeners (the overlay's quiet state) - so the tour's push publishes depth 1 like any overlay's,
+  and a native Back closes the tour, never the app (`GuideOverlay.svelte.test.ts` pins it).
 - **Focus** moves into the bubble on every step (`preventScroll`), Tab stays in it while the step is
   modal (`focusTrap`), the arrow keys step, Esc ends. The bubble is a `dialog` labelled by its title
   and described by its body; an always-mounted polite live region announces "Step n of N: title".
 - **Modal** steps (a tour) put a layer under the bubble that takes every pointer; a hint takes none
   but the bubble's.
-- **Motion**: the spotlight glides between controls (`--motion-slow`), its ring breathes, the bubble
-  pops in per step, the swipe mime slides - all CSS (`app.css`, "THE GUIDED HELP"), all stopped by the
+- **Motion**: the spotlight glides between controls (`--motion-slow`, a `transform`, never
+  left/top), its ring breathes, the bubble pops in per step, the swipe mime slides - all CSS (`app.css`, "THE GUIDED HELP"), all stopped by the
   global reduced-motion rule; the two infinite ones are not even started there (`data-pulse`,
   `data-play`), and a scroll to an off-screen target is instant.
-- The layer is `--z-modal`: a help never runs over a modal (it would not be quiet), and the call and
-  a confirmation keep their rungs above it.
+- **While the page scrolls** the re-measure is coalesced to ONE per animation frame
+  (`requestAnimationFrame`; resize and `ResizeObserver` share it), and the spotlight and bubble carry
+  `data-tracking`, which turns their transition off - they follow the target instead of lagging it.
+  `scrollend` and the next step clear it; where `scrollend` does not fire, the cost is only that the
+  glide waits for the next step.
+- The layer is its own rung, `--z-guide` (one over `--z-modal`): a help never runs over a modal or
+  a sheet (it would not be quiet - it is suspended), and the call and a confirmation keep their rungs
+  above it. The accent ink is the `guide-ink` token (brand dark in light, yellow in dark).
+- **Sign-out resets the engine** (`guideEngine.reset()` beside `resetSeenHelps()` in
+  `endSessionImpl`): a run suspended for account A, or a replay A asked for, never resumes for
+  account B over B's own seen set.
 
 ## The server store
 
@@ -185,7 +199,8 @@ that cannot reach the server shows no new help; the next opening asks again.
 | `GET /api/users/me/help-seen` | `{ seen: HelpId[] }` - only ids the current allowlist names |
 | `POST /api/users/me/help-seen/:helpId` | `200 { success: true }`, idempotent (`ON CONFLICT DO NOTHING`); `400 { code: 'HELP_ID_UNKNOWN' }` for an id outside `HELP_IDS`, nothing written |
 
-Both are behind `NginxAuthGuard` and `AccountThrottlerGuard` (30 a minute per account), under
+Both are behind `NginxAuthGuard` and `AccountThrottlerGuard` (30 a minute per account ON EACH
+route - the throttler keys routes separately), under
 `users/me/...` so `users/:id` cannot capture them. The allowlist bounds the table at one row per
 account per declared help, whatever a client sends. Account erasure deletes the rows
 (`CORE_ERASURE_STATEMENTS`, `help_seen`); the register row is
@@ -194,19 +209,24 @@ account per declared help, whatever a client sends. Account erasure deletes the 
 **The client's writes** (`seenHelps.svelte.ts`): the id is added to the local copy at once
 (`ACCOUNT_KEY.seenHelps`, swept by the account deletion), then POSTed. A write that met no answer is
 OWED and delivered by the reconnect (`connectivity.onReconnect`, the salon writes' trigger) or by the
-next `load` (the next opening); a 4xx is not owed - no repeat can change it - and is logged as an
-error. No retry timer.
+next `load` (the next opening). ONE refusal is dropped for good: the 400 whose typed body `code` is
+`HELP_ID_UNKNOWN` (shared as `unknownIdCode` in `libs/contracts/help-ids.json`), logged as the
+release mismatch it is. Every other status - a 429, a 408, a 401, a 5xx - says nothing permanent
+about the id and stays owed; the decision reads the code, never a message. No retry timer.
 
 ## Tests
 
 - `guideEngine.test.ts` - step order, layout and not-rendered skips, a target that leaves after the
-  plan, replay, every end reason recorded once, a waiting step and its route change, the decline loop.
+  plan, replay, every end reason recorded once, the re-plan on a breakpoint (a `when` read again),
+  the decline loop, and `reset` at an account switch.
 - `guidePlacement.test.ts`, `guideQuiet.test.ts`, `seenHelps.test.ts` (optimistic, owed, reconnect,
-  refusal not owed, reset).
+  only the typed unknown-id refusal dropped, a 429/408/401/5xx kept owed, reset);
+  `guideAnchors.svelte.test.ts` (a registration inside an effect does not re-run it).
 - `GuideOverlay.svelte.test.ts` - the welcome tour on both layouts through the real anchor action and
   the real history stack: six steps on a phone, five on a desktop (no camera, the agenda in the rail,
   the bubble beside it), focus, the announcement, arrows, Esc, "Passer", system Back and gesture Back,
-  no start over a covering surface, reduced motion.
+  Android's native Back depth (1 while the tour is up, 0 after Back), suspension by a call and by a
+  real `Modal` with the return to the same step, no start over a covering surface, reduced motion.
 - `helpIds.contract.test.ts` / `help-ids.spec.ts` - both lists equal the contract.
 - core-service: `help-seen.controller.spec.ts` (allowlist before any write, guards, throttle, path),
   `help-seen.service.spec.ts`, and `help-seen.integration.spec.ts` against PostgreSQL (gated on

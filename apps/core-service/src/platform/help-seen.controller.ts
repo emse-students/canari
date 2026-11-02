@@ -13,18 +13,13 @@ import { Throttle } from '@nestjs/throttler';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AccountThrottlerGuard } from '../common/guards/account-throttler.guard';
 import { HelpSeenService } from './help-seen.service';
-import { isHelpId, type HelpId } from './help-ids';
+import { HELP_ID_UNKNOWN, isHelpId, type HelpId } from './help-ids';
 
 /**
- * The refusal code of an id outside `HELP_IDS`: a client that sends one declared a help the server
- * does not know, which is a release mismatch to fix, never a value to store.
- */
-export const HELP_ID_UNKNOWN = 'HELP_ID_UNKNOWN';
-
-/**
- * Per account and per minute, for both routes together. An honest client reads once per app
- * opening and writes once per help it closes, and there are a handful of helps in all; thirty a
- * minute is a bound no member meets and the most a script could make the table do.
+ * Per account, per minute and PER ROUTE: the throttler keys each route separately, so the read and
+ * the write each allow thirty a minute. An honest client reads once per app opening and writes once
+ * per help it closes, and there are a handful of helps in all; thirty a minute on each is a bound no
+ * member meets and the most a script could make the table do.
  */
 export const HELP_SEEN_LIMIT_PER_MINUTE = 30;
 

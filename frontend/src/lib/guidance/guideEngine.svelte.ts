@@ -54,7 +54,7 @@ export type StepSkip = { readonly step: string; readonly reason: 'layout' | 'not
 
 /**
  * The steps of `guide` this layout shows, in order. A step leaves the plan when its `when` says the
- * layout has no such step, or when its anchor is not rendered and it does not wait for it.
+ * layout has no such step, or when its anchor is not rendered.
  */
 export function planGuide(
   guide: GuideDefinition,
@@ -69,7 +69,7 @@ export function planGuide(
       continue;
     }
     const anchor = byLayout(step.anchor, layout);
-    if (anchor !== null && !step.waitForAnchor && !isAnchorRendered(anchor)) {
+    if (anchor !== null && !isAnchorRendered(anchor)) {
       skipped.push({ step: step.id, reason: 'not-rendered' });
       continue;
     }
@@ -98,8 +98,6 @@ type Run = {
   layout: GuideLayout;
   steps: GuideStep[];
   index: number;
-  /** `waiting`: the current step waits for its anchor (`waitForAnchor`) - nothing is drawn. */
-  phase: 'showing' | 'waiting';
   /** How many steps reached the screen: a run that showed none is put back, never recorded. */
   shown: number;
 };
@@ -120,10 +118,10 @@ export class GuideEngine {
     private readonly env: GuideEnvironment
   ) {}
 
-  /** The step to draw, or `null` (nothing running, or the step waits for its anchor). */
+  /** The step to draw, or `null` when nothing runs. */
   get view(): GuideView | null {
     const run = this.#run;
-    if (!run || run.phase !== 'showing') return null;
+    if (!run) return null;
     const step = run.steps[run.index];
     return {
       guide: run.guide,
@@ -138,7 +136,7 @@ export class GuideEngine {
     };
   }
 
-  /** The help running (shown or waiting), or `null`. */
+  /** The help running, or `null`. */
   get activeId(): HelpId | null {
     return this.#run?.guide.id ?? null;
   }
@@ -197,7 +195,7 @@ export class GuideEngine {
       return;
     }
     Log.i('guide', `${guide.id} starts on ${pathname}: ${steps.length} step(s)`);
-    this.#run = { guide, layout, steps, index: 0, phase: 'showing', shown: 0 };
+    this.#run = { guide, layout, steps, index: 0, shown: 0 };
     this.#enter(0, 1);
   }
 
@@ -210,7 +208,7 @@ export class GuideEngine {
 
   /**
    * Makes step `index` current, moving in `direction` past any step whose anchor is not rendered
-   * now (a viewport change since the plan) and does not wait for it. Running off either end ends the
+   * now (a viewport change since the plan). Running off either end ends the
    * help: forward, finished; backward, the first showable step stays.
    */
   #enter(index: number, direction: 1 | -1): void {
@@ -222,13 +220,8 @@ export class GuideEngine {
       const step = run.steps[i];
       const anchor = byLayout(step.anchor, run.layout);
       if (anchor === null || this.env.isAnchorRendered(anchor)) {
-        this.#run = { ...run, index: i, phase: 'showing', shown: run.shown + 1 };
+        this.#run = { ...run, index: i, shown: run.shown + 1 };
         Log.d('guide', `${run.guide.id}: step ${step.id} (${i + 1}/${run.steps.length})`);
-        return;
-      }
-      if (step.waitForAnchor) {
-        this.#run = { ...run, index: i, phase: 'waiting' };
-        Log.d('guide', `${run.guide.id}: step ${step.id} waits for ${anchor}`);
         return;
       }
       Log.i('guide', `${run.guide.id}: step ${step.id} skipped - ${anchor} is no longer rendered`);
@@ -246,7 +239,7 @@ export class GuideEngine {
   /** The reader's "Next" (or the last step's "Done"). */
   next(): void {
     const run = this.#run;
-    if (!run || run.phase !== 'showing') return;
+    if (!run) return;
     if (run.index + 1 >= run.steps.length) {
       this.end('finished');
       return;
@@ -257,7 +250,7 @@ export class GuideEngine {
   /** The reader's "Previous". A no-op on the first step. */
   previous(): void {
     const run = this.#run;
-    if (!run || run.phase !== 'showing' || run.index === 0) return;
+    if (!run || run.index === 0) return;
     this.#enter(run.index - 1, -1);
   }
 
@@ -278,41 +271,44 @@ export class GuideEngine {
     this.env.markSeen(run.guide.id);
   }
 
-  /** The anchor registry changed: a waiting step whose anchor arrived is shown. */
-  anchorsChanged(): void {
-    const run = this.#run;
-    if (!run || run.phase !== 'waiting') return;
-    const anchor = byLayout(run.steps[run.index].anchor, run.layout);
-    if (anchor !== null && this.env.isAnchorRendered(anchor)) this.#enter(run.index, 1);
-  }
-
   /**
-   * The route settled on `pathname`. A step still waiting for its anchor is skipped - its page is
-   * gone, which is the event that ends the wait - and a help that does not apply to the new route
-   * and showed nothing yet is put back for when its route returns.
-   */
-  routeSettled(pathname: string): void {
-    const run = this.#run;
-    if (!run || run.phase !== 'waiting') return;
-    if (run.shown === 0 && !run.guide.appliesTo(pathname)) {
-      this.#decline(run.guide, `its route was left for ${pathname} before it showed`);
-      return;
-    }
-    const step = run.steps[run.index];
-    Log.i('guide', `${run.guide.id}: step ${step.id} skipped - the route changed while it waited`);
-    run.steps.splice(run.index, 1);
-    this.#enter(run.index, 1);
-  }
-
-  /**
-   * The viewport changed: the layout is read again, and a step on screen whose anchor this layout
-   * no longer renders moves on (the breakpoint is the event; nothing is polled).
+   * The viewport crossed a breakpoint: the help is PLANNED AGAIN for the new layout, so every `when`
+   * and every layout-dependent anchor is read afresh - the camera step appears when the swipe does,
+   * and leaves with it. The reader stays on the step they were on when the new layout has it, else
+   * moves to the next declared step it has; with none left, the help is finished. The breakpoint is
+   * the event; nothing is polled.
    */
   layoutChanged(): void {
     const run = this.#run;
     if (!run) return;
     const layout = this.env.layout();
-    this.#run = { ...run, layout };
-    if (run.phase === 'showing') this.#enter(run.index, 1);
+    const { steps, skipped } = planGuide(run.guide, layout, (a) => this.env.isAnchorRendered(a));
+    const declared = run.guide.steps;
+    const at = declared.indexOf(run.steps[run.index]);
+    const index = steps.findIndex((step) => declared.indexOf(step) >= at);
+    Log.i(
+      'guide',
+      `${run.guide.id}: re-planned for a new layout, ${steps.length} step(s), ${skipped.length} left out`
+    );
+    if (index < 0) {
+      this.#run = { ...run, layout, steps };
+      this.end('finished');
+      return;
+    }
+    // The step on screen counts once: re-entering it is not a new step shown.
+    const same = steps[index] === run.steps[run.index];
+    this.#run = { ...run, layout, steps, index, shown: same ? run.shown : run.shown + 1 };
+  }
+
+  /**
+   * Forgets everything about the account that was signed in: the run on screen or suspended, a
+   * pending replay, the declined situations. Called at sign-out, so account A's half-walked tour
+   * never comes back over account B and skips B's own seen set.
+   */
+  reset(): void {
+    if (this.#run || this.#requested) Log.i('guide', 'reset at sign-out');
+    this.#run = null;
+    this.#requested = null;
+    this.#declined.clear();
   }
 }

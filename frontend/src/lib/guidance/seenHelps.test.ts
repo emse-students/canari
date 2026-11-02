@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 /**
  * THE SEEN SET: the server's answer is the truth, the local copy is optimistic, an unanswered write
- * is owed to the reconnect or the next opening (never a timer), and a refusal is not owed at all.
+ * is owed to the reconnect or the next opening (never a timer), and only the typed unknown-id
+ * refusal is dropped - every other status stays owed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -30,7 +31,7 @@ const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
 const json = (status: number, body: unknown = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const flush = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  for (let i = 0; i < 12; i++) await Promise.resolve();
 };
 
 describe('SeenHelps', () => {
@@ -106,7 +107,35 @@ describe('SeenHelps', () => {
     expect(store.owed).toEqual([]);
   });
 
-  it('does not owe a write the server refused, and accuses it', async () => {
+  it.each([
+    ['a throttled write', 429, { message: 'ThrottlerException: Too Many Requests' }],
+    ['a timed-out request', 408, {}],
+    ['a 400 with another code', 400, { code: 'SOMETHING_ELSE' }],
+    ['a refused session', 401, {}],
+    ['a server failure', 503, {}],
+  ])('keeps %s owed, and delivers it at the next opening', async (_label, status, body) => {
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [] }));
+    await store.load('u1');
+    apiFetch.mockResolvedValueOnce(json(status, body));
+    store.markSeen('welcome-tour');
+    await flush();
+    expect(store.owed).toEqual(['welcome-tour']);
+    expect(warns).toHaveBeenCalled();
+
+    // The next opening reads, then delivers what is owed.
+    const fresh = new SeenHelps();
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [] }));
+    apiFetch.mockResolvedValueOnce(json(200, { success: true }));
+    await fresh.load('u1');
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      'https://core.test/api/users/me/help-seen/welcome-tour',
+      { method: 'POST' }
+    );
+    expect(fresh.owed).toEqual([]);
+  });
+
+  it('drops only the typed unknown-id refusal, and accuses it', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     apiFetch.mockResolvedValueOnce(json(200, { seen: [] }));
     await store.load('u1');

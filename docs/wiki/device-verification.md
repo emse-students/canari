@@ -340,6 +340,43 @@ Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
 
+## The VoIP ring announces a video call as video - owed
+
+**Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).
+Needs a dev build (`CALLS_VIDEO_ENABLED`, `calls_mode = audio_video` on the dev server), the iPhone 12
+locked and the app killed, and a second device calling it with VIDEO.
+
+1. Place a video call from the other device. **Expect** the CallKit screen to read as a video call
+   (the video-call label and the video button on the lock screen), and the log
+   `[CanariCallKit] voip push type=call_ring call=... video=1` then `ringing call=... video=1`.
+2. Answer, unlock. **Expect** the camera on in the call (`pending accept hasVideo` true, the local
+   preview visible) and the caller seeing video.
+3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
+4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
+
+## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
+
+**Method.** The WebView's DevTools socket (`adb forward` to `webview_devtools_remote_<pid>`) read `location.pathname`, `<html>` classes and the console (`[reel-capture]`, `[historyOverlay]`) after each press; no personal data.
+
+| Attempt (about 12 presses) | Result |
+| --- | --- |
+| Idle camera, Back (x4, then swipe back to the camera each time) | `/posts`, chrome back (`fullscreen-place-open` removed), camera reopens by swipe: **PASS** |
+| Hold the shutter 3-4 s, release (review), Back | the "Abandonner cette capture ?" question; `[historyOverlay] Back closed 1 overlay(s), 0 left open` |
+| Back DURING the recording | the camera returns idle on `/camera`, chrome as designed; one more Back goes to `/posts`: **PASS** |
+| Review, Back (question up), Back again (x2, 100 % repeatable) | **the app leaves** (`Setting back callback null`, task closed, no `[historyOverlay]` line for that press) instead of the feed |
+
+**The stuck `/camera` without chrome of alpha.2 did NOT reproduce.** Signature to watch for if it returns: `location.pathname` still `/camera` with `<html class="fullscreen-place-open">` and `[reel-capture] leaving (navigation) ... the camera stays closed` with NO `a navigation ended on this screen` / `did not happen` line after it. That is the same-URL popstate hypothesis (a drain by `beforeNavigate` that no `afterNavigate` follows), still untested.
+
+**The double Back that left the app - cause found, fixed on the web side, the native half owed a build.** Review, Back (the question), Back again finished the activity: `finishing=true`, no `popstate`, no `[historyOverlay]` line. The chain, read on the phone: the question's overlay entry (`ConfirmDialog` -> `ModalOverlay` -> `bindHistoryOverlay`) IS on the stack and history (`history.length` 3, DevTools `Page.getNavigationHistory` shows it), but Wry's callback asks `WebView.canGoBack()` first and it answered false, so `MainActivity.onBackPressed` finished the app. What decides it: an entry pushed from a Back's own handler has no user activation behind it, and Chromium declines to step back from it until the page sees one - a TAP on the dialog text between the two Backs made the second Back close the question (3 of 3), the same question opened by the review's X (a tap) never failed, and `history.back()` from DevTools stepped it fine (a DevTools evaluation may itself count as a user gesture, so that line is weak evidence; the fresh-launch reading below is the real proof). Fix: the page PUBLISHES how many overlays a Back can still close (`window.canariBack.setOverlayDepth`, from the one place `historyOverlayStack` changes: the live overlays minus the Backs issued and not yet landed, as `settleArrival` will close them - a ghost between two live overlays still has one to close; zero on the router's own entry and where no entries are written), and `MainActivity.onBackPressed` reads that number SYNCHRONOUSLY: above zero it lowers it at once and calls `window.__canariBackFromNative()`, which steps the page's own history (the Back closes the question, "Keep"); zero leaves as before. Lowering the depth at the hand-over, not at `popstate`, is what makes two fast Backs close one overlay each. Pinned in `historyOverlayStack.test.ts` (two fast Backs; router entry, no-entry runtime and ghost promise nothing); the Kotlin compiles in CI ("Compile Android app") but HAS NEVER RUN. **Owed: a build with it, then on a fresh launch:**
+
+1. Film a take, Back (the question), Back again: the second Back closes the question, not the app; a third asks again.
+2. Two Backs pressed fast on a review: one overlay closes per press, the page below the camera is never reached.
+3. Back on an incoming call's full-screen overlay: it is minimised, not hung up.
+4. Back on a conversation opened from a notification: it closes to the list.
+5. Back at a root screen (no overlay open): it still leaves the app.
+
+**Untouched stages, read the same day.** The send sheet: Back closes the sheet and leaves the review; the next Back asks the question (a document that had taps: fine). The Android edge-swipe Back in a review asks the same question. The publish sheet was not reached.
+
 **Reading of 2026-11-02 (`1.6.3-alpha.2`, both phones, French; [reels-in-chat section 20](frontend/modules/reels-in-chat.md#20-the-bench-reading-of-163-alpha2-2026-11-02)).**
 The sender was the other bench phone with the dev writer on. No caption (the chat camera has no
 caption field), no salon (RC-8), English not run.

@@ -9,6 +9,13 @@
  */
 export const HELP_IDS = ['welcome-tour'] as const;
 
+/**
+ * The `code` of the server's 400 for an id outside its list - the ONE refusal that is permanent:
+ * the write is dropped. Every other failure (a 429, a 408, a 5xx, no answer) stays owed. Shared as
+ * `unknownIdCode` in the same contract.
+ */
+export const HELP_ID_UNKNOWN = 'HELP_ID_UNKNOWN';
+
 export type HelpId = (typeof HELP_IDS)[number];
 
 /** Narrows an untrusted string (a server answer, a stored copy) to a known help id. */

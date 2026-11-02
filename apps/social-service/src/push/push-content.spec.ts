@@ -16,6 +16,8 @@ import {
   bookingAddedContent,
   bookingCancelledContent,
   bookingReminderContent,
+  bookingChangedContent,
+  bookingRemovedContent,
   bookingWithdrawnContent,
   eventProposedContent,
   eventValidatedContent,
@@ -386,6 +388,8 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_booking_withdrawn', bookingWithdrawnContent(ACTOR, '')],
     ['social_booking_added', bookingAddedContent(ACTOR, '')],
     ['social_booking_reminder', bookingReminderContent('')],
+    ['social_booking_changed', bookingChangedContent(ACTOR, '')],
+    ['social_booking_removed', bookingRemovedContent(ACTOR, '')],
   ];
 
   /**

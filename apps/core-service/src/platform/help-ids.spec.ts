@@ -2,7 +2,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { HELP_IDS, isHelpId } from './help-ids';
+import { HELP_ID_UNKNOWN, HELP_IDS, isHelpId } from './help-ids';
 
 /**
  * The allowlist is the contract's, entry for entry: a help the client declares and this list lacks
@@ -15,10 +15,14 @@ describe('HELP_IDS', () => {
       join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'help-ids.json'),
       'utf8'
     )
-  ) as { ids: string[] };
+  ) as { ids: string[]; unknownIdCode: string };
 
   it('equals libs/contracts/help-ids.json', () => {
     expect([...HELP_IDS]).toEqual(contract.ids);
+  });
+
+  it('refuses with the code the contract names', () => {
+    expect(HELP_ID_UNKNOWN).toBe(contract.unknownIdCode);
   });
 
   it('accepts a listed id and refuses anything else', () => {

@@ -2,8 +2,10 @@
 /**
  * THE WELCOME TOUR ON THE REAL OVERLAY, ON BOTH LAYOUTS: it starts when the route has settled and
  * the app is quiet, points at the control the layout draws, says "n/N", moves focus into its bubble,
- * announces each step, and ends - recorded as seen - by Next, "Passer", Esc and Back. It does not
- * start over a covering surface, and it drops its infinite motion under `prefers-reduced-motion`.
+ * announces each step, and ends - recorded as seen - by Next, "Passer", Esc and Back (Android's
+ * included: its entry is published to the native Back like any overlay's). It does not start over a
+ * covering surface, a tour on screen is SUSPENDED by a call or a modal and comes back after, and it
+ * drops its infinite motion under `prefers-reduced-motion`.
  *
  * The anchors are registered through the real `guideAnchor` action on stand-in controls, with the
  * box a real layout would give them: happy-dom lays nothing out, so a control the breakpoint hides
@@ -28,9 +30,6 @@ vi.mock('$app/navigation', () => ({
   goto: async () => {},
 }));
 vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/posts') } }));
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
-  globalSession: { isLoggedIn: true, callState: 'idle' },
-}));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u1', isGlobalAdmin: () => false }));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   isBelowMinClientVersion: () => false,
@@ -73,6 +72,12 @@ function control(box: DOMRect | null): HTMLElement {
 
 async function setUp(options: { reducedMotion?: boolean; covered?: boolean } = {}) {
   vi.resetModules();
+  // A REACTIVE session, registered after the reset so it is built on the runtime the component gets
+  // (a hoisted `vi.mock` keeps the first one it made - see the fixture).
+  vi.doMock(
+    '$lib/stores/globalChatSingleton.svelte',
+    () => import('./guideOverlayTestSession.svelte')
+  );
   sv = await import('svelte');
   nav.after.length = 0;
   nav.before.length = 0;
@@ -115,7 +120,15 @@ async function setUp(options: { reducedMotion?: boolean; covered?: boolean } = {
   flushSync();
   await sv.tick();
   flushSync();
-  return { history, engine: (await import('$lib/guidance/guidance.svelte')).guideEngine };
+  return {
+    history,
+    engine: (await import('$lib/guidance/guidance.svelte')).guideEngine,
+    // Through the MOCKED path: the module the component imported, not a second copy of the fixture.
+    session: (await import('$lib/stores/globalChatSingleton.svelte')).globalSession as {
+      isLoggedIn: boolean;
+      callState: string;
+    },
+  };
 }
 
 const bubble = () => document.querySelector<HTMLElement>('[data-guide-bubble]');
@@ -133,6 +146,10 @@ const key = (k: string) => {
 
 // The first import transforms the component's whole graph; every later `resetModules` reuses it.
 beforeAll(async () => {
+  vi.doMock(
+    '$lib/stores/globalChatSingleton.svelte',
+    () => import('./guideOverlayTestSession.svelte')
+  );
   await import('./GuideOverlay.svelte');
 }, 60_000);
 
@@ -147,7 +164,15 @@ afterEach(() => {
   for (const fn of cleanup.reverse()) fn();
   cleanup = [];
   document.body.innerHTML = '';
+  delete (window as unknown as Record<string, unknown>).canariBack;
 });
+
+/** The spotlight's offset, read off its transform (it is placed by `translate`, never left/top). */
+function spotOffset(): { x: string; y: string } {
+  const spot = document.querySelector<HTMLElement>('[data-guide-spotlight]')!;
+  const match = /translate\(([-\d.]+px), ([-\d.]+px)\)/.exec(spot.style.transform);
+  return { x: match?.[1] ?? '', y: match?.[2] ?? '' };
+}
 
 describe('the welcome tour on a phone', () => {
   it('walks six steps on the bottom bar and the header, then records itself', async () => {
@@ -167,10 +192,8 @@ describe('the welcome tour on a phone', () => {
     await setUp();
     click('[data-guide-next]');
     expect(stepId()).toBe('feed');
-    const spot = document.querySelector<HTMLElement>('[data-guide-spotlight]')!;
     // The bar's first tab (0, 796, 97x48), grown by the 0.375rem halo padding.
-    expect(spot.style.left).toBe('-6px');
-    expect(spot.style.top).toBe('790px');
+    expect(spotOffset()).toEqual({ x: '-6px', y: '790px' });
     expect(document.querySelector('[data-guide-blocker]')).not.toBeNull();
     expect(bubble()!.getAttribute('aria-modal')).toBe('true');
   });
@@ -231,6 +254,71 @@ describe('the welcome tour on a phone', () => {
     expect(bubble()).toBeNull();
   });
 
+  it("publishes its entry to Android's native Back, which closes the tour and not the app", async () => {
+    // `MainActivity` reads this depth synchronously: at 0 its Back finishes the activity.
+    const depths: number[] = [];
+    (window as unknown as Record<string, unknown>).canariBack = {
+      setOverlayDepth: (d: number) => depths.push(d),
+    };
+    const { history } = await setUp();
+    expect(bubble()).not.toBeNull();
+    expect(depths.at(-1)).toBe(1);
+
+    // The native Back: the page is asked to step its history, and the popstate closes the tour.
+    const native = (window as unknown as Record<string, () => boolean>).__canariBackFromNative;
+    expect(native()).toBe(true);
+    expect(depths.at(-1)).toBe(0);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    flushSync();
+    expect(bubble()).toBeNull();
+    expect(history.historyOverlayStackDepth()).toBe(0);
+    expect(depths.at(-1)).toBe(0);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
+  });
+
+  it('is suspended by a call that starts under it, and comes back on the same step after', async () => {
+    const { history, session } = await setUp();
+    click('[data-guide-next]');
+    expect(stepId()).toBe('feed');
+    expect(history.historyOverlayStackDepth()).toBe(1);
+
+    session.callState = 'connected';
+    flushSync();
+    // Hidden and off the history stack - a Back during the call is the call's, never the tour's.
+    expect(bubble()).toBeNull();
+    expect(history.historyOverlayStackDepth()).toBe(0);
+    expect(markSeen).not.toHaveBeenCalled();
+
+    session.callState = 'idle';
+    flushSync();
+    expect(stepId()).toBe('feed');
+    expect(counter()).toBe('2/6');
+    expect(history.historyOverlayStackDepth()).toBe(1);
+  });
+
+  it('is suspended by a Modal that mounts over it, and comes back when it closes', async () => {
+    const { history } = await setUp();
+    click('[data-guide-next]');
+    expect(stepId()).toBe('feed');
+
+    const { default: Modal } = await import('$lib/components/shared/Modal.svelte');
+    const host = document.body.appendChild(document.createElement('div'));
+    const modal = sv.mount(Modal, {
+      target: host,
+      props: { open: true, title: 'x', onClose: () => {} },
+    });
+    flushSync();
+    expect(bubble()).toBeNull();
+    expect(markSeen).not.toHaveBeenCalled();
+
+    sv.unmount(modal);
+    flushSync();
+    expect(stepId()).toBe('feed');
+    expect(counter()).toBe('2/6');
+    // Its own entry is back, alone: the Modal's went with it.
+    expect(history.historyOverlayStackDepth()).toBe(1);
+  });
+
   it('leaves the history stack when it ends from its own button', async () => {
     const { history } = await setUp();
     click('[data-guide-skip]');
@@ -275,9 +363,8 @@ describe('the welcome tour on a desktop', () => {
       visited.push(stepId()!);
       expect(counter()).toBe(`${i + 1}/5`);
       if (stepId() === 'agenda') {
-        const spot = document.querySelector<HTMLElement>('[data-guide-spotlight]')!;
         // The rail's calendar entry (12, 296, 48x48), grown by the halo padding.
-        expect(spot.style.top).toBe('290px');
+        expect(spotOffset().y).toBe('290px');
         expect(document.querySelector('[data-guide-bubble]')!.getAttribute('data-side')).toBe(
           'right'
         );

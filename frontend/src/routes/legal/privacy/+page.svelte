@@ -367,9 +367,10 @@
       <div>
         <dt>Aides déjà vues</dt>
         <dd>
-          La liste des visites guidées et des astuces de première utilisation que vous avez déjà
-          vues (l'identifiant de l'aide et la date), enregistrée sur votre compte pour qu'elles ne
-          réapparaissent pas sur un autre appareil.
+          Si vous avez déjà vu la visite guidée de bienvenue (son identifiant et la date),
+          enregistré sur votre compte pour qu'elle ne réapparaisse pas sur un autre appareil. Une
+          copie est gardée sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de
+          l'appareil.
         </dd>
       </div>
       <div>
@@ -617,8 +618,12 @@
             </td>
           </tr>
           <tr>
-            <td>Aides déjà vues (visites guidées, astuces)</td>
-            <td>Tant que le compte existe ; supprimées à la suppression du compte</td>
+            <td>Visite guidée de bienvenue déjà vue</td>
+            <td>
+              Tant que le compte existe ; supprimée à la suppression du compte. La copie sur
+              l'appareil y reste jusqu'à la suppression du compte ou la réinitialisation de
+              l'appareil
+            </td>
           </tr>
           <tr>
             <td>Sessions de connexion, et leur clé de restauration sur Android</td>
@@ -871,8 +876,8 @@
           <tr>
             <td>Préférences et brouillons (stockage local)</td>
             <td>
-              Thème, émojis récents, brouillon de publication, identifiant de l'appareil, aides déjà
-              vues
+              Thème, émojis récents, brouillon de publication, identifiant de l'appareil, visite
+              guidée déjà vue
             </td>
             <td>Jusqu'à leur effacement</td>
           </tr>

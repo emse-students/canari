@@ -5,6 +5,7 @@ describe('voipRingPayload', () => {
     groupId: 'group-1',
     callId: 'call-1',
     callerId: 'caller',
+    hasVideo: false,
     ringUntilMs: 1_700_000_060_000.7,
   });
 
@@ -24,5 +25,17 @@ describe('voipRingPayload', () => {
     for (const key of ['callerName', 'senderName', 'groupName']) {
       expect(payload).not.toHaveProperty(key);
     }
+  });
+
+  it('carries the media kind as a string', () => {
+    const video = voipRingPayload({
+      groupId: 'g',
+      callId: 'c',
+      callerId: 'u',
+      hasVideo: true,
+      ringUntilMs: 1,
+    });
+    expect(video.hasVideo).toBe('true');
+    expect(payload.hasVideo).toBe('false');
   });
 });

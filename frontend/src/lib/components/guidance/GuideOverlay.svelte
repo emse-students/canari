@@ -27,7 +27,7 @@
   import { onViewportChange, PHONE_VIEWPORT_QUERY, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
   import { Log } from '$lib/utils/Log';
   import { guideEngine, noteSettledPath } from '$lib/guidance/guidance.svelte';
-  import { guideAnchorsVersion, resolveGuideAnchor } from '$lib/guidance/guideAnchors.svelte';
+  import { resolveGuideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { seenHelps } from '$lib/guidance/seenHelps.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
   import { placeBubble, type BubblePosition } from '$lib/guidance/guidePlacement';
@@ -115,12 +115,6 @@
     guideEngine.consider(blocker === null, pathname);
   });
 
-  // A step waiting for its anchor is shown the moment the anchor registers.
-  $effect(() => {
-    guideAnchorsVersion();
-    untrack(() => guideEngine.anchorsChanged());
-  });
-
   beforeNavigate(({ shallow, type }) => {
     if (shallow && type === 'goto') return;
     settledPath = '';
@@ -133,7 +127,6 @@
     const path = to?.url.pathname ?? page.url.pathname;
     settledPath = path;
     noteSettledPath(path);
-    guideEngine.routeSettled(path);
   });
 
   onMount(() => {
@@ -187,6 +180,12 @@
   let bubbleEl = $state<HTMLElement | null>(null);
   let targetRect = $state<GuideRect | null>(null);
   let bubblePos = $state<BubblePosition | null>(null);
+  /**
+   * True while the page scrolls under the help: the spotlight and the bubble then follow the target
+   * with NO transition (a glide would lag the finger). Set by a scroll, cleared by `scrollend` and
+   * by the next step - the glide is for moving between steps only.
+   */
+  let tracking = $state(false);
 
   /** One rem in px, so the paddings below follow the root font size like every token. */
   function rem(): number {
@@ -230,6 +229,8 @@
     const bubble = bubbleEl;
     if (!current || !bubble || !visible) return;
     untrack(() => {
+      // A new step glides from the last one, whatever the scroll left set.
+      tracking = false;
       const element = current.anchorId ? resolveGuideAnchor(current.anchorId)?.element : null;
       if (element) {
         const r = element.getBoundingClientRect();
@@ -246,20 +247,36 @@
     });
   });
 
-  // Anything that can move the target or the bubble re-measures - events, never a poll.
+  // Anything that can move the target or the bubble re-measures - events, never a poll - and at
+  // most ONCE PER FRAME: a scroll fires many events a frame, and each measure forces a layout.
   $effect(() => {
     if (!visible || !bubbleEl) return;
     const current = view;
     const element = current?.anchorId ? resolveGuideAnchor(current.anchorId)?.element : null;
-    const onMove = () => measure();
-    window.addEventListener('resize', onMove);
-    window.addEventListener('scroll', onMove, { capture: true, passive: true });
-    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(onMove) : null;
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    const onScroll = () => {
+      tracking = true;
+      schedule();
+    };
+    const onScrollEnd = () => (tracking = false);
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('scrollend', onScrollEnd, { capture: true, passive: true });
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
     observer?.observe(bubbleEl);
     if (element) observer?.observe(element);
     return () => {
-      window.removeEventListener('resize', onMove);
-      window.removeEventListener('scroll', onMove, { capture: true });
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('scrollend', onScrollEnd, { capture: true });
       observer?.disconnect();
     };
   });
@@ -325,7 +342,7 @@
   {@const Icon = view.step.icon}
   <div
     use:portal
-    class="fixed inset-0 z-(--z-modal) {view.modal ? '' : 'pointer-events-none'}"
+    class="fixed inset-0 z-(--z-guide) {view.modal ? '' : 'pointer-events-none'}"
     data-guide-overlay={view.guide.id}
     data-guide-step={view.step.id}
     data-motion={reducedMotion ? 'reduced' : 'full'}
@@ -340,7 +357,8 @@
       <div
         class="guide-spotlight"
         data-dim={view.modal || undefined}
-        style="left: {targetRect.left}px; top: {targetRect.top}px; width: {targetRect.width}px; height: {targetRect.height}px;"
+        style="transform: translate({targetRect.left}px, {targetRect.top}px); width: {targetRect.width}px; height: {targetRect.height}px;"
+        data-tracking={tracking || undefined}
         data-guide-spotlight
         aria-hidden="true"
       >
@@ -360,9 +378,9 @@
       tabindex="-1"
       onkeydown={onKeydown}
       class="guide-bubble bg-cn-popover border-cn-border pointer-events-auto absolute w-[min(20rem,calc(100vw-2rem))] rounded-2xl border p-4 shadow-xl outline-none"
-      style="left: {bubblePos?.left ?? 0}px; top: {bubblePos?.top ?? 0}px; visibility: {bubblePos
-        ? 'visible'
-        : 'hidden'};"
+      style="transform: translate({bubblePos?.left ?? 0}px, {bubblePos?.top ??
+        0}px); visibility: {bubblePos ? 'visible' : 'hidden'};"
+      data-tracking={tracking || undefined}
       data-guide-bubble
       data-side={bubblePos?.side}
     >
@@ -371,7 +389,7 @@
           <div class="mb-2 flex items-center gap-2">
             {#if Icon}
               <span
-                class="bg-cn-yellow/15 text-cn-dark flex size-8 shrink-0 items-center justify-center rounded-lg dark:text-amber-300"
+                class="bg-cn-yellow/15 text-guide-ink flex size-8 shrink-0 items-center justify-center rounded-lg"
                 aria-hidden="true"
               >
                 <Icon size={18} />
@@ -394,7 +412,7 @@
           </p>
           {#if view.step.gesture === 'swipe-right'}
             <div
-              class="text-cn-dark mt-3 flex items-center justify-center dark:text-amber-300"
+              class="text-guide-ink mt-3 flex items-center justify-center"
               data-guide-gesture="swipe-right"
               aria-hidden="true"
             >

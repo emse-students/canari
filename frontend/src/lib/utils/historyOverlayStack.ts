@@ -84,17 +84,6 @@ const stack: StackEntry[] = [];
  */
 const depthListeners = new Set<(depth: number) => void>();
 
-/** Tells every depth listener; one that throws is logged and never stops the others. */
-function notifyDepth(): void {
-  for (const listener of depthListeners) {
-    try {
-      listener(stack.length);
-    } catch (e) {
-      console.error('[historyOverlay] a depth listener threw', e);
-    }
-  }
-}
-
 /** Calls `listener` with the new depth after every change of the stack. Returns the unsubscribe. */
 export function onHistoryOverlayDepthChange(listener: (depth: number) => void): () => void {
   depthListeners.add(listener);
@@ -135,6 +124,106 @@ export function isMobileOverlayLayout(): boolean {
   return isOverlayLayout();
 }
 
+/** The Android interface `MainActivity` registers as `canariBack` (absent on the web and on iOS). */
+interface NativeBackBridge {
+  setOverlayDepth(depth: number): void;
+}
+
+/**
+ * How many overlays should remain once the Backs the page issued for the native layer have all
+ * landed, or null when none is in flight. A TARGET, not a count of events: browsers may merge two
+ * `history.back()` calls into one `popstate`, and a counter decremented per event would then stay
+ * above zero for good. It is cleared as soon as the stack has shrunk to it (`settleArrival` closes
+ * every overlay above the landed entry, so a merged landing reaches it too), and by any push, drain
+ * or reset.
+ */
+let nativeTarget: number | null = null;
+/** The depth last handed to the native layer, so an unchanged one is not pushed again. */
+let publishedDepth = -1;
+
+/**
+ * How many overlays a native Back may still close by stepping the page's own history, in agreement
+ * with what {@link settleArrival} will do: a Back from an entry of OURS - a live overlay's or a ghost -
+ * lands below it and closes the overlay on top, so a ghost between two live overlays still has one to
+ * close. ZERO only where no Back can land on an overlay: nothing open, a runtime that writes no
+ * entries (`systemBack: false`), or the pointer on the router's own entry (a Back from there leaves
+ * the page), where promising a close would swallow every later Back. The Backs already issued and not
+ * yet landed are taken off ({@link nativeTarget}).
+ */
+function nativeBackDepth(): number {
+  if (!isBrowser || !writesEntries || stack.length === 0) return 0;
+  const arrival = readArrival(history.state);
+  if (arrival.id <= 0 && !arrival.ghost) return 0;
+  return Math.max(0, nativeTarget === null ? stack.length : Math.min(stack.length, nativeTarget));
+}
+
+/**
+ * Hands the native layer the depth {@link nativeBackDepth} computes, from the one place the stack
+ * changes. THE NATIVE BACK READS IT SYNCHRONOUSLY (Mi 9T, `1.6.3-alpha.2`, 2026-11-02): Android's Back
+ * is decided by the WebView's `canGoBack()` before the page hears of it, and Chromium declines it for
+ * an entry the page pushed with no user activation behind it - the discard question opened by a
+ * first Back on a take - so the second Back FINISHED THE ACTIVITY with no `popstate` and no log.
+ * `MainActivity.onBackPressed` now reads this depth and, when it is above zero, asks the page to
+ * step its own history ({@link backForNativeWhenOverlayOpen}) instead of leaving.
+ */
+function publishNativeBackDepth(force = false): void {
+  if (!isBrowser) return;
+  const depth = nativeBackDepth();
+  if (force) publishedDepth = -1;
+  if (depth === publishedDepth) return;
+  publishedDepth = depth;
+  const bridge = (window as unknown as { canariBack?: NativeBackBridge }).canariBack;
+  try {
+    bridge?.setOverlayDepth(depth);
+  } catch (err) {
+    console.error(`[historyOverlay] the native Back depth could not be published: ${String(err)}`);
+  }
+}
+
+/**
+ * THE ONE CALL AT EVERY POINT THE STACK CHANGES: hands the native Back its depth
+ * ({@link publishNativeBackDepth}) and tells the depth listeners ({@link onHistoryOverlayDepthChange}).
+ * One call, so a change point can never publish to one reader and forget the other - the guided
+ * tour's entry is only closable by Android's Back because its push publishes like any overlay's.
+ * `force` re-sends an unchanged native depth (the native layer lowered its own before asking).
+ */
+function stackChanged(force = false): void {
+  publishNativeBackDepth(force);
+  for (const listener of depthListeners) {
+    try {
+      listener(stack.length);
+    } catch (e) {
+      console.error('[historyOverlay] a depth listener threw', e);
+    }
+  }
+}
+
+/**
+ * Called by the native Back (`window.__canariBackFromNative`) for a Back its own depth said the
+ * page can take: steps the history one entry, which closes the overlay on top through `popstate`
+ * like any other Back. The depth is lowered AT THIS CALL, never at the `popstate`, so two fast Backs
+ * close one overlay each and the second never reaches the page below them.
+ *
+ * @returns Whether a Back was issued: false (nothing live to close) lets the native layer leave.
+ */
+export function backForNativeWhenOverlayOpen(): boolean {
+  const depth = nativeBackDepth();
+  if (depth === 0) {
+    // The native layer lowered ITS depth before asking; tell it what is true (a router write such
+    // as a `replaceState` can move the pointer without a publish).
+    stackChanged(true);
+    return false;
+  }
+  nativeTarget = depth - 1;
+  Log.d(
+    'historyOverlay',
+    `native Back with ${stack.length} overlay(s) open - stepping the history`
+  );
+  stackChanged(true);
+  history.back();
+  return true;
+}
+
 /**
  * Registers a global `popstate` listener. Call once from the root layout.
  * Returns a teardown function.
@@ -163,18 +252,27 @@ export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}):
     const leftGhost =
       !byWalk && from > 0 && fromHref === currentHref() && !stack.some((e) => e.id === from);
     settleArrival(event.state, leftGhost);
+    if (nativeTarget !== null && stack.length <= nativeTarget) nativeTarget = null;
+    stackChanged();
   };
 
   window.addEventListener('popstate', onPopState);
+  (window as unknown as Record<string, unknown>).__canariBackFromNative =
+    backForNativeWhenOverlayOpen;
+  publishedDepth = -1;
+  stackChanged();
   return () => {
     window.removeEventListener('popstate', onPopState);
+    delete (window as unknown as Record<string, unknown>).__canariBackFromNative;
     initialized = false;
     stack.length = 0;
     here = 0;
     hereHref = '';
     walking = false;
     writesEntries = true;
-    notifyDepth();
+    nativeTarget = null;
+    // Cleared FIRST, then told: the native layer must hear the empty stack, never the old depth.
+    stackChanged();
   };
 }
 
@@ -190,9 +288,10 @@ export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}):
 export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
   const id = ++lastId;
+  nativeTarget = null;
   if (!writesEntries) {
     stack.push({ close, id });
-    notifyDepth();
+    stackChanged();
     return;
   }
   const state = { [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID };
@@ -205,7 +304,7 @@ export function pushHistoryOverlay(close: OverlayClose): void {
   stack.push({ close, id });
   here = id;
   hereHref = currentHref();
-  notifyDepth();
+  stackChanged();
 }
 
 /**
@@ -249,7 +348,6 @@ function settleArrival(state: unknown, leftGhost: boolean): void {
     above.push(stack.pop()!);
   }
   for (const entry of above) entry.close('back');
-  if (above.length > 0) notifyDepth();
   if (above.length > 0) {
     Log.d('historyOverlay', `Back closed ${above.length} overlay(s), ${stack.length} left open`);
     return;
@@ -316,8 +414,8 @@ export function backHistoryOverlayFromGesture(arm: HistoryGestureArm | null): bo
     return false;
   }
   Log.i('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
+  stackChanged();
   top.close('back');
-  notifyDepth();
   return true;
 }
 
@@ -360,10 +458,8 @@ export function abandonHistoryOverlay(close: () => void): void {
 export function releaseHistoryOverlay(close: () => void): void {
   if (!isBrowser) return;
   const idx = stack.findIndex((e) => e.close === close);
-  if (idx >= 0) {
-    stack.splice(idx, 1);
-    notifyDepth();
-  }
+  if (idx >= 0) stack.splice(idx, 1);
+  stackChanged();
 }
 
 /**
@@ -387,7 +483,8 @@ export function drainHistoryOverlayStack(): void {
   // ours, and a Back from the next page must not be read as one pressed on it.
   here = 0;
   hereHref = '';
-  notifyDepth();
+  nativeTarget = null;
+  stackChanged();
 }
 
 /**
@@ -411,7 +508,8 @@ export function clearHistoryOverlayStack(): void {
   here = 0;
   hereHref = '';
   walking = false;
-  notifyDepth();
+  nativeTarget = null;
+  stackChanged();
 }
 
 export function historyOverlayStackDepth(): number {

@@ -412,8 +412,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 | DELETE | `/api/users/admin/platform/announcement` | global admin | Retire the live one (keeps the row and its readership) |
 | GET | `/api/users/me/announcement?clientVersion=` | session | The announcement this account has not seen, or `null` |
 | POST | `/api/users/me/announcement/:id/seen` | session | Record that this account has read it |
-| GET | `/api/users/me/help-seen` | session, 30/min per account | The first-time helps this account has seen (`{ seen }`) - [guided-help](../frontend/guided-help.md) |
-| POST | `/api/users/me/help-seen/:helpId` | session, 30/min per account | Record one, idempotent; `400 HELP_ID_UNKNOWN` outside `HELP_IDS` |
+| GET | `/api/users/me/help-seen` | session, 30/min per account on this route | The first-time helps this account has seen (`{ seen }`) - [guided-help](../frontend/guided-help.md) |
+| POST | `/api/users/me/help-seen/:helpId` | session, 30/min per account on this route | Record one, idempotent; `400 HELP_ID_UNKNOWN` outside `HELP_IDS` |
 | GET | `/api/version` | none | Latest app version + platform gates, and `calls: { mode }` - the calls kill switch clients read to hide what chat-delivery-service would refuse ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)) |
 
 ### Payments (Stripe + Lydia)
@@ -472,7 +472,7 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 |---|---|---|---|
 | GET | `/api/payments/provider` | none | Active provider (`lydia` or `disabled`), for the frontend to render the matching onboarding UI |
 | POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
-| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
+| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT + global admin | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
 | POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). With `expectedAmountCents` the answer is VERIFIED - Lydia's signature checked with the Business key over that amount - and carries `verification` (`verified`, `mismatch`, `unsigned`, or `no-key` without asking Lydia); the reconciliation sweep's read ([lydia-api](../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) |
