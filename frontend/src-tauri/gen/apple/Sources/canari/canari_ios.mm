@@ -135,6 +135,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 
 static void CanariPublishSafeAreaInsets(void);
 static void CanariPublishDynamicType(void);
+static void CanariPublishForeground(void);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -498,6 +499,7 @@ static void CanariObserveCallProximity(void) {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
+    CanariPublishForeground();
   }
 }
 @end
@@ -552,6 +554,47 @@ static void CanariPublishSafeAreaInsets(void) {
 /// (docs/wiki/frontend/mobile.md, Dynamic Type). Points are CSS pixels at the page's 1:1 viewport.
 /// Sent on the change itself, on every activation (a change made while suspended), and after every
 /// page load (a reloaded page starts from its probe again).
+/// Whether the app is ON SCREEN: false from `didEnterBackground` to `willEnterForeground`. Not
+/// `g_isInForeground`, which is ACTIVE only and turns false for the Face ID sheet, Control Center or a
+/// permission alert - none of which takes the conversation off the screen, and every one of which
+/// would have re-run the page's "back in the foreground" work in the middle of an unlock.
+static volatile bool g_isOnScreen = true;
+
+/// Hands the page whether the app is on screen, in the contract the Android shell already speaks
+/// (`MainActivity.pushForeground`): `window.__canariForeground` for whoever asks later, and a
+/// `canari:foreground` event for whoever reacts at the edge. ONE implementation in the page
+/// (`appForeground.ts`, `appForegroundState.svelte.ts`) then serves both phones.
+///
+/// WHY: the page asked `isAppInForeground()`, which answers `true` where the global is absent - so on
+/// iOS it was always `true`, and a frame the page processed in the seconds before suspension, in the
+/// conversation left open, counted as read on arrival (owner, 2026-11-02;
+/// docs/wiki/frontend/modules/chat.md, "Read state between devices").
+///
+/// Sent on both edges and after every page load (a page that loads while backgrounded - a launch by
+/// a push - must not start believing it is on screen).
+static void CanariPublishForeground(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariIOS] foreground=%d not published: no WebView yet (the page load publishes it)",
+          g_isOnScreen ? 1 : 0);
+    return;
+  }
+  NSString *value = g_isOnScreen ? @"true" : @"false";
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariForeground=%@;"
+                        "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:%@}}));",
+                       value, value];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                // A page that cannot be told keeps its last value; said, because a silent failure
+                // here reads exactly like the defect this exists to fix.
+                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, error);
+              }
+            }];
+  NSLog(@"[CanariIOS] foreground=%@ published to the page", value);
+}
+
 static void CanariPublishDynamicType(void) {
   static CGFloat published = -1;
   WKWebView *webView = CanariFindWebView();
@@ -973,6 +1016,28 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariOnWillResignActive(note);
+              }];
+  // ON SCREEN OR NOT - the background/foreground pair, never the active pair (see g_isOnScreen).
+  [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                // A launch by a push or a background task starts off screen.
+                g_isOnScreen = [UIApplication sharedApplication].applicationState != UIApplicationStateBackground;
+              }];
+  [nc addObserverForName:UIApplicationDidEnterBackgroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_isOnScreen = false;
+                CanariPublishForeground();
+              }];
+  [nc addObserverForName:UIApplicationWillEnterForegroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_isOnScreen = true;
+                CanariPublishForeground();
               }];
   [nc addObserverForName:UIKeyboardWillChangeFrameNotification
                   object:nil
