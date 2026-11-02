@@ -59,9 +59,16 @@ describe('PostAnnounceScheduler', () => {
         batches.push(data);
         return Promise.resolve((data.recipientIds as string[]).length);
       },
+      notifyPostMentions: (post: Post) => {
+        mentioned.push(post.id);
+        return mentionsFail ? Promise.reject(new Error('down')) : Promise.resolve(1);
+      },
     };
     return new PostAnnounceScheduler(postRepo as never, notifications as never);
   }
+
+  let mentioned: string[];
+  let mentionsFail = false;
 
   /**
    * Answers what the sweeper reads, by what the SQL is asking for. `audience` stands for "who can
@@ -94,6 +101,8 @@ describe('PostAnnounceScheduler', () => {
     };
 
   beforeEach(() => {
+    mentioned = [];
+    mentionsFail = false;
     updates = [];
     claimAffected = 1;
     batches = [];
@@ -109,6 +118,49 @@ describe('PostAnnounceScheduler', () => {
     expect(updates).toEqual([]);
     expect(batches).toEqual([]);
     expect(log).not.toHaveBeenCalled();
+  });
+
+  describe("a scheduled post's mentions are told at its publication, here", () => {
+    const scheduled = (mentions: string[]): Row => ({
+      id: 'p1',
+      authorId: 'a1',
+      associationId: null,
+      markdown: 'hello',
+      scheduledAt: new Date('2026-10-01T08:00:00Z'),
+      mentions,
+    });
+
+    it('tells the mentions of a post that had a scheduledAt', async () => {
+      await scheduler([scheduled(['u1'])], tables({})).announcePosts();
+      expect(mentioned).toEqual(['p1']);
+    });
+
+    it('leaves a post published at once alone: createPost told its mentions', async () => {
+      await scheduler([{ ...scheduled(['u1']), scheduledAt: null }], tables({})).announcePosts();
+      expect(mentioned).toEqual([]);
+    });
+
+    it('asks nothing for a scheduled post that mentions nobody', async () => {
+      await scheduler([scheduled([])], tables({})).announcePosts();
+      expect(mentioned).toEqual([]);
+    });
+
+    it('tells nothing for a post another run already claimed', async () => {
+      claimAffected = 0;
+      await scheduler([scheduled(['u1'])], tables({})).announcePosts();
+      expect(mentioned).toEqual([]);
+    });
+
+    it('a failure is logged and never costs the post its announcement', async () => {
+      mentionsFail = true;
+      const post = { ...scheduled(['u1']), associationId: 'asso1' };
+      await scheduler([post], tables({ audience: ['u2'] })).announcePosts();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('mentions of post=p1'),
+        expect.any(Error)
+      );
+      expect(batches).toHaveLength(1);
+    });
   });
 
   it('announces nothing for a post another run already claimed (conditional stamp)', async () => {

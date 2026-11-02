@@ -1717,6 +1717,43 @@ preview and republication cards read it; the client shows `post.publishedAt` (`P
 scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
 which is already publication time).
 
+## A write or a notification follows the read's predicate (2026-11-02)
+
+**The rule: whatever acts on a post, or tells someone about it, asks the gate the read by id asks.**
+That gate is ONE function, `readPostOpenVerdict` (`apps/social-service/src/posts/post-openable.ts`),
+and its terms are the read's, in the read's order: an expired reel; the audience
+(`postVisibleToViewerSql`); hidden by moderation (the only `403`, and only after the audience term
+passed, so it confirms nothing to an outsider); scheduled later, unless the reader wrote it; a block
+either way with the author of a personal, non-anonymous post (an association or anonymous post is
+exempt, [moderation-and-blocking](../../moderation-and-blocking.md#hiding-a-post-must-not-become-a-way-to-ask-who-wrote-it)).
+Every other refusal is a `404`, typed at the throw.
+
+Before 2026-11-02 the write paths asked the audience term alone, so they honoured less than the read:
+
+- **React, comment, like a comment, the comment page, the calendar link** go through
+  `PostsService.assertVisible`, which is now `getById`'s gate (`assertOpenable`) and not a second
+  copy of part of it. A reaction on a post its author's block hides, or a comment on a hidden post,
+  was accepted until then. The comment page passes `allowHidden` for a platform admin, as `getById`
+  does.
+- **A mention** (a post's, or a comment's) is told only to a recipient who may open the post, and
+  with no block either way with whoever wrote the mentioning text
+  (`PostNotificationsService.mentionRecipientsOf`). It reached anyone but the review cohort - a reader
+  outside the audience, someone who blocked the author - and pushed them the text. A dropped mention
+  is counted at debug (`[MENTION] ... N of M mention(s) dropped`), never named.
+- **A scheduled post's mentions wait for its publication.** `createPost` tells the mentions of a post
+  published at once; a post with a `scheduledAt` is told by `PostAnnounceScheduler` when it sweeps
+  the post (the stamp `feedNotifiedAt` makes it once), and `updatePost` tells them when an author
+  publishes a pending post now (the sweep tells only a post that still has a `scheduledAt`). Known
+  edge: a post published at once and re-scheduled into the future before the sweep (under a minute)
+  stamped it has its mentions told twice.
+- **A report** on a post or a comment
+  ([moderation-and-blocking](../../moderation-and-blocking.md#a-report-follows-the-reads-predicate-2026-11-02)).
+
+Proven against PostgreSQL in `post-openable.integration.spec.ts` (a reader who may open it, one
+outside the audience, a block both ways, a hidden post, a scheduled one, an anonymous one); the
+wiring in `posts.service.visibility.spec.ts`, `post-notifications.mention-gate.spec.ts`,
+`post-announce.scheduler.spec.ts` and `moderation.service.spec.ts`.
+
 ## A navigation never waits on data: the post page and the root layout (WP-NAV-1, 2026-10-10)
 
 Audit in [offline-and-weak-network](../offline-and-weak-network.md) (section 13.2, on the upload PR): in this

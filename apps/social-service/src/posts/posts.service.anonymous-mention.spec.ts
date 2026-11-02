@@ -8,21 +8,16 @@ import { PostNotificationsService } from './post-notifications.service';
 import { PostMediaRetentionService } from './post-media-retention.service';
 
 /**
- * A MENTION NOTIFICATION NEVER WENT THROUGH `mustHideAnonymousAuthor` AT ALL.
+ * WHAT `createPost` HANDS TO THE MENTION NOTICES, AND WHEN.
  *
- * Reported by a user: an anonymous post that `@mentions` someone still tells that person the real
- * name, because `createPost` resolves and sends `actorId`/`actorName` unconditionally - the one
- * write path in this file with no anonymity check anywhere near it. Unlike a post, a notification
- * is never re-shaped per reader afterwards (`actorName` is denormalized onto the row at creation,
- * per `PostNotification`'s own docblock), so the mask has to be chosen before `createNotification`
- * is ever called, not after.
- *
- * Being MENTIONED does not carry the same leak `followed_post` does: the recipient is one of
- * however many people the post names, not a member of a small set defined by watching this one
- * author, so masking the actor here (rather than suppressing the notification, as
- * `PostAnnounceScheduler` now does for `followed_post`) does not by itself narrow anybody down.
+ * The notice itself - masked for an anonymous post, gated on the read's predicate - is
+ * `PostNotificationsService.notifyPostMentions`, pinned in `post-notifications.mention-gate.spec.ts`.
+ * What this file pins is the write's half: the stored row (`mentions` narrowed to the author's side
+ * of the review cohort) goes to it when the post is published at once, and NOT when the post has a
+ * `scheduledAt` - `PostAnnounceScheduler` tells those at publication, so a scheduled post never
+ * pushes its text before anyone may open it.
  */
-describe('PostsService.createPost mention notifications mask an anonymous author', () => {
+describe('PostsService.createPost mention notifications', () => {
   const MARKDOWN = 'salut @[bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]';
   const RECIPIENT = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
@@ -39,14 +34,9 @@ describe('PostsService.createPost mention notifications mask an anonymous author
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
     };
-    const created: Record<string, unknown>[] = [];
     const notifications = {
       resolveMentionedUserIds: () => [RECIPIENT],
-      resolveActorName: jest.fn(() => Promise.resolve('Real Name')),
-      createNotification: jest.fn((data: Record<string, unknown>) => {
-        created.push(data);
-        return Promise.resolve();
-      }),
+      notifyPostMentions: jest.fn((_post: Post) => Promise.resolve(1)),
     };
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,
@@ -61,33 +51,38 @@ describe('PostsService.createPost mention notifications mask an anonymous author
       notifications as unknown as PostNotificationsService,
       { release: jest.fn() } as unknown as PostMediaRetentionService
     );
-    return { service, notifications, created };
+    return { service, notifications };
   }
 
-  it('masks the actor when the post is anonymous', async () => {
-    const { service, notifications, created } = makeService();
+  it('hands the saved post, its mentions stored, to the notices when it is published at once', async () => {
+    const { service, notifications } = makeService();
 
     await service.createPost({ markdown: MARKDOWN, authorId: 'author-1', anonymous: true }, false);
     await flush();
 
-    expect(notifications.resolveActorName).not.toHaveBeenCalled();
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({
-      recipientId: RECIPIENT,
-      type: 'mention',
-      actorId: '',
-      actorName: 'Anonyme',
+    expect(notifications.notifyPostMentions).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyPostMentions.mock.calls[0][0]).toMatchObject({
+      id: 'p1',
+      authorId: 'author-1',
+      anonymous: true,
+      mentions: [RECIPIENT],
     });
   });
 
-  it('reveals the real author when the post is not anonymous', async () => {
-    const { service, created } = makeService();
+  it('tells nobody at the write of a scheduled post: its publication does', async () => {
+    const { service, notifications } = makeService();
 
-    await service.createPost({ markdown: MARKDOWN, authorId: 'author-1', anonymous: false }, false);
+    await service.createPost(
+      {
+        markdown: MARKDOWN,
+        authorId: 'author-1',
+        scheduledAt: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+      false
+    );
     await flush();
 
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({ actorId: 'author-1', actorName: 'Real Name' });
+    expect(notifications.notifyPostMentions).not.toHaveBeenCalled();
   });
 
   /** The review cohort (review-cohort.ts): a mention never notifies across it, either way. */
@@ -98,13 +93,13 @@ describe('PostsService.createPost mention notifications mask an anonymous author
     const saved = process.env.SERVICE_ACCOUNT_USER_ID;
     process.env.SERVICE_ACCOUNT_USER_ID = cohort;
     try {
-      const { service, created } = makeService();
+      const { service, notifications } = makeService();
       await service.createPost(
         { markdown: MARKDOWN, authorId: 'author-1', anonymous: false },
         false
       );
       await flush();
-      expect(created).toEqual([]);
+      expect(notifications.notifyPostMentions).not.toHaveBeenCalled();
     } finally {
       if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
       else process.env.SERVICE_ACCOUNT_USER_ID = saved;

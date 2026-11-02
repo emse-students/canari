@@ -82,6 +82,7 @@ export class PostAnnounceScheduler {
         // BEFORE the send. See the class docblock.
         const recipientIds = await this.stampAndReadRecipients(post);
         if (recipientIds === null) continue;
+        await this.notifyDeferredMentions(post);
         const count = post.associationId
           ? await this.announceAssociationPost(post, recipientIds)
           : await this.announcePersonalPost(post, recipientIds);
@@ -99,6 +100,22 @@ export class PostAnnounceScheduler {
       }
     }
     this.logger.log(`[ANNOUNCE] swept: posts=${announced}/${pending.length} recipients=${reached}`);
+  }
+
+  /**
+   * A SCHEDULED post's mentions, told at its publication - which is this sweep, the only thing that
+   * notices a post becoming visible without a request. `createPost` tells the mentions of a post
+   * published at once and defers those of a post with a `scheduledAt`, so the column is what says
+   * they are still owed; the stamp just taken is what makes this run once. Isolated: a failure
+   * here is logged and never costs the post its announcement.
+   */
+  private async notifyDeferredMentions(post: Post): Promise<void> {
+    if (!post.scheduledAt || (post.mentions ?? []).length === 0) return;
+    try {
+      await this.notifications.notifyPostMentions(post);
+    } catch (e: unknown) {
+      this.logger.warn(`[ANNOUNCE] mentions of post=${post.id.slice(0, 8)} not notified`, e);
+    }
   }
 
   /**

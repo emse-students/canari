@@ -309,9 +309,21 @@ export class PostInteractionsService {
         }
       }
 
-      // Mention notifications
+      // Mention notifications - only to who may open the post, with no block with the writer: the
+      // read's gate (`mentionRecipientsOf`), so a mention never pushes this text past it.
       if (data.text) {
-        const mentionedIds = this.notifications.resolveMentionedUserIds(data.text);
+        let mentionedIds: string[] = [];
+        try {
+          mentionedIds = await this.notifications.mentionRecipientsOf(
+            post,
+            data.userId,
+            this.notifications
+              .resolveMentionedUserIds(data.text)
+              .filter((id) => !alreadyNotified.has(id))
+          );
+        } catch (e) {
+          this.logger.warn(`[NOTIFY] mention recipients of post=${postId} unreadable`, e);
+        }
         for (const recipientId of mentionedIds) {
           if (alreadyNotified.has(recipientId)) continue;
           alreadyNotified.add(recipientId);

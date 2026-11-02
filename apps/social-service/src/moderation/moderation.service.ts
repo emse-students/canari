@@ -35,6 +35,12 @@ import { ContentReport } from './entities/content-report.entity';
 import { UserModeration } from './entities/user-moderation.entity';
 import { sanitizeLog } from '../common/log.utils';
 import { dropRepublicationsOf } from '../posts/republication-sql';
+import { readPostOpenVerdict, type OpenablePost } from '../posts/post-openable';
+import { commentShownDespiteBlocks, type StoredComment } from '../posts/comment-page';
+
+/** The `posts` columns `readPostOpenVerdict` reads, from a row aliased `p`. */
+const OPENABLE_POST_COLUMNS = `p.id, p."authorId", p."associationId", p.anonymous,
+  p."hiddenByModeration", p."scheduledAt", p.kind, p."expiresAt"`;
 
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
@@ -158,7 +164,11 @@ export class ModerationService {
         reportedUserId: live.broadcasterId,
       };
     }
+    if (data.contentType === 'post') {
+      await this.assertReportablePost(data.reporterId, data.contentId);
+    }
     if (data.contentType === 'comment') {
+      await this.assertReportableComment(data.reporterId, data.contentId);
       // The writer is read from the stored comment, never taken from the client: an anonymous
       // comment is served WITHOUT its account, so the reporter cannot name it - and the mute that
       // follows a report needs it. It is held for moderators and never served to anyone else.
@@ -187,6 +197,76 @@ export class ModerationService {
     }
 
     return saved;
+  }
+
+  /**
+   * A POST IS REPORTED BY THOSE WHO MAY OPEN IT - the read's own gate (`readPostOpenVerdict`, which
+   * `PostsService.getById` goes through): its audience, no block with a personal post's author, not
+   * hidden, not scheduled later, not an expired reel. Five reports hide a post (AUTO_HIDE_THRESHOLD),
+   * so a report by someone who was never shown it would be a way to hide what one cannot read.
+   * Every refusal is the same 404 `CONTENT_NOT_FOUND`, a hidden post's included: the route is no
+   * oracle for a post the reporter could not open. A lives' twin is `reportableLive`.
+   */
+  private async assertReportablePost(reporterId: string, postId: string): Promise<void> {
+    if (!UUID_RE.test(postId)) throw this.unreportable('post', postId, reporterId, 'not a post id');
+    const rows: OpenablePost[] = await this.reportRepo.manager.query(
+      `SELECT ${OPENABLE_POST_COLUMNS} FROM posts p WHERE p.id = $1`,
+      [postId]
+    );
+    if (!rows[0]) throw this.unreportable('post', postId, reporterId, 'no such post');
+    await this.assertOpenableBy(rows[0], reporterId, 'post', postId);
+  }
+
+  /**
+   * A COMMENT IS REPORTED BY THOSE WHO ARE SHOWN IT: its post opens to them (`assertReportablePost`'s
+   * gate) and the read does not drop it for a block with its writer (`commentShownDespiteBlocks`,
+   * the rule every comment read applies). Same 404 `CONTENT_NOT_FOUND` otherwise.
+   */
+  private async assertReportableComment(reporterId: string, commentId: string): Promise<void> {
+    const rows: (OpenablePost & { comment: StoredComment })[] = await this.reportRepo.manager.query(
+      `SELECT ${OPENABLE_POST_COLUMNS}, elem AS comment
+           FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
+          WHERE elem->>'id' = $1
+          LIMIT 1`,
+      [commentId]
+    );
+    const row = rows[0];
+    if (!row) throw this.unreportable('comment', commentId, reporterId, 'no such comment');
+    const blockedIds = await this.assertOpenableBy(row, reporterId, 'comment', commentId);
+    if (!commentShownDespiteBlocks(row.comment, new Set(blockedIds))) {
+      throw this.unreportable('comment', commentId, reporterId, 'a block with its writer');
+    }
+  }
+
+  /** `readPostOpenVerdict` for a reporter, refused as {@link unreportable}. Returns their blocks. */
+  private async assertOpenableBy(
+    post: OpenablePost,
+    reporterId: string,
+    contentType: 'post' | 'comment',
+    contentId: string
+  ): Promise<string[]> {
+    const verdict = await readPostOpenVerdict(
+      this.reportRepo.manager,
+      post,
+      { viewerId: reporterId },
+      'READ_OR_REACT'
+    );
+    if (verdict.refusal !== null)
+      throw this.unreportable(contentType, contentId, reporterId, verdict.why);
+    return verdict.blockedIds;
+  }
+
+  /** The one refusal a post or comment report meets, logged with its reason, answered without it. */
+  private unreportable(
+    contentType: 'post' | 'comment',
+    contentId: string,
+    reporterId: string,
+    why: string
+  ): NotFoundException {
+    this.logger.debug(
+      `[REPORT] ${contentType} ${sanitizeLog(contentId)} not reportable by ${short(reporterId)}: ${why}`
+    );
+    return new NotFoundException({ code: 'CONTENT_NOT_FOUND', message: 'Content not found' });
   }
 
   /**
