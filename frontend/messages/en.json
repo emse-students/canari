@@ -4965,7 +4965,6 @@
   "post_repost_undone": "Repost undone",
   "post_repost_error": "The repost failed. Try again.",
   "post_repost_refused_anonymous": "An anonymous post cannot be reposted.",
-  "post_repost_refused_blocked": "Not possible: a block stands between you and the author.",
   "post_repost_refused_not_allowed": "The author does not allow reposts of this post.",
   "post_repost_refused_already": "You already reposted this post.",
   "post_repost_refused_gone": "This post is no longer available.",

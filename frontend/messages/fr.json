@@ -4965,7 +4965,6 @@
   "post_repost_undone": "Republication annulée",
   "post_repost_error": "La republication a échoué. Réessayez.",
   "post_repost_refused_anonymous": "Une publication anonyme ne peut pas être republiée.",
-  "post_repost_refused_blocked": "Impossible : un blocage existe entre vous et l'auteur.",
   "post_repost_refused_not_allowed": "L'auteur n'autorise pas les republications de ce post.",
   "post_repost_refused_already": "Vous avez déjà republié ce post.",
   "post_repost_refused_gone": "Cette publication n'est plus disponible.",
