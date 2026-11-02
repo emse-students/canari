@@ -16,6 +16,8 @@
     withdrawWithConfirm,
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
+  import { bookingOthers } from '$lib/bookings/others';
+  import BookingFaces from './BookingFaces.svelte';
   import { spaceHref } from '$lib/bookings/routes';
   import { internalPath } from '$lib/utils/internalPath';
   import { bookingPlace } from '$lib/bookings/columns';
@@ -109,11 +111,7 @@
       {status ?? role}
     </span>
   </div>
-  {#if booking.participantNames?.length}
-    <p class="text-text-muted text-xs">
-      {m.bookings_card_with({ names: booking.participantNames.join(', ') })}
-    </p>
-  {/if}
+  <BookingFaces people={bookingOthers(booking)} />
   {#if coming && (booking.privateInfo?.spacePrivateInfo || booking.privateInfo?.resourcePrivateInfo)}
     <div class="bg-cn-bg space-y-1 rounded-xl p-3 text-sm">
       {#each [booking.privateInfo?.spacePrivateInfo, booking.privateInfo?.resourcePrivateInfo] as text, i (i)}

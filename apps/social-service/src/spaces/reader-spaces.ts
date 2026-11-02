@@ -316,16 +316,38 @@ export function memberRepostReachesUserSql(post: string, user: string): string {
 }
 
 /**
+ * Post row `post` is one a member repost may carry at all (owner, 2026-11-02): a personal post, or
+ * the post of an ASSOCIATION or an INSTITUTION that addresses at least one space (an
+ * `association_audiences` rule). An ALLOWLIST of types (`CHK_associations_type`, migration 075:
+ * 'association', 'list', 'institution'), so a type added later stays refused until someone lists
+ * it: never the post of a LIST, and never that of an entity with no rule - one read by its MEMBERS
+ * ONLY: what such an entity publishes is meant for that circle, and a member's repost would carry
+ * it past it.
+ *
+ * Read by the write (refused with the 404 of a post not seen), by the card's offer, and inside
+ * `memberRepostCarriesSql` - so a repost written before the decision, or before the association lost
+ * its last rule, reaches, names and dates nothing, with no row deleted. Read from state at every
+ * query: an association that gains a rule makes its posts repostable again.
+ */
+export function memberRepostablePostSql(post: string): string {
+  return `(${post}."associationId" IS NULL OR EXISTS (SELECT 1 FROM associations vis_mrep_asso
+      WHERE vis_mrep_asso.id = ${post}."associationId" AND vis_mrep_asso.type IN ('association', 'institution')
+        AND EXISTS (SELECT 1 FROM association_audiences vis_mrep_arule
+          WHERE vis_mrep_arule."associationId" = vis_mrep_asso.id)))`;
+}
+
+/**
  * Repost row by reposter row `reposter` (a `users` alias) of post row `post` still CARRIES the post
  * to the reader whose id is the expression `readerId` - every condition of
  * `memberRepostReachesUserSql` but the follow itself, so the card that NAMES a reposter
  * (`member-repost-card.ts`) names exactly the ones whose repost reaches that reader: the reposter on
- * the reader's side of the review cohort, not muted, still seeing the post first-hand, and no block
- * between any pair concerned.
+ * the reader's side of the review cohort, not muted, still seeing the post first-hand, no block
+ * between any pair concerned, and a post a repost may carry at all (`memberRepostablePostSql`).
  */
 export function memberRepostCarriesSql(post: string, reposter: string, readerId: string): string {
   const personal = `${post}."associationId" IS NULL`;
-  return `(${sameSideOfReviewCohortSql(`${reposter}.id`, readerId)}
+  return `(${memberRepostablePostSql(post)}
+    AND ${sameSideOfReviewCohortSql(`${reposter}.id`, readerId)}
     AND NOT EXISTS (SELECT 1 FROM user_moderation vis_mrep_mod
       WHERE vis_mrep_mod."userId" = ${reposter}.id AND vis_mrep_mod."isMuted" = true)
     AND ${postVisibleToUserSql(post, reposter, REPOSTER_FIRST_HAND)}
@@ -462,6 +484,12 @@ export function newlyReachedByPersonalRepublicationSql(announced: boolean): stri
  * reader and reposter always, reader and author for a personal post only (an entity post's author
  * is never a block's subject - the oracle that rule documents).
  *
+ * THE REPOST RULE IS REPEATED HERE (`memberRepostablePostSql`), so the "after" set and the "before"
+ * set are read in ONE statement, on one snapshot: the write checked it before taking the post row's
+ * lock, and an officer who removes the association's last audience rule meanwhile takes no lock the
+ * write waits on - without the term, the repost would push `member_repost` for a post its row no
+ * longer carries to anyone.
+ *
  * The CALLER decides whether to tell them: an ENTITY post not yet announced will be announced to
  * everyone who sees it by then (`announceRecipientsSql(false)`), these readers included, so they
  * are told nothing at the repost; a PERSONAL post is announced to its author's followers only, so
@@ -481,6 +509,7 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
          OR (nr_post."associationId" IS NULL AND (
               (nr_rblock."blockerId" = nr_user.id AND nr_rblock."blockedId" = nr_post."authorId")
            OR (nr_rblock."blockerId" = nr_post."authorId" AND nr_rblock."blockedId" = nr_user.id))))
+    AND ${memberRepostablePostSql('nr_post')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
@@ -679,3 +708,37 @@ export function announceRecipientsSql(followersOnly: boolean): string {
     WHERE ann_user.id <> ann_post."authorId" ${follows}
       AND ${postVisibleToUserSql('ann_post', 'ann_user')}`;
 }
+
+/**
+ * WHO IS TOLD ABOUT ENTITY POST `$1` (`announceRecipientsSql(false)`), AND THE ANNOUNCEMENT'S SHARE
+ * OF THE TOLD-ONCE LEDGER (WP-F6), IN ONE STATEMENT: of those readers, the ones who see the post
+ * ONLY through a member repost are recorded in `member_repost_notices`. A repost of an entity post
+ * not yet announced tells nobody (the sweep will), so without this the repost path's ledger never
+ * held those readers: a take-back then a repost - by the same member or another - found them newly
+ * reached again and told them a second time, as `member_repost` after `association_post`.
+ *
+ * ONE STATEMENT, NOT TWO: the recipients and the ledger rows are read on the SAME snapshot. As two
+ * READ COMMITTED statements, an `unrepost` (which takes no lock) committing between them left a
+ * reader in the recipients - reached through that repost - but out of the ledger, so the next
+ * repost told them again. Here a reader is recorded exactly when the set the bell is handed reached
+ * them through a repost.
+ *
+ * Only for an ENTITY post: a personal post is announced to its author's accepted followers, who see
+ * it first-hand (WP-F5), so its ledger share is always empty and nothing is asked. A reader who sees
+ * the post first-hand is not recorded: if they lose that access later - leaving the space, a rule
+ * removed - and a repost reaches them, they are told then, which is the D38 rule at that moment and
+ * not a second notice of the same reach. Nothing is written for a post nobody reposted.
+ */
+export const ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL = `WITH ann_recipients AS (
+    ${announceRecipientsSql(false)}
+  ), ann_recorded AS (
+    INSERT INTO member_repost_notices ("postId", "recipientId")
+    SELECT rn_post.id, rn_user.id FROM posts rn_post
+      JOIN ann_recipients rn_recipient ON true
+      JOIN users rn_user ON rn_user.id = rn_recipient.id
+     WHERE rn_post.id = $1
+       AND EXISTS (SELECT 1 FROM member_reposts rn_rep WHERE rn_rep."postId" = rn_post.id)
+       AND NOT ${postVisibleToUserSql('rn_post', 'rn_user', { memberReposts: false })}
+    ON CONFLICT DO NOTHING
+  )
+  SELECT id FROM ann_recipients`;

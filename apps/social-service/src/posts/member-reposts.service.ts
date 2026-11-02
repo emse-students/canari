@@ -14,6 +14,7 @@ import { acceptedFollowSql } from '../follows/follow-status';
 import { previewOf } from '../push/push-content';
 import {
   NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
+  memberRepostablePostSql,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import { MemberRepost } from './entities/member-repost.entity';
@@ -122,8 +123,9 @@ async function lockAuthorConsent(manager: EntityManager, authorId: string): Prom
  *
  * - a PERSONAL post with its author's consent - an account setting "Autoriser mes abonnes a republier
  *   mes posts", ON by default, and a per-post override either way;
- * - an ENTITY post (association, list, institution) without consent, still reaching only the
- *   reposter's ACCEPTED followers (Q2);
+ * - an ENTITY post (association, institution) without consent when it addresses at least one space,
+ *   still reaching only the reposter's ACCEPTED followers (Q2); never the post of a list or of a
+ *   members-only association (`memberRepostablePostSql`, owner 2026-11-02);
  * - never an anonymous post; never across a block, both ways;
  * - a post the reposter sees WITHOUT a read grant and without the administrator's by-id reach (the
  *   same predicate D38b's request passes).
@@ -148,10 +150,11 @@ export class MemberRepostsService {
 
   /**
    * `actorId` reposts `postId` to their accepted followers. Refusals, in this order, each with an
-   * integration case: absent, hidden, scheduled or expired (404); not seen without a grant (404,
-   * nothing confirmed); anonymous (400); own post (400); a block with a personal post's author (the
-   * SAME 404, so the answer does not reveal the block); no consent (403); already reposted (409). A
-   * muted actor is refused at the route, and the route is throttled per caller.
+   * integration case: absent, hidden, scheduled or expired (404); not seen without a grant, or the
+   * post of a list or of a members-only association (`memberRepostablePostSql`, owner 2026-11-02)
+   * (404, nothing confirmed); anonymous (400); own post (400); a block with a personal post's author
+   * (the SAME 404, so the answer does not reveal the block); no consent (403); already reposted
+   * (409). A muted actor is refused at the route, and the route is throttled per caller.
    *
    * The answer carries no count of who was reached: the reposter learns nothing about their
    * followers' access from it.
@@ -164,7 +167,7 @@ export class MemberRepostsService {
       if (!post || isWithheldPost(post)) throw postNotFound();
       // Seen FIRST, so nothing below confirms a post the actor cannot see - not even that it is
       // anonymous.
-      await this.assertVisibleWithoutGrant(manager, postId, actorId);
+      await this.assertRepostableFirstHand(manager, postId, actorId);
       if (post.anonymous) {
         this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} refused: anonymous`);
         throw refusal(BadRequestException, MEMBER_REPOST_CODES.anonymous, 'An anonymous post');
@@ -356,18 +359,22 @@ export class MemberRepostsService {
     return rows[0] ?? null;
   }
 
-  private async assertVisibleWithoutGrant(
+  /** Seen first-hand without a grant, and a post a repost may carry at all - else ONE 404. */
+  private async assertRepostableFirstHand(
     manager: EntityManager,
     postId: string,
     actorId: string
   ): Promise<void> {
     const rows: { visible: boolean }[] = await manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', FIRST_HAND)} AS visible
+      `SELECT ${postVisibleToViewerSql('posts', '$2', FIRST_HAND)}
+              AND ${memberRepostablePostSql('posts')} AS visible
          FROM posts WHERE posts.id = $1`,
       [postId, actorId]
     );
     if (rows[0]?.visible !== true) {
-      this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} not visible to ${actorId.slice(0, 8)}`);
+      this.logger.debug(
+        `[REPOST-M] ${postId.slice(0, 8)} not repostable first-hand by ${actorId.slice(0, 8)}`
+      );
       throw postNotFound();
     }
   }
