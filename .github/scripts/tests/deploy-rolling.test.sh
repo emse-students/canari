@@ -336,6 +336,9 @@ if [ -z "$bad" ] && [ "${total:-0}" -gt 20 ]; then
   ok "every one of $total POSTs sent across the release was answered 200"
 else
   fail "POSTs sent across the release failed: ${bad:-none} (of $total)"
+  # What the proxies said, so the failure names its cause in the CI log (2026-11-02: one ECONNRESET
+  # in 401 could only be explained by reproducing it; the edge had logged `no live upstreams`).
+  dc logs --no-color --timestamps edge frontend api 2>&1 | grep -E '\[(warn|error|crit|alert|emerg)\]|DRAIN' | sed 's/^/    /'
 fi
 if [ "$(field release "r.versions.v3 > 0 ? 'yes' : 'no'")" = yes ]; then
   ok "the new release answered during the run"

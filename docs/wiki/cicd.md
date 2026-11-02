@@ -589,9 +589,19 @@ stops, `502 x6` and one `ECONNRESET` (at the edge, the frontend's own queue) in 
 steps 3-4, 0 failures in 1692 and the longest request 172 ms. The ~2 s stall a proxy used to spend on
 a retired replica's cached address is gone with the DNS rotation.
 
-**`resolve` costs no window at a reload** (measured: 3000 requests across 10 reloads, all `200`):
-nginx resolves the names when it loads the list. A replica that restarts in place under a new
-address is followed by `resolve` at `valid=2s`.
+**`resolve` costs no window at a reload ONLY WHILE THE SERVER'S NAME STAYS - and the take-out and
+the restore both change it** (corrected 2026-11-02; the first note, "3000 requests across 10 reloads,
+all `200`", measured unchanged names only). nginx does NOT resolve a `resolve` server when it loads the
+list: the new worker starts with that server's peers empty and fills them from its own asynchronous
+DNS query, and a reload carries addresses over only for a name the zone already resolved. The
+take-out renames the service's server to a container and the restore renames it back, so after each
+of those reloads the new worker refuses what it takes before its resolver answers (`no live
+upstreams`: a closed connection at the edge, a `502` at the frontend). Measured: 252 resets in 103 895
+POSTs across 300 renaming edge reloads, 0 across 300 that kept the name. It is the one
+`transport:ECONNRESET` of main-era run 41368923993 (1 self-test run in 58). Open, with the fix measured
+and the reasons the shortcuts are not fixes:
+[backlog](backlog.d/p1-a-renamed-replica-list-starts-with-no-peer.md). A replica that restarts in
+place under a new address is followed by `resolve` at `valid=2s`.
 
 **Every service declares how it may be replaced**, as the label `canari.deploy.replace`, and
 `infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a
@@ -625,6 +635,13 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
 (`forms-reminder.scheduler.spec.ts` fails without it).
 
 **What is NOT zero, said rather than hidden:**
+
+- **Each take-out and each restore reload opens a window of a few milliseconds at the proxy it
+  reloads**, while that worker's resolver has not yet answered for the renamed server (above): a
+  request landing in it is refused. Rare (1 self-test run in 58), but in every deploy, at both proxies
+  ([backlog](backlog.d/p1-a-renamed-replica-list-starts-with-no-peer.md)). When
+  `deploy-rolling.test.sh` sees a failed POST, it now prints the client's failure times and the
+  edge's, frontend's and API's warnings, so the next one names its cause in the log itself.
 
 - **The first deploy carrying the replica lists** still runs the OLD frontend image, which reads no
   list, while the five services behind it are replaced: each is drained the old way (the warning
