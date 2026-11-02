@@ -286,7 +286,10 @@ describe('SpaceWizard', () => {
       await settle();
       expect(picker().getAttribute('aria-label')).toContain(m.bookings_owner_personal());
       expect(tierCalls.calls).toHaveLength(0);
-      for (let i = 0; i < 2; i++) (button(m.bookings_wizard_next()).click(), flushSync());
+      for (let i = 0; i < 2; i++) {
+        button(m.bookings_wizard_next()).click();
+        flushSync();
+      }
       button(m.bookings_wizard_names_yes()).click();
       button(m.bookings_wizard_find_link()).click();
       flushSync();
@@ -319,7 +322,10 @@ describe('SpaceWizard', () => {
       tierCalls.calls[0].resolve({ tiers: [{ name: 'Stale tier', variantKey: 's' }] });
       tierCalls.calls[1].resolve({ tiers: [{ name: 'Fresh tier', variantKey: 'f' }] });
       await settle();
-      for (let i = 0; i < 2; i++) (button(m.bookings_wizard_next()).click(), flushSync());
+      for (let i = 0; i < 2; i++) {
+        button(m.bookings_wizard_next()).click();
+        flushSync();
+      }
       expect(document.body.textContent).not.toContain('stale-tier');
     });
   });
