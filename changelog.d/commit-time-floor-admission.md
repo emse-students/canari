@@ -1,0 +1,3 @@
+### Fixed - A device is no longer handed the acceptance time of a commit made before it was admitted
+
+The commit-time floor was read from an arrival record that could predate the admission (a group's enrolment, a re-added device's first row), so it answered one commit, or the stretch a device was out for, from before it. The commit gate now records the admitting commit on the seat (migration 044, every existing seat backfilled to what the server can prove) and the floor is read from it alone ([chat](docs/wiki/frontend/modules/chat.md#a-visible-notice-is-dated-by-its-frame-never-by-when-this-device-learnt-of-it)).
