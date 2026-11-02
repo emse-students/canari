@@ -40,6 +40,8 @@ import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload
 import { parseSessionId } from '../utils/session-id';
 import { isPublicMlsFrame } from '../utils/mls-frame-epoch';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
+import { buildWakeFrameAnswer, type WakeAnswer } from '../services/push-payload';
+import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
 /**
@@ -302,6 +304,7 @@ export class PushController {
       platform?: string;
       voipToken?: string | null;
       locale?: string;
+      wake?: boolean;
     },
     @Headers('x-user-id') userIdRaw: string,
     @Headers('x-session-id') sessionIdRaw?: string
@@ -331,6 +334,11 @@ export class PushController {
         ? body.locale.trim().slice(0, 5)
         : undefined;
 
+    // WHETHER THIS BINARY UNDERSTANDS A WAKE-UP PUSH, written on every registration and FALSE unless
+    // said: unlike the locale, an absent field is a statement - the build predates the wake handler
+    // (or is a downgrade), and a wake frame sent to it would be dropped. See `PushToken.wakeCapable`.
+    const wakeCapable = body.wake === true;
+
     // Generate a per-device push secret, hash it for storage so a plaintext DB
     // leak doesn't expose usable push secrets directly.
     const rawSecret = crypto.randomUUID().replace(/-/g, '');
@@ -347,6 +355,7 @@ export class PushController {
         platform,
         pushSecret,
         sessionId,
+        wakeCapable,
         ...(voipToken !== undefined ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
@@ -355,7 +364,7 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
         `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
-        `session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
+        `session=${sessionId ? sessionId.slice(0, 8) : 'none'} wake=${wakeCapable}`
     );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
@@ -408,6 +417,75 @@ export class PushController {
       proto: queued.proto ?? queued.content ?? '',
       ratchetTree: queued.ratchetTree ?? '',
     };
+  }
+
+  /**
+   * What a CONTENT-FREE WAKE-UP push left on this server: the data map the full push would have
+   * carried, for the device that was woken (owner, 2026-11-02;
+   * docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+   *
+   * Auth: `Authorization: PushSecret {secret}` with the device's own `userId` and `deviceId`, exactly
+   * as `fetch-proto` - the Android service and the iOS extension and app already hold that secret and
+   * have no JWT. The row is found by (id, recipient, device), so a secret opens only its own queue.
+   *
+   * `silent` is the bit the wake push carried (`buildWakeDataFields`): the sender's "draw nothing"
+   * is decided at send time and is not on the row, so it travels with the device. Everything else is
+   * decided HERE by `describeQueuedFrame`, the same function the full push calls.
+   *
+   * Answers `{status: 'frame', fields}` or `{status: 'gone'}` (`WakeAnswer`); one line per fetch, so
+   * `[PUSH_SEND] mode=wake` minus `[PUSH_WAKE] served|gone` is the wakes no device acted on.
+   */
+  @Get('mls/push/wake')
+  async fetchWakeFrame(
+    @Headers('authorization') authHeader: string,
+    @Query('messageId') messageIdRaw: string,
+    @Query('userId') userIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+    @Query('silent') silentRaw?: string
+  ): Promise<WakeAnswer> {
+    const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
+    if (silentRaw !== 'true' && silentRaw !== 'false') {
+      throw new BadRequestException('silent must be "true" or "false"');
+    }
+    const silent = silentRaw === 'true';
+
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    const found = await this.queuedMessageRepo.findOne({
+      where: { id: messageId, recipientId: userId, deviceId },
+      relations: PAYLOAD_RELATION,
+    });
+    const [queued] = found ? materializeDeliveries([found], this.logger, 'wake') : [];
+    if (!queued) {
+      this.logger.log(
+        `[PUSH_WAKE] gone queued=${messageId} device=${cutDeviceId(deviceId)} - drained or acknowledged since the push`
+      );
+      return { status: 'gone' };
+    }
+    const groupId = queued.groupId ?? '';
+    const senderId = queued.senderId ?? '';
+    if (!groupId || !senderId) {
+      // Every row the MLS send path writes names both; one that does not was written by something
+      // else, and the description below would name nobody. Served anyway - the device then draws
+      // what it can - and accused, because the writer is the defect.
+      this.logger.warn(
+        `[PUSH_WAKE] queued=${messageId} carries groupId=${groupId ? 'set' : 'absent'} senderId=${senderId ? 'set' : 'absent'} - served as it is`
+      );
+    }
+    const input = await this.messagingService.describeQueuedFrame(
+      queued,
+      groupId,
+      senderId,
+      silent,
+      `wake-${messageId.slice(0, 8)}`
+    );
+    const answer = buildWakeFrameAnswer(input, queued.proto ?? '');
+    this.logger.log(
+      `[PUSH_WAKE] served queued=${messageId} device=${cutDeviceId(deviceId)} silent=${input.silent} welcome=${input.isWelcome}`
+    );
+    return answer;
   }
 
   /**

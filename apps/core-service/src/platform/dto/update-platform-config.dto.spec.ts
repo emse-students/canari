@@ -35,3 +35,18 @@ describe('UpdatePlatformConfigDto.livesMode', () => {
     expect(errors.map((e) => e.property)).toEqual(['livesMode']);
   });
 });
+
+/** The push switch takes exactly the two values migration 018's CHECK allows. */
+describe('UpdatePlatformConfigDto.pushMode', () => {
+  const errorsFor = (pushMode: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { pushMode }));
+
+  it.each(['full', 'wake'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['WAKE', 'off', 'on', '', true])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['pushMode']);
+  });
+});

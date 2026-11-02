@@ -194,6 +194,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background service |
+| GET | `/api/mls/push/wake` | PushSecret | The data map a content-free wake-up push left on the server (`{status: frame, fields}` or `{status: gone}`), [design](../backlog.d/push-payloads-carry-nothing-for-google-and-apple.md) |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar for notification |
 | POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active |

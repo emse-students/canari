@@ -14,6 +14,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { CALLS_MODES, LIVES_MODES, type CallsMode, type LivesMode } from '$lib/utils/appVersion';
+  import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
 
@@ -24,6 +25,7 @@
     paymentProvider: PaymentProviderChoice;
     callsMode: CallsMode;
     livesMode: LivesMode;
+    pushMode: PushMode;
   };
 
   /**
@@ -47,6 +49,7 @@
   let paymentProvider = $state<PaymentProviderChoice>('disabled');
   let callsMode = $state<CallsMode>('off');
   let livesMode = $state<LivesMode>('off');
+  let pushMode = $state<PushMode>('full');
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -63,6 +66,14 @@
   };
   const LIVES_MODE_OPTIONS: PickerOption[] = $derived(
     LIVES_MODES.map((mode) => ({ value: mode, label: LIVES_MODE_LABELS[mode]() }))
+  );
+  /** One label per push mode, typed so a new mode cannot reach the picker unlabelled. */
+  const PUSH_MODE_LABELS: Record<PushMode, () => string> = {
+    full: m.admin_platform_push_mode_full,
+    wake: m.admin_platform_push_mode_wake,
+  };
+  const PUSH_MODE_OPTIONS: PickerOption[] = $derived(
+    PUSH_MODES.map((mode) => ({ value: mode, label: PUSH_MODE_LABELS[mode]() }))
   );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
@@ -197,6 +208,7 @@
     paymentProvider = data.paymentProvider;
     callsMode = data.callsMode;
     livesMode = data.livesMode;
+    pushMode = data.pushMode;
   }
 
   /**
@@ -213,6 +225,7 @@
       paymentProvider,
       callsMode,
       livesMode,
+      pushMode,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -464,6 +477,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_lives_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="push-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_push_mode_label()}
+        </label>
+        <Picker
+          id="push-mode"
+          value={pushMode}
+          options={PUSH_MODE_OPTIONS}
+          label={m.admin_platform_push_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = PUSH_MODES.find((known) => known === v);
+            if (mode) pushMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_push_mode_hint()}
         </p>
       </div>
 

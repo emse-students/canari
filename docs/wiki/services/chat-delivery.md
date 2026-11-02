@@ -1551,10 +1551,11 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it) |
+| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it; + `wake: true` from a binary that understands a wake-up push - `push_token.wakeCapable`, written false when absent) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
+| GET | `/api/mls/push/wake` | PushSecret | What a content-free wake-up push left here: `{status: 'frame', fields}` (the full push's data map, `describeQueuedFrame`, ciphertext inline) or `{status: 'gone'}`; `silent` is the bit the wake carried. One `[PUSH_WAKE] served|gone` line per fetch ([design](../backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)) |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
 | POST | `/api/mls/push/channel-read` | PushSecret | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |

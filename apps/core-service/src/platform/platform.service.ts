@@ -9,7 +9,12 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
-import { PlatformConfig, type CallsMode, type LivesMode } from './entities/platform-config.entity';
+import {
+  PlatformConfig,
+  type CallsMode,
+  type LivesMode,
+  type PushMode,
+} from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
@@ -27,6 +32,7 @@ export type PlatformConfigPublic = {
   paymentProvider: PaymentProviderId;
   callsMode: CallsMode;
   livesMode: LivesMode;
+  pushMode: PushMode;
 };
 
 /**
@@ -57,6 +63,7 @@ const DEFAULT_ROW: PlatformConfig = {
   paymentProvider: 'disabled',
   callsMode: 'off',
   livesMode: 'off',
+  pushMode: 'full',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -172,6 +179,14 @@ export class PlatformService implements OnModuleInit {
       }
       changes.livesMode = dto.livesMode;
     }
+    if (dto.pushMode !== undefined) {
+      // What Google and Apple are told about every conversation on the estate turns on it, so who
+      // moved it, and when, is a warn line - the register and the privacy policy follow its state.
+      if (dto.pushMode !== row.pushMode) {
+        this.logger.warn(`pushMode ${row.pushMode} -> ${dto.pushMode} by=${by}`);
+      }
+      changes.pushMode = dto.pushMode;
+    }
 
     if (Object.keys(changes).length > 0) {
       const updated = await this.repo.update({ id: 1 }, changes);
@@ -185,7 +200,7 @@ export class PlatformService implements OnModuleInit {
     }
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode}`
     );
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
@@ -275,5 +290,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     paymentProvider: row.paymentProvider,
     callsMode: row.callsMode,
     livesMode: row.livesMode,
+    pushMode: row.pushMode,
   };
 }
