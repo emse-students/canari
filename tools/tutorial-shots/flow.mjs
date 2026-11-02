@@ -1,7 +1,6 @@
 // Reusable CDP helpers for the user-tutorial screenshots (docs/user-guide/tutoriels): open(port) drives a Chrome
 // started with --remote-debugging-port, closes the dev banner before every shot, emulates desktop or mobile,
 // and clicks with real pointer events. Run it against dev only, with a scratch profile, never a harness profile.
-// reusable CDP flow helpers for the tutorial shots
 export async function open(port) {
   const tabs = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
   const t = tabs.find(x => x.type === "page");
