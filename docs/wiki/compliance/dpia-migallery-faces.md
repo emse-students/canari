@@ -102,8 +102,9 @@ Ordered by the risk they lower. Each is a backlog line
 5. **Proof of consent** - the controller keeps, per member, the consent text version and date.
 6. **Terms page** - correct MiGallery's `/cgu`: sign-in is MiConnect (not the school's CAS
    directly); the selfie deletion is immediate in the browser, not "within 24 h" server-side;
-   the withdrawal erasure (what it does and does not reach) and the face reference ledger must be described; the "last updated" date must be a fixed date, not
-   today's; Google Fonts is loaded (visitor IPs to Google) - self-host the font.
+   the withdrawal erasure (what it does and does not reach) and the face reference ledger must be
+   described; the "last updated" date must be a fixed date, not today's; Google Fonts is loaded
+   (visitor IPs to Google) - self-host the font.
 7. **Processor agreement** between MiTV and Rootz (Art. 28).
 8. **Retention** for photographs and for the `logs` table.
 
