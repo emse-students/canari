@@ -291,7 +291,7 @@ impl MlsError {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StateLoadRefusal {
     /// One of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`,
-    /// `KEYSTORE_KEY_UNAVAILABLE`, or `None`.
+    /// `KEYSTORE_KEY_UNAVAILABLE`, `SLOT_MOVE_UNFINISHED`, or `None`.
     pub code: Option<&'static str>,
     /// The failure's own text - evidence for a reader of the logs, never a discriminator. For a
     /// coded refusal it is the variant's DETAIL, without the code its `Display` leads with: the
@@ -311,6 +311,12 @@ const KEYSTORE_KEY_UNAVAILABLE: &str = "KEYSTORE_KEY_UNAVAILABLE";
 /// ([`StateLoadRefusal::is_sealed_under_another_key`]).
 const STATE_KEY_MISMATCH: &str = "STATE_KEY_MISMATCH";
 
+/// The code of a sign-in refused because a move of a local state between two accounts' places on
+/// the install (the per-account slot of the native app) was cut part-way and cannot be finished.
+/// NOT a verdict about any state's bytes - nothing was opened - so the frontend destroys nothing,
+/// offers no reset, and tells the user a restart retries the move.
+const SLOT_MOVE_UNFINISHED: &str = "SLOT_MOVE_UNFINISHED";
+
 impl StateLoadRefusal {
     /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
     /// wiped entry) - an EXPECTED outcome the caller answers with the PIN modal, read from the
@@ -324,6 +330,20 @@ impl StateLoadRefusal {
     /// answers with the old-PIN recovery, read from the `code` field, never from `message`.
     pub fn is_sealed_under_another_key(&self) -> bool {
         self.code == Some(STATE_KEY_MISMATCH)
+    }
+
+    /// A sign-in refused because a move between two accounts' state places is unfinished
+    /// ([`SLOT_MOVE_UNFINISHED`]); `message` says which, for the logs.
+    pub fn slot_move_unfinished(message: String) -> Self {
+        Self {
+            code: Some(SLOT_MOVE_UNFINISHED),
+            message,
+        }
+    }
+
+    /// True for a [`Self::slot_move_unfinished`] refusal, read from the `code` field.
+    pub fn is_slot_move_unfinished(&self) -> bool {
+        self.code == Some(SLOT_MOVE_UNFINISHED)
     }
 }
 

@@ -26,6 +26,23 @@ import {
 /** The code an empty keystore carries - `MlsError::KeystoreKeyUnavailable` in `mls-core`. */
 const KEYSTORE_KEY_UNAVAILABLE = 'KEYSTORE_KEY_UNAVAILABLE';
 
+/** The code of a sign-in refused over an unfinished move between two accounts' state places. */
+const SLOT_MOVE_UNFINISHED = 'SLOT_MOVE_UNFINISHED';
+
+/**
+ * The native app keeps one MLS state per account, and a move of one between two accounts' places was
+ * cut part-way and could not be finished (`StateLoadRefusal::slot_move_unfinished`, the per-account
+ * slot of `mls_account_state.rs`). NOT a verdict on any state - nothing was opened - so nothing is
+ * destroyed and no reset is offered: the move is retried at every sign-in, and a restart is the
+ * user's way to ask for it again.
+ */
+export class MlsSlotMoveUnfinishedError extends Error {
+  constructor(detail: string, cause?: unknown) {
+    super(`${SLOT_MOVE_UNFINISHED}: ${detail}`, { cause });
+    this.name = 'MlsSlotMoveUnfinishedError';
+  }
+}
+
 /**
  * Biometric mode found no key in the platform keystore: a cancelled or refused sheet, an entry that
  * was never written or was wiped. NOT a verdict on the saved state - nothing was opened - so the
@@ -91,6 +108,12 @@ export function mlsStateLoadErrorOf(rejection: unknown): Error {
   }
   if (isVerdictCode(code)) return new MlsStateVerdictError(code, message, null, rejection);
   if (code === KEYSTORE_KEY_UNAVAILABLE) return new KeystoreKeyUnavailableError(message, rejection);
+  if (code === SLOT_MOVE_UNFINISHED) {
+    console.error(
+      `[MLS] The sign-in was refused: a move of a local state between two accounts is unfinished - nothing destroyed, retried at the next sign-in: ${message.slice(0, 200)}`
+    );
+    return new MlsSlotMoveUnfinishedError(message, rejection);
+  }
   console.error(
     `[MLS] A state load failed with the code '${code.slice(0, 60)}', outside the closed set - a bindings mismatch; untyped, nothing will be destroyed on account of it`
   );

@@ -1156,7 +1156,9 @@ lines.
    64-hex directory under `mls_accounts/`, with no `.parking`, `.unparking` or `.residue-<n>` suffix;
    `mls.owner` in the slot names B; the App Group `mls.bin` has the same sha256 as the slot's.
 7. **The mirror's cost:** between the two `didBecomeActive` mirror lines of one activation, under
-   about 100 ms.
+   about 100 ms; and every `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it
+   M ms` line of the run, both numbers noted - a wait in the hundreds of milliseconds is a main-thread
+   stall behind a multi-megabyte write, and blocks the stable like step 5.
 
 **Any line of step 5, a missing content in steps 1-4, or a second directory in step 6 blocks the
 stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).

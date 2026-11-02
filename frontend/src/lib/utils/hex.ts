@@ -469,8 +469,9 @@ const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null 
  * a state written short by an interrupted flush is damage, not history, and must not arm
  * `noFreshStart` against the device it belongs to.
  *
- * Throws nothing: an unreadable answer is reported as 0 by the command, which is the same verdict
- * as a first install - the only safe one, since the alternative is refusing a login on a stat.
+ * **AN ANSWER NOBODY HAS REJECTS, NEVER A 0** (round 4 of the review of #2919): a state that could
+ * not be located or examined is the command's ERROR, and it propagates. A 0 is "no state", and a
+ * login that believed it would start fresh over a state it could not see.
  *
  * THE ACCOUNT IS AN ARGUMENT (owner, 2026-11-02): an install keeps one state per account, and a
  * size with no subject answered for whichever account used the install last
@@ -478,12 +479,12 @@ const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null 
  */
 export async function mlsStateSize(userId: string): Promise<number> {
   if (!isTauriRuntime()) return 0;
+  const { invoke } = await import('@tauri-apps/api/core');
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return (await invoke<number>('mls_state_size', { userId })) ?? 0;
+    return await invoke<number>('mls_state_size', { userId });
   } catch (e) {
-    console.warn('[MLS] mls_state_size failed:', e);
-    return 0;
+    console.error('[MLS] mls_state_size failed - the saved state is not known, not absent:', e);
+    throw e;
   }
 }
 

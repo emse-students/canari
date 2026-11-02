@@ -34,9 +34,13 @@ describe('mlsStateSize', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('is 0 when the command fails, the same verdict as a first install', async () => {
-    invoke.mockRejectedValue(new Error('no app data dir'));
-    expect(await mlsStateSize('user-1')).toBe(0);
+  it('rejects when the command fails - an unknown size is never "no state"', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('stat mls.bin: permission denied');
+    invoke.mockRejectedValue(failure);
+    await expect(mlsStateSize('user-1')).rejects.toBe(failure);
+    await expect(hasMlsState('user-1')).rejects.toBe(failure);
+    vi.restoreAllMocks();
   });
 });
 

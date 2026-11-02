@@ -1,5 +1,6 @@
 import {
   KeystoreKeyUnavailableError,
+  MlsSlotMoveUnfinishedError,
   MlsStateLoadUntypedError,
   mlsStateLoadErrorOf,
 } from './mlsStateLoadError';
@@ -36,6 +37,14 @@ describe('mlsStateLoadErrorOf', () => {
     expect(typed).toBeInstanceOf(KeystoreKeyUnavailableError);
     expect(typed.message).toBe('KEYSTORE_KEY_UNAVAILABLE: no key');
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it('types an unfinished move between two accounts as MlsSlotMoveUnfinishedError, accused once', () => {
+    const typed = mlsStateLoadErrorOf({ code: 'SLOT_MOVE_UNFINISHED', message: 'a cut park' });
+    expect(typed).toBeInstanceOf(MlsSlotMoveUnfinishedError);
+    expect(typed).not.toBeInstanceOf(MlsStateVerdictError);
+    expect(typed.message).toBe('SLOT_MOVE_UNFINISHED: a cut park');
+    expect(error).toHaveBeenCalledTimes(1);
   });
 
   it('leaves a null code untyped, whatever its message names, with ONE warning and no accusation of the boundary', () => {

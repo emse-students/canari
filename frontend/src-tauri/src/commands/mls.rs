@@ -40,6 +40,11 @@ pub(crate) struct InitMlsOptions {
     /// when the user's unlock cadence is "every 12h" and a prompted unlock happened inside that
     /// window - see `biometricCadence.ts`, which owns that decision. Absent means prompt, as before.
     pub unattended_key_read: Option<bool>,
+    /// A FRESH START THAT KNOWINGLY REPLACES THE SLOT'S STATE: the device identity rotation, after this
+    /// account's state failed to open under a cause no PIN repairs. Every other fresh start is refused
+    /// over a slot that holds a state (`fresh_start_refusal`), because the caller decided "no state"
+    /// on an answer that did not see it - so the one that means to replace it says so.
+    pub replaces_unopened_state: Option<bool>,
 }
 
 /// Initialises the MLS manager for this session and caches its at-rest key.
@@ -78,66 +83,25 @@ pub(crate) async fn initialiser_mls(
     } else {
         Some(device_key_b64)
     };
+    let replaces_unopened_state = opts.replaces_unopened_state == Some(true);
     tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = tauri::Manager::path(&app)
+            .app_data_dir()
+            .map_err(|e| StateLoadRefusal::from(e.to_string()))?;
         // FIRST, BEFORE ANYTHING CAN FAIL: every exit that does not reach `install` - an `Err`, a
         // panic - ends the native session THIS ATTEMPT ESTABLISHED when the guard drops, so a failed
         // sign-in never leaves a manager or key installed, nor this process marked warm over no
         // manager. An attempt refused before its selection established nothing and ends nothing:
         // the session it was refused for is another sign-in's.
-        let mut install = InstallGuard::new(manager_state, device_key_state);
-        // EVERY REFUSAL IS HANDED TO THE GUARD BEFORE IT PROPAGATES, so the guard knows WHY it did
-        // not install and an expected one (a cancelled biometric sheet) is not logged as a failure.
-        let attempt = || -> Result<(MlsManager, [u8; 32]), StateLoadRefusal> {
-            // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when
-            // it did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller
-            // that does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
-            //
-            // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
-            // under the write lock: a background engine (a key-group join from a push, channel-encryption
-            // section 26) then either wrote before this read or sees the mark and gives up - never lands
-            // between the read and this manager's first persist, which would erase it.
-            let data_dir = tauri::Manager::path(&app)
-                .app_data_dir()
-                .map_err(|e| e.to_string())?;
-            // THE SLOT IS GIVEN TO THIS ACCOUNT BEFORE ANYTHING READS OR SEALS IT, ON EVERY PATH
-            // (`mls_account_state.rs`): the previous account's state is parked under the account its
-            // owner record names and this account's own parked state comes back - renamed, never
-            // rewritten. A fresh start is the path that needs it most: without it, the new state's
-            // first save would land on the previous account's file. A refusal stops the sign-in with
-            // nothing moved and nothing written (`null` code: it proves nothing about the bytes).
-            // The process is marked warm in the selection's own hold, so a second sign-in cannot
-            // select the slot for its account before this one loads; the claim that hold returns
-            // is what lets `install` clear the mark if THIS sign-in fails - and only then.
-            let selection = install.select(&data_dir, &user_id)?;
-            let claim = install.claimed()?;
-            // A FRESH START DECIDED WITHOUT SEEING THIS ACCOUNT'S PARKED STATE IS REFUSED. The caller
-            // chose "no state" on `mls_state_size`; if the switch has just brought one back, that
-            // answer was wrong, and a fresh state saved now would replace it.
-            if crate::commands::mls_account_state::fresh_start_would_replace_unparked_state(
-                selection,
-                encrypted_state.is_none() && state_on_disk != Some(true),
-                &data_dir,
-            ) {
-                log::error!(
-                    "[MLS] a fresh start was asked while this account's parked state was just moved into the slot - refused, nothing sealed over it"
-                );
-                return Err(StateLoadRefusal::from(
-                    "a fresh start was asked over this account's saved state".to_string(),
-                ));
-            }
-            // Both the read and the warm mark only while THIS sign-in's session is current: one a
-            // sign-out (or another sign-in's failure) ended since the selection is refused here.
-            let encrypted_state = match (encrypted_state, state_on_disk) {
-                (None, Some(true)) => crate::concurrency::foreground_load_mls_bin_claimed(
-                    &data_dir.join("mls.bin"),
-                    claim,
-                )?,
-                (supplied, _) => {
-                    crate::concurrency::while_claim_current(claim, || ())
-                        .map_err(|e| e.to_string())?;
-                    supplied
-                }
-            };
+        let install = InstallGuard::new(manager_state, device_key_state);
+        let request = SignIn {
+            data_dir: &data_dir,
+            user_id: &user_id,
+            encrypted_state,
+            state_on_disk,
+            replaces_unopened_state,
+        };
+        sign_in(install, request, |encrypted_state, claim| {
             // Resolve the key explicitly instead of letting the loader do it internally: the
             // resolved key is cached below so later saves in this session (which arrive with an
             // empty device_key_b64 in biometric mode) never have to prompt again.
@@ -149,7 +113,6 @@ pub(crate) async fn initialiser_mls(
                 &keystore,
             )
             .map_err(StateLoadRefusal::from)?;
-
             let manager = match MlsManager::load_with_key(
                 &user_id,
                 &device_id,
@@ -159,7 +122,9 @@ pub(crate) async fn initialiser_mls(
                 Ok(manager) => manager,
                 Err(e) => {
                     let migrated = match (&encrypted_state, &legacy_pin) {
-                        (Some(blob), Some(pin)) => migrate_legacy_state_blob(&app, blob, pin, &key),
+                        (Some(blob), Some(pin)) => {
+                            migrate_legacy_state_blob(&data_dir, claim, blob, pin, &key)
+                        }
                         _ => None,
                     };
                     match migrated {
@@ -172,30 +137,8 @@ pub(crate) async fn initialiser_mls(
                     }
                 }
             };
-
-            // THE STATE IS NOW PROVEN TO BE THIS ACCOUNT'S - `load_or_create` refused it otherwise - so
-            // this is the one place the record beside `mls.bin` may name it. A failure to write it costs
-            // only the gate's "another account's messages are here" for a later sign-in, so it is
-            // accused and the session goes on. It is written BEFORE this state is ever saved (a created
-            // one has no `mls.bin` yet): a crash in between leaves at worst a STALE record beside the
-            // previous file, never a state of this account recorded as another's.
-            if let Err(e) = crate::commands::storage::write_mls_state_owner(&app, &user_id) {
-                log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
-            }
-            // A stage a background Welcome left in mls.bin is reported against what was loaded.
-            crate::commands::storage::report_background_stages(&data_dir, &manager);
             Ok((manager, key))
-        };
-        match attempt() {
-            Ok((manager, key)) => {
-                install.install(manager, key)?;
-                Ok::<String, StateLoadRefusal>("MLS Initialized".into())
-            }
-            Err(refusal) => {
-                install.refused(&refusal);
-                Err(refusal)
-            }
-        }
+        })
     })
     .await
     .map_err(|e| StateLoadRefusal::from(e.to_string()))?
@@ -216,12 +159,102 @@ pub(crate) async fn initialiser_mls(
 /// cleared ANOTHER sign-in's warm mark while its manager loaded, letting a background engine write
 /// under it and a third selection switch the slot under it. A claim a later selection superseded
 /// ends nothing either.
+/// What one `initialiser_mls` asks of the slot, its arguments resolved.
+struct SignIn<'a> {
+    data_dir: &'a std::path::Path,
+    user_id: &'a str,
+    /// Bytes the caller supplied (the old-PIN recovery, the migration retry), or `None`.
+    encrypted_state: Option<Vec<u8>>,
+    /// `Some(true)`: the state is on disk and read here rather than handed over.
+    state_on_disk: Option<bool>,
+    /// The rotation's fresh start, which replaces the state that did not open
+    /// ([`InitMlsOptions::replaces_unopened_state`]).
+    replaces_unopened_state: bool,
+}
+
+/// THE WHOLE OF `initialiser_mls` THAT TOUCHES THE SLOT, in order: the selection (which claims the
+/// session), the fresh-start guard, the claimed read of `mls.bin`, the `load` (the key resolution and
+/// the decrypt, handed in so a test drives this exact sequence with the slowness of a biometric sheet
+/// or an Argon2 in the middle), and the install. Every write a sign-in makes into the slot - the
+/// legacy re-seal inside `load`, the owner record and the background-stage report inside
+/// [`InstallGuard::install`] - happens under [`crate::concurrency::while_claim_current`], so a sign-in
+/// whose session was ended while it loaded writes NOTHING (round 4 of the review of #2919: it wrote
+/// its owner over the next account's slot and cleared that account's stage ledger).
+fn sign_in(
+    mut install: InstallGuard,
+    request: SignIn<'_>,
+    load: impl FnOnce(
+        Option<Vec<u8>>,
+        crate::concurrency::SessionClaim,
+    ) -> Result<(MlsManager, [u8; 32]), StateLoadRefusal>,
+) -> Result<String, StateLoadRefusal> {
+    let SignIn {
+        data_dir,
+        user_id,
+        encrypted_state,
+        state_on_disk,
+        replaces_unopened_state,
+    } = request;
+    // EVERY REFUSAL IS HANDED TO THE GUARD BEFORE IT PROPAGATES, so the guard knows WHY it did not
+    // install and an expected one (a cancelled biometric sheet) is not logged as a failure.
+    let attempt = |install: &mut InstallGuard| -> Result<(MlsManager, [u8; 32]), StateLoadRefusal> {
+        // THE SLOT IS GIVEN TO THIS ACCOUNT BEFORE ANYTHING READS OR SEALS IT, ON EVERY PATH
+        // (`mls_account_state.rs`): the previous account's state is parked under the account its
+        // owner record names and this account's own parked state comes back - renamed, never
+        // rewritten. A refusal stops the sign-in with nothing moved and nothing written; an
+        // unfinished move is typed (`SLOT_MOVE_UNFINISHED`), anything else carries a `null` code.
+        // The process is marked warm in the selection's own hold, and the claim that hold returns
+        // is what every later step of THIS sign-in is checked against.
+        let selection = install.select(data_dir, user_id)?;
+        let claim = install.claimed()?;
+        // A FRESH START OVER A SAVED STATE IS REFUSED, whatever the selection (round 4): the caller
+        // chose "no state" on an answer that did not see it. Only the rotation says it replaces one.
+        if let Some(refusal) = crate::commands::mls_account_state::fresh_start_refusal(
+            selection,
+            encrypted_state.is_none() && state_on_disk != Some(true),
+            replaces_unopened_state,
+            data_dir,
+        ) {
+            log::error!("[MLS] fresh start refused, nothing sealed: {refusal}");
+            return Err(StateLoadRefusal::from(refusal));
+        }
+        // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
+        // did. `state_on_disk` is only honoured when the caller supplied no bytes. EITHER WAY THE
+        // FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the read happens under the write
+        // lock, both only while THIS sign-in's session is current.
+        let encrypted_state = match (encrypted_state, state_on_disk) {
+            (None, Some(true)) => crate::concurrency::foreground_load_mls_bin_claimed(
+                &data_dir.join("mls.bin"),
+                claim,
+            )?,
+            (supplied, _) => {
+                crate::concurrency::while_claim_current(claim, || ()).map_err(|e| e.to_string())?;
+                supplied
+            }
+        };
+        load(encrypted_state, claim)
+    };
+    match attempt(&mut install) {
+        Ok((manager, key)) => {
+            install.install(manager, key)?;
+            Ok("MLS Initialized".into())
+        }
+        Err(refusal) => {
+            install.refused(&refusal);
+            Err(refusal)
+        }
+    }
+}
+
 struct InstallGuard {
     manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
     device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
     outcome: InstallOutcome,
     /// The session this attempt's selection claimed, `None` until [`InstallGuard::select`] succeeds.
     claim: Option<crate::concurrency::SessionClaim>,
+    /// The data directory and the account the selection gave the slot to - where the install records
+    /// the owner and reports the background stages.
+    selected: Option<(std::path::PathBuf, String)>,
 }
 
 /// How an [`initialiser_mls`] attempt ended, as [`InstallGuard`] knows it when it drops - a TYPE, so
@@ -254,6 +287,7 @@ impl InstallGuard {
             device_key_state,
             outcome: InstallOutcome::Unreported,
             claim: None,
+            selected: None,
         }
     }
 
@@ -264,10 +298,14 @@ impl InstallGuard {
         &mut self,
         data_dir: &std::path::Path,
         user_id: &str,
-    ) -> Result<crate::commands::mls_account_state::Selection, String> {
+    ) -> Result<
+        crate::commands::mls_account_state::Selection,
+        crate::commands::mls_account_state::SelectionRefused,
+    > {
         let (selection, claim) =
             crate::commands::mls_account_state::select_account_state(data_dir, user_id)?;
         self.claim = Some(claim);
+        self.selected = Some((data_dir.to_path_buf(), user_id.to_string()));
         Ok(selection)
     }
 
@@ -300,8 +338,19 @@ impl InstallGuard {
     /// session a sign-out or another sign-in's failure ended while it loaded is REFUSED and its manager
     /// dropped: installed, it would be a live manager over a cleared warm mark, which a later
     /// selection would switch the slot under.
+    ///
+    /// **AND THE SIGN-IN'S TWO WRITES INTO THE SLOT ARE IN THAT SAME HOLD** (round 4 of the review of
+    /// #2919): the owner record - the state is now proven to be this account's, `load_or_create`
+    /// refused it otherwise - and the report of the background stages a Welcome left. Run outside it,
+    /// a sign-in ended while it loaded wrote its owner over the NEXT account's slot and cleared that
+    /// account's stage ledger. **THE OWNER RECORD IS LOAD-BEARING** (the switch parks by it, a push
+    /// join is bound by it, `save_mls_state` writes by it), so a failure to write it fails the install.
     fn install(mut self, manager: MlsManager, key: [u8; 32]) -> Result<(), String> {
         let claim = self.claimed()?;
+        let (data_dir, user_id) = self
+            .selected
+            .clone()
+            .ok_or_else(|| "initialiser_mls reached its install without a selection".to_string())?;
         let installed = {
             let mut slot = self
                 .manager_state
@@ -311,16 +360,29 @@ impl InstallGuard {
                 .device_key_state
                 .lock()
                 .map_err(|_| "Failed to lock device key".to_string())?;
-            crate::concurrency::while_claim_current(claim, || {
+            crate::concurrency::while_claim_current(claim, || -> Result<(), String> {
+                crate::commands::storage::record_mls_state_owner(&data_dir, &user_id)?;
+                // A stage a background Welcome left in mls.bin is reported against what was loaded.
+                crate::commands::storage::report_background_stages_held(&data_dir, &manager);
                 *cached_key = Some(key);
                 *slot = Some(manager);
+                Ok(())
             })
         };
-        if let Err(superseded) = installed {
-            log::error!(
-                "[MLS] initialiser_mls NOT installed: {superseded} - the manager is dropped, nothing of this sign-in stays"
-            );
-            return Err(superseded.to_string());
+        match installed {
+            Err(superseded) => {
+                log::error!(
+                    "[MLS] initialiser_mls NOT installed: {superseded} - the manager is dropped, nothing of this sign-in was written"
+                );
+                return Err(superseded.to_string());
+            }
+            Ok(Err(e)) => {
+                log::error!(
+                    "[MLS] initialiser_mls NOT installed: the owner of mls.bin could not be recorded ({e}) - the manager is dropped"
+                );
+                return Err(format!("recording the owner of mls.bin: {e}"));
+            }
+            Ok(Ok(())) => {}
         }
         self.outcome = InstallOutcome::Installed;
         log::debug!("[MLS] manager and at-rest key installed");
@@ -412,8 +474,13 @@ pub(crate) async fn terminer_session_mls(
 /// being left to the opportunistic save on the JS side: a snapshot left in the legacy envelope
 /// replays this migration on every launch, and any failure in between resurfaces as a bogus
 /// "PIN changed on another device".
+///
+/// The rewrite happens ONLY while the sign-in's session is current
+/// ([`crate::concurrency::while_claim_current`]): a sign-in ended while it loaded writes nothing into
+/// a slot that may be another account's by now (round 4 of the review of #2919).
 fn migrate_legacy_state_blob(
-    app: &tauri::AppHandle,
+    data_dir: &std::path::Path,
+    claim: crate::concurrency::SessionClaim,
     blob: &[u8],
     pin: &str,
     key: &[u8; 32],
@@ -428,10 +495,20 @@ fn migrate_legacy_state_blob(
     let resealed = MlsManager::encrypt_state_blob_with_key(&plain, key)
         .map_err(|e| log::error!("[MLS] Re-sealing the legacy snapshot failed: {e}"))
         .ok()?;
-    write_mls_state_blob(app, &resealed)
-        .map_err(|e| log::error!("[MLS] Persisting the re-sealed snapshot failed: {e}"))
-        .ok()?;
-    Some(resealed)
+    let path = data_dir.join("mls.bin");
+    match crate::concurrency::while_claim_current(claim, || {
+        crate::concurrency::write_mls_bin_atomically(&path, &resealed)
+    }) {
+        Ok(Ok(())) => Some(resealed),
+        Ok(Err(e)) => {
+            log::error!("[MLS] Persisting the re-sealed snapshot failed: {e}");
+            None
+        }
+        Err(superseded) => {
+            log::error!("[MLS] the re-sealed snapshot is NOT written: {superseded}");
+            None
+        }
+    }
 }
 
 /// Resolve the at-rest key for a save: the caller's base64 key when it supplied one, otherwise
@@ -2164,6 +2241,161 @@ mod tests {
         );
         assert!(key.lock().unwrap().is_none());
         assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The request of a sign-in with no state handed over and none on disk - a first install.
+    fn first_sign_in<'a>(dir: &'a std::path::Path, user: &'a str) -> SignIn<'a> {
+        SignIn {
+            data_dir: dir,
+            user_id: user,
+            encrypted_state: None,
+            state_on_disk: None,
+            replaces_unopened_state: false,
+        }
+    }
+
+    /// ROUND 4 (H1), THROUGH THE COMMAND'S OWN SEQUENCE: account A's sign-in is in its load (a
+    /// biometric sheet, an Argon2) when the page reloads, another sign-in's failure ends the process
+    /// session from the page (an UNCLAIMED end), and account B signs in and takes the slot. A's load
+    /// then finishes: it writes NOTHING - not its owner over B's slot, not the clearing of B's stage
+    /// ledger - and installs nothing.
+    #[test]
+    fn a_sign_in_ended_while_it_loaded_writes_nothing_into_the_slot() {
+        use crate::commands::storage::{BACKGROUND_STAGES_FILE, MLS_STATE_OWNER_FILE};
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("ended-while-loading");
+        let stages = r#"{"group-b":{"baseEpoch":1}}"#;
+
+        let result = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-a"),
+            |_, _| {
+                crate::concurrency::end_native_session(&manager, &key, None, "test: unclaimed end")
+                    .unwrap();
+                let _session_of_b =
+                    crate::commands::mls_account_state::select_account_state(&dir, "guard-b")
+                        .unwrap();
+                std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "guard-b").unwrap();
+                std::fs::write(dir.join("mls.bin"), b"state-b").unwrap();
+                std::fs::write(dir.join(BACKGROUND_STAGES_FILE), stages).unwrap();
+                Ok((
+                    MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a sign-in whose session ended must not install"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(MLS_STATE_OWNER_FILE)).unwrap(),
+            "guard-b",
+            "the ended sign-in wrote its owner over the next account's slot"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(BACKGROUND_STAGES_FILE)).unwrap(),
+            stages,
+            "the ended sign-in cleared the next account's stage ledger"
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-b");
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        assert!(
+            crate::concurrency::live_manager_in_process(),
+            "B's session, which the ended attempt does not own, is left open"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 4 (H1), THROUGH THE COMMAND'S OWN SEQUENCE: a sign-in refused AT ITS SELECTION because
+    /// another one is loading ends nothing - the loading one then installs, its owner recorded. The
+    /// page no longer ends a session after a failed `initialiser_mls` either (`TauriMlsService`, pinned
+    /// by `TauriMlsService.stateOwner.test.ts`): the guard alone ends exactly the session it claimed.
+    #[test]
+    fn a_sign_in_refused_at_its_selection_does_not_end_the_loading_one() {
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("refused-at-selection");
+        let (loading_tx, loading_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+
+        let loading = {
+            let (manager, key, dir) = (manager.clone(), key.clone(), dir.clone());
+            std::thread::spawn(move || {
+                sign_in(
+                    InstallGuard::new(manager, key),
+                    first_sign_in(&dir, "guard-a"),
+                    |_, _| {
+                        loading_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok((
+                            MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                            KEY_A,
+                        ))
+                    },
+                )
+            })
+        };
+        loading_rx.recv().unwrap();
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| panic!("a sign-in refused at its selection must never load"),
+        )
+        .unwrap_err();
+        assert!(!refused.is_slot_move_unfinished());
+        assert!(
+            crate::concurrency::live_manager_in_process(),
+            "the refused sign-in ended the loading one's session"
+        );
+
+        release_tx.send(()).unwrap();
+        loading.join().unwrap().unwrap();
+        assert!(manager.lock().unwrap().is_some());
+        assert_eq!(*key.lock().unwrap(), Some(KEY_A));
+        assert_eq!(
+            crate::commands::storage::read_mls_state_owner(&dir).as_deref(),
+            Some("guard-a")
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 4 (L3): a move that cannot be finished refuses the sign-in with the TYPED code the gate
+    /// answers (`SLOT_MOVE_UNFINISHED`), and ends nothing.
+    #[test]
+    fn an_unfinished_move_refuses_the_sign_in_with_its_own_code() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("unfinished-move");
+        // A's park cut with a non-empty mls.bin at both ends: it cannot be finished.
+        std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "guard-a").unwrap();
+        std::fs::write(dir.join("mls.bin"), b"state-a").unwrap();
+        let journal = crate::commands::mls_account_state::start_park_for_test(&dir, "guard-a");
+        std::fs::write(journal.join("mls.bin"), b"state-a-older").unwrap();
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| panic!("a sign-in refused at its selection must never load"),
+        )
+        .unwrap_err();
+        assert!(refused.is_slot_move_unfinished());
+        assert!(!crate::concurrency::live_manager_in_process());
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a");
         std::fs::remove_dir_all(&dir).ok();
     }
 

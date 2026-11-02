@@ -69,6 +69,7 @@ import {
   type VaultRefusal,
 } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { MlsSlotMoveUnfinishedError } from '$lib/mls-client/mlsStateLoadError';
 import {
   getToken,
   clearAuth,
@@ -1677,6 +1678,11 @@ export async function loginImpl(
       const reason = mlsInitSettled.reason;
       // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
+      // A move between two accounts' local states could not be finished: nothing was opened, and a
+      // restart retries it - the gate says so and offers nothing destructive.
+      if (reason instanceof MlsSlotMoveUnfinishedError) {
+        throw new LoginFailure('local_state_move_unfinished', m.auth_local_state_move_unfinished());
+      }
       if (
         reason instanceof SavedStateUnopenedError ||
         reason instanceof SavedStateOfAnotherAccountError ||

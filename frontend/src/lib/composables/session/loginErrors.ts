@@ -61,6 +61,14 @@ export type LoginErrorCode =
    * `local_state_unreadable_now`, in NONE of the predicates below.
    */
   | 'local_state_unknown'
+  /**
+   * PIN accepted, and the native app refused the sign-in because a move of a local state between two
+   * accounts' places on this install was cut part-way and could not be finished
+   * (`MlsSlotMoveUnfinishedError`). Nothing was opened, rotated or written; the move is retried at
+   * the next sign-in, so the sentence says to restart, and no reset is offered. In NONE of the
+   * predicates below.
+   */
+  | 'local_state_move_unfinished'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */

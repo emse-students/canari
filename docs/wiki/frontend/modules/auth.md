@@ -873,7 +873,9 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   queries still answer, and none is offered that unowned state. What is left unfinished is narrow: two
   non-empty `mls.bin`, or a filesystem refusing a rename. A parked directory already present (checked
   BEFORE a park moves anything) or a second parked state beside the slot's owner is set aside, never a
-  refusal that would lock the install for ever.
+  refusal that would lock the install for ever. The refusal is TYPED (`SLOT_MOVE_UNFINISHED`,
+  `MlsSlotMoveUnfinishedError`): nothing is opened, re-sealed or rotated on it, and the gate says
+  `local_state_move_unfinished` - nothing deleted, a restart resumes the move - with no reset offered.
 - **The selection marks the process warm in its own hold** and returns a `SessionClaim`, so a second
   sign-in interleaved before the first one's load is refused instead of writing one account's owner
   beside the other's state. **A failed sign-in ends only the session it claimed** (`InstallGuard`,
@@ -885,18 +887,35 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   generation on, under `mls_bin_write_lock`, and the read of `mls.bin`, the warm mark and the install
   each check the claim in that same hold (`while_claim_current`, `SessionSuperseded`). A sign-in whose
   session a sign-out or another attempt's failure ended while it loaded is REFUSED and its manager
-  dropped: installed, it would be a live manager over a cleared warm mark. And the page never runs two
-  `initialiser_mls` at once: `TauriMlsService` queues every attempt, its failure's
-  `terminer_session_mls` included (`queueNativeInit`), so that refusal is a defence, never a path.
+  dropped: installed, it would be a live manager over a cleared warm mark. **Every write the sign-in
+  makes into the slot is inside that check** (round 4): the legacy re-seal of a pre-v0.11.0 `mls.bin`,
+  and - in the install's own hold - the owner record and the report that clears the background-stage
+  ledger (`sign_in`, `InstallGuard::install`). Outside it, a sign-in ended while it loaded (a page
+  reload, then another account's sign-in) wrote its owner over the next account's slot and cleared
+  that account's ledger. The owner record is load-bearing (the switch parks by it, a push join and
+  `save_mls_state` are bound by it), so a failure to write it fails the install.
+- **One page never runs two `initialiser_mls` at once, and the page ends no session after one fails.**
+  `TauriMlsService` queues every attempt (`queueNativeInit`); the native install guard alone ends the
+  session its selection claimed. The page's own unclaimed `terminer_session_mls` after a failed attempt
+  is gone (round 4): after a reload it ended the previous page's sign-in still loading natively.
 - **A frontend write of `mls.bin` names its account.** `save_mls_state` takes the `userId` and writes
   only when the slot's owner record names it or the slot holds no state (`write_account_mls_state`,
   `AccountStateWriteRefused::NotThisAccountsSlot`), the check and the write in one hold of the state
   lock: a late checkpoint or a restore from the previous account can no longer seal over the next
-  one's state.
+  one's state. It first FINISHES any move a previous process cut, as a sign-in does, and refuses while
+  one stands (`MoveUnfinished`) - a backup restored after a crash mid-park no longer lands beside part
+  of another account's state. A write into an empty slot records its account as the owner, so the
+  restore's own next checkpoint is not refused.
+- **"Does the slot hold a state" has three answers**: yes, no, and could not be examined
+  (`slot_holds_state` is `state_file_absent` negated, a `Result`). The third REFUSES - the write, the
+  fresh start, the move - never reads as "no". `mls_state_size` locates and measures in one hold of the
+  state lock and rejects when it cannot answer (`mlsStateSize` propagates it) instead of answering 0.
 - **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
   into the slot just handed over), a parked state to unpark into a slot holding an unrecorded one, and
-  a fresh start asked while the switch just brought back a non-empty parked `mls.bin` (the caller
-  decided "no state" on an answer that did not see it).
+  a fresh start over a slot holding a state, WHATEVER the selection (round 4; the caller decided "no
+  state" on an answer that did not see it). The one fresh start that means to replace the state - the
+  device identity rotation, after a cause no PIN repairs - says so (`replacesUnopenedState`,
+  `loadFreshStateReplacingUnopened`), and is still refused over a state an unpark just brought back.
 - **Every query takes its account**: `mls_state_size`, `mls_state_absent` and `load_mls_state` answer
   for `userId` (`account_state_file`), never for whichever account used the install last.
 - The `device_holds_other_account` gate above stays: it is what a REFUSED switch meets.
@@ -907,7 +926,9 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
 - **The iOS extension's App Group copy follows the slot**: rewritten at a switch, removed when the
   slot is empty - by ONE Rust implementation (`sync_extension_copy`) at the switch, the deletion and
   the activation mirror, which `CanariMirrorPushStateToAppGroup` now calls for `mls.bin` instead of
-  copying it itself (pinned by `mobile/iosMlsMirror.test.ts`).
+  copying it itself (pinned by `mobile/iosMlsMirror.test.ts`). The mirror runs on the main thread and
+  takes the state lock, so it logs how long it waited for the lock and held it (`activation mirror:
+  waited N ms ... held it M ms`), read on the bench (device-verification AS).
 
 Tests: `commands/mls_account_state.rs` (A -> B -> A -> B with each account's bytes back unchanged,
 the migration by record, the unrecorded state left in place, the live-manager refusal, two
@@ -916,11 +937,16 @@ slot `mls.bin` never costing the parked one, two states refused with nothing mov
 unpark refusing another sign-in, an unfinishable move stopping sign-ins but not queries, a stray file
 set aside, a second parked state and a taken park name set aside, the deletion of the slot, the parked
 state and its residue, the fresh-start guard, the extension copy, the activation mirror waiting for a
-switch); `commands/mls.rs` (a sign-in refused by a loading one does not end it, through the guard; a
-superseded claim ends nothing, in both orders; a sign-out during a load refuses the install);
-`commands/storage.rs` (`save_mls_state` writes only its own account's slot); `mobile/key_group_join.rs`
-(a join writes nothing into a slot that is not its account's); `services/TauriMlsService.initQueue.test.ts`
-(a second sign-in starts only after the first has failed and ended its session). **Native, verified by
+switch); `commands/mls.rs` (a sign-in refused by a loading one does not end it, through the guard AND
+through the command's own sequence `sign_in`; a superseded claim ends nothing, in both orders; a
+sign-out during a load refuses the install; a sign-in ended while it loaded writes neither its owner
+nor the stage report into the next account's slot; an unfinished move refuses with its typed code);
+`commands/storage.rs` (`save_mls_state` writes only its own account's slot, records the owner of an
+empty one, and finishes a cut park first); `mobile/key_group_join.rs` (a join writes nothing into a
+slot that is not its account's); `services/TauriMlsService.initQueue.test.ts` (a second sign-in starts
+only after the first has failed, no session is ended from the page, a reloaded page's refused sign-in
+ends nothing, and only the rotation asks to replace a state); `services/TauriMlsService.stateOwner.test.ts`
+(an unfinished move is answered with nothing); `mls-client/mlsStateLoadError.test.ts` (the code is typed). **Native, verified by
 compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
 [device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),
 is owed after a pre-release and before a stable

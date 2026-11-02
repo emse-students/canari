@@ -18,7 +18,6 @@ import {
   type MlsInitOptions,
 } from '$lib/mls-client';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
-import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
@@ -51,7 +50,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
-import { mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
+import { MlsSlotMoveUnfinishedError, mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
@@ -60,15 +59,15 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 
 /**
- * The tail of the ONE queue every `initialiser_mls` of this page runs on, its failure's teardown
- * included - module-level, so two service instances share it.
+ * The tail of the ONE queue every `initialiser_mls` of this page runs on - module-level, so two
+ * service instances share it.
  *
- * **TWO SIGN-INS NEVER OVERLAP IN THE NATIVE SESSION** (round 3 of the review of #2919): the native
- * side keeps one manager slot and one session generation per process, and a failed attempt ENDS the
- * session (`terminer_session_mls`). Run beside another attempt, that end lands in the middle of the
- * other's load. The native install guard refuses the survivor then (its claim is no longer current),
- * but the page would have caused a sign-in to fail for no fault of its own; queued here, each attempt
- * selects, loads, installs or ends before the next one starts.
+ * **TWO SIGN-INS OF ONE PAGE NEVER OVERLAP IN THE NATIVE SESSION** (round 3 of the review of #2919):
+ * the native side keeps one manager slot and one session generation per process. Queued here, each
+ * attempt selects, loads, and installs or is refused before the next one starts. A page that RELOADS
+ * gets a new queue while its previous page's attempt may still be loading natively; that one is
+ * covered on the native side, where every step of an attempt is checked against the session it
+ * claimed and an attempt whose session ended writes nothing (round 4).
  */
 let nativeInitQueue: Promise<unknown> = Promise.resolve();
 
@@ -775,6 +774,10 @@ export class TauriMlsService extends BaseMlsService {
       // this one is a decrypt that failed and handed the rest of its time to a recovery, and a
       // report that merged them would show a fresh-start boot as a slow load.
       endBootSpan('mls-load-state', { recovered: true });
+      // AN UNFINISHED MOVE BETWEEN TWO ACCOUNTS' STATES IS NO VERDICT ON ANY STATE: nothing was opened,
+      // so nothing below - a re-seal, a rotation, a reset offered by the gate - may answer it. The
+      // move is retried at the next sign-in (`mls_account_state.rs`).
+      if (e instanceof MlsSlotMoveUnfinishedError) throw e;
       // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
       // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
       // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
@@ -1161,6 +1164,15 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
+   * See {@link BaseMlsService.loadFreshStateReplacingUnopened}: the native fresh start says it
+   * replaces the slot's state, the one fresh start `initialiser_mls` lets over a saved state.
+   */
+  protected override async loadFreshStateReplacingUnopened(deviceKeyB64: string): Promise<void> {
+    this._groupsListed = false;
+    await this.invokeInit(deviceKeyB64, undefined, undefined, false, undefined, true);
+  }
+
+  /**
    * Single `initialiser_mls` call site.
    *
    * `legacyPin` is only ever set on the migration retry from {@link _initImpl}: with it, the Rust
@@ -1179,20 +1191,29 @@ export class TauriMlsService extends BaseMlsService {
     state?: Uint8Array,
     legacyPin?: string,
     stateOnDisk?: boolean,
-    unattendedKeyRead?: boolean
+    unattendedKeyRead?: boolean,
+    replacesUnopenedState?: boolean
   ): Promise<void> {
     return queueNativeInit(() =>
-      this.invokeInitQueued(deviceKeyB64, state, legacyPin, stateOnDisk, unattendedKeyRead)
+      this.invokeInitQueued(
+        deviceKeyB64,
+        state,
+        legacyPin,
+        stateOnDisk,
+        unattendedKeyRead,
+        replacesUnopenedState
+      )
     );
   }
 
-  /** {@link invokeInit}'s body, run on {@link queueNativeInit}: the invoke AND its failure's teardown. */
+  /** {@link invokeInit}'s body, run on {@link queueNativeInit}. */
   private async invokeInitQueued(
     deviceKeyB64: string,
     state?: Uint8Array,
     legacyPin?: string,
     stateOnDisk?: boolean,
-    unattendedKeyRead?: boolean
+    unattendedKeyRead?: boolean,
+    replacesUnopenedState?: boolean
   ): Promise<void> {
     console.debug('[MLS][Tauri] initialiser_mls: queued turn reached');
     this._deviceKeyB64 = deviceKeyB64;
@@ -1212,23 +1233,19 @@ export class TauriMlsService extends BaseMlsService {
           biometricPrompt: keystoreUnlockPrompt(),
           stateOnDisk: stateOnDisk === true,
           unattendedKeyRead: unattendedKeyRead === true,
+          replacesUnopenedState: replacesUnopenedState === true,
         },
       });
     } catch (e) {
-      // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
-      // (by construction, on every exit that did not install); this is the same end through the one
-      // helper every path uses, so the previous account's manager and key cannot be left installed
-      // whatever the native side did. The install's own error is the one that propagates, typed
-      // HERE at the invoke boundary: the command rejects with `{ code, message }`
-      // (`StateLoadRefusal`), so `classifyStateLoadFailure` and the login read a TYPE, never the
-      // message. No older string shape is understood: the app embeds this frontend, so the native
-      // half that answers is always the one built with it.
-      await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
-        (teardown: unknown) =>
-          console.error(
-            `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
-          )
-      );
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND, AND THE NATIVE INSTALL GUARD ALONE ENDS IT: on
+      // every exit that did not install, it ends exactly the session ITS selection claimed - and
+      // nothing when it was refused before claiming one, because the session that refused it is
+      // another sign-in's (round 4 of the review of #2919). The page used to end the native session
+      // here too, UNCLAIMED: after a reload, that ended a previous page's sign-in still loading
+      // natively. The install's own error propagates, typed HERE at the invoke boundary: the
+      // command rejects with `{ code, message }` (`StateLoadRefusal`), so `classifyStateLoadFailure`
+      // and the login read a TYPE, never the message. No older string shape is understood: the app
+      // embeds this frontend, so the native half that answers is always the one built with it.
       throw mlsStateLoadErrorOf(e);
     }
   }
@@ -1446,8 +1463,8 @@ export class TauriMlsService extends BaseMlsService {
 
   /**
    * `mls_state_absent`: `true` only when THIS ACCOUNT's `mls.bin` does not exist or is empty. An
-   * unreadable data directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike
-   * `mls_state_size`, which answers 0 for it.
+   * unreadable data directory is an `Err`, which `reenrolLostState` reads as "not proven" - and
+   * `mls_state_size` rejects on it too since round 4 of the review of #2919.
    */
   protected async savedStateProvenAbsent(): Promise<boolean> {
     return invoke<boolean>('mls_state_absent', { userId: this.userId });

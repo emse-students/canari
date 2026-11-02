@@ -472,7 +472,9 @@
     try {
       const { hasMlsState } = await import('$lib/utils/hex');
       canRecoverPin = await hasMlsState(uid);
-    } catch {
+    } catch (e) {
+      // Whether a saved state exists is not known: the old-PIN recovery is not offered on it.
+      console.warn('[MLS] the saved state could not be measured - no old-PIN recovery offered:', e);
       canRecoverPin = false;
     }
   }

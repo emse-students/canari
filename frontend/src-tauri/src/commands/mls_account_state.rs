@@ -59,7 +59,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::storage::{mls_state_file_names, read_mls_state_owner, remove_mls_state_held};
+use crate::commands::storage::{
+    mls_state_file_names, read_mls_state_owner, remove_mls_state_held, state_file_absent,
+};
 use crate::concurrency::{
     claim_foreground_session_held, live_manager_in_process, mark_foreground_active,
     mls_bin_write_lock, SessionClaim,
@@ -88,6 +90,42 @@ pub(crate) enum Selection {
     /// The slot holds a state with NO owner record: nothing moved, nothing attributed. The load
     /// under this account's key is the only proof of whose it is.
     UnprovenLeftInSlot,
+}
+
+/// Why [`select_account_state`] refused a sign-in - a TYPE, so the frontend's gate can answer an
+/// unfinished move (a restart retries it, nothing is offered for deletion) without reading a sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SelectionRefused {
+    /// A move of a state between two accounts' places was cut part-way and cannot be finished
+    /// ([`refusal_for`]): handing the slot to anyone could write into, or reset, another account's
+    /// state.
+    MoveUnfinished(String),
+    /// Anything else: a foreground session still open, a state of unproven owner, a filesystem
+    /// failure.
+    Other(String),
+}
+
+impl std::fmt::Display for SelectionRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MoveUnfinished(m) | Self::Other(m) => f.write_str(m),
+        }
+    }
+}
+
+impl From<String> for SelectionRefused {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<SelectionRefused> for mls_core::StateLoadRefusal {
+    fn from(refused: SelectionRefused) -> Self {
+        match refused {
+            SelectionRefused::MoveUnfinished(m) => Self::slot_move_unfinished(m),
+            SelectionRefused::Other(m) => Self::from(m),
+        }
+    }
 }
 
 /// A journalled move [`settle_pending_moves_held`] could not finish, named by the account it is of.
@@ -126,24 +164,49 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// Whether the slot holds a state: a non-empty `mls.bin`. An empty one is the trace of a write cut
-/// short and is no state (the same rule `state_file_absent` applies).
-pub(crate) fn slot_holds_state(data_dir: &Path) -> bool {
-    std::fs::metadata(data_dir.join("mls.bin"))
-        .map(|m| m.len() > 0)
-        .unwrap_or(false)
+/// short and is no state ([`state_file_absent`], the one rule). `Err` when the file could not be
+/// examined: an ANSWER NOBODY HAS, which every caller refuses on rather than reading as "no state"
+/// (round 4 of the review of #2919: a `false` there let a write, a fresh start or a move through).
+pub(crate) fn slot_holds_state(data_dir: &Path) -> Result<bool, String> {
+    holds_bytes(&data_dir.join("mls.bin"))
 }
 
-/// Whether a FRESH START asked of `initialiser_mls` would be sealed over this account's own state
-/// that the switch has just brought back: the caller decided "no state" on an answer that did not
-/// see it. Only a non-empty `mls.bin` counts - a parked owner record alone is no state to lose.
-pub(crate) fn fresh_start_would_replace_unparked_state(
+/// Why `initialiser_mls` must NOT start fresh, `None` when it may.
+///
+/// A fresh start seals a new state into the slot, so it is refused whenever the slot already holds
+/// one (round 4 of the review of #2919, whatever the selection - not only after an unpark): the caller
+/// decided "no state" on an answer that did not see it. Only a non-empty `mls.bin` counts - an owner
+/// record alone is no state to lose - and a slot that could not be examined refuses too.
+///
+/// **THE ONE FRESH START THAT REPLACES A STATE SAYS SO** (`replaces_unopened_state`): the device
+/// identity rotation, after this account's state failed to open under a cause no PIN repairs. It is
+/// allowed only over a slot this attempt did not just fill - never over a state an unpark brought
+/// back, which nothing has tried to open yet.
+pub(crate) fn fresh_start_refusal(
     selection: Selection,
     caller_says_no_state: bool,
+    replaces_unopened_state: bool,
     data_dir: &Path,
-) -> bool {
-    caller_says_no_state
-        && matches!(selection, Selection::Moved { unparked: true, .. })
-        && slot_holds_state(data_dir)
+) -> Option<String> {
+    if !caller_says_no_state {
+        return None;
+    }
+    match slot_holds_state(data_dir) {
+        Err(e) => Some(format!(
+            "a fresh start was asked and the slot could not be examined: {e}"
+        )),
+        Ok(false) => None,
+        Ok(true)
+            if replaces_unopened_state
+                && !matches!(selection, Selection::Moved { unparked: true, .. }) =>
+        {
+            log::warn!(
+                "[MLS_ACCOUNT] a fresh start replaces the state that did not open (the device identity rotation asked for it)"
+            );
+            None
+        }
+        Ok(true) => Some("a fresh start was asked over this account's saved state".to_string()),
+    }
 }
 
 /// The first `<account_dir>.residue-<n>` that does not exist yet - where whatever a move would
@@ -197,11 +260,13 @@ fn set_file_aside(
     Ok(())
 }
 
-/// Whether the file at `path` holds bytes. An absent or empty `mls.bin` is no state.
-fn holds_bytes(path: &Path) -> bool {
-    std::fs::metadata(path)
-        .map(|m| m.is_file() && m.len() > 0)
-        .unwrap_or(false)
+/// Whether the file at `path` holds bytes - [`state_file_absent`] negated, so an absent or empty
+/// `mls.bin` is no state and a file that could not be examined is an `Err`, accused, never a "no".
+fn holds_bytes(path: &Path) -> Result<bool, String> {
+    state_file_absent(path).map(|absent| !absent).map_err(|e| {
+        log::error!("[MLS_ACCOUNT] a state file could not be examined: {e}");
+        e
+    })
 }
 
 /// Moves every state file present in `from` into `to`, in [`mls_state_file_names`] order (the owner
@@ -213,7 +278,7 @@ fn holds_bytes(path: &Path) -> bool {
 /// both ends exactly as they were.
 fn move_state_files(from: &Path, to: &Path, account_dir: &Path) -> Result<usize, String> {
     let (src_bin, dst_bin) = (from.join("mls.bin"), to.join("mls.bin"));
-    if holds_bytes(&src_bin) && holds_bytes(&dst_bin) {
+    if holds_bytes(&src_bin)? && holds_bytes(&dst_bin)? {
         log::error!(
             "[MLS_ACCOUNT] TWO STATES AT BOTH ENDS OF ONE MOVE - nothing moved, nothing set aside: which ratchet survives is not this module's to choose"
         );
@@ -228,7 +293,7 @@ fn move_state_files(from: &Path, to: &Path, account_dir: &Path) -> Result<usize,
         }
         let dst = to.join(&name);
         if dst.exists() {
-            if name == "mls.bin" && !holds_bytes(&dst) {
+            if name == "mls.bin" && !holds_bytes(&dst)? {
                 set_file_aside(&dst, &name, &mut residue, account_dir)?;
             } else if name == "mls.bin" {
                 // The moving copy is the empty one (two non-empty ones were refused above): the
@@ -418,17 +483,23 @@ pub(crate) fn account_state_file(
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    account_state_file_held(data_dir, user_id)
+}
+
+/// [`account_state_file`] for a caller holding [`mls_bin_write_lock`].
+fn account_state_file_held(data_dir: &Path, user_id: &str) -> Result<Option<PathBuf>, String> {
     let unfinished = settle_pending_moves_held(data_dir);
     if let Some(refusal) = refusal_for(&unfinished, user_id, false) {
         return Err(refusal);
     }
     let parked = parked_dir(data_dir, user_id);
+    let slot_has_state = slot_holds_state(data_dir)?;
     let located = match read_mls_state_owner(data_dir) {
         Some(owner) if owner == user_id => Some(data_dir.join("mls.bin")),
         _ if parked.exists() => Some(parked.join("mls.bin")),
         // NOT while a move stands unfinished: the unowned state may be the moving account's, its
         // `mls.bin` already in the slot and its record not (re-review of #2919).
-        None if slot_holds_state(data_dir) && unfinished.is_empty() => {
+        None if slot_has_state && unfinished.is_empty() => {
             log::warn!(
                 "[MLS_ACCOUNT] the slot holds a state with no owner record - offered to the load, whose credential check decides"
             );
@@ -445,6 +516,45 @@ pub(crate) fn account_state_file(
         }
     );
     Ok(located)
+}
+
+/// The size of `user_id`'s `mls.bin` on this install, 0 when it has none - located AND measured in
+/// one hold of [`mls_bin_write_lock`], so a switch cannot move the file between the two. A state that
+/// could not be located or examined is an `Err`, never a 0 (round 4 of the review of #2919): 0 is "no
+/// state", and a login that believed it would start fresh.
+pub(crate) fn account_state_size(data_dir: &Path, user_id: &str) -> Result<u64, String> {
+    if user_id.is_empty() {
+        return Err("no account named".to_string());
+    }
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    let Some(path) = account_state_file_held(data_dir, user_id)? else {
+        return Ok(0);
+    };
+    match std::fs::metadata(&path) {
+        Ok(m) => Ok(m.len()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(format!("stat mls.bin: {e}")),
+    }
+}
+
+/// For a writer of the slot that holds [`mls_bin_write_lock`] (`save_mls_state`): finishes every move
+/// a previous process cut part-way, as a sign-in does, and returns the refusal owed when one stays
+/// unfinished - the slot may then hold part of another account's state, so nothing is written into
+/// it (round 4 of the review of #2919).
+pub(crate) fn settle_moves_for_slot_write_held(data_dir: &Path, user_id: &str) -> Option<String> {
+    refusal_for(&settle_pending_moves_held(data_dir), user_id, true)
+}
+
+/// A park cut by a process death right after its journal directory was created: the slot's files
+/// still in place, `<hash>.parking/` beside them. Returns the journal.
+#[cfg(test)]
+pub(crate) fn start_park_for_test(data_dir: &Path, owner: &str) -> PathBuf {
+    std::fs::create_dir_all(data_dir.join(PARKED_STATES_DIR)).unwrap();
+    let staging = with_suffix(&parked_dir(data_dir, owner), PARKING_SUFFIX);
+    std::fs::create_dir(&staging).unwrap();
+    staging
 }
 
 /// Gives the slot to `user_id`: parks the state it holds under the account its owner record names,
@@ -468,14 +578,14 @@ pub(crate) fn account_state_file(
 pub(crate) fn select_account_state(
     data_dir: &Path,
     user_id: &str,
-) -> Result<(Selection, SessionClaim), String> {
+) -> Result<(Selection, SessionClaim), SelectionRefused> {
     log::debug!("[MLS_ACCOUNT] selecting the signing-in account's state");
     if user_id.is_empty() {
-        return Err("no account named".to_string());
+        return Err(SelectionRefused::Other("no account named".to_string()));
     }
     let _guard = mls_bin_write_lock()
         .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        .map_err(|_| SelectionRefused::Other("mls_bin write lock poisoned".to_string()))?;
     let selection = select_held(data_dir, user_id)?;
     let claim = claim_foreground_session_held();
     if matches!(selection, Selection::Moved { .. }) {
@@ -486,17 +596,17 @@ pub(crate) fn select_account_state(
 }
 
 /// [`select_account_state`] under the lock it holds.
-fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, String> {
+fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, SelectionRefused> {
     if let Some(refusal) = refusal_for(&settle_pending_moves_held(data_dir), user_id, true) {
         log::error!("[MLS_ACCOUNT] sign-in refused: {refusal}");
-        return Err(refusal);
+        return Err(SelectionRefused::MoveUnfinished(refusal));
     }
     let owner = read_mls_state_owner(data_dir);
     if owner.as_deref() != Some(user_id) && live_manager_in_process() {
         log::error!(
             "[MLS_ACCOUNT] a foreground manager is loaded or loading in this process - the slot is NOT switched under it"
         );
-        return Err("a foreground MLS session is still open".to_string());
+        return Err("a foreground MLS session is still open".to_string().into());
     }
     let mine = parked_dir(data_dir, user_id);
     let mine_parked = mine.exists();
@@ -531,12 +641,14 @@ fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, String> {
             finish_park(data_dir, &staging)?;
             parked_other = true;
         }
-        None if slot_holds_state(data_dir) => {
+        None if slot_holds_state(data_dir)? => {
             if mine_parked {
                 log::error!(
                     "[MLS_ACCOUNT] the slot holds a state with NO owner record and the account has a parked one - neither is moved, the unproven state is not handed to anyone"
                 );
-                return Err("the slot holds a state of unproven owner".to_string());
+                return Err("the slot holds a state of unproven owner"
+                    .to_string()
+                    .into());
             }
             log::error!(
                 "[MLS_ACCOUNT] the slot holds a state with NO owner record - left in place for its owner, never attributed; the load's credential check decides"
@@ -588,7 +700,7 @@ fn refresh_extension_copy(data_dir: &Path) {
 #[cfg(any(target_os = "ios", test))]
 pub(crate) fn sync_extension_copy(data_dir: &Path, group: &Path) -> Result<(), String> {
     let copy = group.join("mls.bin");
-    if slot_holds_state(data_dir) {
+    if slot_holds_state(data_dir)? {
         let tmp = group.join("mls.bin.tmp");
         std::fs::copy(data_dir.join("mls.bin"), &tmp).map_err(|e| format!("copy mls.bin: {e}"))?;
         std::fs::rename(&tmp, &copy).map_err(|e| format!("rename mls.bin copy: {e}"))?;
@@ -631,19 +743,30 @@ pub(crate) const MIRROR_FAILED: i32 = -3;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) fn mirror_extension_copy(data_dir: &Path, group: &Path) -> i32 {
     log::debug!("[MLS_ACCOUNT] activation mirror of mls.bin into the App Group");
+    // ON THE MAIN THREAD (`didBecomeActive`, `willResignActive`), behind holders that read and write
+    // a multi-megabyte `mls.bin` under the same lock: the wait and the hold are logged so a stall is
+    // a number on the bench, not a guess (round 4 of the review of #2919).
+    let asked = std::time::Instant::now();
     let Ok(_guard) = mls_bin_write_lock().lock() else {
         log::error!(
             "[MLS_ACCOUNT] activation mirror: the mls_bin write lock is poisoned - not mirrored"
         );
         return MIRROR_FAILED;
     };
-    match sync_extension_copy(data_dir, group) {
+    let held = std::time::Instant::now();
+    let code = match sync_extension_copy(data_dir, group) {
         Ok(()) => MIRROR_OK,
         Err(e) => {
             log::error!("[MLS_ACCOUNT] activation mirror of mls.bin failed: {e}");
             MIRROR_FAILED
         }
-    }
+    };
+    log::debug!(
+        "[MLS_ACCOUNT] activation mirror: waited {} ms for the state lock, held it {} ms",
+        held.duration_since(asked).as_millis(),
+        held.elapsed().as_millis()
+    );
+    code
 }
 
 /// The C entry of [`mirror_extension_copy`], called by `CanariMirrorPushStateToAppGroup`
@@ -810,14 +933,18 @@ mod tests {
 
     /// A sign-in's selection followed by its sign-out: the session the selection marked warm ends.
     fn select(dir: &Path, user: &str) -> Result<Selection, String> {
-        let selected = select_account_state(dir, user).map(|(selection, _)| selection);
+        let selected = select_account_state(dir, user)
+            .map(|(selection, _)| selection)
+            .map_err(|e| e.to_string());
         crate::concurrency::forget_live_manager_for_test();
         selected
     }
 
     /// A sign-in's selection whose session stays open (the manager is loading).
     fn select_and_hold(dir: &Path, user: &str) -> Result<Selection, String> {
-        select_account_state(dir, user).map(|(selection, _)| selection)
+        select_account_state(dir, user)
+            .map(|(selection, _)| selection)
+            .map_err(|e| e.to_string())
     }
 
     fn residue(dir: &Path, user: &str, n: u32) -> PathBuf {
@@ -1378,10 +1505,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// F4: the fresh-start guard needs a STATE to have come back - an unparked owner record alone is
-    /// no state to lose.
+    /// F4, widened in round 4: the fresh-start guard needs a STATE in the slot - an owner record
+    /// alone is no state to lose - and refuses one WHATEVER the selection; only the rotation's own
+    /// replacement passes, and never over a state an unpark just brought back.
     #[test]
-    fn the_fresh_start_guard_needs_an_unparked_state_not_a_record() {
+    fn the_fresh_start_guard_needs_a_state_in_the_slot_not_a_record() {
         let _cold = cold();
         let dir = temp_dir("fresh-guard");
         std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "user-a").unwrap();
@@ -1394,18 +1522,25 @@ mod tests {
                 unparked: true
             }
         );
-        assert!(!fresh_start_would_replace_unparked_state(moved, true, &dir));
+        assert_eq!(fresh_start_refusal(moved, true, false, &dir), None);
 
         std::fs::write(dir.join("mls.bin"), b"A").unwrap();
-        assert!(fresh_start_would_replace_unparked_state(moved, true, &dir));
-        assert!(!fresh_start_would_replace_unparked_state(
-            moved, false, &dir
-        ));
-        assert!(!fresh_start_would_replace_unparked_state(
-            Selection::AlreadyInSlot,
-            true,
-            &dir
-        ));
+        assert!(fresh_start_refusal(moved, true, false, &dir).is_some());
+        assert!(
+            fresh_start_refusal(moved, true, true, &dir).is_some(),
+            "a rotation never replaces a state an unpark just brought back"
+        );
+        assert_eq!(fresh_start_refusal(moved, false, false, &dir), None);
+        assert!(
+            fresh_start_refusal(Selection::AlreadyInSlot, true, false, &dir).is_some(),
+            "a fresh start over the slot's state is refused whatever the selection"
+        );
+        assert!(fresh_start_refusal(Selection::UnprovenLeftInSlot, true, false, &dir).is_some());
+        assert_eq!(
+            fresh_start_refusal(Selection::AlreadyInSlot, true, true, &dir),
+            None,
+            "the rotation replaces the state that did not open"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
