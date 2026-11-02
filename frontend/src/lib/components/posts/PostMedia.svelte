@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
-  import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
+  import { FileText, Download, Image as ImageIcon, LoaderCircle, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
   import { Log } from '$lib/utils/Log';
   import LetterboxedImage from '$lib/components/shared/LetterboxedImage.svelte';
@@ -278,8 +278,9 @@
     }
 
     // Still far from the viewport: the placeholder is already the right thing on screen, so the
-    // download waits rather than competing with the page the reader IS looking at.
-    if (deferred) return;
+    // download waits rather than competing with the page the reader IS looking at. A compact row
+    // the reader TAPPED is not deferred: they asked for it, whatever the observer thinks.
+    if (deferred && !(compactFile && asked)) return;
 
     let destroyed = false;
     let acquired = false;
@@ -374,15 +375,38 @@
   /** What the reader asked of a compact row, to run once its file is in. */
   let pendingAction = $state<'open' | 'download' | null>(null);
 
+  /** A compact row's file is being fetched because the reader asked: the row shows it. */
+  const busy = $derived(compactFile && asked && loading);
+  /** A compact row's file arrived for a SAVE: it waits for a tap of its own (see `activate`). */
+  let saveReady = $state(false);
+
   /**
-   * Opens or saves the file. Ready, it happens now; a compact row's file is not yet downloaded, so
-   * the request is remembered and the download started - the effect below finishes the job.
+   * Opens or saves the file.
+   *
+   * - Ready (a full card, a warm blob, or a row whose fetch is done): it happens now, inside the tap.
+   * - A compact row not yet fetched: the request is remembered and the fetch starts. THE FIRST
+   *   REQUEST WINS: while one is pending, further taps are ignored (they used to overwrite it).
+   *   An OPEN runs as soon as the file is in - showing the viewer needs no gesture. A SAVE does
+   *   not: a download started from an effect, long after the tap, is the call WKWebView and Tauri
+   *   may refuse, so the row turns to "ready - tap to save" and the save runs on THAT tap.
+   * - A failure drops the pending request. After "Reessayer" the file arrives and the row is
+   *   simply ready: the reader taps again, and the tap acts at once.
    */
   function activate(action: 'open' | 'download') {
-    Log.d('PostMedia.activate', { action, mediaId: media.mediaId, ready: blobUrl !== null });
+    Log.d('PostMedia.activate', {
+      action,
+      mediaId: media.mediaId,
+      ready: blobUrl !== null,
+      pending: pendingAction,
+    });
     if (blobUrl) {
+      saveReady = false;
       if (action === 'open') pdfViewerOpen = true;
       else downloadBlob(blobUrl, media.fileName ?? (isPdf ? 'document.pdf' : 'file'));
+      return;
+    }
+    if (pendingAction) {
+      Log.d('PostMedia.activate', { ignored: action, kept: pendingAction });
       return;
     }
     pendingAction = action;
@@ -390,10 +414,17 @@
   }
 
   $effect(() => {
-    if (!pendingAction || !blobUrl) return;
+    if (!pendingAction) return;
+    if (failure) {
+      Log.d('PostMedia.activate', { dropped: pendingAction, after: failure });
+      pendingAction = null;
+      return;
+    }
+    if (!blobUrl) return;
     const action = pendingAction;
     pendingAction = null;
-    untrack(() => activate(action));
+    if (action === 'open') pdfViewerOpen = true;
+    else saveReady = true;
   });
 
   let lightboxOpen = $state(false);
@@ -692,11 +723,20 @@
       <p class="text-text-muted text-2xs font-semibold tracking-wider">
         {formatFileSize(media.size)}
       </p>
+      {#if saveReady}
+        <p class="text-2xs font-semibold text-amber-700 dark:text-amber-400" data-save-ready-hint>
+          {m.post_file_ready_to_save()}
+        </p>
+      {/if}
     </div>
   {/snippet}
 
   <div
     class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 transition-colors dark:border-white/10 dark:bg-white/10"
+    aria-busy={busy}
+    data-file-card
+    data-busy={busy ? '' : undefined}
+    data-save-ready={saveReady ? '' : undefined}
   >
     <div class="flex items-center gap-3.5 px-3.5 {compactFile ? 'py-2' : 'py-3'}">
       {#if isPdf}
@@ -722,11 +762,22 @@
         class="ui-icon-button rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
         aria-label={m.post_download_label()}
       >
-        <Download
-          size={18}
-          strokeWidth={2.5}
-          class="opacity-70 transition-opacity group-hover/file:opacity-100"
-        />
+        {#if busy}
+          <LoaderCircle
+            size={18}
+            strokeWidth={2.5}
+            class="animate-spin opacity-70"
+            data-file-spinner
+          />
+        {:else}
+          <Download
+            size={18}
+            strokeWidth={2.5}
+            class="{saveReady
+              ? 'text-amber-700 dark:text-amber-400'
+              : 'opacity-70'} transition-opacity group-hover/file:opacity-100"
+          />
+        {/if}
       </button>
     </div>
     {#if isPdf && !compactFile}

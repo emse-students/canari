@@ -22,6 +22,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { postGalleryLayout } from '$lib/utils/posts/postGalleryLayout';
   import { Log } from '$lib/utils/Log';
+  import { usesCompactDocumentRows } from '$lib/utils/posts/documentRows';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -80,15 +81,8 @@
   const documentMedia = $derived<PostMediaRef[]>(
     postMedia.filter((media) => !isLightboxable(media))
   );
-  /**
-   * SEVERAL DOCUMENTS ARE A LIST OF ROWS, ONE IS A CARD (owner, 2026-11-02): each file carried its
-   * own first-page preview, so a post of five PDFs was a column of five pages. From two files on
-   * every file is a compact row - icon, name, size, download - with no preview and no download
-   * until it is tapped; audio is not a file and keeps its player.
-   */
-  const compactDocuments = $derived(
-    documentMedia.filter((media) => resolveMediaType(media) === 'file').length >= 2
-  );
+  /** From two files on every file is a compact row (`usesCompactDocumentRows`, the one rule). */
+  const compactDocuments = $derived(usesCompactDocumentRows(documentMedia));
   /** Square cells and a "+N" past four (`postGalleryLayout`), for a post of two media or more. */
   const gallery = $derived(postGalleryLayout(lightboxMedia.length));
 

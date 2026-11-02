@@ -1879,10 +1879,11 @@ export class PostsService {
     }
     post.markdown = data.markdown;
 
+    // `media` wins over the legacy `images`; a null `media` now falls through to `images` (it used to
+    // write null) and, with neither, leaves the stored attachments alone.
     const nextMedia = data.media ?? data.images;
     if (nextMedia !== undefined) {
-      // Refused past the cap unless the post already held that many: an old post is never stranded.
-      assertWithinPostAttachmentCap(nextMedia.length, post.media?.length ?? 0);
+      assertWithinPostAttachmentCap(nextMedia.length);
       post.media = nextMedia;
     }
 

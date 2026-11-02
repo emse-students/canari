@@ -981,8 +981,26 @@
   "post_composer_camera": "Open the camera",
   "post_composer_file": "File",
   "post_attachments_counter": "{count}/{max} attachments",
+  "post_attachments_counter_with_status": "{counter} - {status}",
   "post_attachments_full": "A post holds at most {max} attachments.",
-  "post_attachments_partial": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+  "post_attachments_partial": [
+    {
+      "declarations": [
+        "input taken",
+        "input leftOut",
+        "input max",
+        "local takenPlural = taken: plural",
+        "local leftPlural = leftOut: plural"
+      ],
+      "selectors": ["takenPlural", "leftPlural"],
+      "match": {
+        "takenPlural=one leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=one leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=other leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=other leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments."
+      }
+    }
+  ],
   "post_attachments_too_many": "A post holds at most {max} attachments. Remove some and try again.",
   "post_composer_formatting": "Formatting",
   "post_composer_caption_toggle": "Caption",
@@ -3742,6 +3760,7 @@
   "channel_poll_vote_error": "Could not vote",
   "pdf_preview_alt": "Preview of the document's first page",
   "pdf_open_document_label": "Open the document",
+  "post_file_ready_to_save": "Ready - tap to save",
   "pdf_viewer_page_alt": "Page {page} of {total}",
   "pdf_viewer_page_count": "{count} pages",
   "pdf_viewer_zoom_in": "Zoom in",

@@ -117,14 +117,52 @@ describe('updatePost and the attachment cap', () => {
     expect(e).toBeInstanceOf(BadRequestException);
   });
 
-  it('still edits a legacy post that holds 12, as long as it does not grow', async () => {
-    const same = makeService(stored(12));
-    await same.service.updatePost('p1', 'a', { markdown: 'edited', media: items(12) });
-    expect(same.saved).toHaveLength(1);
-
-    const grow = makeService(stored(12));
+  it('refuses a post already holding more than 10 that is written over the cap again', async () => {
+    const { service } = makeService(stored(12));
     await expect(
-      grow.service.updatePost('p1', 'a', { markdown: 'x', media: items(13) })
+      service.updatePost('p1', 'a', { markdown: 'x', media: items(12) })
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('with both `media` and the legacy `images`, `media` is the one counted', async () => {
+    const ok = makeService(stored(1));
+    await ok.service.updatePost('p1', 'a', { markdown: 'x', media: items(2), images: items(11) });
+    expect(ok.saved).toHaveLength(1);
+
+    const over = makeService(stored(1));
+    await expect(
+      over.service.updatePost('p1', 'a', { markdown: 'x', media: items(11), images: items(2) })
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('a null `media` falls through to `images`, and with neither leaves the attachments alone', async () => {
+    const viaImages = makeService(stored(3));
+    await viaImages.service.updatePost('p1', 'a', {
+      markdown: 'x',
+      media: null as never,
+      images: items(2),
+    });
+    expect(viaImages.saved[0].media).toHaveLength(2);
+
+    const neither = makeService(stored(3));
+    await neither.service.updatePost('p1', 'a', { markdown: 'x', media: null as never });
+    expect(neither.saved[0].media).toHaveLength(3);
+  });
+});
+
+describe('createPost with both `media` and `images`', () => {
+  it('counts `media`, which wins', async () => {
+    const { service, saved } = makeService();
+    await service.createPost(
+      { markdown: 'x', authorId: 'a', media: items(2), images: items(11) },
+      false
+    );
+    expect(saved).toHaveLength(1);
+    await expect(
+      service.createPost(
+        { markdown: 'x', authorId: 'a', media: items(11), images: items(2) },
+        false
+      )
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

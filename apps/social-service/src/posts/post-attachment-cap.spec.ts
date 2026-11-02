@@ -35,10 +35,4 @@ describe('post attachment cap', () => {
       max: 10,
     });
   });
-
-  it('lets a legacy post over the cap be edited down or kept, never grown', () => {
-    expect(() => assertWithinPostAttachmentCap(12, 12)).not.toThrow();
-    expect(() => assertWithinPostAttachmentCap(11, 12)).not.toThrow();
-    expect(() => assertWithinPostAttachmentCap(13, 12)).toThrow(BadRequestException);
-  });
 });

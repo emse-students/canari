@@ -1013,8 +1013,26 @@
   "post_composer_camera": "Ouvrir la caméra",
   "post_composer_file": "Fichier",
   "post_attachments_counter": "{count}/{max} pièces jointes",
+  "post_attachments_counter_with_status": "{counter} - {status}",
   "post_attachments_full": "Une publication contient au maximum {max} pièces jointes.",
-  "post_attachments_partial": "{taken} ajoutées, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes.",
+  "post_attachments_partial": [
+    {
+      "declarations": [
+        "input taken",
+        "input leftOut",
+        "input max",
+        "local takenPlural = taken: plural",
+        "local leftPlural = leftOut: plural"
+      ],
+      "selectors": ["takenPlural", "leftPlural"],
+      "match": {
+        "takenPlural=one leftPlural=one": "{taken} ajoutée, {leftOut} laissée de côté : une publication contient au maximum {max} pièces jointes.",
+        "takenPlural=one leftPlural=other": "{taken} ajoutée, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes.",
+        "takenPlural=other leftPlural=one": "{taken} ajoutées, {leftOut} laissée de côté : une publication contient au maximum {max} pièces jointes.",
+        "takenPlural=other leftPlural=other": "{taken} ajoutées, {leftOut} laissées de côté : une publication contient au maximum {max} pièces jointes."
+      }
+    }
+  ],
   "post_attachments_too_many": "Une publication contient au maximum {max} pièces jointes. Retirez-en quelques-unes et réessayez.",
   "post_composer_formatting": "Mise en forme",
   "post_composer_caption_toggle": "Légende",
@@ -3742,6 +3760,7 @@
   "channel_poll_vote_error": "Vote impossible",
   "pdf_preview_alt": "Aperçu de la première page du document",
   "pdf_open_document_label": "Ouvrir le document",
+  "post_file_ready_to_save": "Prêt - touchez pour enregistrer",
   "pdf_viewer_page_alt": "Page {page} sur {total}",
   "pdf_viewer_page_count": "{count} pages",
   "pdf_viewer_zoom_in": "Agrandir",

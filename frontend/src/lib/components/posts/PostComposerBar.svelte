@@ -116,6 +116,15 @@
   let formatting = $state(false);
   /** The post holds the most attachments it may: nothing more can be added. */
   const full = $derived(attachmentsFull(attachmentCount));
+  /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
+  const statusLine = $derived.by(() => {
+    if (attachmentCount === 0) return status;
+    const counter = m.post_attachments_counter({
+      count: attachmentCount,
+      max: POST_ATTACHMENTS_MAX,
+    });
+    return status ? m.post_attachments_counter_with_status({ counter, status }) : counter;
+  });
   const fullChip = 'pointer-events-none opacity-50';
   /** The in-app camera is open over the composer. */
   let cameraOpen = $state(false);
@@ -332,13 +341,12 @@
     >
       <ALargeSmall size={20} strokeWidth={2.25} />
     </button>
-    <span class="text-text-muted text-2xs min-w-0 flex-1 truncate font-semibold">
-      {#if attachmentCount > 0}
-        <span class={full ? 'text-amber-700 dark:text-amber-400' : ''} data-attachment-counter
-          >{m.post_attachments_counter({ count: attachmentCount, max: POST_ATTACHMENTS_MAX })}</span
-        >{status ? ' - ' : ''}
-      {/if}{status}
-    </span>
+    <span
+      class="text-2xs min-w-0 flex-1 truncate font-semibold {full
+        ? 'text-amber-700 dark:text-amber-400'
+        : 'text-text-muted'}"
+      data-attachment-counter={attachmentCount > 0 ? '' : undefined}>{statusLine}</span
+    >
     {@render action()}
   </div>
 </div>

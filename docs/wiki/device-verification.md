@@ -666,6 +666,22 @@ works, which only a screenshot caught. And a mounted `<img>` proves nothing on i
 picture keeps its `src` - so the assertion has to be `naturalWidth > 0`. Step 1 (a PDF in a POST) is
 still owed.
 
+
+## M-bis. Several documents in a post: compact rows, and the save that needs its own tap - owed on iPhone
+
+**Proves** the compact document rows of [posts](frontend/modules/posts.md#several-documents-compact-rows-and-a-cap-of-ten-attachments-owner-2026-11-02).
+A row fetches nothing until tapped, so a SAVE on an unfetched row is a download that finishes AFTER
+the tap; the code therefore never saves from there - the row turns "Pret - touchez pour enregistrer"
+and the save runs on a second tap, inside a gesture. Whether WKWebView (the iOS app) really accepts
+that second tap, and whether a save started from the first one would have been refused, only the
+iPhone 12 can say.
+
+1. Post with three PDFs: three rows, no preview, no network request for the files (the log shows no
+   `downloadAndDecrypt`).
+2. Tap a row: a spinner, then the in-app reader opens. Tap another row while the first loads: ignored.
+3. Tap a row's download button: spinner, then "Pret - touchez pour enregistrer"; tap it again: the
+   share/save sheet appears and the file is the right one.
+4. A post with one PDF still shows its first page and saves in one tap.
 ---
 
 ## N. Offline unlock and the promotion back - owed on BOTH platforms

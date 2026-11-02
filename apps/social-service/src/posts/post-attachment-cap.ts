@@ -6,8 +6,9 @@ import { BadRequestException } from '@nestjs/common';
  * the composers (`frontend/src/lib/posts/attachmentCap.ts`) so the refusal below is a safety net
  * they normally never reach.
  *
- * It binds WRITES only. A post stored before the cap with more attachments still loads and renders,
- * and can still be edited as long as the edit does not grow it (`assertWithinPostAttachmentCap`).
+ * It binds WRITES only: a stored post with more would still load and render. None exists - measured
+ * on production on 2026-11-02, 0 of 213 posts held more than 10 (the maximum is 6), and 0 on dev - so
+ * there is no exception for an edit: any write over the cap is refused, create or edit alike.
  */
 export const POST_ATTACHMENTS_MAX = 10;
 
@@ -23,13 +24,7 @@ export function postAttachmentsTooManyRefusal(count: number): BadRequestExceptio
   });
 }
 
-/**
- * Throws the refusal when a write leaves `count` attachments, more than the cap AND more than the
- * post already held (`previous`, 0 for a new post): an old post over the cap may be edited down or
- * left as it is, never grown.
- */
-export function assertWithinPostAttachmentCap(count: number, previous = 0): void {
-  if (count > POST_ATTACHMENTS_MAX && count > previous) {
-    throw postAttachmentsTooManyRefusal(count);
-  }
+/** Throws the refusal when a write leaves `count` attachments, more than {@link POST_ATTACHMENTS_MAX}. */
+export function assertWithinPostAttachmentCap(count: number): void {
+  if (count > POST_ATTACHMENTS_MAX) throw postAttachmentsTooManyRefusal(count);
 }

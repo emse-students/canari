@@ -621,32 +621,45 @@ already fixed `aspect-square` thumbnails in a scrolling row.
 A post of five PDFs was a column of five first-page previews, up to 22rem each. Images were already
 compacted into the gallery; documents were not.
 
-- **One document is a card, several are a list.** `PostContent` counts the post's `file` media
-  (`compactDocuments`): exactly one keeps the file row plus the first-page preview; from two on EVERY
-  file is a compact row - icon, name, size, download, NO preview - passed to `PostMedia` as
-  `compact`. Audio is not a document and keeps its player. Images keep the gallery, unchanged; the
-  rows sit under it as the cards did. Every surface that draws a post's attachments goes through
-  `PostContent` (the feed, the post page, community and channel posts via `PostCard`, and the
-  moderation preview), so one place decides.
+- **One document is a card, several are a list.** `usesCompactDocumentRows`
+  (`utils/posts/documentRows.ts`, the ONE rule) counts a post's `file` media: exactly one keeps the
+  file row plus the first-page preview; from two on EVERY file is a compact row - icon, name, size,
+  download, NO preview - passed to `PostMedia` as `compact`. Audio is not a document and keeps its
+  player. Images keep the gallery, unchanged; the rows sit under it as the cards did. The rule is
+  read by `PostContent` (the feed, the post page, community and channel posts via `PostCard`, the
+  moderation preview) and by `EditPostForm`'s strip of existing attachments.
 - **A compact row downloads nothing until it is asked.** It is drawn from the metadata the post
-  already holds (`PostMedia`, `compactFile`); the tap on a PDF row, or the download button, starts
-  the fetch and runs the request once the file is in (`activate`, `pendingAction`). A failure
-  falls through to the ordinary retry card. The row and the full card are ONE snippet (`fileCard`),
-  so they cannot drift.
+  already holds (`PostMedia`, `compactFile`); the row and the full card are ONE snippet
+  (`fileCard`). What a tap does (`activate`):
+  - **Feedback**: while the fetch runs the card is `aria-busy` and the download icon is a spinner.
+  - **The first request wins**: a second tap while one is pending is ignored (it used to overwrite it).
+  - **An open** runs as soon as the file is in (showing the viewer needs no gesture). **A save does
+    not**: a download started from an effect, after the tap, is what WKWebView and Tauri may refuse,
+    so the row turns "ready - tap to save" and the save runs on that second tap. The iPhone reading
+    is owed ([device-verification](../../device-verification.md#m-bis-several-documents-in-a-post-compact-rows-and-the-save-that-needs-its-own-tap---owed-on-iphone)).
+  - **A failure drops the pending request.** "Reessayer" fetches again and the row is then simply
+    ready: the next tap acts at once, the old request never comes back by itself.
+  - **A tap beats `deferred`**: a row far from the viewport still fetches when tapped.
 - **The cap is ten attachments per post, images and documents together.** The constant is stated
   three times and pinned by one file, `libs/contracts/post-attachments.json` (`max`, `code`):
   `posts/post-attachment-cap.ts` (social-service), `lib/posts/attachmentCap.ts` (frontend), each
   spec asserting equality with it.
+  - **Measured 2026-11-02**: production holds 213 posts and none has more than 10 attachments (the
+    maximum is 6); dev has none either. So there is **no escape hatch for old posts**: every write
+    over ten is refused, create or edit alike. Reading is untouched - a stored post renders whatever
+    it holds.
   - **Server.** `PostsService.createPost` and `updatePost`, the single write funnel, refuse past it
     with a `400` carrying `code: POST_ATTACHMENTS_TOO_MANY` (and `max`); it is checked there and not
     by an `@ArrayMaxSize` because the global `ValidationPipe` answers a message list with no code.
-    The cap binds WRITES: a stored post with more still loads, and an edit is refused only when it
-    both passes ten AND grows the post, so an old post can be edited down or left as it is.
+    `media` wins over the legacy `images` when both are sent. **Behaviour change**: on an edit, a
+    `media: null` used to write null over the stored attachments; it now falls through to `images`,
+    and with neither leaves them alone (tested in `posts.service.attachment-cap.spec.ts`).
   - **Composer.** `PostComposerBar` takes `attachmentCount`, disables its chips at ten and shows
     "n/10"; `CreatePostForm` and `EditPostForm` (kept media counted) pass every route - picker,
-    camera, drop, paste - through `admitAttachments`, which takes as many files as fit, in order,
-    and toasts how many were left out. The server's code is mapped to the same sentence in
-    `publishFailureMessage`, by code and never by message.
+    camera, drop, paste, and a restored draft - through `admitAttachments`, which takes as many files
+    as fit, in order, and toasts how many were left out (a Paraglide plural in fr and en). Both
+    also refuse BEFORE the upload loop, so no blob is sent only to be refused. The server's code is
+    mapped to the same sentence in `publishFailureMessage`, by code and never by message.
 
 ## PDF previews, and the in-app reader
 
