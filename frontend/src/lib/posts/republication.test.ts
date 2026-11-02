@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AssociationPermissionFlag, type Association } from '$lib/associations/api';
 import type { PostEntity } from './api';
 import {
+  institutionAudienceWarning,
   pendingRequests,
   personalRequestCandidates,
   personalRequestRefusalMessage,
@@ -90,15 +91,20 @@ describe('republishCandidates', () => {
     expect(republishCandidates(mine, post, false).map((a) => a.id)).toEqual(['a']);
   });
 
-  it('leaves out the post own association, a republisher, a list and an archived one', () => {
+  it('leaves out the post own association, a republisher, an archived one and an unlisted kind', () => {
     const mine = [
       asso('own', { permissions: POST_AS }),
       asso('done', { permissions: POST_AS }),
-      asso('list', { permissions: POST_AS, type: 'list' }),
       asso('old', { permissions: POST_AS, archived: true }),
+      asso('club', { permissions: POST_AS, type: 'club' as Association['type'] }),
       asso('ok', { permissions: POST_AS }),
     ];
     expect(republishCandidates(mine, post, false).map((a) => a.id)).toEqual(['ok']);
+  });
+
+  it('offers a campaign list, as the server accepts since 2026-10-31', () => {
+    const list = asso('list', { permissions: POST_AS, type: 'list' });
+    expect(republishCandidates([list], post, false).map((a) => a.id)).toEqual(['list']);
   });
 
   it('hands a global admin every association, flags aside', () => {
@@ -119,9 +125,67 @@ describe('institutions republish like associations (WP6e)', () => {
 });
 
 describe('proposalCandidates', () => {
-  it('offers every association that does not carry the post yet', () => {
-    const directory = [asso('own'), asso('done'), asso('x'), asso('l', { type: 'list' })];
-    expect(proposalCandidates(directory, post).map((a) => a.id)).toEqual(['x']);
+  it('offers every entity of a listed kind that does not carry the post yet', () => {
+    const directory = [
+      asso('own'),
+      asso('done'),
+      asso('x'),
+      asso('l', { type: 'list' }),
+      asso('club', { type: 'club' as Association['type'] }),
+    ];
+    expect(proposalCandidates(directory, post).map((a) => a.id)).toEqual(['x', 'l']);
+  });
+});
+
+describe("institutionAudienceWarning - an institution's potential audience (owner, 2026-11-02)", () => {
+  it('warns of nothing for a request that is not an institution', () => {
+    expect(institutionAudienceWarning(null)).toEqual([]);
+    expect(institutionAudienceWarning(undefined)).toEqual([]);
+  });
+
+  it('says everyone plainly, and the staff side when staff belong to it', () => {
+    expect(
+      institutionAudienceWarning({
+        everyone: true,
+        spaces: [{ campus: null, formation: null }],
+        staffMembers: true,
+      })
+    ).toEqual([
+      m.republication_requests_audience_everyone(),
+      m.republication_requests_audience_staff(),
+    ]);
+  });
+
+  it('names the spaces it reaches otherwise, a null side read as "every"', () => {
+    const lines = institutionAudienceWarning({
+      everyone: false,
+      spaces: [
+        { campus: 'gardanne', formation: null },
+        { campus: 'saint-etienne', formation: 'ICM' },
+      ],
+      staffMembers: false,
+    });
+    expect(lines).toEqual([
+      m.republication_requests_audience_spaces({
+        spaces: [
+          m.republication_requests_audience_space({
+            formation: m.republication_requests_audience_any_formation(),
+            campus: m.profile_campus_gardanne(),
+          }),
+          m.republication_requests_audience_space({
+            formation: 'ICM',
+            campus: m.profile_campus_saint_etienne(),
+          }),
+        ].join(', '),
+      }),
+    ]);
+    expect(lines.join(' ')).not.toContain(m.republication_requests_audience_staff());
+  });
+
+  it('says only its members would see it when it addresses no space', () => {
+    expect(institutionAudienceWarning({ everyone: false, spaces: [], staffMembers: true })).toEqual(
+      [m.republication_requests_audience_none(), m.republication_requests_audience_staff()]
+    );
   });
 });
 
@@ -137,18 +201,23 @@ describe('asking the author of a personal post (D38b)', () => {
     ],
   } as unknown as PostEntity;
 
-  it('offers only associations, held POST_AS_ASSO, not archived, not carrying, not asked yet', () => {
+  it('offers every listed kind (owner, 2026-11-02), held POST_AS_ASSO, not archived, not carrying, not asked yet', () => {
     const mine = [
       asso('ok', { permissions: POST_AS }),
       asso('noflag', { permissions: 0 }),
       asso('inst', { permissions: POST_AS, type: 'institution' }),
       asso('list', { permissions: POST_AS, type: 'list' }),
+      asso('club', { permissions: POST_AS, type: 'club' as Association['type'] }),
       asso('old', { permissions: POST_AS, archived: true }),
       asso('done', { permissions: POST_AS }),
       asso('waiting', { permissions: POST_AS }),
       asso('refused', { permissions: POST_AS }),
     ];
-    expect(personalRequestCandidates(mine, personal).map((a) => a.id)).toEqual(['ok']);
+    expect(personalRequestCandidates(mine, personal).map((a) => a.id)).toEqual([
+      'ok',
+      'inst',
+      'list',
+    ]);
   });
 
   it('names the requests still waiting, and leaves a refused one out', () => {

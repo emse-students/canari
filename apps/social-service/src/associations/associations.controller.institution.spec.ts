@@ -67,7 +67,11 @@ describe('institutions in the listings and the republishing allowlist', () => {
     ]);
   });
 
-  it('a person is asked to republish for an association only, never a list', () => {
-    expect(PERSONAL_REPUBLISHING_ASSOCIATION_TYPES).toEqual(['association']);
+  it('a person may be asked to republish by every kind (owner, 2026-11-02), and by nothing unlisted', () => {
+    expect([...PERSONAL_REPUBLISHING_ASSOCIATION_TYPES].sort()).toEqual([
+      'association',
+      'institution',
+      'list',
+    ]);
   });
 });

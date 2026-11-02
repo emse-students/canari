@@ -401,7 +401,7 @@ refusals and the proof are on
 [profiles-and-access](../../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 On the card, three served fields:
 
-- `canRequestRepublication` draws "Republier au nom d'une association", which opens
+- `canRequestRepublication` draws "Demander à republier", which opens
   `RepublishDialog` in `request` mode (`personalRequestCandidates`).
 - `republicationRequests` draws "Demande envoyee au nom de X" under the header and "Annuler la
   demande de X" in the menu (`withdrawProposal`).

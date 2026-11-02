@@ -153,9 +153,7 @@ it('offers the request to the author, and the cancel of a waiting request, only 
   flushSync();
 
   const items = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
-  const ask = items.find((el) =>
-    el.textContent?.includes("Republier au nom d'une association")
-  ) as HTMLElement;
+  const ask = items.find((el) => el.textContent?.includes('Demander à republier')) as HTMLElement;
   expect(ask).toBeDefined();
   const cancel = items.find((el) => el.textContent?.includes('Annuler la demande de BDA'));
   (cancel as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
@@ -170,7 +168,7 @@ it('offers no request entry by default', () => {
   const labels = Array.from(document.body.querySelectorAll('[role="menuitem"]')).map(
     (el) => el.textContent ?? ''
   );
-  expect(labels.some((t) => t.includes("Republier au nom d'une association"))).toBe(false);
+  expect(labels.some((t) => t.includes('Demander à republier'))).toBe(false);
 });
 
 function openMenu(props: Parameters<typeof mountMenu>[0]) {

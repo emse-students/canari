@@ -69,7 +69,7 @@ describe('PostsService republication fields', () => {
           [...new Set([...(opts.republishAs ?? []), ...(opts.personalAs ?? [])])].map(
             (associationId) => ({
               associationId,
-              type: (opts.personalAs ?? []).includes(associationId) ? 'association' : 'institution',
+              type: (opts.personalAs ?? []).includes(associationId) ? 'institution' : 'club',
               archived: false,
             })
           )
@@ -204,8 +204,9 @@ describe('PostsService republication fields', () => {
       );
     });
 
-    it('never offers it in the name of an association of a kind that may not ask', async () => {
-      // A2 is an institution here: it republishes association posts, never a person's.
+    it('never offers it in the name of an association of a kind nobody listed', async () => {
+      // A2 is of a kind nobody listed here (`personalAs` rows are institutions, which may ask since
+      // 2026-11-02): it is never offered.
       const service = makeService({ post: personalPost, republishAs: [A2], requestable: true });
       expect((await service.getById('p1', { viewerId: 'reader' })).canRequestRepublication).toBe(
         false

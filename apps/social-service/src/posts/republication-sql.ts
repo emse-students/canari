@@ -11,12 +11,20 @@ export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = [
 ];
 
 /**
- * THE KINDS OF ASSOCIATION THAT MAY ASK A PERSON TO REPUBLISH THEIR POST (D38b): associations only.
- * The user asked for "republier en tant qu'association" (2026-10-19), and an INSTITUTION carrying a
- * student's personal post is what D34-D36 rule out ("never a student's personal post" reaches the
- * personnel side): it stays refused until somebody decides otherwise. A list is refused here too (the owner's 2026-10-31 widening covers republishing INTO a list, not a person's consent to it).
+ * THE KINDS OF ASSOCIATION THAT MAY ASK A PERSON TO REPUBLISH THEIR POST (D38b), an allowlist of its
+ * own: a type nobody listed stays refused. Associations since D38b (2026-10-19); LISTS and
+ * INSTITUTIONS since the owner's decision of 2026-11-02 - "Oui partout sans exception. Si un
+ * etudiant demande a l'institution de le republier, je ne vois pas le probleme ?". So an institution
+ * may carry a student's personal post to its audience, its staff members included, which amends
+ * D34-D36's "never a student's personal post reaches the personnel side" for THIS consented path
+ * only: nothing is visible before the author accepts, and the author's request names the
+ * institution. A nominative read grant still never opens a personal post (WP7, a different rule).
  */
-export const PERSONAL_REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association'];
+export const PERSONAL_REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = [
+  'association',
+  'list',
+  'institution',
+];
 
 /** How a card names an association that republished its post. */
 export interface Republisher {

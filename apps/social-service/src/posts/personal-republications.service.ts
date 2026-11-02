@@ -22,6 +22,7 @@ import {
 } from '../proposals/proposals.service';
 import { previewOf } from '../push/push-content';
 import { REPUBLICATION_REQUESTS_TARGET } from '../push/push-target';
+import { inReviewCohortSql } from '../review-cohort';
 import {
   newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
@@ -318,6 +319,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
         )
       : [];
     const subjects = new Map(rows.map((r) => [r.id, r]));
+    const audiences = await this.institutionAudiencesOf(proposals.map((p) => p.fromAssociationId));
     for (const proposal of proposals) {
       const subject = subjects.get(proposal.subjectId);
       if (!subject) continue;
@@ -326,7 +328,60 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
            FROM (${newlyReachedByPersonalRepublicationSql(subject.feedNotifiedAt !== null)}) nr`,
         [proposal.subjectId, proposal.fromAssociationId]
       );
-      out.set(proposal.id, { ...subjectView(subject), newlyReached: reached[0]?.n ?? 0 });
+      out.set(proposal.id, {
+        ...subjectView(subject),
+        newlyReached: reached[0]?.n ?? 0,
+        institutionAudience: audiences.get(proposal.fromAssociationId) ?? null,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * THE WARNING AN AUTHOR READS BEFORE AN INSTITUTION CARRIES THEIR POST (owner, 2026-11-02: "Une
+   * institution n'est pas forcement l'ecole, mais oui, ca peut etre pertinent d'afficher un
+   * avertissement sur l'audience potentielle d'une institution"). For each proposing association
+   * that is an INSTITUTION, read from its CURRENT state, never named after the School:
+   *
+   * - `everyone`: one of its rules addresses every campus and every formation;
+   * - `spaces`: its rules, as (campus, formation) with null meaning "every" - what it reaches;
+   * - `staffMembers`: at least one of its MEMBERS is on the staff side - a campus and no cursus, the
+   *   D34-D36 personnel `campusWideReaderCampus` recognises (a review account never counts). A rule
+   *   reaches spaces, and staff hold none, so membership is how the staff side reads what an
+   *   institution carries; a nominative read grant never opens a personal post (WP7).
+   *
+   * Any other kind answers nothing: the owner asked the warning for institutions, whose audience is
+   * the one an author may not guess. ONE query for the whole inbox.
+   */
+  private async institutionAudiencesOf(
+    associationIds: string[]
+  ): Promise<Map<string, InstitutionAudience>> {
+    const out = new Map<string, InstitutionAudience>();
+    const ids = [...new Set(associationIds)];
+    if (ids.length === 0) return out;
+    const rows: {
+      id: string;
+      rules: { campus: string | null; formation: string | null }[];
+      staffMembers: boolean;
+    }[] = await this.repo.manager.query(
+      `SELECT a.id,
+              COALESCE((SELECT json_agg(json_build_object('campus', r.campus, 'formation', r.formation)
+                                ORDER BY r.campus NULLS FIRST, r.formation NULLS FIRST)
+                          FROM association_audiences r WHERE r."associationId" = a.id), '[]'::json) AS rules,
+              EXISTS (SELECT 1 FROM association_members am JOIN users u ON u.id = am."userId"
+                       WHERE am."associationId" = a.id AND u.campus IS NOT NULL
+                         AND (u.cursus IS NULL OR u.cursus = '[]'::jsonb)
+                         AND NOT ${inReviewCohortSql('u.id')}) AS "staffMembers"
+         FROM associations a
+        WHERE a.id = ANY($1::uuid[]) AND a.type = 'institution'`,
+      [ids]
+    );
+    for (const row of rows) {
+      const everyone = row.rules.some((r) => r.campus === null && r.formation === null);
+      out.set(row.id, { everyone, spaces: row.rules, staffMembers: row.staffMembers === true });
+      this.logger.debug(
+        `[REPOST-P] institution ${row.id.slice(0, 8)} audience: everyone=${everyone} rules=${row.rules.length} staff=${row.staffMembers}`
+      );
     }
     return out;
   }
@@ -413,7 +468,10 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
   /** The proposing association exists, is of a kind that may ask, and still speaks (not archived). */
   private async assertProposingAssociation(manager: EntityManager, id: string): Promise<void> {
     const association = await this.loadAssociation(manager, id);
-    if (!association) throw new NotFoundException('Association not found');
+    if (!association) {
+      this.logger.debug(`[REPOST-P] ${id.slice(0, 8)} may not ask: no such association`);
+      throw new NotFoundException('Association not found');
+    }
     if (
       !PERSONAL_REPUBLISHING_ASSOCIATION_TYPES.includes(association.type) ||
       association.archived
@@ -427,6 +485,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
         'This association may not republish a personal post'
       );
     }
+    this.logger.debug(`[REPOST-P] ${id.slice(0, 8)} may ask: type ${association.type}`);
   }
 
   /**
@@ -478,6 +537,16 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
 }
 
 /** A post as a request's description needs it. */
+/** An institution's potential audience, as the author's request shows it (`institutionAudiencesOf`). */
+export interface InstitutionAudience {
+  /** One of its rules addresses every campus and every formation. */
+  everyone: boolean;
+  /** Its rules: a null side means "every campus" or "every formation". */
+  spaces: { campus: string | null; formation: string | null }[];
+  /** At least one of its members is on the staff side (a campus, no cursus). */
+  staffMembers: boolean;
+}
+
 interface SubjectRow {
   id: string;
   markdown: string | null;

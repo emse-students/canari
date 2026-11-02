@@ -738,7 +738,7 @@ State: **built** = in a draft PR, **next** = decided, not built, **open** = to s
 | Population | Space | Sees student content | State |
 | --- | --- | --- | --- |
 | Student or alumnus (no distinction) | formation x campus (an alumnus keeps the former one) | what their spaces and memberships reach | built |
-| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, built 2026-10-31 as WP-F5: [as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)) | built |
+| Personnel (School, ME, Alumni association) | institution x campus | only by membership or an explicit rule; never a student's personal post, unless the student accepted them as a follower (decided 2026-10-25, built 2026-10-31 as WP-F5: [as built](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)), or accepted an institution's request to carry it, which a staff member of that institution then reads (amended by the owner 2026-11-02 for this consented path only: [D38b amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)); a nominative read grant still never opens one (WP7) | built |
 
 Order: WP6c (BDE per space, `isBDE` deleted) comes first (D35). A new association reaches its creator's
 spaces by default (D36, built - see below; NOT an institution, which starts with no rule, WP6e). A personnel is DECLARED at enrolment, nothing more (user, 2026-10-04), and one person may be a student
@@ -751,8 +751,8 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a list or of a members-only association (WP-F6, since `v1.6.1`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
-| Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
+| Personal post | author and people sharing a space; the readers of an association, a list or an institution its author let carry it (D38b, every kind since 2026-11-02: [amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); an institution only with the author's consent; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a members-only entity (WP-F6, lists admitted 2026-11-02, since `v1.6.1`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
+| Republication (D38) | associations, lists (2026-10-31) and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent, asked by any of the three kinds (D38b, amended 2026-11-02); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
 | Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused, **selection SIGNED since 2026-10-06** ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)); "mine" is the signed-in agenda only |
@@ -1009,7 +1009,9 @@ integration case:**
 3. An association post: 400. D38's routes apply to it.
 4. An anonymous post: 400. An association carrying it would tie it back to its author.
 5. The proposer's own post: 400.
-6. An association of another kind (institution, list) or an archived one: 400.
+6. An association of a kind nobody listed (`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`; a list and
+   an institution were refused here until the owner's decision of 2026-11-02, [amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02))
+   or an archived one: 400.
 7. A block either way between the proposer and the author: 403.
 8. A post the association already carries: 409.
 9. A request that already stands (pending or refused): 409, from the unique index.
@@ -1138,9 +1140,9 @@ acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the pos
 
 **The client:**
 
-- The menu entry "Republier au nom d'une association" (`canRequestRepublication`) opens
+- The menu entry "Demander à republier" (`canRequestRepublication`) opens
   `RepublishDialog` in `request` mode. It lists the reader's HELD `POST_AS_ASSO` associations of
-  type `association`.
+  a kind that may ask - every kind since 2026-11-02 ([amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)).
 - The card shows "Demande envoyee au nom de X" for a pending request (`republicationRequests`),
   and the menu offers "Annuler la demande de X".
 - The inbox is `/notifications/requests`. `/notifications` links to it when something is waiting.
@@ -1340,6 +1342,78 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   another selection's signature, rotated key, unset key, internal caller), and a run against the local
   estate's real PostgreSQL.
 - **Staff reading, as verified (2026-10-07, local estate rebuilt at `62a02ba0d`, real PostgreSQL and a real session):** a sandbox reader with campus `saint-etienne` and `cursus = []` was signed `campus=saint-etienne` with no formation (201); `campus=gardanne` and `campus=saint-etienne&formation=ICM` were each a 403 `AGENDA_SELECTION_FORBIDDEN`. The signed `feed.ics` answered 200 `text/calendar` and the unsigned one 403 `AGENDA_SIGNATURE_REQUIRED`. The feed held the events of several formations of the campus (organisers whose audiences were ICM and ISMIN of that campus). The subscribe modal offered Campus "Saint-Etienne" and "Toutes les formations", carried `campus=saint-etienne&sig=` in its link and did not show the complete-your-profile text. The sandbox user's cursus was restored afterwards. Not read: a gardanne-only event staying out of the feed (no such organiser existed locally).
+
+### D38b amended - every kind may ask, and an institution's request shows its audience (owner, 2026-11-02)
+
+**The decision, verbatim:** *"Oui partout sans exception je pense. Si un étudiant demande à
+l'institution de le republier, je ne vois pas le problème ?"* - and, on the consent screen: *"Une
+institution n'est pas forcément l'école, mais oui, ça peut être pertinent d'afficher un
+avertissement sur l'audience potentielle d'une institution"*.
+
+It amends **D38b** (who may ask a person) and **D34-D36** ("never a student's personal post
+reaches the personnel side"), the latter **for this consented path only**.
+
+- **Asking a person (D38b)**: `PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`
+  (`posts/republication-sql.ts`) names `association`, `list` and `institution`. It keeps its own
+  allowlist, so a kind added later is refused (`REPOST_PERSONAL_ASSOCIATION_TYPE`) until someone
+  lists it. Every other D38b rule stands: nothing is visible before the author accepts, the
+  author may withdraw at any time, and the caps, blocks and anonymity refusals are unchanged.
+- **What an accepted institution reaches**: the republication disjunct of `postVisibleToUserSql`
+  was never typed, so the institution's audience reads the post - its members (a staff member
+  among them) and the spaces its rules reach. A staff member holds no space (a campus, no cursus),
+  so membership is how the staff side reads it.
+- **Member reposts (WP-F6)**: `MEMBER_REPOSTABLE_ASSOCIATION_TYPES` (`spaces/reader-spaces.ts`)
+  admits a LIST's post under the same conditions as an association's: at least one audience rule.
+  A members-only entity's post stays refused, whatever its kind.
+- **The warning**: for an INSTITUTION's request the author's inbox
+  (`GET /api/posts/me/republication-requests`) carries `details.institutionAudience`
+  (`institutionAudiencesOf`, `personal-republications.service.ts`), read from CURRENT state and
+  never named after the School:
+  - `everyone`: a `(NULL, NULL)` rule;
+  - `spaces`: the rules;
+  - `staffMembers`: a member with a campus and no cursus, the D34-D36 personnel; a review account
+    never counts.
+
+  `/notifications/requests` draws it (`institutionAudienceWarning`, `posts/republication.ts`):
+  - "tout le monde" said plainly;
+  - otherwise the spaces it reaches, or that only its members would see the post;
+  - and the staff side whenever staff belong to it.
+
+  Any other kind carries `null`.
+- **The client**:
+  - `personalRequestCandidates` offers the same three kinds;
+  - `republishCandidates` and `proposalCandidates` now also offer a LIST, which the server has
+    accepted since 2026-10-31 but the client had kept out;
+  - the menu entry reads "Demander à republier" ("Ask to share").
+
+**Every place that enforced D34-D36, and what this decision did to it:**
+
+| Place | Rule it holds | Same rule? | Done |
+| --- | --- | --- | --- |
+| `PERSONAL_REPUBLISHING_ASSOCIATION_TYPES` (server write and the card's offer, `PostsService.republishAsOf`) | which kinds may ask to carry a personal post | yes | widened to every kind |
+| `personalRequestCandidates` (client) | the same, as offered | yes | widened, mirrors the server |
+| `sharesSpaceWithAuthorSql` (`reader-spaces.ts`) | the DEFAULT reach of a personal post: a shared space, which staff never hold | no - nothing consented | unchanged |
+| the personal branch spliced without `readGrants` (WP7, decision 3) | a nominative read grant never opens a student's post | no - a grant is not the author's consent, and the author's count excludes it | unchanged, asserted again by the new case |
+| `acceptedFollowerOfAuthorSql` (WP-F5) | an accepted follower, a personnel included | already a consented lift | unchanged |
+| `IN_FEED_AUDIENCE_SQL` | who may open the feed at all | no | unchanged (an institution's staff member is admitted by membership) |
+| `AssociationsService.create` / `audience-policy.ts` (an institution starts with no rule, `everyone` is an institution's only) | an institution's audience | no | unchanged |
+| publishing AS an institution needs membership (`POST_AS_ASSO`; `EditMembersTab`'s default) | being personnel gives no right | no | unchanged |
+
+**Proof**:
+- `posts/personal-republications.integration.spec.ts`, against PostgreSQL:
+  - an institution asks;
+  - its staff member reads nothing before acceptance and the post after it, and is told once;
+  - a read-grant holder still reads nothing;
+  - the author's withdrawal ends it;
+  - a list asks and is refused;
+  - an unlisted kind and an archived one are refused;
+  - the warning follows the institution's rules and its staff membership.
+- `posts/member-reposts.integration.spec.ts`: a list's post is reposted and reaches the followers;
+  renamed to an unlisted type, it is refused, offered nothing and carries nothing.
+- `spaces/member-repostable.spec.ts` and `associations.controller.institution.spec.ts`: the two
+  allowlists.
+- The client's `republication.test.ts` and `page.senderGone.svelte.test.ts`: the warning on the
+  consent screen.
 
 ### WP6e institutions as built (2026-10-05)
 
@@ -1565,9 +1639,11 @@ security review before arming.
   reader who sees it ONLY through another member's repost may not: the author's consent covers one
   step of reach, not an unbounded chain. The write and the card ask the predicate with
   `memberReposts: false` (`FIRST_HAND`, `member-reposts.service.ts`).
-- **NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)**: an entity
-  post is repostable only when its association's type is ALLOWED - `type IN ('association',
-  'institution')`, an allowlist, so a type added later stays refused until listed - and addresses at
+- **NEVER THE POST OF A MEMBERS-ONLY ENTITY OR OF AN UNLISTED TYPE (owner, 2026-11-02)**: an entity
+  post is repostable only when its association's type is ALLOWED - `MEMBER_REPOSTABLE_ASSOCIATION_TYPES`,
+  an allowlist, so a type added later stays refused until listed; a LIST was refused here in the
+  morning and admitted the same day ("Oui partout sans exception", [amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)),
+  so every kind of today is on it - and addresses at
   least one space (an `association_audiences` row); an association with no rule is read by its
   members only, and a member's repost would carry its post past that circle. One clause,
   `memberRepostablePostSql` (`spaces/reader-spaces.ts`), read by the write (the 404 of a post not

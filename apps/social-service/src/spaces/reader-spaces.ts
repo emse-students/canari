@@ -316,22 +316,39 @@ export function memberRepostReachesUserSql(post: string, user: string): string {
 }
 
 /**
+ * THE KINDS OF ENTITY WHOSE POSTS A MEMBER REPOST MAY CARRY (WP-F6). An ALLOWLIST over
+ * `CHK_associations_type` (migration 075), so a type added later stays refused until someone lists
+ * it here. Every type of today is on it: an association and an institution since WP-F6, a LIST since
+ * the owner's decision of 2026-11-02 ("Oui partout sans exception"), which lifted the refusal of
+ * lists taken the same morning. The allowlist shape is kept on purpose rather than "any entity":
+ * the next type is a decision, never an accident.
+ */
+export const MEMBER_REPOSTABLE_ASSOCIATION_TYPES: readonly string[] = [
+  'association',
+  'list',
+  'institution',
+];
+
+/** `MEMBER_REPOSTABLE_ASSOCIATION_TYPES` as an SQL list of literals (constants, never user input). */
+const MEMBER_REPOSTABLE_TYPES_SQL = MEMBER_REPOSTABLE_ASSOCIATION_TYPES.map((t) => `'${t}'`).join(
+  ', '
+);
+
+/**
  * Post row `post` is one a member repost may carry at all (owner, 2026-11-02): a personal post, or
- * the post of an ASSOCIATION or an INSTITUTION that addresses at least one space (an
- * `association_audiences` rule). An ALLOWLIST of types (`CHK_associations_type`, migration 075:
- * 'association', 'list', 'institution'), so a type added later stays refused until someone lists
- * it: never the post of a LIST, and never that of an entity with no rule - one read by its MEMBERS
- * ONLY: what such an entity publishes is meant for that circle, and a member's repost would carry
- * it past it.
+ * the post of an entity of a LISTED type (`MEMBER_REPOSTABLE_ASSOCIATION_TYPES`) that addresses at
+ * least one space (an `association_audiences` rule) - never that of an entity with no rule, one read
+ * by its MEMBERS ONLY: what such an entity publishes is meant for that circle, and a member's repost
+ * would carry it past it.
  *
  * Read by the write (refused with the 404 of a post not seen), by the card's offer, and inside
- * `memberRepostCarriesSql` - so a repost written before the decision, or before the association lost
- * its last rule, reaches, names and dates nothing, with no row deleted. Read from state at every
- * query: an association that gains a rule makes its posts repostable again.
+ * `memberRepostCarriesSql` - so a repost written before its entity lost its last rule, or before its
+ * type left the list, reaches, names and dates nothing, with no row deleted. Read from state at every
+ * query: an entity that gains a rule makes its posts repostable again.
  */
 export function memberRepostablePostSql(post: string): string {
   return `(${post}."associationId" IS NULL OR EXISTS (SELECT 1 FROM associations vis_mrep_asso
-      WHERE vis_mrep_asso.id = ${post}."associationId" AND vis_mrep_asso.type IN ('association', 'institution')
+      WHERE vis_mrep_asso.id = ${post}."associationId" AND vis_mrep_asso.type IN (${MEMBER_REPOSTABLE_TYPES_SQL})
         AND EXISTS (SELECT 1 FROM association_audiences vis_mrep_arule
           WHERE vis_mrep_arule."associationId" = vis_mrep_asso.id)))`;
 }

@@ -82,3 +82,54 @@ describe('the inbox, an acceptance refused with 409', () => {
     expect(text).not.toContain(m.republication_requests_sender_gone());
   });
 });
+
+/**
+ * AN INSTITUTION'S REQUEST WARNS OF ITS POTENTIAL AUDIENCE (owner, 2026-11-02), drawn from what the
+ * server read of its rules and members - and nothing is drawn for an association's request.
+ */
+describe("the inbox, an institution's potential audience", () => {
+  async function render(details: RepublicationRequest['details']): Promise<HTMLElement> {
+    api.list.mockResolvedValue({ incoming: [{ ...request, details }] });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(Page, { target });
+    mounted.push(() => void unmount(app));
+    await settle();
+    return target;
+  }
+
+  it('says everyone plainly, and the staff side, for an institution addressing everyone', async () => {
+    const target = await render({
+      ...request.details!,
+      institutionAudience: {
+        everyone: true,
+        spaces: [{ campus: null, formation: null }],
+        staffMembers: true,
+      },
+    });
+    const text = target.querySelector('[data-testid="institution-audience-warning"]')?.textContent;
+    expect(text).toContain(m.republication_requests_audience_everyone());
+    expect(text).toContain(m.republication_requests_audience_staff());
+  });
+
+  it('names the spaces of an institution that does not address everyone, without staff', async () => {
+    const target = await render({
+      ...request.details!,
+      institutionAudience: {
+        everyone: false,
+        spaces: [{ campus: 'gardanne', formation: null }],
+        staffMembers: false,
+      },
+    });
+    const text = target.querySelector('[data-testid="institution-audience-warning"]')?.textContent;
+    expect(text).toContain(m.republication_requests_audience_any_formation());
+    expect(text).toContain(m.profile_campus_gardanne());
+    expect(text).not.toContain(m.republication_requests_audience_everyone());
+    expect(text).not.toContain(m.republication_requests_audience_staff());
+  });
+
+  it("draws no warning for an association's request", async () => {
+    const target = await render({ ...request.details!, institutionAudience: null });
+    expect(target.querySelector('[data-testid="institution-audience-warning"]')).toBeNull();
+  });
+});

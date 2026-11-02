@@ -5,6 +5,15 @@
  */
 import { AssociationPermissionFlag, type Association } from '$lib/associations/api';
 import type { PostEntity } from './api';
+import type { InstitutionAudience } from '$lib/proposals/api';
+import {
+  CAMPUSES,
+  FORMATIONS,
+  campusLabel,
+  formationLabel,
+  type Campus,
+  type Formation,
+} from '$lib/profile/miconnectProfile';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -60,11 +69,31 @@ export function republishedByText(
 }
 
 /**
- * Only associations and institutions republish - never a promo list (the server's `REPUBLISHING_ASSOCIATION_TYPES`).
- * Archived ones are left out: they no longer speak.
+ * The kinds that republish a post, the server's `REPUBLISHING_ASSOCIATION_TYPES`: an allowlist, so a
+ * kind added later is offered nothing until listed. Every kind of today: associations, institutions
+ * (WP6e) and campaign lists (owner, 2026-10-31).
  */
+const REPUBLISHING_KINDS: readonly Association['type'][] = ['association', 'list', 'institution'];
+
+/**
+ * The kinds that may ASK a person to republish their personal post (D38b), the server's
+ * `PERSONAL_REPUBLISHING_ASSOCIATION_TYPES` - its own allowlist. Every kind since the owner's
+ * decision of 2026-11-02 ("Oui partout sans exception"): an institution may carry a student's post
+ * to its audience, staff included, once the student accepts.
+ */
+const PERSONAL_REQUESTING_KINDS: readonly Association['type'][] = [
+  'association',
+  'list',
+  'institution',
+];
+
+/** A kind on `kinds`, not archived: an archived one no longer speaks. */
+function speaksAs(a: Association, kinds: readonly Association['type'][]): boolean {
+  return kinds.includes(a.type) && !a.archived;
+}
+
 function mayRepublishAtAll(a: Association): boolean {
-  return (a.type === 'association' || a.type === 'institution') && !a.archived;
+  return speaksAs(a, REPUBLISHING_KINDS);
 }
 
 /** Neither the post's own association nor one that already republished it. */
@@ -105,9 +134,9 @@ export function proposalCandidates(
 
 /**
  * The associations the reader may ASK the author of a personal post about (D38b): of the reader's
- * memberships, those holding `POST_AS_ASSO` - HELD, the administrator tier never stands in - of the
- * one kind that may ask (`association`, the server's `PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`),
- * not archived, not already carrying the post, and with no request that still stands for it.
+ * memberships, those holding `POST_AS_ASSO` - HELD, the administrator tier never stands in - of a
+ * kind that may ask (`PERSONAL_REQUESTING_KINDS`), not archived, not already carrying the post, and
+ * with no request that still stands for it.
  */
 export function personalRequestCandidates(
   mine: readonly Association[],
@@ -117,12 +146,50 @@ export function personalRequestCandidates(
   const asked = new Set((post.republicationRequests ?? []).map((r) => r.associationId));
   return mine.filter(
     (a) =>
-      a.type === 'association' &&
-      !a.archived &&
+      speaksAs(a, PERSONAL_REQUESTING_KINDS) &&
       keep(a) &&
       !asked.has(a.id) &&
       ((a.permissions ?? 0) & AssociationPermissionFlag.POST_AS_ASSO) !== 0
   );
+}
+
+/** One audience rule as words: "ICM · Saint-Etienne", a null side read as "every ...". */
+function audienceSpaceLabel(space: InstitutionAudience['spaces'][number]): string {
+  const campus =
+    space.campus === null
+      ? m.republication_requests_audience_any_campus()
+      : (CAMPUSES as readonly string[]).includes(space.campus)
+        ? campusLabel(space.campus as Campus)
+        : space.campus;
+  const formation =
+    space.formation === null
+      ? m.republication_requests_audience_any_formation()
+      : (FORMATIONS as readonly string[]).includes(space.formation)
+        ? formationLabel(space.formation as Formation)
+        : space.formation;
+  return m.republication_requests_audience_space({ formation, campus });
+}
+
+/**
+ * THE WARNING AN AUTHOR READS BEFORE AN INSTITUTION CARRIES THEIR POST (owner, 2026-11-02), one
+ * sentence a line, from the institution's audience as the server read it - never "the School", since
+ * an institution is not necessarily it. Everyone is said plainly; otherwise the spaces it reaches,
+ * or that only its members would; and the staff side whenever a staff member belongs to it. Empty
+ * for a request that is not an institution's (`null`).
+ */
+export function institutionAudienceWarning(
+  audience: InstitutionAudience | null | undefined
+): string[] {
+  if (!audience) return [];
+  const lines: string[] = [];
+  if (audience.everyone) lines.push(m.republication_requests_audience_everyone());
+  else if (audience.spaces.length === 0) lines.push(m.republication_requests_audience_none());
+  else {
+    const spaces = audience.spaces.map(audienceSpaceLabel).join(', ');
+    lines.push(m.republication_requests_audience_spaces({ spaces }));
+  }
+  if (audience.staffMembers) lines.push(m.republication_requests_audience_staff());
+  return lines;
 }
 
 /**

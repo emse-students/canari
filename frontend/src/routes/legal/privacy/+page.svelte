@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="01/11/2026"
+  updated="03/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -99,16 +99,19 @@
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
           plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          association peut vous demander de relayer une de vos publications personnelles : la
-          demande (l'association, le membre qui l'a faite, la publication) vous est adressée, et
-          rien n'est montré à son public tant que vous n'avez pas accepté. Vous pouvez retirer ce
-          relais à tout moment ; la demande est effacée avec la publication ou avec votre compte.
-          Vous pouvez publier ou commenter de façon anonyme, ou au nom d'une association dont vous
-          avez le droit de parler : les autres membres ne voient alors pas votre compte, mais la
-          modération et les administrateurs de la plateforme peuvent l'identifier (pour traiter un
-          signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
-          commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
-          votre compte, détaché de celui-ci.
+          association, une liste ou une institution peut vous demander de relayer une de vos
+          publications personnelles : la demande (l'association, la liste ou l'institution, le
+          membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
+          première fois et, pour une institution, son public possible) vous est adressée, et rien
+          n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
+          d'une institution, votre publication est vue de son public, y compris de ses membres qui
+          font partie du personnel. Vous pouvez retirer ce relais à tout moment ; la demande est
+          effacée avec la publication ou avec votre compte. Vous pouvez publier ou commenter de
+          façon anonyme, ou au nom d'une association dont vous avez le droit de parler : les autres
+          membres ne voient alors pas votre compte, mais la modération et les administrateurs de la
+          plateforme peuvent l'identifier (pour traiter un signalement, par exemple), et votre
+          compte reste responsable de ce que vous écrivez. Un commentaire écrit au nom d'une
+          association lui appartient : il reste si vous supprimez votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>
@@ -180,20 +183,21 @@
           n'est republiée qu'avec l'accord de son auteur : le réglage « Autoriser mes abonnés à
           republier mes posts » est activé par défaut, et l'auteur peut le changer pour tout son
           compte ou publication par publication ; le désactiver retire aussitôt les republications
-          qu'il ne couvre plus. Une publication d'une association ou d'une institution qui s'adresse
-          à au moins un campus ou une formation est republiée sans accord, mais n'atteint que vos
-          abonnés acceptés ; celle d'une liste, ou d'une association réservée à ses membres, ne peut
-          pas être republiée. Une publication anonyme n'est jamais republiée. Un blocage, dans un
-          sens ou dans l'autre, empêche la republication et la retire aussitôt entre les personnes
-          concernées, et un lecteur bloqué par l'auteur ou par vous ne la voit pas. Votre
-          republication cesse d'atteindre vos abonnés dès que vous ne voyez plus vous-même la
-          publication (l'auteur vous retire de ses abonnés, vous cessez de le suivre, vous quittez
-          l'association qui la porte) ou que votre compte est restreint, et la notification qu'elle
-          leur a envoyée n'est plus affichée. Sont conservés : la republication (la publication,
-          votre compte et sa date), le réglage de chaque auteur, le choix fait pour chaque
-          publication et, pour ne jamais notifier deux fois la même personne, le fait qu'un lecteur
-          a déjà été notifié d'une publication, ou qu'elle lui a déjà été annoncée, par une
-          republication, et sa date, jusqu'à l'effacement de la publication ou de son compte.
+          qu'il ne couvre plus. Une publication d'une association, d'une liste ou d'une institution
+          qui s'adresse à au moins un campus ou une formation est republiée sans accord, mais
+          n'atteint que vos abonnés acceptés ; celle d'une association, d'une liste ou d'une
+          institution réservée à ses membres ne peut pas être republiée. Une publication anonyme
+          n'est jamais republiée. Un blocage, dans un sens ou dans l'autre, empêche la republication
+          et la retire aussitôt entre les personnes concernées, et un lecteur bloqué par l'auteur ou
+          par vous ne la voit pas. Votre republication cesse d'atteindre vos abonnés dès que vous ne
+          voyez plus vous-même la publication (l'auteur vous retire de ses abonnés, vous cessez de
+          le suivre, vous quittez l'association qui la porte) ou que votre compte est restreint, et
+          la notification qu'elle leur a envoyée n'est plus affichée. Sont conservés : la
+          republication (la publication, votre compte et sa date), le réglage de chaque auteur, le
+          choix fait pour chaque publication et, pour ne jamais notifier deux fois la même personne,
+          le fait qu'un lecteur a déjà été notifié d'une publication, ou qu'elle lui a déjà été
+          annoncée, par une republication, et sa date, jusqu'à l'effacement de la publication ou de
+          son compte.
         </dd>
       </div>
       <div>

@@ -8,7 +8,9 @@
    *
    * Each row states plainly what accepting means, as the decision requires: WHO asks (the member who
    * pressed the button), in WHICH association's name, about WHICH post, and HOW MANY readers would
-   * see it for the first time - a count, never their names. A row leaves the list on the server's
+   * see it for the first time - a count, never their names. An INSTITUTION's request also warns of
+   * its potential audience (owner, 2026-11-02, `institutionAudienceWarning`): everyone, or the spaces
+   * it reaches, and the staff side when staff belong to it. A row leaves the list on the server's
    * answer; a 409 means it was already decided or withdrawn, and the list is re-read.
    */
   import { onMount } from 'svelte';
@@ -24,6 +26,7 @@
     refuseProposal,
     type RepublicationRequest,
   } from '$lib/proposals/api';
+  import { institutionAudienceWarning } from '$lib/posts/republication';
   import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { formatRelative } from '$lib/utils/time';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -144,6 +147,20 @@
             <p class="text-text-muted text-xs">
               {m.republication_requests_reach({ count: request.details.newlyReached })}
             </p>
+            {@const warning = institutionAudienceWarning(request.details.institutionAudience)}
+            {#if warning.length > 0}
+              <div
+                class="space-y-1 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"
+                data-testid="institution-audience-warning"
+              >
+                <p class="text-text-main font-semibold">
+                  {m.republication_requests_audience_title()}
+                </p>
+                {#each warning as line, i (i)}
+                  <p class="text-text-main">{line}</p>
+                {/each}
+              </div>
+            {/if}
             <a
               href="/posts/{encodeURIComponent(request.subjectId)}"
               class="text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400"
