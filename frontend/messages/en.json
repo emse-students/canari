@@ -4052,6 +4052,8 @@
   "reel_chat_tile_label_expired": "Expired CanaReel from {name}, sent {age}",
   "reel_chat_expired": "CanaReel expired",
   "reel_chat_expired_age": "Sent {age}",
+  "reel_chat_tile_label_deleted": "Deleted CanaReel from {name}, sent {age}",
+  "reel_chat_deleted": "CanaReel deleted",
   "post_republish_action": "Republish",
   "post_propose_republication_action": "Propose to an association",
   "post_unrepublish_action": "Withdraw {name}'s republication",

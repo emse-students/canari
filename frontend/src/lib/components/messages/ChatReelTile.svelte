@@ -10,11 +10,14 @@
    *
    * REPLAYABLE for the 30 days of the blob's life (user, 2026-10-09: no view-once). Once the
    * sender's expiry hint has passed it is a TOMBSTONE: the same box, no blurred ghost of the video,
-   * and the age only (no "N days left" chip). The server's 410 remains the truth for an early loss.
+   * and the age only (no "N days left" chip). The server's 410 remains the truth for an early loss:
+   * met in the viewer, it is recorded on the message's local row and drawn "CanaReel supprime" when
+   * it came before the hint, "CanaReel expire" after (`reelTombstoneOf`, RC-6) - never the reason.
    */
   import { CircleAlert, Play, Trash2, Video as VideoIcon, VideoOff, X } from '@lucide/svelte';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
   import type { MediaRef } from '$lib/media';
+  import type { ReelTombstone } from '$lib/reels/chatReel';
   import { formatVideoTime } from '$lib/utils/videoPlayback';
   import { timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -24,8 +27,8 @@
 
   interface Props {
     mediaRef: MediaRef;
-    /** The sender's expiry hint has passed: draw the tombstone. */
-    expired: boolean;
+    /** The blob is gone, and which way (`reelTombstoneOf`): draw the tombstone. `null`: watchable. */
+    tombstone: ReelTombstone | null;
     senderName: string;
     sentAt: Date;
     /** Same widths as the chat's other media: `w-68` under a caption, `w-56` alone. */
@@ -49,7 +52,7 @@
 
   let {
     mediaRef,
-    expired,
+    tombstone,
     senderName,
     sentAt,
     bleed = false,
@@ -71,10 +74,13 @@
       ? formatVideoTime(mediaRef.durationMs / 1000)
       : ''
   );
+  const expired = $derived(tombstone !== null);
   const label = $derived(
-    expired
-      ? m.reel_chat_tile_label_expired({ name: senderName, age })
-      : m.reel_chat_tile_label({ name: senderName, duration: duration || '0:00', age })
+    tombstone === 'deleted'
+      ? m.reel_chat_tile_label_deleted({ name: senderName, age })
+      : tombstone === 'expired'
+        ? m.reel_chat_tile_label_expired({ name: senderName, age })
+        : m.reel_chat_tile_label({ name: senderName, duration: duration || '0:00', age })
   );
 </script>
 
@@ -93,10 +99,12 @@
       class="text-text-muted absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 text-center"
       role="img"
       aria-label={label}
-      data-reel-tombstone
+      data-reel-tombstone={tombstone}
     >
       <VideoOff size={28} class="opacity-60" />
-      <span class="text-sm font-semibold">{m.reel_chat_expired()}</span>
+      <span class="text-sm font-semibold"
+        >{tombstone === 'deleted' ? m.reel_chat_deleted() : m.reel_chat_expired()}</span
+      >
       <span class="text-xs opacity-70">{m.reel_chat_expired_age({ age })}</span>
     </div>
   {:else if unsent}

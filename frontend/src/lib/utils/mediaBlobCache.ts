@@ -202,6 +202,25 @@ async function evictCiphertext(mediaId: string, baseUrl: string): Promise<void> 
 }
 
 /**
+ * Drops a conversation reel's cached ciphertext once its tile is a tombstone (RC-6,
+ * [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md) 3.3): the Cache API copy would
+ * otherwise be "kept after the server forgot it", the very thing the tombstone says is gone - and
+ * it would play a purged reel from the cache with no `410` ever asked. Idempotent; a cache that
+ * cannot be opened is said, never thrown.
+ */
+export async function evictCachedReelCiphertext(mediaId: string, baseUrl: string): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    const cache = await caches.open(CIPHER_CACHE_NAME);
+    if (await cache.delete(cipherCacheKey(baseUrl, mediaId))) {
+      console.debug(`[mediaBlobCache] ${mediaId}: a gone reel's cached ciphertext dropped`);
+    }
+  } catch (err) {
+    console.warn("[mediaBlobCache] could not drop a gone reel's cached ciphertext", mediaId, err);
+  }
+}
+
+/**
  * Fetches encrypted media bytes, using the Cache API when available so ciphertext
  * survives page reloads without hitting the network again.
  *

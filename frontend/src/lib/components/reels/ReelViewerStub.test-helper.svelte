@@ -7,8 +7,12 @@
   let {
     startPost,
     loadPage,
-  }: { startPost: PostEntity; loadPage?: (o: number, l: number) => Promise<PostEntity[]> } =
-    $props();
+    onMediaGone,
+  }: {
+    startPost: PostEntity;
+    loadPage?: (o: number, l: number) => Promise<PostEntity[]>;
+    onMediaGone?: (postId: string) => void;
+  } = $props();
   let more = $state('pending');
   $effect(() => {
     void (loadPage ? loadPage(0, 10) : Promise.resolve([{}])).then((p) => {
@@ -23,4 +27,14 @@
   data-media-key={startPost.media[0]?.key}
   data-caption={startPost.markdown}
   data-has-more={more}
-></div>
+>
+  <!-- What the real viewer does when its player meets the 410: tells the opener. -->
+  {#if onMediaGone}
+    <button
+      type="button"
+      aria-label="410"
+      data-reel-viewer-stub-gone
+      onclick={() => onMediaGone(startPost.id)}
+    ></button>
+  {/if}
+</div>

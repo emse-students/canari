@@ -117,6 +117,19 @@ describe('message payload round trip', () => {
     expect(hostile.unsentReason).toBeUndefined();
   });
 
+  it("keeps the instant this device met a reel's 410, and refuses a malformed one (RC-6)", () => {
+    // The tile reads it after a reload: one 410 per message per device, never one per scroll.
+    expect(roundTrip({ ...BASE, mediaPurgedAt: 1_700_000_000_500 }).mediaPurgedAt).toBe(
+      1_700_000_000_500
+    );
+    const hostile = fromMessagePayload(KEYS, {
+      senderId: 'alice',
+      content: 'x',
+      mediaPurgedAt: 'yesterday',
+    });
+    expect(hostile.mediaPurgedAt).toBeUndefined();
+  });
+
   it('omits empty optionals rather than storing them', () => {
     const payload = toMessagePayload({ ...BASE, reactions: [], editedAt: 0 });
 
