@@ -1754,6 +1754,10 @@ Before 2026-11-02 the write paths asked the audience term alone, so they honoure
   mentions again each time, and un-scheduling a post after its date but before its sweep lost them
   (review of #2947). A post hidden before its sweep is not swept until it is unhidden - its mentions
   are told then - and never while it stays hidden. An edit of the text after the sweep tells nobody.
+  The claim (`CLAIM_POST_ANNOUNCEMENT_SQL`) carries the publication predicate itself - unstamped,
+  not hidden, `scheduledAt` null or past - and what is told is the row it locked, never the sweep's
+  earlier `find`: a post hidden or re-scheduled between the two is not claimed (re-review of #2947,
+  proven in `post-announce.integration.spec.ts`).
 - **A comment's mentions are asked when it is written**, through the same gate. On a post not yet
   published only its author may comment, nobody else may open it, so such a comment's mentions are
   DROPPED, not deferred - deferring them would need a second teller for comments, the overlap above.

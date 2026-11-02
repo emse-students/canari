@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { Logger } from '@nestjs/common';
-import { PostAnnounceScheduler } from './post-announce.scheduler';
+import { CLAIM_POST_ANNOUNCEMENT_SQL, PostAnnounceScheduler } from './post-announce.scheduler';
 import type { Post } from './entities/post.entity';
 import {
   ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
@@ -47,17 +47,27 @@ describe('PostAnnounceScheduler', () => {
       manager: {
         query,
         // The stamp and the recipient read share ONE transaction (the row lock a republication
-        // waits on); its manager writes through `postRepo.update` so a test can wrap that.
+        // waits on); its claim writes through `postRepo.update` so a test can wrap that.
         transaction: (fn: (m: unknown) => Promise<unknown>) =>
           fn({
-            update: (_entity: unknown, where: { id: string }, patch: Record<string, unknown>) =>
-              postRepo.update(where.id, patch).then(() => {
-                // The conditional stamp (`feedNotifiedAt IS NULL`): a row is claimed once, ever.
-                if (claimAffected === 0 || stamped.has(where.id)) return { affected: 0 };
-                stamped.add(where.id);
-                return { affected: 1 };
-              }),
-            query,
+            query: (sql: string, params: unknown[] = []) => {
+              if (sql !== CLAIM_POST_ANNOUNCEMENT_SQL) return query(sql, params);
+              const [id, at] = params as [string, Date];
+              const row = rows.find((r) => r.id === id);
+              return postRepo.update(id, { feedNotifiedAt: at }).then(() => {
+                // The conditional stamp, its SQL's terms: unstamped, not hidden, published by `at`.
+                const published =
+                  !!row &&
+                  !row.hiddenByModeration &&
+                  (row.scheduledAt == null || row.scheduledAt <= at);
+                if (claimAffected === 0 || stamped.has(id) || !published) return [];
+                stamped.add(id);
+                return [{ id }];
+              });
+            },
+            // The CLAIMED row, as the transaction reads it after its own update.
+            findOne: (_entity: unknown, opts: { where: { id: string } }) =>
+              Promise.resolve(claimedRead(rows.find((r) => r.id === opts.where.id) ?? null)),
           }),
       },
     };
@@ -76,6 +86,8 @@ describe('PostAnnounceScheduler', () => {
 
   let mentioned: string[];
   let mentionsFail = false;
+  /** What the transaction's read returns for the claimed row - a copy, unless a test edits it. */
+  let claimedRead: (row: Row | null) => Row | null;
 
   /**
    * Answers what the sweeper reads, by what the SQL is asking for. `audience` stands for "who can
@@ -110,6 +122,7 @@ describe('PostAnnounceScheduler', () => {
   beforeEach(() => {
     mentioned = [];
     mentionsFail = false;
+    claimedRead = (row) => (row ? { ...row } : null);
     updates = [];
     claimAffected = 1;
     stamped = new Set();
@@ -154,11 +167,41 @@ describe('PostAnnounceScheduler', () => {
       // first claim tells (the writes themselves tell nobody: posts.service.anonymous-mention.spec).
       const row: Row = { ...scheduled(['u1']), scheduledAt: null };
       const sweep = scheduler([row], tables({}));
-      for (const at of [null, new Date('2026-10-02T08:00:00Z'), null, null]) {
+      for (const at of [null, new Date(Date.now() + 86_400_000), null, null]) {
         row.scheduledAt = at;
         await sweep.announcePosts();
       }
       expect(mentioned).toEqual(['p1']);
+    });
+
+    // The mock `find` hands back the row whatever it holds, which is the race: the row was
+    // selectable when read, and changed before the claim. The claim's own terms decide.
+    it.each([
+      ['hidden by moderation', { hiddenByModeration: true }],
+      ['re-scheduled into the future', { scheduledAt: new Date(Date.now() + 86_400_000) }],
+    ])(
+      'a post %s between the find and the claim is not claimed, told or announced',
+      async (_c, change) => {
+        const row: Row = { ...scheduled(['u1']), associationId: 'asso1', ...change };
+        await scheduler([row], tables({ audience: ['u2'] })).announcePosts();
+        expect(mentioned).toEqual([]);
+        expect(batches).toEqual([]);
+        expect(stamped.size).toBe(0);
+      }
+    );
+
+    it('tells what the CLAIMED row holds, never the find snapshot', async () => {
+      claimedRead = (row) => (row ? { ...row, mentions: ['u9'], markdown: 'edited' } : null);
+      const told: Post[] = [];
+      const s = scheduler(
+        [{ ...scheduled(['u1']), associationId: 'asso1' }],
+        tables({ audience: ['u2'] })
+      );
+      const parts = s as unknown as { notifications: { notifyPostMentions: (p: Post) => unknown } };
+      parts.notifications.notifyPostMentions = (p) => (told.push(p), Promise.resolve(1));
+      await s.announcePosts();
+      expect(told.map((p) => p.mentions)).toEqual([['u9']]);
+      expect(batches[0]).toMatchObject({ text: 'edited' });
     });
 
     it('the lost window is told: un-scheduled after its date, before its sweep (scheduledAt null)', async () => {
