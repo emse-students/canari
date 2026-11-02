@@ -58,6 +58,29 @@ import { keystoreUnlockPrompt } from './biometric';
 import { DELETE_DEVICE_KEY_COMMAND } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
+
+/**
+ * The tail of the ONE queue every `initialiser_mls` of this page runs on, its failure's teardown
+ * included - module-level, so two service instances share it.
+ *
+ * **TWO SIGN-INS NEVER OVERLAP IN THE NATIVE SESSION** (round 3 of the review of #2919): the native
+ * side keeps one manager slot and one session generation per process, and a failed attempt ENDS the
+ * session (`terminer_session_mls`). Run beside another attempt, that end lands in the middle of the
+ * other's load. The native install guard refuses the survivor then (its claim is no longer current),
+ * but the page would have caused a sign-in to fail for no fault of its own; queued here, each attempt
+ * selects, loads, installs or ends before the next one starts.
+ */
+let nativeInitQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs `attempt` once every earlier native init of this page has settled, whatever its outcome.
+ * Exported for the test that proves two calls do not overlap.
+ */
+export function queueNativeInit<T>(attempt: () => Promise<T>): Promise<T> {
+  const run = nativeInitQueue.then(attempt, attempt);
+  nativeInitQueue = run.catch(() => undefined);
+  return run;
+}
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
 import { nextPageRingHolder, reportPageGatewaySocket } from './pageGatewaySocket';
@@ -1158,6 +1181,20 @@ export class TauriMlsService extends BaseMlsService {
     stateOnDisk?: boolean,
     unattendedKeyRead?: boolean
   ): Promise<void> {
+    return queueNativeInit(() =>
+      this.invokeInitQueued(deviceKeyB64, state, legacyPin, stateOnDisk, unattendedKeyRead)
+    );
+  }
+
+  /** {@link invokeInit}'s body, run on {@link queueNativeInit}: the invoke AND its failure's teardown. */
+  private async invokeInitQueued(
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    legacyPin?: string,
+    stateOnDisk?: boolean,
+    unattendedKeyRead?: boolean
+  ): Promise<void> {
+    console.debug('[MLS][Tauri] initialiser_mls: queued turn reached');
     this._deviceKeyB64 = deviceKeyB64;
     // `Array.from` ON A MULTI-MEGABYTE BLOB IS THE THING TO AVOID HERE, and `stateOnDisk` is how
     // the login path avoids it: Rust reads `mls.bin` itself and nothing is serialised. What is left

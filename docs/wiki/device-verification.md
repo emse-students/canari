@@ -1126,6 +1126,41 @@ afterwards. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkV*.json` and frame
 
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
+## AS. Two accounts on one iPhone install: A -> B -> A -> B - owed on the iPhone 12 before the stable
+
+**Proves** [one MLS state per account](frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)
+on the platform it was built for: every gate on it is a host test, and the switch, the App Group
+copy the notification extension decrypts with and the activation mirror are native. **This is the
+reading the per-account slot (#2919) owes before a stable carries it.** **Precondition:** a
+pre-release carrying #2919 on the iPhone 12 bench phone, two bench accounts A and B where B has
+never signed in on this install, a third device signed in as a third account with a DM to A and a
+DM to B, and the device log (`tools/ios-device`) for the `[MLS_ACCOUNT]`, `[MLS]` and `[CanariPush]`
+lines.
+
+1. **A, then A -> B.** A signed in with a DM open. Sign out, sign in as B. Expect
+   `slot selected for the signing-in account: Moved { parked_other: true, unparked: false }`,
+   `slot state parked` and `the extension's copy of the previous account's state removed`.
+   Background the app, then bring it back. Lock the phone; the third device writes to B - the
+   notification shows the CONTENT. It writes to A - the notification shows no content, and nothing is
+   written for A (no `[KG_PUSH_JOIN]` or state write naming A's account).
+2. **B -> A.** Sign out, sign in as A. Expect `Moved { parked_other: true, unparked: true }`. A's
+   history opens. The third device sends, A replies, the third device decrypts the reply. Lock the
+   phone; a message for A shows its content.
+3. **A -> B.** Sign out, sign in as B. B's DM continues where step 1 left it. Kill the app and
+   relaunch it once: `[CanariPush] mirror to App Group done` appears, and no
+   `[CanariPush] mirror mls.bin failed`.
+4. **Reboot.** Unlock once, lock, the third device writes to B: the content shows.
+5. **The greps, over the whole run, each ZERO:** `residue`, `TWO STATES`, `cut part-way`,
+   `unproven owner`, `sign-in refused`, `superseded`, `not the push's account`.
+6. **The files** (`xcrun devicectl device info files` on the app container and the App Group): ONE
+   64-hex directory under `mls_accounts/`, with no `.parking`, `.unparking` or `.residue-<n>` suffix;
+   `mls.owner` in the slot names B; the App Group `mls.bin` has the same sha256 as the slot's.
+7. **The mirror's cost:** between the two `didBecomeActive` mirror lines of one activation, under
+   about 100 ms.
+
+**Any line of step 5, a missing content in steps 1-4, or a second directory in step 6 blocks the
+stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).
+
 ## X. The scroll after an edge swipe - owed on the Mi 9T
 
 **Proves or refutes** [the swallowed scroll](frontend/design-reference.md#41-the-system-back-gesture-takes-the-edge-touch-and-the-swipe-back-stayed-armed-mi-9t-2026-10-05):

@@ -1,19 +1,104 @@
 //! Storage Tauri commands: persistence, reload, heartbeat, flags.
 
 use crate::concurrency::{
-    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock, write_mls_state_blob,
+    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock,
+    write_mls_bin_atomically,
 };
 use crate::state::AppState;
 use mls_core::MlsManager;
 use tauri::Manager;
 
-/// Write an already-encrypted MLS state blob into {app_data_dir}/mls.bin.
+/// Write an already-encrypted MLS state blob of `user_id` into {app_data_dir}/mls.bin.
 /// Accepts the encrypted bytes (as number[] from JS) and writes them verbatim.
 /// This is used by the frontend when it already holds an encrypted state and
 /// wants to persist it to the native app data directory (avoid WebView eviction).
+///
+/// **THE WRITE NAMES ITS ACCOUNT, AND LANDS ONLY IN THAT ACCOUNT'S SLOT** (round 3 of the review of
+/// #2919): see [`write_account_mls_state`].
 #[tauri::command]
-pub(crate) fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(), String> {
-    write_mls_state_blob(&app, &data)
+pub(crate) fn save_mls_state(
+    app: tauri::AppHandle,
+    user_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    log::debug!("[MLS] save_mls_state: {} bytes", data.len());
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    write_account_mls_state(&data_dir, &user_id, &data)
+}
+
+/// Why [`write_account_mls_state`] wrote nothing - a TYPE, so no caller reads a sentence.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AccountStateWriteRefused {
+    /// The slot holds a state its owner record does not name as `user_id`'s: another account's, or
+    /// one whose owner was never proven. Overwriting it would destroy a state this write cannot
+    /// claim.
+    NotThisAccountsSlot,
+    /// The directory, the lock or the file system failed.
+    Io(String),
+}
+
+impl std::fmt::Display for AccountStateWriteRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotThisAccountsSlot => f.write_str(
+                "mls.bin holds a state this account does not own - the write is refused",
+            ),
+            Self::Io(e) => f.write_str(e),
+        }
+    }
+}
+
+/// Writes `data` as `user_id`'s `mls.bin` in `data_dir`, ONLY when the slot is that account's: its
+/// owner record ([`MLS_STATE_OWNER_FILE`]) names `user_id`, or the slot holds no state at all (a
+/// backup restored onto an install with nothing in it). The check and the write are one hold of
+/// [`mls_bin_write_lock`], the lock the account switch moves the slot under, so the slot cannot change
+/// owner between them.
+///
+/// **WHY THE ACCOUNT IS CHECKED HERE AND NOT ONLY BY THE CALLER.** The slot belongs to whichever
+/// account signed in last. A write from a page still holding the previous account's bytes - a late
+/// checkpoint, a restore - would otherwise seal account A's state over account B's, the loss the
+/// per-account slot exists to prevent. Refused, nothing is written and the slot is untouched.
+pub(crate) fn write_account_mls_state(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    data: &[u8],
+) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    // A foreground write proves the foreground is alive: refresh the guard so background engines
+    // refrain from writing in parallel (C1/FCM3).
+    mark_foreground_active();
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    account_state_write_held(data_dir, user_id, data).map_err(|refused| {
+        log::error!("[MLS] save_mls_state refused: {refused}");
+        refused.to_string()
+    })
+}
+
+/// [`write_account_mls_state`]'s check and write, the caller holding [`mls_bin_write_lock`].
+fn account_state_write_held(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    data: &[u8],
+) -> Result<(), AccountStateWriteRefused> {
+    let owner = read_mls_state_owner(data_dir);
+    let holds_state = crate::commands::mls_account_state::slot_holds_state(data_dir);
+    if holds_state && owner.as_deref() != Some(user_id) {
+        log::warn!(
+            "[MLS] save_mls_state: the slot holds a state owned by {} - not this account's",
+            if owner.is_some() {
+                "another account"
+            } else {
+                "no proven account"
+            }
+        );
+        return Err(AccountStateWriteRefused::NotThisAccountsSlot);
+    }
+    log::debug!(
+        "[MLS] save_mls_state: the slot is this account's (holds state: {holds_state}) - writing"
+    );
+    write_mls_bin_atomically(&data_dir.join("mls.bin"), data).map_err(AccountStateWriteRefused::Io)
 }
 
 /// What a resume reload did, and WHY when it did nothing - a TYPE, because the caller must act
@@ -1538,6 +1623,42 @@ mod tests {
         let path = dir.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, b"x").unwrap();
+    }
+
+    /// ROUND 3 OF THE REVIEW OF #2919: `save_mls_state` writes only into its own account's slot. An
+    /// empty slot takes any account's state (a restore); a slot whose owner names the writer is
+    /// overwritten; a slot holding another account's state, or a state of no proven owner, is
+    /// refused and left byte for byte.
+    #[test]
+    fn save_mls_state_writes_only_its_own_accounts_slot() {
+        let dir = temp_dir("save-own-slot");
+
+        // No state: the write lands, whoever asks.
+        account_state_write_held(&dir, "user-a", b"state-a").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a");
+
+        // A state of no proven owner is not overwritten.
+        assert_eq!(
+            account_state_write_held(&dir, "user-a", b"state-a2"),
+            Err(AccountStateWriteRefused::NotThisAccountsSlot)
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a");
+
+        // Owned by A: A's write lands, B's is refused and changes nothing.
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        account_state_write_held(&dir, "user-a", b"state-a3").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a3");
+        assert_eq!(
+            account_state_write_held(&dir, "user-b", b"state-b"),
+            Err(AccountStateWriteRefused::NotThisAccountsSlot)
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a3");
+
+        // An empty mls.bin (a write cut short) is no state: the write lands.
+        std::fs::write(dir.join("mls.bin"), b"").unwrap();
+        account_state_write_held(&dir, "user-b", b"state-b").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-b");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// THE A -> B -> A RECORD (backlog "switching accounts on one iPhone"). The owner beside

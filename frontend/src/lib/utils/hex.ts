@@ -315,7 +315,7 @@ async function writeMlsState(
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('save_mls_state', { data: Array.from(bytes) });
+      await invoke('save_mls_state', { userId, data: Array.from(bytes) });
       return 'written';
     } catch (e) {
       console.warn('[MLS] save_mls_state failed:', e);

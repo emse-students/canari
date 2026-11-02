@@ -253,9 +253,11 @@ pub(crate) fn mark_foreground_manager_loading() {
 }
 
 /// The generation of the foreground session this process was last marked warm FOR by a sign-in's
-/// selection ([`claim_foreground_session_held`]). Bumped by every claim, read by
-/// [`end_native_session_claimed`]: an attempt ends the session only while the generation is still
-/// the one it claimed.
+/// selection ([`claim_foreground_session_held`]). Bumped by every claim AND by every end of a
+/// session ([`end_native_session`], a sign-out included), always under [`mls_bin_write_lock`]. Read
+/// under that lock by every step a sign-in takes after its selection - its read of `mls.bin`, its
+/// warm mark, its install, its failure's teardown - so each of them happens only while the session
+/// it claimed is still the current one (round 3 of the review of #2919).
 fn session_generation() -> &'static AtomicU64 {
     static GENERATION: AtomicU64 = AtomicU64::new(0);
     &GENERATION
@@ -285,6 +287,63 @@ pub(crate) fn claim_foreground_session_held() -> SessionClaim {
     SessionClaim(generation)
 }
 
+/// Why a sign-in's step was refused: the session it claimed is no longer the current one - another
+/// selection claimed the process since, or a session end (a sign-out, a failed sign-in's teardown)
+/// closed it. A TYPE the install guard branches on, never a sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionSuperseded;
+
+impl std::fmt::Display for SessionSuperseded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("this sign-in's session was superseded or ended while it loaded")
+    }
+}
+
+/// Runs `step` under [`mls_bin_write_lock`] ONLY while `claim` is the current session, after
+/// (re-)asserting the warm mark and the foreground guard in the same hold: a sign-in's read of
+/// `mls.bin`, its warm mark and its install are each either inside its own session or refused.
+///
+/// **WHY THE CHECK IS AT EVERY STEP AND NOT AT THE SELECTION ALONE.** The mark is process-wide and a
+/// session end clears it. A sign-in whose session was ended while it loaded - a sign-out, or another
+/// sign-in's failure (round 3 of the review of #2919) - would otherwise install a live manager over
+/// a cleared mark: a later selection then switches the slot under it, and the cold-only background
+/// writers write under it. Refused here, the manager is never installed.
+pub(crate) fn while_claim_current<R>(
+    claim: SessionClaim,
+    step: impl FnOnce() -> R,
+) -> Result<R, SessionSuperseded> {
+    let _guard = mls_bin_write_lock().lock().unwrap_or_else(|poisoned| {
+        log::error!(
+            "[MLS] the mls.bin write lock was POISONED - taken anyway, it orders the session's steps"
+        );
+        poisoned.into_inner()
+    });
+    let current = session_generation().load(Ordering::SeqCst);
+    if current != claim.0 {
+        log::warn!(
+            "[MLS] a sign-in step refused: its session (generation {}) is no longer current ({current})",
+            claim.0
+        );
+        return Err(SessionSuperseded);
+    }
+    mark_foreground_manager_loading();
+    Ok(step())
+}
+
+/// [`foreground_load_mls_bin`] for a sign-in holding `claim`: the warm mark and the read happen in
+/// one hold, and only while the claim is current ([`while_claim_current`]).
+pub(crate) fn foreground_load_mls_bin_claimed(
+    path: &std::path::Path,
+    claim: SessionClaim,
+) -> Result<Option<Vec<u8>>, String> {
+    while_claim_current(claim, || match std::fs::read(path) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("read mls.bin: {e}")),
+    })
+    .map_err(|e| e.to_string())?
+}
+
 /// Reads `mls.bin` for the FOREGROUND manager about to be built from it: marks the foreground
 /// active and this process warm FIRST, then reads under [`mls_bin_write_lock`].
 ///
@@ -293,6 +352,10 @@ pub(crate) fn claim_foreground_session_held() -> SessionClaim {
 /// there is no write the manager built from these bytes can later persist over. Before
 /// 2026-10-22 the login read the file with neither, and the heartbeat's first tick came up to
 /// 10 s later.
+///
+/// Test-only since round 3 of the review of #2919: the sign-in reads through
+/// [`foreground_load_mls_bin_claimed`], which refuses a session that was ended while it loaded.
+#[cfg(test)]
 pub(crate) fn foreground_load_mls_bin(path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
     mark_foreground_manager_loading();
     let _guard = mls_bin_write_lock()
@@ -397,6 +460,10 @@ fn end_session(
         // Under the write lock, where a background writer reads it: no foreground manager is loaded
         // any more, so the warm-process refusal must not outlive the manager it described.
         live_manager_flag().store(false, Ordering::SeqCst);
+        // And the session is OVER: a sign-in still loading under the claim just ended can no longer
+        // read, mark or install under it (`while_claim_current`).
+        let ended_generation = session_generation().fetch_add(1, Ordering::SeqCst) + 1;
+        log::debug!("[MLS] session generation now {ended_generation} ({why})");
         sweep_dir.map(crate::commands::storage::remove_mls_state_held)
     };
     // Still under the manager mutex, so no command sees the cleared mark beside a manager.

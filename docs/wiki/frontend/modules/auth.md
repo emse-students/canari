@@ -880,6 +880,19 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   `end_native_session_claimed`): a sign-in refused BY that warm mark holds no claim and ends nothing,
   and a claim a later selection superseded ends nothing either. Before, the refused attempt's guard
   cleared the other sign-in's mark while its manager loaded.
+- **Every step after the selection runs only inside the session it claimed** (round 3 of the review of
+  #2919). Every end of a session (`end_native_session`, a sign-out included) moves the session
+  generation on, under `mls_bin_write_lock`, and the read of `mls.bin`, the warm mark and the install
+  each check the claim in that same hold (`while_claim_current`, `SessionSuperseded`). A sign-in whose
+  session a sign-out or another attempt's failure ended while it loaded is REFUSED and its manager
+  dropped: installed, it would be a live manager over a cleared warm mark. And the page never runs two
+  `initialiser_mls` at once: `TauriMlsService` queues every attempt, its failure's
+  `terminer_session_mls` included (`queueNativeInit`), so that refusal is a defence, never a path.
+- **A frontend write of `mls.bin` names its account.** `save_mls_state` takes the `userId` and writes
+  only when the slot's owner record names it or the slot holds no state (`write_account_mls_state`,
+  `AccountStateWriteRefused::NotThisAccountsSlot`), the check and the write in one hold of the state
+  lock: a late checkpoint or a restore from the previous account can no longer seal over the next
+  one's state.
 - **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
   into the slot just handed over), a parked state to unpark into a slot holding an unrecorded one, and
   a fresh start asked while the switch just brought back a non-empty parked `mls.bin` (the caller
@@ -904,9 +917,13 @@ unpark refusing another sign-in, an unfinishable move stopping sign-ins but not 
 set aside, a second parked state and a taken park name set aside, the deletion of the slot, the parked
 state and its residue, the fresh-start guard, the extension copy, the activation mirror waiting for a
 switch); `commands/mls.rs` (a sign-in refused by a loading one does not end it, through the guard; a
-superseded claim ends nothing); `mobile/key_group_join.rs` (a join writes nothing into a slot that is
-not its account's). **Native, verified by compiling and host tests only**:
-an A -> B -> A reading on the iPhone 12 bench phone is owed after a pre-release
+superseded claim ends nothing, in both orders; a sign-out during a load refuses the install);
+`commands/storage.rs` (`save_mls_state` writes only its own account's slot); `mobile/key_group_join.rs`
+(a join writes nothing into a slot that is not its account's); `services/TauriMlsService.initQueue.test.ts`
+(a second sign-in starts only after the first has failed and ended its session). **Native, verified by
+compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
+[device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),
+is owed after a pre-release and before a stable
 ([backlog](../../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),

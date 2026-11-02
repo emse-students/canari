@@ -109,6 +109,7 @@ pub(crate) async fn initialiser_mls(
             // select the slot for its account before this one loads; the claim that hold returns
             // is what lets `install` clear the mark if THIS sign-in fails - and only then.
             let selection = install.select(&data_dir, &user_id)?;
+            let claim = install.claimed()?;
             // A FRESH START DECIDED WITHOUT SEEING THIS ACCOUNT'S PARKED STATE IS REFUSED. The caller
             // chose "no state" on `mls_state_size`; if the switch has just brought one back, that
             // answer was wrong, and a fresh state saved now would replace it.
@@ -124,12 +125,16 @@ pub(crate) async fn initialiser_mls(
                     "a fresh start was asked over this account's saved state".to_string(),
                 ));
             }
+            // Both the read and the warm mark only while THIS sign-in's session is current: one a
+            // sign-out (or another sign-in's failure) ended since the selection is refused here.
             let encrypted_state = match (encrypted_state, state_on_disk) {
-                (None, Some(true)) => {
-                    crate::concurrency::foreground_load_mls_bin(&data_dir.join("mls.bin"))?
-                }
+                (None, Some(true)) => crate::concurrency::foreground_load_mls_bin_claimed(
+                    &data_dir.join("mls.bin"),
+                    claim,
+                )?,
                 (supplied, _) => {
-                    crate::concurrency::mark_foreground_manager_loading();
+                    crate::concurrency::while_claim_current(claim, || ())
+                        .map_err(|e| e.to_string())?;
                     supplied
                 }
             };
@@ -279,19 +284,43 @@ impl InstallGuard {
         };
     }
 
+    /// The session this attempt's selection claimed - every step after the selection needs it.
+    fn claimed(&self) -> Result<crate::concurrency::SessionClaim, String> {
+        self.claim
+            .ok_or_else(|| "initialiser_mls reached its load without a selection".to_string())
+    }
+
     /// Installs `manager` and its at-rest `key` - the one success exit. The key is written while the
     /// manager mutex is held, the order [`crate::concurrency::end_native_session`] takes them in.
+    ///
+    /// **ONLY WHILE THIS ATTEMPT'S SESSION IS STILL THE CURRENT ONE** (round 3 of the review of #2919):
+    /// under the manager mutex, the device-key mutex and then [`crate::concurrency::mls_bin_write_lock`],
+    /// the order every teardown takes them in, the claim is checked and the warm mark re-asserted in
+    /// the same hold as the install ([`crate::concurrency::while_claim_current`]). A sign-in whose
+    /// session a sign-out or another sign-in's failure ended while it loaded is REFUSED and its manager
+    /// dropped: installed, it would be a live manager over a cleared warm mark, which a later
+    /// selection would switch the slot under.
     fn install(mut self, manager: MlsManager, key: [u8; 32]) -> Result<(), String> {
-        {
+        let claim = self.claimed()?;
+        let installed = {
             let mut slot = self
                 .manager_state
                 .lock()
                 .map_err(|_| "Failed to lock state".to_string())?;
-            *self
+            let mut cached_key = self
                 .device_key_state
                 .lock()
-                .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
-            *slot = Some(manager);
+                .map_err(|_| "Failed to lock device key".to_string())?;
+            crate::concurrency::while_claim_current(claim, || {
+                *cached_key = Some(key);
+                *slot = Some(manager);
+            })
+        };
+        if let Err(superseded) = installed {
+            log::error!(
+                "[MLS] initialiser_mls NOT installed: {superseded} - the manager is dropped, nothing of this sign-in stays"
+            );
+            return Err(superseded.to_string());
         }
         self.outcome = InstallOutcome::Installed;
         log::debug!("[MLS] manager and at-rest key installed");
@@ -1950,12 +1979,14 @@ mod tests {
     fn slot_of_account_a() -> (Slot, KeySlot) {
         let manager = Arc::new(Mutex::new(None));
         let key = Arc::new(Mutex::new(None));
-        InstallGuard::new(manager.clone(), key.clone())
+        let dir = data_dir("account-a");
+        selected_attempt(&manager, &key, &dir, "guard-a")
             .install(
                 MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
                 KEY_A,
             )
             .unwrap();
+        std::fs::remove_dir_all(&dir).ok();
         (manager, key)
     }
 
@@ -2108,7 +2139,62 @@ mod tests {
         );
         assert_eq!(*key.lock().unwrap(), Some(KEY_A));
         assert!(crate::concurrency::live_manager_in_process());
-        crate::concurrency::forget_live_manager_for_test();
+
+        // ROUND 3, THE REVERSE ORDER: the LATER attempt fails first and its teardown ends the session
+        // (the mark cleared, the generation moved on) - the earlier one must then not install a live
+        // manager over the cleared mark.
+        crate::concurrency::end_native_session(&manager, &key, None, "test sign-out").unwrap();
+        let earlier = selected_attempt(&manager, &key, &dir, "guard-a");
+        let mut later = InstallGuard::new(manager.clone(), key.clone());
+        later.select(&dir, "guard-a").unwrap();
+        later.refused(&StateLoadRefusal::from(
+            mls_core::MlsError::KeystoreKeyUnavailable("sheet cancelled".into()),
+        ));
+        drop(later);
+        assert!(!crate::concurrency::live_manager_in_process());
+        assert!(earlier
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .is_err());
+        assert!(
+            manager.lock().unwrap().is_none(),
+            "a manager installed by a session that had ended"
+        );
+        assert!(key.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 3: A SIGN-OUT DURING A LOAD ends the loading sign-in's session. Its read of `mls.bin`
+    /// and its install are refused afterwards, nothing is installed, the mark stays clear, and its
+    /// own failure ends nothing more.
+    #[test]
+    fn a_sign_out_during_a_load_refuses_the_install() {
+        let _s = serialise();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("sign-out-during-load");
+        let loading = selected_attempt(&manager, &key, &dir, "guard-a");
+        let claim = loading.claimed().unwrap();
+
+        crate::concurrency::end_native_session(&manager, &key, None, "test sign-out").unwrap();
+
+        assert!(
+            crate::concurrency::foreground_load_mls_bin_claimed(&dir.join("mls.bin"), claim)
+                .is_err()
+        );
+        assert!(!crate::concurrency::live_manager_in_process());
+        assert!(loading
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .is_err());
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2117,7 +2203,8 @@ mod tests {
     fn a_successful_install_replaces_the_slot_and_the_key() {
         let _s = serialise();
         let (manager, key) = slot_of_account_a();
-        InstallGuard::new(manager.clone(), key.clone())
+        let dir = data_dir("success");
+        selected_attempt(&manager, &key, &dir, "guard-b")
             .install(
                 MlsManager::load_or_create("guard-b", "d1", None).unwrap(),
                 KEY_B,
@@ -2125,6 +2212,9 @@ mod tests {
             .unwrap();
         assert!(manager.lock().unwrap().is_some());
         assert_eq!(*key.lock().unwrap(), Some(KEY_B));
+        assert!(crate::concurrency::live_manager_in_process());
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// A save with no key of its own and none cached is the typed refusal, not a sentence.
