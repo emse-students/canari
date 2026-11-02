@@ -247,6 +247,12 @@ export function deleteResource(resourceId: string): Promise<unknown> {
   });
 }
 
+/** One person of a booking: the id carries the photo, the name is the snapshot taken at booking. */
+export interface BookingPerson {
+  id: string;
+  name: string;
+}
+
 /** One booking as its viewer may read it (D9): names only when allowed, answers to the organiser. */
 export interface BookingView {
   id: string;
@@ -260,6 +266,8 @@ export interface BookingView {
   /** Sent exactly when `holderName` is: the booker's photo is shown only where the name is. */
   holderId?: string;
   participantNames?: string[];
+  /** The people of the booking OTHER than the viewer (holder first); sent where the names are. */
+  others?: BookingPerson[];
   answers?: Record<string, unknown> | null;
   /** With `answers`: the name each FILE answer's file was uploaded under, by file id (WP-B6). */
   fileNames?: Record<string, string>;

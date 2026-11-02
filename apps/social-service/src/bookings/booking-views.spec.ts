@@ -71,6 +71,19 @@ describe('bookingView', () => {
     expect(view).not.toHaveProperty('answers');
   });
 
+  it('lists the OTHER people of the booking, never the viewer', () => {
+    const view = (rows: ParticipantRow[], viewer: string) =>
+      bookingView(booking, rows, 'people', 'occupied', viewer).others;
+    expect(view(people, HOLDER)).toEqual([{ id: IN, name: 'In' }]);
+    expect(view(people, IN)).toEqual([{ id: HOLDER, name: 'Holder' }]);
+    const two = [...people, { ...people[0], userId: 'x', userName: 'Two' }];
+    expect(view(two, IN)).toEqual([
+      { id: HOLDER, name: 'Holder' },
+      { id: 'x', name: 'Two' },
+    ]);
+    expect(view([], HOLDER)).toEqual([]);
+  });
+
   it.each([
     ['other', 'occupied', false],
     ['other', 'names', true],

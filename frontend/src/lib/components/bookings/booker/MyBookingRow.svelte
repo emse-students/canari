@@ -4,6 +4,7 @@
   import MyBookingCard from '$lib/components/bookings/booker/MyBookingCard.svelte';
   import type { MyBooking } from '$lib/bookings/api';
   import { bookingPlace } from '$lib/bookings/columns';
+  import { bookingOthers, othersNames } from '$lib/bookings/others';
   import { bookingWhen, reminderTime } from '$lib/bookings/bookingRow';
   import { BOOKING_NOTIFICATIONS_LIVE } from '$lib/bookings/notified';
   import { m } from '$lib/paraglide/messages';
@@ -35,8 +36,8 @@
   const sub = $derived(
     [
       bookingPlace(booking.space.name, booking.resource.name),
-      booking.participantNames?.length
-        ? m.bookings_row_with({ names: booking.participantNames.join(', ') })
+      bookingOthers(booking).length
+        ? m.bookings_row_with({ names: othersNames(bookingOthers(booking)) })
         : null,
     ]
       .filter(Boolean)

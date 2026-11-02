@@ -73,6 +73,13 @@ export interface BookingView {
    */
   holderId?: string;
   participantNames?: string[];
+  /**
+   * THE OTHER PEOPLE OF THE BOOKING, from the VIEWER's point of view: the holder then the
+   * participants still in, the viewer left out. Sent exactly where `holderName` is.
+   * `participantNames` names the invitees whoever asks, so an invitee read their OWN name as
+   * "Avec : <me>".
+   */
+  others?: { id: string; name: string }[];
   answers?: Record<string, unknown> | null;
   /**
    * The ORGANISER's reading of the FILE answers (D7, WP-B6), as forms' submissions carry it: the
@@ -149,6 +156,10 @@ export function bookingView(
     view.holderName = booking.holderName;
     view.holderId = booking.holderId;
     view.participantNames = inBooking.map((p) => p.userName);
+    view.others = [
+      { id: booking.holderId, name: booking.holderName },
+      ...inBooking.map((p) => ({ id: p.userId, name: p.userName })),
+    ].filter((p) => p.id !== viewerId);
   }
   if (relation === 'manager') view.answers = booking.answers;
   return view;
