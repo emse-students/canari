@@ -128,22 +128,23 @@ import json, sys
 for v in json.load(sys.stdin)["services"]["frontend"].get("volumes") or []:
     print(v.get("type"), v.get("source", "").replace("\\", "/"), v.get("target", ""), v.get("read_only", False))')"
   case "$frontend_mount" in
-  'bind '*'/edge/rotation /etc/nginx/rotation True') ok "$file: the frontend mounts edge/rotation read-only as /etc/nginx/rotation" ;;
-  *) fail "$file: the frontend mounts '$frontend_mount', not edge/rotation read-only at /etc/nginx/rotation" ;;
+  'bind '*'/edge/targets /etc/nginx/targets True') ok "$file: the frontend mounts edge/targets read-only as /etc/nginx/targets" ;;
+  *) fail "$file: the frontend mounts '$frontend_mount', not edge/targets read-only at /etc/nginx/targets" ;;
   esac
 
-  # Every service the frontend nginx routes to by a list has, in the image, the list a workstation
-  # reads - by the same name and on the port its label declares.
+  # Every service the frontend nginx routes to by a list has, in the image, the target a workstation
+  # reads - by its variable and on the port its label declares - and is proxied to through it alone.
   while read -r svc _ _ rot _; do
     rot="${rot%$'\r'}" # a Windows Python ends its lines with CR
     [ "${rot%%:*}" = frontend ] || continue
-    if grep -qF "upstream $svc {" "$FRONTEND_NGINX" && grep -qF "server $svc:${rot#*:} resolve;" "$FRONTEND_NGINX"; then
-      ok "$file: $svc is an upstream of the frontend nginx on port ${rot#*:}"
+    var="target_${svc//-/_}"
+    if grep -qF "map \"\" \$$var { default $svc:${rot#*:}; }" "$FRONTEND_NGINX" && grep -qF "proxy_pass http://\$$var" "$FRONTEND_NGINX"; then
+      ok "$file: $svc is proxied to through \$$var, $svc:${rot#*:} at rest in the frontend image"
     else
-      fail "$file: $svc is routed through the frontend on port ${rot#*:}, but the frontend image declares no such upstream"
+      fail "$file: $svc is routed through the frontend on port ${rot#*:}, but the frontend image has no \$$var at rest, or proxies through none"
     fi
-    if grep -qE "set \\\$upstream_[a-z_]+ $svc:[0-9]+;" "$FRONTEND_NGINX"; then
-      fail "$file: the frontend nginx still names $svc with a port - DNS, not its replica list"
+    if grep -qE "set \\\$upstream_[a-z_]+ $svc(:[0-9]+)?;" "$FRONTEND_NGINX"; then
+      fail "$file: the frontend nginx still names $svc by itself in a set - a request there would never leave by its target"
     fi
   done <<<"$plan"
 
@@ -213,86 +214,82 @@ fi
 
 # ── 3. The replica lists are written where the proxies read them ──────────────
 # shellcheck disable=SC2016 # the literal line of deploy-environment.sh, unexpanded on purpose
-if grep -qF 'ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"' "$DEPLOY"; then
-  ok "deploy-environment.sh writes the replica lists into infrastructure/edge/rotation"
+if grep -qF 'ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/targets"' "$DEPLOY"; then
+  ok "deploy-environment.sh writes the target lists into infrastructure/edge/targets"
 else
-  fail "deploy-environment.sh writes the replica lists somewhere neither proxy mounts"
+  fail "deploy-environment.sh writes the target lists somewhere neither proxy mounts"
 fi
-if grep -qF 'include /etc/nginx/edge/rotation/edge.conf;' "$EDGE_NGINX" && grep -qF 'proxy_pass frontend;' "$EDGE_NGINX"; then
-  ok "the edge chooses a frontend replica from its list"
+# shellcheck disable=SC2016 # nginx text, unexpanded on purpose
+if grep -qF 'include /etc/nginx/edge/targets/edge.conf;' "$EDGE_NGINX" && grep -qF 'proxy_pass $target_frontend;' "$EDGE_NGINX"; then
+  ok "the edge sends a connection to the frontend target its list sets"
 else
-  fail "the edge does not read edge/rotation/edge.conf, or does not proxy to it"
+  fail "the edge does not read edge/targets/edge.conf, or does not proxy to \$target_frontend"
 fi
-if grep -qF 'include /etc/nginx/rotation/frontend.conf;' "$FRONTEND_NGINX" && grep -qF 'include /etc/nginx/rotation/frontend.conf;' "$FIXTURE_NGINX"; then
-  ok "the frontend nginx and the fixture both read /etc/nginx/rotation/frontend.conf"
+if grep -qF 'include /etc/nginx/targets/frontend.conf;' "$FRONTEND_NGINX" && grep -qF 'include /etc/nginx/targets/frontend.conf;' "$FIXTURE_NGINX"; then
+  ok "the frontend nginx and the fixture both read /etc/nginx/targets/frontend.conf"
 else
-  fail "the frontend nginx or the fixture does not include /etc/nginx/rotation/frontend.conf"
+  fail "the frontend nginx or the fixture does not include /etc/nginx/targets/frontend.conf"
 fi
-if git -C "$REPO" check-ignore -q infrastructure/edge/rotation/frontend.conf && [ -f "$REPO/infrastructure/edge/rotation/.gitignore" ]; then
-  ok "the lists' directory exists in every checkout and the lists are never tracked"
-else
-  fail "infrastructure/edge/rotation is missing, or a written list would be tracked"
-fi
+# Both directories: targets/ is this library's, rotation/ the `upstream` lists of 1.6.2, which a
+# frontend of that release reads on the first deploy carrying the targets and its library rewrites on
+# a rollback - a checkout without the directory would leave that frontend's mount empty.
+for dir in targets rotation; do
+  if git -C "$REPO" check-ignore -q "infrastructure/edge/$dir/frontend.conf" && [ -f "$REPO/infrastructure/edge/$dir/.gitignore" ]; then
+    ok "edge/$dir exists in every checkout and its lists are never tracked"
+  else
+    fail "infrastructure/edge/$dir is missing, or a written list would be tracked"
+  fi
+done
 
-# EVERY LIST IS RENDERED FOR THE CONTEXT IT IS INCLUDED IN: `keepalive 0` in an http list (without
-# it nginx >= 1.29.7 caches idle upstream connections and the pairing check counts them as chosen
-# requests), nothing in a stream list (which caches nothing, and refuses the directive). The stream
-# proxies rolling.sh declares are exactly the lists included inside `stream {`.
-stream_includes="$(awk '/^stream *\{/ { s = 1 } /^http *\{/ { s = 0 } s && $1 == "include" && $2 ~ /\/rotation\/[^\/]+\.conf;$/ { f = $2; sub(/.*\/rotation\//, "", f); sub(/\.conf;$/, "", f); print f }' "$REPO/infrastructure/edge/nginx.conf" "$FRONTEND_NGINX" | sort | tr '\n' ' ')"
-declared="$(sed -n 's/^ROTATION_STREAM_PROXIES="\(.*\)"$/\1/p' "$ROLLING" | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')"
-if [ -n "$stream_includes" ] && [ "$stream_includes" = "$declared" ]; then
-  ok "the lists included in a stream context ($stream_includes) are the ones rolling.sh renders as stream"
-else
-  fail "stream includes '$stream_includes' differ from ROTATION_STREAM_PROXIES '$declared'"
-fi
-blocks_of() {
+# ONE LINE PER SERVICE, THE SAME IN BOTH CONTEXTS: `map` exists in `http {}` and `stream {}` with the
+# same syntax, and no list declares an `upstream` block - the one construct that caches an idle
+# connection (`keepalive`), which the pairing check would count as a chosen request.
+line_of() {
   (
     # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
     . "$ROLLING"
-    rotation_block "$1" svc 3000
+    rotation_block "$@"
   )
 }
-if blocks_of frontend | grep -qx '    keepalive 0;' && ! blocks_of edge | grep -q keepalive; then
-  ok "an http list caches no upstream connection, a stream list says nothing of it"
+# shellcheck disable=SC2016 # nginx text, unexpanded on purpose
+if [ "$(line_of chat-gateway 3000)" = 'map "" $target_chat_gateway { default chat-gateway:3000; }' ] &&
+  [ "$(line_of chat-gateway 3000 192.0.2.9)" = 'map "" $target_chat_gateway { default 192.0.2.9:3000; }' ]; then
+  ok "a target is one map line: the DNS name at rest, the address during a take-out"
 else
-  fail "the keepalive line is not rendered as each context needs"
+  fail "rotation_block renders '$(line_of chat-gateway 3000)' / '$(line_of chat-gateway 3000 192.0.2.9)'"
 fi
 
 # THE RESTING FORM IS THE LIST THE FRONTEND IMAGE BAKES: between deploys a list names each service by
 # its DNS name, exactly as an estate with no such deploy reads it, so the seed and the image can never
 # disagree about what "no replacement in progress" looks like.
-baked="$(sed -n "s|^RUN mkdir -p /etc/nginx/rotation && printf '\\(.*\\)' > /etc/nginx/rotation/frontend.conf\$|\\1|p" "$FRONTEND_NGINX")"
-baked="$(printf '%b' "$baked")"
+baked="$(sed -n "s|^RUN mkdir -p /etc/nginx/targets && printf '\\(.*\\)' > /etc/nginx/targets/frontend.conf\$|\\1|p" "$FRONTEND_NGINX")"
+baked="$(printf '%b' "$baked" | sort)"
 resting="$(
   # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
   . "$ROLLING"
   rotation_routes_set <<<"$PROD_PLAN"
   printf '%s\n' "$ROTATION_ROUTES" | while read -r svc via port; do
-    [ "$via" = frontend ] && rotation_block frontend "$svc" "$port"
-  done
+    [ "$via" = frontend ] && rotation_block "$svc" "$port"
+  done | sort
 )"
-missing=""
-for svc in $(printf '%s\n' "$resting" | sed -n 's/^upstream \([^ ]*\) {$/\1/p'); do
-  block="$(printf '%s\n' "$resting" | awk -v s="upstream $svc {" '$0 == s { on = 1 } on { print } on && $0 == "}" { exit }')"
-  case "$baked" in *"$block"*) ;; *) missing="$missing $svc" ;; esac
-done
-if [ -n "$resting" ] && [ -z "$missing" ] &&
-  [ "$(printf '%s\n' "$baked" | grep -c '^upstream ')" = "$(printf '%s\n' "$resting" | grep -c '^upstream ')" ]; then
-  ok "the frontend image bakes, block for block, the resting list rolling.sh writes"
+if [ -n "$resting" ] && [ "$baked" = "$resting" ]; then
+  ok "the frontend image bakes, line for line, the resting list rolling.sh writes"
 else
-  fail "the frontend image's baked list differs from the resting list rolling.sh writes (differs for:${missing:- the count of blocks})"
+  fail "the frontend image's baked list differs from the resting list rolling.sh writes: $(diff <(printf '%s\n' "$baked") <(printf '%s\n' "$resting") | grep '^[<>]' | tr '\n' ' ')"
 fi
 
-# THE RESOLVER LIFETIME, ONE NUMBER: the lists' `valid=`, the frontend's own, the fixtures', and the
-# wait of the library an older release ships - a rollback runs that library against these lists.
+# THE RESOLVER LIFETIME, ONE NUMBER: the resolver both proxies resolve a resting target with, the
+# fixtures', and the wait of the libraries older releases ship - a rollback runs one against these lists.
 ttl="$(sed -n 's/^ROLLING_RESOLVER_TTL_SECONDS=\([0-9]*\)$/\1/p' "$ROLLING")"
-frozen_ttl="$(sed -n 's/^ROLLING_RESOLVER_TTL_SECONDS=\([0-9]*\)$/\1/p' "$FIXTURE_DIR/rolling-pre-rotation.sh")"
-others="$(grep -ho 'resolver 127.0.0.11 valid=[0-9]*s' "$FRONTEND_NGINX" "$FIXTURE_NGINX" "$FIXTURE_DIR/frontend-pre-rotation.conf" |
+frozen_ttl="$(sed -n 's/^ROLLING_RESOLVER_TTL_SECONDS=\([0-9]*\)$/\1/p' "$FIXTURE_DIR/rolling-pre-rotation.sh" "$FIXTURE_DIR/rolling-upstream-lists.sh" | sort -u | tr '\n' ' ')"
+others="$(grep -ho 'resolver 127.0.0.11 valid=[0-9]*s' "$FRONTEND_NGINX" "$EDGE_NGINX" "$FIXTURE_NGINX" \
+  "$FIXTURE_DIR/frontend-pre-rotation.conf" "$FIXTURE_DIR/frontend-upstream-lists.conf" "$FIXTURE_DIR/edge-upstream-lists.conf" |
   sed 's/.*valid=\([0-9]*\)s/\1/' | sort -u | tr '\n' ' ')"
-if [ -n "$ttl" ] && [ "$ttl" = "$frozen_ttl" ] && [ "$others" = "$ttl " ]; then
-  ok "one resolver lifetime (${ttl}s) in rolling.sh, the frozen older library, the frontend image and both fixture configurations"
+if [ -n "$ttl" ] && [ "$frozen_ttl" = "$ttl " ] && [ "$others" = "$ttl " ] &&
+  [ "$(grep -c 'resolver 127.0.0.11 valid=' "$EDGE_NGINX")" = 1 ]; then
+  ok "one resolver lifetime (${ttl}s) in rolling.sh, both frozen older libraries, the frontend image, the edge and every fixture configuration"
 else
-  fail "the resolver lifetimes disagree: rolling.sh '$ttl', the older library '$frozen_ttl', the configurations '$others'"
+  fail "the resolver lifetimes disagree: rolling.sh '$ttl', the older libraries '$frozen_ttl', the configurations '$others'"
 fi
 
 for directive in 'proxy_connect_timeout 2s;' 'proxy_next_upstream error timeout;'; do
@@ -379,19 +376,31 @@ done < <(
   ROT="$(mktemp -d)"
   trap 'rm -rf "$ROT"' EXIT
   # The estate the stub describes: api has an old and a new replica, both healthy; its sibling `sib`
-  # has one replica that is UNHEALTHY; no proxy container runs, so nothing is reloaded.
+  # has one replica that is UNHEALTHY. The proxy `front` has a container (fe-1, on network `net`) that
+  # does not RUN: `ps -a` lists it, `ps` does not, so nothing is reloaded.
   fake_docker() {
     case "$1" in
     inspect)
-      case "${*: -1}" in
-      api-old) echo 'running healthy /p-api-1' ;;
-      api-new) echo 'running healthy /p-api-2' ;;
-      api-sick) echo 'running unhealthy /p-api-3' ;;
-      sib-1) echo 'running unhealthy /p-sib-1' ;;
-      *) return 1 ;;
+      case "$3" in
+      *'.NetworkSettings.Networks'*'IPAddress'*)
+        case "${*: -1}" in
+        api-new) printf 'bridge 198.51.100.5\nnet 192.0.2.2\n' ;;
+        api-elsewhere) printf 'other 203.0.113.2\n' ;;
+        *) return 1 ;;
+        esac
+        ;;
+      *'.NetworkSettings.Networks'*) [ "${*: -1}" = fe-1 ] && echo 'net ' ;;
+      *)
+        case "${*: -1}" in
+        api-old | api-new | api-elsewhere) echo 'running healthy' ;;
+        api-sick) echo 'running unhealthy' ;;
+        sib-1) echo 'running unhealthy' ;;
+        *) return 1 ;;
+        esac
+        ;;
       esac
       ;;
-    ps) ;;
+    ps) [ "$2" = -aq ] && case "$*" in *service=front\ *) echo fe-1 ;; esac ;;
     *) return 1 ;;
     esac
   }
@@ -401,7 +410,8 @@ done < <(
   # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
   . "$ROLLING"
   verdict() { if eval "$2"; then echo "ok $1"; else echo "fail $1"; fi; }
-  block_of() { rotation_existing_block "$ROT/front.conf" "$1" | grep '^    server ' | tr -s ' ' | tr '\n' '|'; }
+  # The target a list sets for a service: `api:3000`, or `192.0.2.2:3000`.
+  block_of() { rotation_existing_block "$ROT/front.conf" "$1" | sed -n 's/^map "" \$[a-z_]* { default \(.*\); }$/\1/p'; }
   PLAN='api overlap no front:3000
 sib overlap no front:3001
 front overlap no edge:80
@@ -409,24 +419,27 @@ edge pinned yes -'
 
   rotation_seed <<<"$PLAN" >/dev/null
   verdict "rotation_seed writes every list, each service by its DNS name" \
-    '[ "$(block_of api)" = " server api:3000 resolve;|" ] && [ "$(block_of sib)" = " server sib:3001 resolve;|" ] && grep -qx "    server front:80 resolve;" "$ROT/edge.conf"'
+    '[ "$(block_of api)" = api:3000 ] && [ "$(block_of sib)" = sib:3001 ] && grep -qxF "map \"\" \$target_front { default front:80; }" "$ROT/edge.conf"'
 
-  # The sibling as a deploy killed mid-replacement leaves it: named by a container.
-  rotation_write front sib "$(rotation_block front sib 3001 p-sib-1)"
+  # The sibling as a deploy killed mid-replacement leaves it: set to an address.
+  rotation_write front sib "$(rotation_block sib 3001 192.0.2.7)"
   rotation_take_out api api-new >/dev/null
-  verdict "taking a replica out names the new one alone" '[ "$(block_of api)" = " server p-api-2:3000 resolve;|" ]'
+  verdict "taking a replica out sets its service to the new one's address, on the network the proxy shares" \
+    '[ "$(block_of api)" = 192.0.2.2:3000 ]'
   verdict "a sibling that is unhealthy is carried over as it was, never re-read and dropped" \
-    '[ "$(block_of sib)" = " server p-sib-1:3001 resolve;|" ]'
-  verdict "the service being replaced is refused when none of the replicas meant to stay is healthy" \
+    '[ "$(block_of sib)" = 192.0.2.7:3001 ]'
+  verdict "the service being replaced is refused when the replica meant to stay is not healthy" \
     '! rotation_take_out api api-sick 2>/dev/null'
+  verdict "a replica on no network the proxy shares is refused, the list untouched" \
+    '! rotation_take_out api api-elsewhere 2>/dev/null && [ "$(block_of api)" = 192.0.2.2:3000 ]'
   rotation_restore api >/dev/null
   verdict "rotation_restore puts the service back on its DNS name, the sibling untouched" \
-    '[ "$(block_of api)" = " server api:3000 resolve;|" ] && [ "$(block_of sib)" = " server p-sib-1:3001 resolve;|" ]'
+    '[ "$(block_of api)" = api:3000 ] && [ "$(block_of sib)" = 192.0.2.7:3001 ]'
   rotation_restore api >/dev/null
   verdict "a restore that changes nothing reports no change (so nothing is reloaded)" '[ "$ROTATION_CHANGED" = no ]'
   rotation_seed <<<"$PLAN" >/dev/null
   verdict "rotation_seed puts a list a killed deploy left mid-replacement back at rest" \
-    '[ "$(block_of sib)" = " server sib:3001 resolve;|" ]'
+    '[ "$(block_of sib)" = sib:3001 ]'
   rm -f "$ROT"/*.conf
   rotation_seed <<<"$PLAN" >/dev/null
   verdict "rotation_seed writes the lists again when the directory lost them" '[ -f "$ROT/front.conf" ] && [ -f "$ROT/edge.conf" ]'
@@ -443,7 +456,7 @@ edge pinned yes -'
   ROTATION_IN_FLIGHT=api
   rotation_restore_in_flight "a test" 2>/dev/null
   verdict "a service still in flight when the deploy ends is put back at rest, and is no longer in flight" \
-    '[ "$(block_of api)" = " server api:3000 resolve;|" ] && [ -z "$ROTATION_IN_FLIGHT" ]'
+    '[ "$(block_of api)" = api:3000 ] && [ -z "$ROTATION_IN_FLIGHT" ]'
   verdict "with nothing in flight, the exit trap does nothing" '[ -z "$(rotation_restore_in_flight "a test" 2>&1)" ]'
   # The restore at the end of a replacement writes the file at rest, then its reload fails: the exit
   # trap finds the file unchanged and must STILL reload, or nginx keeps naming the container.
@@ -486,7 +499,7 @@ edge pinned yes -'
       case "$1" in
       ps) echo fe-1 ;;
       inspect) echo running ;;
-      exec) printf '# configuration file /etc/nginx/rotation/front.conf:\n# render %s\n' "$ROTATION_TOKEN" ;;
+      exec) printf '# configuration file /etc/nginx/targets/front.conf:\n# render %s\n' "$ROTATION_TOKEN" ;;
       *) return 1 ;;
       esac
     }
@@ -515,7 +528,7 @@ front overlap no edge:80 own/front:2'
     WANTED=sha256:running
     rotation_apply front plain >/dev/null 2>&1 || echo own-image-refused
     WANTED=sha256:newer
-    rotation_apply front plain 2>&1 | grep -q '^::warning title=A proxy from before the replica lists::' && echo older-image-drained
+    rotation_apply front plain 2>&1 | grep -q '^::warning title=A proxy from before the target lists::' && echo older-image-drained
   )"
   verdict "a proxy reading no list that runs THIS release's own image is refused, not taken for a transition" \
     'printf "%s\n" "$legacy" | grep -qx own-image-refused'
@@ -528,8 +541,7 @@ chat-gateway overlap no frontend:3000'
   DUMP='# configuration file /etc/nginx/conf.d/default.conf:
     location = /internal/auth/verify {
     internal;
-    set $upstream_auth core-service;
-    proxy_pass http://$upstream_auth/api/auth/verify;
+    proxy_pass http://$target_core_service/api/auth/verify;
     }
     location = /internal/other {
     proxy_pass http://auth:3001/x;
@@ -537,18 +549,24 @@ chat-gateway overlap no frontend:3000'
     location /api/ {
     auth_request /internal/auth/verify;
     auth_request /internal/other;
-    set $upstream_gateway chat-gateway;
+    proxy_pass http://$target_chat_gateway;
     }'
-  verdict "rotation_subrequest_ports reads a bare service name through its route, and a host:port as written" \
+  verdict "rotation_subrequest_ports reads a \$target_<service> through its route, and a host:port as written" \
     '[ "$(printf "%s\n" "$DUMP" | rotation_subrequest_ports frontend | tr "\n" " ")" = "3001 3012 " ]'
   verdict "rotation_subrequest_ports refuses an auth_request whose target it cannot place" \
     '! printf "    auth_request /nowhere;\n" | rotation_subrequest_ports frontend 2>/dev/null >/dev/null'
+  verdict "rotation_subrequest_ports refuses a \$target_ no service routed through the proxy is named by" \
+    '! printf "    location = /a {\n    proxy_pass http://\$target_media_service/x;\n    }\n    auth_request /a;\n" | rotation_subrequest_ports frontend 2>/dev/null >/dev/null'
   verdict "a proxy naming every routed service by DNS, with no list, is a proxy from before the lists" \
     'printf "set \$a core-service:3012;\nset \$b chat-gateway:3000;\n" | rotation_is_legacy frontend'
   verdict "a proxy that names one routed service by nothing is refused, not taken for one from before the lists" \
     '! printf "set \$a core-service:3012;\n" | rotation_is_legacy frontend'
-  verdict "a proxy that includes some rotation file is never taken for one from before the lists" \
-    '! printf "# configuration file /x/rotation/other.conf:\nset \$a core-service:3012;\nset \$b chat-gateway:3000;\n" | rotation_is_legacy frontend'
+  verdict "a proxy of 1.6.2, its upstream list at rest, is a proxy from before the target lists" \
+    'printf "# configuration file /etc/nginx/rotation/frontend.conf:\n    server core-service:3012 resolve;\n    server chat-gateway:3000 resolve;\n" | rotation_is_legacy frontend'
+  verdict "a proxy of 1.6.2 whose upstream list names a container is refused - it would keep choosing it" \
+    '! printf "# configuration file /etc/nginx/rotation/frontend.conf:\n    server canari-core-service-2:3012 resolve;\n    server chat-gateway:3000 resolve;\n" | rotation_is_legacy frontend'
+  verdict "a proxy that includes some target file is never taken for one from before the lists" \
+    '! printf "# configuration file /x/targets/other.conf:\nset \$a core-service:3012;\nset \$b chat-gateway:3000;\n" | rotation_is_legacy frontend'
 
   # The pairing check's join. Worker 10 holds one client connection (local :80, a listened port) and
   # one ESTABLISHED upstream connection to :3012 - the shape of a request still in its auth_request.
