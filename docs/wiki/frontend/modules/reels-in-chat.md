@@ -526,7 +526,9 @@ changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with i
 since a shared blob can vanish under any tile); (5) **the salons stay out of the writer until RC-8
 lands (D-salons-later)**: the switch turns on for DMs and groups, a salon keeps its photo-only camera
 (`reelMessages = !isChannel`, section 13), so RC-8 is NOT a precondition of the switch; (6) the
-readers at the `minClientVersion` floor. **RC-12 (the sheet) follows the switch, in the NEXT release
+readers at the `minClientVersion` floor - **MET on both estates (read 2026-11-02): the reader is
+`v1.2.2` (#1659), production's floor `1.5.1`, dev's `1.2.7`**; the row, with what the floor does and
+does not cover, is in [legacy-compatibility](../../legacy-compatibility.md). **RC-12 (the sheet) follows the switch, in the NEXT release
 (D-sheet-after)**: the first visible version is "film from a conversation, send to that
 conversation" - the in-conversation camera is a complete writer on its own, and the sheet only adds
 targets to the same outbox shape. **The switch is turned on in a PRE-RELEASE, read on both bench
