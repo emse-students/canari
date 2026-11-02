@@ -543,7 +543,7 @@ export class DevicesController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // A device's metadata may only be edited by its owner (audit S4): the userId is a path
     // param, so without this binding any authenticated user could rewrite another user's
-    // device name/OS. No admin exemption (owner, 2026-11-02); legacy no-op when x-user-id absent.
+    // device name/OS. No admin exemption (owner, 2026-11-02).
     assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot update another user device metadata');
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
@@ -895,7 +895,7 @@ export class DevicesController {
     // A device may only be deleted by its owner (audit S4): this route purges the full
     // per-device footprint (memberships, KeyPackages, queued messages, push token) and
     // denylists re-registration, so without this binding any user could eject a victim from
-    // every conversation. No admin exemption (owner, 2026-11-02); legacy no-op when x-user-id absent.
+    // every conversation. No admin exemption (owner, 2026-11-02).
     assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot delete another user device');
 
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the

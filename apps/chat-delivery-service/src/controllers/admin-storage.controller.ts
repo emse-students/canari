@@ -183,13 +183,13 @@ export class AdminStorageController {
   ) {}
 
   /**
-   * `X-Global-Admin` arrives the same way as everywhere else in this service
-   * (`security.controller.ts`'s `assertSelfOrGlobalAdmin`): nginx's `auth_request` forwards it from
-   * core-service's JWT-backed verify endpoint, so a client cannot forge it directly.
+   * `X-Global-Admin` is set by nginx's `auth_request` from core-service's JWT-backed verify
+   * endpoint, so a client cannot forge it directly.
    *
    * KEPT under the owner's rule of 2026-11-02 (no platform-admin bypass on conversation data): this
-   * is the ONE admin-only route left in this service, and it answers aggregates alone - disk, table
-   * sizes, row counts, Redis memory, the media bucket - never a group, a roster, a user or a device.
+   * is the ONE place in this service that reads the header, and it answers aggregates alone - disk,
+   * table sizes, row counts, Redis memory, the media bucket - never a group, a roster, a user or a
+   * device. `no-admin-bypass.spec.ts` fails on the header named in any other source file.
    */
   private assertGlobalAdmin(headerGlobalAdmin?: string): void {
     if (headerGlobalAdmin !== 'true') {

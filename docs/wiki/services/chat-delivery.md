@@ -1305,8 +1305,18 @@ anyone else.
 
 **The one handler that still reads the header** is `GET mls/admin/storage`, which answers aggregates
 alone (disk, table sizes, row counts, Redis, the media bucket), never a person.
-`src/controllers/no-admin-bypass.spec.ts` asserts that from the route metadata of every controller,
-as an allowlist: a new reader of the header fails the suite until someone decides its side.
+`src/controllers/no-admin-bypass.spec.ts` asserts it twice, against one allowlist: from the route
+metadata of every controller `AppModule` registers (walked from the module, never a hand-kept list;
+header names compared in any letter case), and from the SOURCE - the header named anywhere under
+`src/` outside `admin-storage.controller.ts` and the specs fails the suite, which also catches a
+`@Req()` read, a guard or a whole `@Headers()` object. A new reader fails until someone decides its
+side.
+
+**A missing caller is refused, never a pass** (review of #2950). `assertCallerOwnsUserId` and the
+roster checks `assertCallerIsGroupMember` / `assertCallerMayMutateMembership` used to return when
+`x-user-id` was absent - a leftover from deployments without the internal token. They now answer
+401. Nothing relied on that path: every route that calls them is behind `HeaderAuthGuard`, which
+refuses a missing `x-user-id` first, and no service code calls the handlers directly.
 
 Everything else reads no admin header: the owner check `assertCallerOwnsUserId(headerUserId, target,
 message)` has no admin parameter at all, nor do the member checks of `members.controller.ts`,
@@ -1314,8 +1324,9 @@ message)` has no admin parameter at all, nor do the member checks of `members.co
 page used a removed path - every client call names its own account. The gateway's
 `GET /api/admin/presence` is outside this service and not covered here.
 
-Pinned by `no-admin-bypass.spec.ts` (the allowlist, and an admin who is not the owner refused on the
-five device routes and the five PIN routes before any dependency is reached),
+Pinned by `no-admin-bypass.spec.ts` (the allowlist, both readings; an admin who is not the owner
+refused on the five device routes and the five PIN routes before any dependency is reached; a
+request naming no caller refused 401),
 `members.controller.group-rosters.spec.ts` and `invitations.controller.vouch.spec.ts` (an admin
 non-member refused like a stranger), and `messaging.history-requester.spec.ts` (history refused,
 single and batch, the stream never read).

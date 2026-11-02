@@ -10,6 +10,7 @@ import {
   UseGuards,
   Headers,
   ForbiddenException,
+  UnauthorizedException,
   BadRequestException,
   ConflictException,
   GoneException,
@@ -167,9 +168,8 @@ export class MembersController {
    *
    * Blocks the self-join escalation (audit S1): a non-member cannot insert itself into a populated
    * group's `dm_group_members` and then external-join via the served GroupInfo, nor remove others
-   * from a group it does not belong to (audit S5). When `x-user-id` is absent (deployments without
-   * INTERNAL_SHARED_SECRET), the check is a no-op to preserve legacy behavior, matching
-   * `assertCallerOwnsUserId`.
+   * from a group it does not belong to (audit S5). A request naming no caller is refused (401), as
+   * `assertCallerOwnsUserId` refuses it - never read as a pass (review of #2950).
    *
    * **A PLATFORM GLOBAL ADMIN IS NOT EXEMPT** (owner, 2026-11-02): an exemption here was the very
    * self-join above - an admin inserting itself into a roster, then external-joining through the
@@ -188,7 +188,7 @@ export class MembersController {
     allowSelfLeave = false
   ): Promise<void> {
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    if (!caller) return;
+    if (!caller) throw new UnauthorizedException('Missing X-User-Id header');
 
     const standing = await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller);
     if (standing === 'admitted') return;
@@ -256,8 +256,8 @@ export class MembersController {
    * of a conversation it is not in (owner, 2026-11-02). Blocks roster enumeration
    * by non-members (audit S5): the user list and active-device list are group metadata that leak
    * social graph / device topology. Freshly-invited joiners are registered as members BEFORE their
-   * Welcome, so recovery/re-invite reads still pass. No-op when `x-user-id` is absent (legacy
-   * deployments without INTERNAL_SHARED_SECRET), matching `assertCallerOwnsUserId`.
+   * Welcome, so recovery/re-invite reads still pass. A request naming no caller is refused (401),
+   * as `assertCallerOwnsUserId` refuses it (review of #2950).
    *
    * A seat still awaiting a member's admission reads no roster: it is answered the 409
    * `awaiting_admission` ({@link callerSeatStanding}), never the 403 its client would retire on.
@@ -267,7 +267,7 @@ export class MembersController {
     headerUserId: string | undefined
   ): Promise<void> {
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    if (!caller) return;
+    if (!caller) throw new UnauthorizedException('Missing X-User-Id header');
     const standing = await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller);
     if (standing === 'admitted') return;
     if (standing === 'awaiting') {
@@ -804,10 +804,9 @@ export class MembersController {
    * the single read's 403 per group, carried as a FACT the client reads by group, so it never has
    * to learn it by asking again.
    *
-   * **NO CALLER IS NOT A WILDCARD HERE.** `assertCallerIsGroupMember` lets an absent `x-user-id`
-   * through for deployments that predate the internal token; `HeaderAuthGuard` now refuses those
-   * before any handler runs, so that branch is unreachable - and a branch that would hand EVERY
-   * roster to a caller nobody identified is not copied into a route that reads many at once.
+   * **NO CALLER IS NOT A WILDCARD HERE.** `HeaderAuthGuard` refuses a missing `x-user-id` before
+   * any handler runs, and a caller nobody identified is answered every group in `refused` - never
+   * every roster.
    *
    * **OLD CLIENTS ARE UNTOUCHED**: `GET mls/groups/:groupId/user-members` stays, and is still what
    * every other caller (membership guards, peer resolution) reads.
@@ -1292,8 +1291,7 @@ export class MembersController {
    * withholds the union of everybody's windows. Members with no window are omitted.
    *
    * **CURRENT MEMBERS ONLY MAY ASK**, and no branch lets anybody else through: no global-admin
-   * bypass, and no unidentified caller (the legacy no-op of `assertCallerIsGroupMember` is not
-   * copied). The answer names who was removed and when, which is group metadata only a member may
+   * bypass, and no unidentified caller. The answer names who was removed and when, which is group metadata only a member may
    * hold - and only a member answers history anyway.
    *
    * Times are server milliseconds from this service's clock, the clock that stamps

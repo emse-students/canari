@@ -1,22 +1,11 @@
 /// <reference types="jest" />
 
-import { ForbiddenException } from '@nestjs/common';
-import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
-import { AppController } from '../app.controller';
-import { AdminStorageController } from './admin-storage.controller';
-import { CallsController } from './calls.controller';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { MODULE_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { readFileSync, readdirSync, statSync } from 'fs';
+import { join, relative, sep } from 'path';
 import { DevicesController } from './devices.controller';
-import { GifMediaController } from './gif-media.controller';
-import { GifSearchController } from './gif-search.controller';
-import { GroupsController } from './groups.controller';
-import { HealthController } from './health.controller';
-import { InternalController } from './internal.controller';
-import { InvitationsController } from './invitations.controller';
-import { LocksController } from './locks.controller';
 import { MembersController } from './members.controller';
-import { MessagingController } from './messaging.controller';
-import { NotificationPreferencesController } from './notification-preferences.controller';
-import { PushController } from './push.controller';
 import { SecurityController } from './security.controller';
 import { assertCallerOwnsUserId } from '../utils/sanitize';
 
@@ -24,30 +13,17 @@ import { assertCallerOwnsUserId } from '../utils/sanitize';
  * NO PLATFORM-ADMIN BYPASS ON CONVERSATION DATA (owner, 2026-11-02).
  *
  * A global admin is a user like any other on a person's groups, rosters, invitations, queued
- * messages, history, and on the device enrolment that would route a conversation to them. The
- * route-level cases live beside each route (rosters, vouch, history); this one is the gate that
- * keeps the NEXT route honest: every handler of this service that reads `x-global-admin` is named
- * below, by an ALLOWLIST, and a new reader fails here until somebody decides which side it is on.
+ * messages, history, devices and PIN. The route-level cases live beside each route (rosters, vouch,
+ * history) and below (devices, PIN); this file is the gate that keeps the NEXT route honest, by two
+ * independent readings that both have to agree with ONE allowlist:
+ *  - the route metadata of every controller AppModule registers - read from the module, never from
+ *    a list kept here, so a new controller is covered the day it is registered;
+ *  - the SOURCE, for the header named anywhere at all - a `@Req()` read, a guard, a middleware or a
+ *    whole `@Headers()` object never show up as a named route argument.
  */
 describe('no platform-admin bypass on conversation data', () => {
-  const CONTROLLERS = [
-    AppController,
-    AdminStorageController,
-    CallsController,
-    DevicesController,
-    GifMediaController,
-    GifSearchController,
-    GroupsController,
-    HealthController,
-    InternalController,
-    InvitationsController,
-    LocksController,
-    MembersController,
-    MessagingController,
-    NotificationPreferencesController,
-    PushController,
-    SecurityController,
-  ];
+  const HEADER = 'x-global-admin';
+  const SRC = join(__dirname, '..');
 
   /**
    * The ONLY handler allowed to read the header: the storage panel, which answers aggregates and
@@ -55,44 +31,105 @@ describe('no platform-admin bypass on conversation data', () => {
    * decision of 2026-11-02 - each person manages their own devices and their own PIN.
    */
   const ALLOWED = ['AdminStorageController.getStorageUsage'];
+  /** The one source file that may name the header: the allowed handler's own. */
+  const ALLOWED_SOURCE = 'controllers/admin-storage.controller.ts';
 
-  /** Every `Class.method` whose route arguments include the `x-global-admin` header. */
-  const readersOfTheHeader = (): string[] => {
+  type ModuleLike = { module?: object; controllers?: object[]; imports?: unknown[] };
+
+  /** Every controller class AppModule registers, through its imported modules too. */
+  const registeredControllers = async (): Promise<Array<{ name: string; prototype: object }>> => {
+    // AppModule's TypeORM options read this at import time; nothing connects here.
+    process.env.POSTGRES_URL ??= 'postgres://unused@localhost:1/unused';
+    const { AppModule } = await import('../app.module');
+    const found = new Set<{ name: string; prototype: object }>();
+    const seen = new Set<unknown>();
+    const walk = (mod: unknown): void => {
+      if (!mod || seen.has(mod)) return;
+      seen.add(mod);
+      const dynamic = mod as ModuleLike;
+      const cls = typeof mod === 'function' ? (mod as object) : dynamic.module;
+      const read = (key: string): unknown[] =>
+        (cls ? (Reflect.getMetadata(key, cls) as unknown[] | undefined) : undefined) ?? [];
+      for (const c of [...read(MODULE_METADATA.CONTROLLERS), ...(dynamic.controllers ?? [])]) {
+        found.add(c as { name: string; prototype: object });
+      }
+      for (const i of [...read(MODULE_METADATA.IMPORTS), ...(dynamic.imports ?? [])]) walk(i);
+    };
+    walk(AppModule);
+    return [...found];
+  };
+
+  /** Every `Class.method` whose route arguments name the header, in any letter case. */
+  const readersOfTheHeader = (
+    controllers: Array<{ name: string; prototype: object }>
+  ): string[] => {
     const readers: string[] = [];
-    for (const controller of CONTROLLERS) {
+    for (const controller of controllers) {
       for (const method of Object.getOwnPropertyNames(controller.prototype)) {
         const args = (Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, method) ?? {}) as Record<
           string,
           { data?: unknown }
         >;
-        if (Object.values(args).some((a) => a.data === 'x-global-admin')) {
-          readers.push(`${controller.name}.${method}`);
-        }
+        const named = Object.values(args).some(
+          (a) => typeof a.data === 'string' && a.data.toLowerCase() === HEADER
+        );
+        if (named) readers.push(`${controller.name}.${method}`);
       }
     }
     return readers.sort();
   };
 
-  it('reads the header in the allowlisted handlers and nowhere else', () => {
-    expect(readersOfTheHeader()).toEqual([...ALLOWED].sort());
+  /** Every non-spec `.ts` file under `src/`. */
+  const sourceFiles = (dir: string = SRC, acc: string[] = []): string[] => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) sourceFiles(full, acc);
+      else if (entry.endsWith('.ts') && !entry.endsWith('.spec.ts')) acc.push(full);
+    }
+    return acc;
+  };
+
+  it('derives the controllers from AppModule, and finds the ones it must', async () => {
+    const names = (await registeredControllers()).map((c) => c.name);
+    // A control: an empty or partial walk would make the route reading below vacuous.
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'AdminStorageController',
+        'DevicesController',
+        'InvitationsController',
+        'MembersController',
+        'MessagingController',
+        'SecurityController',
+      ])
+    );
   });
 
-  it('the check is live: it sees a handler that reads the header', () => {
-    // A control, so a green run above cannot be a metadata key that matches nothing.
-    expect(readersOfTheHeader()).toContain('AdminStorageController.getStorageUsage');
+  it('reads the header, in any letter case, in the allowlisted handler and nowhere else', async () => {
+    expect(readersOfTheHeader(await registeredControllers())).toEqual([...ALLOWED].sort());
+  });
+
+  it('names the header in no source file but the allowlisted one, in any letter case', () => {
+    const files = sourceFiles();
+    const naming = files
+      .filter((f) => readFileSync(f, 'utf8').toLowerCase().includes(HEADER))
+      .map((f) => relative(SRC, f).split(sep).join('/'))
+      .sort();
+    // A control: the scan must have read the tree, not an empty directory.
+    expect(files.length).toBeGreaterThan(50);
+    expect(naming).toEqual([ALLOWED_SOURCE]);
   });
 
   it("refuses an admin acting on another person's data as it refuses anybody", () => {
     const asAnybody = () => assertCallerOwnsUserId('someone', 'victim', 'refused');
     expect(asAnybody).toThrow(ForbiddenException);
-    // The strict assertion takes no admin flag at all: there is nothing an admin could pass.
+    // The owner check takes no admin flag at all: there is nothing an admin could pass.
     expect(assertCallerOwnsUserId.length).toBe(3);
   });
 
   /**
    * A controller with NO dependencies: every field it touches throws. A refusal must come from the
-   * owner check at the top of the handler, before anything is read or written - a dependency
-   * reached first would fail the case with a different error.
+   * check at the top of the handler, before anything is read or written - a dependency reached
+   * first would fail the case with a different error.
    */
   const bare = <T extends object>(cls: { prototype: T }): T =>
     new Proxy(Object.create(cls.prototype) as T, {
@@ -100,7 +137,7 @@ describe('no platform-admin bypass on conversation data', () => {
         if (key in cls.prototype || typeof key === 'symbol') {
           return Reflect.get(target, key, receiver);
         }
-        throw new Error(`dependency ${String(key)} reached before the owner check`);
+        throw new Error(`dependency ${String(key)} reached before the check`);
       },
     });
 
@@ -141,6 +178,35 @@ describe('no platform-admin bypass on conversation data', () => {
       ['pin-reset', () => security.resetPin({ userId: 'victim' }, 'admin')],
     ])('%s', async (_route, call) => {
       await expect(call()).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  /**
+   * A CHECK CALLED STRICT IS STRICT (review of #2950): a request that names no caller is refused
+   * 401, never read as a pass. `HeaderAuthGuard` refuses it first on every route today; these hold
+   * the checks to it on their own.
+   */
+  describe('a request naming no caller is refused 401, never let through', () => {
+    it('the owner check', () => {
+      expect(() => assertCallerOwnsUserId(undefined, 'victim', 'refused')).toThrow(
+        UnauthorizedException
+      );
+      expect(() => assertCallerOwnsUserId('', 'victim', 'refused')).toThrow(UnauthorizedException);
+    });
+
+    const members = bare(MembersController);
+    const devices = bare(DevicesController);
+    it.each<[string, () => Promise<unknown>]>([
+      ['roster read (user-members)', () => members.getGroupUserMembers('g1', undefined)],
+      ['roster read (members)', () => members.getGroupMembers('g1', undefined)],
+      ['roster removal', () => members.removeGroupMember('g1', 'victim', undefined)],
+      ['groups list', () => members.getUserGroups('victim', undefined)],
+      [
+        'device deletion',
+        () => devices.deleteDevice('victim', 'd1', undefined, undefined, undefined),
+      ],
+    ])('%s', async (_route, call) => {
+      await expect(Promise.resolve().then(call)).rejects.toBeInstanceOf(UnauthorizedException);
     });
   });
 });
