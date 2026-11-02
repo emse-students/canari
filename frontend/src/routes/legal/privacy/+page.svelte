@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="01/11/2026"
+  updated="02/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -365,6 +365,14 @@
         </dd>
       </div>
       <div>
+        <dt>Aides déjà vues</dt>
+        <dd>
+          La liste des visites guidées et des astuces de première utilisation que vous avez déjà
+          vues (l'identifiant de l'aide et la date), enregistrée sur votre compte pour qu'elles ne
+          réapparaissent pas sur un autre appareil.
+        </dd>
+      </div>
+      <div>
         <dt>Cotisations des anciennes bases (personnes sans compte)</dt>
         <dd>
           Pour permettre aux cotisants du BDE et du Cercle d'avant Canari de retrouver leur
@@ -607,6 +615,10 @@
               Tant que le compte existe ; supprimés à la suppression du compte (une nouvelle
               connexion recrée un compte)
             </td>
+          </tr>
+          <tr>
+            <td>Aides déjà vues (visites guidées, astuces)</td>
+            <td>Tant que le compte existe ; supprimées à la suppression du compte</td>
           </tr>
           <tr>
             <td>Sessions de connexion, et leur clé de restauration sur Android</td>
@@ -858,7 +870,10 @@
           </tr>
           <tr>
             <td>Préférences et brouillons (stockage local)</td>
-            <td>Thème, émojis récents, brouillon de publication, identifiant de l'appareil</td>
+            <td>
+              Thème, émojis récents, brouillon de publication, identifiant de l'appareil, aides déjà
+              vues
+            </td>
             <td>Jusqu'à leur effacement</td>
           </tr>
           <tr>

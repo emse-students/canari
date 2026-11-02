@@ -77,6 +77,31 @@ type StackEntry = {
 };
 
 const stack: StackEntry[] = [];
+
+/**
+ * Who is told when the stack's depth changes - the guided-help overlay, which must not START over
+ * an open menu or sheet (`guidance/GuideOverlay.svelte`). An event, so that reader needs no poll.
+ */
+const depthListeners = new Set<(depth: number) => void>();
+
+/** Tells every depth listener; one that throws is logged and never stops the others. */
+function notifyDepth(): void {
+  for (const listener of depthListeners) {
+    try {
+      listener(stack.length);
+    } catch (e) {
+      console.error('[historyOverlay] a depth listener threw', e);
+    }
+  }
+}
+
+/** Calls `listener` with the new depth after every change of the stack. Returns the unsubscribe. */
+export function onHistoryOverlayDepthChange(listener: (depth: number) => void): () => void {
+  depthListeners.add(listener);
+  return () => {
+    depthListeners.delete(listener);
+  };
+}
 /** The id of the last entry pushed by this load. */
 let lastId = 0;
 /**
@@ -149,6 +174,7 @@ export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}):
     hereHref = '';
     walking = false;
     writesEntries = true;
+    notifyDepth();
   };
 }
 
@@ -166,6 +192,7 @@ export function pushHistoryOverlay(close: OverlayClose): void {
   const id = ++lastId;
   if (!writesEntries) {
     stack.push({ close, id });
+    notifyDepth();
     return;
   }
   const state = { [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID };
@@ -178,6 +205,7 @@ export function pushHistoryOverlay(close: OverlayClose): void {
   stack.push({ close, id });
   here = id;
   hereHref = currentHref();
+  notifyDepth();
 }
 
 /**
@@ -221,6 +249,7 @@ function settleArrival(state: unknown, leftGhost: boolean): void {
     above.push(stack.pop()!);
   }
   for (const entry of above) entry.close('back');
+  if (above.length > 0) notifyDepth();
   if (above.length > 0) {
     Log.d('historyOverlay', `Back closed ${above.length} overlay(s), ${stack.length} left open`);
     return;
@@ -288,6 +317,7 @@ export function backHistoryOverlayFromGesture(arm: HistoryGestureArm | null): bo
   }
   Log.i('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
   top.close('back');
+  notifyDepth();
   return true;
 }
 
@@ -330,7 +360,10 @@ export function abandonHistoryOverlay(close: () => void): void {
 export function releaseHistoryOverlay(close: () => void): void {
   if (!isBrowser) return;
   const idx = stack.findIndex((e) => e.close === close);
-  if (idx >= 0) stack.splice(idx, 1);
+  if (idx >= 0) {
+    stack.splice(idx, 1);
+    notifyDepth();
+  }
 }
 
 /**
@@ -354,6 +387,7 @@ export function drainHistoryOverlayStack(): void {
   // ours, and a Back from the next page must not be read as one pressed on it.
   here = 0;
   hereHref = '';
+  notifyDepth();
 }
 
 /**
@@ -377,6 +411,7 @@ export function clearHistoryOverlayStack(): void {
   here = 0;
   hereHref = '';
   walking = false;
+  notifyDepth();
 }
 
 export function historyOverlayStackDepth(): number {

@@ -701,6 +701,79 @@ img[src^='/emoji/'] {
   animation: motionPopIn var(--motion-base) var(--motion-ease-out);
 }
 
+/* THE GUIDED HELP (`components/guidance/GuideOverlay.svelte`, docs/wiki/frontend/guided-help.md).
+   The spotlight is a box over the target: on a tour its giant spread shadow is the scrim, so the
+   target is the one undimmed hole in it; on a hint it carries the ring alone. It GLIDES from one
+   control to the next (the four box properties, on the motion scale), its ring breathes, and the
+   gesture mime slides - every one of them stopped by the global reduced-motion rule, and the two
+   infinite ones are not even started there (`data-pulse` / `data-play` are left off). */
+.guide-spotlight {
+  position: absolute;
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+  transition:
+    left var(--motion-slow) var(--motion-ease-out),
+    top var(--motion-slow) var(--motion-ease-out),
+    width var(--motion-slow) var(--motion-ease-out),
+    height var(--motion-slow) var(--motion-ease-out);
+}
+
+.guide-spotlight[data-dim] {
+  box-shadow: 0 0 0 200vmax color-mix(in srgb, var(--color-cn-scrim) 55%, transparent);
+}
+
+.guide-spotlight-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0.125rem var(--cn-yellow);
+}
+
+.guide-spotlight-ring[data-pulse] {
+  animation: guideHalo 1.8s var(--motion-ease-out) infinite;
+}
+
+@keyframes guideHalo {
+  0% {
+    box-shadow:
+      0 0 0 0.125rem var(--cn-yellow),
+      0 0 0 0 color-mix(in srgb, var(--cn-yellow) 60%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0.125rem var(--cn-yellow),
+      0 0 0 0.875rem transparent;
+  }
+}
+
+.guide-bubble {
+  transition:
+    left var(--motion-slow) var(--motion-ease-out),
+    top var(--motion-slow) var(--motion-ease-out);
+}
+
+.guide-swipe-mime {
+  display: inline-flex;
+}
+
+.guide-swipe-mime[data-play] {
+  animation: guideSwipe 1.6s var(--motion-ease-out) infinite;
+}
+
+@keyframes guideSwipe {
+  0% {
+    transform: translateX(-1rem);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(1rem);
+    opacity: 0;
+  }
+}
+
 /* Press feedback on a control: a shrink on touch, back on release. It restates the colour
    transitions of `.ui-icon-button` because an unlayered `transition` replaces that layered one. */
 .motion-press {
