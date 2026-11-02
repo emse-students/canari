@@ -4,7 +4,13 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(
 let tauri = true;
 vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => tauri }));
 
-import { mlsStateSize, hasMlsState, removeMlsState } from './hex';
+import {
+  mlsStateSize,
+  hasMlsState,
+  removeMlsState,
+  rollbackMlsStateReset,
+  stageMlsStateReset,
+} from './hex';
 import {
   MlsSlotMoveUnfinishedError,
   MlsStateLoadUntypedError,
@@ -85,34 +91,58 @@ describe('hasMlsState', () => {
 });
 
 /**
- * Round 5 of the review of #2919: the "forgot PIN" reset on a phone is THE ACCOUNT'S. It used to end
- * the native session WITH A SWEEP, which removes the slot whoever it belongs to - account B's reset
- * deleted account A's state.
+ * Rounds 5 and 6 of the review of #2919: the "forgot PIN" reset on a phone is THE ACCOUNT'S, and runs
+ * in two steps around the server's reset. It used to end the native session WITH A SWEEP, which
+ * removes the slot whoever it belongs to - account B's reset deleted account A's state.
  */
-describe('removeMlsState on a phone', () => {
+describe('the PIN reset of the local MLS state on a phone', () => {
   beforeEach(() => {
     tauri = true;
     invoke.mockReset();
     invoke.mockResolvedValue(0);
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('ends the native session without a sweep, then resets only the named account', async () => {
-    await removeMlsState('user-b');
+  const sweeps = () =>
+    invoke.mock.calls.some((c) => (c[1] as { sweepState?: boolean })?.sweepState === true);
+
+  it('stage: ends the native session without a sweep, then sets the named account apart', async () => {
+    await stageMlsStateReset('user-b');
     const calls = invoke.mock.calls;
-    expect(calls.map((c) => c[0])).toEqual(['terminer_session_mls', 'reset_user_mls_state']);
+    expect(calls.map((c) => c[0])).toEqual(['terminer_session_mls', 'stage_user_mls_reset']);
     expect(calls[0][1]).toMatchObject({ sweepState: false });
     expect(calls[1][1]).toEqual({ userId: 'user-b' });
-    expect(calls.some((c) => (c[1] as { sweepState?: boolean })?.sweepState === true)).toBe(false);
+    expect(sweeps()).toBe(false);
   });
 
-  it('propagates a refused reset - nothing removed is never reported as done', async () => {
-    const refusal = 'the slot holds a state of unproven owner';
+  it('commit: removes what was set apart, and never sweeps', async () => {
+    await removeMlsState('user-b');
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['commit_user_mls_reset']);
+    expect(invoke.mock.calls[0][1]).toEqual({ userId: 'user-b' });
+    expect(sweeps()).toBe(false);
+  });
+
+  it('rollback: puts the named account back', async () => {
+    await rollbackMlsStateReset('user-b');
+    expect(invoke.mock.calls).toEqual([['rollback_user_mls_reset', { userId: 'user-b' }]]);
+  });
+
+  it('a refused stage or commit propagates - nothing moved is never reported as done', async () => {
+    const refusal = "this account's state was cut part-way through a move";
     invoke.mockImplementation((cmd: string) =>
-      cmd === 'reset_user_mls_state' ? Promise.reject(refusal) : Promise.resolve(undefined)
+      cmd === 'terminer_session_mls' ? Promise.resolve(undefined) : Promise.reject(refusal)
     );
+    await expect(stageMlsStateReset('user-b')).rejects.toBe(refusal);
     await expect(removeMlsState('user-b')).rejects.toBe(refusal);
+  });
+
+  it('the web stages and rolls back nothing', async () => {
+    tauri = false;
+    await stageMlsStateReset('user-b');
+    await rollbackMlsStateReset('user-b');
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

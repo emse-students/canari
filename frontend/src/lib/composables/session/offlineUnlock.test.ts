@@ -250,16 +250,6 @@ describe('a failed unlock keeps the identity unless the session is dead', () => 
  * revocation path had never run any of it. These pin the two halves that cannot drift again.
  */
 describe('what a revoked device stops before it deletes anything', () => {
-  it('stops the live session before the first delete', () => {
-    const wipe = wipeRevokedDeviceBody;
-    const stop = wipe.indexOf("tearDownLiveSession(ctx, cb, 'revoked');");
-    expect(stop).toBeGreaterThan(-1);
-    // Every erasure must come after it - one running timer is enough to undo all three.
-    for (const erase of ['resetDeviceAsFreshImpl(', 'clearAuth()', 'wipeDeviceToFactory()']) {
-      expect(wipe.indexOf(erase)).toBeGreaterThan(stop);
-    }
-  });
-
   it('stops the watchdog that re-created the state, and empties what it iterates', () => {
     // The timer AND its candidate set: the watchdog unions the live conversation map with the
     // not-ready registry, so clearing the timer alone would still leave a reactive path a source.

@@ -39,6 +39,8 @@ import {
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
+  rollbackDeviceResetImpl,
+  stageDeviceResetImpl,
   wipeDeletedAccountImpl,
   releaseDeletedAccountImpl,
   recoverPinImpl,
@@ -536,7 +538,11 @@ export function useChatSession() {
     /** Processes pending MLS invitations from our other devices (multi-device sync). */
     processDeviceInvitationsLocally: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       processDeviceInvitationsLocally(ctx, cb),
-    /** Resets this device's MLS state and returns to a fresh state (called on server revocation). */
+    /** Step one of the "forgot PIN" reset: sets the account's MLS state apart, before the server is asked. */
+    stageDeviceReset: (userIdToReset: string) => stageDeviceResetImpl(ctx, userIdToReset),
+    /** Undoes the stage when the server did not reset the PIN. */
+    rollbackDeviceReset: (userIdToReset: string) => rollbackDeviceResetImpl(userIdToReset),
+    /** Step two of the "forgot PIN" reset, once the server reset the PIN: removes what was set apart. */
     resetDeviceAsFresh: (
       userIdToReset: string,
       cb: import('./session/sessionTypes').ChatSessionCallbacks

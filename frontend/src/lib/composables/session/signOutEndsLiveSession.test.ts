@@ -90,11 +90,16 @@ describe('every sign-out ends the live session on the device', () => {
 
   it('a "forgot PIN" reset deletes the state only after a signed-out session has written its last', () => {
     // Otherwise the sign-out's late write puts back, under the OLD key, the state this deletes.
-    const fn = sessionAuth.slice(
-      sessionAuth.indexOf('export async function resetDeviceAsFreshImpl(')
-    );
-    const wait = fn.indexOf('await ctx.whenMlsRetired();');
-    expect(wait).toBeGreaterThan(-1);
-    expect(wait).toBeLessThan(fn.indexOf('removeMlsState('));
+    // Round 6 of the review of #2919: the state is SET APART first (the stage), so that is where the
+    // wait must come before; the commit asks again.
+    for (const [head, touch] of [
+      ['export async function stageDeviceResetImpl(', 'stageMlsStateReset('],
+      ['export async function resetDeviceAsFreshImpl(', 'removeMlsState('],
+    ]) {
+      const fn = sessionAuth.slice(sessionAuth.indexOf(head));
+      const wait = fn.indexOf('await ctx.whenMlsRetired();');
+      expect(wait).toBeGreaterThan(-1);
+      expect(wait).toBeLessThan(fn.indexOf(touch));
+    }
   });
 });

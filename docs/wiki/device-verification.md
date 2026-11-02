@@ -1151,11 +1151,23 @@ lines.
    `[CanariPush] mirror mls.bin failed`.
 4. **Reboot.** Unlock once, lock, the third device writes to B: the content shows.
 4b. **B's "forgot PIN" leaves A intact.** With A having signed in last, sign in as B and take "forgot
-   PIN" at B's PIN gate. Expect `[MLS_ACCOUNT] the PIN reset removes the account's local MLS state`
-   and no `terminer_session_mls` with a sweep; A's state - in the slot with `mls.owner` naming A, or
-   parked under A's directory - has the same sha256 as before, and A then signs in with its history.
+   PIN" at B's PIN gate. Expect `[MLS_ACCOUNT] the PIN reset is staged` then `the PIN reset is
+   committed`, and no `terminer_session_mls` with a sweep; A's state - parked under A's directory - has
+   the same sha256 as before, and A then signs in with its history. With the network cut before the
+   reset, expect `the PIN reset is rolled back` and B's old PIN still opening B's history.
+4c. **An unproven state survives a reset and goes back to its owner.** Install a build from before the
+   owner record, sign A in, then install the pre-release over it (A's `mls.bin`, no `mls.owner`). Sign
+   in as B: B's PIN cannot open the saved state it is offered (A's), and the gate says so. B takes "forgot PIN": expect `the slot's
+   state of UNPROVEN owner set aside as unproven.residue-0` and B choosing a new PIN. Sign in as A:
+   expect `a state of unproven owner set aside earlier is offered to the signing-in account`, A's
+   history opens, and `mls.owner` names A.
+4d. **B revoking the phone with A parked leaves A whole.** With A parked and B signed in, remove this
+   phone from B's device list on another device. Expect `another account's MLS state is on this install
+   - only the revoked account is wiped` (or `other account(s) recorded`), never `wiping this device back
+   to a fresh install`; then A signs in with its history, its PIN and its biometric unlock.
 5. **The greps, over the whole run, each ZERO:** `residue`, `TWO STATES`, `cut part-way`,
-   `unproven owner`, `sign-in refused`, `superseded`, `not the push's account`.
+   `sign-in refused`, `superseded`, `not the push's account`, `a PIN reset was cut` (step 4c's own
+   `UNPROVEN owner set aside` line is expected there and nowhere else).
 6. **The files** (`xcrun devicectl device info files` on the app container and the App Group): ONE
    64-hex directory under `mls_accounts/`, with no `.parking`, `.unparking` or `.residue-<n>` suffix;
    `mls.owner` in the slot names B; the App Group `mls.bin` has the same sha256 as the slot's.

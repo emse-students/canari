@@ -195,6 +195,12 @@ export interface WipeDeletedAccountOptions {
    * running for an account the server has just refused.
    */
   stopIf?: () => WipeStop | null;
+  /**
+   * The account STILL EXISTS - a device its owner revoked, wiped of that one account because another
+   * account uses the install (`wipeAccountOfRevokedDevice`). It is then not noted as deleted here:
+   * the account may sign in on this device again.
+   */
+  accountStillExists?: boolean;
 }
 
 /** The ids whose case collision this start already reported - see {@link wipeDeletedAccountLocalData}. */
@@ -241,7 +247,7 @@ export async function wipeDeletedAccountLocalData(
   // the resume: a stale marker resumed in two web tabs would leave the flag in tab A after the user
   // signed in again from tab B, whose `forgetDeletedAccountOnSignIn` clears only its own process -
   // and tab A would refuse the new account. The resume's own guard is the marker, which tab B drops.
-  if (!options.stopIf) noteDeletedAccountWipeStarted(userId);
+  if (!options.stopIf && !options.accountStillExists) noteDeletedAccountWipeStarted(userId);
   const twins = caseCollidingAccountIdsIn(localStorage, userId);
   if (twins.length > 0) {
     // Kept as owed on purpose: reported at ERROR once per start (the resume and the live wipe may

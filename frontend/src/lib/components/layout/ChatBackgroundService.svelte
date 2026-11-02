@@ -32,6 +32,7 @@
   import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
   import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
+  import { runPinReset } from '$lib/composables/session/pinReset';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -2186,51 +2187,47 @@
       pinError = m.auth_pin_reset_withheld_key_unreadable();
       return;
     }
-    // ASKED BEFORE THE SERVER RESETS THE PIN (round 5 of the review of #2919): a local reset the
-    // native side would refuse - a saved state no owner record names, maybe another account's - must
-    // leave the old PIN working, not half-reset the account.
-    try {
-      const { mlsStateResetRefusal } = await import('$lib/utils/hex');
-      const refusal = await mlsStateResetRefusal(uid);
-      if (refusal) {
-        appendLog(`[PIN_RESET] REFUSED locally, the server not asked - ${refusal}`);
-        pinError = m.auth_pin_reset_blocked_unproven_state();
-        return;
-      }
-    } catch (e) {
-      appendLog(`[PIN_RESET] REFUSED - whether the reset may run could not be read: ${String(e)}`);
-      pinError = m.auth_pin_reset_failed();
-      return;
-    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
     appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}…`);
-    // The reset deletes the account's salt; one asked before it can only be stale.
-    forgetPinSaltAhead('PIN reset', appendLog);
+    // Whether the server reset the PIN: from then on the old PIN opens nothing, so the gate stays in
+    // first setup whatever fails after.
+    let serverReset = false;
     try {
-      const token = await getToken();
-      const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userId: uid }),
+      await runPinReset({
+        stage: () => globalSession.stageDeviceReset(uid),
+        askServer: async () => {
+          // The reset deletes the account's salt; one asked before it can only be stale.
+          forgetPinSaltAhead('PIN reset', appendLog);
+          const token = await getToken();
+          const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ userId: uid }),
+          });
+          if (!res.ok) throw new Error(`Server-side PIN reset failed (${res.status}).`);
+        },
+        rollback: () => globalSession.rollbackDeviceReset(uid),
+        enterFirstSetup: () => {
+          serverReset = true;
+          globalSession.userId = uid;
+          isFirstPinSetup = true;
+        },
+        commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
+        log: appendLog,
       });
-      if (!res.ok) throw new Error('Server-side PIN reset failed.');
-      // Local MLS state is encrypted under the old PIN - wipe it so a new PIN starts fresh.
-      await globalSession.resetDeviceAsFresh(uid, sessionCb());
-      appendLog('[PIN_RESET] MLS state wiped - choose a new PIN.');
-      globalSession.userId = uid;
-      isFirstPinSetup = true;
-      // Deliberately NOT gated on `mayPromptForPin`: the POST above carried a live access token, so
-      // the credential is not dead, and the local MLS state is already wiped. Declining the keypad
-      // here would strand the user mid-reset with nothing to unlock and no way to finish.
+      // Deliberately NOT gated on `mayPromptForPin`: the POST carried a live access token, so the
+      // credential is not dead, and the local MLS state is gone. Declining the keypad here would
+      // strand the user mid-reset with nothing to unlock and no way to finish.
       showPinGate('PIN reset');
     } catch (e) {
-      // The `Server-side PIN reset failed.` thrown above is a DEV line and used to be shown as it
-      // stood - an English sentence on a French modal, and the only thing the reader was told.
-      // It stays exactly as it is, in the log, where it is correct.
+      // A DEV line, kept in the log where it is correct; the reader is told in their language.
       pinError = m.auth_pin_reset_failed();
       appendLog(`[PIN_RESET] Failed: ${String(e)}`);
+      // The server reset the PIN and only the local commit failed: the gate is already in first
+      // setup, so the keypad still opens to choose the new PIN.
+      if (serverReset) showPinGate('PIN reset');
     } finally {
       pinLoading = false;
       pinStep = '';

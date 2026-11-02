@@ -7,7 +7,8 @@ export type NativeMlsSessionEnd =
   | 'stopped login'
   | 'client reset'
   | 'state reset'
-  | 'factory wipe';
+  | 'factory wipe'
+  | 'revoked account wipe';
 
 /**
  * Ends this process's native MLS session: the manager, its cached at-rest key and the warm-process

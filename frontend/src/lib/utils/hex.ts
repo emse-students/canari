@@ -492,16 +492,31 @@ export async function mlsStateSize(userId: string): Promise<number> {
 }
 
 /**
- * Why the "forgot PIN" reset of `userId` must not run on this device, `null` when it may - asked
- * BEFORE the server resets the PIN, so a reset refused here leaves the old PIN working (round 5 of
- * the review of #2919). On a phone, refused when the slot holds a saved state no owner record names:
- * it may be another account's, and the reset would erase it (`mls_state_reset_refusal`). The web keeps
- * one store per account and has nothing to refuse.
+ * STEP ONE OF THE "FORGOT PIN" RESET of `userId`, run BEFORE the server resets the PIN (round 6 of
+ * the review of #2919): on a phone, the native session ends WITHOUT a sweep and the account's state is
+ * SET APART, never removed (`stage_user_mls_reset`) - so a server reset that fails is rolled back
+ * ({@link rollbackMlsStateReset}) and one that lands is committed ({@link removeMlsState}). A slot
+ * holding a state no owner record names is set aside for its owner in the same hold, never removed.
+ * A rejection means nothing was moved: the server must not be asked. The web keeps one store per
+ * account and stages nothing - its removal is the commit.
  */
-export async function mlsStateResetRefusal(userId: string): Promise<string | null> {
-  if (!isTauriRuntime()) return null;
+export async function stageMlsStateReset(userId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await endNativeMlsSession('state reset', { sweepState: false });
   const { invoke } = await import('@tauri-apps/api/core');
-  return (await invoke<string | null>('mls_state_reset_refusal', { userId })) ?? null;
+  await invoke('stage_user_mls_reset', { userId });
+  console.log("[MLS] the account's local MLS state is set apart for the PIN reset");
+}
+
+/**
+ * Undoes {@link stageMlsStateReset} when the server did NOT reset the PIN: the account's state goes
+ * back where it was, so the old PIN still opens it (`rollback_user_mls_reset`). A no-op on the web.
+ */
+export async function rollbackMlsStateReset(userId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('rollback_user_mls_reset', { userId });
+  console.warn("[MLS] the PIN reset is rolled back - the account's local MLS state is back");
 }
 
 /**
@@ -573,7 +588,12 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
   return stateOrAbsent(bytes);
 }
 
-/** Remove the MLS state for `userId` from IndexedDB (and legacy localStorage). */
+/**
+ * Removes `userId`'s MLS state: from IndexedDB (and legacy localStorage) on the web; on a phone, the
+ * commit of the PIN reset {@link stageMlsStateReset} staged. Its ONE caller is that reset - the
+ * revoked device's wipe and the deleted account's wipe remove the native state themselves
+ * (`delete_user_mls_state`, `clear_app_data`), never through a step that can refuse.
+ */
 export async function removeMlsState(userId: string): Promise<void> {
   // Remove legacy localStorage entry always
   try {
@@ -583,16 +603,15 @@ export async function removeMlsState(userId: string): Promise<void> {
   }
 
   if (isTauriRuntime()) {
-    // THIS ACCOUNT'S STATE, AND ONLY ITS (round 5 of the review of #2919): the native session ends
-    // WITHOUT a sweep - a sweep removes the slot whoever it belongs to, and the "forgot PIN" reset of
-    // account B, from B's PIN gate with account A in the slot, deleted A's state - then the native
-    // side removes B's parked state, B's residue, and the slot only when its owner record names B
-    // (`reset_user_mls_state`). A refusal propagates: a reset that removed nothing must not be
+    // THE COMMIT OF A STAGED PIN RESET, AND ONLY OF THIS ACCOUNT'S STATE (rounds 5 and 6 of the review
+    // of #2919): {@link stageMlsStateReset} set it apart once the native session had ended without a
+    // sweep - a sweep removes the slot whoever it belongs to, and B's reset with A in the slot deleted
+    // A's state. This removes what was set apart and the account's residue
+    // (`commit_user_mls_reset`). A failure propagates: a reset that removed nothing must not be
     // reported as done.
-    await endNativeMlsSession('state reset', { sweepState: false });
     const { invoke } = await import('@tauri-apps/api/core');
-    const removed = await invoke<number>('reset_user_mls_state', { userId });
-    console.log(`[MLS] the account's local MLS state reset: ${removed} file(s) removed`);
+    const removed = await invoke<number>('commit_user_mls_reset', { userId });
+    console.log(`[MLS] the account's local MLS state reset: ${removed} director(y/ies) removed`);
     return;
   }
 

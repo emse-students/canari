@@ -927,24 +927,76 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   `slot_is_accounts_held`). A directory entry of `mls_accounts/` that cannot be read is accused at
   ERROR and counted as an unfinished move, never skipped.
 - **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
-  into the slot just handed over), a parked state to unpark into a slot holding an unrecorded one, and
-  a fresh start over a slot holding a state, WHATEVER the selection (round 4; the caller decided "no
+  into the slot just handed over), and a fresh start over a slot holding a state, WHATEVER the selection (round 4; the caller decided "no
   state" on an answer that did not see it). The one fresh start that means to replace the state - the
   device identity rotation, after a cause no PIN repairs - says so (`replacesUnopenedState`,
   `loadFreshStateReplacingUnopened`), and is honoured ONLY when the slot already held this account's
   state (`Selection::AlreadyInSlot`, round 5): never over a state an unpark just brought back, nor over
   an unproven one left in the slot.
-- **The "forgot PIN" reset is THE ACCOUNT'S** (round 5). It used to end the native session WITH A
-  SWEEP, which removes the slot whoever it belongs to: B's reset, from B's PIN gate with A in the slot,
-  deleted A's state. `removeMlsState` now ends the session without a sweep and calls
-  `reset_user_mls_state`, which removes B's parked state, B's residue, and the slot only when its owner
-  record names B. It is REFUSED - and asked first, BEFORE the server resets the PIN
-  (`mls_state_reset_refusal`, `handlePinReset`), so the old PIN keeps working - when B's own move is
-  unfinished, or when the slot holds a state NO owner record names: it may be another account's. The
-  gate says `auth_pin_reset_blocked_unproven_state`. The cost, taken knowingly: an install whose state
-  predates the owner record cannot use "forgot PIN" until the owning account signs in once on this
-  build (or the app's data is cleared). The sweep (`sweepState: true`) now has ONE caller, the factory
-  wipe of a revoked device (`deviceReset.ts`), whole-install by design.
+- **A state of unproven owner is set aside, never refused over and never deleted** (round 6). A slot
+  holding a state NO owner record names - every install upgrading from before the record - is moved
+  whole into `mls_accounts/unproven.residue-<n>` when something must take the slot: an account with a
+  parked state signing in (it used to be refused, for as long as the state stood) or a "forgot PIN"
+  reset (below). The stem is not a hash, so no account's allowlist (`is_residue_of`) can ever match it
+  and no account-scoped removal can delete it. **It goes back to its owner**: an account with no
+  state of its own (no parked directory, the slot empty or parked) is OFFERED the first such residue -
+  moved into the slot at its sign-in (`Selection::UnprovenLeftInSlot`), and located there by
+  `account_state_file` so the login expects it - and its load under the account's own key, the
+  credential check, decides whose it is; the owner's load records it. An account that reset its PIN is
+  listed in `mls_accounts/unproven.declined` and never offered one again. The known cost: a brand-new
+  account on such an install is offered the residue too, fails its load (sealed under another key), and
+  meets the gate for a state its PIN cannot open; its "forgot PIN" then sets the residue aside again and declines it.
+- **The "forgot PIN" reset is THE ACCOUNT'S, and runs in two steps around the server** (rounds 5 and
+  6). It used to end the native session WITH A SWEEP, which removes the slot whoever it belongs to:
+  B's reset, from B's PIN gate with A in the slot, deleted A's state. Now (`runPinReset`,
+  `composables/session/pinReset.ts`):
+  1. **Stage**, once a signed-out session's final checkpoint has landed (`stageDeviceResetImpl`): the
+     native session ends WITHOUT a sweep, then `stage_user_mls_reset` - in ONE hold of the state lock,
+     so no write lands between the check and the move - parks B's slot when its record names B, sets
+     an unproven slot aside (above), renames B's parked state to `<hash>.resetting`, and declines B.
+     Refused only while B's own move stands unfinished or a manager is loaded: then the server is not
+     asked. Round 5 refused over an unproven slot, with "clear the app's data" as the only way out -
+     that dead end (`auth_pin_reset_blocked_unproven_state`) is gone.
+  2. **Ask the server.** Refused or unreachable: `rollback_user_mls_reset` puts everything back - B's
+     state into the slot when it came from there, the unproven state likewise, B off the declined
+     list - so the old PIN still opens it.
+  3. **First setup**, the moment the server has reset the PIN and before anything else can fail: the
+     old PIN opens nothing any more, so the next PIN typed is a NEW one, never an unlock misread as a
+     PIN rotated elsewhere.
+  4. **Commit** (`resetDeviceAsFresh` -> `commit_user_mls_reset`): `<hash>.resetting` and B's residue
+     are removed; the unproven residue stays for its owner.
+  A `<hash>.resetting` no reset of THIS process owns (`RESETS_IN_FLIGHT`) was left by a process that
+  died mid-reset; the server's answer is not known, so the next look PUTS IT BACK (parked, or set
+  aside beside a parked one), never removes it. If the server had reset the PIN, that state fails its
+  load and the account resets again. The sweep (`sweepState: true`) now has ONE caller, the factory
+  wipe (`deviceReset.ts`).
+- **A revoked device another account still uses loses only the revoked account** (round 6). Account
+  B removing "this phone" from another device ran the factory wipe, which took A's parked state,
+  vault slot and keys with it. `runRevokedDeviceWipe` now reads `revokedWipeScope` first: the whole
+  install only when no other account lives on it - no other account's device id recorded, and
+  `mls_other_accounts_present` false (another account's parked or set-aside state, a state of
+  unproven owner, or a slot another record names all say "present"; an answer the native side cannot
+  give is read as "present", accused). Otherwise `wipeAccountOfRevokedDevice`: the session ended
+  without a sweep, then the deleted account's per-account wipe (`wipeDeletedAccountLocalData`, with
+  `accountStillExists` so B is not marked deleted here). The factory wipe's items, scoped:
+
+  | Factory wipe clears | The account's wipe |
+  | --- | --- |
+  | every store connection | closed (all of this realm's, after `clearAuth`) |
+  | `mls.bin`, `mls_accounts/` | B's slot (record naming B), B's parked state and residue |
+  | the native message databases | B's (`delete_user_database`) |
+  | push files, `push_context.json`, device notices, names copy | B's, when `push_context.json` names B; B's names and quick replies |
+  | the WebView databases | the three named by B |
+  | every keystore entry | B's alias, after B's at-rest marker |
+  | `localStorage` / `sessionStorage` | B's per-account keys, B's vault slot, B's upload marks and session metadata |
+  | the in-app log, the HTTP cache, notification avatars, `fcm_token.txt`, `keystore_aliases.xml`, the Share Extension's share | LEFT: nothing in them names an account, and A reads them |
+  | `graine_seeds.json`, `channel_keys.json` (sealed at rest) | LEFT: unlabelled, shared with A's communities - an owner decision (the leak of B's seeds against A's rich notifications) |
+
+  **Nothing on the revoked path can refuse any more**: it used to begin with the PIN reset's
+  `removeMlsState`, which round 5 made refusable, and a refusal threw past `clearAuth` and the wipe -
+  the phone stayed signed in, the reset was never recorded, and every PIN check ran it again. A
+  `device_revoked` frame arriving while the wipe runs joins it without asking the server (the wipe
+  only starts on a confirmed revocation).
 - **Every query takes its account**: `mls_state_size`, `mls_state_absent` and `load_mls_state` answer
   for `userId` (`account_state_file`), never for whichever account used the install last.
 - The `device_holds_other_account` gate above stays: it is what a REFUSED switch meets.
@@ -972,15 +1024,22 @@ sign-out during a load refuses the install; a sign-in ended while it loaded writ
 nor the stage report into the next account's slot; an unfinished move refuses with its typed code;
 a fresh start is not installed over a state written while it loaded; an owner record that cannot be
 written fails with its own code); the PIN reset (`mls_account_state.rs`: only its own account's state
-removed, refused over a state of unproven owner; the size query types an unfinished move);
+removed; a server refusal rolled back byte for byte; a reset cut before it settled put back; an
+unproven state set aside by B's reset going back to A end to end, out of reach of every allowlist;
+another account's state seen wherever it lies; the size query types an unfinished move);
 `commands/storage.rs` (`save_mls_state` writes only its own account's slot, records the owner of an
 empty one, finishes a cut park first, and refuses on an unreadable owner record); `mobile/key_group_join.rs` (a join writes nothing into a
 slot that is not its account's); `services/TauriMlsService.initQueue.test.ts` (a second sign-in starts
 only after the first has failed, no session is ended from the page, a reloaded page's refused sign-in
 ends nothing, and only the rotation asks to replace a state); `services/TauriMlsService.stateOwner.test.ts`
 (an unfinished move and an unrecorded owner are answered with nothing); `mls-client/mlsStateLoadError.test.ts` (both codes are typed);
-`utils/hex.mlsStateSize.test.ts` (the size query's typed rejection; `removeMlsState` never sweeps and
-names its account); `composables/session/signOutDuringLogin.test.ts` (a refused sign-in's login ends
+`utils/hex.mlsStateSize.test.ts` (the size query's typed rejection; the stage, commit and rollback
+never sweep and name their account); `composables/session/pinReset.test.ts` (the order; a refused
+stage asks no server; a server failure rolls back; a failed commit leaves first setup);
+`composables/session/revokedDeviceReset.test.ts` (a refusing `removeMlsState` cannot stop the revoked
+wipe; the account-only and whole-install branches; the live session stopped before the first erasure,
+observed); `utils/deviceReset.revokedScope.test.ts` (the scope, both branches); `utils/accountLocalWipe.test.ts`
+(a revoked account's wipe does not mark it deleted); `composables/session/signOutDuringLogin.test.ts` (a refused sign-in's login ends
 the process session, the one end that clears an orphan). **Native, verified by
 compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
 [device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),

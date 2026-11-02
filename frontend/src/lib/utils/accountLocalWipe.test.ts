@@ -14,6 +14,7 @@ import {
   type AccountLiveness,
 } from './accountLocalWipe';
 import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
+import { isDeletedAccountHere } from './deletedAccountMarker';
 
 /** Nobody signed in here but `liveId`, and no sign-in in flight. */
 function settledAs(liveId: string | null): AccountLiveness {
@@ -109,6 +110,14 @@ describe('wipeDeletedAccountLocalData', () => {
     // Never the in-app log or another account's database.
     expect(order.join(' ')).not.toContain('user-b');
     expect(order.join(' ')).not.toContain('CanariDBLog');
+  });
+
+  it("a revoked device's account wipe does not mark the account deleted - it may sign in here again", async () => {
+    // Round 6 of the review of #2919: the wipe of ONE account of a revoked device another account uses.
+    await wipeDeletedAccountLocalData('user-c', { ...AFTER_DELETE, accountStillExists: true });
+    expect(isDeletedAccountHere('user-c')).toBe(false);
+    await wipeDeletedAccountLocalData('user-d', AFTER_DELETE);
+    expect(isDeletedAccountHere('user-d')).toBe(true);
   });
 
   it("drops that account's vault slot and leaves another account's, and the preferences", async () => {
