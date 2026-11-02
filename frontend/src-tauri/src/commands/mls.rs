@@ -80,8 +80,10 @@ pub(crate) async fn initialiser_mls(
     };
     tauri::async_runtime::spawn_blocking(move || {
         // FIRST, BEFORE ANYTHING CAN FAIL: every exit that does not reach `install` - an `Err`, a
-        // panic - ends the native session when the guard drops, so a failed sign-in never leaves the
-        // previous account's manager or key installed, nor this process marked warm over no manager.
+        // panic - ends the native session THIS ATTEMPT ESTABLISHED when the guard drops, so a failed
+        // sign-in never leaves a manager or key installed, nor this process marked warm over no
+        // manager. An attempt refused before its selection established nothing and ends nothing:
+        // the session it was refused for is another sign-in's.
         let mut install = InstallGuard::new(manager_state, device_key_state);
         // EVERY REFUSAL IS HANDED TO THE GUARD BEFORE IT PROPAGATES, so the guard knows WHY it did
         // not install and an expected one (a cancelled biometric sheet) is not logged as a failure.
@@ -104,11 +106,9 @@ pub(crate) async fn initialiser_mls(
             // first save would land on the previous account's file. A refusal stops the sign-in with
             // nothing moved and nothing written (`null` code: it proves nothing about the bytes).
             // The process is marked warm in the selection's own hold, so a second sign-in cannot
-            // select the slot for its account before this one loads; `install` clears the mark if
-            // this sign-in fails.
-            let selection = crate::commands::mls_account_state::select_account_state(
-                &data_dir, &user_id,
-            )?;
+            // select the slot for its account before this one loads; the claim that hold returns
+            // is what lets `install` clear the mark if THIS sign-in fails - and only then.
+            let selection = install.select(&data_dir, &user_id)?;
             // A FRESH START DECIDED WITHOUT SEEING THIS ACCOUNT'S PARKED STATE IS REFUSED. The caller
             // chose "no state" on `mls_state_size`; if the switch has just brought one back, that
             // answer was wrong, and a fresh state saved now would replace it.
@@ -204,10 +204,19 @@ pub(crate) async fn initialiser_mls(
 /// process-wide and a sign-out on a phone is an in-app navigation: when account B's install fails
 /// (another account's state, a refused key), what the slot still held was account A's manager and
 /// key, and a later command could act on A's state under B's session.
+///
+/// **IT ENDS ONLY THE SESSION THIS ATTEMPT ESTABLISHED** (review of #2919): the session is the one its
+/// selection claimed ([`crate::concurrency::SessionClaim`]). An attempt refused before or by its
+/// selection - "a foreground MLS session is still open" - holds no claim, and ending the session then
+/// cleared ANOTHER sign-in's warm mark while its manager loaded, letting a background engine write
+/// under it and a third selection switch the slot under it. A claim a later selection superseded
+/// ends nothing either.
 struct InstallGuard {
     manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
     device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
     outcome: InstallOutcome,
+    /// The session this attempt's selection claimed, `None` until [`InstallGuard::select`] succeeds.
+    claim: Option<crate::concurrency::SessionClaim>,
 }
 
 /// How an [`initialiser_mls`] attempt ended, as [`InstallGuard`] knows it when it drops - a TYPE, so
@@ -239,7 +248,22 @@ impl InstallGuard {
             manager_state,
             device_key_state,
             outcome: InstallOutcome::Unreported,
+            claim: None,
         }
+    }
+
+    /// Gives the slot to `user_id` ([`crate::commands::mls_account_state::select_account_state`])
+    /// and keeps the session claim the selection returns: from here on, a failure of this attempt
+    /// ends that session, and before it nothing does.
+    fn select(
+        &mut self,
+        data_dir: &std::path::Path,
+        user_id: &str,
+    ) -> Result<crate::commands::mls_account_state::Selection, String> {
+        let (selection, claim) =
+            crate::commands::mls_account_state::select_account_state(data_dir, user_id)?;
+        self.claim = Some(claim);
+        Ok(selection)
     }
 
     /// Records why this attempt will not install, before its refusal propagates: the code decides
@@ -277,6 +301,19 @@ impl InstallGuard {
 
 impl Drop for InstallGuard {
     fn drop(&mut self) {
+        if self.outcome == InstallOutcome::Installed {
+            return;
+        }
+        let Some(claim) = self.claim else {
+            // Refused before or by the selection: this attempt marked nothing warm and installed
+            // nothing, so there is no session of ITS to end - and the one that refused it is
+            // another sign-in's, which ending would leave loading under no warm mark.
+            log::debug!(
+                "[MLS] initialiser_mls did not install a manager ({:?}) and established no session - nothing ended",
+                self.outcome
+            );
+            return;
+        };
         match self.outcome {
             InstallOutcome::Installed => return,
             InstallOutcome::NoKeystoreKey => log::debug!(
@@ -290,10 +327,10 @@ impl Drop for InstallGuard {
                 self.outcome
             ),
         }
-        if let Err(e) = crate::concurrency::end_native_session(
+        if let Err(e) = crate::concurrency::end_native_session_claimed(
             &self.manager_state,
             &self.device_key_state,
-            None,
+            claim,
             "failed initialiser_mls",
         ) {
             log::error!("[MLS] the teardown after a failed initialiser_mls failed: {e}");
@@ -1887,6 +1924,28 @@ mod tests {
     type Slot = Arc<Mutex<Option<MlsManager>>>;
     type KeySlot = Arc<Mutex<Option<[u8; 32]>>>;
 
+    /// A fresh directory standing for `app_data_dir`.
+    fn data_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("canari-guard-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An attempt for `user` whose selection succeeded on `dir`: from here its failure ends ITS
+    /// session. Starts the process cold.
+    fn selected_attempt(
+        manager: &Slot,
+        key: &KeySlot,
+        dir: &std::path::Path,
+        user: &str,
+    ) -> InstallGuard {
+        crate::concurrency::forget_live_manager_for_test();
+        let mut install = InstallGuard::new(manager.clone(), key.clone());
+        install.select(dir, user).unwrap();
+        install
+    }
+
     /// Account A's session, installed as a successful `initialiser_mls` leaves it.
     fn slot_of_account_a() -> (Slot, KeySlot) {
         let manager = Arc::new(Mutex::new(None));
@@ -1912,11 +1971,14 @@ mod tests {
             "precondition: A is installed"
         );
 
+        let dir = data_dir("failed");
         let attempt = || -> Result<(), String> {
-            let _install = InstallGuard::new(manager.clone(), key.clone());
+            let _install = selected_attempt(&manager, &key, &dir, "guard-b");
             Err("the saved state is another account's".to_string())
         };
         assert!(attempt().is_err());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
 
         assert!(
             manager.lock().unwrap().is_none(),
@@ -1952,7 +2014,8 @@ mod tests {
             (untyped, InstallOutcome::Refused),
         ] {
             let (manager, key) = slot_of_account_a();
-            let mut install = InstallGuard::new(manager.clone(), key.clone());
+            let dir = data_dir("keystore");
+            let mut install = selected_attempt(&manager, &key, &dir, "guard-b");
             install.refused(&refusal);
             assert_eq!(install.outcome, expected, "{refusal:?}");
             drop(install);
@@ -1966,14 +2029,87 @@ mod tests {
     fn a_panicking_install_leaves_the_slot_empty() {
         let _s = serialise();
         let (manager, key) = slot_of_account_a();
-        let (m, k) = (manager.clone(), key.clone());
+        let dir = data_dir("panic");
+        let (m, k, d) = (manager.clone(), key.clone(), dir.clone());
         let panicked = std::panic::catch_unwind(move || {
-            let _install = InstallGuard::new(m, k);
+            let _install = selected_attempt(&m, &k, &d, "guard-b");
             panic!("the load exploded");
         });
         assert!(panicked.is_err());
+        std::fs::remove_dir_all(&dir).ok();
         assert!(manager.lock().unwrap_or_else(|e| e.into_inner()).is_none());
         assert!(key.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+    }
+
+    /// F1 of the re-review of #2919, THROUGH THE GUARD: a sign-in refused because another one is
+    /// loading must not end THAT one. Before, the refused attempt's guard cleared the warm mark of the
+    /// sign-in in flight, so a background engine could write under its loading manager and a third
+    /// selection could switch the slot under it.
+    #[test]
+    fn a_sign_in_refused_by_a_loading_one_does_not_end_it() {
+        let _s = serialise();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("interleaved");
+
+        // A's sign-in has selected the slot and is loading.
+        let a = selected_attempt(&manager, &key, &dir, "guard-a");
+        // B's sign-in is refused by the selection, and its guard drops.
+        let mut b = InstallGuard::new(manager.clone(), key.clone());
+        assert!(b.select(&dir, "guard-b").is_err());
+        b.refused(&StateLoadRefusal::from(
+            "a foreground MLS session is still open".to_string(),
+        ));
+        drop(b);
+        assert!(
+            crate::concurrency::live_manager_in_process(),
+            "B's refused attempt ended A's sign-in in flight"
+        );
+        // A third account is therefore still refused, with nothing moved.
+        let mut c = InstallGuard::new(manager.clone(), key.clone());
+        assert!(c.select(&dir, "guard-c").is_err());
+        drop(c);
+        assert!(crate::concurrency::live_manager_in_process());
+
+        // A's own failure ends A's session.
+        drop(a);
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A claim a later selection superseded ends nothing: two sign-ins of ONE account (the slot is
+    /// its own, so both select), the first fails after the second claimed the process.
+    #[test]
+    fn a_superseded_claim_ends_nothing() {
+        let _s = serialise();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("superseded");
+        std::fs::write(
+            dir.join(crate::commands::storage::MLS_STATE_OWNER_FILE),
+            "guard-a",
+        )
+        .unwrap();
+        std::fs::write(dir.join("mls.bin"), b"A").unwrap();
+
+        let first = selected_attempt(&manager, &key, &dir, "guard-a");
+        let mut second = InstallGuard::new(manager.clone(), key.clone());
+        second.select(&dir, "guard-a").unwrap();
+        second
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .unwrap();
+        drop(first);
+        assert!(
+            manager.lock().unwrap().is_some(),
+            "the superseded attempt dropped the session the later one installed"
+        );
+        assert_eq!(*key.lock().unwrap(), Some(KEY_A));
+        assert!(crate::concurrency::live_manager_in_process());
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The success exit replaces the slot and the key, and does not end the session it installed.

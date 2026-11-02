@@ -6,7 +6,7 @@
 //! participate and never reloaded `mls.bin`. Result: a background advance
 //! (Welcome/send/worker) was overwritten on foreground return (lost-update -> SecretReuse).
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
@@ -252,6 +252,39 @@ pub(crate) fn mark_foreground_manager_loading() {
     mark_foreground_active();
 }
 
+/// The generation of the foreground session this process was last marked warm FOR by a sign-in's
+/// selection ([`claim_foreground_session_held`]). Bumped by every claim, read by
+/// [`end_native_session_claimed`]: an attempt ends the session only while the generation is still
+/// the one it claimed.
+fn session_generation() -> &'static AtomicU64 {
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    &GENERATION
+}
+
+/// The proof that ONE sign-in attempt marked this process warm for itself - handed out by
+/// [`claim_foreground_session_held`] and spent by [`end_native_session_claimed`].
+///
+/// **A FAILED SIGN-IN ENDS ONLY THE SESSION IT ESTABLISHED** (review of #2919). The warm mark is
+/// process-wide, and a sign-in refused BECAUSE another one holds it must not clear it: that was the
+/// other sign-in's guard against a background write under its loading manager, and against a third
+/// selection switching the slot under it. A token, not a reading of the refusal's text: the attempt
+/// that never received one has nothing to end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct SessionClaim(u64);
+
+/// Marks this process warm for the sign-in whose selection holds [`mls_bin_write_lock`], and returns
+/// the claim that alone may end that session if the sign-in fails.
+///
+/// **THE CALLER HOLDS [`mls_bin_write_lock`]**: the selection that decided the slot is this account's
+/// and this mark are one step, so no other selection fits between them.
+pub(crate) fn claim_foreground_session_held() -> SessionClaim {
+    let generation = session_generation().fetch_add(1, Ordering::SeqCst) + 1;
+    mark_foreground_manager_loading();
+    log::debug!("[MLS] foreground session claimed (generation {generation})");
+    SessionClaim(generation)
+}
+
 /// Reads `mls.bin` for the FOREGROUND manager about to be built from it: marks the foreground
 /// active and this process warm FIRST, then reads under [`mls_bin_write_lock`].
 ///
@@ -300,6 +333,32 @@ pub(crate) fn end_native_session(
     sweep_dir: Option<&std::path::Path>,
     why: &str,
 ) -> Result<SessionEnded, String> {
+    end_session(manager_state, device_key_state, sweep_dir, why, None)
+        .map(|ended| ended.unwrap_or_default())
+}
+
+/// [`end_native_session`] for a sign-in that FAILED: ends the session only while `claim` is still
+/// the current one, and answers `Ok(None)` - nothing ended, nothing cleared - when a later selection
+/// has claimed the process since. The check and the clearing of the warm mark happen in ONE hold of
+/// [`mls_bin_write_lock`], where every claim is made, so no claim lands between them.
+pub(crate) fn end_native_session_claimed(
+    manager_state: &Mutex<Option<mls_core::MlsManager>>,
+    device_key_state: &Mutex<Option<[u8; 32]>>,
+    claim: SessionClaim,
+    why: &str,
+) -> Result<Option<SessionEnded>, String> {
+    end_session(manager_state, device_key_state, None, why, Some(claim))
+}
+
+/// The one body of [`end_native_session`] and [`end_native_session_claimed`]: `Ok(None)` means
+/// `only_if` was given and is no longer the current claim.
+fn end_session(
+    manager_state: &Mutex<Option<mls_core::MlsManager>>,
+    device_key_state: &Mutex<Option<[u8; 32]>>,
+    sweep_dir: Option<&std::path::Path>,
+    why: &str,
+    only_if: Option<SessionClaim>,
+) -> Result<Option<SessionEnded>, String> {
     // DEBUG: what was ended is known only under the hold, and the closing line reports it.
     log::debug!(
         "[MLS] ending the native MLS session ({why}, state files {})",
@@ -317,6 +376,30 @@ pub(crate) fn end_native_session(
     if waited_ms > 0 {
         log::debug!("[MLS] teardown waited {waited_ms} ms for the checkpoint and manager locks");
     }
+    let swept = {
+        let _file = mls_bin_write_lock().lock().unwrap_or_else(|poisoned| {
+            log::error!(
+                "[MLS] teardown: the mls.bin write lock was POISONED - taken anyway, it guards file order and the files are removed by unlink"
+            );
+            poisoned.into_inner()
+        });
+        if let Some(SessionClaim(claimed)) = only_if {
+            let current = session_generation().load(Ordering::SeqCst);
+            if current != claimed {
+                // Another sign-in's selection claimed the process after this one: the manager, the
+                // key and the warm mark belong to THAT session, and this failed attempt ends nothing.
+                log::debug!(
+                    "[MLS] teardown ({why}) skipped: this attempt's session (generation {claimed}) was superseded by generation {current} - nothing ended"
+                );
+                return Ok(None);
+            }
+        }
+        // Under the write lock, where a background writer reads it: no foreground manager is loaded
+        // any more, so the warm-process refusal must not outlive the manager it described.
+        live_manager_flag().store(false, Ordering::SeqCst);
+        sweep_dir.map(crate::commands::storage::remove_mls_state_held)
+    };
+    // Still under the manager mutex, so no command sees the cleared mark beside a manager.
     let manager = slot.take();
     let had_key = device_key_state
         .lock()
@@ -328,18 +411,6 @@ pub(crate) fn end_native_session(
         })
         .take()
         .is_some();
-    let swept = {
-        let _file = mls_bin_write_lock().lock().unwrap_or_else(|poisoned| {
-            log::error!(
-                "[MLS] teardown: the mls.bin write lock was POISONED - taken anyway, it guards file order and the files are removed by unlink"
-            );
-            poisoned.into_inner()
-        });
-        // Under the write lock, where a background writer reads it: no foreground manager is loaded
-        // any more, so the warm-process refusal must not outlive the manager it described.
-        live_manager_flag().store(false, Ordering::SeqCst);
-        sweep_dir.map(crate::commands::storage::remove_mls_state_held)
-    };
     drop(slot);
     drop(_ordered);
     let ended = SessionEnded {
@@ -375,12 +446,12 @@ pub(crate) fn end_native_session(
             log::error!("[MLS] teardown ({why}): the state files were NOT all removed: {e}");
             Err(e)
         }
-        _ => Ok(ended),
+        _ => Ok(Some(ended)),
     }
 }
 
 /// What [`end_native_session`] found and ended - read by its tests and its log line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct SessionEnded {
     pub had_manager: bool,
     pub had_key: bool,
@@ -474,6 +545,7 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     data: &[u8],
 ) -> Result<(), String> {
     background_write_mls_bin_compare_and_swap(path, loaded_digest, data, false, || ())
+        .map_err(|e| e.to_string())
 }
 
 /// [`background_write_mls_bin_if_unchanged`], AND ALSO REFUSED IN A WARM PROCESS - the writer of
@@ -492,6 +564,7 @@ pub(crate) fn background_write_mls_bin_if_unchanged_and_cold(
     data: &[u8],
 ) -> Result<(), String> {
     background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true, || ())
+        .map_err(|e| e.to_string())
 }
 
 /// [`background_write_mls_bin_if_unchanged_and_cold`], then `then` UNDER THE SAME HOLD of
@@ -499,14 +572,41 @@ pub(crate) fn background_write_mls_bin_if_unchanged_and_cold(
 /// ledger entry (`mobile/background.rs`). A state reset's sweep takes that lock too
 /// ([`end_native_session`], through `remove_mls_state_held`), so it removes both or neither: never
 /// a ledger naming a stage beside no state. `then` must not take the lock.
+///
+/// The refusal is TYPED ([`BackgroundWriteRefused`]): its caller answers the warm-process refusal with
+/// its own token, and the warm mark read AFTER the refusal cannot say which it was - a sign-out clears
+/// it in between.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn background_write_mls_bin_if_unchanged_and_cold_then<R>(
     path: &std::path::Path,
     loaded_digest: &[u8; 32],
     data: &[u8],
     then: impl FnOnce() -> R,
-) -> Result<R, String> {
+) -> Result<R, BackgroundWriteRefused> {
     background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true, then)
+}
+
+/// Why a background `mls.bin` write was refused, classified where it is decided.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BackgroundWriteRefused {
+    /// A foreground manager is loaded (or loading) in this process: a resume would persist over it.
+    WarmProcess,
+    /// Anything else - the foreground is active, `mls.bin` moved since it was loaded, an I/O or lock
+    /// failure - said in prose for the log.
+    Other(String),
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+impl std::fmt::Display for BackgroundWriteRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WarmProcess => f.write_str(
+                "a foreground manager is loaded in this process - background mls.bin write abandoned (a resume would persist over it)",
+            ),
+            Self::Other(why) => f.write_str(why),
+        }
+    }
 }
 
 /// The one body of the background writers above: the foreground guard, optionally the warm-process
@@ -518,27 +618,27 @@ fn background_write_mls_bin_compare_and_swap<R>(
     data: &[u8],
     refuse_warm_process: bool,
     then: impl FnOnce() -> R,
-) -> Result<R, String> {
+) -> Result<R, BackgroundWriteRefused> {
+    use BackgroundWriteRefused::Other;
     let _guard = mls_bin_write_lock()
         .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        .map_err(|_| Other("mls_bin write lock poisoned".to_string()))?;
     if foreground_is_active() {
-        return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
+        return Err(Other(
+            "foreground active - background mls.bin write abandoned (C1/FCM3)".to_string(),
+        ));
     }
     if refuse_warm_process && live_manager_in_process() {
-        return Err(
-            "a foreground manager is loaded in this process - background mls.bin write abandoned (a resume would persist over it)"
-                .to_string(),
-        );
+        return Err(BackgroundWriteRefused::WarmProcess);
     }
-    let current = std::fs::read(path).map_err(|e| format!("re-read mls.bin: {e}"))?;
+    let current = std::fs::read(path).map_err(|e| Other(format!("re-read mls.bin: {e}")))?;
     if &mls_bin_digest(&current) != loaded_digest {
-        return Err(
+        return Err(Other(
             "mls.bin changed since it was loaded - background write abandoned (lost update refused)"
                 .to_string(),
-        );
+        ));
     }
-    write_mls_bin_atomically(path, data)?;
+    write_mls_bin_atomically(path, data).map_err(Other)?;
     Ok(then())
 }
 

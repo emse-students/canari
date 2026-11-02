@@ -551,22 +551,21 @@ void CanariMirrorPushStateToAppGroup(void) {
   // The Notification Service Extension reads these three inputs to decrypt a push in its
   // own process. Write atomically (temp + rename) so the cross-process reader never sees a
   // torn file, and keep the same at-rest protection class as the source.
+  //
+  // mls.bin IS RUST'S TO COPY, UNDER THE STATE FILES' LOCK (re-review of #2919, one state per
+  // account): an account switch moves the slot and refreshes this copy inside that lock, so a copy
+  // made here without it could read the previous account's state before the switch and write it
+  // after - and the extension would decrypt the new account's pushes with it. Rust copies the slot
+  // as it stands, or removes the copy when the slot holds no state.
+  int mirrored = canari_ios_mirror_mls_bin_to_app_group(src.UTF8String);
+  if (mirrored != CANARI_MLS_MIRROR_OK) {
+    NSLog(@"[CanariPush] mirror %@ failed: code %d", kMlsBinFileName, mirrored);
+  }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
-  for (NSString *name in @[ kMlsBinFileName, kPushContextFileName, kGraineSeedsFileName ]) {
+  for (NSString *name in @[ kPushContextFileName, kGraineSeedsFileName ]) {
     NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
     if (data == nil) {
-      // NO STATE IN THE SLOT MEANS NO COPY FOR THE EXTENSION (2026-11-02, one state per account):
-      // a copy kept here would be the previous account's, and the extension would decrypt the new
-      // account's pushes with it. The other inputs keep their copy, as before.
-      if ([name isEqualToString:kMlsBinFileName]) {
-        NSError *rmErr = nil;
-        NSURL *copy = [container URLByAppendingPathComponent:name];
-        if (![[NSFileManager defaultManager] removeItemAtURL:copy error:&rmErr] &&
-            !(rmErr.domain == NSCocoaErrorDomain && rmErr.code == NSFileNoSuchFileError)) {
-          NSLog(@"[CanariPush] mirror: stale %@ copy not removed: %@", name, CanariErrorReason(rmErr));
-        }
-      }
       continue;
     }
     NSError *err = nil;

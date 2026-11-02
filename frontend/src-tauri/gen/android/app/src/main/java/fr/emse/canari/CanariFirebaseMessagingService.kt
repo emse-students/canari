@@ -2938,10 +2938,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // what each answer means is [KeyGroupPushJoin]; the orchestration is [joinKeyGroupFromPush].
 
     /**
-     * Claims one attempt at [groupId]: `granted`, `attempted:<state>`, `full`, or `error`. The
-     * ledger is sealed under [cacheKeyB64]; an empty key answers `error` and nothing is written.
+     * Claims one attempt at [groupId] for [userId], the push's account: `granted`, `attempted:<state>`,
+     * `full`, `not-the-accounts-slot` (the app's MLS state slot holds another account's state, so
+     * nothing is written), or `error`. The ledger is sealed under [cacheKeyB64]; an empty key answers
+     * `error` and nothing is written.
      */
-    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, groupId: String): String
+    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, userId: String, groupId: String): String
 
     /**
      * Settles an attempt: [state] is `joined` ([a] = scope kind, [b] = scope id), `refused`, `lost`
@@ -2951,6 +2953,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeKeyGroupJoinSettle(
         filesDir: String,
         cacheKeyB64: String,
+        userId: String,
         groupId: String,
         state: String,
         a: String,
@@ -2975,11 +2978,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
     ): String
 
-    /** Installs the staged state, refused if `mls.bin` changed since it was read. False = lost. */
-    external fun nativeFinishKeyGroupJoin(filesDir: String): Boolean
+    /**
+     * Installs [userId]'s staged state, refused if `mls.bin` changed since it was read or the slot is
+     * no longer that account's. False = lost.
+     */
+    external fun nativeFinishKeyGroupJoin(filesDir: String, userId: String): Boolean
 
-    /** Deletes the staged state of a commit the server did not accept. */
-    external fun nativeAbandonKeyGroupJoin(filesDir: String)
+    /** Deletes [userId]'s staged state of a commit the server did not accept - only from that account's slot. */
+    external fun nativeAbandonKeyGroupJoin(filesDir: String, userId: String)
 
     /**
      * Settles the Add staged in [stateBytes] (the mls.bin just loaded) for [groupId] on a DEFINITIVE
@@ -5704,7 +5710,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
 
         val claim = try {
-            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId))
+            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, ctx.userId, groupId))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
             return
@@ -5724,7 +5730,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Anything thrown before the install is a join that did not happen; the staged state,
             // if any, is deleted so it can never be installed later by mistake.
             Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.message}")
-            nativeAbandonKeyGroupJoin(filesDir)
+            nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             KeyGroupPushJoin.Settlement.Retryable("exception")
         }
         if (settlement == null) {
@@ -5740,7 +5746,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is KeyGroupPushJoin.Settlement.Retryable -> settlement.reason to ""
             is KeyGroupPushJoin.Settlement.Deferred -> settlement.reason to settlement.baseEpoch.toString()
         }
-        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, groupId, settlement.token, a, b)
+        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, ctx.userId, groupId, settlement.token, a, b)
         val level = when (settlement) {
             is KeyGroupPushJoin.Settlement.Joined -> Log.INFO
             is KeyGroupPushJoin.Settlement.Retryable -> Log.INFO
@@ -5829,14 +5835,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             base.baseEpoch,
         )
         if (step == KeyGroupPushJoin.AfterCommit.ABANDON) {
-            nativeAbandonKeyGroupJoin(filesDir)
+            nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             return refusal ?: KeyGroupPushJoin.Settlement.Retryable("commit-unsettled")
         }
         // ACCEPTED: the server now holds this device's leaf. The install is the one step whose
         // failure leaves a leaf with no secrets behind it - LOST, and the app's join replaces it.
         // A lock not taken is NOT a refusal: null, and the attempt is left unsettled.
-        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir) }
-        if (installed == false) nativeAbandonKeyGroupJoin(filesDir)
+        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir, ctx.userId) }
+        if (installed == false) nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
         return KeyGroupPushJoin.afterInstall(installed, base)
     }
 

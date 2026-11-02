@@ -163,6 +163,16 @@ void canari_ios_set_page_ringing_listener(void (*listener)(const char *call_id))
 #define CANARI_SHARE_IMPORT_FAILED (-3)
 int canari_ios_import_app_group_share(const char *data_dir, const char *cache_dir);
 
+/* The activation mirror's mls.bin half (commands/mls_account_state.rs): the slot's mls.bin copied
+   into the App Group for the notification extension - or the copy removed when the slot holds no
+   state - UNDER the Rust lock an account switch moves the slot under. Answers one of the codes
+   below, which the caller NSLogs. */
+#define CANARI_MLS_MIRROR_OK 0
+#define CANARI_MLS_MIRROR_NO_DIR (-1)
+#define CANARI_MLS_MIRROR_NO_GROUP (-2)
+#define CANARI_MLS_MIRROR_FAILED (-3)
+int canari_ios_mirror_mls_bin_to_app_group(const char *data_dir);
+
 /* Once per process, before the page exists: deletes the share copies no current manifest names,
    the App Group's leftover claim files, and repairs an App Group epoch behind the app's. The
    report is NSLogged by the caller (Rust's CanariShareSweep, same layout; flags are SWEEP_*). */

@@ -979,8 +979,9 @@ fn key_group_join_ledger_key(
         .ok_or_else(|| "no native cache key - the ledger is never written in the clear".to_string())
 }
 
-/// Claims one push-join attempt at a key group: `granted`, `granted-unless-base:<epoch>`,
-/// `attempted:<state>`, `full`, or `error`. `cacheKeyB64` seals the ledger, as for
+/// Claims one push-join attempt at a key group for `userId` (the push's account): `granted`,
+/// `granted-unless-base:<epoch>`, `attempted:<state>`, `full`, `not-the-accounts-slot` (the slot
+/// holds another account's state), or `error`. `cacheKeyB64` seals the ledger, as for
 /// `nativeStoreGraineSeeds`; without it the answer is `error` and nothing is attempted.
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -989,6 +990,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
     cache_key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     use mobile::key_group_join::{claim, Claim};
@@ -998,13 +1000,17 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
             .map_err(|e| e.to_string())?
             .into();
         let key = key_group_join_ledger_key(&mut env, &cache_key_b64)?;
+        let user: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
         let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
-        Ok(match claim(std::path::Path::new(&dir), &key, &gid)? {
-            Claim::Granted => "granted".to_string(),
-            Claim::GrantedUnlessBaseAt(epoch) => format!("granted-unless-base:{epoch}"),
-            Claim::AlreadyAttempted(state) => format!("attempted:{state}"),
-            Claim::LedgerFull => "full".to_string(),
-        })
+        Ok(
+            match claim(std::path::Path::new(&dir), &key, &user, &gid)? {
+                Claim::Granted => "granted".to_string(),
+                Claim::GrantedUnlessBaseAt(epoch) => format!("granted-unless-base:{epoch}"),
+                Claim::AlreadyAttempted(state) => format!("attempted:{state}"),
+                Claim::LedgerFull => "full".to_string(),
+                Claim::NotTheAccountsSlot => "not-the-accounts-slot".to_string(),
+            },
+        )
     })()
     .unwrap_or_else(|e| {
         log::error!("[KG_PUSH_JOIN] claim failed: {e}");
@@ -1014,9 +1020,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
         .unwrap_or_else(|_| env.new_string("error").unwrap())
 }
 
-/// Settles a push-join attempt. `state` is `joined` (`a` = scope kind, `b` = scope id), `refused`,
-/// `lost` or `retryable` (`a` = the reason token), or `deferred` (`a` = the reason, `b` = the base
-/// epoch). `cacheKeyB64` seals the ledger, as for the claim. Returns whether the ledger was written.
+/// Settles `userId`'s push-join attempt. `state` is `joined` (`a` = scope kind, `b` = scope id),
+/// `refused`, `lost` or `retryable` (`a` = the reason token), or `deferred` (`a` = the reason, `b` =
+/// the base epoch). `cacheKeyB64` seals the ledger, as for the claim. Returns whether the ledger was
+/// written - false too when the slot is no longer that account's (a switch parked its ledger).
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinSettle(
@@ -1024,18 +1031,20 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
     _service: jni::objects::JObject,
     files_dir: jni::objects::JString,
     cache_key_b64: jni::objects::JString,
+    user_id: jni::objects::JString,
     group_id: jni::objects::JString,
     state: jni::objects::JString,
     a: jni::objects::JString,
     b: jni::objects::JString,
 ) -> jni::sys::jboolean {
     use mobile::key_group_join::{settle, Settlement};
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<bool, String> {
         let dir: String = env
             .get_string(&files_dir)
             .map_err(|e| e.to_string())?
             .into();
         let key = key_group_join_ledger_key(&mut env, &cache_key_b64)?;
+        let user: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
         let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
         let state: String = env.get_string(&state).map_err(|e| e.to_string())?.into();
         let a: String = env.get_string(&a).map_err(|e| e.to_string())?.into();
@@ -1056,10 +1065,12 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
             },
             other => return Err(format!("unknown settlement '{other}'")),
         };
-        settle(std::path::Path::new(&dir), &key, &gid, &settlement)
+        settle(std::path::Path::new(&dir), &key, &user, &gid, &settlement)
     })();
     match result {
-        Ok(()) => 1,
+        Ok(true) => 1,
+        // `slot_is_accounts_held` has said why at WARN.
+        Ok(false) => 0,
         Err(e) => {
             log::error!("[KG_PUSH_JOIN] settle failed: {e}");
             0
@@ -1140,21 +1151,23 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
 
-/// Installs the staged post-join state once the server accepted the commit. False = LOST.
+/// Installs `userId`'s staged post-join state once the server accepted the commit. False = LOST.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeFinishKeyGroupJoin(
     mut env: jni::JNIEnv,
     _service: jni::objects::JObject,
     files_dir: jni::objects::JString,
+    user_id: jni::objects::JString,
 ) -> jni::sys::jboolean {
-    let result = env
-        .get_string(&files_dir)
-        .map_err(|e| e.to_string())
-        .and_then(|dir| {
-            let dir: String = dir.into();
-            mobile::key_group_join::finish_key_group_join(std::path::Path::new(&dir))
-        });
+    let result = (|| -> Result<usize, String> {
+        let dir: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let user: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
+        mobile::key_group_join::finish_key_group_join(std::path::Path::new(&dir), &user)
+    })();
     match result {
         Ok(_) => 1,
         Err(e) => {
@@ -1164,18 +1177,27 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeFinis
     }
 }
 
-/// Deletes the staged post-join state of a commit the server did not accept.
+/// Deletes `userId`'s staged post-join state of a commit the server did not accept - only while the
+/// slot is that account's.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeAbandonKeyGroupJoin(
     mut env: jni::JNIEnv,
     _service: jni::objects::JObject,
     files_dir: jni::objects::JString,
+    user_id: jni::objects::JString,
 ) {
-    match env.get_string(&files_dir) {
-        Ok(dir) => {
-            let dir: String = dir.into();
-            mobile::key_group_join::abandon_key_group_join(std::path::Path::new(&dir));
+    let marshalled = (|| -> Result<(String, String), String> {
+        let dir: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let user: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
+        Ok((dir, user))
+    })();
+    match marshalled {
+        Ok((dir, user)) => {
+            mobile::key_group_join::abandon_key_group_join(std::path::Path::new(&dir), &user);
         }
         Err(e) => log::error!("[KG_PUSH_JOIN] abandon marshalling failed: {e}"),
     }

@@ -28,28 +28,41 @@
 //! unpark first renames `<hash>/` to `<hash>.unparking/`; each directory is a durable statement that
 //! the files of the slot (parking) or in it (unparking) belong to that account, so the next process
 //! completes the move before anything reads a state ([`settle_pending_moves_held`]). No clock, no
-//! retry: the directories ARE the journal. Where both ends hold one file, THE SLOT'S COPY WINS: the
-//! journal proves both are that account's, and the slot is where every writer writes, so its copy
-//! is the later one.
+//! retry: the directories ARE the journal.
 //!
-//! **ONE ACCOUNT'S BROKEN JOURNAL STOPS THAT ACCOUNT, NOT THE INSTALL** (review of #2919). A move that
-//! cannot be finished is reported against the account it belongs to; every other account's query
-//! still answers. Only a PARK that cannot finish also refuses other accounts' sign-ins: the slot then
-//! still holds part of that account's state, and handing it onward is the cross-account write this
-//! module exists to prevent. A file nobody listed in a parked directory never blocks anything: it is
-//! set aside as `<hash>.residue-<n>` and accused.
+//! **NOTHING IS DELETED WHEN A MOVE FINDS A FILE AT BOTH ENDS** (re-review of #2919). The copy
+//! already at the DESTINATION is set aside into `<hash>.residue-<n>` and accused at ERROR, and the
+//! moving copy takes its place: in a park the journal proves both are that account's and the slot's
+//! is the later one; in an unpark the slot's copy is proven to be nobody's (a ledger the push service
+//! recreated), while the parked one is the account's. `mls.bin` is the exception, because choosing
+//! between two states is choosing which ratchet survives: an EMPTY one is no state (the trace of a
+//! write cut short) and is the one set aside; two non-empty ones are REFUSED before anything moves.
 //!
-//! Everything here runs under [`mls_bin_write_lock`], the lock every writer of the state files takes
-//! (`mls.bin`, the JSON ledgers, and the key-group join's ledger and stage in `key_group_join.rs`), so
-//! no write lands between a park and its unpark, and a background engine that loaded the slot before
-//! a switch fails its compare-and-swap re-read.
+//! **AN UNFINISHED MOVE STOPS EVERY SIGN-IN, AND NOTHING ELSE** (review and re-review of #2919). A
+//! move that cannot be finished is reported against the account it belongs to; every other account's
+//! QUERY still answers. But every SIGN-IN is refused while it stands, a park's or an unpark's: either
+//! way the slot may hold part of that account's state - an unpark moves `mls.bin` before its owner
+//! record, so a cut one leaves the account's state UNOWNED in the slot - and handing the slot to
+//! another account is the cross-account write (and the reset of someone else's state) this module
+//! exists to prevent. Only a non-empty `mls.bin` at both ends of one move, or a filesystem that
+//! refuses a rename, is left unfinished: a parked directory already present, or a file nobody listed
+//! in one, is set aside as `<hash>.residue-<n>` and accused, so it never locks the install.
+//!
+//! **EVERY WRITER OF THE STATE FILES TAKES [`mls_bin_write_lock`]** (`mls.bin`, the JSON ledgers, the
+//! key-group join's ledger and stage in `key_group_join.rs`, and the iOS activation mirror of
+//! `mls.bin` into the App Group), and everything here runs under it, so no write lands between a park
+//! and its unpark. **AND A WRITE MADE FOR AN ACCOUNT IS BOUND TO IT**: a background engine that loaded
+//! the slot before a switch fails its compare-and-swap re-read, and the key-group join's ledger and
+//! stage - which no compare-and-swap covers - are written only while the slot's owner record names
+//! the account the push is for (`key_group_join.rs`), so a join in flight across a switch, or a push
+//! for an account deleted since, writes into nobody else's state.
 
 use std::path::{Path, PathBuf};
 
 use crate::commands::storage::{mls_state_file_names, read_mls_state_owner, remove_mls_state_held};
 use crate::concurrency::{
-    live_manager_in_process, mark_foreground_active, mark_foreground_manager_loading,
-    mls_bin_write_lock,
+    claim_foreground_session_held, live_manager_in_process, mark_foreground_active,
+    mls_bin_write_lock, SessionClaim,
 };
 
 /// The directory, beside `mls.bin`, holding the states of the accounts NOT signed in on the install.
@@ -133,11 +146,80 @@ pub(crate) fn fresh_start_would_replace_unparked_state(
         && slot_holds_state(data_dir)
 }
 
+/// The first `<account_dir>.residue-<n>` that does not exist yet - where whatever a move would
+/// otherwise have to delete or refuse over is set aside, under the name of the account it was found
+/// with. Only [`remove_account_state`] ever removes one ([`is_residue_of`]).
+fn next_residue_dir(account_dir: &Path) -> PathBuf {
+    let mut n = 0u32;
+    loop {
+        let candidate = with_suffix(account_dir, &format!("{RESIDUE_INFIX}{n}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Whether `name` (an entry of [`PARKED_STATES_DIR`]) is one of `account`'s residue directories:
+/// exactly `<account>.residue-<digits>`. The allowlist of what deleting `account` may remove besides
+/// its parked directory - never a prefix match, which would reach another account's hash.
+fn is_residue_of(name: &str, account: &str) -> bool {
+    name.strip_prefix(account)
+        .and_then(|rest| rest.strip_prefix(RESIDUE_INFIX))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Moves `file` (named `name`) into `residue`, creating `<account_dir>.residue-<n>` the first time a
+/// move needs one, and accuses it: something sat where the move had to put a state file, and
+/// NOTHING IS DELETED for it.
+fn set_file_aside(
+    file: &Path,
+    name: &str,
+    residue: &mut Option<PathBuf>,
+    account_dir: &Path,
+) -> Result<(), String> {
+    let dir = match residue {
+        Some(dir) => dir.clone(),
+        None => {
+            let dir = next_residue_dir(account_dir);
+            std::fs::create_dir_all(&dir).map_err(|e| format!("create the residue: {e}"))?;
+            *residue = Some(dir.clone());
+            dir
+        }
+    };
+    std::fs::rename(file, dir.join(name)).map_err(|e| format!("set {name} aside: {e}"))?;
+    log::error!(
+        "[MLS_ACCOUNT] {name} was at both ends of a move - one copy set aside as {}, nothing deleted",
+        dir.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// Whether the file at `path` holds bytes. An absent or empty `mls.bin` is no state.
+fn holds_bytes(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.len() > 0)
+        .unwrap_or(false)
+}
+
 /// Moves every state file present in `from` into `to`, in [`mls_state_file_names`] order (the owner
-/// record LAST). Where both ends hold one file, the SLOT'S copy is kept (see the module comment):
-/// moving out of the slot replaces the older copy, moving into it drops it. Only ever called where a
-/// journal proves both ends are one account's.
-fn move_state_files(from: &Path, to: &Path, from_is_slot: bool) -> Result<usize, String> {
+/// record LAST). `account_dir` is the account's parked directory (`<hash>`), naming any residue.
+///
+/// **A CLASH NEVER DELETES** (see the module comment): the copy already at the destination is set
+/// aside and the moving one takes its place - except for `mls.bin`, where the EMPTY copy is the one
+/// set aside, and two non-empty copies are refused BEFORE ANY FILE MOVES, so a refused move leaves
+/// both ends exactly as they were.
+fn move_state_files(from: &Path, to: &Path, account_dir: &Path) -> Result<usize, String> {
+    let (src_bin, dst_bin) = (from.join("mls.bin"), to.join("mls.bin"));
+    if holds_bytes(&src_bin) && holds_bytes(&dst_bin) {
+        log::error!(
+            "[MLS_ACCOUNT] TWO STATES AT BOTH ENDS OF ONE MOVE - nothing moved, nothing set aside: which ratchet survives is not this module's to choose"
+        );
+        return Err("mls.bin holds a state at both ends of the move".to_string());
+    }
+    let mut residue = None;
     let mut moved = 0;
     for name in mls_state_file_names() {
         let src = from.join(&name);
@@ -146,17 +228,15 @@ fn move_state_files(from: &Path, to: &Path, from_is_slot: bool) -> Result<usize,
         }
         let dst = to.join(&name);
         if dst.exists() {
-            if from_is_slot {
-                log::warn!(
-                    "[MLS_ACCOUNT] {name} is at both ends of a park - the slot's later copy replaces the parked one"
-                );
-                std::fs::remove_file(&dst).map_err(|e| format!("replace {name}: {e}"))?;
-            } else {
-                log::warn!(
-                    "[MLS_ACCOUNT] {name} is at both ends of an unpark - the slot's later copy is kept, the parked one dropped"
-                );
-                std::fs::remove_file(&src).map_err(|e| format!("drop {name}: {e}"))?;
+            if name == "mls.bin" && !holds_bytes(&dst) {
+                set_file_aside(&dst, &name, &mut residue, account_dir)?;
+            } else if name == "mls.bin" {
+                // The moving copy is the empty one (two non-empty ones were refused above): the
+                // state already at the destination stays, the trace of a cut write goes aside.
+                set_file_aside(&src, &name, &mut residue, account_dir)?;
                 continue;
+            } else {
+                set_file_aside(&dst, &name, &mut residue, account_dir)?;
             }
         }
         std::fs::rename(&src, &dst).map_err(|e| format!("move {name}: {e}"))?;
@@ -166,8 +246,8 @@ fn move_state_files(from: &Path, to: &Path, from_is_slot: bool) -> Result<usize,
 }
 
 /// Removes `dir` once its listed files are gone; anything left in it was never listed, so the
-/// directory is set aside as `<dir>.residue-<n>` and accused - it never blocks a move again.
-fn remove_or_set_aside(dir: &Path) -> Result<(), String> {
+/// directory is set aside as `<account_dir>.residue-<n>` and accused - it never blocks a move again.
+fn remove_or_set_aside(dir: &Path, account_dir: &Path) -> Result<(), String> {
     if std::fs::remove_dir(dir).is_ok() {
         return Ok(());
     }
@@ -179,20 +259,8 @@ fn remove_or_set_aside(dir: &Path) -> Result<(), String> {
                 .collect()
         })
         .unwrap_or_default();
-    // Named after the account (`<hash>.residue-<n>`), never after the move it was found in.
-    let base = PathBuf::from(
-        dir.to_string_lossy()
-            .trim_end_matches(UNPARKING_SUFFIX)
-            .to_string(),
-    );
-    let mut n = 0u32;
-    let aside = loop {
-        let candidate = with_suffix(&base, &format!("{RESIDUE_INFIX}{n}"));
-        if !candidate.exists() {
-            break candidate;
-        }
-        n += 1;
-    };
+    // Named after the account, never after the move it was found in.
+    let aside = next_residue_dir(account_dir);
     std::fs::rename(dir, &aside).map_err(|e| format!("set the residue aside: {e}"))?;
     log::error!(
         "[MLS_ACCOUNT] a parked state carried {} file(s) no list names ({}) - set aside, nothing deleted",
@@ -202,22 +270,35 @@ fn remove_or_set_aside(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The account directory (`<hash>`) a journal directory (`<hash>.parking` / `<hash>.unparking`)
+/// belongs to.
+fn account_dir_of(staging: &Path, suffix: &str) -> Result<PathBuf, String> {
+    staging
+        .to_string_lossy()
+        .strip_suffix(suffix)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("a journal directory without its {suffix} suffix"))
+}
+
 /// Completes a park: the slot's remaining state files into `staging`, then `staging` renamed to its
 /// final name. `staging` existing IS the proof that the slot's files are that account's.
+///
+/// **THE FINAL NAME IS CHECKED FIRST, AND AN OCCUPIED ONE NEVER STOPS THE PARK** (re-review of #2919):
+/// a refusal there was an unfinished park, which refuses every sign-in on the install for as long as
+/// it stands - for ever, since nothing would ever free the name. The directory already there is the
+/// same account's OLDER state (the slot is where every writer writes), so it is set aside as
+/// `<hash>.residue-<n>`, accused, and nothing is deleted; the park then completes.
 fn finish_park(data_dir: &Path, staging: &Path) -> Result<(), String> {
-    let final_dir = PathBuf::from(
-        staging
-            .to_string_lossy()
-            .strip_suffix(PARKING_SUFFIX)
-            .ok_or_else(|| "a park directory without its suffix".to_string())?,
-    );
-    let moved = move_state_files(data_dir, staging, true)?;
+    let final_dir = account_dir_of(staging, PARKING_SUFFIX)?;
     if final_dir.exists() {
+        let aside = next_residue_dir(&final_dir);
+        std::fs::rename(&final_dir, &aside)
+            .map_err(|e| format!("set the older parked state aside: {e}"))?;
         log::error!(
-            "[MLS_ACCOUNT] TWO PARKED STATES FOR ONE ACCOUNT - the park is left staged, nothing overwritten"
+            "[MLS_ACCOUNT] TWO PARKED STATES FOR ONE ACCOUNT - the older one set aside, nothing deleted; the slot's later state is parked"
         );
-        return Err("this account already has a parked state".to_string());
     }
+    let moved = move_state_files(data_dir, staging, &final_dir)?;
     std::fs::rename(staging, &final_dir).map_err(|e| format!("rename the parked state: {e}"))?;
     log::info!("[MLS_ACCOUNT] slot state parked ({moved} file(s) moved)");
     Ok(())
@@ -226,8 +307,9 @@ fn finish_park(data_dir: &Path, staging: &Path) -> Result<(), String> {
 /// Completes an unpark: `staging`'s state files into the slot, then `staging` removed (or set aside
 /// when it still holds a file nobody listed).
 fn finish_unpark(data_dir: &Path, staging: &Path) -> Result<(), String> {
-    let moved = move_state_files(staging, data_dir, false)?;
-    remove_or_set_aside(staging)?;
+    let account_dir = account_dir_of(staging, UNPARKING_SUFFIX)?;
+    let moved = move_state_files(staging, data_dir, &account_dir)?;
+    remove_or_set_aside(staging, &account_dir)?;
     log::info!("[MLS_ACCOUNT] parked state moved into the slot ({moved} file(s) moved)");
     Ok(())
 }
@@ -291,18 +373,26 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
 }
 
 /// The refusal owed to `user_id` from the moves [`settle_pending_moves_held`] left unfinished: its
-/// own, always; another account's park only when `needs_slot` (a sign-in, never a query).
+/// own, always; ANY other account's when `needs_slot` (a sign-in, never a query).
+///
+/// **AN UNPARK REFUSES TOO, NOT ONLY A PARK** (re-review of #2919): `finish_unpark` moves `mls.bin`
+/// before the owner record, so an unpark that cannot finish may leave that account's state in the slot
+/// with NO record naming it - and a sign-in admitted over it would find a state of "unproven owner",
+/// fail its credential check, and reach the reset that deletes it.
 fn refusal_for(unfinished: &[UnfinishedMove], user_id: &str, needs_slot: bool) -> Option<String> {
     let mine = parked_dir_name(user_id);
     unfinished
         .iter()
-        .find(|m| m.account == mine || (needs_slot && m.park))
+        .find(|m| m.account == mine || needs_slot)
         .map(|m| {
             if m.account == mine {
                 "this account's state was cut part-way through a move that cannot be finished"
                     .to_string()
-            } else {
+            } else if m.park {
                 "the slot still holds part of another account's state".to_string()
+            } else {
+                "the slot may hold another account's state, moved in without its owner record"
+                    .to_string()
             }
         })
 }
@@ -312,7 +402,8 @@ fn refusal_for(unfinished: &[UnfinishedMove], user_id: &str, needs_slot: bool) -
 /// - the slot, when its owner record names `user_id`;
 /// - the account's parked `mls.bin`, when it has one;
 /// - the slot, when it holds a state with NO record - unproven, so the load decides, which is the
-///   answer this install gave before one state per account existed;
+///   answer this install gave before one state per account existed - unless a move stands
+///   unfinished, which may have left ANOTHER account's state there without its record;
 /// - otherwise `None`: the slot is another account's, and this account has nothing here.
 ///
 /// Read-only apart from finishing a move a previous process left cut ([`settle_pending_moves_held`]):
@@ -327,14 +418,17 @@ pub(crate) fn account_state_file(
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    if let Some(refusal) = refusal_for(&settle_pending_moves_held(data_dir), user_id, false) {
+    let unfinished = settle_pending_moves_held(data_dir);
+    if let Some(refusal) = refusal_for(&unfinished, user_id, false) {
         return Err(refusal);
     }
     let parked = parked_dir(data_dir, user_id);
     let located = match read_mls_state_owner(data_dir) {
         Some(owner) if owner == user_id => Some(data_dir.join("mls.bin")),
         _ if parked.exists() => Some(parked.join("mls.bin")),
-        None if slot_holds_state(data_dir) => {
+        // NOT while a move stands unfinished: the unowned state may be the moving account's, its
+        // `mls.bin` already in the slot and its record not (re-review of #2919).
+        None if slot_holds_state(data_dir) && unfinished.is_empty() => {
             log::warn!(
                 "[MLS_ACCOUNT] the slot holds a state with no owner record - offered to the load, whose credential check decides"
             );
@@ -361,12 +455,20 @@ pub(crate) fn account_state_file(
 /// **THE PROCESS IS MARKED WARM IN THE SAME HOLD** (review of #2919): a second sign-in interleaved
 /// with this one then finds a manager loading and is refused, instead of selecting the slot for its
 /// own account between this selection and this account's load - which wrote one account's owner
-/// beside the other's state. The caller's install guard clears the mark if the sign-in fails.
+/// beside the other's state. The [`SessionClaim`] returned with the selection is what lets the
+/// caller's install guard clear that mark if THIS sign-in fails; a refused selection returns none,
+/// so its guard clears nothing (re-review of #2919).
 ///
 /// **REFUSED, WITH NOTHING MOVED**, when a foreground manager is loaded (or loading) in this process
-/// and the slot is not already this account's, and when the move would overwrite anything: two parked
-/// states for one account, or a parked state to unpark into a slot that holds an unproven one.
-pub(crate) fn select_account_state(data_dir: &Path, user_id: &str) -> Result<Selection, String> {
+/// and the slot is not already this account's, when a move is left unfinished
+/// ([`refusal_for`]), and when this account has a parked state to unpark into a slot holding a state
+/// of unproven owner. A second parked state for the account the slot already belongs to is set aside
+/// (`<hash>.residue-<n>`), never a refusal: the slot's is the later one, and a refusal there would
+/// stand for ever.
+pub(crate) fn select_account_state(
+    data_dir: &Path,
+    user_id: &str,
+) -> Result<(Selection, SessionClaim), String> {
     log::debug!("[MLS_ACCOUNT] selecting the signing-in account's state");
     if user_id.is_empty() {
         return Err("no account named".to_string());
@@ -375,12 +477,12 @@ pub(crate) fn select_account_state(data_dir: &Path, user_id: &str) -> Result<Sel
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     let selection = select_held(data_dir, user_id)?;
-    mark_foreground_manager_loading();
+    let claim = claim_foreground_session_held();
     if matches!(selection, Selection::Moved { .. }) {
         refresh_extension_copy(data_dir);
     }
     log::info!("[MLS_ACCOUNT] slot selected for the signing-in account: {selection:?}");
-    Ok(selection)
+    Ok((selection, claim))
 }
 
 /// [`select_account_state`] under the lock it holds.
@@ -403,10 +505,14 @@ fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, String> {
     match owner {
         Some(owner) if owner == user_id => {
             if mine_parked {
+                // The slot is where every writer writes: the parked copy is the older one. Set
+                // aside, never deleted, and never a refusal that would stand for ever.
+                let aside = next_residue_dir(&mine);
+                std::fs::rename(&mine, &aside)
+                    .map_err(|e| format!("set the older parked state aside: {e}"))?;
                 log::error!(
-                    "[MLS_ACCOUNT] the slot AND a parked state both belong to the signing-in account - neither is moved"
+                    "[MLS_ACCOUNT] the slot AND a parked state both belong to the signing-in account - the parked one set aside, nothing deleted"
                 );
-                return Err("two states for one account".to_string());
             }
             log::debug!("[MLS_ACCOUNT] the slot already holds the account's state");
             return Ok(Selection::AlreadyInSlot);
@@ -415,13 +521,9 @@ fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, String> {
             // A sign-in IS the foreground: a background engine checking the guard gives way early,
             // and one that loaded the slot before this hold fails its compare-and-swap re-read.
             mark_foreground_active();
+            // A parked state the owner already has is set aside by `finish_park`, before anything
+            // moves: the slot's state is the later one.
             let other = parked_dir(data_dir, &owner);
-            if other.exists() {
-                log::error!(
-                    "[MLS_ACCOUNT] the slot's owner already has a parked state - nothing moved, nothing overwritten"
-                );
-                return Err("the slot's owner already has a parked state".to_string());
-            }
             std::fs::create_dir_all(data_dir.join(PARKED_STATES_DIR))
                 .map_err(|e| format!("create {PARKED_STATES_DIR}: {e}"))?;
             let staging = with_suffix(&other, PARKING_SUFFIX);
@@ -503,6 +605,75 @@ pub(crate) fn sync_extension_copy(data_dir: &Path, group: &Path) -> Result<(), S
     Ok(())
 }
 
+/// [`canari_ios_mirror_mls_bin_to_app_group`]'s answer: the copy follows the slot.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) const MIRROR_OK: i32 = 0;
+/// No data directory was handed over (null or not UTF-8): nothing was touched.
+#[cfg(target_os = "ios")]
+pub(crate) const MIRROR_NO_DIR: i32 = -1;
+/// The App Group container could not be resolved: nothing was touched.
+#[cfg(target_os = "ios")]
+pub(crate) const MIRROR_NO_GROUP: i32 = -2;
+/// The copy or the removal failed, or the state files' lock was poisoned.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) const MIRROR_FAILED: i32 = -3;
+
+/// The activation mirror's `mls.bin` half: [`sync_extension_copy`] UNDER [`mls_bin_write_lock`].
+///
+/// **WHY THE MIRROR TAKES THE STATE FILES' LOCK** (re-review of #2919). `CanariMirrorPushStateToAppGroup`
+/// runs on the main thread at every activation, and copied `mls.bin` with no lock: it could read
+/// account A's state from the slot, lose the CPU to a switch that parked it and refreshed the App
+/// Group copy from B's slot, then write A's bytes over it - and the notification extension would
+/// decrypt B's pushes with A's state until the next activation. Checking the owner record first
+/// would not close it (the switch can land between the check and the write); the lock does, because
+/// the switch's own refresh ([`refresh_extension_copy`]) runs inside the same hold as its moves. So the
+/// mirror and the switch are one writer of the copy, serialised, with one implementation.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn mirror_extension_copy(data_dir: &Path, group: &Path) -> i32 {
+    log::debug!("[MLS_ACCOUNT] activation mirror of mls.bin into the App Group");
+    let Ok(_guard) = mls_bin_write_lock().lock() else {
+        log::error!(
+            "[MLS_ACCOUNT] activation mirror: the mls_bin write lock is poisoned - not mirrored"
+        );
+        return MIRROR_FAILED;
+    };
+    match sync_extension_copy(data_dir, group) {
+        Ok(()) => MIRROR_OK,
+        Err(e) => {
+            log::error!("[MLS_ACCOUNT] activation mirror of mls.bin failed: {e}");
+            MIRROR_FAILED
+        }
+    }
+}
+
+/// The C entry of [`mirror_extension_copy`], called by `CanariMirrorPushStateToAppGroup`
+/// (`canari_push.mm`) with the app data directory (`CanariTauriDataDir`). Answers one of the
+/// `MIRROR_*` codes, which the caller NSLogs.
+///
+/// # Safety
+/// `data_dir` is null or a valid NUL-terminated string for the duration of the call.
+#[cfg(target_os = "ios")]
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_mirror_mls_bin_to_app_group(
+    data_dir: *const std::os::raw::c_char,
+) -> i32 {
+    if data_dir.is_null() {
+        return MIRROR_NO_DIR;
+    }
+    // SAFETY: non-null, and NUL-terminated for the call by this function's contract.
+    let Ok(dir) = std::ffi::CStr::from_ptr(data_dir).to_str() else {
+        return MIRROR_NO_DIR;
+    };
+    let group = match crate::app_group::app_group_dir() {
+        Ok(group) => group,
+        Err(e) => {
+            log::error!("[MLS_ACCOUNT] activation mirror: no App Group container: {e}");
+            return MIRROR_NO_GROUP;
+        }
+    };
+    mirror_extension_copy(Path::new(dir), &group)
+}
+
 /// What [`remove_account_state`] removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Removed {
@@ -510,6 +681,8 @@ pub(crate) struct Removed {
     pub parked_files: usize,
     /// Whether the slot was the account's and was swept.
     pub slot: bool,
+    /// The account's `<hash>.residue-<n>` directories - what moves set aside under its name.
+    pub residue_dirs: usize,
 }
 
 /// Removes EVERY MLS state `user_id` has on this install - the deleted-account wipe
@@ -519,6 +692,10 @@ pub(crate) struct Removed {
 ///
 /// The slot is swept only on that proof, and REFUSED while a foreground manager is loaded: the
 /// manager's next checkpoint would write the state back.
+///
+/// **AND WHAT WAS SET ASIDE UNDER ITS NAME** (re-review of #2919): every `<hash>.residue-<n>` of THIS
+/// account, matched exactly ([`is_residue_of`]) - an allowlist, so no other account's directory, and
+/// no unlisted entry of [`PARKED_STATES_DIR`], is ever reached.
 pub(crate) fn remove_account_state(data_dir: &Path, user_id: &str) -> Result<Removed, String> {
     if user_id.is_empty() {
         return Err("no account named".to_string());
@@ -533,6 +710,7 @@ pub(crate) fn remove_account_state(data_dir: &Path, user_id: &str) -> Result<Rem
     let mut removed = Removed {
         parked_files: 0,
         slot: false,
+        residue_dirs: 0,
     };
     if read_mls_state_owner(data_dir).as_deref() == Some(user_id) {
         if live_manager_in_process() {
@@ -561,11 +739,36 @@ pub(crate) fn remove_account_state(data_dir: &Path, user_id: &str) -> Result<Rem
     } else {
         log::debug!("[MLS_ACCOUNT] no parked state for the deleted account");
     }
+    let account = parked_dir_name(user_id);
+    match std::fs::read_dir(data_dir.join(PARKED_STATES_DIR)) {
+        Ok(entries) => {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !is_residue_of(&name, &account) {
+                    continue;
+                }
+                std::fs::remove_dir_all(entry.path())
+                    .map_err(|e| format!("remove a residue of the deleted account: {e}"))?;
+                removed.residue_dirs += 1;
+            }
+            if removed.residue_dirs > 0 {
+                log::info!(
+                    "[MLS_ACCOUNT] the deleted account's set-aside residue removed ({} director(y/ies))",
+                    removed.residue_dirs
+                );
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            log::error!("[MLS_ACCOUNT] {PARKED_STATES_DIR} unreadable - the deleted account's residue is not removed: {e}");
+            return Err(format!("read {PARKED_STATES_DIR}: {e}"));
+        }
+    }
     Ok(removed)
 }
 
 /// The frontend's view of [`remove_account_state`]: the number of state files removed, the slot's
-/// counted as one.
+/// counted as one, and each residue directory as one.
 ///
 /// SYNCHRONOUS, like `delete_user_push_files`: on iOS it runs on the main thread, where the
 /// activation mirror runs, so the mirror cannot copy the swept slot back into the App Group between
@@ -581,7 +784,7 @@ pub(crate) fn delete_user_mls_state(
         .app_data_dir()
         .map_err(|e| format!("app_data_dir: {e}"))?;
     let removed = remove_account_state(&data_dir, &user_id)?;
-    Ok(removed.parked_files + usize::from(removed.slot))
+    Ok(removed.parked_files + usize::from(removed.slot) + removed.residue_dirs)
 }
 
 #[cfg(test)]
@@ -607,9 +810,18 @@ mod tests {
 
     /// A sign-in's selection followed by its sign-out: the session the selection marked warm ends.
     fn select(dir: &Path, user: &str) -> Result<Selection, String> {
-        let selected = select_account_state(dir, user);
+        let selected = select_account_state(dir, user).map(|(selection, _)| selection);
         crate::concurrency::forget_live_manager_for_test();
         selected
+    }
+
+    /// A sign-in's selection whose session stays open (the manager is loading).
+    fn select_and_hold(dir: &Path, user: &str) -> Result<Selection, String> {
+        select_account_state(dir, user).map(|(selection, _)| selection)
+    }
+
+    fn residue(dir: &Path, user: &str, n: u32) -> PathBuf {
+        with_suffix(&parked_dir(dir, user), &format!("{RESIDUE_INFIX}{n}"))
     }
 
     fn slot(dir: &Path) -> Option<Vec<u8>> {
@@ -783,18 +995,18 @@ mod tests {
 
         // B's sign-in selects (B's state is in the slot, the process is now warm)...
         assert_eq!(
-            select_account_state(&dir, "user-b").unwrap(),
+            select_and_hold(&dir, "user-b").unwrap(),
             Selection::AlreadyInSlot
         );
         // ...and A's, interleaved before B's load, is refused with nothing moved.
-        assert!(select_account_state(&dir, "user-a").is_err());
+        assert!(select_and_hold(&dir, "user-a").is_err());
         assert_eq!(slot(&dir).as_deref(), Some(&b"B"[..]));
         assert_eq!(owner(&dir).as_deref(), Some("user-b"));
         // An empty slot too: the first fresh sign-in owns it until its session ends.
         crate::concurrency::forget_live_manager_for_test();
         let fresh = temp_dir("interleaved-fresh");
-        select_account_state(&fresh, "user-a").unwrap();
-        assert!(select_account_state(&fresh, "user-b").is_err());
+        select_and_hold(&fresh, "user-a").unwrap();
+        assert!(select_and_hold(&fresh, "user-b").is_err());
         crate::concurrency::forget_live_manager_for_test();
         assert!(select(&fresh, "user-b").is_ok());
         std::fs::remove_dir_all(&dir).ok();
@@ -841,12 +1053,14 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// F1 (review of #2919): A LEDGER WRITTEN INTO THE SLOT WHILE A MOVE WAS CUT - a key-group join
-    /// settling in a new process before anything finished the journal - lands at both ends of the
-    /// move. The slot's copy is the later one and wins, and nothing is refused: before, the occupied
-    /// destination failed every account's selection until a factory wipe.
+    /// F1 (review of #2919), F2 of the re-review: A LEDGER WRITTEN INTO THE SLOT WHILE A MOVE WAS CUT -
+    /// a key-group join settling in a new process before anything finished the journal - lands at
+    /// both ends of the move. Nothing is refused (an occupied destination used to fail every account's
+    /// selection until a factory wipe), and NOTHING IS DELETED: the copy at the destination is set
+    /// aside under the account's name. In a park that is the older parked copy; in an unpark it is
+    /// the slot's stray, which no record proves to be the account's - the parked ledger wins.
     #[test]
-    fn a_ledger_written_into_the_slot_during_a_cut_move_does_not_block_the_install() {
+    fn a_ledger_at_both_ends_of_a_cut_move_is_set_aside_never_deleted() {
         let _cold = cold();
         let dir = temp_dir("ledger-between");
         let ledger = crate::commands::storage::KEY_GROUP_PUSH_JOIN_LEDGER_FILE;
@@ -867,27 +1081,119 @@ mod tests {
             }
         );
         assert_eq!(std::fs::read(a.join(ledger)).unwrap(), b"newer ledger");
+        assert_eq!(
+            std::fs::read(residue(&dir, "user-a", 0).join(ledger)).unwrap(),
+            b"old ledger",
+            "the older parked copy is set aside, not deleted"
+        );
         assert!(!dir.join(ledger).exists());
         sign_in_and_save(&dir, "user-b", b"B");
 
-        // A's unpark, cut after the ledger arrived; a write lands in the slot, then the rest.
+        // B parked, A unparked: its ledger goes back with it.
         select(&dir, "user-a").unwrap();
         select(&dir, "user-b").unwrap();
-        let unstaging = with_suffix(&a, UNPARKING_SUFFIX);
-        // B in the slot, A parked: park B by hand, then cut A's unpark before any file moved.
+        // The push service recreates a stray ledger in B's slot... B parked by hand, then A's
+        // unpark cut before any file moved: the stray sits where A's ledger must go.
         let b_parked = parked_dir(&dir, "user-b");
-        assert!(!b_parked.exists());
         std::fs::create_dir_all(&b_parked).unwrap();
         for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
             std::fs::rename(dir.join(name), b_parked.join(name)).unwrap();
         }
+        let unstaging = with_suffix(&a, UNPARKING_SUFFIX);
         std::fs::rename(&a, &unstaging).unwrap();
-        std::fs::write(dir.join(ledger), b"newest ledger").unwrap();
+        std::fs::write(dir.join(ledger), b"stray ledger").unwrap();
 
         assert_eq!(select(&dir, "user-a").unwrap(), Selection::AlreadyInSlot);
         assert_eq!(slot(&dir).as_deref(), Some(&b"A"[..]));
-        assert_eq!(std::fs::read(dir.join(ledger)).unwrap(), b"newest ledger");
+        assert_eq!(
+            std::fs::read(dir.join(ledger)).unwrap(),
+            b"newer ledger",
+            "the account's parked ledger wins over a stray nobody is proven to own"
+        );
+        assert_eq!(
+            std::fs::read(residue(&dir, "user-a", 1).join(ledger)).unwrap(),
+            b"stray ledger"
+        );
         assert!(!unstaging.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// F2 of the re-review: AN EMPTY `mls.bin` IN THE SLOT IS NO STATE, and an unpark never deletes
+    /// the account's real one for it - the empty trace is set aside and the state comes back.
+    #[test]
+    fn an_empty_slot_mls_bin_never_costs_the_parked_state() {
+        let _cold = cold();
+        let dir = temp_dir("empty-slot-bin");
+        sign_in_and_save(&dir, "user-a", b"A's state");
+        select(&dir, "user-b").unwrap();
+        std::fs::write(dir.join("mls.bin"), b"").unwrap();
+
+        assert_eq!(
+            select(&dir, "user-a").unwrap(),
+            Selection::Moved {
+                parked_other: false,
+                unparked: true
+            }
+        );
+        assert_eq!(slot(&dir).as_deref(), Some(&b"A's state"[..]));
+        assert_eq!(owner(&dir).as_deref(), Some("user-a"));
+        assert_eq!(
+            std::fs::read(residue(&dir, "user-a", 0).join("mls.bin")).unwrap(),
+            b""
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// F2 of the re-review: TWO NON-EMPTY `mls.bin` AT BOTH ENDS OF ONE MOVE ARE REFUSED BEFORE ANY
+    /// FILE MOVES - which ratchet survives is not a rename's to decide. Both bytes stay where they were.
+    #[test]
+    fn two_states_at_both_ends_of_a_move_are_refused_with_nothing_moved() {
+        let _cold = cold();
+        let dir = temp_dir("two-states");
+        let ledger = crate::commands::storage::KEY_GROUP_PUSH_JOIN_LEDGER_FILE;
+        sign_in_and_save(&dir, "user-a", b"A");
+        select(&dir, "user-b").unwrap();
+        let a = parked_dir(&dir, "user-a");
+        std::fs::write(a.join(ledger), b"A's ledger").unwrap();
+        // A state nobody is recorded for appears in the slot during A's unpark.
+        let unstaging = with_suffix(&a, UNPARKING_SUFFIX);
+        std::fs::rename(&a, &unstaging).unwrap();
+        std::fs::write(dir.join("mls.bin"), b"unproven state").unwrap();
+
+        assert!(select(&dir, "user-a").is_err());
+        assert_eq!(slot(&dir).as_deref(), Some(&b"unproven state"[..]));
+        assert_eq!(std::fs::read(unstaging.join("mls.bin")).unwrap(), b"A");
+        assert_eq!(
+            std::fs::read(unstaging.join(ledger)).unwrap(),
+            b"A's ledger",
+            "nothing moved before the refusal"
+        );
+        assert!(!residue(&dir, "user-a", 0).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// F3 of the re-review: AN UNPARK THAT CANNOT FINISH REFUSES EVERY OTHER SIGN-IN. Its `mls.bin`
+    /// moved first, so the slot holds the account's state with no owner record; admitting another
+    /// account there would offer it that state as "unproven", and the reset after its failed load
+    /// would delete it.
+    #[test]
+    fn an_unfinished_unpark_refuses_another_account_s_sign_in() {
+        let _cold = cold();
+        let dir = temp_dir("unpark-unowned");
+        sign_in_and_save(&dir, "user-a", b"A");
+        select(&dir, "user-b").unwrap();
+        let a = parked_dir(&dir, "user-a");
+        let unstaging = with_suffix(&a, UNPARKING_SUFFIX);
+        std::fs::rename(&a, &unstaging).unwrap();
+        std::fs::rename(unstaging.join("mls.bin"), dir.join("mls.bin")).unwrap();
+        // What makes it unfinishable: a second state where the moved one now is.
+        std::fs::write(unstaging.join("mls.bin"), b"another copy").unwrap();
+
+        assert!(select(&dir, "user-b").is_err());
+        assert_eq!(slot(&dir).as_deref(), Some(&b"A"[..]));
+        assert_eq!(owner(&dir), None);
+        // A query still answers for B (who has nothing here).
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -914,10 +1220,10 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// F1: ONE ACCOUNT'S UNFINISHABLE MOVE STOPS THAT ACCOUNT ONLY - every other account is located
-    /// and signs in.
+    /// F1, and F3 of the re-review: ONE ACCOUNT'S UNFINISHABLE MOVE STOPS EVERY SIGN-IN, and only
+    /// that: every other account is still located, and signs in again once the move can finish.
     #[test]
-    fn an_unfinishable_move_refuses_only_its_own_account() {
+    fn an_unfinishable_move_stops_sign_ins_and_never_queries() {
         let _cold = cold();
         let dir = temp_dir("one-broken");
         sign_in_and_save(&dir, "user-b", b"B");
@@ -927,8 +1233,9 @@ mod tests {
         // would have to replace.
         let a = parked_dir(&dir, "user-a");
         let unstaging = with_suffix(&a, UNPARKING_SUFFIX);
-        std::fs::create_dir_all(unstaging.join("mls.bin")).unwrap();
-        std::fs::write(unstaging.join("mls.bin").join("x"), b"x").unwrap();
+        std::fs::create_dir_all(&unstaging).unwrap();
+        // A state the slot's (C's) would have to give way to: two states, refused.
+        std::fs::write(unstaging.join("mls.bin"), b"A").unwrap();
 
         assert!(account_state_file(&dir, "user-a").is_err());
         assert!(select(&dir, "user-a").is_err());
@@ -936,14 +1243,20 @@ mod tests {
             account_state_file(&dir, "user-b").unwrap(),
             Some(parked_dir(&dir, "user-b").join("mls.bin"))
         );
+        assert!(select(&dir, "user-b").is_err());
+        assert_eq!(slot(&dir).as_deref(), Some(&b"C"[..]));
+        // Once the obstacle is gone, the journal finishes and B signs in.
+        std::fs::remove_file(unstaging.join("mls.bin")).unwrap();
         select(&dir, "user-b").unwrap();
         assert_eq!(slot(&dir).as_deref(), Some(&b"B"[..]));
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// NOTHING IS OVERWRITTEN: an owner whose state is somehow parked twice keeps both.
+    /// F4 of the re-review: AN ACCOUNT WITH A STATE IN THE SLOT AND ANOTHER PARKED NEVER LOCKS THE
+    /// INSTALL. The parked one - the older, since the slot is where every writer writes - is set aside,
+    /// nothing is overwritten or deleted, and both another account and the owner sign in.
     #[test]
-    fn a_second_parked_state_for_one_account_is_refused() {
+    fn a_second_parked_state_for_one_account_is_set_aside_not_a_lock() {
         let _cold = cold();
         let dir = temp_dir("twice");
         sign_in_and_save(&dir, "user-a", b"A in the slot");
@@ -951,10 +1264,57 @@ mod tests {
         std::fs::create_dir_all(&a).unwrap();
         std::fs::write(a.join("mls.bin"), b"A parked").unwrap();
 
-        assert!(select(&dir, "user-b").is_err());
-        assert_eq!(slot(&dir).as_deref(), Some(&b"A in the slot"[..]));
-        assert_eq!(std::fs::read(a.join("mls.bin")).unwrap(), b"A parked");
-        assert!(select(&dir, "user-a").is_err());
+        // Another account: the park finds the name taken, sets the older state aside FIRST.
+        select(&dir, "user-b").unwrap();
+        assert_eq!(slot(&dir), None);
+        assert_eq!(std::fs::read(a.join("mls.bin")).unwrap(), b"A in the slot");
+        assert_eq!(
+            std::fs::read(residue(&dir, "user-a", 0).join("mls.bin")).unwrap(),
+            b"A parked"
+        );
+
+        // The owner itself, with the slot its own: the parked copy goes aside, the slot stays.
+        let fresh = temp_dir("twice-owner");
+        sign_in_and_save(&fresh, "user-a", b"A in the slot");
+        let a = parked_dir(&fresh, "user-a");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("mls.bin"), b"A parked").unwrap();
+        assert_eq!(select(&fresh, "user-a").unwrap(), Selection::AlreadyInSlot);
+        assert_eq!(slot(&fresh).as_deref(), Some(&b"A in the slot"[..]));
+        assert!(!a.exists());
+        assert_eq!(
+            std::fs::read(residue(&fresh, "user-a", 0).join("mls.bin")).unwrap(),
+            b"A parked"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&fresh).ok();
+    }
+
+    /// F4 of the re-review: A CUT PARK WHOSE FINAL NAME IS TAKEN checks it BEFORE moving anything, and
+    /// still finishes - a refusal there stood for ever and refused every sign-in.
+    #[test]
+    fn a_cut_park_whose_final_name_is_taken_still_finishes() {
+        let _cold = cold();
+        let dir = temp_dir("cut-park-taken");
+        sign_in_and_save(&dir, "user-a", b"A");
+        let a = parked_dir(&dir, "user-a");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("mls.bin"), b"older A").unwrap();
+        std::fs::create_dir_all(with_suffix(&a, PARKING_SUFFIX)).unwrap();
+
+        assert_eq!(
+            select(&dir, "user-b").unwrap(),
+            Selection::Moved {
+                parked_other: false,
+                unparked: false
+            }
+        );
+        assert_eq!(std::fs::read(a.join("mls.bin")).unwrap(), b"A");
+        assert_eq!(
+            std::fs::read(residue(&dir, "user-a", 0).join("mls.bin")).unwrap(),
+            b"older A"
+        );
+        assert!(!with_suffix(&a, PARKING_SUFFIX).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -968,14 +1328,33 @@ mod tests {
         select(&dir, "user-b").unwrap();
         sign_in_and_save(&dir, "user-b", b"B");
 
+        // What a move set aside under A's name goes with it; a look-alike of another hash stays.
+        std::fs::create_dir_all(residue(&dir, "user-a", 0)).unwrap();
+        std::fs::write(residue(&dir, "user-a", 0).join("x"), b"x").unwrap();
+        let other_residue = residue(&dir, "user-b", 0);
+        std::fs::create_dir_all(&other_residue).unwrap();
+        let look_alike = with_suffix(&parked_dir(&dir, "user-a"), ".residue-x");
+        std::fs::create_dir_all(&look_alike).unwrap();
+
         let removed = remove_account_state(&dir, "user-a").unwrap();
         assert_eq!(
             removed,
             Removed {
                 parked_files: 2,
-                slot: false
+                slot: false,
+                residue_dirs: 1
             }
         );
+        assert!(!residue(&dir, "user-a", 0).exists());
+        assert!(
+            other_residue.exists(),
+            "another account's residue is not this deletion's"
+        );
+        assert!(
+            look_alike.exists(),
+            "only <hash>.residue-<digits> is on the allowlist"
+        );
+        std::fs::remove_dir_all(&other_residue).unwrap();
         assert!(!parked_dir(&dir, "user-a").exists());
         assert_eq!(slot(&dir).as_deref(), Some(&b"B"[..]));
 
@@ -992,7 +1371,8 @@ mod tests {
             remove_account_state(&dir, "user-b").unwrap(),
             Removed {
                 parked_files: 0,
-                slot: false
+                slot: false,
+                residue_dirs: 0
             }
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -1050,6 +1430,50 @@ mod tests {
         assert!(!group.join("mls.bin.tmp").exists());
         std::fs::remove_dir_all(&dir).ok();
         std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// F5 of the re-review: THE ACTIVATION MIRROR TAKES THE STATE FILES' LOCK. While a switch holds
+    /// it, the mirror waits, and then copies the slot AS THE SWITCH LEFT IT - never the previous
+    /// account's bytes read before the switch.
+    #[test]
+    fn the_activation_mirror_waits_for_a_switch_and_copies_what_it_left() {
+        let _cold = cold();
+        let dir = temp_dir("mirror-slot");
+        let group = temp_dir("mirror-group");
+        std::fs::write(dir.join("mls.bin"), b"account A").unwrap();
+
+        let switching = mls_bin_write_lock().lock().unwrap();
+        let (d, g) = (dir.clone(), group.clone());
+        let mirror = std::thread::spawn(move || mirror_extension_copy(&d, &g));
+        // The switch, inside its hold: the slot becomes B's.
+        std::fs::write(dir.join("mls.bin"), b"account B").unwrap();
+        drop(switching);
+
+        assert_eq!(mirror.join().unwrap(), MIRROR_OK);
+        assert_eq!(std::fs::read(group.join("mls.bin")).unwrap(), b"account B");
+        // An empty slot leaves no copy for the extension.
+        std::fs::remove_file(dir.join("mls.bin")).unwrap();
+        assert_eq!(mirror_extension_copy(&dir, &group), MIRROR_OK);
+        assert!(!group.join("mls.bin").exists());
+        assert_ne!(MIRROR_FAILED, MIRROR_OK);
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The residue allowlist matches `<hash>.residue-<digits>` exactly.
+    #[test]
+    fn only_an_accounts_own_residue_matches() {
+        let a = parked_dir_name("user-a");
+        assert!(is_residue_of(&format!("{a}.residue-0"), &a));
+        assert!(is_residue_of(&format!("{a}.residue-12"), &a));
+        assert!(!is_residue_of(&format!("{a}.residue-"), &a));
+        assert!(!is_residue_of(&format!("{a}.residue-1x"), &a));
+        assert!(!is_residue_of(&format!("{a}.parking"), &a));
+        assert!(!is_residue_of(&a, &a));
+        assert!(!is_residue_of(
+            &format!("{}.residue-0", parked_dir_name("user-b")),
+            &a
+        ));
     }
 
     /// Ids differing only by case are two accounts, and two directories on a case-insensitive volume.

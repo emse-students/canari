@@ -849,35 +849,63 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   load's credential check says whose it is - as before.
 - **A move cut part-way is finished from a journal, not a clock.** A park creates `<hash>.parking/`
   first, an unpark renames `<hash>/` to `<hash>.unparking/` first; the next process completes either
-  before any state is located. Where both ends hold one file, the slot's copy wins (every writer
-  writes there, so it is the later one); a file no list names is set aside as `<hash>.residue-<n>`.
+  before any state is located.
+- **A clash never deletes** (re-review of #2919). Where both ends of a move hold one file, the copy
+  already at the destination is set aside as `<hash>.residue-<n>` (accused at ERROR) and the moving
+  one takes its place: in a park both are the account's and the slot's is the later; in an unpark the
+  slot's copy is proven to be nobody's (a ledger the Android push service recreated) and the parked one
+  wins. For `mls.bin` an EMPTY copy is the one set aside, and two non-empty ones are refused before any
+  file moves - choosing between them is choosing a ratchet. A file no list names is set aside too.
 - **Every writer of a parked file takes the state lock** (`mls_bin_write_lock`): `mls.bin`, the JSON
-  ledgers, and the key-group join's ledger and stage (`key_group_join.rs`, review of #2919) - no write
-  lands between a park and its unpark.
-- **One account's broken journal stops that account only.** A move that cannot be finished refuses
-  that account's queries and sign-in; other accounts still answer. Only an unfinishable PARK also
-  refuses other sign-ins: the slot still holds part of that account's state.
-- **The selection marks the process warm in its own hold**, so a second sign-in interleaved before
-  the first one's load is refused instead of writing one account's owner beside the other's state.
+  ledgers, the key-group join's ledger and stage (`key_group_join.rs`, the take's stage deletion
+  included), and the iOS activation mirror of `mls.bin` (`canari_ios_mirror_mls_bin_to_app_group`) -
+  no write lands between a park and its unpark, and the mirror can no longer write the previous
+  account's bytes over the copy a switch just refreshed.
+- **A join's writes are bound to the push's account.** No compare-and-swap covers the key-group join's
+  ledger and stage, so claim, settle, stage, finish and abandon each check, under that lock, that the
+  slot's owner record names the push's account (`slot_is_accounts_held`), and write nothing otherwise
+  (`not-the-accounts-slot`, `slot-not-the-account`): a join in flight across a switch never settles
+  `lost` into the next account's ledger, and a push for an account deleted since recreates nothing.
+- **An unfinished move stops every sign-in, never a query.** A move that cannot be finished refuses
+  that account's queries and every sign-in, a park's or an UNPARK's: `finish_unpark` moves `mls.bin`
+  before the owner record, so a cut unpark can leave that account's state UNOWNED in the slot, where an
+  admitted account would fail its load on it and reach the reset that deletes it. Other accounts'
+  queries still answer, and none is offered that unowned state. What is left unfinished is narrow: two
+  non-empty `mls.bin`, or a filesystem refusing a rename. A parked directory already present (checked
+  BEFORE a park moves anything) or a second parked state beside the slot's owner is set aside, never a
+  refusal that would lock the install for ever.
+- **The selection marks the process warm in its own hold** and returns a `SessionClaim`, so a second
+  sign-in interleaved before the first one's load is refused instead of writing one account's owner
+  beside the other's state. **A failed sign-in ends only the session it claimed** (`InstallGuard`,
+  `end_native_session_claimed`): a sign-in refused BY that warm mark holds no claim and ends nothing,
+  and a claim a later selection superseded ends nothing either. Before, the refused attempt's guard
+  cleared the other sign-in's mark while its manager loaded.
 - **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
-  into the slot just handed over), a second parked state for one account, and a fresh start asked
-  while the switch just brought back a non-empty parked `mls.bin` (the caller decided "no state" on
-  an answer that did not see it).
+  into the slot just handed over), a parked state to unpark into a slot holding an unrecorded one, and
+  a fresh start asked while the switch just brought back a non-empty parked `mls.bin` (the caller
+  decided "no state" on an answer that did not see it).
 - **Every query takes its account**: `mls_state_size`, `mls_state_absent` and `load_mls_state` answer
   for `userId` (`account_state_file`), never for whichever account used the install last.
 - The `device_holds_other_account` gate above stays: it is what a REFUSED switch meets.
-- A deleted account's states go with its wipe (`delete_user_mls_state`): the parked one, and the
-  slot when its record names that account and no session is loaded. The factory wipe takes
-  `mls_accounts/` with everything else.
+- A deleted account's states go with its wipe (`delete_user_mls_state`): the parked one, the slot
+  when its record names that account and no session is loaded, and every `<hash>.residue-<n>` of THAT
+  account (an exact-match allowlist, `is_residue_of`). The factory wipe takes `mls_accounts/` with
+  everything else.
 - **The iOS extension's App Group copy follows the slot**: rewritten at a switch, removed when the
-  slot is empty (Rust at the switch and the deletion; `CanariMirrorPushStateToAppGroup` now removes
-  the copy when the slot has no `mls.bin`).
+  slot is empty - by ONE Rust implementation (`sync_extension_copy`) at the switch, the deletion and
+  the activation mirror, which `CanariMirrorPushStateToAppGroup` now calls for `mls.bin` instead of
+  copying it itself (pinned by `mobile/iosMlsMirror.test.ts`).
 
 Tests: `commands/mls_account_state.rs` (A -> B -> A -> B with each account's bytes back unchanged,
 the migration by record, the unrecorded state left in place, the live-manager refusal, two
-interleaved sign-ins, both cut moves finished, a ledger written into the slot mid-move, a stray file
-set aside, one broken journal refusing only its account, the deletion of the slot and the parked
-state, the fresh-start guard, the extension copy). **Native, verified by compiling and host tests only**:
+interleaved sign-ins, both cut moves finished, a ledger at both ends of a cut move set aside, an empty
+slot `mls.bin` never costing the parked one, two states refused with nothing moved, an unfinished
+unpark refusing another sign-in, an unfinishable move stopping sign-ins but not queries, a stray file
+set aside, a second parked state and a taken park name set aside, the deletion of the slot, the parked
+state and its residue, the fresh-start guard, the extension copy, the activation mirror waiting for a
+switch); `commands/mls.rs` (a sign-in refused by a loading one does not end it, through the guard; a
+superseded claim ends nothing); `mobile/key_group_join.rs` (a join writes nothing into a slot that is
+not its account's). **Native, verified by compiling and host tests only**:
 an A -> B -> A reading on the iPhone 12 bench phone is owed after a pre-release
 ([backlog](../../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
 
