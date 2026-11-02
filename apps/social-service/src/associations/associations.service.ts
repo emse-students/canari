@@ -132,11 +132,7 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import {
-  addressesEveryoneSql,
-  assertCreatorCampusGoverned,
-  defaultCampusRules,
-} from '../spaces/audience-policy';
+import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import {
   BDE_MODERATED_POST_IDS_SQL,
@@ -1611,6 +1607,7 @@ export class AssociationsService {
     opts?: { includePending?: boolean; includeRejected?: boolean; viewer?: CalendarViewer }
   ) {
     await this.findById(associationId);
+    if (this.isAnonymousAgendaRead(associationId, opts?.viewer)) return [];
     const promoCutoff = await promoCutoffFor(
       this.calendarRepo.manager,
       opts?.viewer?.userId,
@@ -1636,7 +1633,6 @@ export class AssociationsService {
       qb.andWhere('e.startsAt >= :promoCutoff::timestamptz', { promoCutoff });
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
-    this.closeAnonymousAgenda(qb, associationId, opts?.viewer);
     if (fromIso?.trim()) {
       // Include multi-day events that started before `from` but end within or after the window.
       qb.andWhere('COALESCE(e.endsAt, e.startsAt) >= :from', { from: new Date(fromIso) });
@@ -1686,8 +1682,8 @@ export class AssociationsService {
    * spaces, or the reader is a member (D21) - `eventVisibleToViewerSql`, the one predicate for an
    * event. An anonymous read (the public agenda and its `.ics`, D30) passes no viewer and is left
    * whole, exactly as the promo cutoff leaves it: like that cutoff, this is relevance and not
-   * confidentiality. ONE association's agenda read anonymously is the exception, closed by
-   * `closeAnonymousAgenda` (2026-11-02): that feed's selection is signed, this route is not.
+   * confidentiality. ONE association's agenda read anonymously answers nothing at all
+   * (`isAnonymousAgendaRead`, 2026-11-02): that feed's selection is signed, this route is not.
    */
   private restrictToViewerSpaces(
     qb: SelectQueryBuilder<AssociationCalendarEvent>,
@@ -1702,36 +1698,19 @@ export class AssociationsService {
   }
 
   /**
-   * ONE ASSOCIATION'S AGENDA IS CLOSED TO AN ANONYMOUS CALLER (owner, 2026-11-02), like the signed
-   * feed (D40 amended): without an account it is read only when that association ADDRESSES
-   * EVERYONE (`addressesEveryoneSql`, the twin of `isEveryoneRule` - an audience rule with no
-   * campus). Otherwise the answer is an EMPTY list, never a 401: the public association page draws
-   * "no event" rather than an error, as an anonymous visitor's page does for every other gated
-   * block. A signed-in reader is narrowed by `restrictToViewerSpaces` instead and passes here.
+   * WITHOUT A SESSION, ONE ASSOCIATION'S AGENDA IS EMPTY (owner, 2026-11-02): only what the student
+   * portal publishes is public, and it publishes no event - whatever the association's audience,
+   * an institution addressing everyone included. The answer is an EMPTY list, never a 401: the
+   * public association page draws "no event", as it does for every other gated block. A signed
+   * agenda link (`/calendar/feed` with a signed selection) is the one anonymous way in.
    */
-  private closeAnonymousAgenda(
-    qb: SelectQueryBuilder<AssociationCalendarEvent>,
+  private isAnonymousAgendaRead(
     associationId: string,
     viewer: CalendarViewer | undefined
-  ): void {
-    if (viewer?.userId?.trim() || viewer?.isGlobalAdmin) return;
-    this.logger.debug(
-      `[AGENDA] anonymous read of ${associationId.slice(0, 8)}: open only if it addresses everyone`
-    );
-    qb.andWhere(addressesEveryoneSql(':anonAgendaAssociationId'), {
-      anonAgendaAssociationId: associationId,
-    });
-  }
-
-  /**
-   * WHAT IS PUBLISHED TO EVERYONE (owner, 2026-11-02): an event whose ORGANISER addresses everyone
-   * (`addressesEveryoneSql`, the ONE predicate `closeAnonymousAgenda` uses too). Asked for the
-   * server-side SEO of `/calendar`, whose JSON-LD every anonymous visitor and crawler reads: an
-   * association that addresses only some spaces is not published there, as its own agenda is not.
-   */
-  private publishedToEveryone(qb: SelectQueryBuilder<AssociationCalendarEvent>): void {
-    this.logger.debug('[AGENDA] public face: only the associations that address everyone');
-    qb.andWhere(addressesEveryoneSql('e."associationId"'));
+  ): boolean {
+    if (viewer?.userId?.trim() || viewer?.isGlobalAdmin) return false;
+    this.logger.debug(`[AGENDA] anonymous read of ${associationId.slice(0, 8)}: answers nothing`);
+    return true;
   }
 
   /**
@@ -2395,13 +2374,7 @@ export class AssociationsService {
     fromIso?: string,
     toIso?: string,
     associationId?: string,
-    opts?: {
-      includePending?: boolean;
-      viewer?: CalendarViewer;
-      selection?: SpaceSelection;
-      /** Keep only the events of associations that ADDRESS EVERYONE (`publishedToEveryone`). */
-      everyoneOnly?: boolean;
-    }
+    opts?: { includePending?: boolean; viewer?: CalendarViewer; selection?: SpaceSelection }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
     const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
@@ -2438,7 +2411,6 @@ export class AssociationsService {
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
     this.restrictToSelection(qb, opts?.selection);
-    if (opts?.everyoneOnly) this.publishedToEveryone(qb);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {

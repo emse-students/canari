@@ -1280,9 +1280,8 @@ against real PostgreSQL, plus the service and controller specs.
 - **The selector** (`AgendaSelectionFields`, `lib/calendar/agendaSelection.ts`) sits in the subscribe
   modal and on the PDF export page. It defaults to the reader's own campus and first cursus formation
   (`defaultAgendaSelection`); a reader with no space gets nothing and must choose (no link, no month
-  until they do). One association's feed shows no selector. The SEO agenda page (`serverSeo`), which
-  reads anonymously, asks once per campus and merges - so an association with no rule, on no campus,
-  does not appear in that JSON-LD.
+  until they do). One association's feed shows no selector. The SEO agenda page publishes no event
+  since 2026-11-02 ([D40 closed](#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)).
 - **`GET /api/public/associations`** (the sitemap) stays COMPLETE, unchanged.
 
 ### D40 amended - the selection is SIGNED, and only the reader's own spaces are signed (2026-10-06)
@@ -1313,12 +1312,9 @@ one that remained: ANY campus or formation could be named in a URL by anyone.
   a **403 `AGENDA_SIGNATURE_INVALID`** (constant-time compare, logged `[AGENDA_SIG]`); no selection at
   all stays the 400 `AGENDA_SELECTION_REQUIRED`. `from`/`to` are NOT signed, so the window stays free.
   `assertAgendaAccess` (`directory-query.ts`) replaced `assertAgendaSelected`.
-- **Open on purpose:** `eventId` (the one-evening link, no signature), a **signed-in** JSON read (already
-  narrowed to the reader's spaces by `restrictToViewerSpaces`), and a **server-internal** read.
-- **The SEO agenda page** (`serverSeo`) keeps its per-campus reads unchanged and passes its existing
-  `X-Internal-Secret` (`internalHeaders()`): the JSON feed treats a valid internal secret as trusted
-  and skips the signature (`isInternalSecret`, timing-safe, `internal/is-internal-secret.util.ts`). No second secret, no public bypass; the
-  public JSON-LD is untouched.
+- **Open:** a **signed-in** JSON read (already narrowed to the reader's spaces by
+  `restrictToViewerSpaces`). **Since 2026-11-02** the one-event link is signed too and the internal
+  secret is no bypass: the SEO agenda page reads no feed ([D40 closed](#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)).
 - **Fails closed:** with `AGENDA_SIGNING_KEY` unset or under 32 characters the signing route and every
   signed selection answer **503**; nothing is ever served unchecked.
   **Refused at deploy since 2026-10-06**: `render-env.sh` fails the deploy naming the secret when the
@@ -1404,36 +1400,44 @@ admin's, as for VALIDATE_EVENTS. **The platform admin stays global for every one
   the platform admin's edit of another person's post refused), the moderation and lives controller
   specs.
 
-### D40 closed - one association's agenda is closed to an anonymous caller (2026-11-02)
+### D40 closed - no event is published to an anonymous reader (2026-11-02)
 
-**Decided by the owner (2026-11-02):** `GET /api/associations/:id/events` answered every validated event
-of any association to a caller with no session, beside a feed whose selection must be signed - naming
-the association on this route defeated the signing above. It is now closed like the feed:
+**Decided by the owner (2026-11-02):** only what the student portal shows is public, and it shows no
+event. So without a session, NO event is served, whatever the association's audience - an institution
+addressing everyone included. The anonymous ways in are capabilities a member hands out, and only
+those:
 
-- **Without an account, an association's agenda is read only when that association ADDRESSES
-  EVERYONE** - an audience rule with no campus (`isEveryoneRule`, its SQL twin `addressesEveryoneSql`
-  in `spaces/audience-policy.ts`; only an institution may hold one). No predicate named "open to all"
-  existed on the public feed; "addresses everyone" is the codebase's one definition of it.
-- **Otherwise the anonymous answer is an EMPTY list, never a 401**: the public association page draws
-  "no event", as it does for every other block an anonymous visitor does not get
-  (`AssociationsService.closeAnonymousAgenda`, logged `[AGENDA]`).
-- **A signed-in reader is unchanged** (`restrictToViewerSpaces`), and so is a global admin.
-- **Consumers, enumerated:** the association page's agenda block (`AssociationCalendarSection`,
-  client-side, the only anonymous reader of THIS route: empty for a visitor unless the association
-  addresses everyone); the composer's linkable-event picker (`listLinkableValidatedCalendarEvents`,
-  signed in); the edit pages (signed in). The `.ics` export is `/calendar/feed.ics`, untouched; the
-  native apps run the same web client.
-- **The server-side SEO of `/calendar` is the other anonymous face, closed by the same predicate.**
-  `serverSeo.ts` (`agendaJsonLd`) reads `/calendar/feed` per campus with the internal secret and writes
-  the 25 soonest events into the page's JSON-LD - which every anonymous visitor and crawler reads. That
-  read, trusted and with no reader, is the PUBLIC face: the feed passes `everyoneOnly` and keeps only
-  the events whose organiser addresses everyone (`AssociationsService.publishedToEveryone`, the same
-  `addressesEveryoneSql`). A signed-in reader and a signed subscription are unchanged. Proof: the
-  `coorganisation.integration.spec.ts` rows on real PostgreSQL (an association reaching only some
-  spaces is absent from the SEO read and from its own anonymous agenda) and the controller row that
-  only the trusted anonymous read asks for it. **nginx** has no per-route allowlist here: `/api/associations`
-  goes through `auth_request` to core's `verify`, which answers 200 with empty identity headers for an
-  anonymous caller, so the decision is the service's and nothing changes at the edge.
+- **A signed selection** (`/calendar/feed` and `feed.ics` with `sig`, [D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)) - unchanged.
+- **A signed single-event link** (`feed.ics?eventId=..&sig=..`): `sig` is that EVENT's signature,
+  `v1|event-ics|event=<id>` under `AGENDA_SIGNING_KEY` (`signEventIcs`, `agenda-signature.ts`; its own
+  canonical prefix, so neither kind can be read as the other). The server serves it on every validated
+  event it lists (`icsSig`, `withEventIcsSig`, on `/calendar/feed` and `/:id/events`); the client puts
+  it in the "add to my calendar" link (`eventIcsAbsoluteUrl`, the event modal's export) and builds no
+  link without it. An unsigned or wrongly signed request is a **bodyless 403**, logged with the tag
+  `[AGENDA_ICS_REFUSED]` - the count to read after a release, to measure links still saved in the
+  old form. No time-based grace period.
+
+What answers nothing without a session:
+
+- **`GET /api/associations/:id/events`** answers an EMPTY list, never a 401 - the public association
+  page draws "no event", as it does for every other gated block (`AssociationsService.isAnonymousAgendaRead`,
+  logged `[AGENDA]`). A signed-in reader keeps `restrictToViewerSpaces`, a global admin the whole.
+- **The server-side SEO of `/calendar`** writes no `Event` into its JSON-LD and reads no feed
+  (`serverSeo.ts`): the JSON-LD of a page is read by every anonymous visitor and crawler. The internal
+  secret grants the feed nothing.
+- **Consumers, enumerated:** the association page's agenda block (`AssociationCalendarSection`, the
+  only anonymous reader of `/:id/events`: empty for a visitor); the composer's linkable-event picker
+  (`listLinkableValidatedCalendarEvents`, signed in); the edit pages (signed in); the event modal's
+  "add to my calendar" link (signed per event); the native apps run the same web client. **nginx** has
+  no per-route allowlist here: `/api/associations` goes through `auth_request` to core's `verify`,
+  which answers 200 with empty identity headers for an anonymous caller, so the decision is the
+  service's and nothing changes at the edge.
+- **Proof:** `associations.service.calendar-owner.spec.ts` (an anonymous read answers before any
+  query), `coorganisation.integration.spec.ts` on real PostgreSQL (an association addressing everyone
+  is empty anonymously and read signed in), the controller specs (the event link signed for that
+  event, refused bodyless otherwise, never on the selection's signature; the internal secret is no
+  bypass), `serverSeo.test.ts` (no feed read, no `Event`) and `eventIcsUrl.test.ts` (no link without
+  the signature).
 
 ### WP6e institutions as built (2026-10-05)
 

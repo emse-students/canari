@@ -1,6 +1,5 @@
 import { AssociationsService } from './associations.service';
 import { AssociationCalendarEventStatus } from './entities/association-calendar-event.entity';
-import { addressesEveryoneSql, isEveryoneRule } from '../spaces/audience-policy';
 
 /**
  * `listCalendarEvents` returns the events an association OWNS **and** the ones it merely co-owns,
@@ -14,6 +13,8 @@ import { addressesEveryoneSql, isEveryoneRule } from '../spaces/audience-policy'
  */
 const PAGE_ASSO = '11111111-1111-4111-8111-111111111111';
 const OTHER_ASSO = '22222222-2222-4222-8222-222222222222';
+/** A signed-in reader: an anonymous read of one association's agenda answers nothing. */
+const READER = { viewer: { userId: 'reader' } };
 
 function makeQueryBuilder(rows: unknown[]) {
   const qb: Record<string, jest.Mock> = {};
@@ -89,7 +90,12 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
   it('reports the REAL owner of an event the association only co-owns', async () => {
     const { service } = makeService([eventRow('ev-co-owned', OTHER_ASSO)]);
 
-    const [ev] = (await service.listCalendarEvents(PAGE_ASSO)) as unknown as {
+    const [ev] = (await service.listCalendarEvents(
+      PAGE_ASSO,
+      undefined,
+      undefined,
+      READER
+    )) as unknown as {
       associationId: string;
       associationName: string;
       associationSlug: string;
@@ -112,7 +118,12 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
   it('carries the association own identity for an event it owns', async () => {
     const { service } = makeService([eventRow('ev-own', PAGE_ASSO)]);
 
-    const [ev] = (await service.listCalendarEvents(PAGE_ASSO)) as unknown as {
+    const [ev] = (await service.listCalendarEvents(
+      PAGE_ASSO,
+      undefined,
+      undefined,
+      READER
+    )) as unknown as {
       associationName: string;
       associationSlug: string;
       associationLogoUrl: string | null;
@@ -126,55 +137,34 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
   it('asks for no owner at all when the window holds no event', async () => {
     const { service, assoRepo } = makeService([]);
 
-    expect(await service.listCalendarEvents(PAGE_ASSO)).toEqual([]);
+    expect(await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, READER)).toEqual([]);
     // `findById` is the only lookup an empty window may cost.
     expect(assoRepo.find).not.toHaveBeenCalled();
   });
 });
 
 /**
- * ONE ASSOCIATION'S AGENDA IS CLOSED TO AN ANONYMOUS CALLER (owner, 2026-11-02): without an account
- * it is read only when the association addresses everyone (`addressesEveryoneSql`), and is an empty
- * list otherwise - the SQL decides, so the test pins that the clause is spliced for the anonymous
- * read, bound to the page's association, and for nobody else.
+ * WITHOUT A SESSION, ONE ASSOCIATION'S AGENDA IS EMPTY (owner, 2026-11-02): no event is published
+ * to an anonymous reader, whatever the association's audience - an institution addressing everyone
+ * included. The read answers before any query; a signed-in reader and a global admin are unchanged.
  */
 describe('AssociationsService.listCalendarEvents - the anonymous agenda', () => {
-  const EVERYONE = addressesEveryoneSql(':anonAgendaAssociationId');
-  const clauses = (qb: Record<string, jest.Mock>) =>
-    qb.andWhere.mock.calls.map((call: unknown[]) => call[0]);
+  it('answers an empty list to an anonymous read, and runs no query', async () => {
+    const { service, qb } = makeService([{ id: 'ev-own', associationId: PAGE_ASSO }]);
 
-  it('splices "addresses everyone", bound to the page association, for an anonymous read', async () => {
-    const { service, qb } = makeService([]);
+    await expect(
+      service.listCalendarEvents(PAGE_ASSO, undefined, undefined, { viewer: {} })
+    ).resolves.toEqual([]);
+    await expect(service.listCalendarEvents(PAGE_ASSO)).resolves.toEqual([]);
 
-    await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, { viewer: {} });
-
-    expect(qb.andWhere).toHaveBeenCalledWith(EVERYONE, { anonAgendaAssociationId: PAGE_ASSO });
+    expect(qb.getMany).not.toHaveBeenCalled();
   });
 
-  it('leaves a signed-in reader to their spaces, never to the anonymous rule', async () => {
-    const { service, qb } = makeService([]);
-
-    await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, {
-      viewer: { userId: 'reader' },
-    });
-
-    expect(clauses(qb)).not.toContain(EVERYONE);
-  });
-
-  it('leaves a global admin whole', async () => {
-    const { service, qb } = makeService([]);
-
-    await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, {
-      viewer: { isGlobalAdmin: true },
-    });
-
-    expect(clauses(qb)).not.toContain(EVERYONE);
-  });
-
-  it('is a rule with no campus, the twin of isEveryoneRule', () => {
-    expect(EVERYONE).toContain('association_audiences');
-    expect(EVERYONE).toMatch(/campus IS NULL/);
-    expect(isEveryoneRule({ formation: 'ICM', campus: null })).toBe(true);
-    expect(isEveryoneRule({ formation: null, campus: 'saint-etienne' })).toBe(false);
+  it('reads the agenda for a signed-in reader and for a global admin', async () => {
+    for (const viewer of [{ userId: 'reader' }, { isGlobalAdmin: true }]) {
+      const { service, qb } = makeService([]);
+      await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, { viewer });
+      expect(qb.getMany).toHaveBeenCalled();
+    }
   });
 });

@@ -90,6 +90,44 @@ export function assertAgendaSignature(sel: SignedSelection, sig: string | undefi
 }
 
 /**
+ * THE SIGNED LINK OF ONE EVENT'S `.ics` (owner, 2026-11-02): the "add to my calendar" link a phone's
+ * browser opens, with no identity. Like a selection it is a capability - the server signs it for a
+ * reader who already sees the event (served on the event as `icsSig`), and the route refuses it
+ * unsigned. Its own canonical prefix, so neither kind of signature can be read as the other.
+ */
+export function canonicalEventIcs(eventId: string): string {
+  return `v1|event-ics|event=${eventId}`;
+}
+
+/** The signature of event `eventId`'s single-event `.ics` link. */
+export function signEventIcs(eventId: string): string {
+  return signWithAgendaKey(canonicalEventIcs(eventId));
+}
+
+/**
+ * The log tag of a refused single-event `.ics` read - unsigned or wrongly signed. Counted after a
+ * release to measure the links still saved in the old, unsigned form; no grace period applies.
+ */
+export const EVENT_ICS_REFUSED_TAG = '[AGENDA_ICS_REFUSED]';
+
+/**
+ * `rows` with `icsSig` on each VALIDATED event: what the client puts in that event's "add to my
+ * calendar" link. Only a validated event has a single-event `.ics` (the feed serves no other).
+ */
+export function withEventIcsSig<T extends { id: string; status?: string }>(
+  rows: T[]
+): Array<T & { icsSig?: string }> {
+  return rows.map((row) =>
+    row.status === 'validated' ? { ...row, icsSig: signEventIcs(row.id) } : row
+  );
+}
+
+/** Constant-time check of an event `.ics` link's signature; false when absent or wrong. */
+export function eventIcsSignatureMatches(eventId: string, sig: string | undefined): boolean {
+  return agendaKeySignatureMatches(canonicalEventIcs(eventId), sig);
+}
+
+/**
  * May a reader whose spaces are `spaces` be handed a signature for `sel`? Only one of
  * their spaces, a campus AND a formation (user, 2026-10-07). An association adds
  * no condition of its own - membership does not matter (user, 2026-10-06) and its page is public;

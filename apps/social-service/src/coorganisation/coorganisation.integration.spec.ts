@@ -629,14 +629,12 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
   });
 
   /**
-   * WHAT AN ANONYMOUS VISITOR IS PUBLISHED (owner, 2026-11-02): `addressesEveryoneSql` run against the
-   * real tables, through both of its readers - the SEO read of `/calendar` (`everyoneOnly`) and one
-   * association's agenda read with no account.
+   * NO EVENT IS PUBLISHED TO AN ANONYMOUS READER (owner, 2026-11-02), whatever the audience: an
+   * institution with a (NULL, NULL) rule - addressing everyone - is no exception. On the real tables.
    */
-  describe('the agenda published to everyone', () => {
+  describe('the anonymous agenda', () => {
     const EVERYONE = '00000000-0000-4000-8000-0000000c0a07'; // a (NULL, NULL) rule: addresses everyone
     const OPEN_DAY = E(30);
-    const RANGE = ['2026-01-01T00:00:00.000Z', '2026-12-31T00:00:00.000Z'] as const;
 
     beforeAll(async () => {
       await q(
@@ -655,29 +653,19 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       );
     });
 
-    it('the SEO read keeps the events of an association addressing everyone, and no other', async () => {
-      const ids = async (everyoneOnly: boolean) =>
-        (
-          await associations.listAggregatedCalendarFeed(RANGE[0], RANGE[1], undefined, {
-            everyoneOnly,
-          })
-        ).map((r) => r.id);
-      const whole = await ids(false);
-      // Not vacuous: the unnarrowed window holds events of associations reaching only some spaces.
-      expect(whole.filter((id) => id !== OPEN_DAY).length).toBeGreaterThan(0);
-      expect(await ids(true)).toEqual([OPEN_DAY]);
-    });
-
-    it("one association's agenda read anonymously: open only if it addresses everyone", async () => {
+    it("one association's agenda read anonymously is empty, an everyone-addressing one too", async () => {
       expect(await associations.listCalendarEvents(A1)).toEqual([]);
-      expect((await associations.listCalendarEvents(EVERYONE)).map((r) => r.id)).toEqual([
-        OPEN_DAY,
-      ]);
-      // A signed-in reader of A1's space keeps A1's agenda.
-      const signedIn = await associations.listCalendarEvents(A1, undefined, undefined, {
-        viewer: { userId: 'seReader' },
-      });
-      expect(signedIn.length).toBeGreaterThan(0);
+      expect(await associations.listCalendarEvents(EVERYONE)).toEqual([]);
+      // A signed-in reader keeps both: the event exists, it is simply not published anonymously.
+      const reader = { viewer: { userId: 'seReader' } };
+      expect(
+        (await associations.listCalendarEvents(EVERYONE, undefined, undefined, reader)).map(
+          (r) => r.id
+        )
+      ).toEqual([OPEN_DAY]);
+      expect(
+        (await associations.listCalendarEvents(A1, undefined, undefined, reader)).length
+      ).toBeGreaterThan(0);
     });
   });
 });

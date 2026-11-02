@@ -83,7 +83,11 @@ import {
   parseDirectoryQuery,
   parseSpaceSelection,
 } from './directory-query';
-import { isInternalSecret } from '../internal/is-internal-secret.util';
+import {
+  EVENT_ICS_REFUSED_TAG,
+  eventIcsSignatureMatches,
+  withEventIcsSig,
+} from './agenda-signature';
 
 const LOGO_UPLOAD_MB = 2;
 
@@ -326,13 +330,10 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string,
     @Query('campus') campus?: string,
     @Query('formation') formation?: string,
-    @Query('sig') sig?: string,
-    @Headers('x-internal-secret') internalSecret?: string
+    @Query('sig') sig?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    const signedIn = Boolean(userId?.trim());
-    const trusted = isInternalSecret(internalSecret);
-    assertAgendaAccess({ selection, associationId, sig, signedIn, trusted });
+    assertAgendaAccess({ selection, associationId, sig, signedIn: Boolean(userId?.trim()) });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -342,15 +343,13 @@ export class AssociationsController {
         (await this.service.canViewPendingCalendarEvents(userId.trim())) ||
         (await this.service.isUserBdeAdmin(userId.trim()));
     }
-    return this.service.listAggregatedCalendarFeed(from, to, associationId, {
-      includePending: include,
-      viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
-      selection,
-      // The trusted read with no reader is the server-side SEO of `/calendar`: what it returns is
-      // published to every anonymous visitor and crawler, so only the associations that address
-      // everyone (owner, 2026-11-02 - an anonymous visitor sees what is published to all).
-      everyoneOnly: trusted && !signedIn,
-    });
+    return withEventIcsSig(
+      await this.service.listAggregatedCalendarFeed(from, to, associationId, {
+        includePending: include,
+        viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
+        selection,
+      })
+    );
   }
 
   /**
@@ -360,11 +359,13 @@ export class AssociationsController {
    * subscribed URL is saved once by the calendar app and re-polled forever with no way to ever
    * add query params to it.
    *
-   * `eventId` (optional) keeps only that event of the window - see the filter below.
+   * `eventId` (optional) keeps only that event of the window - see the filter below. Its `sig` is
+   * the EVENT's signature (`signEventIcs`, served on the event as `icsSig`): an unsigned or wrongly
+   * signed one is a BODYLESS 403, logged `[AGENDA_ICS_REFUSED]` (owner, 2026-11-02).
    *
    * `campus` / `formation` (D40, optional): ONE FEED PER SELECTION - only the events a space of that
-   * campus / formation reaches. An anonymous read with neither (and no `associationId` / `eventId`)
-   * is REFUSED with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
+   * campus / formation reaches. An anonymous read with neither (and no `associationId`) is REFUSED
+   * with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
    *
    * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
    * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
@@ -383,12 +384,24 @@ export class AssociationsController {
     @Query('sig') sig?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    // `.ics` is always anonymous: a calendar app sends no identity.
-    assertAgendaAccess({ selection, associationId, eventId, sig, signedIn: false });
+    const wanted = eventId?.trim();
+    if (wanted) {
+      // ONE EVENT'S LINK IS SIGNED FOR THAT EVENT. A refusal has no body: the browser that opened it
+      // has nothing to render, and the tag is what counts the old unsigned links still in use.
+      if (!eventIcsSignatureMatches(wanted, sig)) {
+        this.logger.warn(
+          `${EVENT_ICS_REFUSED_TAG} event=${sanitizeLog(wanted.slice(0, 36))} signed=${Boolean(sig?.trim())}`
+        );
+        res.status(403);
+        return '';
+      }
+    } else {
+      // `.ics` is always anonymous: a calendar app sends no identity.
+      assertAgendaAccess({ selection, associationId, sig, signedIn: false });
+    }
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
     });
-    const wanted = eventId?.trim();
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
     // response; Android downloads it for whichever calendar app owns .ics). Same route, same
@@ -488,10 +501,9 @@ export class AssociationsController {
    * Cut at the caller's own promo, exactly as the aggregated feed is - a limit only one of the two
    * honoured would be no limit at all, since this route lists the same rows.
    *
-   * CLOSED TO AN ANONYMOUS CALLER since 2026-11-02 (owner): it answered every event of any
-   * association with no session, beside a feed whose selection must be signed (D40 amended). Now an
-   * anonymous read gets an EMPTY list unless the association addresses everyone
-   * (`AssociationsService.closeAnonymousAgenda`); a signed-in reader keeps their spaces.
+   * WITHOUT A SESSION IT ANSWERS AN EMPTY LIST (owner, 2026-11-02): no event is published to an
+   * anonymous reader (`AssociationsService.isAnonymousAgendaRead`); a signed-in reader keeps their
+   * spaces. Each validated event carries `icsSig`, the signature of its own `.ics` link.
    */
   @Get(':id/events')
   async listCalendarEvents(
@@ -522,11 +534,13 @@ export class AssociationsController {
         includeRej = await this.service.canPostAs(uid, id, { isGlobalAdmin: ga === 'true' });
       }
     }
-    return this.service.listCalendarEvents(id, from, to, {
-      includePending: include,
-      includeRejected: includeRej,
-      viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
-    });
+    return withEventIcsSig(
+      await this.service.listCalendarEvents(id, from, to, {
+        includePending: include,
+        includeRejected: includeRej,
+        viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
+      })
+    );
   }
 
   /** Returns whether the calling user is following the specified association. */

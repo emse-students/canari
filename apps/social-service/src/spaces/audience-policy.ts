@@ -35,16 +35,6 @@ export function isEveryoneRule(rule: RuleLike): boolean {
 }
 
 /**
- * The SQL twin of {@link isEveryoneRule}, asked of a whole entity: association `association` (an id
- * expression) holds at least one rule with no campus - it ADDRESSES EVERYONE. What opens its agenda
- * to an anonymous caller (owner, 2026-11-02, `AssociationsService.closeAnonymousAgenda`).
- */
-export function addressesEveryoneSql(association: string): string {
-  return `EXISTS (SELECT 1 FROM association_audiences everyone_rule
-    WHERE everyone_rule."associationId" = ${association} AND everyone_rule.campus IS NULL)`;
-}
-
-/**
  * Refuses an `everyone` rule on any entity that is not an institution (decision 6). The UI hiding
  * the preset is not the rule: this runs on EVERY audience write, so a hand-written request is
  * refused here.

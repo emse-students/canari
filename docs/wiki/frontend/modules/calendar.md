@@ -169,7 +169,9 @@ offered Google's template URL (no use without a Google account; Etar users had n
 
 **Now:** `feed.ics` takes `eventId`, keeping that one event of the window (same builder, same
 `UID@canari` as the subscription, so import + subscribe never doubles it).
-`eventIcsAbsoluteUrl` builds the link (one day either side of the start); a phone opens it in the
+`eventIcsAbsoluteUrl` builds the link (one day either side of the start) and, since 2026-11-02,
+carries the event's own signature `icsSig`, served with each validated event - no signature, no link
+([D40 closed](../../profiles-and-access.md#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)); a phone opens it in the
 SYSTEM BROWSER - iOS Safari answers a text/calendar response with "Add to Calendar", Android downloads
 it and the calendar app owning `.ics` takes it (Etar's `ImportActivity` resolves
 `VIEW text/calendar` on the Mi 9T, measured). iOS goes straight there; Android and desktop keep the
