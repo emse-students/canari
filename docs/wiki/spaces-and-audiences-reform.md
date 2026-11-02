@@ -52,7 +52,9 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 | 5 | E1 | **Partnerships are KEPT** | section 5.3 |
 | 5 | E2 | **A partner edits the text and the poster, and may withdraw; only the organiser changes the date, the audience or the partner list, and only the organiser deletes** | closes P14 (5.2, WP-Q1) |
 | 5 | E3 | **A BDE MAY delete an association or list that depends on it**, as today; the `MANAGE_ASSO` comment that says otherwise is wrong and is corrected (WP-R5) | section 6, row 8 |
-| 5 | E4 | **Lists LOSE Lydia payments, the shop and the document vault** (the owner's choice, against this page's recommendation) | WP-L (section 8.1); existing data waits for his explicit decision |
+| 5 | E4 | ~~Lists lose Lydia payments, the shop and the document vault~~ - **CORRECTED by the owner the same day**: *"en fait je ne veux pas retirer la boutique aux listes, ni les formulaires ou autres payants. Par contre, une liste ne peut pas avoir de compte Lydia, donc elle est obligee de deleguer."* Lists KEEP the shop (cotisation included), paid forms and every paid feature; a list may NOT hold its own Lydia account, so its payments go through payment delegation (`paymentParentAssociationId`). The vault is NOT decided by the correction | WP-L (section 8.1); the vault is the open question |
+| 5 | E6 | **Republication for EVERY type, without exception**: lists and institutions may ask a person to republish their post, so an institution may carry a student's personal post with the student's consent (this lifts the D34-D36 point); list posts become member-repostable | its own pull request; section 6, rows 11-13 |
+| 5 | E7 | **A new "edit profile" permission, separate from `MANAGE_MEMBERS`**, granted by migration to every current `MANAGE_MEMBERS` holder | its own pull request; section 6, row 9 |
 | 5 | E5 | **No BDE ever governs an institution** (decided in another thread; fixed at the predicate level by #2949 - archive, members, profile, audience, and every path that asks the same predicate) | WP-R0's institution half is #2949 |
 
 ## 1. The current model
@@ -407,15 +409,15 @@ different things today.
 | 6 | Who governs (validate, manage, moderate) | any BDE its audience reaches (`bde.ts:35-41`) | same | same - a reaching BDE manages its members and may delete it (P8) | parent BDE, else platform admin; events per space governor | Differs |
 | 7 | Members managed by | own `MANAGE_MEMBERS`, governing BDEs, admin (`GlobalAdminOrAssociationRoleGuard` -> `mayAct`) | same | same in CODE; D20 and WP6e say "added nominatively by an admin" | association, list: own officers, parent BDE, admin; institution: **admin only** (G6) | Differs; **Disagree** (institution) |
 | 8 | Deleted by | admin, or `MANAGE_ASSO` in a governing BDE (controller 743-757; client `editSections.ts`, `delete: isGlobalAdmin \|\| isSuperAdmin`); the flag's own comment says it "does not include deleting an association" (`association-member.entity.ts:20-24`) | same | same (P8) | association, list: platform admin or the PARENT BDE's `MANAGE_ASSO` holders (E3, as today but scoped to the parent); institution: platform admin only (E5, #2949); the flag's comment corrected (WP-R5) | Differs (scope); **Disagree** (comment vs code, the comment is wrong) |
-| 9 | Profile edited by | `MANAGE_MEMBERS` holders, governing BDEs, admin (`PATCH :id`, 770-771); quota admin only; cotisation fields need `MANAGE_PRODUCTS` | same | same | super tier = parent BDE; institution: own officers + admin | Differs (super tier) |
+| 9 | Profile edited by | `MANAGE_MEMBERS` holders, governing BDEs, admin (`PATCH :id`, 770-771); quota admin only; cotisation fields need `MANAGE_PRODUCTS` | same | same | a NEW "edit profile" permission, separate from `MANAGE_MEMBERS`, granted by migration to every current `MANAGE_MEMBERS` holder (E7, its own PR); super tier = parent BDE; institution: own officers + admin, never a BDE (E5) | Differs |
 | 10 | Posting as | `POST_AS_ASSO`; never through the super tier (`SUPER_ADMIN_EXCLUDED_FLAGS`) | same (since 2026-10-31) | same | unchanged | - |
-| 11 | Republishes others' posts | yes | **yes since 2026-10-31** (`posts/republication-sql.ts:7-11`); WP6e in profiles-and-access still says "a list still does not" | yes | unchanged | **Disagree** (wiki stale) |
-| 12 | Asks a person to republish their post (D38b) | yes | no | no (`republication-sql.ts:19`) | unchanged | - |
-| 13 | Its posts member-repostable (WP-F6) | yes, if it has a rule | **never** (`reader-spaces.ts:318-336`) | yes, if it has a rule | unchanged | - |
+| 11 | Republishes others' posts | yes | **yes since 2026-10-31** (`posts/republication-sql.ts:7-11`); WP6e in profiles-and-access still says "a list still does not" | yes | every type, without exception (E6) | **Disagree** today (wiki stale) |
+| 12 | Asks a person to republish their post (D38b) | yes | no | no (`republication-sql.ts:19`) | **every type (E6, its own PR)**: an institution may carry a student's personal post with the student's consent, lifting the D34-D36 point | Differs |
+| 13 | Its posts member-repostable (WP-F6) | yes, if it has a rule | **never** (`reader-spaces.ts:318-336`) | yes, if it has a rule | **list posts become member-repostable (E6, its own PR)** | Differs |
 | 14 | Events | `PROPOSE_EVENT`; validated by a governing BDE | same | same; with no rule, no validator (P9) | per space governor (section 4) | Differs |
 | 15 | Co-organises | yes, any type (`resolveSender`) | yes | yes | unchanged; a partner edits text and poster and may withdraw, the organiser alone changes date, audience, partners, and deletes (E2) | Differs (rights) |
-| 16 | Lydia, payout, shop, vault | yes; `MANAGE_PAYOUT_ACCOUNT` never through the super tier | **yes in code** - no server or client type check (`editSections.ts:70-90`) - while the entity comment says lists are "associations minus the banking/shop/vault features" (`association.entity.ts:177-180`) | yes | association, institution: unchanged; **list: none of the three (E4, WP-L)** - the comment becomes true | Differs; **Disagree** today (comment vs code) |
-| 17 | Payment delegation | `paymentParentAssociationId`, any type, financial only | same | same | unchanged, kept apart from the governance parent (2.2) | - |
+| 16 | Lydia, payout, shop, vault | yes; `MANAGE_PAYOUT_ACCOUNT` never through the super tier | **yes in code** - no server or client type check (`editSections.ts:70-90`) - while the entity comment says lists are "associations minus the banking/shop/vault features" (`association.entity.ts:177-180`) | yes | association, institution: unchanged; **list: shop and every paid feature kept, NO own Lydia account - paid through delegation (E4 corrected, WP-L); vault open (question 1)**; the entity comment is corrected to say exactly that | Differs (own Lydia account); **Disagree** today (comment vs code) |
+| 17 | Payment delegation | `paymentParentAssociationId`, any type, financial only | same | same | unchanged, kept apart from the governance parent (2.2); **for a list, the ONLY way to be paid (E4 corrected)** | Differs (list) |
 | 18 | Bookings, forms, cotisation, partnerships | yes, by their flags; no type check | same | same | unchanged | - |
 | 19 | Moderation of its content | any BDE holding `MODERATE` (global) | same | same | parent BDE, else platform admin (2.4) | Differs |
 | 20 | Directory | `/associations` | `/lists` (campaign: `promo`, `name2`, `logoMediaId2`) | `/institutions` | unchanged | - |
@@ -438,8 +440,8 @@ levels enforced by triggers; spaces under at most one governor, a BDE or an inst
 the platform admin with a journal. The parent manages and moderates its children; space governors
 validate event slices and moderate their students' personal content; the platform admin governs
 the rest. Institutions may narrow an item. Partnerships stay, validated per slice; a partner edits
-text and poster and may withdraw, the organiser alone changes the rest and deletes. Lists hold no
-money features. Moderators hide and delete, never edit.
+text and poster and may withdraw, the organiser alone changes the rest and deletes. A list holds no
+Lydia account of its own and is paid through delegation. Moderators hide and delete, never edit.
 
 **Quick wins - each ships BEFORE the reform, alone, on today's model:**
 
@@ -447,7 +449,7 @@ money features. Moderators hide and delete, never edit.
 | --- | --- | --- | --- |
 | **WP-Q1** | Partner rights (E2, closes P14): `assertMayWriteEvent` returns the side the caller writes from; a co-organiser-side date, audience, `coOwnerIds` change or delete is refused with one typed 403 (`CALENDAR_PARTNER_ORGANISER_ONLY`); the event form hides those controls for a partner; `coorganisation.integration.spec.ts` gains the four refusals and the allowed text, poster and withdrawal | a partner can delete another campus's event today | none |
 | **WP-Q2** | P13 interim: accepting a co-organisation on a VALIDATED event returns it to `pending` (status, `validatedAt`, `validatedBy` cleared) in the acceptance's own transaction (`CoorganisationService.apply`, `coorganisation.service.ts:281-300`), logged, and the event's validators notified as for a proposal - the date-move rule applied to the new reach. Superseded by WP-E, where an acceptance re-opens only the new governors' slices | today an acceptance widens a validated event with no validation | none |
-| **WP-L** | The list money gate (E4), detailed in 8.1 | the owner's decision | none by itself; existing data waits for the owner (8.1) |
+| **WP-L** | A list has no Lydia account of its own and is paid through delegation (E4 corrected), detailed in 8.1 | the owner's decision | none: every list counter is 0 in production (8.1) |
 
 **The reform:**
 
@@ -469,26 +471,41 @@ Each WP changes its tests (`bde.integration.spec.ts`, `spaces.service.spec.ts`,
 agenda and moderation specs) and updates [profiles-and-access](profiles-and-access.md) (D20, D22,
 D23, D33, D39 amended) and [calendar](frontend/modules/calendar.md).
 
-### 8.1 WP-L - lists lose Lydia payments, the shop and the vault (E4)
+### 8.1 WP-L - a list has no Lydia account of its own and is paid through delegation (E4 corrected)
 
-**One place on the server, by type.** A single map beside `SUPER_ADMIN_EXCLUDED_FLAGS`
-(`association-member.entity.ts`), `TYPE_EXCLUDED_FLAGS = { list: MANAGE_PAYOUT_ACCOUNT |
-MANAGE_PRODUCTS | MANAGE_DOCUMENTS }`, read by `mayAct` and `mayActOnAny`
-(`associations.service.ts:2018-2077`): no tier - the platform admin included - holds an excluded
-flag on a list, so every route already guarded by those flags refuses with no edit of its own. The
-paths no flag guards ask the same map through one helper (`assertTypeMayHold(type, flag)`): a
-buyer's product checkout, a payment-delegation request, the Lydia readiness and enrolment, a
-document upload. One typed refusal code (`LIST_FEATURE_UNAVAILABLE`). What exactly "Lydia payments"
-covers for a list - its own account only, or also paid forms, the cotisation product (a shop
-product, `provisionCotisationProduct`) and a payment routed through a parent's account - is
-**question 1**.
+**What a list keeps**: the shop (the cotisation product included), paid forms and every other paid
+feature - unchanged. **What it loses**: its OWN Lydia account. Its payments go through payment
+delegation to a parent's account (`paymentParentAssociationId`, `association.entity.ts:113-129`).
+The vault is not part of this WP (question 1).
 
-**The client** reads the same map: `editRights` (`frontend/src/lib/associations/editSections.ts:70-90`)
-returns `payoutAccount`, `products` and `documents` false for a list, so the Paiements, Achats,
-Délégation and Documents sections are not drawn; one shared list of the excluded features, no second
-copy.
+1. **`MANAGE_PAYOUT_ACCOUNT` excluded for lists, in one place.** A map beside
+   `SUPER_ADMIN_EXCLUDED_FLAGS` (`association-member.entity.ts`), `TYPE_EXCLUDED_FLAGS = { list:
+   MANAGE_PAYOUT_ACCOUNT }`, read by `mayAct` and `mayActOnAny`
+   (`associations.service.ts:2018-2077`): no tier - the platform admin included - holds it on a list,
+   so every route that flag guards refuses with no edit of its own. The vault flag can join the same
+   map later if question 1 says so.
+2. **Lydia enrolment refused for a list**, with one typed code (`LIST_NO_OWN_LYDIA_ACCOUNT`), on the
+   enrolment, readiness and cashier paths that the flag does not already cover - checked by the same
+   map through one helper (`assertTypeMayHold(type, flag)`), never a second list of types.
+3. **A paid feature on a list with no APPROVED delegate refuses clearly, at its entry**: creating a
+   priced product, enabling the cotisation, publishing a paid form, and a buyer's checkout are refused
+   with one typed code (`LIST_DELEGATE_REQUIRED`) whose client sentence says "choose the association
+   whose Lydia account receives your payments" and links to the delegation section - instead of a
+   failure deep in the payment provider call. A free product or a free form is unaffected.
+4. **The delegation setting is reachable for a list.** It already is in the code: the routes
+   `GET/POST/DELETE :id/payment-delegation` (`associations.controller.ts:1744-1770`) need
+   `MANAGE_PRODUCTS`, which a list keeps, and the client's `delegation` section is drawn on the same
+   flag (`frontend/src/lib/associations/editSections.ts:104`, `170`). WP-L adds a test that a list's
+   officer reaches both, and the `editRights` change of point 1 (`payoutAccount` false for a list) so
+   the Paiements section shows the delegation state instead of an enrolment button.
 
-**Existing data - read-only counts first** (aggregates; no agent runs them against production):
+The entity comment (`association.entity.ts:177-180`, "minus the banking/shop/vault features") is
+corrected to say what is true after WP-L.
+
+**Production, read-only, counted by the coordinator on 2026-11-02: every list counter is 0** - no
+list holds a Lydia account, a delegation, a product, a checkout, a purchase record or a document. So
+WP-L touches no existing data, and the question of what to do with it does not arise. The counting
+query, kept for a re-run before shipping:
 
 ```sql
 SELECT
@@ -496,34 +513,26 @@ SELECT
      WHERE type = 'list' AND "lydiaAccountId" IS NOT NULL)                         AS lists_with_lydia,
   (SELECT count(*) FROM associations
      WHERE type = 'list' AND "paymentParentAssociationId" IS NOT NULL)             AS lists_with_delegation,
-  (SELECT count(DISTINCT p."associationId") FROM association_products p
-     JOIN associations a ON a.id = p."associationId" WHERE a.type = 'list')        AS lists_with_products,
   (SELECT count(*) FROM association_products p
      JOIN associations a ON a.id = p."associationId" WHERE a.type = 'list')        AS list_products,
   (SELECT count(*) FROM product_checkouts c
      JOIN associations a ON a.id = c."associationId" WHERE a.type = 'list')        AS list_checkouts,
   (SELECT count(*) FROM purchase_records r
      JOIN associations a ON a.id = r."associationId" WHERE a.type = 'list')        AS list_purchase_records,
-  (SELECT count(DISTINCT d."associationId") FROM association_documents d
-     JOIN associations a ON a.id = d."associationId" WHERE a.type = 'list')        AS lists_with_documents,
   (SELECT count(*) FROM association_documents d
      JOIN associations a ON a.id = d."associationId" WHERE a.type = 'list')        AS list_documents;
 ```
 
-**Nothing is disabled or removed on an existing list without the owner's explicit decision, and
-nothing is deleted automatically.** If any count is above zero, WP-L does not ship until the owner
-has said what happens to that data (question 2); the gate never deletes a row, a document or an
-order, and a purchase already made stays in its buyer's history.
+If a re-run ever finds a list with its own Lydia account, WP-L does not disable it on its own: the
+owner decides first, and nothing is deleted automatically.
 
-## 9. Questions for the owner (sixth round)
+## 9. Questions for the owner (seventh round)
 
-Decided in round five, so no longer asked: partnerships kept (E1), the partner's rights (E2), a BDE
-may delete its dependent associations and lists (E3), lists lose the money features (E4).
+Decided, so no longer asked: partnerships kept (E1), the partner's rights (E2), a BDE may delete its
+dependent associations and lists (E3), lists keep every paid feature but no own Lydia account (E4
+corrected), republication for every type (E6), a separate "edit profile" permission (E7). Existing
+list data: none in production, so no question.
 
-1. **Pour une liste, que couvre exactement « plus de paiements Lydia » ?**
-   - (Recommandé) Tout ce qui encaisse de l'argent : son propre compte Lydia, la boutique (y compris le produit de cotisation), les formulaires payants et le paiement via le compte Lydia du BDE parent. Les formulaires gratuits restent.
-   - Seulement son propre compte Lydia, la boutique et le coffre-fort ; elle garde les formulaires payants et la cotisation, encaissés via le compte de son BDE.
-2. **Si des listes ont déjà un compte Lydia, des produits, des commandes ou des documents, qu'en fait-on ?**
-   - (Recommandé) On gèle : plus rien de nouveau (ni vente, ni dépôt), mais tout l'existant reste consultable et téléchargeable, les commandes restent dans l'historique des acheteurs, rien n'est supprimé.
-   - On retire l'accès aux gestionnaires de la liste, et seul l'admin plateforme peut encore consulter ou exporter ces données.
-   - On attend de voir les chiffres avant de décider.
+1. **Les listes gardent-elles le coffre-fort de documents ?**
+   - (Recommandé) Oui, comme aujourd'hui : il ne touche pas à l'argent, et la correction sur Lydia ne le concerne pas.
+   - Non : on le retire aux listes (aucune liste n'a de document aujourd'hui, donc rien à supprimer).
