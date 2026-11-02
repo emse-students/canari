@@ -5,14 +5,18 @@
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
   import {
     book,
+    editBooking,
     uploadBookingAnswerFile,
     type BookerResource,
     type BookerSpace,
     type SlotUnit,
   } from '$lib/bookings/api';
-  import { formatBookingRange, formatTimeRange } from '$lib/bookings/grid';
+  import { formatBookingRange, formatTimeRange, formatTimeRangeParts } from '$lib/bookings/grid';
+  import type { EditChoices } from '$lib/bookings/editRange';
+  import { unitKey } from '$lib/bookings/planning';
   import { describeBookingRefusal, outcomeUnknown } from '$lib/bookings/refusals';
   import {
     firstMissingAnswer,
@@ -34,6 +38,12 @@
    * picks how far it goes. The people, the questions and - for an organiser - the account it is
    * booked for are fixed at booking time: the sheet says so, since a holder can only cancel (D36).
    * Every rule is the server's; the sheet only spares a request it knows would be refused.
+   *
+   * IN EDIT MODE (`editing`, owner 2026-11-02, superseding D36's "a holder can only cancel"): the
+   * same sheet, pre-filled - a start on the booking's own day, the same "Jusqu'a" stepper, the same
+   * other people - and nothing else: the holder, the answers, the reminder and the day stay. One
+   * request replaces the booking whole or not at all (`PATCH bookings/:id`), and a refusal says the
+   * booking has not changed (`BOOKING_EDIT_*`, `refusals.ts`).
    */
   interface Person {
     id: string;
@@ -54,6 +64,8 @@
     onStartRefused?: (startMs: number) => void;
     /** `changed`: a booking was made, or the grid is known stale (a slot taken meanwhile). */
     onClose: (changed: boolean) => void;
+    /** Edit this booking instead of making one: its choices (`editRange.ts`) and its people. */
+    editing?: { bookingId: string; choices: EditChoices; participants: Person[] };
   }
 
   let {
@@ -65,13 +77,22 @@
     onReread,
     onStartRefused,
     onClose,
+    editing,
   }: Props = $props();
 
   const items = $derived(space.items);
   const hidden = $derived(new Set(space.hiddenItemIds));
 
-  let count = $state(untrack(() => Math.max(1, Math.min(initialCount, run.length))));
-  let participants = $state<Person[]>([]);
+  /** In edit mode, the chosen start among `editing.choices.starts`. */
+  let startIndex = $state(untrack(() => editing?.choices.startIndex ?? 0));
+  /** The units the range may cover: the tapped run, or - editing - the run of the chosen start. */
+  const activeRun = $derived(
+    editing ? editing.choices.runOf(editing.choices.starts[startIndex]) : run
+  );
+  let count = $state(
+    untrack(() => Math.max(1, Math.min(editing?.choices.count ?? initialCount, activeRun.length)))
+  );
+  let participants = $state<Person[]>(untrack(() => editing?.participants ?? []));
   let onBehalf = $state(false);
   let holder = $state<Person | null>(null);
   /** The booker's own reminder (Q-R1), the space's default until they pick another. */
@@ -85,8 +106,8 @@
   const uploading = $derived(Object.values(uploads).some(Boolean));
 
   const shown = $derived(visibleItems(items, selections, hidden));
-  const first = $derived(run[0]);
-  const last = $derived(run[Math.min(count, run.length) - 1]);
+  const first = $derived(activeRun[0]);
+  const last = $derived(activeRun[Math.min(count, activeRun.length) - 1]);
   /** People besides the holder this booking may still take (D4: the cap counts the holder). */
   const roomLeft = $derived(
     space.maxPeople === null ? Infinity : space.maxPeople - 1 - participants.length
@@ -94,11 +115,62 @@
   const mayAddPeople = $derived(space.maxPeople === null || space.maxPeople > 1);
 
   const lengthOptions = $derived(
-    run.map((unit, i) => ({
+    activeRun.map((unit, i) => ({
       value: String(i + 1),
-      label: formatTimeRange(run[0].startMs, unit.endMs, space.timeZone),
+      label: formatTimeRange(activeRun[0].startMs, unit.endMs, space.timeZone),
     }))
   );
+  /** A slot reads as its whole range, a step as its start: the range form's labels. */
+  const startOptions = $derived(
+    (editing?.choices.starts ?? []).map((u) => ({
+      value: unitKey(u),
+      label:
+        space.slotMode === 'slots'
+          ? formatTimeRange(u.startMs, u.endMs, space.timeZone)
+          : formatTimeRangeParts(u.startMs, u.endMs, space.timeZone).start,
+    }))
+  );
+
+  /** A new start keeps the length chosen, as far as the run from it allows. */
+  function chooseStart(key: string) {
+    if (!editing) return;
+    const i = editing.choices.starts.findIndex((u) => unitKey(u) === key);
+    if (i < 0) return;
+    Log.d('BOOKINGS', 'edit sheet: start switched');
+    startIndex = i;
+    count = Math.max(1, Math.min(count, editing.choices.runOf(editing.choices.starts[i]).length));
+  }
+
+  /** Sends the edit: the new range and the whole set of other people, all or nothing. */
+  async function submitEdit(bookingId: string) {
+    submitting = true;
+    try {
+      const { changed } = await editBooking(bookingId, {
+        startsAt: new Date(first.startMs).toISOString(),
+        endsAt: new Date(last.endMs).toISOString(),
+        participantIds: participants.map((p) => p.id),
+      });
+      Log.i('BOOKINGS', `edited from the sheet id=${bookingId.slice(0, 8)} changed=${changed}`);
+      showToast(changed ? m.bookings_edit_done() : m.bookings_edit_unchanged(), 'info');
+      onClose(changed);
+    } catch (e) {
+      if (outcomeUnknown(e)) {
+        Log.i('BOOKINGS', `edit outcome unknown: ${String(e)}`);
+        error = m.bookings_edit_outcome_unknown();
+        await onReread();
+        return;
+      }
+      error = describeBookingRefusal(e, m.bookings_edit_submit());
+      // The new range was taken or blocked meanwhile: the grid is stale, the booking is not.
+      if (refusalCode(e) === 'BOOKING_EDIT_CONFLICT') {
+        Log.i('BOOKINGS', `the edit's range went stale: ${String(e)}`);
+        showToast(error, 'error');
+        onClose(true);
+      }
+    } finally {
+      submitting = false;
+    }
+  }
 
   const excluded = $derived([...participants.map((p) => p.id), ...(holder ? [holder.id] : [])]);
 
@@ -110,6 +182,10 @@
   async function submit() {
     if (submitting || uploading) return;
     error = '';
+    if (editing) {
+      await submitEdit(editing.bookingId);
+      return;
+    }
     if (onBehalf && !holder) {
       error = m.bookings_sheet_holder_missing();
       return;
@@ -170,7 +246,13 @@
   }
 </script>
 
-<Modal open title={m.bookings_sheet_title()} topAnchored footerEdge onClose={() => onClose(false)}>
+<Modal
+  open
+  title={editing ? m.bookings_edit_title() : m.bookings_sheet_title()}
+  topAnchored
+  footerEdge
+  onClose={() => onClose(false)}
+>
   <div class="space-y-4">
     <div class="border-cn-border bg-cn-bg flex items-start gap-3 rounded-2xl border p-3">
       <CalendarClock size={18} class="text-text-muted mt-0.5 shrink-0" aria-hidden="true" />
@@ -184,7 +266,16 @@
       </div>
     </div>
 
-    {#if run.length > 1}
+    {#if editing && startOptions.length > 1}
+      <Select
+        label={m.bookings_edit_start_label()}
+        value={unitKey(editing.choices.starts[startIndex])}
+        options={startOptions}
+        onValueChange={chooseStart}
+      />
+    {/if}
+
+    {#if activeRun.length > 1}
       <div class="space-y-1.5">
         <p class="text-text-main text-sm font-semibold">{m.bookings_sheet_length_label()}</p>
         <div class="flex items-center gap-2">
@@ -208,8 +299,8 @@
             type="button"
             class="ui-icon-button border-cn-border text-text-main rounded-xl border aria-disabled:opacity-40"
             aria-label={m.bookings_sheet_length_more()}
-            aria-disabled={count >= run.length}
-            onclick={() => count < run.length && (count += 1)}
+            aria-disabled={count >= activeRun.length}
+            onclick={() => count < activeRun.length && (count += 1)}
           >
             <Plus size={16} />
           </button>
@@ -217,7 +308,7 @@
       </div>
     {/if}
 
-    {#if space.canManage}
+    {#if space.canManage && !editing}
       <div class="space-y-3">
         <Toggle
           bind:checked={onBehalf}
@@ -296,15 +387,17 @@
             {m.bookings_sheet_people_full({ max: space.maxPeople ?? 0 })}
           </p>
         {/if}
-        <p class="text-text-muted text-xs">
-          {BOOKING_NOTIFICATIONS_LIVE
-            ? m.bookings_sheet_people_note_notified()
-            : m.bookings_sheet_people_note()}
-        </p>
+        {#if !editing}
+          <p class="text-text-muted text-xs">
+            {BOOKING_NOTIFICATIONS_LIVE
+              ? m.bookings_sheet_people_note_notified()
+              : m.bookings_sheet_people_note()}
+          </p>
+        {/if}
       </div>
     {/if}
 
-    {#if BOOKING_NOTIFICATIONS_LIVE && !onBehalf}
+    {#if BOOKING_NOTIFICATIONS_LIVE && !onBehalf && !editing}
       <div class="space-y-1.5">
         <p id="booking-reminder-label" class="text-text-main text-sm font-semibold">
           {m.bookings_reminder_label()}
@@ -335,7 +428,7 @@
       </div>
     {/if}
 
-    {#if shown.length}
+    {#if shown.length && !editing}
       <div class="space-y-4">
         {#each shown as item, index (item.id)}
           <FormQuestion
@@ -355,7 +448,12 @@
     {/if}
 
     <div class="text-text-muted text-2xs space-y-1">
-      <p>{m.bookings_sheet_no_edit_note()}</p>
+      {#if editing}
+        <p>{m.bookings_edit_note()}</p>
+        {#if BOOKING_NOTIFICATIONS_LIVE}<p>{m.bookings_edit_note_notified()}</p>{/if}
+      {:else}
+        <p>{m.bookings_sheet_no_edit_note()}</p>
+      {/if}
       {#if space.associationId === null}
         <p>{m.bookings_sheet_personal_note()}</p>
       {/if}
@@ -388,7 +486,7 @@
         onclick={submit}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {m.bookings_sheet_submit()}
+        {editing ? m.bookings_edit_submit() : m.bookings_sheet_submit()}
       </button>
     </div>
   {/snippet}

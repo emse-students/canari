@@ -36,6 +36,13 @@
     WEEK_DAYS,
   } from '$lib/bookings/grid';
   import { addDays, localDate } from '$lib/bookings/zonedTime';
+  import {
+    editChoices,
+    editPeople,
+    type EditChoices,
+    type EditPerson,
+  } from '$lib/bookings/editRange';
+  import { currentUserId } from '$lib/stores/userState.svelte';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import {
     SCHEDULE_AGENDA_QUERY,
@@ -83,7 +90,14 @@
         blockRun: SlotUnit[];
       }
     | { kind: 'block'; resource: BookerResource; run: SlotUnit[]; initialCount: number }
-    | { kind: 'detail'; resource: BookerResource; unit: SlotUnit };
+    | { kind: 'detail'; resource: BookerResource; unit: SlotUnit }
+    | {
+        kind: 'edit';
+        resource: BookerResource;
+        bookingId: string;
+        choices: EditChoices;
+        participants: EditPerson[];
+      };
 
   let slots = $state<ResourceSlots[]>([]);
   let loaded = $state<{ from: string; to: string } | null>(null);
@@ -273,6 +287,40 @@
     };
   }
 
+  /**
+   * "Modifier" on a taken unit (owner, 2026-11-02): the booking sheet in edit mode, its choices
+   * read from the week held (`editChoices`), its people from the booking as this reader got it.
+   * Null - and no button - when the week does not hold the booking's own start.
+   */
+  function editOf(picked: BookerResource, unit: SlotUnit): (() => void) | undefined {
+    if (unit.state !== 'booked') return undefined;
+    const booking = unit.booking;
+    const choices = editChoices(
+      unitsInOrder(slots, picked.id),
+      booking,
+      space,
+      nowMs,
+      lastRefusedStart
+    );
+    if (!choices) return undefined;
+    const own = mine.get(booking.id);
+    const me = currentUserId();
+    return () => {
+      Log.d('BOOKINGS', `edit sheet opened booking=${booking.id.slice(0, 8)}`);
+      sheet = {
+        kind: 'edit',
+        resource: picked,
+        bookingId: booking.id,
+        choices,
+        participants: editPeople(
+          booking,
+          me ? { id: me, isParticipant: booking.mine && !(own?.holder ?? false) } : null,
+          m.bookings_edit_you()
+        ),
+      };
+    };
+  }
+
   async function closeSheet(changed: boolean) {
     sheet = null;
     if (!changed) return;
@@ -408,6 +456,19 @@
         : undefined}
       onClose={closeSheet}
     />
+  {:else if sheet.kind === 'edit'}
+    <BookingSheet
+      {space}
+      resource={sheet.resource}
+      run={sheet.choices.runOf(sheet.choices.starts[sheet.choices.startIndex])}
+      editing={{
+        bookingId: sheet.bookingId,
+        choices: sheet.choices,
+        participants: sheet.participants,
+      }}
+      onReread={reread}
+      onClose={closeSheet}
+    />
   {:else if sheet.kind === 'block'}
     <BlockSheet
       {space}
@@ -425,6 +486,7 @@
       mine={sheet.unit.state === 'booked' ? mine.get(sheet.unit.booking.id) : undefined}
       {nowMs}
       onClose={closeSheet}
+      onEdit={editOf(sheet.resource, sheet.unit)}
     />
   {/if}
 {/if}

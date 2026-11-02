@@ -2610,4 +2610,303 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(n).toBe(3);
     });
   });
+
+  describe('editing a booking (owner, 2026-11-02)', () => {
+    beforeEach(async () => {
+      // As for the notices above: earlier cases' people are marked reminded, so each case here
+      // reads only the reminders of its own bookings.
+      await q(`UPDATE bookings SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`);
+      await q(
+        `UPDATE booking_participants SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`
+      );
+      told.length = 0;
+      notices.enabled = true;
+    });
+    afterEach(() => {
+      notices.enabled = false;
+    });
+
+    const edit = (
+      id: string,
+      from: string,
+      to: string,
+      participantIds: string[] = [],
+      actor = ALICE,
+      nowMs = NOW
+    ) => service.edit(id, { startsAt: on(from), endsAt: on(to), participantIds }, as(actor), nowMs);
+    const rangeOf = async (id: string) => {
+      const [row] = (await q(`SELECT "startsAt", "endsAt" FROM bookings WHERE id = $1`, [id])) as {
+        startsAt: Date;
+        endsAt: Date;
+      }[];
+      return [row.startsAt.toISOString(), row.endsAt.toISOString()];
+    };
+    const peopleOf = async (id: string) =>
+      (
+        (await q(
+          `SELECT "userId" FROM booking_participants WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL`,
+          [id]
+        )) as { userId: string }[]
+      )
+        .map((r) => r.userId)
+        .sort();
+    const tos = (type: string) =>
+      told
+        .filter((t) => t.type === type)
+        .map((t) => t.to)
+        .sort();
+
+    it('shortens a booking in place, freeing only the part it gave up', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '11:00', ALICE, {
+        participantIds: [BOB],
+      });
+      expect(await edit(id, '10:30', '11:00', [BOB])).toEqual({ ok: true, changed: true });
+      expect(await rangeOf(id)).toEqual([on('10:30'), on('11:00')]);
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', CAROL)).resolves.toHaveProperty(
+        'id'
+      );
+      // The people who stay are told of the new time; the one who edited is not.
+      expect(tos('booking_changed')).toEqual([BOB]);
+      expect(told.find((t) => t.type === 'booking_changed')?.meta?.startsAt).toBe(
+        new Date(on('10:30')).toISOString()
+      );
+    });
+
+    it('lengthens a booking over free units, and the same request again changes nothing', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await edit(id, '10:00', '11:30');
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('11:30')]);
+      told.length = 0;
+      expect(await edit(id, '10:00', '11:30')).toEqual({ ok: true, changed: false });
+      expect(told).toEqual([]);
+    });
+
+    it('refuses a range another booking holds, the original left whole and still held', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await book(space.id, resourceIds[0], '11:00', '11:30', CAROL);
+      expect(await refusal(edit(id, '10:30', '11:30'))).toEqual({
+        code: 'BOOKING_EDIT_CONFLICT',
+        reason: 'slot-taken',
+      });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      // Never released in between: the original slot is still taken.
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', DAN))).toEqual({
+        code: 'slot-taken',
+      });
+      expect(told).toEqual([]);
+    });
+
+    it('refuses a range under a block, outside the openings, too long, or on another day', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await service.addBlock(
+        resourceIds[0],
+        { startsAt: on('12:00'), endsAt: on('13:00') },
+        as(ORGA),
+        NOW
+      );
+      expect(await refusal(edit(id, '12:00', '12:30'))).toEqual({
+        code: 'BOOKING_EDIT_CONFLICT',
+        reason: 'blocked',
+      });
+      expect(await refusal(edit(id, '21:30', '22:30'))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'outside-availability',
+      });
+      expect(await refusal(edit(id, '10:00', '12:30'))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'too-many-steps',
+      });
+      const nextDay = {
+        startsAt: on('10:00', '2026-11-03'),
+        endsAt: on('10:30', '2026-11-03'),
+        participantIds: [],
+      };
+      expect(await refusal(service.edit(id, nextDay, as(ALICE), NOW))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'other-day',
+      });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+    });
+
+    it('refuses a start the window refuses, and leaves a started or cancelled booking alone', async () => {
+      const { space, resourceIds } = await setup({ minNoticeMinutes: 60 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      // At 09:15 the 60-minute notice refuses a 10:00 start; 11:00 is still bookable.
+      const at = Date.parse(on('09:15'));
+      expect(await refusal(edit(id, '10:00', '11:00', [], ALICE, at))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'notice',
+      });
+      await expect(edit(id, '11:00', '11:30', [], ALICE, at)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      expect(await refusal(edit(id, '12:00', '12:30', [], ALICE, Date.parse(on('11:05'))))).toEqual(
+        { code: 'history-frozen' }
+      );
+      const other = await book(space.id, resourceIds[0], '15:00', '15:30', ALICE);
+      await service.cancel(other.id, as(ALICE), NOW);
+      expect(await refusal(edit(other.id, '16:00', '16:30'))).toEqual({
+        code: 'already-cancelled',
+      });
+    });
+
+    it('a concurrent edit and booking of the same units: exactly one wins, the loser is told why', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+        const [edited, booked] = await Promise.allSettled([
+          edit(id, '10:00', '11:00'),
+          book(space.id, resourceIds[0], '10:30', '11:00', BOB),
+        ]);
+        // Exactly one of the two outcomes, each whole: the winner's range, the loser's typed code.
+        const loser = [edited, booked].flatMap((o) =>
+          o.status === 'rejected' ? [(o.reason as HttpException).getResponse()] : []
+        );
+        expect([
+          {
+            editWon: true,
+            bookWon: false,
+            loser: [{ code: 'slot-taken' }],
+            range: [on('10:00'), on('11:00')],
+          },
+          {
+            editWon: false,
+            bookWon: true,
+            loser: [{ code: 'BOOKING_EDIT_CONFLICT', reason: 'slot-taken' }],
+            range: [on('10:00'), on('10:30')],
+          },
+        ]).toContainEqual({
+          editWon: edited.status === 'fulfilled',
+          bookWon: booked.status === 'fulfilled',
+          loser,
+          range: await rangeOf(id),
+        });
+      }
+    });
+
+    it('counts the edited booking as REPLACED in the quotas, never as one more', async () => {
+      const { space, resourceIds } = await setup({
+        maxActiveBookings: 1,
+        maxMinutesPerPeriod: 60,
+        quotaPeriod: 'day',
+      });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      // One active booking allowed, and this is it: moving it is not a second one.
+      await expect(edit(id, '14:00', '15:00')).resolves.toEqual({ ok: true, changed: true });
+      // 60 minutes a day: the replaced 60 are not counted on top of the new 90 - 90 alone is over.
+      expect(await refusal(edit(id, '14:00', '15:30'))).toEqual({
+        code: 'BOOKING_EDIT_QUOTA',
+        reason: 'minutes-per-period',
+        holder: true,
+      });
+      expect(await rangeOf(id)).toEqual([on('14:00'), on('15:00')]);
+      // A person ADDED counts against their own quota.
+      await book(space.id, resourceIds[0], '18:00', '18:30', BOB);
+      expect(await refusal(edit(id, '14:00', '15:00', [BOB]))).toEqual({
+        code: 'BOOKING_EDIT_QUOTA',
+        reason: 'active-bookings',
+        holder: false,
+      });
+      expect(await peopleOf(id)).toEqual([]);
+      // An organiser editing someone else's booking is exempt, as when booking on their behalf.
+      await expect(edit(id, '14:00', '15:30', [BOB], ORGA)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+    });
+
+    it('adds and removes people, and tells each of them', async () => {
+      // Two racers rather than P2 and P3, whom earlier cases leave blocking ALICE and BOB.
+      const [P2, P3] = [RACERS[2], RACERS[3]];
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB, P2],
+      });
+      told.length = 0;
+      await edit(id, '10:00', '10:30', [P2, P3]);
+      expect(await peopleOf(id)).toEqual([P2, P3].sort());
+      expect(tos('booking_added')).toEqual([P3]);
+      expect(tos('booking_removed')).toEqual([BOB]);
+      // The time did not change: nobody who stayed is told anything.
+      expect(tos('booking_changed')).toEqual([]);
+      // The one removed is no longer one of its people: the history row stays, marked, and
+      // their calendar link is refused.
+      expect((await service.mine(as(BOB))).find((b) => b.id === id)?.withdrawn).toBe(true);
+      expect(await refusal(service.calendarLink(id, as(BOB)))).toEqual({ code: 'not-yours' });
+      // Brought back: their old row is live again, not a second one.
+      told.length = 0;
+      await edit(id, '11:00', '11:30', [BOB, P2, P3], ORGA);
+      expect(await peopleOf(id)).toEqual([BOB, P2, P3].sort());
+      const [{ n }] = (await q(
+        `SELECT count(*)::int AS n FROM booking_participants WHERE "bookingId" = $1`,
+        [id]
+      )) as { n: number }[];
+      expect(n).toBe(3);
+      expect(tos('booking_added')).toEqual([BOB]);
+      // The organiser moved it: the holder and those who stayed are told, with the new start.
+      expect(tos('booking_changed')).toEqual([ALICE, P2, P3].sort());
+      expect(told.every((t) => t.meta?.startsAt === new Date(on('11:00')).toISOString())).toBe(
+        true
+      );
+    });
+
+    it('refuses a person who blocked the one who adds them, and the holder as a participant', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [DAN, ALICE]);
+      try {
+        expect(await refusal(edit(id, '10:00', '10:30', [DAN]))).toEqual({
+          code: 'participant-blocked',
+        });
+      } finally {
+        await q(`DELETE FROM user_blocks WHERE "blockerId" = $1 AND "blockedId" = $2`, [
+          DAN,
+          ALICE,
+        ]);
+      }
+      expect(await refusal(edit(id, '10:00', '10:30', [ALICE]))).toEqual({
+        code: 'holder-is-participant',
+      });
+    });
+
+    it('only who may cancel may edit: the holder or the organiser, never a participant or a stranger', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      for (const who of [BOB, STRANGER]) {
+        expect(await refusal(edit(id, '11:00', '11:30', [BOB], who))).toEqual({
+          code: 'BOOKING_EDIT_FORBIDDEN',
+          reason: 'not-yours',
+        });
+      }
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      await expect(edit(id, '11:00', '11:30', [BOB], ORGA)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+    });
+
+    it("every person's reminder follows the new time", async () => {
+      const { space, resourceIds } = await setup({ reminderMinutes: 30 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await reminders.remindOnce(new Date(on('09:35')));
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+      told.length = 0;
+      // Moved at 09:40 to 11:00: the reminder for the new time is owed again, to both.
+      await edit(id, '11:00', '11:30', [BOB], ALICE, Date.parse(on('09:40')));
+      told.length = 0;
+      await reminders.remindOnce(new Date(on('10:00')));
+      expect(tos('booking_reminder')).toEqual([]);
+      await reminders.remindOnce(new Date(on('10:35')));
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+    });
+  });
 });

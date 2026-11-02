@@ -99,7 +99,8 @@ export interface ResourceFields {
 /**
  * A refused bookings call. `bookingIds` is set on `bookings-inside-change` and
  * `bookings-inside-block` (D29): the coming bookings the change would strand, which the organiser
- * cancels before retrying. Empty otherwise.
+ * cancels before retrying. Empty otherwise. `reason` is the precise rule beside a family code - an
+ * edit's `BOOKING_EDIT_*` (owner, 2026-11-02) - and null otherwise.
  */
 export class BookingsApiError extends SocialApiError {
   constructor(
@@ -107,7 +108,8 @@ export class BookingsApiError extends SocialApiError {
     code: string | null,
     status: number,
     readonly bookingIds: string[],
-    amountBounds: AmountBounds | null = null
+    amountBounds: AmountBounds | null = null,
+    readonly reason: string | null = null
   ) {
     super(message, code, status, amountBounds);
     this.name = 'BookingsApiError';
@@ -127,7 +129,8 @@ async function refusal(res: Response, what: string): Promise<BookingsApiError> {
     code,
     res.status,
     ids,
-    amountBoundsOf(body)
+    amountBoundsOf(body),
+    typeof body.reason === 'string' ? body.reason : null
   );
 }
 
@@ -483,6 +486,28 @@ export function getSlots(spaceId: string, from: string, to: string): Promise<Res
 
 export function book(spaceId: string, request: BookingRequest): Promise<{ id: string }> {
   return call('book', `/spaces/${encodeURIComponent(spaceId)}/bookings`, json('POST', request));
+}
+
+/**
+ * What an edit sends (owner, 2026-11-02): the NEW range, on the booking's own day, and the WHOLE
+ * set of its other people after the edit - not a delta.
+ */
+export interface BookingEditRequest {
+  startsAt: string;
+  endsAt: string;
+  participantIds: string[];
+}
+
+/**
+ * Edits a coming booking: its holder or the organiser, as for a cancellation. All or nothing on
+ * the server: refused, the booking is exactly as it was (`BOOKING_EDIT_*`, `refusals.ts`).
+ * `changed` is false when the request matched the booking already (a retry).
+ */
+export function editBooking(
+  bookingId: string,
+  request: BookingEditRequest
+): Promise<{ ok: true; changed: boolean }> {
+  return call('editBooking', `/${encodeURIComponent(bookingId)}`, json('PATCH', request));
 }
 
 /** A participant leaves a coming booking, until the space's delay (D5). */

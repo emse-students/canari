@@ -258,6 +258,9 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_booking_cancelled": composed = actorTitled("booking_cancelled")
     case "social_booking_withdrawn": composed = actorTitled("booking_withdrawn")
     case "social_booking_added": composed = actorTitled("booking_added")
+    // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
+    case "social_booking_changed": composed = actorTitled("booking_changed")
+    case "social_booking_removed": composed = actorTitled("booking_removed")
     // The reminder: nobody acted, a fixed title; the body is the place and the time.
     case "social_booking_reminder":
       composed = (
