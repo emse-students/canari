@@ -93,6 +93,8 @@ see who else booked.
 | D53 | Notifications (2026-10-23) | **YES now**: organiser cancellation, confirmation to an added participant, a reminder before the slot with an adjustable delay. Supersedes D13's "no notification in v1". |
 | D54 | Method (2026-10-23) | **Mockups first**, built in parallel with the stable (user: *"Tout de suite, en parallele de la stable"*). |
 
+**Owner picker, "Creer en tant que" (owner, 2026-11-02).** Step 1 of `SpaceWizard` carries the posts' `PostIdentityPicker` (anonymous off, "Moi" as the personal option), fed by `listSpaceOwnerChoices` (`MANAGE_BOOKINGS`, every entity for a global admin; the server still asks `mayManageSpace`, `not-manager`). It opens on the page's owner (null on the Reservations page, the entity on an association or list edit page) and stays changeable, as the composer's identity does. Both creation paths use the chosen owner: the wizard's ONE create call and "Je regle tout moi-meme" (`onSkip(name, ownerId)`). The audience tiers reload per chosen owner and a late answer for a previous owner is dropped. Both paths end on the new space's editor; its list is read on mount. No transfer of an existing space (out of scope).
+
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.

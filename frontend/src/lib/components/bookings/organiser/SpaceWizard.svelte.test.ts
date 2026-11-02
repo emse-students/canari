@@ -17,8 +17,20 @@ vi.mock('$lib/bookings/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/bookings/api')>()),
   createSpace: (...a: unknown[]) => createSpace(...a),
 }));
+/** One pending answer per entity, settled by the test, so a slow answer can arrive LATE. */
+const tierCalls = vi.hoisted(() => ({
+  calls: [] as {
+    id: string;
+    resolve: (v: { tiers: { name: string; variantKey: string }[] }) => void;
+  }[],
+}));
 vi.mock('$lib/forms/cotisationSettings', () => ({
-  cotisationOptionsFor: () => Promise.resolve({ tiers: [] }),
+  cotisationOptionsFor: (id: string) =>
+    new Promise((resolve) => tierCalls.calls.push({ id, resolve: resolve as never })),
+}));
+const ownerChoices = vi.hoisted(() => ({ list: [] as unknown[] }));
+vi.mock('$lib/bookings/spaceOwners', () => ({
+  listSpaceOwnerChoices: () => Promise.resolve(ownerChoices.list),
 }));
 vi.mock('$lib/pricing/criteriaOptions', () => ({
   fetchFormations: () => Promise.resolve([]),
@@ -86,6 +98,11 @@ function open(associationId: string | null, initialName = 'Salle de musique') {
 afterAll(adoptTransitionAnimations());
 
 beforeEach(() => {
+  tierCalls.calls.length = 0;
+  ownerChoices.list = [
+    { id: 'assoc-1', name: 'BDE', type: 'association' },
+    { id: 'assoc-2', name: 'BDS', type: 'association' },
+  ];
   setLocale('fr', { reload: false });
   createSpace.mockReset();
   createSpace.mockResolvedValue({ id: 'space-1', resourceId: 'col-1' });
@@ -233,7 +250,7 @@ describe('SpaceWizard', () => {
   it('"Je regle tout moi-meme" hands back the name and creates nothing', () => {
     const { onSkip } = open(null, '  Foyer ');
     button(m.bookings_wizard_skip()).click();
-    expect(onSkip).toHaveBeenCalledWith('Foyer');
+    expect(onSkip).toHaveBeenCalledWith('Foyer', null);
     expect(createSpace).not.toHaveBeenCalled();
   });
 
@@ -243,5 +260,67 @@ describe('SpaceWizard', () => {
     flushSync();
     expect(onSkip).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain(m.bookings_problem_required());
+  });
+
+  describe('"Creer en tant que"', () => {
+    const picker = () => document.querySelector('#wizard-owner') as HTMLButtonElement;
+
+    async function choose(label: string) {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query.includes('40rem'),
+        media: query,
+        addEventListener() {},
+        removeEventListener() {},
+      }));
+      picker().click();
+      await settle();
+      const option = [...document.querySelectorAll('[role="option"]')].find((o) =>
+        o.textContent?.includes(label)
+      ) as HTMLElement;
+      option.click();
+      await settle();
+    }
+
+    it('opens on "Moi" from the Reservations page, and creates a personal space', async () => {
+      open(null);
+      await settle();
+      expect(picker().getAttribute('aria-label')).toContain(m.bookings_owner_personal());
+      expect(tierCalls.calls).toHaveLength(0);
+      for (let i = 0; i < 2; i++) (button(m.bookings_wizard_next()).click(), flushSync());
+      button(m.bookings_wizard_names_yes()).click();
+      button(m.bookings_wizard_find_link()).click();
+      flushSync();
+      button(m.bookings_tab_create_button()).click();
+      await settle();
+      expect(createSpace.mock.calls[0][1]).toBeNull();
+    });
+
+    it('opens pre-filled with the entity of the edit page it came from', async () => {
+      open('assoc-2');
+      await settle();
+      expect(picker().getAttribute('aria-label')).toContain('BDS');
+      expect(tierCalls.calls.map((c) => c.id)).toEqual(['assoc-2']);
+    });
+
+    it('creates for the CHOSEN owner, and hands it to "Je regle tout moi-meme"', async () => {
+      const { onSkip } = open(null);
+      await settle();
+      await choose('BDE');
+      button(m.bookings_wizard_skip()).click();
+      expect(onSkip).toHaveBeenCalledWith('Salle de musique', 'assoc-1');
+    });
+
+    it('reloads the tiers on a change of entity and drops the previous answer arriving late', async () => {
+      open('assoc-1');
+      await settle();
+      await choose('BDS');
+      expect(tierCalls.calls.map((c) => c.id)).toEqual(['assoc-1', 'assoc-2']);
+      // The first entity answers AFTER the switch: nothing may apply it.
+      tierCalls.calls[0].resolve({ tiers: [{ name: 'Stale tier', variantKey: 's' }] });
+      tierCalls.calls[1].resolve({ tiers: [{ name: 'Fresh tier', variantKey: 'f' }] });
+      await settle();
+      for (let i = 0; i < 2; i++) (button(m.bookings_wizard_next()).click(), flushSync());
+      expect(document.body.textContent).not.toContain('stale-tier');
+    });
   });
 });
