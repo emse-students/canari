@@ -6,9 +6,10 @@ an association's audience reaches; on a campus split between two BDEs the defaul
 audience puts every new association under both, and the per-campus audience bound lets each BDE
 rewrite the other's audiences. `MODERATE` is still global, the moderator tier may edit others'
 posts, and a BDE manages the members of an institution reaching its space. The proposal - audience
-and dependencies as two independent axes with two admin panels, one parent per entity and one
-governor per space set by hand by the platform admin with a journal, institution-only item
-narrowing, events validated per governor slice, work packages WP-R0, WP-R1, WP-D1, WP-D2, WP-R4,
-WP-I, WP-E and WP-R5, and the owner's open questions - is
+and dependencies as two independent axes with two admin panels, an association or list under at
+most one BDE (two levels, enforced by triggers) and one governor per space, set by hand by the
+platform admin with a journal, institution-only item narrowing, events and partnerships validated
+per governor slice, a comparison of associations, lists and institutions, work packages WP-R0,
+WP-R1, WP-D1, WP-D2, WP-R4, WP-I, WP-E and WP-R5, and the owner's open questions - is
 [spaces-and-audiences-reform](../spaces-and-audiences-reform.md). Nothing is built; the schema and
 data changes wait for the owner's yes.

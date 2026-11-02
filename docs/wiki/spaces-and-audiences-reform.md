@@ -1,16 +1,17 @@
 # Spaces, audiences and dependencies - a reform proposal (2026-11-02)
 
-**Status: PROPOSAL, revised four times the same day after the owner's answers (section 0). Nothing
-is built.** Written for the owner to decide. It extends [profiles-and-access](profiles-and-access.md)
-(D16-D41, the audiences chantier, WP-C read grants, WP-F5/F6) and does not restate it. Every
-`file:line` is from `main` at the time of writing (`apps/social-service/src/` unless said
-otherwise).
+**Status: PROPOSAL, revised after each of the owner's four rounds of answers the same day (section
+0). Nothing is built.** Written for the owner to decide. It extends
+[profiles-and-access](profiles-and-access.md) (D16-D41, the audiences chantier, WP-C read grants,
+WP-F5/F6) and does not restate it. Every `file:line` is from `main` at the time of writing
+(`apps/social-service/src/` unless said otherwise).
 
 **The model in one paragraph.** Two independent axes, each with its own panel on `/admin/spaces`.
-**Audience** says who SEES an entity (today's grid). **Dependencies** say who GOVERNS it - validates,
-manages, moderates: an entity depends on ONE parent (a BDE, an institution) or on nothing (then the
-platform admin governs), and every space depends on one governor too. The two are correlated by
-defaults and shown side by side, never coupled: changing one never silently changes the other.
+**Audience** says who SEES an entity (today's grid). **Dependencies** say who GOVERNS it, on two
+levels at most: an association or a list may depend on ONE BDE; a BDE and an institution depend on
+nothing; whatever depends on nothing is the platform admin's. Separately, every SPACE has at most one
+governor - a BDE or an institution - which validates the events shown in it. The axes are
+correlated by defaults and shown side by side, never coupled.
 
 ## 0. What prompted it, and what is already decided
 
@@ -25,116 +26,105 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 | G3 | Nobody edits another person's post | the moderator tier may edit any post (`posts/posts.service.ts:592-608`, `canManage`) |
 | G4 | Republication stays THE inter-campus mechanism | it is (D38, D38b), beside co-organisation (D39) |
 | G5 | Public data matches only what Portail-etu shows | out of scope here |
-| G6 | An institution's members are managed by the platform admin only | a BDE holding `MANAGE_ASSO` manages them when the institution reaches its space (P8) |
+| G6 | An institution's members are managed by the platform admin only | its own `MANAGE_MEMBERS` holders and any reaching BDE manage them (section 6, row 5) |
 | G7 | A BDE secretary may place themselves in any association they govern | already true through the super-admin tier (`mayAct`, `associations/associations.service.ts:2018-2035`) |
 
-**First round:**
-
-| # | Answer | Effect |
-| --- | --- | --- |
-| A1 | **The campus is NOT the unit**: *"il peut exister plusieurs formations pour un campus, et un BDE par formation"* - on one campus one BDE governs four formations and another the fifth | governance is attached to an entity, never to a campus |
-| A2 | *"Non, sauf l'existant"*: an association or a list addresses only its governor's reach; the other campus through republication or co-organisation; existing wider audiences stay until edited | reconciled with the decoupling in 2.5 (question 1) |
-| A3 | A BDE is designated **per formation x campus**, as today | every BDE bound is stated per space (2.6) |
-| A4 | **Only the platform admin changes an entity's governor, and every change is logged** | 2.8 |
-
-**Second round:**
-
-| # | Answer | Effect |
-| --- | --- | --- |
-| B1 | *"On va faire la migration a la main. Apres, ca peut etre un reglage a la main [...] accessible des admins uniquement. Et par defaut evidemment le BDE qui la cree. (idem pour les listes)"* | no computed proposal, no back-fill; an admin-only setting; the default is the creating entity (2.8) |
-| B2 | *"on peut avoir une asso/liste/institution sans rattachement"* | no parent = the platform admin governs (2.3) |
-| B3 | Another BDE sees the association and proposes a republication or a co-organisation; it validates and manages nothing | 2.7 |
-| B4 | An institution is governed by what the admin attaches it to; with nothing, by the platform admin | 2.3 |
-| B5 | A personal post is moderated by the BDE governing the author's space; under two, either | 2.7 |
-| B6 | *"Quand l'ecole propose un evenement elle choisit son audience ? Chaque BDE pourrait valider ou non pour la formation dont il est le BDE ?"* | section 4: events validated per audience slice |
-
-**Third round:**
-
-| # | Answer | Effect |
-| --- | --- | --- |
-| C1 | *"Comment une institution choisit l'audience d'un post ? D'une proposition d'evenement ?"*, then: **narrowing an item's audience is for INSTITUTIONS ONLY**; associations and lists always use their entity's audience | section 3 |
-| C2 | *"dans la refonte des espaces, on peut avoir deux grands panneaux de gestion : l'un pour l'audience, l'autre pour les 'dependances' ? [...] meme si c'est souvent correle [...] on peut imaginer des cas autres. Notamment avec les institutions, qui sont plus hautes souvent."* | section 2: audience and dependencies are two axes, two panels |
+| Round | # | Answer | Effect |
+| --- | --- | --- | --- |
+| 1 | A1 | **The campus is NOT the unit**: *"il peut exister plusieurs formations pour un campus, et un BDE par formation"* (one campus: one BDE for four formations, another for the fifth) | governance attaches to an entity, never to a campus |
+| 1 | A2 | *"Non, sauf l'existant"*: an association or a list addresses only its governor's reach; existing wider audiences stay until edited | 2.5 |
+| 1 | A3 | A BDE is designated per formation x campus, as today | every bound is per space (2.6) |
+| 1 | A4 | Only the platform admin changes a dependency, and every change is logged | 2.7 |
+| 2 | B1 | *"On va faire la migration a la main [...] un reglage a la main [...] accessible des admins uniquement. Et par defaut evidemment le BDE qui la cree. (idem pour les listes)"* | 2.7 |
+| 2 | B2 | *"on peut avoir une asso/liste/institution sans rattachement"* | no parent = platform admin |
+| 2 | B3 | Another BDE sees the association and proposes a republication or a co-organisation; it validates and manages nothing | 2.4 |
+| 2 | B4 | ~~an institution is governed by what the admin attaches it to~~ - **superseded by D2** | - |
+| 2 | B5 | A personal post is moderated by the BDE governing the author's space; under two, either | 2.4 |
+| 2 | B6 | *"Chaque BDE pourrait valider ou non pour la formation dont il est le BDE ?"* | section 4 |
+| 3 | C1 | Narrowing a post's or an event's audience is for INSTITUTIONS ONLY | section 3 |
+| 3 | C2 | *"deux grands panneaux de gestion : l'un pour l'audience, l'autre pour les 'dependances'"* | section 2 |
+| 4 | D1 | "Oui pour le parent": a parent writing a child's audience stays inside its own spaces; the platform admin may write anything, a mismatch is shown, never refused | 2.5 |
+| 4 | D2 | **"Enfants directs. Et il ne peut y avoir que deux niveaux maximum. Un BDE n'est gere par personne. Les associations/listes peuvent etre gerees par un BDE. Les institutions ne peuvent pas etre gerees, ce sont des entites differentes."** | 2.2: the dependency axis is a two-level forest, enforced by the database |
+| 4 | D3 | "Admin ou institution": a formation with no BDE is validated by the platform admin, or by an institution the admin places it under | 2.3 |
+| 4 | D4 | "Selon le changement": a date move re-opens every slice, an audience change only the slices whose spaces changed, text none | 4.2 |
+| 4 | D5 | *"Et si plusieurs associations/listes/institutions sont partenaires d'un evenement, comment on gere tout ca ? Est-ce qu'on interdit des partenariats ?"* | section 5 |
+| 4 | D6 | *"On peut faire le point sur toutes les differences/similarites entre associations/listes/institutions si tu veux"* | section 6 |
 
 ## 1. The current model
 
 ### 1.1 Spaces
 
 - A **space** is one `formation x campus` pair (D16): `spaces/space.entity.ts:18-34`, five
-  formations x two campuses (`SPACE_FORMATIONS`, `SPACE_CAMPUSES`, lines 4-6) = **10 rows**, all
-  present since D17 was relaxed (2026-10-04). `openedAt` and the "OPEN spaces" wording are vestiges.
+  formations x two campuses = **10 rows**, all present since D17 was relaxed. `openedAt` and the
+  "OPEN spaces" wording are vestiges.
 - A **reader's spaces**: campus is theirs, formation one of their cursus formations
-  (`isReaderSpaceSql`, `spaces/reader-spaces.ts:88-90`; pure twin `readerSpaces`, 52-63). Staff
-  (campus, empty cursus) get their campus's agenda by `campusWideReaderCampus` (71-76).
-- A space carries ONE optional BDE, `spaces."bdeAssociationId"` (`space.entity.ts:32-33`), which
-  must be of type `association` (`spaces.service.ts` `setBde`); the same association may be the BDE
-  of several spaces (`migrations/071_spaces.sql`). Set on `/admin/spaces` by the platform admin
-  (`spaces/spaces.controller.ts:23`, `GlobalAdminGuard`). **`setBde` also inserts an audience rule**,
-  and `setAudiences` re-adds the governed spaces to a BDE's own audience (`spaces.service.ts:240-246`):
-  governance and audience are coupled in both directions today.
+  (`isReaderSpaceSql`, `spaces/reader-spaces.ts:88-90`; twin `readerSpaces`, 52-63). Staff get their
+  campus's agenda by `campusWideReaderCampus` (71-76).
+- A space carries ONE optional BDE, `spaces."bdeAssociationId"` (`space.entity.ts:32-33`), of type
+  `association` only (`spaces.service.ts:167`). **`setBde` also inserts an audience rule**, and
+  `setAudiences` re-adds a BDE's governed spaces (`spaces.service.ts:240-246`): governance and
+  audience are coupled both ways.
 
-### 1.2 Audiences (reach)
+### 1.2 Audiences
 
-- `association_audiences` rows `(formation | NULL, campus | NULL)`, NULL = "any"
-  (`spaces/association-audience.entity.ts`, D19/D33), matched by `ruleReachesSpaceSql`
-  (`spaces/rule-sql.ts:8-12`) at read time.
-- **Policy** (`spaces/audience-policy.ts`): `everyone` refused outside institutions (42-51); default
-  = the creator's campus, every formation (58-68); a BDE "star" reads and writes inside the CAMPUSES
-  it governs (77-123); a non-admin creator creates on a governed campus (131-141).
-- **Visibility** of an entity's content: a member (D21), OR its rules reach one of the reader's
-  spaces, OR (read paths) a read grant meets its rules (`associationVisibleToUserSql`,
-  `reader-spaces.ts:168-177`; grants 125-143). **A post or an event has no rules of its own**
-  (`postVisibleToUserSql`, 411-436; `eventVisibleToUserSql`, 637-641): per-post rules existed (D33,
-  `post_audiences`) and were dropped by D38 (migration `073_republications.sql`).
+- `association_audiences` rows `(formation | NULL, campus | NULL)`, NULL = "any", matched by
+  `ruleReachesSpaceSql` (`spaces/rule-sql.ts:8-12`) at read time.
+- Policy (`spaces/audience-policy.ts`): `everyone` refused outside institutions (42-51); default =
+  the creator's campus (58-68); a BDE "star" reads and writes inside the CAMPUSES it governs (77-123);
+  a non-admin creates on a governed campus (131-141).
+- Visibility: a member (D21), OR its rules reach one of the reader's spaces, OR (read paths) a read
+  grant (`associationVisibleToUserSql`, `reader-spaces.ts:168-177`). A post or an event has no rules
+  of its own (`postVisibleToUserSql`, 411-436; `eventVisibleToUserSql`, 637-641); per-post rules
+  (D33) were dropped by D38 (migration `073_republications.sql`).
 
-### 1.3 Governance scope
+### 1.3 Governance
 
-- "Is a BDE" = designated on at least one space (`isBdeAssociationSql`, `spaces/bde.ts:14-16`).
 - `holdsBdeFlagOverSql` (`spaces/bde.ts:35-41`): U holds F in the BDE of ANY space A's audience
-  reaches. Read by `VALIDATE_EVENTS` (`mayValidateEventsOf`, `associations.service.ts:1832`, the
-  pending queue 2095-2112, the proposal notification 2398-2420) and `MANAGE_ASSO`
-  (`isAssociationSuperAdminOf`, 1980, hence `mayAct`/`mayActOnAny`, 2018-2077).
-- The audience bounds use the CAMPUSES of the governed spaces (`BDE_GOVERNED_CAMPUSES_SQL`,
-  `spaces/bde.ts:47-49`).
-- `MODERATE` is unscoped (`isContentModerator`, `associations.service.ts:1994-1998`); 16 call sites
-  ask an unscoped BDE question (moderation controller, lives, live chat, comment identity, posts).
+  reaches. Read by `VALIDATE_EVENTS` (`mayValidateEventsOf`, `associations.service.ts:1832`) and
+  `MANAGE_ASSO` (`isAssociationSuperAdminOf`, 1980, hence `mayAct`, 2018-2035, and the association
+  delete route, `associations.controller.ts:743-757`).
+- Audience bounds per CAMPUS (`BDE_GOVERNED_CAMPUSES_SQL`, `spaces/bde.ts:47-49`).
+- `MODERATE` unscoped (`isContentModerator`, `associations.service.ts:1994-1998`); 16 call sites ask
+  an unscoped BDE question.
+- **Two parent-like columns already exist, neither of them governance** (`associations/entities/
+  association.entity.ts`): `parentAssociationId` (187-189), "lists only: optional parent association
+  (e.g. the owning BDE)", read only to DISPLAY a parent name (`associations.service.ts:644-699`); and
+  `paymentParentAssociationId` (113-121), the payment-delegation parent, "purely financial routing +
+  accounting access".
 
-### 1.4 Events and their validation
+### 1.4 Events
 
-- ONE status per event, `pending | validated | rejected`
-  (`associations/entities/association-calendar-event.entity.ts:3-7`).
-- Reach = organiser's audience union each ACCEPTED co-organiser's (`eventVisibleToUserSql`,
-  `reader-spaces.ts:637-641`; D39). Signed-in agenda: `restrictToViewerSpaces`
-  (`associations.service.ts:1678-1688`); anonymous selection: `eventReachesSpaceMatchingSql`
-  (`reader-spaces.ts:204-212`, `restrictToSelection`, 1694-1711). Readers see `validated`; proposers
-  `pending` too (1617-1622).
-- Always created `pending`, platform admin and BDE included (user, 2026-09-14;
-  `createCalendarEvent`, 2453-2503; `associations.service.never-auto-validates.spec.ts`).
-- Validated or rejected as a whole (`validateCalendarEvent` 2697-2712, `rejectCalendarEvent`
-  2715-2741; routes `associations.controller.ts:1029`, `:1045`) by `mayValidateEvent`: the platform
-  admin or `VALIDATE_EVENTS` in ANY BDE the ORGANISER reaches (1832-1866).
-- A DATE move returns a validated event to `pending`; text, poster, form do not (2545-2627;
-  `associations.service.revalidate-on-date-change.spec.ts`).
-- Deleted by the organiser's people, or a governing BDE / the admin across associations (2748-2780).
-- Notified: proposal -> every governing BDE's validators (`notifyEventValidatorsOfProposal`, 2409);
-  decision -> the organiser's admins (`notifyAssocAdminsOfEventAction`, 2362).
-- Pages: [calendar](frontend/modules/calendar.md#who-may-deposit-from-the-global-agenda-and-whose-id-carries-the-right).
+- ONE status, `pending | validated | rejected` (`association-calendar-event.entity.ts:3-7`).
+- Reach = organiser's audience union each ACCEPTED co-organiser's (`eventVisibleToUserSql`;
+  D39); signed-in agenda `restrictToViewerSpaces` (`associations.service.ts:1678-1688`); anonymous
+  selection `eventReachesSpaceMatchingSql` (`reader-spaces.ts:204-212`). Readers see `validated`;
+  proposers `pending` too (1617-1622).
+- Always created `pending` (user, 2026-09-14; `createCalendarEvent`, 2453-2503).
+- Decided as a whole (`validateCalendarEvent` 2697-2712, `rejectCalendarEvent` 2715-2741) by
+  `mayValidateEvent`: the admin or `VALIDATE_EVENTS` in ANY BDE the ORGANISER reaches (1832-1866;
+  controller `assertMayDecideEvent`, `associations.controller.ts:1009-1022`).
+- A DATE move demotes a validated event; text, poster, form do not (2545-2627).
+- Write and delete: `assertMayWriteEvent` (1870-1900) then `findCalendarEventForAssociation`
+  (1382-1401), which matches the organiser OR an accepted co-organiser (section 5.1).
 
 ### 1.5 Pain points, measured from the code
 
 | # | Finding | Evidence | Consequence |
 | --- | --- | --- | --- |
-| P1 | **Reach decides governance** | `bde.ts:35-41` joins `association_audiences` | an association reaching two BDEs' spaces is governed by EITHER, contrary to D22 and G1 |
-| P2 | **Governance and audience move each other**: an audience edit grants or removes a BDE's power; `setBde` writes an audience rule; `setAudiences` re-adds a BDE's governed spaces | `spaces.service.ts:224-258` | neither change is visible as what it is |
-| P3 | **Two granularities**: validation and management per SPACE, audience and creation bounds per CAMPUS - live on the split campus (A1) | `bde.ts:35-41` vs `47-49`; `audience-policy.ts:77-141` | each of the two BDEs of one campus may rewrite the other's audiences, and by P2 take governance |
-| P4 | **The default audience crosses BDE borders**: `(NULL, creator's campus)` | `audience-policy.ts:58-68`, written at `associations.service.ts:565` | on the split campus every new association is governed by both BDEs from day one |
-| P5 | **Decision 3 half-enforced**: only campus-NULL rules are refused, so a two-campus audience passes for the admin | `audience-policy.ts:42-51` | multi-campus associations are still creatable |
-| P6 | **`MODERATE` is global** | `associations.service.ts:1994-1998` | any BDE moderates, pins and unmasks anonymous posts everywhere (`posts.service.ts:606-608`) |
+| P1 | **Reach decides governance** | `bde.ts:35-41` | an association reaching two BDEs' spaces is governed by EITHER |
+| P2 | **Governance and audience move each other** | `spaces.service.ts:224-258` | neither change is visible as what it is |
+| P3 | **Two granularities** (space vs campus), live on the split campus | `bde.ts:35-41` vs `47-49` | each of the two BDEs of one campus may rewrite the other's audiences |
+| P4 | **Default audience crosses BDE borders** | `audience-policy.ts:58-68` | every new association on the split campus is governed by both BDEs |
+| P5 | **Decision 3 half-enforced** | `audience-policy.ts:42-51` | two-campus audiences still creatable by the admin |
+| P6 | **`MODERATE` is global** | `associations.service.ts:1994-1998` | any BDE moderates, pins, unmasks everywhere (`posts.service.ts:606-608`) |
 | P7 | **Moderators edit others' posts** | `posts.service.ts:605` | contradicts G3 |
-| P8 | **Institutions under the BDE super-admin tier**: `holdsBdeFlagOver` never checks the type | `mayAct` 2018-2035 -> 1980 | a BDE manages an institution's members, contrary to D20 and G6 |
+| P8 | **Institutions under BDEs**: no type check in the super-admin tier | `mayAct` 2018-2035; delete route 743-757 | a reaching BDE manages an institution's members, and may DELETE it |
 | P9 | **No rule = no governor**, by accident | `bde.ts:28-29` | an institution's events reach no validator |
-| P10 | **Only an association can govern a space** | `setBde` type check | a formation with no BDE has no validator but the admin, and an institution cannot take it |
-| P11 | **One validation for many audiences** | entity 3-7; `mayValidateEventsOf` 1832; 637-641 | an event validated by one BDE appears in another BDE's spaces with no say from it |
-| P12 | **An institution cannot narrow a post or an event** | 411-436, 637-641 | the School must reach everyone or not publish |
+| P10 | **Only an association can govern a space** | `spaces.service.ts:167` | a formation with no BDE has no validator but the admin |
+| P11 | **One validation for many audiences** | entity 3-7; 1832; 637-641 | an event validated by one BDE appears in another BDE's spaces |
+| P12 | **An institution cannot narrow an item** | 411-436, 637-641 | the School reaches everyone or nobody |
+| P13 | **Accepting a co-organisation widens a VALIDATED event with no validation** | `coorganisation/coorganisation.service.ts:281-300` (`apply` inserts the row, the status is untouched) | the event appears in the partner's spaces on the strength of a validation given for the organiser's |
+| P14 | **A co-organiser may delete the organiser's event** | `deleteCalendarEvent`'s member branch, `associations.service.ts:2770-2777`, matches co-owners via 1382-1401 | documented in D39 as built ("edit, poster, delete"), never decided for a partner of another campus |
 
 ## 2. Two axes: audience and dependencies (C2)
 
@@ -142,49 +132,76 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 
 | Axis | Question | Stored in | Panel on `/admin/spaces` | Who writes it |
 | --- | --- | --- | --- | --- |
-| **Audience** | who SEES the entity | `association_audiences` (unchanged) | **"Audience"**: today's grid, kept | the platform admin; the entity's governor within its own spaces (2.6) |
-| **Dependencies** | who GOVERNS it: validates, manages, moderates | `associations.parent_id` (NULL allowed) for entities; `spaces."bdeAssociationId"` for spaces, now called the space's **governor** | **"Dépendances"**: a tree - each governor with the spaces and entities under it, the entities with no parent apart | the platform admin only, journaled (A4) |
+| **Audience** | who SEES the entity | `association_audiences` (unchanged) | **"Audience"**: today's grid | the platform admin; a parent BDE inside its own spaces (2.5) |
+| **Dependencies** | who GOVERNS the entity: manages, moderates | `associations."parentAssociationId"` (2.2) | **"Dépendances"**: each BDE with the associations and lists under it; BDEs, institutions and unattached entities apart | the platform admin only, journaled |
+| **Space governors** | who VALIDATES the events shown in a space, moderates its students' personal content | `spaces."bdeAssociationId"` (a BDE or an institution, 2.3) | same panel, each space under its governor | the platform admin only, journaled |
 
-### 2.2 One parent (a tree), not several
+### 2.2 Two levels, enforced by the database (D2)
 
-| Option | Validation | Moderation | Verdict |
-| --- | --- | --- | --- |
-| **A. One parent per entity: a tree** (recommended) | one governor answers for the entity; G1's "origin alone" holds by construction | one moderator per item, no conflicting decisions | deterministic, explainable in one sentence, and a cycle is refused on write (an entity cannot depend on its own descendant) |
-| B. Several parents (a graph) | who validates - any, all, a quorum? Any reintroduces P1 under another name; all creates a queue nobody owns | two moderators may disagree on one item, and nothing arbitrates | rejected: it is today's defect with a panel on it |
+- **The parent column is the one that already exists**: `parentAssociationId`, today a display-only
+  "owning BDE" of a list. It is generalised to associations and becomes THE governance parent; no
+  third parent-like column is added. `paymentParentAssociationId` stays a separate, purely financial
+  relation (payment delegation is not governance, and a delegation parent is often not a BDE).
+- **The shape (D2):**
 
-Institutions "higher" (C2) fit the tree directly: the School may be the parent of BDEs and of
-associations; a BDE the parent of its associations and lists. What a parent's power reaches -
-its direct children only, or every descendant - is **question 2**; the recommendation is direct
-children only, so each entity has exactly one governor and the platform admin stays the only
-authority above everything.
-
-### 2.3 What a parent governs, and how `holdsBdeFlagOver` changes
-
-**The three super-permissions follow the dependency axis, never the audience:**
-
-| Flag | Held in | Over |
+| Entity | May have a parent? | May be a parent? |
 | --- | --- | --- |
-| `VALIDATE_EVENTS` | the governor of a SPACE | the event slices of that space (section 4) |
-| `MANAGE_ASSO` | the PARENT of an entity | that entity's administration (members, documents, forms, products), minus `SUPER_ADMIN_EXCLUDED_FLAGS`; for an institution, NOT its members (G6) |
-| `MODERATE` | the PARENT of an entity, or the governor of the author's space for a personal item | that entity's posts, comments, lives (2.7) |
+| association that is a BDE (governs at least one space) | **never** - "un BDE n'est gere par personne" | yes, of associations and lists |
+| association that is not a BDE | optional: one BDE | no |
+| list | optional: one BDE | no |
+| institution | **never** - "ce sont des entites differentes" | no |
 
-An entity with no parent (B2) is governed by the platform admin alone. These flags take effect in
-ANY entity that is a parent or a governor - a BDE as today, and an institution once it is one;
-`isBdeAssociationSql` becomes "governs at least one space or is the parent of at least one entity",
-which is what the routes naming no association ask (creating one, the categories, the carte).
+- **Enforced by constraints, not convention.** A `CHECK` cannot read another row, so the rule is a
+  pair of triggers (one migration, replay-safe like the rest):
+  - on `associations` (INSERT, UPDATE of `parentAssociationId` or `type`): when the parent is set,
+    the row is of type `association` or `list`, is NOT a space governor, and the parent is of type
+    `association` AND governs at least one space - otherwise `RAISE` with a stable code
+    (`DEPENDENCY_PARENT_NOT_A_BDE`, `DEPENDENCY_CHILD_IS_A_BDE`, `DEPENDENCY_INSTITUTION`);
+  - on `spaces` (UPDATE of `bdeAssociationId`): designating as governor an association that HAS a
+    parent is refused (`DEPENDENCY_CHILD_IS_A_BDE`). Removing a BDE's last space while it has
+    children is NOT refused (a redesignation must stay possible): its children then depend on an
+    association that governs nothing, which the predicate treats as no parent (2.4) and the panel
+    lists as a mismatch, with a warn log.
+  - Two levels follow: a parent is a BDE, a BDE has no parent, so no chain can be longer than one.
+  - The service checks the same rules first, so a refusal reaches the client as a typed 4xx; the
+    trigger is what makes a hand-written `UPDATE` unable to break it.
 
-**`holdsBdeFlagOverSql(user, association, flag)`** (`spaces/bde.ts:35-41`) stops joining
-`association_audiences` and becomes **`holdsParentFlagOverSql`**:
+### 2.3 Space governors - an institution included (D3)
+
+The space axis is NOT the parent axis, and D2 does not touch it: **a space's governor may be a BDE or
+an institution** (`setBde`'s type check, `spaces.service.ts:167`, widened to `association |
+institution`; closes P10). So the admin may place a formation with no BDE under the School, whose
+`VALIDATE_EVENTS` holders then answer for it; a space with no governor is the platform admin's. An
+institution governing a space is still not a BDE for D2: it never becomes a parent, and nothing
+depends on it.
+
+### 2.4 Who governs what, and how the predicates change
+
+| Power | Over an association or list WITH a parent BDE | Over a BDE, an institution, or an entity with no parent |
+| --- | --- | --- |
+| `MANAGE_ASSO` (administer: members, documents, forms, products; minus `SUPER_ADMIN_EXCLUDED_FLAGS`) | the parent BDE's holders, and the platform admin | the platform admin (and the entity's own officers, as today, for its own data) |
+| institution members | - | **the platform admin ONLY** (G6) |
+| `MODERATE` its posts, comments, lives | the parent BDE's holders | the platform admin |
+| `VALIDATE_EVENTS` | per SPACE, never per entity: the governor of each space the event reaches (section 4) | same |
+| `MODERATE` a personal post | the governor of the author's space; under two, either (B5) | - |
+
+Every other BDE **sees** an entity like any reader, **proposes** a republication or a co-organisation,
+and decides nothing of it - except an event's slice in its own spaces (B3, B6). `canManage` loses the
+moderator tier (G3): hide and delete, never edit.
+
+**`holdsBdeFlagOverSql(user, association, flag)`** (`spaces/bde.ts:35-41`) keeps its name and loses
+its audience join:
 
 ```sql
 EXISTS (SELECT 1 FROM associations gov_child
-  JOIN association_members gov_m ON gov_m."associationId" = gov_child.parent_id
+  JOIN association_members gov_m ON gov_m."associationId" = gov_child."parentAssociationId"
   WHERE gov_child.id = ${association}
-    AND gov_m."userId" = ${user} AND (gov_m.permissions & ${flag}) <> 0)
+    AND gov_m."userId" = ${user} AND (gov_m.permissions & ${flag}) <> 0
+    AND EXISTS (SELECT 1 FROM spaces gov_s WHERE gov_s."bdeAssociationId" = gov_child."parentAssociationId"))
 ```
 
-(with descendants, question 2, a recursive CTE over `parent_id`). Its callers keep their names;
-`mayValidateEventsOf` moves to the per-slice predicate of section 4:
+No recursion (two levels), one join on a key. The last clause makes a parent that governs nothing
+govern nobody. Its callers keep their names; `mayValidateEventsOf` moves to the per-space predicate:
 
 ```sql
 -- U holds F in the governor of space S
@@ -193,76 +210,42 @@ EXISTS (SELECT 1 FROM spaces gov_s
   WHERE gov_s.id = ${space} AND gov_m."userId" = ${user} AND (gov_m.permissions & ${flag}) <> 0)
 ```
 
-Both are one join on an indexed key: cheaper than today's rule matching.
+`isBdeAssociationSql` keeps its meaning ("governs at least one space") for the routes that name no
+association; `BDE_GOVERNED_CAMPUSES_SQL` becomes `GOVERNED_SPACES_SQL` (2.6).
 
-### 2.4 Spaces sit on the dependency axis too
+### 2.5 Correlated, never coupled (D1)
 
-A space's governor is the entity its `bdeAssociationId` names - **an association (a BDE) or, newly,
-an institution** (P10): a formation with no BDE can be placed under the School, whose validators then
-answer for it. A space with no governor is the platform admin's (question 3).
+- **Defaults derive from the parent.** At creation the parent is the creating BDE (B1); a creator
+  holding `MANAGE_ASSO` in two BDEs picks one; a platform admin creating picks one or none; an
+  institution has none. The default audience is the spaces the parent governs (`smallestRules`);
+  with no parent, the creator's own spaces. Closes P4.
+- **No silent change.** Changing a parent never writes an audience and vice versa: `setBde` stops
+  inserting a rule, `setAudiences` stops re-adding governed spaces (`spaces.service.ts`).
+- **Mismatches are information**, shown on both panels, never refused: an entity reaching a space
+  its parent does not govern; a parent governing none of its child's audience; a parent that governs
+  nothing.
+- **D1, "Oui pour le parent"**: a parent BDE writing a child's audience stays inside its own spaces;
+  the platform admin may write any audience. Existing wider audiences stay (A2).
 
-### 2.5 Correlated, never coupled
+### 2.6 Audience bounds per space (A3, closes P3)
 
-- **Defaults derive from the parent.** At creation the parent is the creating entity (B1: the BDE
-  the creator acts from; a creator holding `MANAGE_ASSO` in two picks one; a platform admin creating
-  picks one or leaves none). The default AUDIENCE is the spaces the parent governs (as the smallest
-  rule set, `smallestRules`); if it governs none (an institution parent), the parent's own audience.
-  Closes P4.
-- **No silent change.** Changing a parent never writes an audience; changing an audience never
-  changes a governor. `setBde` stops inserting a rule and `setAudiences` stops re-adding governed
-  spaces (both in `spaces.service.ts`), amending the 2026-10-04 "a BDE always reaches what it
-  governs" into a default plus a mismatch.
-- **Mismatches are information.** Both panels flag, without refusing: an entity whose audience
-  reaches a space whose governor is not its parent; an entity whose parent governs none of its
-  audience; a space governor that does not reach the space it governs.
-- **A2 under decoupling - question 1.** Recommended: **a rule for the governors, freedom for the
-  platform admin.** A parent writing a child's audience stays bounded to the spaces it governs (2.6),
-  so a BDE can never address another BDE's spaces on its own; the platform admin may write any
-  audience, and a mismatch it creates is shown, never refused. Existing wider audiences stay (A2).
-  The alternatives: a default plus a warning for everyone (lets a BDE address the other BDE's
-  students), or a rule for everyone including the admin (forbids the cases C2 wants possible).
+`GOVERNED_SPACES_SQL`: the spaces whose governor U holds F in. A rule is inside them when every space
+it reaches is; a whole-campus rule is inside only for a governor of every formation of that campus
+(the editor writes pair rules for the four-formation BDE). A non-admin reads and writes an entity's
+audience only when they hold `MANAGE_ASSO` in its PARENT, inside the parent's governed spaces; before
+WP-D2, inside the caller's governed spaces (WP-R1). Presets for a parent: "all of our spaces" / "some
+formations among them"; the grid stays the admin's.
 
-### 2.6 The governor's audience bounds, per space (A3, closes P3)
+### 2.7 Setting the dependencies by hand (B1, A4)
 
-- `BDE_GOVERNED_CAMPUSES_SQL` becomes **`GOVERNED_SPACES_SQL`**: the spaces whose governor U holds F
-  in.
-- A rule is **inside** those spaces when every space it reaches is in them; a whole-campus rule is
-  inside only for a governor of every formation of that campus (the four-formation BDE writes four
-  pair rules, the editor doing it for it).
-- A non-admin may read and write an entity's audience only when they hold `MANAGE_ASSO` in its
-  PARENT, and only inside the parent's governed spaces. Before `parent_id` exists, the bound is
-  "current AND submitted rules inside the caller's governed spaces" (WP-R1).
-- The presets offered to a governor: "all of our spaces" / "some formations among them". The grid
-  stays the platform admin's (the Audience panel).
-
-### 2.7 Moderation (G2, B5) and the other governors (B3)
-
-| Content | Moderated by |
-| --- | --- |
-| an entity's post, comment, live | `MODERATE` in its parent; no parent: platform admin |
-| a personal post, comment, live | `MODERATE` in the governor of the AUTHOR's space; an author under two governors, either (B5) |
-| a report | the moderator of the reported content; the queue is filtered accordingly |
-| muting a user | the governor of one of that user's spaces |
-
-`canManage` loses the moderator tier (G3): hide and delete, never edit; `canPin` and
-`canUnmaskAnonymous` follow the table.
-
-Any governor other than the parent **sees** the entity like any reader, **proposes** a republication
-(D38) or a co-organisation (D39), and **validates or manages nothing** of it - except the slice of an
-event shown in its own spaces (section 4).
-
-### 2.8 Setting the dependencies, and the migration by hand (B1, A4)
-
-- Only the platform admin changes a parent or a space governor, on the Dependencies panel; each
-  change writes an append-only `dependency_journal` line (`subject_kind` entity|space, `subject_id`,
-  `from_id`, `to_id`, `actor`, `at`) in the same transaction - the shape of `read_grant_journal`
-  (migration 078); account deletion anonymises the actor as WP-C does.
-- **Existing entities start with no parent and are set by the owner by hand.** The governance switch
-  (WP-D2) ships when the owner says they are set; until then the current predicate stays.
-- **Read-only counts for the owner** (aggregates; no agent runs them against production):
+Only the platform admin changes a parent or a space governor; each change writes an append-only
+`dependency_journal` line (`subject_kind` entity|space, `subject_id`, `from_id`, `to_id`, `actor`,
+`at`) in the same transaction (the shape of `read_grant_journal`, migration 078). The owner sets
+the existing parents by hand; WP-D2 ships when he says they are set. **Read-only counts for him**
+(aggregates; no agent runs them against production):
 
 ```sql
--- Entities by type and number of distinct space governors their audience reaches (the hand work).
+-- Entities by type and number of distinct space governors their audience reaches.
 SELECT type, n_gov, count(*) FROM (
   SELECT a.id, a.type, count(DISTINCT s."bdeAssociationId") AS n_gov
   FROM associations a
@@ -272,157 +255,213 @@ SELECT type, n_gov, count(*) FROM (
   GROUP BY a.id, a.type) x
 GROUP BY type, n_gov ORDER BY 1, 2;
 
+-- The parents that already exist (lists' display-only owning BDE), and how many would pass D2.
+SELECT a.type, count(*) AS with_parent,
+       count(*) FILTER (WHERE p.type = 'association'
+         AND EXISTS (SELECT 1 FROM spaces s WHERE s."bdeAssociationId" = p.id)) AS parent_is_a_bde
+FROM associations a JOIN associations p ON p.id = a."parentAssociationId"
+GROUP BY a.type;
+
 -- Spaces with no governor.
 SELECT count(*) FROM spaces WHERE "bdeAssociationId" IS NULL;
 
--- Once parent_id exists: entities still without a parent, by type.
-SELECT type, count(*) FROM associations WHERE parent_id IS NULL GROUP BY type;
-
--- Once parent_id exists: mismatches - entities reaching a space their parent does not govern.
-SELECT count(DISTINCT a.id) FROM associations a
-JOIN association_audiences r ON r."associationId" = a.id
-JOIN spaces s ON (r.formation IS NULL OR r.formation = s.formation)
-             AND (r.campus IS NULL OR r.campus = s.campus)
-WHERE a.parent_id IS NOT NULL AND s."bdeAssociationId" IS DISTINCT FROM a.parent_id;
+-- Associations and lists without a parent, by type.
+SELECT type, count(*) FROM associations
+WHERE type IN ('association', 'list') AND "parentAssociationId" IS NULL GROUP BY type;
 ```
+
+The trigger of 2.2 would refuse an existing list whose display parent is not a BDE: the second count
+says how many, and **the migration that adds the trigger must not run while that count is above zero**
+(the owner clears or corrects those rows by hand first).
 
 ## 3. Per-item audience, for institutions only (C1)
 
 **An institution's post or event may NARROW the institution's audience, never widen it.**
-Associations and lists always publish to their entity's audience; the DTO refuses an item audience
-for them, and the composer does not offer it.
+Associations and lists always publish to their entity's audience (the DTO refuses an item audience,
+the composer does not offer it).
 
-- **Storage**: `post_audiences(post_id, formation | NULL, campus | NULL)` and
-  `association_calendar_event_audiences(event_id, ...)`, the shape of `association_audiences`. **No
-  row = the whole entity audience**: every existing item, and every item nobody narrows.
-- **Structural, never a stored copy**: the item's rules are AND-ed with the entity's reach at READ
-  time, so an item can never reach a space its entity does not; if the entity's audience shrinks,
-  the item shrinks with it and its now-outside rows are inert. The write refuses rules outside the
-  entity's current audience (`AUDIENCE_OUTSIDE_ENTITY`).
-- **History**: D33 built per-post rules and D38 dropped them (2026-10-04) so that only a
-  republication widens; narrowing keeps that rule intact (G4).
+- `post_audiences(post_id, formation | NULL, campus | NULL)` and
+  `association_calendar_event_audiences(event_id, ...)`. **No row = the whole audience.**
+- AND-ed with the entity's reach at READ time: never wider than the entity, shrinking with it. The
+  write refuses rules outside the entity's audience (`AUDIENCE_OUTSIDE_ENTITY`).
+- Members of the institution see every item (D21). A read grant must meet the ITEM's rules too. A
+  republication reaches the republisher's own readers (G4). `announceRecipientsSql` reads the same
+  predicate. Edits re-open the event slices whose spaces changed (D4); readers newly reached by an
+  edit are not re-notified. The composer's **"Visible par"** defaults to "Toute l'audience de X".
+- Cost: one `NOT EXISTS (row) OR EXISTS (row reaching a reader space)` per candidate, indexed; the
+  shape WP-C measured at +10 %
+  ([WP-C](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)); `EXPLAIN` owed
+  with WP-I.
 
-| Topic | Rule |
-| --- | --- |
-| Members (D21) | a member of the institution sees every item of it; the narrowing applies to the space branch |
-| Read grants (WP-C) | a grant reaches a narrowed item only when its cell meets the ITEM's rules too (the AND in `readGrantReachesAssociationSql`) |
-| Republication (D38) | the narrowing restricts the institution's own branch; a republication reaches the republisher's readers, as its admins accepted (G4) |
-| Co-organisation (D39) | an institution's event narrows the union ceiling (section 4.1) |
-| Per-slice validation | the slices are cut from the narrowed spaces only; a governor left out is never asked |
-| Announcements | `announceRecipientsSql` reads the same predicate: a narrowed post notifies only whom it reaches |
-| Anonymous agenda, `.ics` | the selection applies the narrowed spaces |
-| Edits after publication | editable by whoever may edit the item; visibility follows at the next read; newly reached readers are not re-notified; logged; for an event, the slices whose spaces changed re-open (question 4) |
-| Feed cache | an item audience edit drops it, as `setAudiences` does |
-| Composer | a **"Visible par"** picker on the institution's composer and event form, defaulting to "Toute l'audience de X", chips per space grouped by governor; hidden when the institution reaches one space; labels through Paraglide |
-| Cost | one `NOT EXISTS (row) OR EXISTS (row reaching a reader space)` per candidate, indexed by `post_id` / `event_id`; for the no-row majority, one empty index probe - the shape WP-C measured at +10 % on the feed predicate ([WP-C](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)). `EXPLAIN (ANALYZE, BUFFERS)` before/after owed with WP-I |
-
-## 4. Events validated per audience slice (B6)
+## 4. Events validated per space slice (B6, D3, D4)
 
 ### 4.1 The model
 
-- **An event's ceiling** is the union of its organiser's audience and each ACCEPTED co-organiser's
-  (today's reach). An institution's event may narrow it (section 3); an association's or list's
-  event uses it whole.
-- **Its spaces are cut into SLICES, one per space GOVERNOR** (2.4): the four-formation BDE decides
-  once for its four spaces; the School decides for a formation placed under it; spaces with no
-  governor form one slice, the platform admin's (question 3).
-- **Who validates a slice is the governor of its spaces, NOT the event entity's parent.** The two
-  coincide in the correlated case (an association under BDE X addressing X's spaces has one slice,
-  X's - today's single validation); they differ only on a mismatch, a co-organisation or an
-  institution, and then each governor answers for its own students, which is what B6 asks.
-- **Each slice has its own decision**: `association_calendar_event_validations(event_id,
-  governor_id | NULL, status, decided_by, decided_at, reason)`, unique per `(event_id, governor)`.
-  `VALIDATE_EVENTS` holders of that governor decide it (the second predicate of 2.3).
-- **The event appears in a space once that space's slice is validated.** Reader rule: a member of
-  the organiser or an accepted co-organiser (D21), OR one of their spaces is among the event's
-  spaces AND its slice is `validated`. Same rule for the anonymous selection, the `.ics` and a read
-  grant's spaces.
-- **Nothing is auto-validated** (user, 2026-09-14): every slice starts `pending`.
+- **An event's spaces** are the spaces of its ceiling - the union of the organiser's audience and each
+  ACCEPTED co-organiser's (section 5) - narrowed by its own rows if the organiser is an institution.
+- **A slice is the set of the event's spaces under one governor** (2.3); spaces with no governor form
+  the platform admin's slice. **The slices are DERIVED at read time** from the event's spaces and
+  `spaces."bdeAssociationId"`, never stored.
+- **Only the decisions are stored**: `association_calendar_event_decisions(event_id, governor_id |
+  NULL, verdict validated|rejected, decided_by, decided_at, reason)`, unique per `(event_id,
+  governor)`. **A slice with no decision row is pending.** So a partner accepting, an audience edit
+  or a space changing governor produces a pending slice by construction, with no copy to keep in
+  sync; and a decision whose governor no longer has a space in the event is inert.
+- **The event appears in a space once that space's governor has validated it.** Reader rule: a member
+  of the organiser or an accepted co-organiser (D21), OR one of their spaces is among the event's
+  spaces AND its governor's decision is `validated`. Same for the anonymous selection, the `.ics`, a
+  read grant's spaces.
+- **Nothing is auto-validated** (user, 2026-09-14).
+- The governor's queue: events with a space it governs and no decision of it. Under the correlated
+  case (an association under BDE X addressing X's spaces) there is ONE slice, X's: today's single
+  validation.
 
-### 4.2 How it fits the rest
+### 4.2 Changes after a decision (D4, "selon le changement")
+
+| Change | Effect |
+| --- | --- |
+| a DATE moves | every decision row is deleted: every slice back to pending (today's rule, `associations.service.ts:2563-2627`, per slice) |
+| the event's spaces change (an institution's narrowing edited, a partner joins or leaves, a partner's or the organiser's audience edited) | the decisions of governors whose set of spaces in the event CHANGED are deleted; a governor newly reached has none, so is pending; the others stand |
+| a space changes governor | the new governor has no decision: pending in that space, structurally |
+| title, description, poster, form | nothing |
+
+Each deletion of a decision is logged with its cause. The write that changes the spaces notifies
+the governors left pending (`notifyEventValidatorsOfProposal`, `associations.service.ts:2409`, per
+slice); a read-time-only change (a governor reassigned) is announced by the admin action that made it.
+
+### 4.3 The rest
 
 | Topic | Rule |
 | --- | --- |
-| Co-organisation (D39) | an acceptance widens the ceiling and opens a `pending` slice per NEW governor; decided slices are untouched. A co-organiser leaving deletes the slices left with no space, logged |
-| Republication (D38) | concerns posts: republishing a post announcing an event opens no slice |
-| Partly validated | the organiser's people see one status per slice ("Validé : X - En attente : Y - Refusé : Z, motif"); a reader sees the event only in validated slices, nothing about the others; by link, a 404 outside any validated slice and membership |
-| Summary `status` | kept, derived in the same transaction: `validated` if any slice is, `rejected` if all are, `pending` otherwise; no reader path decides on it |
-| Notifications | each new slice notifies ITS governor's validators (`notifyEventValidatorsOfProposal` per slice); the no-governor slice the platform admins; each decision the organiser's admins, naming the slice. A governor is never told of an event outside its spaces |
-| Edits after validation | question 4; recommended: a DATE move re-opens every slice (today's rule, 2563-2627, per slice), an audience change only the slices whose spaces changed, text changes nothing |
-| Declining, deleting | a governor DECLINES its slice with an optional reason and never deletes the event (B3); deletion stays with the organiser's people, its parent and the platform admin |
-| Breaks (`kind = 'break'`) | declared by a validator on its own spaces; one slice |
+| Partly validated | the organiser's and partners' people see one line per slice ("Validé : X - En attente : Y - Refusé : Z, motif"); a reader sees the event only where validated; by link, 404 outside any validated slice and membership |
+| Summary `status` | kept, recomputed in the same transaction: `validated` if any decision is, `rejected` if every slice is rejected, `pending` otherwise; no reader path reads it |
+| Declining, deleting | a governor DECLINES its slice; it never deletes the event (B3) |
+| Breaks (`kind = 'break'`) | declared by a governor's validator on its own spaces: one slice |
+| Existing events (owner's yes) | one decision row per governor the current ceiling reaches, copying the current status when it is `validated` or `rejected` (a pending event gets none): every reader sees exactly what they see today |
+| Cost | the agenda predicate gains a join on the decisions, keyed by `event_id`; `EXPLAIN` owed with WP-E |
 
-### 4.3 Existing events - a plan, owner's yes
+## 5. Partnerships - co-organised events (D5)
 
-No audience row (= the whole ceiling, today's reach) and one slice per governor that ceiling
-reaches, plus the no-governor slice, **each copying the event's current status**: on the day of the
-switch every reader sees exactly what they see today. A data migration: the owner's yes.
+### 5.1 How co-organisation works today, from the code
 
-### 4.4 Cost
+| Step | What the code does | Where |
+| --- | --- | --- |
+| Invite | the organiser names co-organisers on the event form (`coOwnerIds`), as a holder of `PROPOSE_EVENT` in the organiser; each name becomes a `coorganise` proposal | `CoorganisationService.sync`, `coorganisation/coorganisation.service.ts:154-210`; sender flag line 65 |
+| Who may be invited | ANY association row - association, list or institution: `resolveSender` checks only that the target exists and is not the organiser | 257-279 |
+| Cap | 3 co-organisers (4 entities), accepted + pending counted, refused not | `associations/co-organiser-cap.ts:13`; measured 2026-10-10: 9 co-organised events, the most on one is 1 accepted + 2 pending |
+| Accept / refuse | the invited entity's `POST_AS_ASSO` holders; acceptance inserts the `association_calendar_event_co_owners` row; a refusal is recorded and never re-asked; no expiry | acceptor flag line 66; `apply` 281-300 |
+| Audience | organiser's audience union each accepted co-organiser's; pending or refused add nothing | `eventVisibleToUserSql`, `reader-spaces.ts:637-641` |
+| Validation | the organiser's governing BDEs only; a partner's BDE has no say; **acceptance does not touch the status** (P13) | `mayValidateEvent`, `associations.service.ts:1846-1860` |
+| Edit | an accepted co-organiser's `PROPOSE_EVENT` holders edit everything, dates included (a date move demotes the event) | `assertMayWriteEvent` 1870-1900 -> `findCalendarEventForAssociation` 1382-1401 |
+| Co-organiser list | only the organiser side adds or removes; a co-organiser may only remove ITSELF (leave) | `sync`, line 190 |
+| Delete | **an accepted co-organiser may delete the whole event** (P14) - D39 as built lists "edit, poster, delete" | `deleteCalendarEvent`, 2770-2777 |
+| Leaving | a partner leaves or is removed: its row and its audience go; the event stays with its organiser | `end`, 214-250 |
+| Deleted event | an `AFTER DELETE` trigger removes its co-owner rows and proposals | migration 074 |
 
-The agenda predicate gains a join on the event's validations (and, for an institution, its audience
-rows), all keyed by `event_id`. `EXPLAIN` before/after on production-sized data is owed with WP-E.
+### 5.2 How it fits the per-slice validation
 
-## 5. Other simplifications considered
+- **Each partner accepts** (unchanged): no right, no reach before acceptance.
+- **The audience is the union**, and **the slices are cut per space governor**, whoever brought the
+  space in: a Gardanne association co-organising with a Saint-Etienne one puts the event in front of
+  each campus's governor for its own spaces. Closes P13: an acceptance adds spaces, the new governors
+  have no decision, so the event is pending there.
+- **A partner leaves**: its spaces go unless another member of the union still reaches them;
+  decisions of governors left with no space become inert; nothing else re-opens.
+- **A partner's audience changes**: the event's spaces follow at read time; governors whose set
+  changed are re-asked (4.2).
+- **Edits**: D4 applies per slice whoever edits; under the recommended rule of question 2, a partner
+  can no longer move the date or delete the event (closes P14).
+- **Partners of every type stay allowed** (an institution co-organising with an association is the
+  School-and-a-club case). A list co-organising is allowed today and nothing argues against it.
 
-- **Is "formation x campus" the right unit?** Yes, for reading and for governing spaces (A1, A3).
-  The `spaces` table stays; `openedAt` and the "OPEN spaces" wording go (WP-R5).
-- **Audience shape**: keep the rule rows (no predicate rewrite; the item audience reuses them).
-  A formation list per entity or one cell type shared with `read_grants` both cost a migration of
-  every predicate for no reader-visible gain.
-- **The review cohort** stays outside the model: it also seals messaging, search, calls and the
-  people directory, which spaces do not bound (52 call sites in 13 files today), and a fake space
-  would leak into every `CHECK` and picker
+### 5.3 Forbid partnerships? No.
+
+**Recommendation: keep them.** They are the ONLY way an event crosses from one governor's spaces to
+another's - republication carries posts, not events (D38) - so forbidding them would leave an
+inter-campus event no route at all, against G4's intent. What makes them risky today is P13 and P14,
+and both are fixed by the slices and by narrowing a partner's rights, not by forbidding the feature.
+The coordinator's prior (keep) is confirmed by the code.
+
+## 6. Associations, lists and institutions compared (D6)
+
+Built from the code (server and `frontend/src/lib/associations/`) and the wiki. **Differs** marks a
+cell that changes with the reform; **Disagree** marks code and wiki (or code comment) saying
+different things today.
+
+| # | Topic | Association - today | List - today | Institution - today | After the reform | Flag |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Who creates it | platform admin, or `MANAGE_ASSO` in any BDE (`associations.controller.ts:700-722`), on a governed campus | same | platform admin only (708-711) | same; the creating BDE becomes the parent | Differs (parent) |
+| 2 | Parent | none for governance | `parentAssociationId`, display only ("owning BDE", entity 187-189) | none | association, list: optional, a BDE (2.2); a BDE: never; institution: never | Differs |
+| 3 | Can govern a space | yes (`setBde`, `spaces.service.ts:167`) | no | no | association (BDE) or institution (2.3) | Differs |
+| 4 | Audience | default creator's campus; no `everyone` | same | no default; may be `everyone` | default = parent's spaces; institution unchanged | Differs |
+| 5 | Item audience | none (D38) | none | none | institution only may narrow (C1) | Differs |
+| 6 | Who governs (validate, manage, moderate) | any BDE its audience reaches (`bde.ts:35-41`) | same | same - a reaching BDE manages its members and may delete it (P8) | parent BDE, else platform admin; events per space governor | Differs |
+| 7 | Members managed by | own `MANAGE_MEMBERS`, governing BDEs, admin (`GlobalAdminOrAssociationRoleGuard` -> `mayAct`) | same | same in CODE; D20 and WP6e say "added nominatively by an admin" | association, list: own officers, parent BDE, admin; institution: **admin only** (G6) | Differs; **Disagree** (institution) |
+| 8 | Deleted by | admin, or `MANAGE_ASSO` in a governing BDE (controller 743-757; client `editSections.ts`, `delete: isGlobalAdmin \|\| isSuperAdmin`); the flag's own comment says it "does not include deleting an association" (`association-member.entity.ts:20-24`) | same | same (P8) | institution: admin only; association, list: question 3 | Differs; **Disagree** (comment vs code) |
+| 9 | Profile edited by | `MANAGE_MEMBERS` holders, governing BDEs, admin (`PATCH :id`, 770-771); quota admin only; cotisation fields need `MANAGE_PRODUCTS` | same | same | super tier = parent BDE; institution: own officers + admin | Differs (super tier) |
+| 10 | Posting as | `POST_AS_ASSO`; never through the super tier (`SUPER_ADMIN_EXCLUDED_FLAGS`) | same (since 2026-10-31) | same | unchanged | - |
+| 11 | Republishes others' posts | yes | **yes since 2026-10-31** (`posts/republication-sql.ts:7-11`); WP6e in profiles-and-access still says "a list still does not" | yes | unchanged | **Disagree** (wiki stale) |
+| 12 | Asks a person to republish their post (D38b) | yes | no | no (`republication-sql.ts:19`) | unchanged | - |
+| 13 | Its posts member-repostable (WP-F6) | yes, if it has a rule | **never** (`reader-spaces.ts:318-336`) | yes, if it has a rule | unchanged | - |
+| 14 | Events | `PROPOSE_EVENT`; validated by a governing BDE | same | same; with no rule, no validator (P9) | per space governor (section 4) | Differs |
+| 15 | Co-organises | yes, any type (`resolveSender`) | yes | yes | unchanged; partner rights per question 2 | Differs (rights) |
+| 16 | Lydia, payout, shop, vault | yes; `MANAGE_PAYOUT_ACCOUNT` never through the super tier | **yes in code** - no server or client type check (`editSections.ts:70-90`) - while the entity comment says lists are "associations minus the banking/shop/vault features" (`association.entity.ts:177-180`) | yes | question 4 | **Disagree** (comment vs code) |
+| 17 | Payment delegation | `paymentParentAssociationId`, any type, financial only | same | same | unchanged, kept apart from the governance parent (2.2) | - |
+| 18 | Bookings, forms, cotisation, partnerships | yes, by their flags; no type check | same | same | unchanged | - |
+| 19 | Moderation of its content | any BDE holding `MODERATE` (global) | same | same | parent BDE, else platform admin (2.4) | Differs |
+| 20 | Directory | `/associations` | `/lists` (campaign: `promo`, `name2`, `logoMediaId2`) | `/institutions` | unchanged | - |
+
+## 7. Other simplifications considered
+
+- **"formation x campus"** stays the unit for reading and for governing spaces (A1, A3); `openedAt`
+  and the "OPEN spaces" wording go (WP-R5).
+- **Audience shape**: keep the rule rows; the item audience reuses them.
+- **The review cohort** stays outside the model: it seals messaging, search, calls and the people
+  directory, which spaces do not bound (52 call sites in 13 files)
   ([review cohort](profiles-and-access.md#the-review-cohort---store-reviewers-in-a-world-of-their-own-2026-10-31)).
 - **Staff with no cursus**: `campusWideReaderCampus` is a decision (D34-D36), left as is.
 
-## 6. Target and path
+## 8. Target and path
 
-**Target.** Two panels. Audience: who sees, today's grid, a governor bounded to its spaces, the
-admin free. Dependencies: a tree in which every entity has at most one parent and every space at
-most one governor, set by the platform admin alone with a journal, the creating entity by default;
-the parent manages and moderates its children, the space governor validates event slices and
-moderates personal content of its students, the platform admin governs whatever has no parent.
-Defaults correlate the axes, panels show mismatches, nothing couples them. Institutions may narrow
-an item; events are validated slice by slice. Moderators hide and delete, never edit.
+**Target.** Audience panel: who sees; a parent bounded to its spaces, the admin free. Dependencies
+panel: associations and lists under at most one BDE, BDEs and institutions under nothing, two
+levels enforced by triggers; spaces under at most one governor, a BDE or an institution; all set by
+the platform admin with a journal. The parent manages and moderates its children; space governors
+validate event slices and moderate their students' personal content; the platform admin governs
+the rest. Institutions may narrow an item. Partnerships stay, validated per slice. Moderators hide
+and delete, never edit.
 
 | WP | What | Ships alone because | Data change |
 | --- | --- | --- | --- |
-| **WP-R0** | Institutions excluded from the super-admin's member management (G6); the moderator's EDIT removed (G3) | two predicates; closes P7, P8 | none |
-| **WP-R1** | Audience bounds per SPACE (`GOVERNED_SPACES_SQL`, read/write/create) | server checks; closes P3 now | none |
-| **WP-D1** | The dependency axis: `associations.parent_id` (cycle refused), a space governor may be an institution, `dependency_journal`; the Dependencies panel (tree, mismatches) beside the Audience panel; the default parent and the parent-derived default audience at creation; `setBde` and `setAudiences` stop writing each other's axis; nothing reads `parent_id` for governance yet | additive; the owner then sets parents by hand; closes P2, P4, P10 | **schema: owner's yes** (no back-fill) |
-| **WP-D2** | Governance switched to the dependency axis: `holdsParentFlagOverSql` for `MANAGE_ASSO`, no parent = platform admin; the governor-bounded audience writes of 2.5 | ships when the owner says the parents are set; closes P1, P5, P9 | none |
-| **WP-R4** | `MODERATE` scoped by 2.7 | needs WP-D2; closes P6 | none |
-| **WP-I** | Institution item audience (section 3) | additive, institutions only; closes P12 | **two tables: owner's yes** |
-| **WP-E** | Events per slice (section 4): the validations table, the space-governor predicate, both agendas and the `.ics`, per-slice notifications, edit and decline rules, the per-slice view, the derived status, `EXPLAIN` | needs WP-D1 (space governors) and, for institutions, WP-I; closes P11 | **one table + the event migration of 4.3: owner's yes** |
-| **WP-R5** | Governor presets; `openedAt` and "OPEN spaces" removed | cosmetics | dropping `openedAt`: owner's yes |
+| **WP-R0** | Institutions out of the super-admin tier: members, delete (G6, P8); the moderator's EDIT removed (G3, P7) | predicates only | none |
+| **WP-R1** | Audience bounds per SPACE (`GOVERNED_SPACES_SQL`) | server checks; closes P3 | none |
+| **WP-D1** | `parentAssociationId` generalised to associations; the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
+| **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes | ships when the owner says the parents are set; closes P1, P5, P9 | none |
+| **WP-R4** | `MODERATE` scoped (2.4) | needs WP-D2; closes P6 | none |
+| **WP-I** | Institution item audience (section 3) | additive; closes P12 | **two tables: owner's yes** |
+| **WP-E** | Events per slice (section 4) and partnerships under it (section 5): the decisions table, the space-governor predicate, both agendas and the `.ics`, per-slice notifications, D4's re-opening, the partner rights of question 2, `EXPLAIN` | needs WP-D1 (space governors) and, for institutions, WP-I; closes P11, P13, P14 | **one table + the event migration of 4.3: owner's yes** |
+| **WP-R5** | Parent presets; `openedAt` and "OPEN spaces" removed; the stale WP6e line on lists and the two code comments of section 6 corrected | cosmetics | dropping `openedAt`: owner's yes |
 
 Each WP changes its tests (`bde.integration.spec.ts`, `spaces.service.spec.ts`,
 `associations.service.create-default-audience.spec.ts`,
 `associations.service.never-auto-validates.spec.ts`,
-`associations.service.revalidate-on-date-change.spec.ts`, the agenda and moderation specs) and
-updates [profiles-and-access](profiles-and-access.md) (D22, D23, D33, D39 amended) and
-[calendar](frontend/modules/calendar.md).
+`associations.service.revalidate-on-date-change.spec.ts`, `coorganisation.integration.spec.ts`, the
+agenda and moderation specs) and updates [profiles-and-access](profiles-and-access.md) (D20, D22,
+D23, D33, D39 amended) and [calendar](frontend/modules/calendar.md).
 
-## 7. Questions for the owner (fourth round)
+## 9. Questions for the owner (fifth round)
 
-1. **Une association ou une liste doit-elle rester dans les espaces de l'entité dont elle dépend ?**
-   - (Recommandé) Oui quand c'est son BDE (ou son institution) qui règle son audience : il ne peut choisir que parmi ses propres espaces. L'admin plateforme, lui, peut tout régler ; un écart est alors signalé dans les deux panneaux, sans être bloqué. Les audiences plus larges qui existent déjà restent.
-   - Non, ce n'est qu'un réglage par défaut avec un avertissement, pour tout le monde (un BDE pourrait alors viser les étudiants d'un autre BDE).
-   - Oui pour tout le monde, admin plateforme compris, sans exception.
-2. **Le pouvoir d'une entité parente s'arrête-t-il à ses enfants directs ?**
-   - (Recommandé) Oui : l'École gère les BDE qui dépendent d'elle, mais pas les associations qui dépendent de ces BDE ; chaque entité a un seul responsable, et l'admin plateforme reste au-dessus de tout.
-   - Non : une entité gère toute sa descendance (l'École gère aussi les associations des BDE qui dépendent d'elle).
-3. **Une formation qui n'a pas de BDE : qui valide les événements qui la visent ?**
-   - (Recommandé) L'admin plateforme par défaut ; l'admin peut aussi la placer sous une institution (l'École, par exemple), qui valide alors pour elle.
-   - Personne : l'événement n'y apparaît jamais.
-   - Personne : il y apparaît sans validation (ce qui contredit la règle « jamais validé automatiquement »).
-4. **Quand un événement déjà validé est modifié, qui doit le revalider ?**
-   - (Recommandé) Changement de date : tous les responsables revalident. Changement d'audience : seuls ceux dont les formations changent. Titre, description, affiche : personne.
-   - Toute modification remet l'événement en attente pour tous.
-   - Seul le changement de date compte, comme aujourd'hui.
-
-Settled by the answers, so not asked: the grid stays as the Audience panel (C2); item narrowing is
-for institutions only (C1); a governor that does not want an event in its spaces declines its slice
-and cannot delete the event (B3, B6); a republication of a narrowed post reaches the republisher's
-own readers (G4).
+1. **Faut-il interdire les partenariats entre associations, listes et institutions sur un événement ?**
+   - (Recommandé) Non, on les garde : c'est le seul moyen pour un événement de passer d'un campus ou d'un BDE à l'autre. Chaque partenaire accepte, l'audience est l'union des partenaires, et chaque responsable (BDE ou institution) valide pour ses propres formations ; l'arrivée d'un partenaire remet l'événement en attente seulement chez les nouveaux responsables.
+   - Oui, on les interdit entre campus différents seulement.
+   - Oui, on les interdit complètement.
+2. **Que peut faire un partenaire (pas l'organisateur) sur un événement co-organisé ?**
+   - (Recommandé) Modifier le texte et l'affiche, et se retirer ; seul l'organisateur change la date, l'audience et la liste des partenaires, ou supprime l'événement.
+   - Comme aujourd'hui : tout, y compris changer la date et supprimer l'événement entier.
+   - Seulement se retirer.
+3. **Un BDE peut-il supprimer une association ou une liste qui dépend de lui ?**
+   - (Recommandé) Non : il peut l'archiver, mais la suppression (définitive) reste à l'admin plateforme.
+   - Oui, comme aujourd'hui.
+4. **Les listes ont-elles droit aux paiements Lydia, à la boutique et au coffre-fort de documents ?**
+   - (Recommandé) Oui, comme aujourd'hui dans l'application : on ne retire rien, et on corrige seulement la note du code qui dit le contraire.
+   - Non : on les retire aux listes, comme le prévoyait cette note.

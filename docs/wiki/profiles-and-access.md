@@ -9,7 +9,7 @@ Alumni SSO account), so who a person is, and what that opens, has to be modelled
 inferred from one self-declared string.
 
 > **Proposed reform (2026-11-02, partly decided):** audience and dependencies as two independent axes -
-> one parent per association, list and institution, one governor per space - amending D22, D23,
+> an association or list under at most one BDE, one governor per space - amending D20, D22, D23,
 > D33 and D39. See
 > [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
 
