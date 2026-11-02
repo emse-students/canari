@@ -2,6 +2,8 @@
   import { CalendarClock } from '@lucide/svelte';
   import type { MyBooking } from '$lib/bookings/api';
   import { formatBookingRange } from '$lib/bookings/grid';
+  import { bookingOthers } from '$lib/bookings/others';
+  import BookingFaces from './BookingFaces.svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -41,10 +43,8 @@
                 booking.space.timeZone
               )}
             </p>
-            {#if booking.participantNames?.length}
-              <p class="text-text-muted truncate text-xs">
-                {m.bookings_card_with({ names: booking.participantNames.join(', ') })}
-              </p>
+            {#if bookingOthers(booking).length}
+              <BookingFaces people={bookingOthers(booking)} />
             {:else if booking.resource.name !== booking.space.name}
               <p class="text-text-muted truncate text-xs">{booking.resource.name}</p>
             {/if}

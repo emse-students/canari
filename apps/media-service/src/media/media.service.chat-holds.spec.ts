@@ -47,6 +47,7 @@ type Internals = {
   logger: Record<'log' | 'debug' | 'warn' | 'error', (msg: string) => void>;
   persistMetadata: () => Promise<void>;
   purgeExpiredMedia: () => Promise<void>;
+  purgeOrphanedChunks: () => Promise<void>;
   sweepIntervalMs: number;
   uploadLocks: Map<string, Promise<void>>;
 };
@@ -88,6 +89,10 @@ function serviceWith(items: Record<string, Entry>, sizes: Record<string, number>
   internals.logger = { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} };
   internals.uploadLocks = new Map();
   internals.persistMetadata = () => Promise.resolve();
+  // The sweep runs under a mocked FUTURE `Date.now()`, at which every file in the process-wide
+  // `chunks_temp` looks older than 24 h: the real orphan purge would delete the live staged
+  // uploads of specs running in parallel workers (cwd is shared). Not under test here.
+  internals.purgeOrphanedChunks = () => Promise.resolve();
   internals.sweepIntervalMs = 60_000;
   return { service, deleted, sweep: () => internals.purgeExpiredMedia() };
 }

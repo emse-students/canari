@@ -10,6 +10,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import PostContent from './PostContent.svelte';
+import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
+
+useResizeObserverStub();
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -35,6 +38,8 @@ async function mountPost(markdown: string) {
   mounted.push(() => void unmount(app));
   flushSync();
   await tick();
+  // The first overflow read is answered by the observer's first callback (`watchClampOverflow`).
+  fireResize();
   flushSync();
   return target;
 }

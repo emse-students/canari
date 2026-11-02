@@ -141,6 +141,10 @@
     pinned?: boolean;
     /** Called to toggle this message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
+    /** When this device met this reel message's `410` (`ChatMessage.mediaPurgedAt`), RC-6. */
+    reelPurgedAt?: number;
+    /** The reel viewer met this message's `410` at `atMs`: record it on the local row (RC-6). */
+    onReelPurged?: (messageId: string, atMs: number) => void;
     /**
      * Called when the user chooses "edit" on their own text message, with its current text. The
      * edit itself happens in the conversation's composer (user, 2026-10-02: *"modification des
@@ -199,6 +203,8 @@
     onBeginEdit,
     pinned = false,
     onTogglePin,
+    reelPurgedAt,
+    onReelPurged,
     currentUserId = '',
     authToken = '',
     shouldAnimate = false,
@@ -1020,6 +1026,8 @@
                 sentAt={timestamp}
                 {messageId}
                 {authToken}
+                {reelPurgedAt}
+                onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
                 onNear={() => (isNearViewport = true)}
                 {upload}
                 uploadFailed={uploadFailed || retiredForGroup}

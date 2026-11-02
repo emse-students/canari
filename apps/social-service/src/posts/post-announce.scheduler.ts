@@ -5,7 +5,10 @@ import { Repository, IsNull, LessThanOrEqual } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { previewOf } from '../push/push-content';
-import { announceRecipientsSql } from '../spaces/reader-spaces';
+import {
+  ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+  announceRecipientsSql,
+} from '../spaces/reader-spaces';
 
 /**
  * HOW MANY UNANNOUNCED POSTS ONE TICK TAKES.
@@ -188,9 +191,16 @@ export class PostAnnounceScheduler {
         return null;
       }
       if (!post.associationId && post.anonymous) return [];
-      const rows: unknown = await manager.query(announceRecipientsSql(!post.associationId), [
-        post.id,
-      ]);
+      // An ENTITY post: the recipients and the told-once ledger rows of the readers it reaches
+      // through a member repost, in ONE statement - one snapshot, so a concurrent take-back cannot
+      // leave a reader told here and missing from the ledger the repost path reads. A personal
+      // post's followers see it first-hand: no ledger share, so only the recipients are asked.
+      const entity = !!post.associationId;
+      const rows: unknown = await manager.query(
+        entity ? ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL : announceRecipientsSql(true),
+        [post.id]
+      );
+      // Logged by the caller, per post, with its kind and count.
       return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
     });
   }
