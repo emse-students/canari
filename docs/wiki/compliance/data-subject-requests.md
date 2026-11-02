@@ -75,13 +75,20 @@ the admin interface - the person then cannot sign in to any service.
 
 `users` (`id_user`), `user_favorites` (`user_id`), `photo_access_permissions` (`owner_id`,
 `authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). Option C is
-deployed (MiGallery `v2.18.0`, seeded 2026-11-01, matching rules refined up to `v2.22.0`; the A8 cutover ran on 2026-11-01, so Immich holds no face, person or embedding any more and `users.photos_id` points at nothing). A member's face data is `face_references`, `face_negatives`, the ledger tables, `face_matches` and `face_consents` (`user_id`), plus their crops under
+deployed (MiGallery `v2.18.0`, seeded 2026-11-01, matching rules refined up to `v2.22.0`; the A8
+cutover ran on 2026-11-01, so Immich holds no face, person or embedding any more and
+`users.photos_id` points at nothing). A member's face data is `face_references`, `face_negatives`,
+the ledger tables, `face_matches` and `face_consents` (`user_id`), plus their crops under
 `data/cache/faces/members/`; withdrawal in the settings, or the account's deletion, erases all of it
-(a withdrawal keeps the closed consent row, which goes with the account). The face store (`data/faces.db`) holds one template per face of every
+(a withdrawal keeps the closed consent row, which goes with the account). The face store
+(`data/faces.db`) holds one template per face of every
 photograph and names no one: it goes with its photograph (a photograph in Immich's trash keeps its
-templates until the trash is emptied). An encrypted copy of what lot A8 deleted from Immich is kept until 2026-12-01 and Immich's dumps from before it
+templates until the trash is emptied). An encrypted copy of what lot A8 deleted from Immich is kept
+until 2026-12-01 and Immich's dumps from before it
 rotate out by 2026-11-15: a request touching that old data goes to the owner. Mechanism:
-[MiGallery face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md), [dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
+[MiGallery
+face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md),
+[dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
 
 ### Sky (SQLite)
 
