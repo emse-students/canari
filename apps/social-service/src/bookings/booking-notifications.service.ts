@@ -14,6 +14,7 @@ import { Booking } from './entities/booking.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingSpace } from './entities/booking-space.entity';
+import type { BookingEditChange } from './bookings.service';
 
 /**
  * THE SWITCH OF THE BOOKINGS NOTICES (WP-N), mirrored by `BOOKING_NOTIFICATIONS_LIVE` in
@@ -35,6 +36,8 @@ export const BOOKING_NOTICE_TYPES = [
   'booking_withdrawn',
   'booking_added',
   'booking_reminder',
+  'booking_changed',
+  'booking_removed',
 ] as const;
 export type BookingNoticeType = (typeof BOOKING_NOTICE_TYPES)[number];
 
@@ -151,6 +154,9 @@ export interface DeletedBookingNotice {
  * - a WITHDRAWAL (Q-R2): the holder.
  * - a BOOKING: every participant added, and the holder of a booking made on their behalf (D20).
  * - a SPACE DELETED (Q-R4): the people of its COMING live bookings, as a cancellation.
+ * - an EDIT (owner, 2026-11-02): the people ADDED (`booking_added`), the people REMOVED
+ *   (`booking_removed`), and - when the time changed - those who STAY (`booking_changed`), each
+ *   with the booking's NEW start in `meta`.
  * - the organiser is never told of a booking or a cancellation (Q-R7).
  */
 @Injectable()
@@ -224,6 +230,46 @@ export class BookingNotificationsService {
         await this.present(ctx.space, actorId, people),
         ctx.meta
       );
+    });
+  }
+
+  /**
+   * A booking was EDITED by `actorId` (owner, 2026-11-02): those added are told as of a booking,
+   * those removed that they are no longer on it, and those who stay - the holder included - that
+   * its time changed. Every notice carries the NEW start (`meta.startsAt`). Each group in its own
+   * `try`: a failed group does not silence the others.
+   */
+  async edited(bookingId: string, actorId: string, change: BookingEditChange): Promise<void> {
+    await this.guard('edited', bookingId.slice(0, 8), async () => {
+      const ctx = await this.context(bookingId);
+      if (!ctx) return;
+      const people = [ctx.booking.holderId, ...ctx.people];
+      // The removed were among its people until now: an actor they booked with is named as such.
+      const presented = await this.present(ctx.space, actorId, [...people, ...change.removed]);
+      const stayed = people.filter((p) => !change.added.includes(p));
+      const groups: [BookingNoticeType, string[]][] = [
+        ['booking_added', change.added],
+        ['booking_removed', change.removed],
+        ['booking_changed', change.timeChanged ? stayed : []],
+      ];
+      for (const [type, to] of groups) {
+        if (to.length === 0) continue;
+        try {
+          await this.send(
+            type,
+            ctx.booking.id,
+            to,
+            actorId,
+            { row: ctx.place, push: ctx.place },
+            presented,
+            ctx.meta
+          );
+        } catch (e) {
+          this.logger.error(
+            `[BOOKINGS_NOTIFY] edited: ${type} booking=${bookingId.slice(0, 8)} not told: ${String(e)}`
+          );
+        }
+      }
     });
   }
 

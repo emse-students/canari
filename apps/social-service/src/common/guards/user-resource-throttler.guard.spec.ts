@@ -62,6 +62,16 @@ describe('UserResourceThrottlerGuard', () => {
     expect(two).toBe('user-a:co-2');
   });
 
+  it('gives one user a bucket per booking they edit (`:bookingId`)', async () => {
+    // The control: with `:bookingId` unread, every edit of one account shared ONE bucket
+    // ('user-a:'), so an organiser editing a column of bookings was starved by the tenth.
+    const edit = (userId: string, bookingId: string) =>
+      guard.getTracker({ ...req(userId, ''), params: { bookingId } });
+    expect(await edit('user-a', 'bk-1')).toBe('user-a:bk-1');
+    expect(await edit('user-a', 'bk-2')).toBe('user-a:bk-2');
+    expect(await edit('user-b', 'bk-1')).toBe('user-b:bk-1');
+  });
+
   it('falls to the socket, at ERROR, when no user was named', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     expect(await guard.getTracker(req(undefined, 'sub-1'))).toBe('172.25.0.1:sub-1');
