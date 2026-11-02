@@ -26,6 +26,8 @@
       view.phase === 'retrying' ||
       view.phase === 'blocked' ||
       view.phase === 'failed' ||
+      view.phase === 'refused' ||
+      view.phase === 'unanswered' ||
       view.phase === 'error'
   );
 </script>
