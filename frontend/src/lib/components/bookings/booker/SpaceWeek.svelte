@@ -303,7 +303,9 @@
       lastRefusedStart
     );
     if (!choices) return undefined;
-    const own = mine.get(booking.id);
+    // Read from the booking itself, never from the reader's own list: that list is capped
+    // (`MINE_LIMIT`), and a booking past it would make its holder look like a participant (review
+    // of #2945). `holderId` is always sent to whoever may edit - its holder, or a manager.
     const me = currentUserId();
     return () => {
       Log.d('BOOKINGS', `edit sheet opened booking=${booking.id.slice(0, 8)}`);
@@ -314,7 +316,7 @@
         choices,
         participants: editPeople(
           booking,
-          me ? { id: me, isParticipant: booking.mine && !(own?.holder ?? false) } : null,
+          me ? { id: me, isParticipant: booking.mine && booking.holderId !== me } : null,
           m.bookings_edit_you()
         ),
       };

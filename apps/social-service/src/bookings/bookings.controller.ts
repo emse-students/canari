@@ -42,8 +42,12 @@ export const actorOf = (userId: string, globalAdmin: string | undefined): Actor 
 });
 
 /**
- * How many edits one account may send in a minute. Each one may notify every person it adds,
- * removes or moves, so a loop - a stuck tab, a script - must not be able to drive it.
+ * How many edits one account may send to ONE booking in a minute (`UserResourceThrottlerGuard`,
+ * keyed on the account AND `:bookingId`). Each one may notify every person it adds, removes or
+ * moves, so a loop - a stuck tab, a script - must not be able to drive it; an organiser editing a
+ * column of bookings in a row is not throttled by their own earlier edits. A flood spread over
+ * many bookings reaches a person only through bookings the actor holds or manages, and D21's block
+ * stops it at the next edit (review of #2945).
  */
 export const BOOKING_EDITS_PER_MINUTE = 10;
 

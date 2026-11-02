@@ -91,6 +91,28 @@ describe('editChoices', () => {
     expect(choices.starts.map((u) => u.startMs)).toEqual([at(2), at(4), at(5), at(6), at(7)]);
   });
 
+  it('offers a later start inside its own range despite the window, as giving back only', () => {
+    // 09:00-10:00 at 08:45: the 60-minute notice refuses 09:30, yet a start there only gives back
+    // (review of #2945) - offered, and running no further than the booking's own end.
+    const own = view('mine', 2, 2);
+    const late = Date.parse(`${DAY}T08:45:00Z`);
+    const strict = { ...space, minNoticeMinutes: 60 } as BookerSpace;
+    const choices = editChoices(units({ 2: own, 3: own }), own, strict, late, null)!;
+    expect(choices.starts.map((u) => u.startMs)).toEqual([
+      at(2),
+      at(3),
+      at(4),
+      at(5),
+      at(6),
+      at(7),
+    ]);
+    const later = choices.starts.find((u) => u.startMs === at(3))!;
+    expect(choices.runOf(later).map((u) => u.startMs)).toEqual([at(3)]);
+    // Its own start keeps any length: the window never reads a start that did not move.
+    const ownRun = choices.runOf(choices.starts[choices.startIndex]);
+    expect(ownRun.map((u) => u.startMs)).toEqual([at(2), at(3), at(4), at(5)]);
+  });
+
   it("offers only the booking's own day", () => {
     const own = view('mine', 2);
     const nextDay = units({}, '2026-11-03');

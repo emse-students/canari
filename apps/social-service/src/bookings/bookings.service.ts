@@ -920,13 +920,19 @@ export class BookingsService {
    * two copies of the rules). Run INSIDE the caller's transaction, after `lockResource`: every
    * setting it reads is the one the space and resource locks hold. In this order, the first that
    * fails answering:
-   * - D4 the people ceiling (`too-many-people`), holder included;
+   * - D4 the people ceiling (`too-many-people`), holder included - unless `onlyReduces`;
    * - when `rangeChanged`: the shape (D3: `rangeLengthRefusal` from the settings alone, then
-   *   `checkRangeShape` against the availability), the window (D26), a block over the range;
+   *   `checkRangeShape` against the availability), the window (D26) when `judgeWindow`, a block
+   *   over the range;
    * - every account of `mustExist` exists (`unknown-account`) - the names returned are snapshots;
    * - D21: no block between `blockSources` and a NEWCOMER (`participant-blocked`);
    * - D17: each person of `quotaPersons` against their OTHER live bookings of the space, the one
    *   `replacing` excepted - so an edit counts its booking as REPLACED, never as added.
+   *
+   * `onlyReduces` (an edit that only shrinks its range inside the old one and/or only removes
+   * people, review of #2945): such an edit asks for LESS than the booking already holds, so a
+   * setting tightened since (`maxPeople`, a quota, the window) never refuses it - the caller then
+   * also passes no `quotaPersons` and `judgeWindow: false`.
    *
    * The overlap with another booking is NOT judged here: the exclusion constraint is its last word
    * (`23P01`), at the write, under the same locks. Answers a typed refusal rather than throwing it,
@@ -939,6 +945,8 @@ export class BookingsService {
       resource: BookingResource;
       range: Range;
       rangeChanged: boolean;
+      judgeWindow: boolean;
+      onlyReduces: boolean;
       holderId: string;
       participantIds: string[];
       newcomers: string[];
@@ -960,7 +968,7 @@ export class BookingsService {
       return { refusal: { family, code, status, ...(extra ? { extra } : {}) } };
     };
     const people = [input.holderId, ...input.participantIds];
-    if (space.maxPeople !== null && people.length > space.maxPeople) {
+    if (!input.onlyReduces && space.maxPeople !== null && people.length > space.maxPeople) {
       return refuse('outside-rules', 'too-many-people', 400, { maxPeople: space.maxPeople });
     }
 
@@ -990,7 +998,7 @@ export class BookingsService {
       );
       if (shape) return refuse('outside-rules', shape, 400);
 
-      const window = checkBookingWindow(space, range, nowMs);
+      const window = input.judgeWindow ? checkBookingWindow(space, range, nowMs) : null;
       if (window) return refuse('outside-rules', window, 409);
 
       const blocked: unknown[] = await m.query(
@@ -1076,6 +1084,8 @@ export class BookingsService {
           resource,
           range,
           rangeChanged: true,
+          judgeWindow: true,
+          onlyReduces: false,
           holderId,
           participantIds,
           newcomers: participantIds,
@@ -1212,8 +1222,14 @@ export class BookingsService {
    *
    * WHO: exactly who may `cancel` - its holder, or whoever manages the space (a global admin
    * included); anyone else is refused `BOOKING_EDIT_FORBIDDEN` before anything of the booking's
-   * state is said. A manager editing someone else's booking is exempt from the quotas, as when
-   * booking on their behalf (D17, D20).
+   * state is said, and before any lock is taken. A holder who does not manage the space is also
+   * asked the campus and the audience, as when booking (`assertMayUse`, 'write'). A manager editing
+   * someone else's booking is exempt from the quotas, as when booking on their behalf (D17, D20).
+   *
+   * LESS IS NEVER REFUSED: an edit whose range sits inside the old one and that adds nobody skips
+   * the quotas, the people ceiling and the window - a setting tightened since cannot forbid giving
+   * back. The window (D26) reads the start alone, so it is judged only when the start moves out of
+   * the old range.
    *
    * ALL OR NOTHING, AND THE ORIGINAL IS NEVER RELEASED: one transaction takes the space, the
    * resource and then the booking row (`FOR UPDATE`, the order every colliding write takes), runs
@@ -1229,10 +1245,11 @@ export class BookingsService {
    * account's tombstone is never touched. A request that changes nothing changes nothing and tells
    * nobody (a retry after a lost answer).
    *
-   * Reminders: when the time changes, every person still on the booking is re-armed as if they had
+   * Reminders: when the START moves, every person still on the booking is re-armed as if they had
    * chosen their delay now (`reminderSentAt` cleared, `reminderSetAt` = now): a reminder already
    * sent for the old time is owed again for the new one, and a new start already inside the delay
-   * gets none (Q-R6). Each keeps their own delay; a newcomer starts at the space's default, as at
+   * gets none (Q-R6). An end-only edit re-arms nothing: a reminder due and not yet claimed is
+   * still sent. Each keeps their own delay; a newcomer starts at the space's default, as at
    * booking time. The `.ics` is read live from the row, so "Ajouter a mon calendrier" gives the new
    * time - an entry a calendar already imported is replaced by re-adding it (same UID).
    *
@@ -1243,13 +1260,26 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] edit booking=${bookingId}`);
     const range = this.parseRange(dto.startsAt, dto.endsAt);
     const participantIds = [...new Set(dto.participantIds.map((p) => p.trim().toLowerCase()))];
-    // Where the booking is, read before the locks: they are taken space first, then resource.
-    const [place]: { resourceId: string; spaceId: string }[] = await this.bookings.manager.query(
-      `SELECT b."resourceId", r."spaceId" FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
-        WHERE b.id = $1`,
-      [bookingId]
-    );
+    // Where the booking is and whose it is, read before the locks: they are taken space first,
+    // then resource, and the RIGHTS are judged before any of them (as `book` does) - `mayManage`
+    // may ask the associations, which a held lock must not wait on.
+    const [place]: { resourceId: string; spaceId: string; holderId: string }[] =
+      await this.bookings.manager.query(
+        `SELECT b."resourceId", r."spaceId", b."holderId" FROM bookings b
+           JOIN booking_resources r ON r.id = b."resourceId" WHERE b.id = $1`,
+        [bookingId]
+      );
     if (!place) throw new NotFoundException({ code: 'booking-not-found' });
+    const before = await this.loadSpace(place.spaceId);
+    const manages = await this.mayManage(before, actor);
+    if (place.holderId !== actor.userId && !manages) {
+      this.logger.log(`[BOOKINGS] edit refused: not the holder nor a manager`);
+      throw new ForbiddenException({ code: BOOKING_EDIT_FORBIDDEN, reason: 'not-yours' });
+    }
+    // A holder editing their own booking WRITES to the space, as when booking: the campus and the
+    // audience are asked again (review of #2945) - a holder the space no longer admits may still
+    // cancel, never move or grow their booking.
+    if (!manages) await this.assertMayUse(before, actor, false, 'write');
 
     try {
       const outcome = await this.bookings.manager.transaction(async (m) => {
@@ -1260,9 +1290,10 @@ export class BookingsService {
         );
         // Deleted between the two reads (its space deleted, an account erased): as if never there.
         if (!booking) throw new NotFoundException({ code: 'booking-not-found' });
+        // The holder never changes, so the rights judged above still hold; the row says so again.
         const isHolder = booking.holderId === actor.userId;
-        if (!isHolder && !(await this.mayManage(space, actor))) {
-          this.logger.log(`[BOOKINGS] edit refused: not the holder nor a manager`);
+        if (!isHolder && !manages) {
+          this.logger.error(`[BOOKINGS] edit refused: holder changed under the lock`);
           throw new ForbiddenException({ code: BOOKING_EDIT_FORBIDDEN, reason: 'not-yours' });
         }
         if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
@@ -1290,33 +1321,43 @@ export class BookingsService {
             WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL AND "userId" <> $2 FOR UPDATE`,
           [bookingId, DELETED_ACCOUNT]
         );
-        const before = new Set(current.map((p) => p.userId));
-        const added = participantIds.filter((p) => !before.has(p));
-        const removed = [...before].filter((p) => !participantIds.includes(p));
-        const timeChanged = range.startMs !== oldRange.startMs || range.endMs !== oldRange.endMs;
+        const present = new Set(current.map((p) => p.userId));
+        const added = participantIds.filter((p) => !present.has(p));
+        const removed = [...present].filter((p) => !participantIds.includes(p));
+        const startMoved = range.startMs !== oldRange.startMs;
+        const timeChanged = startMoved || range.endMs !== oldRange.endMs;
         if (!timeChanged && added.length === 0 && removed.length === 0) {
           this.logger.debug(`[BOOKINGS] edit changes nothing booking=${bookingId.slice(0, 8)}`);
           return null;
         }
+        // An edit that asks for LESS than the booking holds - its range inside the old one, nobody
+        // added - is never refused by a setting tightened since (review of #2945).
+        const inside = range.startMs >= oldRange.startMs && range.endMs <= oldRange.endMs;
+        const onlyReduces = inside && added.length === 0;
 
         const verdict = await this.bookingRuleVerdict(m, {
           space,
           resource,
           range,
           rangeChanged: timeChanged,
+          // The window (D26) reads the START alone: judged only when it moves outside the old
+          // range - a later start inside it is further from now, never closer.
+          judgeWindow: startMoved && !inside,
+          onlyReduces,
           holderId: booking.holderId,
           participantIds,
           newcomers: added,
           mustExist: added,
           blockSources: isHolder ? [actor.userId] : [actor.userId, booking.holderId],
-          // A manager editing someone else's booking is exempt (D17, D20). Otherwise a NEWCOMER
-          // always counts; the people already on it only when the time changes - the same
-          // range replacing itself costs nobody anything.
-          quotaPersons: isHolder
-            ? timeChanged
-              ? [booking.holderId, ...participantIds]
-              : added
-            : [],
+          // A manager editing someone else's booking is exempt (D17, D20), and so is an edit that
+          // only reduces. Otherwise a NEWCOMER always counts; the people already on it only when
+          // the time changes - the same range replacing itself costs nobody anything.
+          quotaPersons:
+            !isHolder || onlyReduces
+              ? []
+              : timeChanged
+                ? [booking.holderId, ...participantIds]
+                : added,
           replacing: bookingId,
           nowMs,
         });
@@ -1331,11 +1372,18 @@ export class BookingsService {
         if (timeChanged) {
           // In place: the exclusion constraint judges the new range against every OTHER live
           // booking here, and a 23P01 rolls everything back to the old range.
+          await m.query(`UPDATE bookings SET "startsAt" = $2, "endsAt" = $3 WHERE id = $1`, [
+            bookingId,
+            new Date(range.startMs),
+            new Date(range.endMs),
+          ]);
+        }
+        if (startMoved) {
+          // The reminders read the START alone (Q-R6): re-armed only when it moves. An end-only
+          // edit leaves them be, so a reminder due and not yet claimed is still sent.
           await m.query(
-            `UPDATE bookings SET "startsAt" = $2, "endsAt" = $3,
-                    "reminderSetAt" = $4, "reminderSentAt" = NULL
-              WHERE id = $1`,
-            [bookingId, new Date(range.startMs), new Date(range.endMs), at]
+            `UPDATE bookings SET "reminderSetAt" = $2, "reminderSentAt" = NULL WHERE id = $1`,
+            [bookingId, at]
           );
           await m.query(
             `UPDATE booking_participants SET "reminderSetAt" = $2, "reminderSentAt" = NULL

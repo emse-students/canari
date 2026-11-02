@@ -44,9 +44,12 @@ export function unitsFreedFor(units: readonly SlotUnit[], bookingId: string): Sl
  * null when that read does not hold the booking's own start (the week moved, the rules changed):
  * the edit is then not offered, and the line says why.
  *
- * A start is offered as a booking's would be (`isOfferedStart`), on the booking's local day; its
- * CURRENT start is offered whatever the window says now, since keeping the time while changing the
- * people is not a new start (the server judges the window only when the range changes).
+ * A start is offered as a booking's would be (`isOfferedStart`), on the booking's local day - and,
+ * whatever the window says now, every coming start INSIDE the booking's own range, its current one
+ * included: the server judges the window (D26, which reads the start alone) only when the start
+ * moves, and never on a range inside the old one (review of #2945). A MOVED start the window would
+ * refuse runs no further than the booking's own end, so the sheet never names a range the server
+ * would refuse for the window.
  */
 export function editChoices(
   units: readonly SlotUnit[],
@@ -62,11 +65,13 @@ export function editChoices(
   const endMs = Date.parse(booking.endsAt);
   const day = localDate(startMs, space.timeZone);
   const freed = unitsFreedFor(units, booking.id);
+  const inside = (u: SlotUnit) => u.startMs >= startMs && u.startMs < endMs && u.startMs > nowMs;
+  const offered = (u: SlotUnit) => isOfferedStart(space, u, nowMs, lastRefusedStart, false);
   const starts = freed.filter(
     (u) =>
       u.state === 'free' &&
       localDate(u.startMs, space.timeZone) === day &&
-      (u.startMs === startMs || isOfferedStart(space, u, nowMs, lastRefusedStart, false))
+      (u.startMs === startMs || inside(u) || offered(u))
   );
   // A slot list may hold two slots starting at the same instant: the booking's is the one it ends.
   const startIndex = starts.findIndex(
@@ -80,7 +85,13 @@ export function editChoices(
     return null;
   }
   const limit = bookingUnitLimit(space);
-  const runOf = (start: SlotUnit) => freeRunFrom(freed, start, limit);
+  const runOf = (start: SlotUnit) => {
+    const run = freeRunFrom(freed, start, limit);
+    // Its own start keeps any length (the window never reads an unmoved start); another start
+    // the window refuses is offered only as giving back: no further than the booking's own end.
+    if (start.startMs === startMs || offered(start)) return run;
+    return run.filter((u) => u.endMs <= endMs);
+  };
   const covered = runOf(starts[startIndex]).findIndex((u) => u.endMs === endMs) + 1;
   return { starts, runOf, startIndex, count: Math.max(1, covered) };
 }

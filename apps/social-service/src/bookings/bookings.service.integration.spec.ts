@@ -2734,14 +2734,17 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
 
     it('refuses a start the window refuses, and leaves a started or cancelled booking alone', async () => {
       const { space, resourceIds } = await setup({ minNoticeMinutes: 60 });
-      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
-      // At 09:15 the 60-minute notice refuses a 10:00 start; 11:00 is still bookable.
+      const { id } = await book(space.id, resourceIds[0], '11:00', '11:30', ALICE);
+      // At 09:15 the 60-minute notice refuses any start before 10:15: moving the start out of the
+      // old range, earlier, is refused.
       const at = Date.parse(on('09:15'));
-      expect(await refusal(edit(id, '10:00', '11:00', [], ALICE, at))).toEqual({
+      expect(await refusal(edit(id, '10:00', '11:30', [], ALICE, at))).toEqual({
         code: 'BOOKING_EDIT_OUTSIDE_RULES',
         reason: 'notice',
       });
-      await expect(edit(id, '11:00', '11:30', [], ALICE, at)).resolves.toEqual({
+      expect(await rangeOf(id)).toEqual([on('11:00'), on('11:30')]);
+      // The END alone moves: the window reads the start, which did not (review of #2945).
+      await expect(edit(id, '11:00', '12:00', [], ALICE, at)).resolves.toEqual({
         ok: true,
         changed: true,
       });
@@ -2753,6 +2756,23 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await refusal(edit(other.id, '16:00', '16:30'))).toEqual({
         code: 'already-cancelled',
       });
+    });
+
+    it('lets a booking be shortened inside the notice period, its start moved later included', async () => {
+      const { space, resourceIds } = await setup({ minNoticeMinutes: 60 });
+      const { id } = await book(space.id, resourceIds[0], '09:30', '11:00', ALICE);
+      // At 09:15 the notice covers every start before 10:15 - yet giving back is never refused:
+      // a later start inside the old range is further from now, not closer.
+      const at = Date.parse(on('09:15'));
+      await expect(edit(id, '10:00', '11:00', [], ALICE, at)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      await expect(edit(id, '10:00', '10:30', [], ALICE, at)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
     });
 
     it('a concurrent edit and booking of the same units: exactly one wins, the loser is told why', async () => {
@@ -2907,6 +2927,127 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(tos('booking_reminder')).toEqual([]);
       await reminders.remindOnce(new Date(on('10:35')));
       expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+    });
+    it('an end-only edit re-arms nothing: a reminder due and not yet claimed is still sent', async () => {
+      const { space, resourceIds } = await setup({ reminderMinutes: 30 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      // At 09:40 both reminders are due (since 09:30) and nobody has claimed them yet. The control:
+      // re-armed at 09:40 (`reminderSetAt` = now), the scheduler would have dropped them both.
+      await edit(id, '10:00', '11:00', [BOB], ALICE, Date.parse(on('09:40')));
+      told.length = 0;
+      await reminders.remindOnce(new Date(on('09:41')));
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+    });
+
+    it('a holder the space no longer admits may cancel, never edit; the organiser still may', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      // The audience narrowed after the booking: ALICE's facts no longer match it.
+      await ds
+        .getRepository(BookingSpace)
+        .update(space.id, { audience: { promo: { values: [2024] } } });
+      expect(await refusal(edit(id, '11:00', '11:30'))).toEqual({ code: 'audience' });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      await expect(edit(id, '11:00', '11:30', [], ORGA)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      await expect(service.cancel(id, as(ALICE), NOW)).resolves.toEqual({ ok: true });
+    });
+
+    it('an edit that only gives back is never refused by settings tightened since', async () => {
+      const [P2, P3] = [RACERS[2], RACERS[3]];
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '11:00', ALICE, {
+        participantIds: [P2, P3],
+      });
+      // Tightened after the booking: two people at most, and 15 minutes a day - which this
+      // booking, three people over 60 minutes, already exceeds on both counts.
+      await ds.getRepository(BookingSpace).update(space.id, {
+        maxPeople: 2,
+        maxMinutesPerPeriod: 15,
+        quotaPeriod: 'day',
+      });
+      // One person removed, nobody added: still over the ceiling, yet less than before.
+      await expect(edit(id, '10:00', '11:00', [P2])).resolves.toEqual({ ok: true, changed: true });
+      // Shortened inside the old range: still over the quota, yet less than before.
+      await expect(edit(id, '10:00', '10:30', [P2])).resolves.toEqual({ ok: true, changed: true });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      // The control: an edit that asks for MORE is judged on the settings as they are now.
+      expect(await refusal(edit(id, '14:00', '14:30', [P2]))).toEqual({
+        code: 'BOOKING_EDIT_QUOTA',
+        reason: 'minutes-per-period',
+        holder: true,
+      });
+      expect(await refusal(edit(id, '10:00', '10:30', [P2, P3]))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'too-many-people',
+        maxPeople: 2,
+      });
+      expect(await peopleOf(id)).toEqual([P2]);
+    });
+
+    it('an edit racing the cancellation of its booking: one serial order, never a torn row', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+        const [edited, cancelled] = await Promise.allSettled([
+          edit(id, '11:00', '11:30'),
+          service.cancel(id, as(ORGA), NOW),
+        ]);
+        const [row] = (await q(`SELECT "cancelledAt" FROM bookings WHERE id = $1`, [id])) as {
+          cancelledAt: Date | null;
+        }[];
+        // The cancellation always lands; the edit lands only when it went first.
+        expect([
+          { edit: 'fulfilled', cancel: 'fulfilled', range: [on('11:00'), on('11:30')] },
+          {
+            edit: { code: 'already-cancelled' },
+            cancel: 'fulfilled',
+            range: [on('10:00'), on('10:30')],
+          },
+        ]).toContainEqual({
+          edit:
+            edited.status === 'fulfilled'
+              ? 'fulfilled'
+              : (edited.reason as HttpException).getResponse(),
+          cancel: cancelled.status,
+          range: await rangeOf(id),
+        });
+        expect(row.cancelledAt).not.toBeNull();
+      }
+    });
+
+    it('an edit racing a participant withdrawing: one serial order, the same end state', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+          participantIds: [BOB],
+        });
+        told.length = 0;
+        // The holder moves it and removes BOB, while BOB leaves on his own.
+        const [edited, withdrawn] = await Promise.allSettled([
+          edit(id, '11:00', '11:30', []),
+          service.withdraw(id, as(BOB), NOW),
+        ]);
+        // Either order ends the same: moved, BOB off it, ONE row of his marked. Only who removed
+        // him differs - and so whether he is told he was removed.
+        expect(edited.status).toBe('fulfilled');
+        expect(await rangeOf(id)).toEqual([on('11:00'), on('11:30')]);
+        expect(await peopleOf(id)).toEqual([]);
+        expect([
+          { withdraw: 'fulfilled', removed: [] },
+          { withdraw: { code: 'not-a-participant' }, removed: [BOB] },
+        ]).toContainEqual({
+          withdraw:
+            withdrawn.status === 'fulfilled'
+              ? 'fulfilled'
+              : (withdrawn.reason as HttpException).getResponse(),
+          removed: tos('booking_removed'),
+        });
+      }
     });
   });
 });
