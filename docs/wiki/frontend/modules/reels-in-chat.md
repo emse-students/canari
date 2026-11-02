@@ -674,6 +674,9 @@ Unit specs only; the real-service bench run is owed. The client type `MediaReten
 - **A profile is a row, not a pipeline.** `videoEncodingPlan.ts` gains `VIDEO_PROFILES`: `feed` (720p short side, 2.5 Mb/s, AAC 128 kb/s: C3, what every call without a profile gets, byte-identical to before) and `chat` (540p, 1.2 Mb/s, AAC 96 kb/s: D-size). `prepareVideoForUpload({ profile: 'chat' })` threads it through the plan, the audio route (a copied AAC-LC track dearer than the profile's audio bitrate is re-encoded) and the AAC probe. Container and codecs are unchanged.
 - **The chat cap is the server's.** `GET /api/posts/reel-limits` serves `chatMaxDurationMs` (60 000, `CHAT_REEL_MAX_DURATION_MS`); the client type `ReelLimits.chatMaxDurationMs` is OPTIONAL, so an older server's answer reads as "no chat cap" and no client carries the number. Old clients ignore the extra field.
 - **Pinned** by `videoEncodingPlan.test.ts` (540x960 at 1.2 Mb/s; sizes at 20, 60 and 90 s under `maxBytes`; about 9 MB at 60 s; the feed plan unchanged), `prepareVideoForUpload.test.ts` (audio route against the profile's bitrate) and `reel-rules.spec.ts` (the served field).
+- **Read on `1.6.3-alpha.2` ([section 20](#20-the-bench-reading-of-163-alpha2-2026-11-02)):** the Mi 9T
+  prepares a 57.6 s take in 24.0 s to 7.3 MB; the iPhone 12 sends one in at most 23 s, its split
+  and size not readable on TestFlight. The row below stays owed for the iPhone's own numbers.
 - **OWED, HARDWARE: the RC-0 device table re-run** at the shipped numbers (encode time and real output size of a 60 s in-app take at the `chat` profile, on the Mi 9T and the iPhone 12). The plan's arithmetic is tested; how long the phones take and what the encoder really lands at is not measured.
 
 ## 12. What the push package (RC-7) built (2026-10-19)
@@ -1455,6 +1458,9 @@ hint tombstone, the conversation viewer on one slide, no forward, no share). Thi
   `history.replayedStoredRow.test.ts` and `useMessaging.bulkIngest.svelte.test.ts` (the record
   survives a replay and both upgrade rewrites), and `MessageBubble.reel.svelte.test.ts` (the bubble
   hands the viewer's `410` up with its message id, and draws a recorded one with no tap).
+- **Read on `1.6.3-alpha.2` ([section 20](#20-the-bench-reading-of-163-alpha2-2026-11-02)): BLOCKED** - the
+  sender's delete replaces the bubble before any tap meets the `410`, so the row below cannot be
+  produced by that gesture; it needs RC-8's purge.
 - **Owed on devices:** with the writer on, a reel purged by its sender (`Supprimer pour tout le
   monde`) read on the other phone as "CanaReel supprime" after one tap, and still so after a
   relaunch with the network cut.
@@ -1526,4 +1532,46 @@ adoption BEFORE `createPost`, Back after the sends, no host), `useMessaging.reel
 - **Salons** wait for RC-8.
 - **"Suivant" is not renamed in the iOS/Android native strings** - nothing native changed.
 - **Owed**: the RC-9 hardware pass (the sheet on both phones, one take to a DM and a group, the feed
-  AND chats case with ONE upload on the server), and the sheet's own look read on a phone.
+  AND chats case with ONE upload on the server), and the sheet's own look read on a phone. **Read
+  on `1.6.3-alpha.2` ([section 20](#20-the-bench-reading-of-163-alpha2-2026-11-02)):** the sheet on
+  phone A, one take to a group and two DMs, ONE upload, PASS; still owed: the sheet on phone B and
+  the feed AND chats case.
+
+## 20. The bench reading of `1.6.3-alpha.2` (2026-11-02)
+
+**Bench.** Phone A = the Mi 9T (sideloaded release APK `1.6.3` / `100600302`, the rig's `owner`
+account), phone B = the iPhone 12 (TestFlight `1.6.3 (100600302)`, the rig's `third` account), both
+reading `Version de Canari 1.6.3-alpha.2` in Parametres > A propos, both on dev, where the writer is
+on (`CHAT_REEL_WRITER_ENABLED`, a dev build). Phone A's console was read over CDP, phone B's through
+the device syslog. A third member of the group and of a third DM is a rig account with no phone on
+the bench; its half is read on the server. Evidence: `<harness-dir>/a1-bench/r1102-163a2/`.
+
+| Row | Phones | Verdict | Evidence |
+| --- | --- | --- | --- |
+| A reel filmed in a DM and sent, A -> B | A, B | **PASS** | A: `[video-prep] plan: 540x960, 1200 kb/s, 3.48 s`, `done in 1953 ms: 1632883 -> 661111 bytes`, `1 of 1 went`; B: tile `CanaReel de <A>, 0:03`, the viewer plays it |
+| The same, B -> A | B, A | **PASS** | B's take in A's DM (`0:03`), A's viewer plays it (`[reel-viewer] opened`, `settled`) |
+| A reel in a group, A -> B and B -> A | A, B | **PASS** | A -> B: `1 of 1 went`, B's lock screen reads it under the group's title and B's group draws the tile; B -> A: A's push service decrypts it as a reel (`decryptProto: success type=media`) and posts it under the group's title - A's tile itself not opened |
+| No forward on a reel message | A | **PASS** | the bubble's menu offers Repondre, Epingler, Supprimer - no forward, no copy of the media |
+| B-reel, the lock-screen line (French) | A, B | **PASS** | see [device-verification B-reel](../../device-verification.md#b-reel-a-canareel-announces-itself-on-the-lock-screen-of-a-killed-app---owed-on-both-platforms) |
+| "Envoyer a..." from the camera tab to three conversations (RC-12/RC-13) | A, B, server | **PASS** | the sheet: feed row first, then the group and two DMs; "Envoyer (3)", toast "Envoi a 3 conversations"; ONE preparation, ONE upload, three sends: `take ... upload started for its 3 send(s)`, `done in 2086 ms: 1430629 -> 583311 bytes`, `every send settled, 3 of 3 went`; B shows the reel in the DM AND the group; the third DM's peer has no phone here, so its conversation is read on the server: 2 queued rows for 1 recipient at the send's second |
+| A take over the chat cap withheld from the chats | A | **PASS** | a 62 s take: every conversation row disabled, under "Cette video depasse 60 s : elle ne peut etre que publiee, pas envoyee en conversation." |
+| The sender's "Supprimer pour tout le monde" | A, B | **PASS** | A: `take ... withdrawn (its last standing message was deleted for everyone) - its file ... is released`, `chat reel ... released: HTTP 200`; both phones draw "Ce message a ete supprime." |
+| "CanaReel supprime" after the sender's delete (section 18) | A, B | **BLOCKED** | not reachable by that gesture: the delete is a control message, so the bubble is REPLACED by "Ce message a ete supprime." before any tap can meet the `410` (D-delete-one, 15.7). The `410` tombstone needs a file gone under a message that still stands - a moderator's purge (RC-8, not built) or a delete message that has not arrived yet; neither was produced on this bench |
+| RC-0 re-run, 60 s at the chat profile, phone A | A | **measured** | a 57.61 s in-app take, 29 392 397 bytes raw (`video/x-matroska;codecs=avc1,opus`, 4 Mb/s) -> **7 338 350 bytes** (`540x960, 1200 kb/s`, `avc1.64001f, mp4a.40.2`) in **23 995 ms**; upload about 8 s on Wi-Fi; battery 27.6 -> 28.5 C over the take and its preparation |
+| RC-0 re-run, phone B | B, A | **measured, bounded** | a 57 s take: the tap on "Envoyer" at 17:08:08, phone A decrypted the message at 17:08:31, so preparation + upload + send took **at most 23 s**; the TestFlight build writes no console line to read the split or the output size |
+
+**Findings.**
+- **P3 - the viewer draws a placeholder "UI" avatar for every chat reel.** `reelMessageAsPost` sets
+  no `authorId` (deliberately: nothing may ask the server about the message id), and
+  `PostAuthorAvatar` then draws `Avatar userId=''`, whose initials are not the sender's. Seen on both
+  phones beside the right name. The fix belongs in the shape the viewer is given (the sender's id
+  is known to the bubble), not in a fallback.
+- **The 60 s chat cap is not a recording limit.** The camera tab recorded 62 s without stopping;
+  the sheet then refuses the chats, as designed. Whether the chat camera should stop at 60 s is a
+  product question, not a defect.
+- **Phone A, after Back from the camera tab:** `/camera` stayed the route, drawing the feed
+  underneath with no header nor tab bar, until a horizontal swipe returned to `/posts`. Seen once.
+
+**Still owed:** English for B-reel; the captioned reel (the chat camera offers no caption field, so
+the `🎬 CanaReel : <caption>` line has no writer yet); the salon rows (RC-8); a relaunch with the
+network cut on a `410` tombstone, which needs the tombstone first.
