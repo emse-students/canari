@@ -77,6 +77,13 @@
      * absent: a transform-only entrance (`expandFrom`). Null: no entrance drawn here.
      */
     expandOrigin?: { x: number; y: number } | null;
+    /**
+     * A reel's file answered `410` (`ReelSlide`'s `onMediaGone`), named by its post id. A
+     * conversation's opener records it on the message so the tile behind draws the tombstone
+     * (RC-6, [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md) 15.4); the feed passes
+     * nothing.
+     */
+    onMediaGone?: (postId: string) => void;
   }
 
   let {
@@ -86,6 +93,7 @@
     loadPage = listAllReels,
     likerId,
     expandOrigin = null,
+    onMediaGone,
   }: Props = $props();
 
   /**
@@ -604,6 +612,7 @@
               active={i === index}
               preload={i === index + 1 && currentSettled}
               onReady={() => markSettled(i)}
+              onMediaGone={onMediaGone ? () => onMediaGone(reels[i].id) : undefined}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
               rail={railFor(reels[i])}
             />

@@ -32,7 +32,8 @@
   import { uploadCaption } from '$lib/utils/chat/uploadLabel';
   import type { UploadView } from '$lib/utils/chat/uploadProgress.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
-  import { isReelMessage, isReelMessageExpired, reelMessageAsPost } from '$lib/reels/chatReel';
+  import { isReelMessage, reelMessageAsPost, reelTombstoneOf } from '$lib/reels/chatReel';
+  import { dropGoneReelCopy } from '$lib/reels/chatReelCache';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
@@ -92,6 +93,16 @@
     /** Bearer token the reel viewer's own download resolves; a tile fetches nothing without a tap. */
     authToken?: string;
     /**
+     * When THIS device met the reel's `410`, as its stored row records it (`mediaPurgedAt`): the
+     * tile is then a tombstone across reloads without a request (RC-6).
+     */
+    reelPurgedAt?: number;
+    /**
+     * The reel viewer met the `410`, at `atMs`: the caller records it on the message's local row,
+     * once. The tile draws the tombstone at once either way.
+     */
+    onReelPurged?: (atMs: number) => void;
+    /**
      * The upload this bubble stands for, while the sender's outbox still holds the bytes. Draws the
      * real progress, a cancel and a retry where the plain skeleton had an endless spinner.
      */
@@ -123,6 +134,8 @@
     sentAt,
     messageId = '',
     authToken = '',
+    reelPurgedAt,
+    onReelPurged,
     upload = null,
     uploadFailed = false,
     uploadFailedLabel = m.upload_failed_label(),
@@ -136,8 +149,28 @@
    */
   const isReel = $derived(isReelMessage(mediaRef));
   let showReelViewer = $state(false);
-  /** The hint, read when the row is drawn: a tombstone needs no request to be told it is one. */
-  const reelExpired = $derived(!!mediaRef && isReel && isReelMessageExpired(mediaRef, Date.now()));
+  /** The `410` the viewer met in THIS mount, before the caller's record comes back down. */
+  let purgedHere = $state<number | null>(null);
+  /**
+   * Which tombstone, if any: the recorded `410` first, then the hint read when the row is drawn - a
+   * tombstone needs no request to be told it is one (`reelTombstoneOf`).
+   */
+  const reelTombstone = $derived(
+    mediaRef && isReel ? reelTombstoneOf(mediaRef, reelPurgedAt ?? purgedHere, Date.now()) : null
+  );
+  // A tombstone's local copy goes with it (3.3): the cache would otherwise replay a reel the server
+  // forgot. Once per media id per page life (`dropGoneReelCopy`).
+  $effect(() => {
+    if (reelTombstone && mediaRef?.mediaId) dropGoneReelCopy(mediaRef.mediaId);
+  });
+
+  function reelGone() {
+    if (reelPurgedAt !== undefined || purgedHere !== null) return;
+    const at = Date.now();
+    purgedHere = at;
+    console.debug(`[chat-reel] ${messageId.slice(0, 8)} answered 410 in the viewer - recorded`);
+    onReelPurged?.(at);
+  }
   const reelSenderName = $derived(senderId ? getUserDisplayNameSync(senderId, senderId) : '');
   const reelPost = $derived(
     showReelViewer && mediaRef && isReel
@@ -249,7 +282,7 @@
     {#if isReel}
       <ChatReelTile
         {mediaRef}
-        expired={reelExpired}
+        tombstone={reelTombstone}
         senderName={reelSenderName}
         sentAt={sentAt ?? new Date()}
         {bleed}
@@ -617,6 +650,7 @@
     {authToken}
     onClose={() => (showReelViewer = false)}
     loadPage={async () => []}
+    onMediaGone={reelGone}
   />
 {/if}
 

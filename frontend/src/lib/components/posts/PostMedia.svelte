@@ -114,6 +114,12 @@
      * (`failed`). The reel viewer stops waiting on it then.
      */
     onPlaybackBlocked?: (cause: 'refused' | 'unplayable' | 'failed') => void;
+    /**
+     * Told WHY the download failed, typed (`mediaFailureCause`), once per failure. A conversation's
+     * reel reads `expired` (the `410`) to record the loss on its message (RC-6); nothing else
+     * branches on it here.
+     */
+    onFailure?: (cause: MediaFailureCause) => void;
   }
 
   let {
@@ -130,11 +136,18 @@
     poster = null,
     onLoaded,
     onPlaybackBlocked,
+    onFailure,
   }: Props = $props();
 
   // A failed download is decided: the caller stops waiting on this media.
   $effect(() => {
     if (failure && onPlaybackBlocked) untrack(() => onPlaybackBlocked('failed'));
+  });
+
+  // ...and told why, for the one caller that keeps a record of it.
+  $effect(() => {
+    const cause = failure;
+    if (cause && onFailure) untrack(() => onFailure(cause));
   });
 
   // The whole file is in the pool: the caller may draw from it (a reel's first frame).
