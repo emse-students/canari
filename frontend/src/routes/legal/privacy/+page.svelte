@@ -180,18 +180,20 @@
           n'est republiée qu'avec l'accord de son auteur : le réglage « Autoriser mes abonnés à
           republier mes posts » est activé par défaut, et l'auteur peut le changer pour tout son
           compte ou publication par publication ; le désactiver retire aussitôt les republications
-          qu'il ne couvre plus. Une publication d'une association, d'une liste ou d'une institution
-          est republiée sans accord, mais n'atteint que vos abonnés acceptés. Une publication
-          anonyme n'est jamais republiée. Un blocage, dans un sens ou dans l'autre, empêche la
-          republication et la retire aussitôt entre les personnes concernées, et un lecteur bloqué
-          par l'auteur ou par vous ne la voit pas. Votre republication cesse d'atteindre vos abonnés
-          dès que vous ne voyez plus vous-même la publication (l'auteur vous retire de ses abonnés,
-          vous cessez de le suivre, vous quittez l'association qui la porte) ou que votre compte est
-          restreint, et la notification qu'elle leur a envoyée n'est plus affichée. Sont conservés :
-          la republication (la publication, votre compte et sa date), le réglage de chaque auteur,
-          le choix fait pour chaque publication et, pour ne jamais notifier deux fois la même
-          personne, le fait qu'un lecteur a déjà été notifié d'une publication republiée, et sa
-          date, jusqu'à l'effacement de la publication ou de son compte.
+          qu'il ne couvre plus. Une publication d'une association ou d'une institution qui s'adresse
+          à au moins un campus ou une formation est republiée sans accord, mais n'atteint que vos
+          abonnés acceptés ; celle d'une liste, ou d'une association réservée à ses membres, ne peut
+          pas être republiée. Une publication anonyme n'est jamais republiée. Un blocage, dans un
+          sens ou dans l'autre, empêche la republication et la retire aussitôt entre les personnes
+          concernées, et un lecteur bloqué par l'auteur ou par vous ne la voit pas. Votre
+          republication cesse d'atteindre vos abonnés dès que vous ne voyez plus vous-même la
+          publication (l'auteur vous retire de ses abonnés, vous cessez de le suivre, vous quittez
+          l'association qui la porte) ou que votre compte est restreint, et la notification qu'elle
+          leur a envoyée n'est plus affichée. Sont conservés : la republication (la publication,
+          votre compte et sa date), le réglage de chaque auteur, le choix fait pour chaque
+          publication et, pour ne jamais notifier deux fois la même personne, le fait qu'un lecteur
+          a déjà été notifié d'une publication, ou qu'elle lui a déjà été annoncée, par une
+          republication, et sa date, jusqu'à l'effacement de la publication ou de son compte.
         </dd>
       </div>
       <div>
