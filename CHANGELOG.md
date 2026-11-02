@@ -14,6 +14,47 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-11-02
+
+### Changed - the camera opens on the lens last used, and the conversation's "+" offers one camera entry
+
+Every camera (chat, CanaReels tab, new post, live) opens on the lens last used on the device instead of always the front one, and the "CanaReels" entry is gone from the conversation's "+" menu, the tab staying in the navigation ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#1-entering-the-camera-from-a-conversation)).
+
+### Fixed - Device lines, removal notices and call records are dated by their event, not by when the phone learnt of it
+
+A device line takes the commit log instant of the commit that admitted the device (new members-only `GET /api/mls/commits/:groupId/accepted-at`), a removal notice the Remove commit's or the server's record of the seat's removal (new `GET /api/mls/groups/:groupId/own-removal`), a call record its frame's, with its duration on one clock; the acting device's notice and the archive replay now carry the server time too. With no durable instant the row is refused at ERROR, or kept owed until the server answers, never clock-dated ([chat](docs/wiki/frontend/modules/chat.md#a-visible-notice-is-dated-by-its-frame-never-by-when-this-device-learnt-of-it)).
+
+### Fixed - a migration the owner must approve is held until the owner's own merge approves it
+
+A migration marked `-- canari:hold-for-owner`, or with any statement that is not plainly additive, refuses the release tag and the deploy until `infrastructure/migration-approvals.txt` names its checksum - a file no auto-merge may touch - and an approved one is applied right after a database dump; TypeORM `synchronize` is now an explicit flag a production service refuses ([cicd](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
+
+### Fixed - Chrome no longer warns about the home-screen meta tag on every page
+
+The standard `mobile-web-app-capable` meta now sits beside the Apple one, which Safari still needs ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Added - a chat reel is one take for one or more conversations (RC-13, writer still off)
+
+The outbox writes a take and its sends in one transaction, uploads the file once (or adopts the CanaReels upload under a chat hold), and keeps the take only while a send names it; the daily budget's 429 now fails a take's sends for good, and no late write can bring back a withdrawn outbox row ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)).
+
+### Fixed - a chat-reel take's release and its tab hand-offs are never silent (RC-13 follow-up, writer still off)
+
+A failed `releasing` write is retried in the same page life, a reel deletion lost between tabs is re-derived from its tombstone by the leader, and the take records are kept by the leader only ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)).
+
+### Fixed - a deploy could still answer 502 to a message sent while a replica was retired
+
+Closing a retiring replica's listener reset the connections still waiting in its accept queue, after
+nginx had sent the POST into them (1 in 346 on main's CI). For every request that goes through nginx,
+the frontend and the edge now choose replicas from lists the deploy writes; a replica leaves its
+list, by a reload the pairing check holds, before it is stopped (the lists cache no idle upstream
+connection, which that check would take for a request), and the lists rest naming each service by DNS
+so a rollback to an older release still works. A call from one service to another does not go
+through nginx and keeps the old window
+([cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
+
+### Added - one reel file held by its post and its conversations (RC-14)
+
+media-service keeps a reel file while a post or a conversation holds it; a salon message declares its reel (migration 122, approved by the owner) so a moderator purges only what their salon names; `reel-purge` carries its reason. Server half only, nothing sends to it yet ([media-service](docs/wiki/services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01), [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#16-what-the-shared-file-server-package-rc-14-built-2026-11-01)).
+
 ## [1.6.1] - 2026-11-01
 
 ### Fixed - a joiner's second device reads its conversation as waiting for a member
