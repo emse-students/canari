@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { scrollFades } from '$lib/actions/scrollFades';
   import type { Snippet } from 'svelte';
   import {
     Camera,
@@ -209,10 +208,7 @@
     {#if formatting}
       <MarkdownComposerToolbar row {onFormat} class="w-full" />
     {:else}
-      <div
-        use:scrollFades
-        class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1"
-      >
+      <div data-chip-row class="flex w-full flex-wrap items-center gap-2">
         {#if nativeLibrary}
           <button
             type="button"
