@@ -441,16 +441,28 @@ export function buildApnsRequest(
  * - `queuedMessageId`, an opaque random id of the device's OWN queued row - it names nobody;
  * - `silent`, the one bit the platform needs: on iOS a silent frame must be a background push and a
  *   visible one an alert, so Apple sees it anyway, and on Android it decides whether a failed fetch
- *   owes a notification.
+ *   owes a notification;
+ * - `notifLevel: 'mentions'`, for a visible frame of a conversation the recipient keeps at
+ *   `mentions` only - the same key and the same rule as the full map. A failed fetch cannot know
+ *   whether the frame mentions them, so it must not ring for it: Android posts its failure silently,
+ *   exactly as Apple already reads the same bit as `passive` ({@link buildWakeApnsRequest}). It
+ *   names no conversation and no person.
  *
  * @param queuedMessageId - The queued row the device will fetch.
  * @param silent - Whether the frame draws nothing (`PushMessageInput.silent`, as decided at send).
+ * @param mentionsOnly - The recipient's level for this conversation is `mentions`.
  */
 export function buildWakeDataFields(
   queuedMessageId: string,
-  silent: boolean
+  silent: boolean,
+  mentionsOnly: boolean
 ): Record<string, string> {
-  return { type: 'wake', queuedMessageId, silent: silent ? 'true' : 'false' };
+  return {
+    type: 'wake',
+    queuedMessageId,
+    silent: silent ? 'true' : 'false',
+    ...(mentionsOnly && !silent ? { notifLevel: 'mentions' } : {}),
+  };
 }
 
 /**
@@ -474,7 +486,7 @@ export function buildWakeApnsRequest(
   mentionsOnly: boolean,
   locale?: string | null
 ): ApnsRequest {
-  const fields = buildWakeDataFields(queuedMessageId, silent);
+  const fields = buildWakeDataFields(queuedMessageId, silent, mentionsOnly);
   if (silent) {
     return {
       payload: { aps: { 'content-available': 1 }, ...fields },

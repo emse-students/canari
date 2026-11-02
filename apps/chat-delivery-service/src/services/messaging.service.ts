@@ -1131,7 +1131,7 @@ export class MessagingService {
     }
     return {
       token: pt.token,
-      data: buildWakeDataFields(input.queuedMessageId, input.silent),
+      data: buildWakeDataFields(input.queuedMessageId, input.silent, !!input.mentionsOnly),
       android: { priority: 'high', ttl: 86_400_000 },
     };
   }
@@ -1149,14 +1149,19 @@ export class MessagingService {
    * @param senderId - Its author.
    * @param silent - The sender's own "draw nothing" (receipts, own-device copies, control frames).
    * @param traceId - The send's trace, for the decision lines.
+   * @param stage - `send` logs the decisions; `fetch` (the wake-up fetch of a frame whose push
+   *   already left) repeats none of them - they were said once, when the push was sent. Only what can
+   *   differ at fetch time (the group read failing, the row gone) is said again.
    */
   async describeQueuedFrame(
     queued: QueuedMessage,
     groupId: string,
     senderId: string,
     silent: boolean,
-    traceId: string
+    traceId: string,
+    stage: 'send' | 'fetch' = 'send'
   ): Promise<PushMessageInput> {
+    const announce = stage === 'send';
     // THE RECIPIENT'S "MESSAGES" SWITCH. The frame must still REACH the device - an MLS ciphertext is
     // state the account needs to stay decryptable, so it cannot be dropped like a social push - but it
     // may be told to draw nothing: the same `silent` the own-device copies and receipts already use,
@@ -1171,15 +1176,17 @@ export class MessagingService {
       const disabled = await readDisabledCategories(this.groupRepo.manager, queued.recipientId);
       if (disabled.has('messages')) {
         drawNothing = true;
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
-        );
+        if (announce)
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
+          );
       } else if (!isGroupUuid(groupId)) {
         // Every MLS conversation is a uuid row; a queued frame naming anything else is a defect
         // upstream, and the level it cannot have is not invented here.
-        this.logger.warn(
-          `[PUSH_SEND][${traceId}] group=${groupId} is not a uuid - no conversation level applies`
-        );
+        if (announce)
+          this.logger.warn(
+            `[PUSH_SEND][${traceId}] group=${groupId} is not a uuid - no conversation level applies`
+          );
       } else {
         const level = await readGroupNotificationLevel(
           this.groupRepo.manager,
@@ -1188,14 +1195,16 @@ export class MessagingService {
         );
         if (level === 'none') {
           drawNothing = true;
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] level=none for user=${cutUserId(queued.recipientId)} group=${groupId} - sent silent`
-          );
+          if (announce)
+            this.logger.log(
+              `[PUSH_SEND][${traceId}] level=none for user=${cutUserId(queued.recipientId)} group=${groupId} - sent silent`
+            );
         } else if (level === 'mentions') {
           mentionsOnly = true;
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] level=mentions for user=${cutUserId(queued.recipientId)} group=${groupId} - the device decides`
-          );
+          if (announce)
+            this.logger.log(
+              `[PUSH_SEND][${traceId}] level=mentions for user=${cutUserId(queued.recipientId)} group=${groupId} - the device decides`
+            );
         }
       }
     }

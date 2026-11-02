@@ -30,7 +30,9 @@ fetches) - designed when step 1 has its readings.
   (the default - today's payloads) or `wake`. Read by chat-delivery-service on every MLS push that
   has a capable destination, never cached (`utils/push-mode.ts`, the twin of `calls-mode.ts`). An
   unreadable switch throws and that device's push is not sent - logged at error by the fan-out; the
-  frame stays queued and is delivered at the next open. An absent row reads as `full`, at error.
+  frame stays queued and is delivered at the next open. An absent row reads as `full` - not a
+  guess: the value the row is CREATED with (the column default, core's `DEFAULT_ROW`), so the switch
+  was never moved - and is accused at error ONCE PER PROCESS (`[PUSH_MODE]`), never once per push.
 - `push_token.wakeCapable` (chat-delivery migration 045): the REGISTRATION says whether the binary
   understands a wake frame. Written on EVERY `POST /mls/push/register`, `false` when the body does not
   say `wake: true` - so an old build, and a downgrade, are never sent a frame they would drop. The
@@ -49,23 +51,32 @@ the other: a `full` frame to an old build is the old build's contract, not a deg
 | `type: 'wake'` | the discriminator every native dispatcher branches on |
 | `queuedMessageId` | an opaque random UUID naming the device's own queued row - the fetch key. It names nobody and no conversation |
 | `silent` | **the one bit the platform needs**: on iOS a silent frame MUST be `content-available` / `apns-push-type: background` and a visible one an alert, so Apple sees it anyway; on Android it decides whether a fetch failure owes a notification |
+| `notifLevel: 'mentions'` | only on a visible frame of a conversation the recipient keeps at `mentions` (same key, same rule as the full map). A failed fetch cannot know whether the frame mentions them, so Android posts its failure notification SILENTLY - the bit Apple already reads as `passive` below. It names no conversation and no person |
 
 **Removed from what Google and Apple see**: `groupId`, `senderId`, `senderName`, `groupName`,
-`isGroup`, `isKeyDistribution`, `notifLevel`, `isWelcome`, `createdAt`, `proto`, and on iOS the
+`isGroup`, `isKeyDistribution`, `isWelcome`, `createdAt`, `proto`, and on iOS the
 `thread-id` (the conversation id) and the sender-name title - the alert reads `Canari` / the localized
 `Nouveau message`. **Kept on iOS, knowingly**: `interruption-level: passive` on a `mentions`
 conversation's frame. It says "a quiet frame", not who or where, and without it a non-mention would
 ring whenever the extension does not run.
 
 **3. How each platform fetches.** `GET /api/mls/push/wake?messageId=&userId=&deviceId=&silent=`,
-**the same PushSecret auth as `fetch-proto`** (the secret the app mirrors to the extension's App
-Group and to Android's Keystore and `pending_push_secret.txt`; userId and deviceId are the device's
-own, read from its push context, never from the push). It answers one of two typed bodies:
+behind **`PushSecretGuard` then `PushSecretThrottlerGuard`**, like the key-group push routes: the
+guard reads a GET's ids from its QUERY (never a merge with a body), and the throttler counts per
+user, `WAKE_FETCH_LIMIT_PER_MINUTE = 600` - twice the 300 visible notifications a minute Android
+posts at most per app (`MAX_PACKAGE_ENQUEUE_RATE` = 5/s), the other half for silent frames. The
+secret is the one the app mirrors to the extension's App Group and to Android's Keystore and
+`pending_push_secret.txt`; userId and deviceId are the device's own, read from its push context,
+never from the push. A `messageId` that is not a uuid is a `400` before Postgres sees it. It
+answers one of two typed bodies:
 
 - `{status: 'frame', fields}` - EXACTLY the data map the full push would have carried
   (`buildPushDataFields`, one implementation), computed at fetch time by `describeQueuedFrame` - the
-  same function the send path calls - with the ciphertext always inline (no 4 KB budget on our own
-  TLS; a Welcome still fetches its bundle through `fetch-proto`, which carries the ratchet tree).
+  same function the send path calls, in its `fetch` stage, which repeats none of the decision lines
+  the send already logged - with the ciphertext always inline, read as `proto ?? content` exactly as
+  the full push and `fetch-proto` read it, a legacy `content` row accused alike (no 4 KB budget on
+  our own TLS; a Welcome still fetches its bundle through `fetch-proto`, which carries the ratchet
+  tree).
 - `{status: 'gone'}` - the row is not there: the app drained or ACKed it since. **An answer, not a
   failure**: nothing new is drawn on Android; the iOS extension, which cannot withhold an alert,
   makes it passive and says the message was already received.
@@ -101,8 +112,12 @@ whether the extension RUNS and decrypts on the bench and on a user's phone (`[NS
 the server's alert no longer even names the sender, and a tap on a banner the extension did not
 rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`). So:
 
-- **`push_mode` stays `full` until that entry's bench rows 1-6 read `decrypted` on the iPhone 12.**
-  Turning it on earlier would hide the P1 measurement behind a second cause.
+- **The owner's order (2026-11-02): ON on dev once the Mi 9T reading (row 1 below) passes, then ON
+  in production FOR ANDROID ONLY until the P1 is closed.** "Android only" is not a server branch on
+  the platform: it is the second lock. **An iOS build does not declare `wakeCapable`**
+  (`PUSH_WAKE_COMPILED` is false on iOS) until that entry is closed, so `push_mode = wake` wakes
+  Android devices and every iPhone keeps the full push. Turning iOS on earlier would hide the P1
+  measurement behind a second cause; turning it on is one constant and a store build.
 - The wake path adds one fetch BEFORE the decrypt: its own `[NSE_OUTCOME]` stage is `wake-fetch`, so
   a kill or an expiry during it is attributed to it, not to the decrypt. The outcome log's contract
   (`commands/nse_outcomes.rs`, `nseOutcomes.ts`) is unchanged: `kind=wake` and the two new causes are

@@ -41,6 +41,11 @@ describe('MessagingService - the wake-up push', () => {
     findOne: jest.fn().mockResolvedValue({ name: 'Secret group', isGroup: true }),
     manager,
   };
+  /** The recipient keeps this conversation at `mentions` (`dm_group_members.notifLevel`). */
+  const mentionsLevel = () =>
+    manager.findOne.mockImplementation(async (entity: unknown) =>
+      entity === GroupMember ? { id: 1, notifLevel: 'mentions' } : null
+    );
   const unusedRepo = { find: jest.fn(), findOne: jest.fn(), delete: jest.fn(), save: jest.fn() };
 
   const queued = {
@@ -73,6 +78,7 @@ describe('MessagingService - the wake-up push', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    manager.findOne.mockResolvedValue(null);
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     modeRows = [{ push_mode: 'wake' }];
@@ -152,6 +158,37 @@ describe('MessagingService - the wake-up push', () => {
     await send();
     expect(sent().data?.type).toBe('message');
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('MISSING'));
+  });
+
+  it('tells an Android device a frame of a mentions-only conversation must not ring', async () => {
+    mentionsLevel();
+    pushTokenRepo.find.mockResolvedValue([token('android', true)]);
+    await send();
+    expect(sent().data).toEqual({
+      type: 'wake',
+      queuedMessageId: queued.id,
+      silent: 'false',
+      notifLevel: 'mentions',
+    });
+  });
+
+  it('describes a frame at fetch time without repeating the decisions the send logged', async () => {
+    const logLine = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    mentionsLevel();
+    const input = await service.describeQueuedFrame(
+      queued as never,
+      G1,
+      'sender-u2',
+      false,
+      'wake-trace',
+      'fetch'
+    );
+    expect(input.mentionsOnly).toBe(true);
+    expect(logLine).not.toHaveBeenCalledWith(expect.stringContaining('level=mentions'));
+
+    mentionsLevel();
+    await service.describeQueuedFrame(queued as never, G1, 'sender-u2', false, 'send-trace');
+    expect(logLine).toHaveBeenCalledWith(expect.stringContaining('level=mentions'));
   });
 
   it('sends nothing when the switch holds a value no service understands', async () => {

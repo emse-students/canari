@@ -6,6 +6,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
+import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -21,7 +22,7 @@ import type { PushMessageInput } from '../services/push-payload';
  *
  * - `POST /mls/push/register` records whether the binary understands a wake, on EVERY registration;
  * - `GET /mls/push/wake` hands the woken device the map the full push would have carried, behind
- *   the same PushSecret as `fetch-proto`, or says the row is gone.
+ *   `PushSecretGuard` and its per-user throttler, or says the row is gone.
  */
 describe('PushController - the wake-up push', () => {
   const SECRET = 'the-push-secret';
@@ -103,8 +104,8 @@ describe('PushController - the wake-up push', () => {
   });
 
   describe('GET mls/push/wake', () => {
-    const fetch = (silent = 'false', auth = `PushSecret ${SECRET}`) =>
-      controller.fetchWakeFrame(auth, Q, 'user-1', 'phone-1', silent);
+    const fetch = (silent = 'false', messageId = Q) =>
+      controller.fetchWakeFrame(messageId, 'user-1', 'phone-1', silent);
 
     it('answers the full data map, ciphertext inline whatever its size', async () => {
       const longProto = 'A'.repeat(20_000);
@@ -141,8 +142,35 @@ describe('PushController - the wake-up push', () => {
         'g1',
         'u2',
         false,
-        expect.any(String)
+        expect.any(String),
+        'fetch'
       );
+    });
+
+    it('serves a legacy content row as the full push does, and accuses it', async () => {
+      queuedRepo.findOne.mockResolvedValue({
+        id: Q,
+        groupId: 'g1',
+        senderId: 'u2',
+        proto: null,
+        content: 'LEGACY',
+      });
+      describeQueuedFrame.mockResolvedValue(input());
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const answer = await fetch();
+      expect(answer.status === 'frame' && answer.fields.proto).toBe('LEGACY');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('LEGACY_CONTENT_ROW'));
+    });
+
+    it('refuses an id that is not a uuid with a 400, before the database sees it', async () => {
+      await expect(fetch('false', 'not-a-uuid')).rejects.toBeInstanceOf(BadRequestException);
+      expect(queuedRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('is guarded by the PushSecret, then counted per user, in that order', () => {
+      const route = Object.getOwnPropertyDescriptor(PushController.prototype, 'fetchWakeFrame');
+      const guards = Reflect.getMetadata('__guards__', route?.value as object) as unknown[];
+      expect(guards).toEqual([PushSecretGuard, PushSecretThrottlerGuard]);
     });
 
     it('carries no ciphertext for a Welcome, whose bundle comes from fetch-proto', async () => {
@@ -160,15 +188,46 @@ describe('PushController - the wake-up push', () => {
 
     it('refuses a silent value it was not given rather than guessing one', async () => {
       await expect(
-        controller.fetchWakeFrame(`PushSecret ${SECRET}`, Q, 'user-1', 'phone-1', undefined)
+        controller.fetchWakeFrame(Q, 'user-1', 'phone-1', undefined)
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(fetch('1')).rejects.toBeInstanceOf(BadRequestException);
       expect(queuedRepo.findOne).not.toHaveBeenCalled();
     });
+  });
 
-    it('opens nothing without the device secret', async () => {
-      await expect(fetch('false', 'PushSecret wrong')).rejects.toBeInstanceOf(ForbiddenException);
-      expect(queuedRepo.findOne).not.toHaveBeenCalled();
+  describe('PushSecretGuard on a GET', () => {
+    const guardContext = (req: Record<string, unknown>) =>
+      ({ switchToHttp: () => ({ getRequest: () => req }) }) as never;
+    const guard = () => new PushSecretGuard(pushTokenRepo as never);
+
+    it('proves the device the QUERY names, and opens nothing without its secret', async () => {
+      const req = {
+        method: 'GET',
+        headers: { authorization: `PushSecret ${SECRET}` },
+        query: { userId: 'user-1', deviceId: 'phone-1' },
+      };
+      await expect(guard().canActivate(guardContext(req))).resolves.toBe(true);
+      expect(pushTokenRepo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'user-1', deviceId: 'phone-1' },
+      });
+      await expect(
+        guard().canActivate(
+          guardContext({ ...req, headers: { authorization: 'PushSecret wrong' } })
+        )
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('never reads a GET body, so a body cannot name another device', async () => {
+      const req = {
+        method: 'GET',
+        headers: { authorization: `PushSecret ${SECRET}` },
+        query: {},
+        body: { userId: 'user-1', deviceId: 'phone-1' },
+      };
+      await expect(guard().canActivate(guardContext(req))).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      expect(pushTokenRepo.findOne).not.toHaveBeenCalled();
     });
   });
 });
