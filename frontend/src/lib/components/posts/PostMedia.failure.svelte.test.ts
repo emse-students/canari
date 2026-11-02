@@ -41,7 +41,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function mountFailing(err: unknown) {
+async function mountFailing(err: unknown, extra: Record<string, unknown> = {}) {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   download.mockRejectedValue(err);
@@ -52,6 +52,7 @@ async function mountFailing(err: unknown) {
     props: {
       media: { type: 'image', mediaId: 'm1', key: 'k', iv: 'iv', mimeType: 'image/jpeg', size: 1 },
       authToken: 'token',
+      ...extra,
     },
   });
   mounted.push(() => unmount(component));
@@ -94,5 +95,12 @@ describe('PostMedia names the cause of a failure', () => {
 
     expect(download).toHaveBeenCalledTimes(2);
     expect(target.querySelector('img')?.getAttribute('src')).toBe('blob:second');
+  });
+
+  it('tells its caller the typed cause, once - a 410 reads "expired" (RC-6)', async () => {
+    const onFailure = vi.fn();
+    await mountFailing(new MediaPurgedError(), { onFailure });
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onFailure).toHaveBeenCalledWith('expired');
   });
 });

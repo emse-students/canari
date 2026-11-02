@@ -19,6 +19,8 @@ vi.mock('$lib/posts/sharePost', () => ({
   sharePostLinkOut: (...a: unknown[]) => sharePostLinkOut(...a),
   repostToMyFollowers: (id: string) => repostToMyFollowers(id),
   undoMyRepost: (id: string) => undoMyRepost(id),
+  toggleMyRepost: (id: string, reposted: boolean) =>
+    reposted ? undoMyRepost(id) : repostToMyFollowers(id),
 }));
 
 let native = false;

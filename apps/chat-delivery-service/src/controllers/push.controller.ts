@@ -9,6 +9,7 @@ import {
   BadRequestException,
   ConflictException,
   UseGuards,
+  Header,
   Headers,
   Res,
   Logger,
@@ -40,6 +41,8 @@ import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload
 import { parseSessionId } from '../utils/session-id';
 import { isPublicMlsFrame } from '../utils/mls-frame-epoch';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
+import { buildWakeFrameAnswer, type WakeAnswer } from '../services/push-payload';
+import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
 /**
@@ -92,6 +95,24 @@ const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex
  * phone settles it `deferred` on that base, never `lost`.
  */
 export const KEY_GROUP_PUSH_LIMIT_PER_MINUTE = 64;
+
+/**
+ * Wake-up fetches one USER may make per minute on `mls/push/wake`, PER REPLICA (one per wake push a
+ * device received; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+ *
+ * What the number is, and is not: the throttler keys on the user (`PushSecretThrottlerGuard`), so
+ * every device of that user shares it, and its storage is the replica's own memory, so N replicas
+ * admit up to N times it. It is therefore a bound on abuse, not a per-phone budget. Sized from one
+ * phone upward: Android posts at most 5 notifications a second per app
+ * (`NotificationManagerService.MAX_PACKAGE_ENQUEUE_RATE`), so 300 a minute is every VISIBLE frame
+ * one phone can show; 600 leaves the same again for silent frames or a second device. A user whose
+ * devices together exceed it on one replica gets a `429`, which each device treats as a failed
+ * fetch (logged, accused) - the frame stays queued for the next open.
+ */
+export const WAKE_FETCH_LIMIT_PER_MINUTE = 600;
+
+/** A queued row's id is a uuid (`QueuedMessage.id`): anything else is refused before Postgres sees it. */
+const QUEUED_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
@@ -302,6 +323,7 @@ export class PushController {
       platform?: string;
       voipToken?: string | null;
       locale?: string;
+      wake?: boolean;
     },
     @Headers('x-user-id') userIdRaw: string,
     @Headers('x-session-id') sessionIdRaw?: string
@@ -331,6 +353,11 @@ export class PushController {
         ? body.locale.trim().slice(0, 5)
         : undefined;
 
+    // WHETHER THIS BINARY UNDERSTANDS A WAKE-UP PUSH, written on every registration and FALSE unless
+    // said: unlike the locale, an absent field is a statement - the build predates the wake handler
+    // (or is a downgrade), and a wake frame sent to it would be dropped. See `PushToken.wakeCapable`.
+    const wakeCapable = body.wake === true;
+
     // Generate a per-device push secret, hash it for storage so a plaintext DB
     // leak doesn't expose usable push secrets directly.
     const rawSecret = crypto.randomUUID().replace(/-/g, '');
@@ -347,6 +374,7 @@ export class PushController {
         platform,
         pushSecret,
         sessionId,
+        wakeCapable,
         ...(voipToken !== undefined ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
@@ -355,7 +383,7 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
         `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
-        `session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
+        `session=${sessionId ? sessionId.slice(0, 8) : 'none'} wake=${wakeCapable}`
     );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
@@ -408,6 +436,94 @@ export class PushController {
       proto: queued.proto ?? queued.content ?? '',
       ratchetTree: queued.ratchetTree ?? '',
     };
+  }
+
+  /**
+   * What a CONTENT-FREE WAKE-UP push left on this server: the data map the full push would have
+   * carried, for the device that was woken (owner, 2026-11-02;
+   * docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+   *
+   * Auth: `Authorization: PushSecret {secret}` with the device's own `userId` and `deviceId` in the
+   * QUERY - the Android service and the iOS extension and app already hold that secret and have no
+   * JWT. Proven ONCE by `PushSecretGuard` (which reads a GET's ids from its query), then counted per
+   * user by `PushSecretThrottlerGuard` ({@link WAKE_FETCH_LIMIT_PER_MINUTE}). The row is found by
+   * (id, recipient, device), so a secret opens only its own queue; a `messageId` that is not a uuid
+   * is a `400`, never a query Postgres refuses with a `500`.
+   *
+   * `silent` is the bit the wake push carried (`buildWakeDataFields`): the sender's "draw nothing"
+   * is decided at send time and is not on the row, so it travels with the device. Everything else is
+   * decided HERE by `describeQueuedFrame`, the same function the full push calls.
+   *
+   * Answers `{status: 'frame', fields}` or `{status: 'gone'}` (`WakeAnswer`); one line per fetch, so
+   * `[PUSH_SEND] mode=wake` minus `[PUSH_WAKE] served|gone` is the wakes no device acted on.
+   *
+   * `Cache-Control: no-store`: a per-device answer about a queue that changes under it, so no
+   * client, proxy or OS cache may replay it - a stale `frame` would draw a message already read.
+   */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: WAKE_FETCH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Header('Cache-Control', 'no-store')
+  @Get('mls/push/wake')
+  async fetchWakeFrame(
+    @Query('messageId') messageIdRaw: string,
+    @Query('userId') userIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+    @Query('silent') silentRaw?: string
+  ): Promise<WakeAnswer> {
+    const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
+    if (silentRaw !== 'true' && silentRaw !== 'false') {
+      throw new BadRequestException('silent must be "true" or "false"');
+    }
+    const silent = silentRaw === 'true';
+    if (!QUEUED_ID_RE.test(messageId)) {
+      throw new BadRequestException('messageId must be a queued message id');
+    }
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
+
+    const found = await this.queuedMessageRepo.findOne({
+      where: { id: messageId, recipientId: userId, deviceId },
+      relations: PAYLOAD_RELATION,
+    });
+    const [queued] = found ? materializeDeliveries([found], this.logger, 'wake') : [];
+    if (!queued) {
+      this.logger.log(
+        `[PUSH_WAKE] gone queued=${messageId} device=${cutDeviceId(deviceId)} - drained or acknowledged since the push`
+      );
+      return { status: 'gone' };
+    }
+    const groupId = queued.groupId ?? '';
+    const senderId = queued.senderId ?? '';
+    if (!groupId || !senderId) {
+      // Every row the MLS send path writes names both; one that does not was written by something
+      // else, and the description below would name nobody. Served anyway - the device then draws
+      // what it can - and accused, because the writer is the defect.
+      this.logger.warn(
+        `[PUSH_WAKE] queued=${messageId} carries groupId=${groupId ? 'set' : 'absent'} senderId=${senderId ? 'set' : 'absent'} - served as it is`
+      );
+    }
+    // Its decisions were logged when the push left; the fetch repeats none of them.
+    const input = await this.messagingService.describeQueuedFrame(
+      queued,
+      groupId,
+      senderId,
+      silent,
+      `wake-${messageId.slice(0, 8)}`,
+      'fetch'
+    );
+    // The ciphertext exactly as the full push and `fetch-proto` read it, legacy row accused alike.
+    if (!queued.proto && queued.content) {
+      this.logger.warn(
+        `[PUSH] LEGACY_CONTENT_ROW queuedId=${queued.id} recipient=${userId}:${deviceId} - ` +
+          `row carries no proto; served from the retired content column (wake)`
+      );
+    }
+    const answer = buildWakeFrameAnswer(input, queued.proto ?? queued.content ?? '');
+    this.logger.log(
+      `[PUSH_WAKE] served queued=${messageId} device=${cutDeviceId(deviceId)} silent=${input.silent} welcome=${input.isWelcome}`
+    );
+    return answer;
   }
 
   /**

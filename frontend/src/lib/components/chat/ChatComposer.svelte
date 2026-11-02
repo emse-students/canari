@@ -9,7 +9,6 @@
     X,
     FileText,
     CloudUpload,
-    LoaderCircle,
     ChartColumn,
     SmilePlus,
     Images,
@@ -121,7 +120,7 @@
     onFilesSelected?: (files: File[]) => void;
     /**
      * The conversation takes a CanaReel filmed here (a DM or a group - never a salon). Only effective
-     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`, off until RC-5 and RC-7).
+     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`: a dev build only).
      */
     reelMessages?: boolean;
     /**
@@ -139,8 +138,6 @@
     onRemovePendingFile?: (index: number) => void;
     /** A picked video being re-encoded before it joins `pendingFiles` - drawn with its cancel. */
     videoPreparation?: VideoPreparationState;
-    /** Whether an upload is currently in progress (disables the send button). */
-    isUploading?: boolean;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
     allowedUserIds?: string[];
     /**
@@ -171,7 +168,6 @@
     pendingFiles = [],
     onRemovePendingFile,
     videoPreparation,
-    isUploading = false,
     allowedUserIds,
     notice,
   }: Props = $props();
@@ -525,7 +521,7 @@
   const isSendDisabled = $derived(
     isEditing
       ? !messageText.trim() || messageText.trim() === (editingText ?? '').trim()
-      : (!messageText.trim() && pendingFiles.length === 0) || isUploading
+      : !messageText.trim() && pendingFiles.length === 0
   );
 
   // ── Typing signal (throttled) ──────────────────────────────────────────────
@@ -1166,39 +1162,25 @@
 
       <!-- The phone apps' "+": every action, growing out of one glass button (see `addMenuItems`). -->
       {#if appChrome && !actionsHidden}
-        {#if isUploading}
-          <div class="shrink-0">
-            <button
-              type="button"
-              disabled
-              aria-label={m.chat_attach_file_label()}
-              class="glass-chrome ui-icon-button rounded-full"
-            >
-              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-            </button>
-          </div>
-        {:else}
-          <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`); the spinner
-               above stays web, since an upload is short and cannot be picked from. -->
-          <span
-            class="inline-flex shrink-0"
-            use:nativeGlassPiece={{
-              id: 'chat-add',
-              label: m.chat_composer_add_label(),
-              icon: Plus,
-              items: addMenuItems,
-            }}
-          >
-            <GlassMenuButton
-              icon={Plus}
-              label={m.chat_composer_add_label()}
-              items={addMenuItems}
-              open={surface === 'menu'}
-              onOpenChange={onMenuOpenChange}
-              keepsFocus={menuPressKeepsFocus(keyboardOpen)}
-            />
-          </span>
-        {/if}
+        <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`). -->
+        <span
+          class="inline-flex shrink-0"
+          use:nativeGlassPiece={{
+            id: 'chat-add',
+            label: m.chat_composer_add_label(),
+            icon: Plus,
+            items: addMenuItems,
+          }}
+        >
+          <GlassMenuButton
+            icon={Plus}
+            label={m.chat_composer_add_label()}
+            items={addMenuItems}
+            open={surface === 'menu'}
+            onOpenChange={onMenuOpenChange}
+            keepsFocus={menuPressKeepsFocus(keyboardOpen)}
+          />
+        </span>
       {/if}
 
       <!-- The website's paperclip. An Android browser gets Canari's menu (`attachMenuItems`); an iOS
@@ -1235,16 +1217,11 @@
         <div class="shrink-0">
           <button
             onclick={() => openSource('files')}
-            disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
             class="ui-icon-button chat-composer-icon-button"
           >
-            {#if isUploading}
-              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-            {:else}
-              <Paperclip size={20} strokeWidth={2} />
-            {/if}
+            <Paperclip size={20} strokeWidth={2} />
           </button>
         </div>
       {/if}

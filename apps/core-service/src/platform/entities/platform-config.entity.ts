@@ -50,6 +50,18 @@ export class PlatformConfig {
     default: 'off',
   })
   livesMode!: LivesMode;
+
+  /**
+   * What an MLS push tells Google and Apple (migration 018): today's payloads, or a content-free
+   * wake-up the device completes from this estate.
+   */
+  @Column({
+    name: 'push_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'full',
+  })
+  pushMode!: PushMode;
 }
 
 /**
@@ -74,3 +86,17 @@ export type LivesMode = 'off' | 'on';
 
 /** Every {@link LivesMode}, for the DTO's validation. */
 export const LIVES_MODES: readonly LivesMode[] = ['off', 'on'];
+
+/**
+ * What an MLS push carries. `full` is today's payload (conversation and sender ids, the names on a
+ * visible frame, the inline ciphertext); `wake` sends a device that declared it understands one only
+ * `type`, `queuedMessageId` and `silent`, and the device fetches the rest from this estate
+ * (docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md). Read by
+ * chat-delivery-service on every MLS push with a capable destination
+ * (`apps/chat-delivery-service/src/utils/push-mode.ts`, the same two values, held together by the
+ * column's CHECK constraint). Not published to clients: the push itself says which shape it is.
+ */
+export type PushMode = 'full' | 'wake';
+
+/** Every {@link PushMode}, for the DTO's validation. */
+export const PUSH_MODES: readonly PushMode[] = ['full', 'wake'];

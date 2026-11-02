@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+import { assertWithinPostAttachmentCap } from './post-attachment-cap';
 import {
   memberRepostContext,
   EMPTY_MEMBER_REPOST_CONTEXT,
@@ -45,7 +46,7 @@ import { assertReelEditShape } from './reel-rules';
 import type { ReelPurgeReason } from '../internal/reel-media';
 import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 import { publicationTime } from './publication-time';
-import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
+import { invalidatePostListCache, postListCacheKey } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { pageComments, type CommentOrder } from './comment-page';
@@ -55,7 +56,9 @@ import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
   inAssociationsFeedSql,
   republishedFeedAtSql,
-  memberRepostedAmongSql,
+  followedRepostLateralSql,
+  FOLLOWED_REPOST_AT,
+  MEMBER_REPOSTED_BY_FOLLOWED_SQL,
   republishedForViewerSql,
 } from './republished-feed-sql';
 import {
@@ -192,6 +195,11 @@ interface PostCapabilities {
    * override and what applies); absent on every other card.
    */
   repostConsent?: RepostConsent;
+  /**
+   * WP-F6: beside `repostConsent`, on the reader's OWN personal post only, how many people its
+   * author is shown as having reposted it ("Republie par N personnes", the list behind it).
+   */
+  repostCount?: number;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -239,7 +247,16 @@ export class PostsService {
     kind: PostKind | undefined,
     singlePhotos: boolean
   ) {
-    return `${POST_LIST_CACHE_PREFIX}${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}:${kind ?? '-'}${singlePhotos ? '+photos' : ''}`;
+    return postListCacheKey({
+      feed,
+      viewerUserId,
+      promo,
+      formation,
+      limit,
+      offset,
+      kind,
+      singlePhotos,
+    });
   }
 
   /**
@@ -609,7 +626,10 @@ export class PostsService {
   private memberRepostFields(
     postId: string | undefined,
     viewer: PostViewerContext
-  ): Pick<PostCapabilities, 'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent'> {
+  ): Pick<
+    PostCapabilities,
+    'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent' | 'repostCount'
+  > {
     const ctx = viewer.memberReposts;
     if (!viewer.viewerId || !postId) {
       return { canRepost: false, repostedByMe: false, repostedBy: [] };
@@ -619,7 +639,9 @@ export class PostsService {
       canRepost: ctx.repostable.has(postId),
       repostedByMe: ctx.mine.has(postId),
       repostedBy: ctx.reposters.get(postId) ?? [],
-      ...(consent ? { repostConsent: consent } : {}),
+      ...(consent
+        ? { repostConsent: consent, repostCount: ctx.reposterCount.get(postId) ?? 0 }
+        : {}),
     };
   }
 
@@ -970,6 +992,8 @@ export class PostsService {
       data.media = data.images;
     }
     delete data.images;
+    // The cap on a post's attachments (typed 400); a reel carries its one video and never reaches it.
+    assertWithinPostAttachmentCap(Array.isArray(data.media) ? data.media.length : 0);
 
     // THE KIND IS DECIDED HERE AND NOWHERE ELSE. The controller has already refused a malformed
     // reel (`assertCreateKindShape`); this stamps the three columns that stand or fall together and
@@ -1353,6 +1377,11 @@ export class PostsService {
     // never in these two - the predicate without its follower disjunct.
     const spaceVisibleAt = (index: number) =>
       `AND ${postVisibleToViewerSql('posts', `$${index}`, { followers: false })}`;
+    // "Associations" lists what associations publish and republish; a MEMBER repost is a person's
+    // reach, and appears in Suivis only (WP-F6) - an entity post a reader sees only because someone
+    // they follow reposted it is not in this feed.
+    const associationsVisibleAt = (index: number) =>
+      `AND ${postVisibleToViewerSql('posts', `$${index}`, { memberReposts: false })}`;
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -1371,7 +1400,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
-         ${visibleAt(3 + tail.length)}
+         ${associationsVisibleAt(3 + tail.length)}
        ${this.listOrderSql(kind, republishedFeedAtSql(`$${3 + tail.length}`))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
@@ -1402,6 +1431,7 @@ export class PostsService {
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       ${followedRepostLateralSql('$4', `$${5 + tail.length}`)}
        WHERE (
          (posts."associationId" IS NOT NULL AND posts."associationId" = ANY($3::uuid[]))
          -- Never an anonymous post: appearing in THIS feed at all already says "written by
@@ -1412,8 +1442,9 @@ export class PostsService {
          -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
          OR (NOT COALESCE(posts.anonymous, false)
              AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
-         -- What a followed PERSON reposted (WP-F6), never anonymous.
-         OR ${memberRepostedAmongSql('$4', `$${5 + tail.length}`)}
+         -- What a followed PERSON reposted (WP-F6), never anonymous: the lateral above, read once
+         -- for admission and once for placement.
+         OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
@@ -1422,7 +1453,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3', '$4'))}
+       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3', FOLLOWED_REPOST_AT))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -1848,10 +1879,12 @@ export class PostsService {
     }
     post.markdown = data.markdown;
 
-    if (data.media !== undefined) {
-      post.media = data.media;
-    } else if (data.images !== undefined) {
-      post.media = data.images;
+    // `media` wins over the legacy `images`; a null `media` now falls through to `images` (it used to
+    // write null) and, with neither, leaves the stored attachments alone.
+    const nextMedia = data.media ?? data.images;
+    if (nextMedia !== undefined) {
+      assertWithinPostAttachmentCap(nextMedia.length);
+      post.media = nextMedia;
     }
 
     if (data.polls !== undefined) {

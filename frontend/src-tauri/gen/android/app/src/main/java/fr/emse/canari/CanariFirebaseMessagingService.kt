@@ -29,7 +29,10 @@ import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
@@ -45,6 +48,9 @@ import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
+import fr.emse.canari.push.WakeAnswer
+import fr.emse.canari.push.WakeOrder
+import fr.emse.canari.push.FixedNotifIds
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -119,7 +125,76 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * unbounded thread-per-push it exists to prevent, wearing a queue as a disguise.
          */
         private val MLS_PUSH_LANE: ExecutorService =
-            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls") }
+            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls").also { mlsLaneThread = it } }
+
+        /**
+         * The lane's one thread, so [runSerializedWithWakeLock] knows a RE-QUEUE OF THE SAME FRAME
+         * behind its Welcome, made on the lane, which goes straight back to it - everything else,
+         * new work a lane task spawns included, takes a [WAKE_ORDER] ticket.
+         */
+        @Volatile private var mlsLaneThread: Thread? = null
+
+        /**
+         * Where wake-up fetches run - OFF [MLS_PUSH_LANE], which they would otherwise hold for a
+         * network round trip each. Four threads: a burst fetches in parallel, and the frames are
+         * still dispatched in arrival order by [WAKE_ORDER]. Bounded, so a burst queues here rather
+         * than becoming a thread per push. Companion-scoped for the reason the lane is.
+         */
+        private val WAKE_FETCH_POOL: ExecutorService =
+            Executors.newFixedThreadPool(4) { r -> Thread(r, "canari-fcm-wake") }
+
+        /**
+         * Where the HTTP call of a wake fetch runs, so the fetch thread can hold it to
+         * [WAKE_FETCH_DEADLINE_MS] as a WHOLE: `connectTimeout` does not cover the DNS lookup, and
+         * `readTimeout` bounds each read, not the response. A call past its deadline is disconnected
+         * and abandoned; a DNS lookup cannot be interrupted, so its thread ends with the lookup -
+         * which is why this pool is not the fetch pool.
+         */
+        private val WAKE_HTTP_POOL: ExecutorService =
+            Executors.newCachedThreadPool { r -> Thread(r, "canari-fcm-wake-http") }
+
+        /**
+         * THE BOUND OF ONE WAKE TICKET, COUNTED FROM THE PUSH'S ARRIVAL: queueing for a fetch thread,
+         * DNS, connect and the last byte all fit in it, and the ticket is settled when it runs out
+         * whatever the fetch is doing ([WAKE_ORDER]'s deadline). Twice the 5 s connect + 5 s read a
+         * healthy call is allowed. Past it the wake is a failure, logged at ERROR, never retried.
+         */
+        private const val WAKE_FETCH_DEADLINE_MS = 20_000L
+
+        /** The wake lock of one fetch is what is left of its deadline, plus this, to settle its ticket. */
+        private const val WAKE_FETCH_WAKELOCK_MARGIN_MS = 10_000L
+
+        /**
+         * Where every wake ticket's deadline fires, [WAKE_FETCH_DEADLINE_MS] after the push ARRIVED.
+         * One thread: a deadline only settles a ticket, which is a map write and the release of
+         * whatever is now at the head - nothing here waits on the network.
+         */
+        private val WAKE_DEADLINES: java.util.concurrent.ScheduledExecutorService =
+            Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "canari-fcm-wake-deadline") }
+
+        /**
+         * The ARRIVAL ORDER of every push bound for [MLS_PUSH_LANE], wake-up or full, kept across the
+         * wake-ups' parallel fetches - and bounded: no wake ticket stays unsettled longer than
+         * [WAKE_FETCH_DEADLINE_MS] after it arrived, so nothing waits longer than that behind the
+         * latest wake ahead of it. See [WakeOrder].
+         */
+        private val WAKE_ORDER = WakeOrder(WAKE_FETCH_DEADLINE_MS) { delayMs, task ->
+            WAKE_DEADLINES.schedule({
+                // A scheduled executor swallows what a task throws; this is the only place it shows.
+                try {
+                    task()
+                } catch (e: Throwable) {
+                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${e.javaClass.simpleName}", e)
+                }
+            }, delayMs, TimeUnit.MILLISECONDS)
+        }
+
+        /**
+         * The ONE id every "could not be loaded" notification is posted under: a burst of failed
+         * fetches is one notification that says so, not one per frame - they all say the same thing
+         * and all open the same place.
+         */
+        private const val WAKE_UNAVAILABLE_NOTIF_ID = FixedNotifIds.WAKE_UNAVAILABLE
 
         /**
          * How many Welcomes for each group are queued on [MLS_PUSH_LANE] and not yet finished.
@@ -131,9 +206,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * this single thread. Measured on NOTIF-21, 2026-09-28: two key-group frames spent ten
          * seconds each asleep in front of their own Welcome, which joined 24 s after it arrived.
          *
-         * Counted when the push is RECEIVED (before it is queued) and released when its task
-         * ENDS, whatever the outcome - so a count above zero means "a Welcome for this group is
-         * behind you on the lane", and a frame re-queued then runs after it. One re-queue per
+         * Counted when the task is HANDED TO THE LANE - inside its [WakeOrder] release, right
+         * before `execute` - and released when its task ENDS, whatever the outcome. So a count above
+         * zero means "a Welcome for this group is ON the lane behind you", and a frame re-queued
+         * then runs after it; a Welcome still waiting on an earlier wake is not counted, because
+         * nothing behind it on the lane can be waiting for it. One re-queue per
          * Welcome at most: by the time the re-queued frame runs, the Welcome has released it.
          */
         private val WELCOMES_ON_LANE = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -305,13 +382,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private const val GROUP_KEY_MESSAGES = "canari_messages_group"
 
         /** Reserved ID for the group summary notification (must not collide with getStableNotifId). */
-        private const val GROUP_SUMMARY_ID   = 9999
+        private const val GROUP_SUMMARY_ID   = FixedNotifIds.GROUP_SUMMARY
 
         /** Reserved ID for the "messages pending sync" notification (messages channel -> auto-cleared on open). */
-        private const val PENDING_SYNC_NOTIF_ID = 9998
+        private const val PENDING_SYNC_NOTIF_ID = FixedNotifIds.PENDING_SYNC
 
         /** Reserved ID for the "a new device was added to your account" notification. */
-        private const val NEW_DEVICE_NOTIF_ID = 9996
+        private const val NEW_DEVICE_NOTIF_ID = FixedNotifIds.NEW_DEVICE
 
         /** App-private cleartext mirror of the outbox (written by the TS) drained by the background send. */
         private const val OUTBOX_PENDING_FILE = "outbox_pending.ndjson"
@@ -414,6 +491,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
+                // The one "could not be loaded" notice of the wake-up push: the app is open, so the
+                // queue it asked to drain is draining. Named, not left to the channel sweep above,
+                // which an API below 26 does not filter by channel and a channel move would miss.
+                manager.cancel(WAKE_UNAVAILABLE_NOTIF_ID)
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
             }
@@ -786,7 +867,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
                 val existing = prefs.getInt(groupId, -1)
                 if (existing != -1) return@synchronized existing
-                val next = prefs.getInt("__counter__", 1000)
+                // A fixed id ([FixedNotifIds]) is never handed to a conversation: the counter only
+                // grows, and would otherwise walk into them. An id already stored above is kept.
+                val next = FixedNotifIds.skipReserved(prefs.getInt("__counter__", 1000))
                 // commit() guarantees the counter is incremented before exiting the synchronized block.
                 prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).commit()
                 next
@@ -1414,6 +1497,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return try {
                 val ids = manager.activeNotifications.filter { sbn ->
                     sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
+                        sbn.id != WAKE_UNAVAILABLE_NOTIF_ID &&
                         (android.os.Build.VERSION.SDK_INT < 26 ||
                             sbn.notification.channelId == CHANNEL_MESSAGES ||
                             sbn.notification.channelId == CHANNEL_MENTIONS)
@@ -3160,6 +3244,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val data = remoteMessage.data
         Log.d(TAG, "onMessageReceived: type=${data["type"]} action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
+        // A CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`): Google carried only an opaque id. The
+        // frame is fetched from our server and then goes through EXACTLY the path below - one
+        // dispatcher, never a second handler that could drift from it.
+        if (data["type"] == WakeAnswer.WAKE_TYPE) {
+            onWakePush(data)
+            return
+        }
+        dispatchPush(data)
+    }
+
+    /**
+     * Everything a push's data map can ask of this service, whether it arrived in the push itself
+     * or was fetched for a wake-up push ([onWakePush]). The map is the same in both cases - the
+     * server builds both from one description (`describeQueuedFrame`).
+     *
+     * For a wake-up push it runs under [WAKE_ORDER]'s monitor ([onWakeFetched]): it must stay quick
+     * and must never wait - its MLS work goes to the lane, as it does from FCM's own thread.
+     */
+    private fun dispatchPush(data: Map<String, String>) {
         val msgType = data["type"]
 
         // A REACTION RIDES ON `social` WITHOUT BEING ONE. Its wire type stays `social` on purpose:
@@ -3258,8 +3361,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "isWelcome: missing groupId -> abort")
                 return
             }
-            WELCOMES_ON_LANE.merge(groupId, 1, Int::plus)
-            runSerializedWithWakeLock("welcome_join", 90_000L) {
+            runSerializedWithWakeLock(
+                "welcome_join", 90_000L,
+                onLane = { WELCOMES_ON_LANE.merge(groupId, 1, Int::plus) },
+            ) {
                 try {
                     processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
                 } finally {
@@ -3474,7 +3579,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // join - no retry, no clock, and no fallback banner for a message about to be readable.
         if (outcome is PushDecrypt.Refused && (WELCOMES_ON_LANE[groupId] ?: 0) > 0) {
             Log.d(TAG, "tryDecrypt refused group=${groupId.take(8)}: its Welcome is queued behind this frame -> re-queued after it")
-            runSerializedWithWakeLock("fcm_decrypt") { handleMlsFrame(data, silent) }
+            runSerializedWithWakeLock("fcm_decrypt", requeueOfThisFrame = true) { handleMlsFrame(data, silent) }
             return
         }
 
@@ -3736,7 +3841,39 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * The WakeLock is taken when the task STARTS rather than when it is queued, so a task waiting
      * its turn does not hold the CPU awake for the ones ahead of it.
      */
-    private fun runSerializedWithWakeLock(name: String, timeoutMs: Long = 60_000L, block: () -> Unit) {
+    private fun runSerializedWithWakeLock(
+        name: String,
+        timeoutMs: Long = 60_000L,
+        requeueOfThisFrame: Boolean = false,
+        onLane: () -> Unit = {},
+        block: () -> Unit,
+    ) {
+        // IN ARRIVAL ORDER WITH THE WAKE-UPS. Work entering the lane takes a [WAKE_ORDER] ticket, so
+        // it cannot overtake a wake-up that arrived before it and is still fetching (a key-group
+        // Welcome sent as a wake, then the salon push sealed on it) - NEW work a lane task spawns
+        // (a key-group join queued behind its banner) included: from the lane it takes a ticket
+        // like an arrival, and the lane never waits on it, since a ticket that cannot run yet is
+        // stored and run later by whichever settlement releases it.
+        //
+        // Two kinds go straight to the lane. A RE-QUEUE OF THE SAME FRAME behind its Welcome
+        // ([requeueOfThisFrame], on the lane): its place was already taken on arrival, and it must
+        // land right behind the Welcome that is ON the lane. And work queued from inside a release
+        // (the fetched frame's own dispatch): [WakeOrder.inOrder] sees it is already in its turn.
+        if (requeueOfThisFrame && Thread.currentThread() === mlsLaneThread) {
+            executeOnLane(name, timeoutMs, onLane, block)
+            return
+        }
+        val now = WAKE_ORDER.inOrder { executeOnLane(name, timeoutMs, onLane, block) }
+        if (!now) Log.d(TAG, "$name: waits for ${WAKE_ORDER.waiting() - 1} earlier ticket(s), a wake-up still fetching ahead of them")
+    }
+
+    /**
+     * Queues [block] on [MLS_PUSH_LANE] under its own wake lock - the only place work enters it.
+     * [onLane] runs first, on the calling thread, right before the task is handed to the lane: what
+     * must count "this task is ON the lane" ([WELCOMES_ON_LANE]) counts from here, never earlier.
+     */
+    private fun executeOnLane(name: String, timeoutMs: Long, onLane: () -> Unit, block: () -> Unit) {
+        onLane()
         MLS_PUSH_LANE.execute {
             val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
@@ -4321,6 +4458,243 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } finally {
             MlsStateLock.LOCK.unlock()
         }
+    }
+
+    /**
+     * A CONTENT-FREE WAKE-UP PUSH: fetch what the server kept, then dispatch it as the full push
+     * (owner, 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+     *
+     * THE FETCH IS OFF THE MLS LANE, THE DISPATCH ON IT, IN ARRIVAL ORDER - WITH EVERY OTHER PUSH. A
+     * ticket is taken here, on FCM's thread; every full push bound for the lane takes one too
+     * ([runSerializedWithWakeLock]). The fetch runs on [WAKE_FETCH_POOL], and [WAKE_ORDER] releases
+     * the results in ticket order - so a Welcome sent as a wake is still joined before the salon push
+     * that arrived after it, and the lane is never held by a round trip. One request, no retry: the
+     * whole fetch is held to [WAKE_FETCH_DEADLINE_MS], and the ticket is settled on every path (the
+     * fetch's `finally`, or here if it could not be scheduled), so no path leaves a later push
+     * waiting.
+     *
+     * A FAILED FETCH IS NEVER DRAWN AS THE GENERIC TEXT. It is logged at ERROR with its stage, and a
+     * visible frame gets a notification that SAYS the message could not be loaded; a silent one gets
+     * the line only - its row stays queued and the next open drains it.
+     */
+    private fun onWakePush(data: Map<String, String>) {
+        val queuedMessageId = data["queuedMessageId"].orEmpty()
+        val silent = data["silent"] == "true"
+        // The conversation is kept at "mentions": a failure cannot know whether this frame mentions
+        // the user, so it must not ring for it (the bit Apple reads as `passive`).
+        val mentionsOnly = data["notifLevel"] == "mentions"
+        if (PushRegistrationEnd.isSignedOut(this)) {
+            Log.w(TAG, "[PUSH_WAKE] dropped queued=$queuedMessageId - this device is signed out, no account owns its pushes")
+            return
+        }
+        // The foreground engine drains the queue over its WebSocket; fetching here would only race it.
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "[PUSH_WAKE] app in foreground -> the WebSocket delivers queued=$queuedMessageId, nothing fetched")
+            return
+        }
+        if (queuedMessageId.isEmpty()) {
+            Log.e(TAG, "[PUSH_WAKE] a wake push without queuedMessageId - nothing to fetch (server defect) silent=$silent")
+            if (!silent) runWithWakeLock("fcm_wake_unavailable") { showWakeUnavailableNotification(mentionsOnly) }
+            return
+        }
+        val arrivedAt = android.os.SystemClock.elapsedRealtime()
+        // THE TICKET IS BOUNDED FROM ARRIVAL: unless its fetch settles it first, its deadline does,
+        // [WAKE_FETCH_DEADLINE_MS] from now - whether the fetch is queued behind stuck ones, running,
+        // or never scheduled at all.
+        val ticket = WAKE_ORDER.arrive {
+            Log.e(TAG, "[PUSH_WAKE] DEADLINE queued=$queuedMessageId not settled $WAKE_FETCH_DEADLINE_MS ms after it arrived " +
+                "(its fetch still queued or running) - settled as not loaded, so nothing behind it waits longer")
+            onWakeFetched(queuedMessageId, silent, mentionsOnly, WakeAnswer.Outcome.Failed("deadline"))
+        }
+        val settle = { outcome: WakeAnswer.Outcome ->
+            try {
+                val released = WAKE_ORDER.settle(ticket) { onWakeFetched(queuedMessageId, silent, mentionsOnly, outcome) }
+                if (released == null) {
+                    Log.w(TAG, "[PUSH_WAKE] late result DROPPED queued=$queuedMessageId ticket=$ticket outcome=${outcome.javaClass.simpleName} " +
+                        "- its deadline settled it first; the frame stays queued for the next open")
+                } else {
+                    Log.d(TAG, "[PUSH_WAKE] settled queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+            }
+        }
+        try {
+            WAKE_FETCH_POOL.execute {
+                var outcome: WakeAnswer.Outcome = WakeAnswer.Outcome.Failed("uncaught")
+                var wl: PowerManager.WakeLock? = null
+                try {
+                    // What is left of the ticket's bound: a fetch that waited its turn here gets the
+                    // remainder, and one whose deadline already passed is not started at all.
+                    val remainingMs = arrivedAt + WAKE_FETCH_DEADLINE_MS - android.os.SystemClock.elapsedRealtime()
+                    if (remainingMs <= 0) {
+                        Log.w(TAG, "[PUSH_WAKE] fetch NOT started queued=$queuedMessageId - it waited past its deadline for a fetch thread")
+                        outcome = WakeAnswer.Outcome.Failed("deadline")
+                    } else {
+                        wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_wake_fetch")
+                        wl.acquire(remainingMs + WAKE_FETCH_WAKELOCK_MARGIN_MS)
+                        outcome = fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)
+                    }
+                } catch (e: Throwable) {
+                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                } finally {
+                    settle(outcome)
+                    if (wl?.isHeld == true) wl.release()
+                }
+            }
+        } catch (e: RejectedExecutionException) {
+            // Never expected (the pool is never shut down) - and if it ever is, the ticket is settled
+            // HERE, so no later push waits even for the deadline.
+            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}")
+            settle(WakeAnswer.Outcome.Failed("not-scheduled"))
+        }
+    }
+
+    /**
+     * [fetchWakeFrame] held to [budgetMs] - what is left of its ticket's deadline - as a whole. Past
+     * it the connection is disconnected, the call abandoned on [WAKE_HTTP_POOL], and the fetch is a
+     * failure accused at ERROR - the frame stays queued for the next open.
+     */
+    private fun fetchWakeFrameWithinDeadline(queuedMessageId: String, silent: Boolean, budgetMs: Long): WakeAnswer.Outcome {
+        val connection = AtomicReference<HttpURLConnection?>(null)
+        // Where the call was when the budget ran out: `connecting` covers the DNS lookup and the TCP
+        // and TLS handshakes, `awaiting-response` the request and the status line, `reading-body` the rest.
+        val phase = AtomicReference("queued")
+        val call = WAKE_HTTP_POOL.submit<WakeAnswer.Outcome> { fetchWakeFrame(queuedMessageId, silent, connection, phase) }
+        return try {
+            call.get(budgetMs, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            Log.e(TAG, "[PUSH_WAKE] fetch EXCEEDED the $budgetMs ms left of its deadline queued=$queuedMessageId " +
+                "phase=${phase.get()} - abandoned, the ticket is settled by its deadline")
+            connection.get()?.disconnect()
+            call.cancel(true)
+            WakeAnswer.Outcome.Failed("deadline")
+        } catch (e: java.util.concurrent.ExecutionException) {
+            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
+            WakeAnswer.Outcome.Failed("uncaught")
+        }
+    }
+
+    /**
+     * What one wake fetch became, acted on IN ITS TURN: run inside [WAKE_ORDER]'s release, so the
+     * frame's own lane work ([dispatchPush] -> [runSerializedWithWakeLock]) enters the lane at the
+     * place this push ARRIVED, before anything that arrived after it.
+     *
+     * IT RUNS UNDER [WAKE_ORDER]'S MONITOR, on whichever thread settled the ticket (a fetch thread,
+     * the deadline thread). That is why [dispatchPush] must stay what `onMessageReceived` already
+     * needs it to be - quick and non-blocking, its MLS work queued on the lane, never done inline:
+     * anything slow here holds every other settlement, and anything that WAITED on the order here
+     * would wait on itself.
+     */
+    private fun onWakeFetched(queuedMessageId: String, silent: Boolean, mentionsOnly: Boolean, outcome: WakeAnswer.Outcome) {
+        when (outcome) {
+            is WakeAnswer.Outcome.Frame -> {
+                Log.d(TAG, "[PUSH_WAKE] fetched queued=$queuedMessageId type=${outcome.fields["type"]} silent=$silent -> dispatched as the full push")
+                dispatchPush(outcome.fields)
+            }
+            WakeAnswer.Outcome.Gone ->
+                Log.i(TAG, "[PUSH_WAKE] gone queued=$queuedMessageId - drained or acknowledged since the push, nothing to draw")
+            is WakeAnswer.Outcome.Failed -> {
+                Log.e(TAG, "[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent mentionsOnly=$mentionsOnly - " +
+                    if (silent) "nothing drawn, the frame stays queued" else "drawn as not loaded")
+                if (!silent) showWakeUnavailableNotification(mentionsOnly)
+            }
+        }
+    }
+
+    /**
+     * `GET /api/mls/push/wake` for one queued row, with the device's own ids and PushSecret - the
+     * auth `fetch-proto` uses. The decision on what came back is [WakeAnswer.classify]'s.
+     */
+    private fun fetchWakeFrame(
+        queuedMessageId: String,
+        silent: Boolean,
+        connection: AtomicReference<HttpURLConnection?>,
+        phase: AtomicReference<String>,
+    ): WakeAnswer.Outcome {
+        val ctx = MlsContextLoader.loadPushContext(this) ?: return WakeAnswer.Outcome.Failed("no-push-context")
+        val secret = retrievePushSecret(this) ?: return WakeAnswer.Outcome.Failed("no-push-secret")
+        val url = URL(
+            "${ctx.baseUrl}/api/mls/push/wake" +
+                "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
+                "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}" +
+                "&silent=$silent"
+        )
+        val conn = try {
+            (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "GET"
+                useCaches      = false
+                setRequestProperty("Authorization", "PushSecret $secret")
+            }.also { connection.set(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "[PUSH_WAKE] cannot open the connection: ${e.javaClass.simpleName}")
+            return WakeAnswer.Outcome.Failed("transport")
+        }
+        try {
+            val code = try {
+                phase.set("connecting")
+                conn.connect()
+                phase.set("awaiting-response")
+                conn.responseCode
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH_WAKE] no response (phase=${phase.get()}): ${e.javaClass.simpleName}")
+                return WakeAnswer.classify(null, null, null)
+            }
+            if (code != 200) return WakeAnswer.classify(code, null, null)
+            phase.set("reading-body")
+            val json = try {
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH_WAKE] unreadable body: ${e.javaClass.simpleName}")
+                return WakeAnswer.Outcome.Failed("unreadable-body")
+            }
+            val fields = json.optJSONObject("fields")?.let { obj ->
+                buildMap { obj.keys().forEach { key -> (obj.opt(key) as? String)?.let { put(key, it) } } }
+            }
+            return WakeAnswer.classify(code, json.optString("status").takeIf { it.isNotEmpty() }, fields)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * The notification a visible wake-up gets when its message could not be fetched: it says so and
+     * asks to open Canari, which drains the queue. In the app's chosen language ([appLocaleContext]);
+     * the tap opens the app, since nothing here knows which conversation the message belongs to.
+     *
+     * ONE id for all of them ([WAKE_UNAVAILABLE_NOTIF_ID]): a burst of failures replaces one
+     * notification instead of stacking identical ones. SILENT for a mentions-only conversation
+     * ([mentionsOnly]): the frame may not mention the user, and a level they chose must not ring.
+     */
+    private fun showWakeUnavailableNotification(mentionsOnly: Boolean) {
+        val res = appLocaleContext(this)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannels(manager)
+        val notifId = WAKE_UNAVAILABLE_NOTIF_ID
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, notifId, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val body = res.getString(R.string.notif_wake_unavailable)
+        val notification = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(res.getString(R.string.app_name))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setOnlyAlertOnce(true)
+            .setSilent(mentionsOnly || callHoldsSound())
+            .build()
+        Log.d(TAG, "[PUSH_WAKE] not-loaded notification posted notifId=$notifId silent=${mentionsOnly || callHoldsSound()}")
+        manager.notify(notifId, notification)
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
@@ -5396,6 +5770,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_booking_added_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_added_body) }
             )
+            // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
+            "social_booking_changed" -> Pair(
+                res.getString(R.string.notif_social_booking_changed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_changed_body) }
+            )
+            "social_booking_removed" -> Pair(
+                res.getString(R.string.notif_social_booking_removed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_removed_body) }
+            )
             // The reminder: nobody acted, a fixed title; the body is the place and the time.
             "social_booking_reminder" -> Pair(
                 res.getString(R.string.notif_social_booking_reminder_title),
@@ -5540,7 +5923,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             !graineSeedHeld(cacheKey, channelId, sessionId)
         ) {
             Log.d(TAG, "handleChannelMessage: the Welcome into key group ${seedGroupId.take(8)} is queued behind this push -> re-queued after it channel=$channelId index=$messageIndex")
-            runSerializedWithWakeLock("fcm_channel") { handleChannelMessage(data.toMap()) }
+            runSerializedWithWakeLock("fcm_channel", requeueOfThisFrame = true) { handleChannelMessage(data.toMap()) }
             return
         }
 

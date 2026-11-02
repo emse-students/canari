@@ -53,7 +53,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
+        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
       dry_run:
         description: 'dev-reset only: report what would happen and change nothing'
         type: boolean
@@ -185,6 +185,37 @@ jobs:
 
       - name: Prune the log archive and judge the live logs
         run: bash infrastructure/deploy/log-retention-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DID DOCKER'S DNS FAIL THE TWO PROXIES?
+  #
+  # Since the replica lists became variable targets (2026-11-02), every request the frontend proxies
+  # and every connection the edge relays waits on Docker's resolver for its target, and a resolver
+  # that fails fails the request after `resolver_timeout`. Counts the edge's and the frontend's
+  # `could not be resolved` lines of the last day and goes RED on any no design explains: a timeout
+  # or server failure (the DNS itself), an overlap service or a take-out's container name not found.
+  # An exclusive service's own gap is printed, counted. infrastructure/lib/resolver-report.sh;
+  # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
+  #
+  # ON THE SELF-HOSTED RUNNER because the logs are the local daemon's, as for `log-retention`.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  resolver:
+    name: DNS failures at the two proxies
+    if: >
+      github.event.schedule == '30 7 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "resolver"]'), inputs.job))
+    runs-on: self-hosted
+    timeout-minutes: 15
+    # Its own group, at the job level, for the reason `hosts` gives.
+    concurrency:
+      group: resolver-report
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Count the proxies' DNS failures of the last day
+        run: bash infrastructure/deploy/resolver-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE NIGHTLY SECURITY PASS

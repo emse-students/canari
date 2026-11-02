@@ -685,6 +685,61 @@ export const MAX_CONCURRENT_SENDS = 3;
 export const UPLOAD_STALL_HINT_MS = 10_000;
 
 /**
+ * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
+ * swap into the optimistic placeholder message. Shared by the DM/group queue and the salon
+ * attachment send (`salonAttachmentSend.ts`), so an attachment is encoded ONE way whichever path
+ * carries it.
+ */
+export function buildMediaMessage(
+  entry: Pick<OutboxEntry, 'id' | 'sentAt'>,
+  media: NonNullable<OutboxEntry['media']>,
+  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+): { proto: Uint8Array; content: string } {
+  // What the sender declared (a reel message's intent, length and expiry hint): empty for an
+  // ordinary attachment, which therefore encodes exactly as before.
+  const declaration = {
+    ...(media.intent ? { intent: media.intent } : {}),
+    ...(media.durationMs ? { durationMs: media.durationMs } : {}),
+    ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
+  };
+  const fullRef: MediaRef = {
+    type: mediaKindToType(media.kind),
+    mediaId: ref.mediaId,
+    key: ref.key,
+    iv: ref.iv,
+    mimeType: media.mimeType,
+    size: media.size,
+    fileName: media.fileName,
+    width: media.width,
+    height: media.height,
+    ...(media.placeholder ? { placeholder: media.placeholder } : {}),
+    ...(media.voiceNote ? { voiceNote: true } : {}),
+    ...(ref.encoding ? { encoding: ref.encoding } : {}),
+    ...declaration,
+  };
+  const proto = encodeAppMessage({
+    ...mkMedia({
+      kind: media.kind,
+      mediaId: ref.mediaId,
+      key: fromHex(ref.key),
+      iv: fromHex(ref.iv),
+      mimeType: media.mimeType,
+      size: media.size,
+      fileName: media.fileName ?? '',
+      voiceNote: media.voiceNote ?? false,
+      caption: media.caption,
+      ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+      ...mediaPlaceholderProtoField(media.placeholder),
+      ...mediaEncodingProtoField(ref.encoding),
+      ...mediaReelProtoFields(declaration),
+    }),
+    messageId: entry.id,
+    sentAt: entry.sentAt,
+  });
+  return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+}
+
+/**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
  * send time (so epoch changes are transparent), is idempotent on the stable messageId (a re-send
  * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
@@ -1668,16 +1723,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
       // Started after the preparation, which moves no byte and is not a stall.
       let lastMoved = Date.now();
-      hint = setInterval(() => {
+      const stallHint = setInterval(() => {
         if (Date.now() - lastMoved > UPLOAD_STALL_HINT_MS)
           patchUpload(entry.id, { phase: 'stalled' });
       }, 2_000);
+      hint = stallHint;
+      // A WITHDRAWN OR DISPOSED TRANSFER SHOWS NOTHING MORE, even while its request has not yet
+      // answered the abort: the `finally` below clears the timer only once the upload SETTLES, and a
+      // transfer stuck behind a dead storage or socket never does - its timer then wrote `stalled`
+      // into the view of whatever took the id next (the intermittent 'WHILE THE DRIVE READS THE TAKE').
+      control.signal.addEventListener('abort', () => clearInterval(stallHint), { once: true });
       const described = media;
       uploaded = await uploadMedia(
         media,
         {
           signal: control.signal,
           onProgress: ({ loaded, total }) => {
+            // A WITHDRAWN TRANSFER REPORTS NOTHING: a late progress event of a request that has not
+            // yet answered its abort would recreate the view `clearUpload` just removed, for an entry
+            // that is gone. (`persist` below is NOT guarded the same way: a session opened after the
+            // abort must still be remembered in `openSessions`, because that is what releases it.)
+            if (control.signal.aborted) return;
             lastMoved = Date.now();
             attemptLoaded = Math.max(attemptLoaded, loaded);
             patchUpload(entry.id, { phase: 'uploading', loaded, total });
@@ -1836,59 +1902,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       `[OUTBOX] ${id}… take prepared: ${raw.fileBytes.length} -> ${prepared.bytes.length} bytes (${prepared.mimeType}), stored in its place`
     );
     return next;
-  }
-
-  /**
-   * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
-   * swap into the optimistic placeholder message.
-   */
-  function buildMediaMessage(
-    entry: OutboxEntry,
-    media: NonNullable<OutboxEntry['media']>,
-    ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
-  ): { proto: Uint8Array; content: string } {
-    // What the sender declared (a reel message's intent, length and expiry hint): empty for an
-    // ordinary attachment, which therefore encodes exactly as before.
-    const declaration = {
-      ...(media.intent ? { intent: media.intent } : {}),
-      ...(media.durationMs ? { durationMs: media.durationMs } : {}),
-      ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
-    };
-    const fullRef: MediaRef = {
-      type: mediaKindToType(media.kind),
-      mediaId: ref.mediaId,
-      key: ref.key,
-      iv: ref.iv,
-      mimeType: media.mimeType,
-      size: media.size,
-      fileName: media.fileName,
-      width: media.width,
-      height: media.height,
-      ...(media.placeholder ? { placeholder: media.placeholder } : {}),
-      ...(media.voiceNote ? { voiceNote: true } : {}),
-      ...(ref.encoding ? { encoding: ref.encoding } : {}),
-      ...declaration,
-    };
-    const proto = encodeAppMessage({
-      ...mkMedia({
-        kind: media.kind,
-        mediaId: ref.mediaId,
-        key: fromHex(ref.key),
-        iv: fromHex(ref.iv),
-        mimeType: media.mimeType,
-        size: media.size,
-        fileName: media.fileName ?? '',
-        voiceNote: media.voiceNote ?? false,
-        caption: media.caption,
-        ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-        ...mediaPlaceholderProtoField(media.placeholder),
-        ...mediaEncodingProtoField(ref.encoding),
-        ...mediaReelProtoFields(declaration),
-      }),
-      messageId: entry.id,
-      sentAt: entry.sentAt,
-    });
-    return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
   }
 
   /**

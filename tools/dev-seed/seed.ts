@@ -562,7 +562,7 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     id: uuid(`event:${e.key}`),
     associationId: assoId(e.association),
     title: e.title,
-    description: `Evenement fictif organise par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
+    description: `Événement fictif organisé par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
     startsAt: ahead(e.days, e.hour),
     endsAt: ahead(e.days, e.hour + 2),
     createdBy: userId(e.author),
@@ -601,6 +601,9 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev is where lives are read on the bench phones, so its lives kill switch (migration 015)
         // is open too; production's row defaults to `off`.
         lives_mode: 'on',
+        // Dev keeps today's push payloads (migration 018); the wake-up push is moved to `wake` by
+        // hand at `/admin/platform` for its readings, and a reset puts it back.
+        push_mode: 'full',
       },
     ],
     users,

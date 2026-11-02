@@ -54,6 +54,10 @@
 "notif.social.booking_withdrawn.body" = "Your booking still stands";
 "notif.social.booking_added.title" = "%@ added you to a booking";
 "notif.social.booking_added.body" = "Find it in Bookings";
+"notif.social.booking_changed.title" = "%@ changed your booking";
+"notif.social.booking_changed.body" = "Find the new time in Bookings";
+"notif.social.booking_removed.title" = "%@ removed you from a booking";
+"notif.social.booking_removed.body" = "You are no longer part of it";
 "notif.social.booking_reminder.title" = "Booking reminder";
 "notif.social.booking_reminder.body" = "Your booking starts soon";
 "notif.form.opening_soon.title" = "Form opening soon";
@@ -85,3 +89,8 @@
 
 "notif.device.added.title" = "New device";
 "notif.device.added.body" = "A new device was added to your account. If it was not you, open Canari.";
+
+/* A content-free wake-up push whose message could not be fetched from the server, and one whose
+   message the app had already received (push_mode = wake, 2026-11-02). */
+"notif.wake.unavailable" = "A message could not be loaded. Open Canari to read it.";
+"notif.wake.gone" = "Message already received in Canari.";

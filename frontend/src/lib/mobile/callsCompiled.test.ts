@@ -370,3 +370,13 @@ describe('what the calls switches must never take with them', () => {
     expect(pushMm).toMatch(/if \(kCanariCallsEnabled\) \{\s*CanariCallKitSetup\(\);/);
   });
 });
+
+describe('B2: the native ring announces what the build can carry', () => {
+  it('a build with the native ring carries video, so a video ring is never answered as audio', () => {
+    // The VoIP push and the FCM `call_ring` carry the call's media kind (`hasVideo`) to CallKit and
+    // the Android notification. A build that rings with no video would announce a call it then
+    // answers without a camera: the ring compiled implies `CALLS_VIDEO_ENABLED`. (The server's
+    // `calls_mode` refusal of a video ring is a second guard, not this one.)
+    if (RING) expect(VIDEO).toBe(true);
+  });
+});

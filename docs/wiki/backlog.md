@@ -61,7 +61,7 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 BUILT (draft #2859, for `1.6.0`).** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 IN PRODUCTION since `v1.6.1` (#2859, migrations 121 and 123; hardened by #2917, and #2920 made the posts of lists and members-only associations non-repostable).** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -69,8 +69,9 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 ### The decisions
 
 1. **Member reposts.** A member may republish another member's post to THEIR OWN followers, with
-   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an entity
-   (association, list, institution) is reposted without asking. Never an anonymous post. A block
+   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an
+   association or an institution that addresses at least one space is reposted without asking;
+   never the post of a list or of a members-only association (owner, 2026-11-02). Never an anonymous post. A block
    applies both ways. Hiding the original removes every repost. Same rules for reels. A repost
    enters the Suivis feed of the reposter's followers at the time of the repost; a notification goes
    only to readers who NEWLY see the post (the D38 rule).
@@ -223,9 +224,9 @@ ordinary review.
   space / other space x personal / anonymous / association post), the read-grants spec unchanged,
   and the privacy-policy paragraph in the same pull request.
 - **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
-  review before arming). BUILT, draft pull request #2859, migration 121**
+  review before arming). IN PRODUCTION since `v1.6.1` (#2859, migration 121), hardened by #2917 (migration 123); since #2920 the posts of lists and members-only associations are not repostable**
   ([as built](profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
-  owed: the Opus review, then arming on the owner's go (it changes who sees what). The plan as
+  it changed who sees what, and shipped on the owner's go. The plan as
   written: The consent setting (per author, per post); the SQL beside the
   republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
   on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
@@ -234,13 +235,17 @@ ordinary review.
   D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
   Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
   notification only for the newly reached, and the policy paragraph in the same pull request.
-- **WP-F7 - the register and the privacy policy for follow requests.** Register C5
-  ([register](compliance/register-of-processing.md)): the request, its answer, the followers list,
-  retention (a request until answered or withdrawn; a follow until removed or either account is
-  erased). The privacy policy (`/legal/privacy`, its public face - both change together), the
-  terms (`/legal/cgu`) if they name following, and the D34-D41 tables of
-  [profiles-and-access](profiles-and-access.md). Merges before the stable carrying F1-F4; F5 and F6
-  each amend these texts in their own pull request.
+- **WP-F7 - the register and the privacy policy for follow requests. DONE 2026-11-02.** The text
+  rode with the code: register C5 and the `/legal/privacy` paragraphs (follows, member reposts,
+  retention table) arrived in the F5 and F6 pull requests, and this package re-read them against
+  the code (the `FOLLOW_ASKS_PER_DAY` cap of 50, the notice row kept until an erasure, the refusal
+  and withdrawal deletes, the F6 consent default ON, the erasure deletes of `member_reposts` and
+  `user_repost_settings`) and found them exact; #2917 and #2920 had already amended C5 and the
+  privacy page in step ("notified, or announced to, through a repost"; lists and members-only
+  associations not repostable), so this package changes neither. The terms (`/legal/cgu`) name followers only for
+  lives and need nothing; the D37-D41 table of
+  [profiles-and-access](profiles-and-access.md#d37-d41---what-each-surface-shows) was the one stale
+  line, now corrected.
 
 ### Risks, and what proves each away
 
@@ -2139,7 +2144,7 @@ Salon writes now wait for the link and a repeat is one row (WP-OFF-3/4, PK4 pull
 
 ## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
 
-Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1), the upload running outside the lane so a text sent behind a big file does not wait for it (WP-OFF-9, section 13.8). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); a salon attachment blocks the composer with no progress (WP-OFF-3 queues a salon text, edit or reaction but not a photo, video or poll: section 16); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
+Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1), the upload running outside the lane so a text sent behind a big file does not wait for it (WP-OFF-9, section 13.8). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); a salon poll is still not queued (WP-OFF-3 queues a salon text, edit or reaction, and since 2026-11-02 a salon attachment is drawn at the tap with its upload on its row: [chat](frontend/modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02)); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
 
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 

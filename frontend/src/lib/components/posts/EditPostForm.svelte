@@ -1,6 +1,13 @@
 <script lang="ts">
-  import { needsThumbIcon } from '$lib/utils/mediaLayout';
+  import { needsThumbIcon, resolveMediaType } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import {
+    POST_ATTACHMENTS_MAX,
+    admitAttachments,
+    attachmentCapNotice,
+  } from '$lib/posts/attachmentCap';
+  import { usesCompactDocumentRows } from '$lib/utils/posts/documentRows';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
@@ -197,7 +204,13 @@
    * The picker, a drop and a paste all end here: the editor body is Markdown and cannot hold an
    * image, so the only place one can go is this list (user, 2026-09-18).
    */
-  function addFiles(files: File[]) {
+  function addFiles(incoming: File[]) {
+    if (incoming.length === 0) return;
+    // At most ten attachments a post, kept ones included: as many as fit are taken, the rest are said.
+    const admitted = admitAttachments(existingMedia.length + newFiles.length, incoming);
+    const notice = attachmentCapNotice(admitted);
+    if (notice) showToast(notice);
+    const files = admitted.accepted;
     if (files.length === 0) return;
     newFiles = [...newFiles, ...files];
     newFilePreviews = [
@@ -207,6 +220,9 @@
     newFileThumbIcons = [...newFileThumbIcons, ...files.map((f) => needsThumbIcon(f))];
     newMediaCaptions = [...newMediaCaptions, ...files.map(() => '')];
   }
+
+  /** Two or more existing documents are rows that fetch nothing until tapped, as on the post card. */
+  const compactExisting = $derived(usesCompactDocumentRows(existingMedia));
 
   /** Removes an existing media item (already uploaded) by index. */
   function removeExistingMedia(i: number) {
@@ -251,6 +267,11 @@
       });
       pollIssue = blocker?.pollIssue ?? null;
       if (blocker) throw new LocalizedError(blocker.message);
+      // BEFORE any upload: a post over the cap would be refused by the server after every new blob
+      // was already sent. The composer stops adding at the cap, so this is a net, never a path.
+      if (existingMedia.length + newFiles.length > POST_ATTACHMENTS_MAX) {
+        throw new LocalizedError(m.post_attachments_too_many({ max: POST_ATTACHMENTS_MAX }));
+      }
 
       // Upload new media files and get their refs.
       const uploadedRefs: PostMediaRef[] = [];
@@ -397,7 +418,11 @@
               <div
                 class="group relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 shadow-sm dark:border-white/10"
               >
-                <PostMedia media={mediaItem} authToken={currentAuthToken} />
+                <PostMedia
+                  media={mediaItem}
+                  authToken={currentAuthToken}
+                  compact={compactExisting && resolveMediaType(mediaItem) === 'file'}
+                />
                 <MediaThumbRemoveButton
                   label={m.post_edit_remove_image_aria()}
                   title={m.common_delete_button()}
@@ -537,6 +562,7 @@
 
     <PostComposerBar
       onFiles={addFiles}
+      attachmentCount={existingMedia.length + newFiles.length}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}

@@ -796,6 +796,8 @@
   "upload_waiting": "Waiting for a connection - retrying automatically",
   "upload_blocked": "Blocked by the server - try again later",
   "upload_failed": "Could not send: no answer from the server after several tries ({sent} of {total} sent). Try again or delete this message.",
+  "upload_refused": "The server refused this upload. Retry or cancel it.",
+  "upload_unanswered": "The file was sent but the server did not answer in time. Retry or cancel it.",
   "upload_error": "Could not send: something went wrong on this device (the file may be unreadable). Try again or delete this message.",
   "upload_cancel_label": "Cancel sending",
   "upload_retry_label": "Try again now",
@@ -981,6 +983,28 @@
   "post_composer_photo_video": "Photo/video",
   "post_composer_camera": "Open the camera",
   "post_composer_file": "File",
+  "post_attachments_counter": "{count}/{max} attachments",
+  "post_attachments_counter_with_status": "{counter} - {status}",
+  "post_attachments_full": "A post holds at most {max} attachments.",
+  "post_attachments_partial": [
+    {
+      "declarations": [
+        "input taken",
+        "input leftOut",
+        "input max",
+        "local takenPlural = taken: plural",
+        "local leftPlural = leftOut: plural"
+      ],
+      "selectors": ["takenPlural", "leftPlural"],
+      "match": {
+        "takenPlural=one leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=one leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=other leftPlural=one": "{taken} added, {leftOut} left out: a post holds at most {max} attachments.",
+        "takenPlural=other leftPlural=other": "{taken} added, {leftOut} left out: a post holds at most {max} attachments."
+      }
+    }
+  ],
+  "post_attachments_too_many": "A post holds at most {max} attachments. Remove some and try again.",
   "post_composer_formatting": "Formatting",
   "post_composer_caption_toggle": "Caption",
   "post_composer_caption_placeholder": "Caption for media {position} (optional)",
@@ -1273,6 +1297,10 @@
   "admin_platform_lives_mode_off": "Closed",
   "admin_platform_lives_mode_on": "Open",
   "admin_platform_lives_mode_hint": "Takes effect as soon as you save: closed, no live can start, be watched or carry its chat, and the live card and the Live button disappear. Lives open only where this server's deployment also enables them.",
+  "admin_platform_push_mode_label": "Notifications sent through Google and Apple",
+  "admin_platform_push_mode_full": "Full (ids and names)",
+  "admin_platform_push_mode_wake": "Wake-up only (nothing identifying)",
+  "admin_platform_push_mode_hint": "Takes effect as soon as you save, for conversation messages: in wake-up only, Google and Apple receive just an opaque id, and the phone fetches the rest from here. Only app versions that can do this receive it; the others stay on full. Turn it on only once the iOS notification extension has been verified on an iPhone.",
   "admin_spaces_label": "Spaces",
   "admin_spaces_title": "Spaces & audiences",
   "admin_spaces_subtitle": "Every formation × campus combination is a space. Each club, list or institution chooses who it reaches: everyone, a whole campus or one formation.",
@@ -3737,6 +3765,7 @@
   "channel_poll_vote_error": "Could not vote",
   "pdf_preview_alt": "Preview of the document's first page",
   "pdf_open_document_label": "Open the document",
+  "post_file_ready_to_save": "Ready - tap to save",
   "pdf_viewer_page_alt": "Page {page} of {total}",
   "pdf_viewer_page_count": "{count} pages",
   "pdf_viewer_zoom_in": "Zoom in",
@@ -3948,6 +3977,44 @@
   "reels_review_edit": "Edit the photo or video",
   "reels_review_add": "Add",
   "reel_chat_send": "Send",
+  "reel_sendto_action": "Send to...",
+  "reel_sendto_title": "Send to",
+  "reel_sendto_back": "Back to the video",
+  "reel_sendto_feed_row": "Post to CanaReels",
+  "reel_sendto_feed_muted": "You cannot post right now: your account is muted.",
+  "reel_sendto_search": "Search conversations",
+  "reel_sendto_empty": "No conversation to send this video to.",
+  "reel_sendto_no_match": "No conversation matches.",
+  "reel_sendto_kind_direct": "conversation",
+  "reel_sendto_kind_group": "group conversation",
+  "reel_sendto_row_label": "{name}, {kind}",
+  "reel_sendto_chip_remove": "Remove {name}",
+  "reel_sendto_cap": "You can pick {count} conversations at most.",
+  "reel_sendto_sound_removed_chats": "Removed sound cannot apply to a conversation send: this video can only be posted.",
+  "reel_sendto_sheet_unavailable": "Sending to conversations is not ready, try again in a moment.",
+  "reel_sendto_too_long_for_chats": "This video is over {seconds} s: it can only be posted, not sent to a conversation.",
+  "reel_sendto_blocks_unread": "Your blocked list could not be read: sending to conversations is unavailable, you can still post.",
+  "reel_sendto_failed": "The send could not be queued.",
+  "reel_sendto_send": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Send ({count})",
+        "countPlural=other": "Send ({count})"
+      }
+    }
+  ],
+  "reel_sendto_sending": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Sending to {count} conversation",
+        "countPlural=other": "Sending to {count} conversations"
+      }
+    }
+  ],
   "reels_review_next": "Next",
   "reels_editor_title": "Edit capture",
   "reels_editor_back": "Back to preview",
@@ -4055,6 +4122,8 @@
   "reel_chat_tile_label_expired": "Expired CanaReel from {name}, sent {age}",
   "reel_chat_expired": "CanaReel expired",
   "reel_chat_expired_age": "Sent {age}",
+  "reel_chat_tile_label_deleted": "Deleted CanaReel from {name}, sent {age}",
+  "reel_chat_deleted": "CanaReel deleted",
   "post_republish_action": "Republish",
   "post_propose_republication_action": "Propose to an association",
   "post_unrepublish_action": "Withdraw {name}'s republication",
@@ -4073,6 +4142,18 @@
   "post_republish_error": "The action failed. Try again.",
   "post_republished_by": "Republished by {names}",
   "post_republished_by_more": "Republished by {names} +{count}",
+  "post_republished_by_you": "Republished by you",
+  "post_republished_by_you_and": "Republished by you and {name}",
+  "post_republished_by_you_and_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Republished by you, {name} and {count} other",
+        "countPlural=other": "Republished by you, {name} and {count} others"
+      }
+    }
+  ],
   "post_request_republication_action": "Share as an association",
   "post_request_dialog_title": "Ask the author",
   "post_request_dialog_hint": "The post's author decides. Nothing is shown before they accept.",
@@ -4630,7 +4711,24 @@
   "bookings_sheet_people_full": "The maximum is reached ({max} people, you included).",
   "bookings_sheet_people_note": "They are added directly, without being told: they will see it on Bookings and may leave.",
   "bookings_sheet_person_remove": "Remove {name}",
-  "bookings_sheet_no_edit_note": "A booking cannot be edited: to change an answer or the people, cancel and book again - the slot may be taken in between.",
+  "bookings_sheet_no_edit_note": "The time and the other people can be edited later; to change an answer, the day, the room or the person it is for, cancel and book again - the slot may be taken in between.",
+  "bookings_edit_action": "Edit",
+  "bookings_edit_title": "Edit the booking",
+  "bookings_edit_submit": "Save",
+  "bookings_edit_done": "Booking updated.",
+  "bookings_edit_unchanged": "Nothing changed.",
+  "bookings_edit_you": "You",
+  "bookings_edit_start_label": "From",
+  "bookings_edit_note": "The day, the room, the person it is for and the answers cannot be edited: to change them, cancel and book again.",
+  "bookings_edit_note_notified": "People added or removed are notified, and so are those who stay when the time changes.",
+  "bookings_edit_outcome_unknown": "The answer did not arrive, so the change may or may not have been made. The grid and your bookings were read again: check them before trying again.",
+  "bookings_edit_refusal_conflict": "The new time is not free.",
+  "bookings_edit_refusal_quota": "This change goes beyond a limit of the space.",
+  "bookings_edit_refusal_outside_rules": "The new time is outside the space's rules.",
+  "bookings_edit_refusal_unchanged": "Your booking has not changed.",
+  "bookings_edit_refusal_stale": "The booking changed in the meantime: check it and try again.",
+  "bookings_edit_refusal_forbidden": "Only the person who booked and the space's organisers can edit this booking.",
+  "bookings_edit_refusal_other_day": "A booking does not change day: cancel it and book the new day.",
   "bookings_sheet_personal_note": "This is a personal space: if its owner deletes their account, the upcoming bookings disappear without warning.",
   "bookings_detail_title": "Booking",
   "bookings_detail_holder": "Booked by",
@@ -4678,6 +4776,7 @@
   "bookings_field_opens_at_zone": "On the space's clock: {zone}.",
   "bookings_stranded_cancel_confirm_button": "Cancel the booking",
   "bookings_stranded_keep": "Keep it",
+  "bookings_time_end_of_day": "00:00 (end of day)",
   "bookings_time_next_day": "(next day)",
   "bookings_sheet_outcome_unknown": "The answer did not arrive, so the booking may or may not have been made. The grid and your bookings were read again: check them before trying again.",
   "bookings_block_outcome_unknown": "The answer did not arrive, so the block may or may not have been made. The grid was read again and shows whether it exists: check it before blocking again.",
@@ -4918,6 +5017,8 @@
   "notif_booking_cancelled_text": "cancelled a booking",
   "notif_booking_withdrawn_text": "left your booking",
   "notif_booking_added_text": "added you to a booking",
+  "notif_booking_changed_text": "changed your booking",
+  "notif_booking_removed_text": "removed you from a booking",
   "notif_booking_reminder_text": "Reminder: your booking starts soon",
   "notif_booking_word_quoted": "\"{word}\"",
   "follow_list_more": "Show more",
@@ -4968,7 +5069,6 @@
   "post_repost_undone": "Repost undone",
   "post_repost_error": "The repost failed. Try again.",
   "post_repost_refused_anonymous": "An anonymous post cannot be reposted.",
-  "post_repost_refused_blocked": "Not possible: a block stands between you and the author.",
   "post_repost_refused_not_allowed": "The author does not allow reposts of this post.",
   "post_repost_refused_already": "You already reposted this post.",
   "post_repost_refused_gone": "This post is no longer available.",
@@ -4977,8 +5077,27 @@
   "post_repost_consent_allowed_toast": "Reposts allowed for this post",
   "post_repost_consent_forbidden_toast": "Reposts forbidden for this post",
   "post_repost_consent_error": "The setting could not be saved.",
+  "post_reposters_menu": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Republished by {count} person",
+        "countPlural=other": "Republished by {count} people"
+      }
+    }
+  ],
+  "post_reposters_title": "Republished by",
+  "post_reposters_empty": "Nobody reposts this post at the moment.",
+  "post_reposters_remove": "Remove",
+  "post_reposters_remove_confirm": "Remove {name}'s repost? Their followers will no longer see this post through them. {name} will not be told.",
+  "post_reposters_remove_error": "The repost could not be removed.",
   "settings_allow_reposts_label": "Allow my followers to repost my posts",
   "settings_allow_reposts_hint": "Your followers will be able to repost your posts to their own followers. You can change this post by post from a post's menu. Anonymous posts are never reposted.",
   "settings_allow_reposts_error": "The setting could not be saved.",
-  "notif_member_repost_text": "reposted:"
+  "notif_member_repost_text": "reposted:",
+  "bookings_owner_label": "Create as",
+  "bookings_owner_personal": "Me",
+  "bookings_owner_current": "This association",
+  "bookings_owner_load_error": "Your associations could not be loaded: only the current choice is offered."
 }

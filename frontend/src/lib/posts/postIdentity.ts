@@ -7,31 +7,18 @@
  * written inline in `CreatePostForm`, and a reel is published "with the same audience as posts
  * have" (R3), so the camera reads the same two answers rather than a second spelling of them.
  */
-import {
-  AssociationPermissionFlag,
-  hasPermissionFlag,
-  listAssociations,
-  listMyAssociations,
-  type Association,
-} from '$lib/associations/api';
-import { isGlobalAdmin } from '$lib/stores/user';
+import { AssociationPermissionFlag, type Association } from '$lib/associations/api';
+import { listActableAssociations } from '$lib/associations/actable';
 import { ANONYMOUS_POST_IDENTITY } from './postComposerDraft';
 import type { CreatePostPayload } from './api';
 
 /**
- * The associations the member may publish - or comment - as: every one for a global admin,
- * otherwise those where they hold `POST_AS_ASSO` itself.
- *
- * It filtered on `isAdmin` ("holds ANY permission") until 2026-10-21, a wider test than the one the
- * server applies (`canPostAs`): a member who could only manage the roster was OFFERED an association
- * the server then refused. The server still checks - this list only decides what is offered.
+ * The associations the member may publish - or comment - as: `POST_AS_ASSO` held themselves, or
+ * everything for a global admin. A BDE super-admin does NOT inherit it (`listActableAssociations`).
+ * It filtered on `isAdmin` until 2026-10-21, wider than the server's `canPostAs`.
  */
-export async function listPostAsAssociations(): Promise<Association[]> {
-  if (isGlobalAdmin()) return listAssociations();
-  const mine = await listMyAssociations();
-  return mine.filter((a) =>
-    hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.POST_AS_ASSO)
-  );
+export function listPostAsAssociations(): Promise<Association[]> {
+  return listActableAssociations(AssociationPermissionFlag.POST_AS_ASSO);
 }
 
 /** The payload fields an identity choice adds: an association, anonymity, or nothing (the member). */

@@ -97,6 +97,7 @@ REST: those rows need a count, then a migration.
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
 | State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | `minClientVersion` AND the web rollback floor >= the tag carrying the HARDENED v2 reader (#2074) - a v2 reader alone (`v1.2.7`) is not enough: `v1.2.7` and `v1.4.0` misread a refused v2 blob, the second as `STATE_ALTERED` | NO (floor `1.2.7`; the hardened reader is in no tag yet) | it CHANGES device data at rest | 1 line in its own PR, then the encrypt worker | NOT done: #2074 ships the reader with the writer OFF ([mls-protocol](protocols/mls-protocol.md#v2---the-browser-seals-with-webcrypto-every-platform-reads-it-2026-10-12)) |
+| `CHAT_REEL_WRITER_ENABLED` (`reels/chatReelWriter.ts`, [reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order) item 6) | `minClientVersion` on the estate the writer writes to >= `v1.2.2`, the first stable carrying the reader (#1659, RC-1: a reel message is drawn as a tile, never as a downloadable chat video); a push says "CanaReel" from `v1.3.1` (#2112, RC-7), below it "video" - a softer line, not a misread. RC-6's "CanaReel supprime" (#2911) is NOT part of the floor: an older reader draws the player's expired state on the same `410` | YES on both estates, read 2026-11-02 from `GET /api/version`: production `1.5.1`, dev `1.2.7` (the push half too on production; on dev a `1.2.7`-`1.3.0` device would announce a reel as "video") | none | the floor is a precondition, nothing to remove | MET - the switch waits only for its other items (section 7) and the bench readings; how it turns on for dev only is the switch's own PR |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closed (floor `1.5.1` on production, read 2026-10-31) |
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
@@ -173,13 +174,16 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
 
-### No date yet - a frontend image older than the replica lists, drained by DNS (2026-11-01)
+### No date yet - a frontend image older than the target lists, drained by DNS (2026-11-01)
 
 **Site:** `rotation_is_legacy` and the `legacy` branch of `rotation_apply` in
 `infrastructure/lib/rolling.sh`.
-**What it humours:** a frontend nginx from before the lists, which reads no `rotation/frontend.conf`
-and names every service by `<service>:<port>`. The first deploy carrying the lists finds one running,
-and so does every deploy after a rollback to a release older than them. Its retiring replica is kept
+**What it humours:** a frontend nginx from before the target lists, which reads no
+`targets/frontend.conf` and names every service by `<service>:<port>` - by `set` before any list, by
+1.6.2's `upstream` list at rest since (2026-11-02). The first deploy carrying the target lists finds
+one running, and so does every deploy after a rollback to a release older than them. Kept for the same
+reason: `infrastructure/edge/rotation/` and its `.gitignore`, where 1.6.2's frontend reads its list
+and 1.6.2's library writes it on a rollback; this library never touches it. Its retiring replica is kept
 up `ROLLING_RESOLVER_TTL_SECONDS + 1` while that nginx re-resolves - the drain every deploy made
 before the lists - with a `::warning` naming it, rather than refused
 ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
@@ -188,10 +192,11 @@ says this release deploys (`rotation_runs_this_release`, the plan's fifth field)
 release's image is the transition, warned and drained; THIS release's own image reading no list is a
 release built wrong, refused at `::error`; an image that cannot be compared is drained and logged at
 `::error`. `deploy-replace.test.sh` asserts the first two.
-**Condition, and its trigger:** no release a rollback may still target predates the lists - the GHCR
-prune keeps 30 pushes, so once the 30 newest releases of each estate carry them. Measured, not
-remembered: `git tag --contains <the squash commit of #2866> | grep -cE '^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$'`
-reaching 30. Then delete the branch, so a proxy that reads no list is refused like any other. The
+**Condition, and its trigger:** no release a rollback may still target predates the target lists -
+the GHCR prune keeps 30 pushes, so once the 30 newest releases of each estate carry them. Measured,
+not remembered: `git tag --contains <the squash commit that brought the target lists> | grep -cE '^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$'`
+reaching 30. Then delete the branch and `edge/rotation/`, so a proxy that reads no target list is
+refused like any other. The
 resting DNS form of the lists is NOT part of this entry: it is the design, and stays.
 
 ### No date yet - the Lydia key paste field of a build older than enrolment lot 1

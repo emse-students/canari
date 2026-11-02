@@ -196,6 +196,8 @@ export interface ChatMessage {
   awaitingServerId?: boolean;
   /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
   restoredUnverified?: boolean;
+  /** When this device met this reel message's `410` - see `StoredMessage.mediaPurgedAt`. */
+  mediaPurgedAt?: number;
   /** Where the store's page read found this row (`StoredMessage.pageKey`); absent on a row that did not come from one. */
   pageKey?: PageKey;
 }

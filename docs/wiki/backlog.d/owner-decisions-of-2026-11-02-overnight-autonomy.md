@@ -12,3 +12,34 @@ Decisions, not open questions; this entry is deleted when the last one is carrie
   versions included, once CI is green and an adversarial review has passed.
 - **MiGallery faces (#443)**: an unproven chain is accepted automatically at **0.5**, not 0.62. The
   merge waits for a clean review and a dry run whose numbers are trustworthy.
+- **MiGallery faces, three more answers**: a member with 3 to 14 references grows on this deploy
+  from PROVEN faces only (a `suggested` face is proof only for a member holding nothing but a
+  selfie); a member with no selfie is measured to their ORIGINAL references, never to ones added
+  later; replacing a selfie drops the saved snapshot, so an undo returns to the new selfie.
+- **Started the same night**: RC-12, the "Envoyer à..." sheet on the main camera, behind the writer
+  switch; WP-F7 (register and policy) - WP-F6 was already merged (#2859, 2026-11-01), so it gets a security review after the fact instead, since its own was owed before arming and none is recorded; the content-free wake-up push,
+  behind a server switch that is OFF by default
+  ([entry](push-payloads-carry-nothing-for-google-and-apple.md)); one local MLS store per account
+  instead of one per install ([entry](../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
+- **Backlog order once the night's work is done**: opening a community comes first
+  ([community-open-budget](../frontend/community-open-budget.md)).
+- **For the day of 2026-11-02**, answered in the morning:
+  - read-only SELECTs on the production and dev databases are always allowed to the lead agent
+    (a read-only transaction, aggregates only, no name or id ever enters the repository);
+  - MiGallery faces (#443) merge without the owner if the review is clean and the dry run is sane
+    (no face that fails to open, convergence in under 6 passes, under 5 % of added faces between 0.45
+    and 0.5 of the selfie); otherwise the owner looks first;
+  - one local MLS store per account (#2919) ships to production after an A-B-A-B reading on the
+    iPhone 12 bench phone;
+  - the content-free wake-up push: on for dev if the Mi 9T reading passes, then production for
+    ANDROID ONLY until the iOS "notifications without content" P1 is fixed;
+  - member reposts: a post of a members-only association or of a list can no longer be reposted;
+    existing reposts of such posts stay in the database, inert (no deletion); the consent default for
+    personal posts is kept as it is;
+  - `minClientVersion` rises to 1.6.0 on both estates once both stores serve 1.6.x;
+  - the stable `1.6.3` is cut by the lead agent if dev is healthy and the phone readings pass;
+  - the chat-reel writer goes ON in production with the next stable if both phones' readings pass and
+    dev stays healthy;
+  - 1:1 video calls are already enabled in production (owner's own test); the bench measurements are
+    still taken;
+  - the iOS "notifications without content" P1 is today's priority on the bench phones.

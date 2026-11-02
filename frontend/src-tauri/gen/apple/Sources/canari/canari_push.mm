@@ -723,6 +723,9 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_booking_cancelled" : @"booking_cancelled",
     @"social_booking_withdrawn" : @"booking_withdrawn",
     @"social_booking_added" : @"booking_added",
+    // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
+    @"social_booking_changed" : @"booking_changed",
+    @"social_booking_removed" : @"booking_removed",
   };
   // With no name to show (the lookup failed server-side) the title says "someone": an id never
   // reaches a lock screen.
@@ -3833,9 +3836,11 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
 /// - A call already reported for `callId` (the FCM `call_ring` rang first) is reported AGAIN under the
 ///   same UUID: CallKit refuses it as a duplicate, which still honours the contract, and nothing
 ///   new rings.
-/// - Audio only (`hasVideo = NO`) until the video lot decides how the native ring announces video.
+/// - `hasVideo` is the call's media kind from the push (the server's `voipRingPayload`): CallKit
+///   announces it and the answer's pending accept carries it, so the join opens the camera. A
+///   payload without the key (a server older than this build) reads as audio.
 static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *callerId,
-                                 long long ringUntilMs) {
+                                 BOOL hasVideo, long long ringUntilMs) {
   CanariEnsureCallProvider();
   if (!kCanariCallsEnabled) {
     // Unreachable by construction: the registry is installed only when the ring is compiled. The
@@ -3863,14 +3868,14 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
       @"groupId" : groupId ?: @"",
       @"callId" : callId,
       @"callerId" : callerId ?: @"",
-      @"hasVideo" : @NO,
+      @"hasVideo" : @(hasVideo),
     };
   }
   NSString *display = CanariCallerDisplayName(callerId);
   CXCallUpdate *update = [[CXCallUpdate alloc] init];
   update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
   update.localizedCallerName = display;
-  update.hasVideo = NO;
+  update.hasVideo = hasVideo;
   update.supportsHolding = NO;
   update.supportsGrouping = NO;
   update.supportsUngrouping = NO;
@@ -3885,9 +3890,9 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
                                          update:update
                                      completion:^(NSError *_Nullable error) {
                                        if (error == nil) {
-                                         NSLog(@"[CanariCallKit] %@ call=%@ (voip, %lld ms left)",
+                                         NSLog(@"[CanariCallKit] %@ call=%@ video=%d (voip, %lld ms left)",
                                                endAtOnce ? @"reported" : @"ringing", callId,
-                                               remainingMs);
+                                               hasVideo, remainingMs);
                                        } else {
                                          NSLog(@"[CanariCallKit] voip report refused call=%@ "
                                                @"duplicate=%d: %@",
@@ -4009,21 +4014,24 @@ static void CanariPersistVoipToken(NSString *hexToken) {
   long long ringUntilMs = [data[@"ringUntil"] isKindOfClass:[NSString class]]
                               ? [(NSString *)data[@"ringUntil"] longLongValue]
                               : 0;
-  NSLog(@"[CanariCallKit] voip push type=%@ call=%@", msgType, callId);
+  // A string "true" like the FCM data payload's; an absent key (an older server) is audio.
+  BOOL hasVideo = [data[@"hasVideo"] isKindOfClass:[NSString class]] &&
+                  [(NSString *)data[@"hasVideo"] isEqualToString:@"true"];
+  NSLog(@"[CanariCallKit] voip push type=%@ call=%@ video=%d", msgType, callId, hasVideo);
 
   if (CanariPushSignedOut()) {
     // A SIGNED-OUT DEVICE RINGS FOR NOBODY. PushKit still requires every VoIP push to be reported
     // to CallKit, so a placeholder with no caller and no conversation is reported and ended at once
     // (deadline 0) - nothing of the account that signed out is shown.
     NSLog(@"[CanariCallKit] voip push type=%@ while signed out - reported and ended", msgType);
-    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", 0);
+    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", NO, 0);
   } else if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
-    CanariReportVoipCall(groupId, callId, callerId, ringUntilMs);
+    CanariReportVoipCall(groupId, callId, callerId, hasVideo, ringUntilMs);
   } else {
     // Contract keeper: an unexpected payload still reports a call, ended at once (deadline 0).
     NSLog(@"[CanariCallKit] ERROR unexpected voip payload type=%@ - reported and ended", msgType);
     NSString *bogusId = callId.length > 0 ? callId : [[NSUUID UUID] UUIDString];
-    CanariReportVoipCall(groupId, bogusId, @"", 0);
+    CanariReportVoipCall(groupId, bogusId, @"", NO, 0);
   }
   completion();
 }
@@ -4617,6 +4625,10 @@ static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
   return wakes && aps[@"alert"] == nil;
 }
 
+/// Defined after `CanariHandleBackgroundFrame`, which it hands the fetched frame to.
+static void CanariHandleWakeBackgroundFrame(NSDictionary *data,
+                                            void (^done)(UIBackgroundFetchResult));
+
 /**
  * WHAT A SILENT FRAME MAY DO WHEN IT WAKES THIS PROCESS - AN ALLOWLIST OF KINDS, each a dismissal.
  *
@@ -4625,6 +4637,8 @@ static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
  *   copy from another device - clear that conversation's notification. Decided on the cleartext
  *   `senderId`, so no frame is decrypted to learn it carries nothing.
  * - `call_ring_end`: end the CallKit ring of that call (a no-op when none rings for it).
+ * - `wake`: a content-free wake-up push - its frame is fetched (`CanariHandleWakeBackgroundFrame`)
+ *   and comes back through THIS allowlist, never around it.
  *
  * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
  * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and
@@ -4637,6 +4651,11 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
   NSString *msgType = [data[@"type"] isKindOfClass:[NSString class]] ? data[@"type"] : @"";
   NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
   NSLog(@"[CanariPush] onMessage background frame type=%@ groupId=%@", msgType, groupId);
+
+  if ([msgType isEqualToString:@"wake"]) {
+    CanariHandleWakeBackgroundFrame(data, done);
+    return;
+  }
 
   if ([msgType isEqualToString:@"channel_read"]) {
     NSString *channelId =
@@ -4717,6 +4736,109 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
         @"background allowlist (canari_push.mm, CanariHandleBackgroundFrame)",
         msgType, isWelcome);
   done(UIBackgroundFetchResultNoData);
+}
+
+/**
+ * A SILENT CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`, owner 2026-11-02;
+ * docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md): Apple carried only
+ * `type`, `queuedMessageId` and `silent`. The frame is fetched with the device's PushSecret
+ * (`GET /api/mls/push/wake`, the auth `fetch-proto` uses) and handed to `CanariHandleBackgroundFrame`
+ * - the same allowlist a full silent frame meets, never a second one.
+ *
+ * One request, no retry, no timer beyond the request's own timeout. A failure is logged at ERROR with
+ * its stage and acts on nothing: the one thing it loses is an own-device dismissal, and app activation
+ * clears message notifications anyway (`CanariPushCancelMessageNotifications`). `done` is called
+ * exactly once, on every path.
+ */
+static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void (^done)(UIBackgroundFetchResult)) {
+  // Signed out first, as every other reader of the mirror: no account owns this device's pushes, and
+  // its secret must not be read for one.
+  if (CanariPushSignedOut()) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] dropped - this device is signed out, no account owns its pushes");
+    done(UIBackgroundFetchResultNoData);
+    return;
+  }
+  NSString *queuedMessageId =
+      [data[@"queuedMessageId"] isKindOfClass:[NSString class]] ? data[@"queuedMessageId"] : @"";
+  NSString *silent = [data[@"silent"] isEqual:@"true"] ? @"true" : @"false";
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR push_context.json absent - the frame cannot be fetched");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  NSString *secret = CanariRetrievePushSecret();
+  if (secret == nil) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR pushSecret absent - the frame cannot be fetched");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  if (queuedMessageId.length == 0) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR a wake push without queuedMessageId (server defect)");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  NSCharacterSet *allowed = [NSCharacterSet URLQueryAllowedCharacterSet];
+  NSString *urlStr = [NSString
+      stringWithFormat:@"%@/api/mls/push/wake?messageId=%@&userId=%@&deviceId=%@&silent=%@",
+                       ctx.baseUrl,
+                       [queuedMessageId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
+                       [ctx.userId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
+                       [ctx.deviceId stringByAddingPercentEncodingWithAllowedCharacters:allowed],
+                       silent];
+  NSURL *url = [NSURL URLWithString:urlStr];
+  if (url == nil) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] ERROR the fetch URL does not parse");
+    done(UIBackgroundFetchResultFailed);
+    return;
+  }
+  // Never a cached answer: a stale `frame` for this row would act on a message already handled
+  // (the server also says `Cache-Control: no-store`).
+  NSMutableURLRequest *req =
+      [NSMutableURLRequest requestWithURL:url
+                              cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                          timeoutInterval:5.0];
+  req.HTTPMethod = @"GET";
+  [req setValue:[NSString stringWithFormat:@"PushSecret %@", secret]
+      forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 5.0;
+  [[[NSURLSession sharedSession]
+      dataTaskWithRequest:req
+        completionHandler:^(NSData *body, NSURLResponse *response, NSError *error) {
+          NSInteger status = [response isKindOfClass:[NSHTTPURLResponse class]]
+                                 ? ((NSHTTPURLResponse *)response).statusCode
+                                 : 0;
+          if (error != nil || body == nil || status != 200) {
+            NSLog(@"[CanariPush] [PUSH_WAKE] ERROR fetch failed stage=%@ status=%ld - nothing acted on",
+                  error != nil ? @"transport" : @"http", (long)status);
+            done(UIBackgroundFetchResultFailed);
+            return;
+          }
+          id json = [NSJSONSerialization JSONObjectWithData:body options:0 error:nil];
+          NSDictionary *answer = [json isKindOfClass:[NSDictionary class]] ? json : nil;
+          id answerStatus = answer[@"status"];
+          if ([answerStatus isEqual:@"gone"]) {
+            NSLog(@"[CanariPush] [PUSH_WAKE] gone - drained or acknowledged since the push");
+            done(UIBackgroundFetchResultNoData);
+            return;
+          }
+          NSDictionary *raw = [answer[@"fields"] isKindOfClass:[NSDictionary class]] ? answer[@"fields"] : nil;
+          NSMutableDictionary<NSString *, NSString *> *fields = [NSMutableDictionary dictionary];
+          [raw enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+            if ([key isKindOfClass:[NSString class]] && [obj isKindOfClass:[NSString class]]) {
+              fields[key] = obj;
+            }
+          }];
+          NSString *type = fields[@"type"];
+          // A frame that is itself a wake would loop back into a fetch.
+          if (![answerStatus isEqual:@"frame"] || type.length == 0 || [type isEqualToString:@"wake"]) {
+            NSLog(@"[CanariPush] [PUSH_WAKE] ERROR fetch failed stage=unreadable-answer - nothing acted on");
+            done(UIBackgroundFetchResultFailed);
+            return;
+          }
+          NSLog(@"[CanariPush] [PUSH_WAKE] fetched type=%@ - handled as the full silent frame", type);
+          CanariHandleBackgroundFrame(fields, done);
+        }] resume];
 }
 
 /**

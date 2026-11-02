@@ -14,6 +14,7 @@
     Megaphone,
     X,
     Ban,
+    Users,
   } from '@lucide/svelte';
   import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
@@ -23,6 +24,7 @@
   import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
   import { slide } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
+  import { toggleMyRepost } from '$lib/posts/sharePost';
 
   /**
    * Props for the PostActionsMenu component.
@@ -117,6 +119,13 @@
     repostsAllowed?: boolean;
     /** WP-F6: the author picked "Autoriser" (true) or "Interdire" (false) for this post. */
     onSetRepostConsent?: (allow: boolean) => void;
+    /**
+     * WP-F6: the AUTHOR's own post only - how many people they are shown as having reposted it.
+     * Above zero, draws "Republie par N personnes", which opens the list (`onShowReposters`).
+     */
+    reposterCount?: number;
+    /** WP-F6: the author picked "Republie par N personnes". */
+    onShowReposters?: () => void;
   }
 
   let {
@@ -147,6 +156,8 @@
     onRepostChange = () => {},
     repostsAllowed,
     onSetRepostConsent = () => {},
+    reposterCount = 0,
+    onShowReposters = () => {},
   }: Props = $props();
 
   let open = $state(false);
@@ -208,7 +219,7 @@
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
   const ROW =
-    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors';
+    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors [&>svg]:shrink-0';
 </script>
 
 {#if isLoggedIn}
@@ -255,6 +266,24 @@
           <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
+
+        {#if repostedByMe || canRepost}
+          <button
+            type="button"
+            role="menuitem"
+            data-repost-row
+            onclick={() =>
+              pick(() => {
+                void toggleMyRepost(postId, repostedByMe).then((reposted) =>
+                  onRepostChange(reposted)
+                );
+              })}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Repeat2 size={16} strokeWidth={2.5} />
+            {repostedByMe ? m.post_repost_undo_label() : m.post_repost_label()}
+          </button>
+        {/if}
 
         {#if canRepublish}
           <button
@@ -331,6 +360,19 @@
               <Repeat2 size={16} strokeWidth={2.5} />
               {m.post_repost_consent_allow()}
             {/if}
+          </button>
+        {/if}
+
+        {#if reposterCount > 0}
+          <button
+            type="button"
+            role="menuitem"
+            data-post-reposters-open
+            onclick={() => pick(onShowReposters)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Users size={16} strokeWidth={2.5} />
+            {m.post_reposters_menu({ count: reposterCount })}
           </button>
         {/if}
 

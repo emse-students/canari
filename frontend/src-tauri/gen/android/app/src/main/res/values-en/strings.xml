@@ -36,6 +36,7 @@
 
     <string name="notif_mention_you">you</string>
     <string name="notif_mention_someone">someone</string>
+    <string name="notif_wake_unavailable">A message could not be loaded. Open Canari to read it.</string>
 
     <string name="notif_reaction_body">reacted %1$s to your message</string>
     <string name="notif_action_reply">Reply</string>
@@ -98,6 +99,10 @@
     <string name="notif_social_booking_added_body">Find it in Bookings</string>
     <string name="notif_social_booking_reminder_title">Booking reminder</string>
     <string name="notif_social_booking_reminder_body">Your booking starts soon</string>
+    <string name="notif_social_booking_changed_title">%1$s changed your booking</string>
+    <string name="notif_social_booking_changed_body">Find the new time in Bookings</string>
+    <string name="notif_social_booking_removed_title">%1$s removed you from a booking</string>
+    <string name="notif_social_booking_removed_body">You are no longer part of it</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>

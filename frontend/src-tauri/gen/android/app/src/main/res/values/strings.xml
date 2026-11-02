@@ -59,6 +59,7 @@
          placeholder: a token is replaced by its label, whole. -->
     <string name="notif_mention_you">vous</string>
     <string name="notif_mention_someone">quelqu\'un</string>
+    <string name="notif_wake_unavailable">Un message n\'a pas pu être chargé. Ouvrez Canari pour le lire.</string>
 
     <!-- Rendered under the reactor's name in the conversation's notification, so it reads
          "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
@@ -131,6 +132,10 @@
     <string name="notif_social_booking_added_body">Retrouvez-la dans Réservations</string>
     <string name="notif_social_booking_reminder_title">Rappel de réservation</string>
     <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
+    <string name="notif_social_booking_changed_title">%1$s a modifié votre réservation</string>
+    <string name="notif_social_booking_changed_body">Retrouvez le nouvel horaire dans Réservations</string>
+    <string name="notif_social_booking_removed_title">%1$s vous a retiré d'une réservation</string>
+    <string name="notif_social_booking_removed_body">Vous n'en faites plus partie</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>

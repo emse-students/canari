@@ -545,6 +545,23 @@
     await reloadAfterRepublication();
   }
 
+  /**
+   * WP-F6: the author's "Republie par N personnes" sheet - loaded on its first opening, never with
+   * the card, the way the menu loads its share sheet. Lives here, outside the menu, which unmounts
+   * what it draws when it closes.
+   */
+  let RepostersSheet = $state<typeof import('./PostRepostersSheet.svelte').default | null>(null);
+  let repostersOpen = $state(false);
+
+  function openReposters() {
+    import('./PostRepostersSheet.svelte')
+      .then((mod) => {
+        RepostersSheet = mod.default;
+        repostersOpen = true;
+      })
+      .catch((e: unknown) => Log.d('PostCard', `the reposters sheet did not load: ${String(e)}`));
+  }
+
   /** The requests of the reader's associations still waiting on the author, for the menu. */
   const waitingRequests = $derived(pendingRequests(localPost));
 
@@ -682,8 +699,19 @@
         onRepostChange={() => void reloadAfterRepublication()}
         repostsAllowed={localPost.repostConsent?.effective}
         onSetRepostConsent={(allow) => void setRepostConsent(allow)}
+        reposterCount={localPost.repostCount ?? 0}
+        onShowReposters={openReposters}
       />
     </div>
+
+    {#if RepostersSheet}
+      <RepostersSheet
+        open={repostersOpen}
+        postId={localPost.id}
+        onClose={() => (repostersOpen = false)}
+        onRemoved={() => void reloadAfterRepublication()}
+      />
+    {/if}
 
     {#if localPost.linkedCalendarEvent}
       {@const ev = localPost.linkedCalendarEvent}

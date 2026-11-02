@@ -60,6 +60,12 @@
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
     /**
+     * A conversation reel's viewer met its `410` at `atMs`: record it on the message's local row,
+     * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
+     * this mount.
+     */
+    onReelPurged?: (messageId: string, atMs: number) => void;
+    /**
      * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to the bubbles
      * only when the rule lets the viewer pin here. Absent = no ranks (DM, group).
      */
@@ -111,6 +117,7 @@
     canModerate = false,
     onBeginEdit,
     onTogglePin,
+    onReelPurged,
     pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
     pinnedIds = [],
@@ -337,6 +344,8 @@
               isReadReceiptAnchor={msg.id === lastReadOwnMessageId}
               isEdited={msg.isEdited}
               restoredUnverified={msg.restoredUnverified}
+              reelPurgedAt={msg.mediaPurgedAt}
+              {onReelPurged}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}
