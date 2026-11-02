@@ -48,21 +48,37 @@ export async function trackedFetch(
   const requestClass = opts.requestClass ?? classOfMethod(init.method ?? 'GET');
   const bytes = bodyByteLength(init.body);
   const deadlineMs = deadlineFor(requestClass, bytes, opts.deadlineMs);
+  return trackRequestOutcome(init.method ?? 'GET', url, bytes, () =>
+    fetchUnderDeadline(fetchImpl, url, init, requestClass, deadlineMs)
+  );
+}
+
+/**
+ * Counts ONE request with the connectivity store and settles it from its outcome - the half of
+ * {@link trackedFetch} that is not the deadline, shared with the upload transport (`fetchUpload`,
+ * `media.ts`), whose XHR has its own bounds. Without it a link lost mid-upload told the store
+ * nothing, so `isOffline` stayed false and nothing was owed to the reconnect (review of #2944).
+ *
+ * A bare `TypeError` from the transport is re-raised as {@link TransportFailureError}: by contract it
+ * means "no answer", and a consumer asks for THAT type rather than for a programming bug's.
+ */
+export async function trackRequestOutcome(
+  method: string,
+  url: string,
+  bytes: number,
+  send: () => Promise<Response>
+): Promise<Response> {
   const tracked = connectivity.trackRequest({ transfer: bytes >= LATENCY_BODY_CEILING_BYTES });
   try {
-    const res = await fetchUnderDeadline(fetchImpl, url, init, requestClass, deadlineMs);
+    const res = await send();
     if (responseOrigin(res) === 'gateway') tracked.answered(bytes < LATENCY_BODY_CEILING_BYTES);
     else {
       tracked.unproven(
-        `${init.method ?? 'GET'} ${url} answered ${res.status} with ${res.headers.get('content-type') ?? 'no content type'}`
+        `${method} ${url} answered ${res.status} with ${res.headers.get('content-type') ?? 'no content type'}`
       );
     }
     return res;
   } catch (e) {
-    // TYPED AT THE THROW. The `fetch` CALL rejects with a `TypeError` for exactly one thing by
-    // contract: no answer. The browser's is a bare `TypeError: Failed to fetch`, which a reader could
-    // not tell from a programming bug that also throws one; re-raised as the one class that says
-    // "no answer" by its name, so a consumer can ask for THAT type and nothing broader.
     const failure =
       e instanceof TypeError && !(e instanceof TransportFailureError)
         ? new TransportFailureError(e)

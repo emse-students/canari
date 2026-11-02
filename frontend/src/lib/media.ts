@@ -221,6 +221,7 @@ import {
 } from '$lib/utils/uploadXhr';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
+import { trackRequestOutcome } from '$lib/utils/trackedFetch';
 import {
   releaseUploadSession,
   uploadResumable,
@@ -305,17 +306,21 @@ export async function fetchUpload(
         `[media] refusing to send ${bytes} body bytes to ${where}: over the ${GATEWAY_MAX_BODY_BYTES}-byte gateway limit`
       );
     }
-    return transport
-      ? xhrUpload(
-          url,
-          {
-            method: init.method,
-            headers: init.headers as Record<string, string> | undefined,
-            body: init.body as FormData | Blob | string | null | undefined,
-          },
-          transport
-        )
-      : fetchWithAnswerDeadline(url, init);
+    // COUNTED BY THE CONNECTIVITY STORE like every other request (`trackRequestOutcome`): a link
+    // lost mid-upload marks the server unreachable, so what is owed to the reconnect is owed.
+    return trackRequestOutcome(init.method ?? 'POST', url, bytes, () =>
+      transport
+        ? xhrUpload(
+            url,
+            {
+              method: init.method,
+              headers: init.headers as Record<string, string> | undefined,
+              body: init.body as FormData | Blob | string | null | undefined,
+            },
+            transport
+          )
+        : fetchWithAnswerDeadline(url, init)
+    );
   };
   return sendRenewingOn401(send, authToken, {
     tokenNow: () => getToken(),
