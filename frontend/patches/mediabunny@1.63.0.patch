@@ -64,15 +64,15 @@ index 6d063544fdea63b5b06bc6b08c874109bc2d2195..d919f82fdd49a68b6289fcb48ee41134
 +    return serializeAvcDecoderConfigurationRecord(rebuilt);
 +};
 diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
-index b174a361128b55751f2c7c3eaae79c0ef9ec72d0..41564bb995afad887d268a91e23f233df573acb4 100644
+index 2714d9262b58ecd8bc4f0b2570ba6b189da8bd45..5d421b9e845e7a197513227a3d335db90df14091 100644
 --- a/dist/modules/src/media-source.js
 +++ b/dist/modules/src/media-source.js
 @@ -67,7 +67,7 @@ import { EncodedPacket } from './packet.js';
  import { AudioSample, audioSampleToInterleavedFormat, toInterleavedAudioFormat, VideoSample, } from './sample.js';
  import { buildAudioEncoderConfig, buildQuantizerEncodeOptions, buildVideoEncoderConfigs, resolveQuality, validateAudioEncodingConfig, validateVideoEncodingConfig, } from './encode.js';
  import { AudioResampler } from './resample.js';
--import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
-+import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, rebuildAvcDescriptionFromInBand, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
+-import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, parseOpusIdentificationHeader, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
++import { deserializeAvcDecoderConfigurationRecord, determineVideoPacketType, rebuildAvcDescriptionFromInBand, extractAv1CodecInfoFromPacket, extractAvcDecoderConfigurationRecord, extractHevcDecoderConfigurationRecord, extractVp9CodecInfoFromPacket, parseOpusIdentificationHeader, serializeAvcDecoderConfigurationRecord, } from './codec-data.js';
  import { Logging } from './logging.js';
  import { readEsDescriptor } from './isobmff/isobmff-reader.js';
  import { FileSlice } from './reader.js';
