@@ -2219,12 +2219,12 @@ describe('outbox - settling a group before its exit', () => {
 /**
  * R-D8 - THE TRIGGER TABLE, PINNED, BECAUSE THE COUNT THAT RAISED IT IS ACCURATE.
  *
- * Eight sites raise a flush and there is ONE flusher. That was flagged as a duplicate path and
- * refuted on every axis: all eight reach `runFlush`, which is where all the gates live, so "is
+ * Nine sites raise a flush and there is ONE flusher. That was flagged as a duplicate path and
+ * refuted on every axis: all nine reach `runFlush`, which is where all the gates live, so "is
  * there a second flusher" is a question this block answers instead of a claim in a comment. The
- * reasoning, and why folding the three external sites in would be a regression, is on
+ * reasoning, and why folding the four external sites in would be a regression, is on
  * `flushOutbox`'s docblock - whoever counts call sites next lands on one or the other before they
- * find eight things to fuse.
+ * find nine things to fuse.
  *
  * Each row raises its trigger THE WAY ITS SITE DOES and nothing else - no `outbox.flush()` standing
  * in for an event - because a table that pokes the shared function proves only that the shared
@@ -2412,7 +2412,7 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
     }
   });
 
-  it('exactly three sites outside this module raise a flush, and they are the three named ones', async () => {
+  it('exactly four sites outside this module raise a flush, and they are the four named ones', async () => {
     const { relativeTo, sourceFiles } = await import('../../../test/sourceTree');
     const found: Record<string, number> = {};
     for (const { path, text } of sourceFiles({
@@ -2439,6 +2439,11 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
     expect(found, 'a new site raises a flush from outside the outbox').toEqual({
       'lib/composables/session/promoteOfflineSession.ts': 1,
       'lib/composables/session/sessionAuth.ts': 2,
+      // The iOS leave-flush hold (2026-11-02): the enqueue of an owed read mark raises a flush but
+      // hands nobody its end, and the background task must last until the send SETTLES - a moment
+      // nothing inside the outbox can observe. `flush()` coalesces with the one the enqueue raised,
+      // so it adds no send; it only gives the hold a promise to await (`backgroundFlush.ts`).
+      'lib/components/MainChatPage.svelte': 1,
     });
   });
 });

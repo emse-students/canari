@@ -1355,6 +1355,51 @@ the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-view
    turn it; with the comments sheet open the wheel scrolls the list; over an unfolded caption it
    scrolls the caption.
 
+## LA. Read state follows the iPhone leaving and coming back - owed on the iPhone 12
+
+**ANY FAILURE HERE BLOCKS THE STABLE** that carries the iOS read-lifecycle fix (the follow-up to
+#2937). The fix is verified by compiling and by the source contract
+(`utils/appForeground.contract.test.ts`) only. Whether iOS delivers the background/foreground pair
+to the shell, and whether the page hears it, is read here and nowhere else
+([chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
+**Precondition:** a pre-release carrying it on TestFlight, a second device of the SAME account (a web
+tab), and a peer account that writes to it. The in-app log must be open to read the `[FOREGROUND]` (page)
+and `[CanariIOS]` (shell) lines.
+
+1. **The page hears both edges.** Open a conversation, press Home, come back. Expect one
+   `[FOREGROUND] app in the background` and one `... back in the foreground` per transition, and no
+   `[CanariIOS] ERROR foreground=... not published` line.
+2. **A system sheet is not leaving.** On the open conversation, pull down Control Centre, then trigger
+   the Face ID sheet (lock the app if biometrics are on, or open a biometric-gated setting). Expect NO
+   foreground edge. A message the peer sends while the sheet is up is marked read once it closes,
+   with no change to how the mark leaves.
+3. **A frame that lands while the app is in the background is NOT read.** Press Home, and have the peer send a message
+   within 5 s. Expect the list badge to show 1 on the web tab of the same account, and no "Vu" on the
+   peer. Come back to the conversation: the mark leaves (the badge falls to 0 on the web tab, "Vu" on
+   the peer).
+4. **The badge after a resume.** Leave the iPhone on another conversation, read the first one on the web tab,
+   come back. The iPhone's badge for it is 0 without a reload.
+
+## LF. A read reaches the other devices when the iPhone leaves the app - owed on the iPhone 12
+
+**ANY FAILURE HERE BLOCKS THE STABLE** that carries the iOS read-lifecycle fix. **This reading
+also decides the next step**: if the hold begins and then EXPIRES with no settle, the WebContent
+process was suspended under the task, and the delivery moves native, as designed in
+[chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02). **Precondition:** as
+for LA, plus the Xcode device console (or Console.app) filtered on `leave flush` (the `[CanariPush]` lines).
+
+1. **Online.** Have the peer send a message. Open the conversation on the iPhone and press Home within
+   ONE second, inside the 2 s debounce. Expect, in order: `[CanariPush] leave flush N begun`, the
+   mark's send, then `leave flush N ended: done`, and NO `ERROR leave flush` line. The web tab of the same
+   account shows the conversation as read and the peer shows "Vu" WITHOUT the iPhone being opened
+   again. Repeat 5 times: all 5 must pass.
+2. **Offline.** Switch on aeroplane mode, open a fresh unread conversation, and press Home within one second.
+   Expect the begin, then either `ended: failed` or, if the send hangs until iOS's deadline, the
+   expiration logged as an ERROR by the shell. That ERROR is expected here and nowhere else. Then switch
+   aeroplane mode off and open the app: the owed mark leaves at once (the web tab drops the badge).
+3. **Off iOS nothing changed.** On the Mi 9T, repeat step 1: there is no `leave flush` line, and the mark leaves
+   as before.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11

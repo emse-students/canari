@@ -49,7 +49,10 @@ fn c_text(what: &str, text: &str) -> Option<std::ffi::CString> {
     match std::ffi::CString::new(text) {
         Ok(c) => Some(c),
         Err(e) => {
-            log::error!("[LEAVE_FLUSH] {what} {text:?} has a NUL byte: {e}");
+            log::error!(
+                "[LEAVE_FLUSH] {what} ({} bytes) has a NUL byte: {e}",
+                text.len()
+            );
             None
         }
     }

@@ -16,6 +16,8 @@
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import { flushOwedDmReadMarks } from '$lib/utils/chat/messaging';
+  import { getOutbox } from '$lib/utils/chat/outbox';
+  import { holdWhileLeaving } from '$lib/utils/backgroundFlush';
   import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
@@ -922,7 +924,20 @@
     // The app leaving the screen ends the reading: the pending read mark is delivered now rather
     // than at a window expiry the OS may never let run (a backgrounded phone suspends timers).
     const offScreenChange = onAppScreenChange((onScreen) => {
-      if (!onScreen) readMarks.flush();
+      if (onScreen) return;
+      // ON iOS THE PROCESS IS HELD WHILE IT GOES (`holdWhileLeaving`): the mark handed on here is
+      // then SENT before the app is suspended, not at its next open. The delivery hands it to the
+      // outbox (a DM) or the owed queue (a salon); what is awaited is both drains and the outbox's
+      // flush, so the hold ends when the frame has left - or failed, or iOS's own deadline came.
+      const reader = session.userId;
+      void holdWhileLeaving('read mark on leaving the screen', async () => {
+        readMarks.flush();
+        if (!reader) return;
+        await Promise.all([
+          flushOwedSalonMarks(reader),
+          flushOwedDmReadMarks(reader).then(() => getOutbox()?.flush()),
+        ]);
+      });
     });
     return () => {
       offScreenChange();
