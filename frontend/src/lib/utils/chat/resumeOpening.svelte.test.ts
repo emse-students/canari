@@ -2,7 +2,9 @@
 import { readFileSync } from 'node:fs';
 import { flushSync } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
+import { processAppLinks } from '$lib/mobile/appLinkRouter';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
+import { listenForNativeNotificationTaps } from '$lib/mobile/notificationTapDrain';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import type { Conversation } from '$lib/types';
 import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
@@ -24,7 +26,7 @@ import {
  * comparison got wrong). The shells are driven through the event they dispatch (`canari:foreground`
  * with `detail.opening`); the router's outcomes through what it calls: `notifNav.navigate` (a
  * landing), `noteOpenNavigated` (`afterNavigate`), `noteOpenRoutedNowhere`, and the page's own tap
- * handler, `routePageNotificationTap`. Each in both orders against the edge.
+ * handler, `routePageNotificationTap`. Each router outcome before and after the edge.
  */
 
 const X = { key: 'dm:xavier', group: 'grp-x' };
@@ -162,6 +164,18 @@ describe('a resume that opens a chat link for Y, with X left open (keys are not 
     expect(r.marked).toEqual([X.key, X.key]);
   });
 
+  it('a landing published BEFORE the edge and then abandoned releases X', () => {
+    const r = open(X.key);
+    announce(false);
+    notifNav.navigate(Y.group);
+    flushSync();
+    announce(true, link(Y.group));
+    expect(r.marked).toEqual([X.key]);
+    notifNav.clear();
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
   it('a landing that is abandoned releases X, which is what is on screen', () => {
     const r = open(X.key);
     announce(false);
@@ -242,9 +256,97 @@ describe('a resume that opens a link to anything else', () => {
   it('... and holds nothing when it was routed nowhere BEFORE the edge', () => {
     const r = open(X.key);
     announce(false);
-    noteOpenRoutedNowhere('a link that is not ours');
-    announce(true, `${MOBILE_APP_PROTOCOL}//unknown-host`);
+    noteOpenRoutedNowhere('an open link to no claimed page');
+    announce(true, `${MOBILE_APP_PROTOCOL}//open?url=https%3A%2F%2Fexample.org`);
     expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('a second leave signal while already away is not a leave: the outcome before it still counts', () => {
+    const r = open(X.key);
+    announce(false);
+    noteOpenRoutedNowhere('an open link to no claimed page');
+    // A repeated `false` (a background page load, a repeated edge) must not re-snapshot: the
+    // outcome above would then predate the baseline and the edge below would hold X for good.
+    announce(false);
+    announce(true, `${MOBILE_APP_PROTOCOL}//open?url=https%3A%2F%2Fexample.org`);
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+});
+
+describe('the REAL router and tap drain report a link that routes nowhere', () => {
+  const unclaimed = `${MOBILE_APP_PROTOCOL}//open?url=https%3A%2F%2Fexample.org`;
+
+  it('processAppLinks on an unclaimed open?url releases X (no hand-called outcome)', () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, unclaimed);
+    expect(r.marked).toEqual([X.key]);
+    processAppLinks([unclaimed]);
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('processAppLinks on a link that is not ours releases X', () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, 'mailto:someone@example.org');
+    processAppLinks(['mailto:someone@example.org']);
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
+  it('the native tap drain, its record not JSON, releases X through its own wiring', async () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, unclaimed);
+    expect(r.marked).toEqual([X.key]);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const opened: string[] = [];
+    let taken!: () => void;
+    const done = new Promise<void>((res) => (taken = res));
+    const stop = listenForNativeNotificationTaps(
+      (l) => opened.push(l),
+      async () => {
+        queueMicrotask(taken);
+        return 'not json';
+      },
+      Promise.resolve()
+    );
+    try {
+      await done;
+      await Promise.resolve();
+      flushSync();
+      expect(opened).toEqual([]);
+      expect(r.marked).toEqual([X.key, X.key]);
+    } finally {
+      stop();
+      error.mockRestore();
+    }
+  });
+
+  it('the native tap drain handing an unclaimed link to the real router releases X', async () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, unclaimed);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let routed!: () => void;
+    const done = new Promise<void>((res) => (routed = res));
+    const stop = listenForNativeNotificationTaps(
+      (l) => {
+        processAppLinks([l]);
+        routed();
+      },
+      async () => JSON.stringify({ deepLink: unclaimed }),
+      Promise.resolve()
+    );
+    try {
+      await done;
+      flushSync();
+      expect(r.marked).toEqual([X.key, X.key]);
+    } finally {
+      stop();
+      warn.mockRestore();
+    }
   });
 });
 

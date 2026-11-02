@@ -1,7 +1,7 @@
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { chatTargetOfLink } from '$lib/mobile/chatLinkTarget';
 import { notifNav } from '$lib/stores/notifNav.svelte';
-import { onAppForegroundChange } from '$lib/utils/appForeground';
+import { isAppInForeground, onAppForegroundChange } from '$lib/utils/appForeground';
 import { createAppForegroundState } from '$lib/utils/appForegroundState.svelte';
 import { Log } from '$lib/utils/Log';
 import { describeDeepLink } from '$lib/utils/logSanitize';
@@ -88,6 +88,11 @@ let opening = $state<ResumeOpening | null>(null);
 /** Opens routed nowhere, and navigations, ever: compared, never reset. */
 let nowhereSeq = $state(0);
 let navigatedSeq = $state(0);
+/**
+ * Set when this session can never route a page notification's tap (no listener could be armed).
+ * Reactive: a registration refused AFTER a `landing` hold began releases that hold.
+ */
+let pageTapsUnroutable = $state<string | null>(null);
 /** The outcome counters when the app last LEFT the screen: what is counted after is the resume's. */
 let atLeave = { landing: notifNav.landing, nowhere: 0, navigated: 0 };
 
@@ -103,9 +108,17 @@ function noteLeave(): void {
   opening = null;
   atLeave = { landing: notifNav.landing, nowhere: nowhereSeq, navigated: navigatedSeq };
 }
+/**
+ * The last foreground value this module saw. A `false` while already `false` is not a leave: the
+ * shells publish the same value again (a page load in the background, a repeated edge), and a second
+ * snapshot would move the baseline past an outcome the resume to come must still count.
+ */
+let lastForeground = isAppInForeground();
 // Module-level, so a leave is seen whatever page is mounted when it happens.
 onAppForegroundChange((foreground) => {
-  if (!foreground) noteLeave();
+  const was = lastForeground;
+  lastForeground = foreground;
+  if (!foreground && was) noteLeave();
 });
 
 /**
@@ -131,6 +144,9 @@ export function noteResumeOpening(
   let kind: ResumeOpening['kind'];
   let target: string | null = null;
   if (link === PAGE_NOTIFICATION_OPENING) {
+    // No listener to name the landing: a hold would wait for nothing.
+    if (pageTapsUnroutable)
+      return nothing(`page notification taps cannot be routed: ${pageTapsUnroutable}`);
     if (landedSinceLeave) {
       // The page's tap handler published its landing before the edge: that landing names it.
       if (nav.pending === null) return nothing('its landing already ended');
@@ -156,7 +172,10 @@ export function noteResumeOpening(
     heldKey: selected,
     kind,
     target,
-    landingAtOpen: nav.landing,
+    // A landing published BEFORE the edge is this open's: the baseline is the leave's, so its end
+    // (released, abandoned) is a landing count the hold no longer equals. Taken at the edge instead,
+    // the count already included it, and an abandon (pending nulled, count unchanged) held for good.
+    landingAtOpen: landedSinceLeave ? atLeave.landing : nav.landing,
     nowhereAtOpen: nowhereSeq,
     navigatedAtOpen: navigatedSeq,
     resolve,
@@ -179,6 +198,8 @@ export function resumeOpeningHolds(key: string, nav: LandingState = notifNav): b
     case 'page':
       return navigatedSeq === o.navigatedAtOpen;
     case 'landing':
+      // No listener exists to publish the landing (its registration was refused): nothing will come.
+      if (pageTapsUnroutable) return false;
       // Not published yet: held until the page's tap handler publishes it (or says "nowhere").
       if (nav.landing === o.landingAtOpen) return true;
       return nav.pending !== null && o.resolve(nav.pending) !== key;
@@ -214,6 +235,18 @@ export function noteOpenNavigated(): void {
 export function noteOpenRoutedNowhere(why: string): void {
   nowhereSeq += 1;
   Log.d(`[RESUME-OPEN] an open routes nowhere (${why})${opening ? ' - the hold ends' : ''}`);
+}
+
+/**
+ * This session's page-notification taps can never be routed (the plugin has no `onAction`, or its
+ * registration failed): a resume opening one holds nothing, since no landing and no "nowhere" would
+ * ever come from a handler that does not exist.
+ */
+export function notePageTapsUnroutable(why: string): void {
+  pageTapsUnroutable = why;
+  Log.d(
+    `[RESUME-OPEN] page notification taps cannot be routed (${why}) - a resume opening one holds nothing`
+  );
 }
 
 /**

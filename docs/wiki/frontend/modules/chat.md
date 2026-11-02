@@ -4337,17 +4337,27 @@ was the one that moved only the first.
   still marks X. The hold ends on an event, never a clock:
   - the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
     effect runs once);
-  - Y's landing is published and then released or abandoned (read from `notifNav`);
+  - Y's landing ENDS, read from `notifNav`: released, or abandoned (`clear()`), whether it was
+    published before the edge or after - the baseline is the landing count at the LEAVE when it was
+    published before (review of #2937, F1: taken at the edge, an abandon left the count equal and X
+    held for good);
   - a page link navigated (`noteOpenNavigated`, from `afterNavigate`);
-  - the open was routed NOWHERE (`noteOpenRoutedNowhere`): the router's every non-routing branch (an
-    unclaimed `open?url=`, an unknown link, a callback with no code), a native tap record that is not
-    a link, a page notification's tap with no identity or not posted by this session;
+  - the open was routed NOWHERE (`noteOpenRoutedNowhere`): the router's every non-routing branch
+    (`mobile/appLinkRouter.ts`: an unclaimed `open?url=`, a link not ours, a callback with no code,
+    and every `catch` of a publish or a `goto` that failed), a native tap record that is not a link,
+    a page notification's tap with no identity or not posted by this session;
+  - on iOS, the page's tap listener could not be armed (`notePageTapsUnroutable`: no `onAction`, or
+    its registration threw or rejected): a page-notification resume then holds nothing, and one
+    already waiting for its landing is released;
   - the app left again, or a resume carried no link.
 
-  **Either order, the same answer.** The link reaches the router (and its landing, navigation or
-  "nowhere") through its own channel, before OR after the edge, so every outcome is a SEQUENCE,
-  snapshotted when the app LEAVES the screen (a module-level listener, whatever page is mounted): at
-  the edge an outcome counted since the leave is this open's, one counted after ends the hold.
+  **The router's outcomes, before or after the edge.** The link reaches the router (and its landing,
+  navigation or "nowhere") through its own channel, before OR after the edge, so each of those
+  outcomes is a SEQUENCE, snapshotted when the app LEAVES the screen (a module-level listener,
+  whatever page is mounted): at the edge an outcome counted since the leave is this open's, one
+  counted after ends the hold. A `false` while already away is not a leave (review F4): a repeated
+  signal would re-snapshot past an outcome the coming resume must count. The selection moving and
+  the app leaving are not router outcomes: they end the hold only after the edge.
   **Keys, not ids:** a link and `notifNav.pending` carry a GROUP id, the selection a MAP key, and the
   two differ for every DM and group; every comparison resolves through `resolveConversationKey`, as
   the landing does (review of #2937 - compared raw, a tap on a DM's own notification held it for
@@ -4362,9 +4372,12 @@ was the one that moved only the first.
   tap handler (`routePageNotificationTap`) publishes, or for it to say the tap routes nowhere. A cold
   start needs nothing: no conversation is open, so nothing is held, and only Y is read. The chat link
   is parsed in ONE place (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
-  `resumeOpening.svelte.test.ts` - keys that are not group ids, each outcome in both orders against
-  the edge, Y already selected before the edge, a DM's own notification, a non-navigating link, the
-  page notification's tap, a cold start, the arrival rule.
+  `resumeOpening.svelte.test.ts` - keys that are not group ids, each router outcome (landing
+  published, landing abandoned, navigated, nowhere) before and after the edge, a repeated leave
+  signal, Y already selected before the edge, a DM's own notification, a non-navigating link driven
+  through the REAL `processAppLinks` and `listenForNativeNotificationTaps`, the page notification's
+  tap, a cold start, the arrival rule; `resumeOpening.pageTapsUnroutable.svelte.test.ts` - the
+  listener that could not be armed.
 
 **The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
 server answer that moved a count (one entry per moved salon). Neither grows with a conversation's
