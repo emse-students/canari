@@ -767,19 +767,26 @@ A `--profile` of a cold tab tap (1.6.0, Mi 9T at 1x CPU, three runs, read with
 
 What changed: `splitEmojiText` returns at once for an all-ASCII string (the shape that cannot hold
 an emoji picture; a test runs every code point 0..127 and CRLF through `emojiSvgSrc` to pin it),
-and `watchClampOverflow` batches the first read of every box that asks in one frame into ONE
-next-frame pass (the first read pays the layout, the others find it clean; the observer keeps the
-answer current as before).
+and `watchClampOverflow` takes NO read inside the mount: the ResizeObserver's first callback is
+the first read. The browser delivers it for every newly observed box in the rendering step that
+lays it out, after the rAF callbacks and before paint, so layout is already clean (the
+`scrollHeight` read forces nothing, no forced layout per card) and a card mounted at any point of
+the frame, even inside a rAF callback, is answered before it paints (no "Voir plus" arriving a
+frame late and shifting the page by ~20 px). No timer, no batch. A first version batched the read
+on `requestAnimationFrame`; review showed it shifts a card mounted from a rAF callback, so it was
+dropped. Without `ResizeObserver` (server rendering) nothing is watched.
 
 **Ordering kept, untouched:** F2 (the key-group step waits on `whenMlsReady()`) and F3
 (`loadChannelHistory` fetches at once, decodes only after `whenSalonEntryDecided`). No MLS or API
-call moved, so the existing F2/F3 tests still pin them. The frame-batched read is pinned by
-`clampOverflow.test.ts` (nothing read while mounting, one pass for every box, teardown cancels) on
-a manual frame queue (`src/test/frameQueue.ts`).
+call moved, so the existing F2/F3 tests still pin them. The observer-first read is pinned by
+`clampOverflow.test.ts` (nothing read while mounting, answered on the first callback, teardown
+disconnects) on a stubbed ResizeObserver (`src/test/resizeObserverStub.ts`).
 
 **The instrument:** each frame the harness runs a predicate per watcher; its cost used to land in
 the booked number. `community-open.mjs` now times that loop and the report books it as
-`probe ms, hub open / salon open / cached reopen`, separate from the open's own time.
+`probe ms, hub open / salon open / cached reopen`, separate from the open's own time. **The
+`tap>` and `click>` columns still INCLUDE that cost** (it is reported beside them, not subtracted);
+read the probe columns to correct a number.
 
 Owed: the Mi 9T before/after, after the next pre-release.
 

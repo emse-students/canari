@@ -56,7 +56,6 @@ const sumTasks = (r, from, to) =>
 const sumProbe = (r, from, to) =>
   from == null || to == null || !r.probe ? null : Math.round(r.probe.filter(([t]) => t >= from && t <= to).reduce((x, [, dur]) => x + dur, 0) * 10) / 10;
 
-
 /** One run's milestones and chain links, each a duration in ms. */
 function measure(r) {
   const listing = first(r, /^\/api\/channels\/workspaces\/user\/me/);

@@ -11,9 +11,9 @@ import { flushSync, mount, unmount } from 'svelte';
 import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { m } from '$lib/paraglide/messages';
-import { flushFrames, useFrameQueue } from '../../../test/frameQueue';
+import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
 
-useFrameQueue();
+useResizeObserverStub();
 
 vi.mock('$lib/reels/reelPreload', () => ({
   ReelPreload: class {
@@ -105,8 +105,8 @@ function render(post: PostEntity, active = true, extra: Record<string, unknown> 
     props: { post, authToken: 'tok', active, preload: false, ...extra },
   });
   flushSync();
-  // The caption's first overflow read is batched onto the next frame (`watchClampOverflow`).
-  flushFrames();
+  // The caption's first overflow read is answered by the observer's first callback (`watchClampOverflow`).
+  fireResize();
   flushSync();
   mounted.push(() => unmount(instance));
   const q = <T extends Element>(s: string) => target.querySelector<T>(s);
