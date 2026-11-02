@@ -11,7 +11,8 @@ most one BDE (two levels, enforced by triggers) and one governor per space, set 
 platform admin with a journal, institution-only item narrowing, events and partnerships validated
 per governor slice, a comparison of associations, lists and institutions, three quick wins that
 ship before the reform (WP-Q1 partner rights, WP-Q2 an acceptance re-opens a validated event, WP-L
-a list has no Lydia account of its own and is paid through delegation), the reform's WP-R0, WP-R1, WP-D1, WP-D2, WP-R4, WP-I, WP-E and WP-R5, and the
-owner's open questions - is
-[spaces-and-audiences-reform](../spaces-and-audiences-reform.md). Nothing is built; the schema and
-data changes wait for the owner's yes.
+a list collects through a delegation its receiver accepted, built in
+`feat/lists-collect-through-delegation`), the reform's WP-R0, WP-R1, WP-D1, WP-D2, WP-R4, WP-I,
+WP-E and WP-R5, and the owner's decisions (no question left open) - is
+[spaces-and-audiences-reform](../spaces-and-audiences-reform.md). Once it merges every WP is built;
+each migration waits for the owner's hand-merge.
