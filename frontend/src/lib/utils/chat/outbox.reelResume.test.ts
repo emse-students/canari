@@ -750,9 +750,16 @@ describe.each([1, 3])(
           );
           // To the backoff timer and NEVER PAST IT: overshooting moved the faked clock under the next
           // attempt, whose stall hint then read a 60 s silence (a 'stalled' seen under load).
+          // THE TIMER IS AN EVENT, NOT A FIXED NUMBER OF LOOKS: `phase` reads 'waiting' a queue read
+          // BEFORE `scheduleBackoff` arms the timer, and fake-IndexedDB answers on real macrotask turns,
+          // so a bounded loop of advances could end before the timer existed and the third attempt never
+          // started (`expected 2 to be greater than or equal to 3`). Each pass waits until a timer
+          // exists or the attempt moved on, and only then advances ONE timer.
           const before = w.settled;
-          for (let step = 0; step < 50; step++) {
-            if (w.settled !== before || uploadViewOf(VIEW)?.phase !== 'waiting') break;
+          const moved = () => w.settled !== before || uploadViewOf(VIEW)?.phase !== 'waiting';
+          while (!moved()) {
+            await waitForEventNoClock(() => expect(moved() || vi.getTimerCount() > 0).toBe(true));
+            if (moved()) break;
             await vi.advanceTimersToNextTimerAsync();
             // Fake-IndexedDB runs on the REAL setImmediate: let it move before the next look.
             await new Promise((resolve) => setImmediate(resolve));
