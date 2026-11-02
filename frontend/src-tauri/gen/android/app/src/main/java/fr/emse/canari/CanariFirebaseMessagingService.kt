@@ -46,6 +46,7 @@ import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
 import fr.emse.canari.push.WakeAnswer
+import fr.emse.canari.push.WakeOrder
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -121,6 +122,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         private val MLS_PUSH_LANE: ExecutorService =
             Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls") }
+
+        /**
+         * Where wake-up fetches run - OFF [MLS_PUSH_LANE], which they would otherwise hold for a
+         * network round trip each. Four threads: a burst fetches in parallel, and the frames are
+         * still dispatched in delivery order by [WAKE_ORDER]. Bounded, so a burst queues here rather
+         * than becoming a thread per push. Companion-scoped for the reason the lane is.
+         */
+        private val WAKE_FETCH_POOL: ExecutorService =
+            Executors.newFixedThreadPool(4) { r -> Thread(r, "canari-fcm-wake") }
+
+        /** The delivery order of wake-ups, kept across their parallel fetches. See [WakeOrder]. */
+        private val WAKE_ORDER = WakeOrder()
+
+        /**
+         * The ONE id every "could not be loaded" notification is posted under: a burst of failed
+         * fetches is one notification that says so, not one per frame - they all say the same thing
+         * and all open the same place.
+         */
+        private const val WAKE_UNAVAILABLE_NOTIF_ID = 9995
 
         /**
          * How many Welcomes for each group are queued on [MLS_PUSH_LANE] and not yet finished.
@@ -4338,9 +4358,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * A CONTENT-FREE WAKE-UP PUSH: fetch what the server kept, then dispatch it as the full push
      * (owner, 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
      *
-     * ON THE MLS LANE, so wake-ups are dispatched in the order FCM delivered them: each fetch runs in
-     * its turn and enqueues its frame's own work behind the wake-ups already waiting, so A's work
-     * still precedes B's. One request, no retry and no timer: the transport's own timeout bounds it.
+     * THE FETCH IS OFF THE MLS LANE, THE DISPATCH ON IT, IN DELIVERY ORDER. A ticket is taken here, on
+     * FCM's thread, so tickets follow delivery; the fetch runs on [WAKE_FETCH_POOL]; [WAKE_ORDER]
+     * releases the results in ticket order, and each is queued on the lane by
+     * [runSerializedWithWakeLock] as it is released - so A's work still precedes B's, and the lane is
+     * never held by a round trip. One request, no retry and no timer: the socket's own timeouts bound
+     * it, and the ticket is completed in a `finally`, so no path leaves a later wake waiting.
      *
      * A FAILED FETCH IS NEVER DRAWN AS THE GENERIC TEXT. It is logged at ERROR with its stage, and a
      * visible frame gets a notification that SAYS the message could not be loaded; a silent one gets
@@ -4349,6 +4372,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun onWakePush(data: Map<String, String>) {
         val queuedMessageId = data["queuedMessageId"].orEmpty()
         val silent = data["silent"] == "true"
+        // The conversation is kept at "mentions": a failure cannot know whether this frame mentions
+        // the user, so it must not ring for it (the bit Apple reads as `passive`).
+        val mentionsOnly = data["notifLevel"] == "mentions"
         if (PushRegistrationEnd.isSignedOut(this)) {
             Log.w(TAG, "[PUSH_WAKE] dropped queued=$queuedMessageId - this device is signed out, no account owns its pushes")
             return
@@ -4360,22 +4386,43 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         if (queuedMessageId.isEmpty()) {
             Log.e(TAG, "[PUSH_WAKE] a wake push without queuedMessageId - nothing to fetch (server defect) silent=$silent")
-            if (!silent) runWithWakeLock("fcm_wake_unavailable") { showWakeUnavailableNotification() }
+            if (!silent) runWithWakeLock("fcm_wake_unavailable") { showWakeUnavailableNotification(mentionsOnly) }
             return
         }
-        runSerializedWithWakeLock("fcm_wake") {
-            when (val outcome = fetchWakeFrame(queuedMessageId, silent)) {
-                is WakeAnswer.Outcome.Frame -> {
-                    Log.d(TAG, "[PUSH_WAKE] fetched queued=$queuedMessageId type=${outcome.fields["type"]} silent=$silent -> dispatched as the full push")
-                    dispatchPush(outcome.fields)
+        val ticket = WAKE_ORDER.take()
+        WAKE_FETCH_POOL.execute {
+            val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_wake_fetch")
+            wl.acquire(60_000L)
+            var outcome: WakeAnswer.Outcome = WakeAnswer.Outcome.Failed("uncaught")
+            try {
+                outcome = fetchWakeFrame(queuedMessageId, silent)
+            } catch (e: Throwable) {
+                Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+            } finally {
+                val result = outcome
+                val released = WAKE_ORDER.complete(ticket, { onWakeFetched(queuedMessageId, silent, mentionsOnly, result) }) { action ->
+                    runSerializedWithWakeLock("fcm_wake") { action() }
                 }
-                WakeAnswer.Outcome.Gone ->
-                    Log.i(TAG, "[PUSH_WAKE] gone queued=$queuedMessageId - drained or acknowledged since the push, nothing to draw")
-                is WakeAnswer.Outcome.Failed -> {
-                    Log.e(TAG, "[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent - " +
-                        if (silent) "nothing drawn, the frame stays queued" else "drawn as not loaded")
-                    if (!silent) showWakeUnavailableNotification()
-                }
+                Log.d(TAG, "[PUSH_WAKE] fetch done queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
+                if (wl.isHeld) wl.release()
+            }
+        }
+    }
+
+    /** What one wake fetch became, acted on in its turn on the MLS lane. */
+    private fun onWakeFetched(queuedMessageId: String, silent: Boolean, mentionsOnly: Boolean, outcome: WakeAnswer.Outcome) {
+        when (outcome) {
+            is WakeAnswer.Outcome.Frame -> {
+                Log.d(TAG, "[PUSH_WAKE] fetched queued=$queuedMessageId type=${outcome.fields["type"]} silent=$silent -> dispatched as the full push")
+                dispatchPush(outcome.fields)
+            }
+            WakeAnswer.Outcome.Gone ->
+                Log.i(TAG, "[PUSH_WAKE] gone queued=$queuedMessageId - drained or acknowledged since the push, nothing to draw")
+            is WakeAnswer.Outcome.Failed -> {
+                Log.e(TAG, "[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent mentionsOnly=$mentionsOnly - " +
+                    if (silent) "nothing drawn, the frame stays queued" else "drawn as not loaded")
+                if (!silent) showWakeUnavailableNotification(mentionsOnly)
             }
         }
     }
@@ -4432,12 +4479,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * The notification a visible wake-up gets when its message could not be fetched: it says so and
      * asks to open Canari, which drains the queue. In the app's chosen language ([appLocaleContext]);
      * the tap opens the app, since nothing here knows which conversation the message belongs to.
+     *
+     * ONE id for all of them ([WAKE_UNAVAILABLE_NOTIF_ID]): a burst of failures replaces one
+     * notification instead of stacking identical ones. SILENT for a mentions-only conversation
+     * ([mentionsOnly]): the frame may not mention the user, and a level they chose must not ring.
      */
-    private fun showWakeUnavailableNotification() {
+    private fun showWakeUnavailableNotification(mentionsOnly: Boolean) {
         val res = appLocaleContext(this)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
-        val notifId = notificationIdCounter.incrementAndGet()
+        val notifId = WAKE_UNAVAILABLE_NOTIF_ID
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -4453,9 +4504,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setSilent(callHoldsSound())
+            .setOnlyAlertOnce(true)
+            .setSilent(mentionsOnly || callHoldsSound())
             .build()
-        Log.d(TAG, "[PUSH_WAKE] not-loaded notification posted notifId=$notifId")
+        Log.d(TAG, "[PUSH_WAKE] not-loaded notification posted notifId=$notifId silent=${mentionsOnly || callHoldsSound()}")
         manager.notify(notifId, notification)
     }
 

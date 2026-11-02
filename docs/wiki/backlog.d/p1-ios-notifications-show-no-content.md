@@ -72,9 +72,11 @@ the tethered Mac):**
    proof must move to a lock the run holds for its life (released by the kernel at its death).
 
 **The wake-up push waits on this entry** ([push-payloads-carry-nothing](push-payloads-carry-nothing-for-google-and-apple.md)):
-with `push_mode = wake` the extension is the ONLY source of content on iOS, so the switch stays
-`full` until rows 1-6 above read `decrypted`. A wake run logs `kind=wake` and the stage `wake-fetch`
-before `push-context`, so its kills and expiries are told apart from this entry's.
+with a wake push the extension is the ONLY source of content on iOS, so **iOS does not declare the
+wake (`PUSH_WAKE_DECLARED.ios = false`) until this entry is closed** - the owner's order of
+2026-11-02, under which `push_mode = wake` may go on for Android alone and every iPhone keeps the
+full push. Once iOS declares it, a wake run logs the stage `wake-fetch` before `push-context` and
+`kind=wake` until its frame is fetched, so its kills and expiries are told apart from this entry's.
 
 Closed when a release carrying this change shows content on the bench and the user's phone, or
 the outcome log names a cause that then gets its own fix.

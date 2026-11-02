@@ -627,7 +627,12 @@ class NotificationService: UNNotificationServiceExtension {
     /// read and written under `lock`, because the expiry reads it from another thread while the
     /// decrypt is still writing it; the marker is written and removed under the same lock.
     final class Trace {
-      let kind: String
+      /// What the run is: the push's `type`, and for a wake-up push the type of the frame it fetched
+      /// ([rekind]) - so `[NSE_OUTCOME]` keeps its message/channel split under `push_mode = wake`.
+      var kind: String {
+        get { locked { kindValue } }
+      }
+      private var kindValue: String
       let startedAtMs: Int64
       /// The run's sequence in this process, from 1: with the pid and `startedAtMs` it is the
       /// run's identity, since two runs of one process can start in the same millisecond. Carried
@@ -658,7 +663,7 @@ class NotificationService: UNNotificationServiceExtension {
       }
 
       init(kind: String) {
-        self.kind = kind
+        kindValue = kind
         startedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
         peakValue = NseOutcomeLog.footprintMB()
         NseOutcomeLog.sequenceLock.lock()
@@ -675,6 +680,17 @@ class NotificationService: UNNotificationServiceExtension {
         lock.lock()
         defer { lock.unlock() }
         return body()
+      }
+
+      /// A wake-up run becomes the kind of the frame it fetched, before that frame is dispatched, so
+      /// the record says `message` or `channel` as a full push's would. Rewrites the marker, so a kill
+      /// after this point is filed under the fetched kind too. A no-op once the run has ended.
+      func rekind(_ kind: String) {
+        locked {
+          guard !written else { return }
+          kindValue = kind
+          writeMarkerLocked()
+        }
       }
 
       /// Records why the run falls back - the FIRST cause found is kept, every later branch being a
@@ -759,7 +775,8 @@ class NotificationService: UNNotificationServiceExtension {
 
       private func recordLocked(outcome: String?, cause: String?) -> [String: Any] {
         NseOutcomeLog.record(
-          kind: kind, at: startedAtMs, n: sequence, outcome: outcome, cause: cause,
+          // `kindValue`, not `kind`: this runs under `lock`, which NSLock does not re-enter.
+          kind: kindValue, at: startedAtMs, n: sequence, outcome: outcome, cause: cause,
           stage: stageValue, ms: elapsedMs, peakMB: peakValue, stateKB: stateKBValue)
       }
 
@@ -882,8 +899,24 @@ class NotificationService: UNNotificationServiceExtension {
     case frame([String: String])
     /// The queued row was drained or acknowledged since the push left.
     case gone
-    /// No frame; the stage that failed, for the log.
+    /// No frame; the stage that failed, as a LETTER-ONLY token (`wakeStatusToken` for an HTTP
+    /// status): it becomes the run's cause `wake-<stage>`, and `[NSE_OUTCOME]` keeps only causes
+    /// that pass `is_code_token` - no digit, no id - so a token with a status code in it would be
+    /// dropped, and the evidence with it.
     case failed(String)
+  }
+
+  /// An HTTP status as a letter-only token, for a cause `is_code_token` keeps.
+  private static func wakeStatusToken(_ status: Int) -> String {
+    switch status {
+    case 400: return "http-bad-request"
+    case 401: return "http-unauthorized"
+    case 403: return "http-forbidden"
+    case 404: return "http-not-found"
+    case 429: return "http-throttled"
+    case 500...599: return "http-server-error"
+    default: return "http-other"
+    }
   }
 
   /// A CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`, owner 2026-11-02;
@@ -901,7 +934,7 @@ class NotificationService: UNNotificationServiceExtension {
     trace?.mark("wake-fetch")
     guard let ctx = loadPushContext() else {
       NSLog("[CanariNSE] [PUSH_WAKE] ERROR push_context absent - the message cannot be fetched")
-      noteCause("wake-no-context")
+      noteCause("wake-no-push-context")
       trace?.outcome = "fallback"
       applyWakeUnavailable(content: content, locale: nil)
       finish()
@@ -919,6 +952,8 @@ class NotificationService: UNNotificationServiceExtension {
     case .frame(let fields):
       let type = fields["type"] ?? "message"
       NSLog("[CanariNSE] [PUSH_WAKE] fetched type=\(type) - dispatched as the full push")
+      // From here the run is the frame it fetched: `[NSE_OUTCOME]` keeps its message/channel split.
+      trace?.rekind(type)
       var merged = userInfo
       for (key, value) in fields { merged[key] = value }
       content.userInfo = merged
@@ -932,7 +967,7 @@ class NotificationService: UNNotificationServiceExtension {
       finish()
     case .failed(let stage):
       NSLog("[CanariNSE] [PUSH_WAKE] ERROR fetch failed stage=\(stage) - drawn as not loaded")
-      noteCause("wake-fetch-failed")
+      noteCause("wake-\(stage)")
       trace?.outcome = "fallback"
       applyWakeUnavailable(content: content, locale: ctx.locale)
       finish()
@@ -957,7 +992,10 @@ class NotificationService: UNNotificationServiceExtension {
     guard let (data, status) = syncRequest(method: "GET", urlStr: urlStr, secret: secret, body: nil) else {
       return .failed("transport")
     }
-    guard status == 200 else { return .failed("http-\(status)") }
+    guard status == 200 else {
+      NSLog("[CanariNSE] [PUSH_WAKE] ERROR status=\(status)")
+      return .failed(Self.wakeStatusToken(status))
+    }
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       return .failed("unreadable-body")
     }

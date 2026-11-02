@@ -57,8 +57,8 @@ describe('startPushService - rotation de token FCM', () => {
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).platform).toBe(
       'android'
     );
-    // This build's native code understands a wake-up push, and every registration says so: the
-    // server writes `push_token.wakeCapable` from it, false when absent.
+    // Android takes a wake-up push, and every registration says so: the server writes
+    // `push_token.wakeCapable` from it, false when absent.
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).wake).toBe(true);
 
     // Re-call (foreground return) without token change -> no re-POST.
@@ -89,9 +89,11 @@ describe('startPushService - rotation de token FCM', () => {
 
     await startPushService('https://api', 'jwt', 'dev-ios');
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).platform).toBe(
-      'ios'
-    );
+    const body = JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body);
+    expect(body.platform).toBe('ios');
+    // The owner's order of 2026-11-02: no wake-up push on iOS until its notification P1 is closed,
+    // so an iPhone says `false` and keeps the full push whatever `push_mode` holds.
+    expect(body.wake).toBe(false);
   });
 
   it('desktop (ni Android ni iOS) est un noop : aucune registration', async () => {

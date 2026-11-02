@@ -37,7 +37,8 @@ fetches) - designed when step 1 has its readings.
   understands a wake frame. Written on EVERY `POST /mls/push/register`, `false` when the body does not
   say `wake: true` - so an old build, and a downgrade, are never sent a frame they would drop. The
   web bundle is compiled into the store binary (`frontendDist`), so the TS that registers is always
-  the same build as the native code that receives; `PUSH_WAKE_COMPILED` in `features.ts` says it.
+  the same build as the native code that receives; `PUSH_WAKE_DECLARED` in `features.ts` says it,
+  PER PLATFORM (`android: true`, `ios: false` - the owner's order, below).
   `registerPushToken` skips only within one process (sessionStorage), so an upgraded app writes the
   flag at its first start.
 
@@ -91,15 +92,30 @@ neither shape): **logged at error, tagged `[PUSH_WAKE]`, with the stage and the 
 drawn as the generic text:
 
 - Android, visible frame: a notification that SAYS the message could not be loaded and asks to open
-  Canari (`notif_wake_unavailable`), on the messages channel. Silent frame: the error line only - the
+  Canari (`notif_wake_unavailable`), on the messages channel, under ONE id for every failure
+  (`WAKE_UNAVAILABLE_NOTIF_ID`: a burst is one notification, alerting once), and SILENT when the
+  wake said `notifLevel: mentions`. Silent frame: the error line only - the
   frame stays queued and the next open drains it.
 - iOS extension: the body becomes `notif.wake.unavailable` (same sentence), and the run's
-  `[NSE_OUTCOME]` record is `fallback` with cause `wake-fetch-failed` (or `wake-no-context`),
-  `kind=wake`. A `gone` answer is `server-content`, cause-free.
+  `[NSE_OUTCOME]` record is `fallback` with cause `wake-<stage>`, the stage that failed as a
+  LETTER-ONLY token so it survives `is_code_token` (`wake-no-push-context`, `wake-no-id`,
+  `wake-no-push-secret`, `wake-transport`, `wake-http-forbidden` / `-unauthorized` / `-throttled` /
+  `-not-found` / `-bad-request` / `-server-error` / `-other`, `wake-unreadable-body`,
+  `wake-frame-without-fields`, `wake-frame-without-type`, `wake-frame-is-a-wake`,
+  `wake-unknown-status`), `kind=wake`. A FETCHED frame re-kinds the run (`Trace.rekind`) before it
+  is dispatched, so `[NSE_OUTCOME]` keeps its `message` / `channel` split under wake mode. A `gone` answer is `server-content`, cause-free.
 - iOS app, silent frame: the error line, no action (the dismissal it would have done is the one
   thing lost, and the next activation clears every conversation's notifications anyway).
 
 No retry and no timer: one request, bounded by the transport's own timeout (5 s, as `fetch-proto`).
+
+**On Android the fetch is OFF the MLS lane, and the dispatch ON it, in delivery order.** The lane is
+the single writer of `mls.bin`; a fetch on it held every later frame for a round trip. A ticket is
+taken on FCM's thread (`WakeOrder.take`), the fetch runs on a 4-thread pool, and `WakeOrder`
+releases the results in ticket order onto the lane - so a commit still precedes the message sealed
+after it even when the message's fetch returns first. Termination is a proof, not a clock: a ticket
+waits only on an earlier fetch, every fetch ends (socket timeouts), and the ticket is completed in a
+`finally` (`WakeOrderTest`).
 The server writes `[PUSH_WAKE] served|gone` per fetch, so **sends with `mode=wake` minus fetches
 served** is the population of wakes no device acted on - the one rate that says whether the switch
 can stay on.
@@ -115,7 +131,7 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
 - **The owner's order (2026-11-02): ON on dev once the Mi 9T reading (row 1 below) passes, then ON
   in production FOR ANDROID ONLY until the P1 is closed.** "Android only" is not a server branch on
   the platform: it is the second lock. **An iOS build does not declare `wakeCapable`**
-  (`PUSH_WAKE_COMPILED` is false on iOS) until that entry is closed, so `push_mode = wake` wakes
+  (`PUSH_WAKE_DECLARED.ios` is false) until that entry is closed, so `push_mode = wake` wakes
   Android devices and every iPhone keeps the full push. Turning iOS on earlier would hide the P1
   measurement behind a second cause; turning it on is one constant and a store build.
 - The wake path adds one fetch BEFORE the decrypt: its own `[NSE_OUTCOME]` stage is `wake-fetch`, so
@@ -127,7 +143,8 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
 
 - Server half: #2915 (the switch, the capability column, the wake send, `GET /mls/push/wake`).
 - Client half: the stacked draft after it (Android `onWakePush` + `WakeAnswer`, the iOS extension's
-  `handleWake`, the iOS app's `CanariHandleWakeBackgroundFrame`, `PUSH_WAKE_COMPILED` sent as `wake`).
+  `handleWake`, the iOS app's `CanariHandleWakeBackgroundFrame`, `PUSH_WAKE_DECLARED[platform]`
+  sent as `wake` - `true` on Android, `false` on iOS until its P1 closes).
 - **What is verified, and how**: the server by its jest suites; Android by compiling the app
   (`:app:compileArmDebugKotlin`) and the JVM `WakeAnswerTest`; the TS by vitest
   (`pushWakeCompiled.test.ts` reads the three native receivers as text). **The Swift and the
@@ -145,7 +162,7 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
    frame).
 3. Airplane mode right after the send arrives (or the server stopped): Android shows the
    "could not be loaded" notification and `[PUSH_WAKE] ... failed` at error; iOS shows the same
-   sentence and `outcome=fallback cause=wake-fetch-failed`.
+   sentence and `outcome=fallback cause=wake-transport` (iOS: owed only once iOS declares the wake).
 4. Production, a week with the switch on: `[PUSH_SEND] mode=wake` count against `[PUSH_WAKE] served`
    + `gone` - the gap is the wakes nobody fetched, per platform.
 5. **Once on in production**, update the register (section 8) and the privacy policy together: what

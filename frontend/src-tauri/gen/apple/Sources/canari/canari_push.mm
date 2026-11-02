@@ -4733,6 +4733,13 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
  * exactly once, on every path.
  */
 static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void (^done)(UIBackgroundFetchResult)) {
+  // Signed out first, as every other reader of the mirror: no account owns this device's pushes, and
+  // its secret must not be read for one.
+  if (CanariPushSignedOut()) {
+    NSLog(@"[CanariPush] [PUSH_WAKE] dropped - this device is signed out, no account owns its pushes");
+    done(UIBackgroundFetchResultNoData);
+    return;
+  }
   NSString *queuedMessageId =
       [data[@"queuedMessageId"] isKindOfClass:[NSString class]] ? data[@"queuedMessageId"] : @"";
   NSString *silent = [data[@"silent"] isEqual:@"true"] ? @"true" : @"false";
