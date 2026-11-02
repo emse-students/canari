@@ -25,8 +25,20 @@
   const bands = $derived(stackedBands(buckets, layers, BOX, peak));
   const empty = $derived(history.samples.length === 0);
 
-  let hovered = $state<number | null>(null);
+  // The selected minute is kept BY TIMESTAMP, never by index: the 60 s refresh slides the window one
+  // minute, and an index would then point at the minute after the one the reader was on.
+  let selectedT = $state<number | null>(null);
+  let focused = $state(false);
+  const hovered = $derived.by(() => {
+    if (selectedT === null) return null;
+    const at = buckets.findIndex((b) => b.t === selectedT);
+    return at >= 0 ? at : null;
+  });
   const reading = $derived(hovered === null ? null : (buckets[hovered] ?? null));
+
+  function select(index: number | null) {
+    selectedT = index === null ? null : (buckets[index]?.t ?? null);
+  }
 
   /**
    * The readout is reachable without a pointer: the chart takes focus, shows the latest minute, and
@@ -43,9 +55,9 @@
       End: last,
     };
     if (event.key === 'Escape') {
-      hovered = null;
+      select(null);
     } else if (event.key in next) {
-      hovered = next[event.key];
+      select(next[event.key]);
     } else {
       return;
     }
@@ -56,7 +68,7 @@
     const rect = (event.currentTarget as Element).getBoundingClientRect();
     if (rect.width === 0 || buckets.length === 0) return;
     const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
-    hovered = Math.min(buckets.length - 1, Math.floor(ratio * buckets.length));
+    select(Math.min(buckets.length - 1, Math.floor(ratio * buckets.length)));
   }
 
   const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
@@ -80,7 +92,7 @@
 <div class="text-xs">
   <div class="text-text-muted mb-1 flex justify-between">
     <span>{m.admin_status_chart_peak({ count: peak })}</span>
-    <span class="min-h-4" aria-live="polite">{readingText}</span>
+    <span class="min-h-4" aria-hidden="true">{readingText}</span>
   </div>
 
   <div class="relative">
@@ -89,6 +101,7 @@
       tabindex="0"
       aria-label={m.admin_status_chart_aria()}
       aria-orientation="horizontal"
+      aria-readonly="true"
       aria-valuemin={0}
       aria-valuemax={Math.max(buckets.length - 1, 0)}
       aria-valuenow={hovered ?? Math.max(buckets.length - 1, 0)}
@@ -96,10 +109,18 @@
       class="rounded-lg"
       onpointermove={moveTo}
       onpointerdown={moveTo}
-      onpointerleave={() => (hovered = null)}
+      onpointerleave={() => {
+        if (!focused) select(null);
+      }}
       onkeydown={onKey}
-      onfocus={() => (hovered ??= buckets.length - 1)}
-      onblur={() => (hovered = null)}
+      onfocus={() => {
+        focused = true;
+        if (selectedT === null) select(buckets.length - 1);
+      }}
+      onblur={() => {
+        focused = false;
+        select(null);
+      }}
     >
       <svg
         viewBox="0 0 {BOX.width} {BOX.height}"

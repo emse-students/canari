@@ -177,7 +177,7 @@ it('gives the chart readout to the keyboard', async () => {
     expect(svg).not.toBeNull();
     return svg!;
   });
-  const readout = () => page.querySelector('[aria-live="polite"]')?.textContent?.trim() ?? '';
+  const readout = () => page.querySelector('[role="slider"]')?.getAttribute('aria-valuetext') ?? '';
   expect(chart.getAttribute('tabindex')).toBe('0');
   expect(readout()).toBe('');
 

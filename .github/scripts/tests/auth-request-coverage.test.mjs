@@ -469,6 +469,47 @@ function rustFnBody(crateDir, name) {
   return null;
 }
 
+/**
+ * Whether a handler body names one of {@link RUST_AUTH}, matched as a WHOLE identifier (`caller_id`
+ * must not be credited by `not_caller_id_at_all`). The header literal is a string, matched as text.
+ *
+ * A handler credited by the NAME of the global-admin helper is credited only while that helper's own
+ * body still reads the header: a helper that stopped asking would otherwise keep every caller's
+ * handler "authorized" by a name. `helperBody(name)` answers a function's body or `null`.
+ */
+function isRustAuthorized(body, helperBody) {
+  const named = (text, id) => new RegExp(`(?<![A-Za-z0-9_])${id}(?![A-Za-z0-9_])`).test(text);
+  return RUST_AUTH.some((idiom) => {
+    if (idiom === 'x-global-admin') return body.includes(idiom);
+    if (!named(body, idiom)) return false;
+    if (idiom !== 'is_global_admin') return true;
+    const helper = helperBody('is_global_admin');
+    return helper !== null && helper.includes('x-global-admin');
+  });
+}
+
+// THE GATE'S OWN NEGATIVE TESTS: a helper that stops reading the header must FAIL the check, and a
+// near-miss identifier must not be credited. Run on every invocation, so a gate that was loosened
+// fails here before it can wave a handler through.
+{
+  const asks = () => '{ headers.get("x-global-admin").is_some() }';
+  const silent = () => '{ true }';
+  const handler = '{ if !is_global_admin(&headers) { return forbidden(); } }';
+  const checks = [
+    ['a handler asking through a helper that reads the header', isRustAuthorized(handler, asks), true],
+    ['a handler asking through a helper that stopped reading it', isRustAuthorized(handler, silent), false],
+    ['a handler naming a helper that does not exist', isRustAuthorized(handler, () => null), false],
+    ['a near-miss identifier', isRustAuthorized('{ my_is_global_admin_x(&h) }', asks), false],
+    ['the header read inline', isRustAuthorized('{ h.get("x-global-admin") }', () => null), true],
+  ];
+  for (const [what, got, want] of checks) {
+    if (got !== want) {
+      console.error(`FAIL: this gate's own self-test - ${what}: expected ${want}, got ${got}`);
+      process.exit(1);
+    }
+  }
+}
+
 // ── The assertions ───────────────────────────────────────────────────────────────────────────────
 
 const failures = [];
@@ -575,16 +616,7 @@ for (const loc of locations) {
       );
       continue;
     }
-    // A handler credited by the NAME of the global-admin helper is credited only while that
-    // helper's own body still reads the header: a helper that stopped asking would otherwise
-    // keep every caller's handler "authorized" by a name.
-    const helperBody = body.includes('is_global_admin') ? rustFnBody(dir, 'is_global_admin') : null;
-    const helperAsks = helperBody !== null && helperBody.includes('x-global-admin');
-    if (
-      RUST_AUTH.some(
-        (idiom) => body.includes(idiom) && (idiom !== 'is_global_admin' || helperAsks)
-      )
-    ) {
+    if (isRustAuthorized(body, (name) => rustFnBody(dir, name))) {
       rustAuthorized++;
       continue;
     }

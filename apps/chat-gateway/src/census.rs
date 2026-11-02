@@ -23,9 +23,10 @@
 //!   replica whose clock is wrong can neither wipe real history nor plant future samples nor take a
 //!   minute's slot from a correct one. Its own clock only decides WHEN it tries; a skewed replica
 //!   leaves its minutes to the others.
-//! - **a cell of fewer than [`HISTORY_MIN_CELL`] devices is never kept in the series**: it would
-//!   identify the person behind it, whose connections an admin could then read to the minute. See
-//!   [`aggregate`].
+//! - **a cell of fewer than [`HISTORY_MIN_CELL`] devices OR people is merged before the series keeps
+//!   it**: it would identify the person behind it, whose connections an admin could then read to the
+//!   minute. The `(other, other)` remainder and each sample's totals are NOT suppressed and may be 1
+//!   or 2. See [`aggregate`].
 //!
 //! A minute nobody sampled (every gateway restarting, Redis down) has NO member: the admin page draws
 //! it as a gap, and nothing here interpolates one.
@@ -50,9 +51,9 @@ const MAX_VERSION_LEN: usize = 32;
 /// sample's size whatever a client declares.
 pub const MAX_VERSIONS_PER_SAMPLE: usize = 32;
 
-/// The fewest devices a (platform, version) cell may hold in the 24-hour series. A cell of one device
-/// names a person in effect (their connections readable to the minute), so smaller cells are merged
-/// by [`aggregate`] before a sample is written. The LIVE census keeps every cell (minimum 1).
+/// The fewest devices AND people a (platform, version) cell may hold in the 24-hour series. A cell of
+/// one person names them in effect (their connections readable to the minute), so smaller cells are
+/// merged by [`aggregate`] before a sample is written. The LIVE census keeps every cell (minimum 1).
 pub const HISTORY_MIN_CELL: u64 = 3;
 
 /// One sample per this many seconds.
@@ -153,11 +154,12 @@ pub struct Sample {
 /// which is what the shared presence keys give and a per-process map does not. The ids are used to
 /// count distinct users and are not kept.
 ///
-/// `min_cell` is the fewest devices a (platform, version) cell may hold: a smaller one is merged
+/// `min_cell` is the fewest devices AND the fewest distinct people a (platform, version) cell may
+/// hold (three devices of one user are one person): a smaller one is merged
 /// into `other`, BY PLATFORM FIRST (the version is dissolved: `(ios, 1.5.4)` of 1 device joins
 /// `(ios, other)`), then BY VERSION (a platform's remaining cell still under the minimum joins
 /// `(other, other)`, the platform dissolved too). Totals never change - only how finely they are
-/// split. The live census passes 1 (no merge); the series passes [`HISTORY_MIN_CELL`].
+/// split - and neither the `(other, other)` remainder nor the totals are suppressed. The live census passes 1 (no merge); the series passes [`HISTORY_MIN_CELL`].
 ///
 /// The output is deterministic: groups sorted by platform, then devices descending, then version.
 pub fn aggregate(devices: &[(String, ClientKind)], min_cell: u64) -> Census {
@@ -195,8 +197,10 @@ pub fn aggregate(devices: &[(String, ClientKind)], min_cell: u64) -> Census {
     let fold = |cells: &mut BTreeMap<(String, String), Cell>, dissolve_platform: bool| {
         let small: Vec<(String, String)> = cells
             .iter()
-            .filter(|((platform, version), (n, _))| {
-                *n < min_cell
+            .filter(|((platform, version), (n, users))| {
+                // A cell is small when it holds few DEVICES or few PEOPLE: three devices of one
+                // user are one person's connections, readable to the minute.
+                (*n < min_cell || (users.len() as u64) < min_cell)
                     && if dissolve_platform {
                         platform != OTHER
                     } else {
@@ -477,7 +481,7 @@ async fn sample_once(state: &AppState, now: i64) {
             return;
         }
     };
-    match minute_taken(&mut con, SAMPLES_KEY, bucket).await {
+    match minute_taken(&mut con, &state.census_key, bucket).await {
         Ok(true) => {
             tracing::debug!(
                 "[census] minute {} already taken by another replica - no scan",
@@ -495,6 +499,27 @@ async fn sample_once(state: &AppState, now: i64) {
             return;
         }
     }
+    // A skewed replica is told so BEFORE it scans: the script would refuse its minute anyway.
+    match redis_now(&mut con).await {
+        Ok(redis) if (bucket - redis).abs() > SAMPLE_INTERVAL_SECS => {
+            tracing::warn!(
+                "[census] this replica's clock is {} s {} Redis's - minute {} REFUSED before the scan",
+                (bucket - redis).abs(),
+                if bucket > redis { "ahead of" } else { "behind" },
+                bucket
+            );
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(
+                "[census] Redis time unreadable - minute {} left as a gap: {}",
+                bucket,
+                e
+            );
+            return;
+        }
+    }
     let census = match read_census(&mut con, HISTORY_MIN_CELL).await {
         Ok(census) => census,
         Err(e) => {
@@ -506,7 +531,7 @@ async fn sample_once(state: &AppState, now: i64) {
             return;
         }
     };
-    match record_sample(&mut con, SAMPLES_KEY, bucket, &census).await {
+    match record_sample(&mut con, &state.census_key, bucket, &census).await {
         Ok(SampleOutcome::Skewed { skew }) => tracing::warn!(
             "[census] this replica's clock is {} s {} Redis's - minute {} REFUSED, nothing written",
             skew.abs(),
@@ -730,6 +755,34 @@ mod tests {
         );
         assert_eq!(cell_of(&census, "other", "other"), Some((3, 2)));
         assert_eq!(census.users, 2);
+    }
+
+    #[test]
+    fn three_devices_of_one_person_are_not_a_cell() {
+        let census = aggregate(
+            &[
+                device("solo", "ios", "1.0.0"),
+                device("solo", "ios", "1.0.0"),
+                device("solo", "ios", "1.0.0"),
+            ],
+            HISTORY_MIN_CELL,
+        );
+        // Three devices pass a device threshold, one person does not: nothing names the platform.
+        assert_eq!(cell_of(&census, "ios", "1.0.0"), None);
+        assert_eq!(cell_of(&census, "other", "other"), Some((3, 1)));
+    }
+
+    #[test]
+    fn three_people_make_a_cell() {
+        let census = aggregate(
+            &[
+                device("a", "ios", "1.0.0"),
+                device("b", "ios", "1.0.0"),
+                device("c", "ios", "1.0.0"),
+            ],
+            HISTORY_MIN_CELL,
+        );
+        assert_eq!(cell_of(&census, "ios", "1.0.0"), Some((3, 3)));
     }
 
     #[test]

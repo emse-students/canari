@@ -461,7 +461,7 @@ plateforme, la version"*. The page is `frontend/src/routes/admin/status/+page.sv
 (totals, a chart, the versions live now); the server side is `census.rs` and the two admin routes in
 `presence.rs`.
 
-**Aggregate, and no cell small enough to be a person.** `GET /api/admin/presence` answers `{ devices, users, groups: [{ platform,
+**Aggregate, with the small cells merged.** `GET /api/admin/presence` answers `{ devices, users, groups: [{ platform,
 version, devices, users }] }`; `GET /api/admin/presence/history` answers `{ now, intervalSecs,
 windowSecs, samples: [{ t, devices, users, groups }] }`. No user id, device id, address or per-person
 field exists on either wire - `the_admin_routes_return_counts_and_never_an_id` seeds a device with
@@ -470,15 +470,17 @@ stray `userId` in a response reaches the DOM. `users` is DISTINCT over the whole
 person on a phone and a laptop is one user, two devices), so it is not the sum of the groups.
 
 **Small cells are merged in the HISTORY, never in the live counts (review of #2956).** A
-(platform, version) cell holding ONE device identifies the person behind it: an admin could read that
+(platform, version) cell holding ONE person identifies them - and three devices of one user are one
+person, so the rule counts PEOPLE as well as devices: an admin could read that
 person's connections to the minute for 24 hours. So before a sample is kept, `aggregate(.., 3)`
-merges every cell of fewer than `HISTORY_MIN_CELL` (3) devices into `other`, BY PLATFORM FIRST (the
+merges every cell of fewer than `HISTORY_MIN_CELL` (3) devices OR distinct people into `other`, BY PLATFORM FIRST (the
 version is dissolved: `(ios, 1.5.4)` of 1 device joins `(ios, other)`), then BY VERSION (a platform
 whose merged cell is still under 3 is dissolved too and joins `(other, other)`). The totals never
 move, only how finely they are split; the page says so under the chart. The live counts keep every
-cell: they are a single instant, with no history to follow a person through. The last residue,
-`(other, other)`, may hold fewer than 3 devices - it carries no platform and no version, so it
-singles out no one.
+cell: they are a single instant, with no history to follow a person through. **What is NOT
+suppressed, stated exactly:** cells below 3 people are merged; the `(other, other)` remainder and each
+sample's totals (`devices`, `users`) are kept as they are and may be 1 or 2 - a total of 1 shows
+that one person was connected, and nothing more, since it carries no platform and no version.
 
 **What a socket declares.** The client adds `platform=` (`web`, or the native shell's own name:
 `android`, `ios`, `macos`, `windows`, `linux`) and `app_version=` (`VITE_APP_VERSION`, the very
@@ -536,8 +538,8 @@ the tab is hidden and one read happens the moment it is shown again; each reques
 keys, so a forgotten tab must not keep asking. The page keeps one failure flag per source, so a live
 read that succeeds never clears a history read that failed.
 
-**Register.** The series is counts by platform and version, with cells under 3 devices merged
-(above), so it singles out no one; row C18 says exactly that. The only thing tied to an account is the
+**Register.** The series is counts by platform and version, with cells under 3 devices or people
+merged (above); the remainder and the totals are not suppressed, and row C18 says exactly that. The only thing tied to an account is the
 declaration key, for at most 90 s after the device's last pong and gone with the presence key on a
 clean end - the lifetime and purpose of the presence key it sits beside. The ADMIN's view shrank: it
 no longer shows a list of connected people. The privacy policy needs no change.

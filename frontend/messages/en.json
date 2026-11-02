@@ -1377,7 +1377,7 @@
   "admin_status_chart_axis_middle": "12 h ago",
   "admin_status_chart_axis_end": "now",
   "admin_status_chart_gap_hint": "A blank stretch is a period nobody measured (the server restarting, for example), not a period with nobody connected.",
-  "admin_status_chart_small_cells_hint": "In this history, any platform or version with fewer than 3 devices is merged into \"Other\", so no one can be singled out.",
+  "admin_status_chart_small_cells_hint": "In this history, any platform or version with fewer than 3 devices or people is merged into \"Other\". Totals are not hidden.",
   "admin_status_versions_heading": "Versions live right now",
   "admin_status_versions_hint": "Share of the connected devices, to weigh a minimum-version decision.",
   "admin_status_versions_empty": "Nobody is connected.",
