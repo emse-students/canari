@@ -176,10 +176,11 @@ export class DeviceGroupMembership {
    * NULL MEANS NO ADMISSION IS RECORDED, and the floor never reads it as "no floor". A KICK clears
    * it (`deactivateDeviceMembership` with `removedFromTreeAt`): the seat is refused until the Add
    * that answers the kick records a new one. A demotion with no kick (the stale-device cron, a
-   * self-report) leaves it, since the leaf stays in the tree. Any other NULL seat - enrolled and not
-   * yet admitted, or admitted by a path that did not record it - is floored at the group's current
-   * epoch by the first ask and written once (`commitFloorOf`, {@link admissionInferred}). Rows from
-   * before migration 044 were backfilled by it with the same rule (refuse rather than leak).
+   * self-report) leaves it, since the leaf stays in the tree. An ACTIVE seat found NULL (admitted by
+   * a path that did not record it) is floored at the group's current epoch by its first ask and
+   * written once (`commitFloorOf`, {@link admissionInferred}); a PENDING one is never inferred - it
+   * may not be admitted yet - and is refused until a commit admits it. Rows from before migration 044
+   * were backfilled by it with the same rule (refuse rather than leak).
    */
   @Column({ type: 'integer', nullable: true, default: null })
   admittedByBaseEpoch: number | null;

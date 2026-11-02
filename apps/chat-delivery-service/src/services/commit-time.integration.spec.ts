@@ -14,7 +14,8 @@
  * - a device kicked (by the real demotion writer, which ends its admission) and re-added, its row
  *   kept: the commits made while it was out refused; a later declaration cannot raise its floor;
  * - a demotion with no kick (the cron) keeps the floor;
- * - a seat found with no admission (an old replica admitted it): floored at the group epoch, once;
+ * - an ACTIVE seat found with no admission (an old replica admitted it): floored at the group
+ *   epoch, once;
  * - the rows from before the column, backfilled by migration 044: refuse rather than leak.
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads;
@@ -299,9 +300,9 @@ maybe('the accepted-at arrival floor (PostgreSQL)', () => {
 
   /**
    * ROWS FROM BEFORE THE COLUMN, backfilled by migration 044 - refuse rather than leak. An active
-   * seat, and a pending one the cron demoted (never kicked), are floored at their group's epoch; a
-   * seat a commit admitted and that has not activated yet at the epoch it holds; a kicked seat is
-   * left with no admission.
+   * seat is floored at its group's epoch; a seat a commit admitted and that has not activated yet at
+   * the epoch it holds; every other pending seat (kicked, cron-demoted, never admitted) is left with
+   * no admission.
    */
   it('migration 044 floors every pre-column seat at what it can prove, never lower', async () => {
     const OTHER = '00000000-0000-4000-8000-0000000000c3';
@@ -324,7 +325,7 @@ maybe('the accepted-at arrival floor (PostgreSQL)', () => {
     await row(OTHER, ME.deviceId, 'active', null);
     await row(GROUP, ME.deviceId, 'pending', 7); // admitted by the commit on base 6, not activated
     await row(KEY_GROUP, 'dev-kicked', 'pending', null, at(2)); // kicked, not re-added
-    await row(OTHER, 'dev-demoted', 'pending', null); // demoted by the cron, its leaf still in
+    await row(OTHER, 'dev-demoted', 'pending', null); // demoted by the cron, or never admitted
 
     await q(MIGRATION_044);
     // Idempotent: a second run changes nothing.
@@ -342,7 +343,9 @@ maybe('the accepted-at arrival floor (PostgreSQL)', () => {
       [`c3:${ME.deviceId}`]: [4, true],
       [`c2:${ME.deviceId}`]: [6, false],
       'c1:dev-kicked': [null, false],
-      'c3:dev-demoted': [4, true],
+      // Pending, so never inferred: refused until a commit admits it, or floored at its first ask
+      // once a report re-activates it.
+      'c3:dev-demoted': [null, false],
     });
 
     for (const base of [3, 7, 8]) await commitAt(KEY_GROUP, base, at(base));

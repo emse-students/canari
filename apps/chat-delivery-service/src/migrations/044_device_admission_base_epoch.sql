@@ -16,18 +16,23 @@
 -- server can still prove, and never a lower one:
 --   1. a pending seat a commit admitted and that has not activated yet still holds the epoch that
 --      commit created ("admittedAtEpoch"): its floor is exact, that epoch minus one;
---   2. an ACTIVE seat, and a pending seat that was never KICKED (the stale-device cron demotes an
---      active seat to pending and clears "admittedAtEpoch" but leaves its leaf in the tree, and a
---      report may re-activate it with no commit): floored at its group's current epoch, inferred.
---      No commit accepted before this migration is answered to it, every later one is. Its true
+--   2. an ACTIVE seat: floored at its group's current epoch, inferred. No commit accepted before
+--      this migration is answered to it, every later one is. Its true
 --      admission is recorded nowhere a clock could not have moved, so the stretch it may have been
 --      out for is refused, not guessed. The cost, taken knowingly: a line about a commit accepted
 --      before the deploy and merged after it is settled undated;
---   3. a KICKED seat (pending, "kickedAt" set) keeps NULL: its leaf is out of the tree, and it is
---      refused until the Add that answers the kick records a new admission.
--- Seats a replica still running the old code admits after this runs are floored the same way by
--- their first ask (`commitFloorOf`), written once. No row is deleted. Idempotent: ADD COLUMN IF NOT
--- EXISTS, and each UPDATE touches NULLs only.
+--   3. any other PENDING seat keeps NULL: enrolled and not yet admitted, kicked, or demoted by the
+--      stale-device cron. An inferred floor would hand a seat not yet admitted every commit time
+--      until its Add - the past a newcomer is not handed - so a pending seat is refused until a
+--      commit admits it. A cron-demoted seat a report re-activates with no commit is floored by its
+--      first ask instead, at the group's epoch then (`commitFloorOf`, written once), as is a seat a
+--      replica still running the old code admits after this runs.
+-- No row is deleted. Idempotent: ADD COLUMN IF NOT EXISTS, and each UPDATE touches NULLs only.
+-- A ROLLBACK ACROSS THIS MIGRATION leaves floors the old code does not maintain (its kick does not
+-- clear one, its re-add records none), so a kicked-then-re-added seat could keep a stale LOW floor.
+-- Nothing distinguishes those seats afterwards, so the roll-forward step is to set EVERY floor back
+-- to NULL and re-run the two UPDATEs below (every active seat then floored at its group's epoch of
+-- that day) - a data change, the owner's to approve then (docs/wiki/frontend/modules/chat.md).
 --
 -- THE ALTER IS ALONE, AND THE BACKFILL OUTSIDE ITS LOCK. ADD COLUMN takes ACCESS EXCLUSIVE on
 -- `dm_device_group_memberships`, which every send's fan-out and every commit read. A nullable
@@ -55,4 +60,4 @@ UPDATE "dm_device_group_memberships" d
   FROM "dm_groups" g
  WHERE g.id = d."groupId"
    AND d."admittedByBaseEpoch" IS NULL
-   AND (d.status = 'active' OR d."kickedAt" IS NULL);
+   AND d.status = 'active';

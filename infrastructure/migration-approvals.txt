@@ -16,5 +16,7 @@
 # Mechanism: docs/wiki/cicd.md ("A migration the owner must approve is held").
 
 # 044: the commit-time floor read from the admission the commit gate records, and the backfill of every
-# existing seat - approved by the owner on 2026-11-02 ("Oui, dans la file").
-apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql b6f241694235a3cb694616809be718451ed3ad336631d3a96a70c7515b92c2ef
+# existing seat. The migration was approved by the owner on 2026-11-02 ("Oui, dans la file"); this line
+# is for its FINAL SQL (backfill rules 1-3 in the file), written by the author, and it awaits the owner's
+# confirmation of those rules - his merge of it by hand is that confirmation.
+apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql 7686835c26486db8913403e66f3a4fecf691917e2dea7df35f0ff9c6643c2ce7

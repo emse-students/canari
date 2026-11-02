@@ -2946,47 +2946,91 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
 
     /**
-     * A seat no recorded admission names and no kick removed - admitted by an old replica during a
-     * rollout, or demoted by the cron and re-activated by a report - is floored at the group's epoch
-     * and that is WRITTEN, once: refuse rather than leak, and never refused for ever.
+     * A PENDING seat is never inferred: enrolled and not yet admitted, an inferred floor would hand
+     * it every commit time until its Add (2026-11-02). Only the admission the gate wrote while it
+     * waits (`admittedAtEpoch`) floors it.
      */
-    it.each([
-      ['active', 'error'],
-      ['pending', 'warn'],
-    ] as const)(
-      'an unkicked %s seat with no admission is floored at the group epoch, written once, said at %s',
-      async (status, level) => {
-        seat(null, status);
-        seats.update.mockResolvedValue({ affected: 1 });
-        log();
-        await expect(
-          service.getCommitAcceptedAt('group-1', 8, 'member-1', 'dev-1')
-        ).rejects.toBeInstanceOf(ForbiddenException);
-        expect(seats.update).toHaveBeenCalledWith(
-          {
-            groupId: 'group-1',
-            userId: 'member-1',
-            deviceId: 'dev-1',
-            admittedByBaseEpoch: IsNull(),
-          },
-          { admittedByBaseEpoch: 9, admissionInferred: true }
-        );
-        const spy = level === 'error' ? errorSpy : warnSpy;
-        expect(spy).toHaveBeenCalledWith(expect.stringContaining('floored at the group'));
-        // The refusal names the floor that refused: inferred, not the admission.
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('INFERRED'));
+    it('a pending seat admitted by no commit is refused quietly, and nothing is inferred', async () => {
+      seat(null, 'pending');
+      log();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 8, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(seats.update).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('admitted by no commit'));
+    });
 
-        // The next ask reads the written floor: nothing more is written or said at ERROR.
-        seats.update.mockClear();
-        errorSpy.mockClear();
-        seat(9, status, null, true);
-        await expect(
-          service.getCommitAcceptedAt('group-1', 8, 'member-1', 'dev-1')
-        ).rejects.toBeInstanceOf(ForbiddenException);
-        expect(seats.update).not.toHaveBeenCalled();
-        expect(errorSpy).not.toHaveBeenCalled();
-      }
-    );
+    it('a pending seat the gate admitted is floored by that admission, nothing written', async () => {
+      deviceGroupRepo.findOne.mockResolvedValue({
+        id: 'row-1',
+        status: 'pending',
+        kickedAt: null,
+        admittedAtEpoch: 7,
+        admittedByBaseEpoch: null,
+        admissionInferred: false,
+      });
+      log();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 5, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.getCommitAcceptedAt('group-1', 6, 'member-1', 'dev-1')).resolves.toEqual(
+        at(6)
+      );
+      expect(seats.update).not.toHaveBeenCalled();
+    });
+
+    /**
+     * An ACTIVE seat no recorded admission names - admitted by an old replica during a rollout, or
+     * demoted by the cron and re-activated by a report - is floored at the group's epoch and that is
+     * WRITTEN, once: refuse rather than leak, and never refused for ever.
+     */
+    it('an active seat with no admission is floored at the group epoch, written once, said at ERROR once', async () => {
+      seat(null, 'active');
+      seats.update.mockResolvedValue({ affected: 1 });
+      log();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 8, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      // Conditional on the seat read: still active, unkicked, floorless - a kick mid-ask wins.
+      expect(seats.update).toHaveBeenCalledWith(
+        {
+          groupId: 'group-1',
+          userId: 'member-1',
+          deviceId: 'dev-1',
+          status: 'active',
+          kickedAt: IsNull(),
+          admittedByBaseEpoch: IsNull(),
+        },
+        { admittedByBaseEpoch: 9, admissionInferred: true }
+      );
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('floored at the group'));
+      // The refusal names the floor that refused - inferred, not the admission - at `log`.
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('INFERRED'));
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      // The next ask reads the written floor: nothing more is written, nothing said above `log`.
+      seats.update.mockClear();
+      errorSpy.mockClear();
+      seat(9, 'active', null, true);
+      await expect(
+        service.getCommitAcceptedAt('group-1', 8, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(seats.update).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('a refusal before a RECORDED admission is said at WARN', async () => {
+      log();
+      await expect(
+        service.getCommitAcceptedAt('group-1', 3, 'member-1', 'dev-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('admitted this device (base 4)')
+      );
+    });
 
     it('a repair that loses to a concurrent writer reads the floor that writer recorded', async () => {
       deviceGroupRepo.findOne

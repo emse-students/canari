@@ -3281,12 +3281,20 @@ export class MessagingService {
       group?.activeEpoch ?? null
     );
     if (baseEpoch < floor.baseEpoch) {
-      this.logger.warn(
-        `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - ` +
-          (floor.inferred
-            ? `before the floor INFERRED for this seat (base ${floor.baseEpoch}: the group's epoch when its admission was found unrecorded - migration 044's backfill or a repair - not its admission)`
-            : `before the commit that admitted this device (base ${floor.baseEpoch})`)
-      );
+      // An INFERRED floor refuses by design every commit before it (044's backfill, a repair), so
+      // its refusals are expected and said at `log`; one before a RECORDED admission is a client
+      // asking about its own past, said at WARN.
+      if (floor.inferred) {
+        this.logger.log(
+          `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - ` +
+            `before the floor INFERRED for this seat (base ${floor.baseEpoch}: the group's epoch when its admission was found unrecorded - migration 044's backfill or a repair - not its admission)`
+        );
+      } else {
+        this.logger.warn(
+          `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - ` +
+            `before the commit that admitted this device (base ${floor.baseEpoch})`
+        );
+      }
       throw new ForbiddenException(
         `Commit ${baseEpoch} of ${groupId} precedes the requester's arrival`
       );
@@ -3319,20 +3327,23 @@ export class MessagingService {
    * never content. The gate knows the admitting commit exactly - it is the one it accepts - so no
    * timestamp is compared any more, and a re-add moves the floor past the commits it was out for.
    *
-   * A SEAT WITH NO RECORDED ADMISSION, NOT KICKED, IS FLOORED AT THE GROUP'S CURRENT EPOCH AND THAT
-   * IS WRITTEN, ONCE (`admissionInferred`) - the rule migration 044's backfill applies, here for the
+   * AN ACTIVE SEAT WITH NO RECORDED ADMISSION IS FLOORED AT THE GROUP'S CURRENT EPOCH AND THAT IS
+   * WRITTEN, ONCE (`admissionInferred`) - the rule migration 044's backfill applies, here for the
    * seats it could not reach: one admitted by a replica still running the old code during a rollout,
-   * an aborted rollout or a rollback, and a seat the stale-device cron demoted (`kickedAt` null, so
-   * still in the tree) and a report later re-activated with no commit. Refusing those for ever would
-   * leave every line they derive undated with nothing to repair it; the current epoch refuses every
-   * commit already accepted (refuse rather than leak) and answers every later one. The write is
-   * conditional on the column still being null, so a concurrent admission wins and the line is said
-   * once: ERROR for an `active` seat (a path admitted it without recording it), WARN for a `pending`
-   * one (a demoted seat, or one enrolled and not yet admitted - whose person is already a member).
+   * an aborted rollout or a rollback, and a seat the stale-device cron demoted and a report later
+   * re-activated with no commit. Refusing those for ever would leave every line they derive undated
+   * with nothing to repair it; the current epoch refuses every commit already accepted (refuse
+   * rather than leak) and answers every later one. The write is conditional on the seat still being
+   * active, unkicked and floorless, so a concurrent kick or admission wins, and the line is said once,
+   * at ERROR (a path admitted the seat without recording it).
+   *
+   * A PENDING SEAT IS NEVER INFERRED (2026-11-02): it is enrolled and not yet admitted, or kicked,
+   * and an inferred floor would hand it every commit time until its Add - the past a newcomer is not
+   * handed. Floored only by the admission the gate wrote while it waits (`admittedAtEpoch - 1`).
    *
    * REFUSED, QUIETLY (`log`), where nothing can be floored:
-   * - a KICKED seat (`kickedAt` set, its admission cleared by the kick): it is out of the tree until
-   *   the Add that answers the kick records a new admission - an expected state, not a fault;
+   * - a PENDING seat with no admission: enrolled and not yet admitted, or KICKED (`kickedAt` set, its
+   *   admission cleared by the kick) and out of the tree until the Add that answers it - expected;
    * - a member whose device holds no seat: a pending seat the 14-day cleanup purged while its owner
    *   stayed on the roster, or a device never enrolled. No row means no admission to read and none
    *   to write; such a device never processed a Welcome, so it has no commit of its own to ask about.
@@ -3357,6 +3368,7 @@ export class MessagingService {
         id: true,
         status: true,
         kickedAt: true,
+        admittedAtEpoch: true,
         admittedByBaseEpoch: true,
         admissionInferred: true,
       },
@@ -3370,29 +3382,45 @@ export class MessagingService {
     if (seat.admittedByBaseEpoch !== null && seat.admittedByBaseEpoch !== undefined) {
       return { baseEpoch: seat.admittedByBaseEpoch, inferred: seat.admissionInferred === true };
     }
-    if (seat.kickedAt || activeEpoch === null) {
+    // A PENDING seat is not in the tree by anything this server can prove - enrolled and not yet
+    // admitted, or kicked - so nothing is inferred for it (user, 2026-10-21: a newcomer is not handed
+    // the past, and an inferred floor would hand it every commit until its Add). Only the admission
+    // the gate wrote while it waits (`admittedAtEpoch`, the epoch its Add created) floors it.
+    if (seat.status !== 'active') {
+      if (!seat.kickedAt && seat.admittedAtEpoch !== null && seat.admittedAtEpoch !== undefined) {
+        return { baseEpoch: seat.admittedAtEpoch - 1, inferred: false };
+      }
       this.logger.log(
         `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} status=${seat.status} - ` +
           (seat.kickedAt
             ? `kicked, its re-add not yet accepted: no admission, nothing answered`
-            : `no group epoch to floor it at: nothing answered`)
+            : `pending and admitted by no commit: no admission, nothing answered`)
       );
       throw new ForbiddenException(`No admission of the requester in ${groupId}`);
     }
+    if (activeEpoch === null) {
+      this.logger.log(
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} - no group epoch to floor it at: nothing answered`
+      );
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
+    }
+    // Conditional on the seat being exactly what was read - active, unkicked, with no floor - so a
+    // kick or an admission landing mid-ask wins, and the re-read below handles the no-match.
     const repaired = await this.deviceGroupRepo.update(
-      { ...where, admittedByBaseEpoch: IsNull() },
+      {
+        ...where,
+        status: 'active' as const,
+        kickedAt: IsNull(),
+        admittedByBaseEpoch: IsNull(),
+      },
       { admittedByBaseEpoch: activeEpoch, admissionInferred: true }
     );
     if ((repaired.affected ?? 0) > 0) {
-      const line =
-        `[COMMIT_AT] ${who} device=${cutDeviceId(deviceId)} status=${seat.status} - no admission ` +
-        `recorded on this seat: floored at the group's current epoch ${activeEpoch}, written once ` +
-        `(every commit before it refused, every later one answered)`;
-      if (seat.status === 'active') {
-        this.logger.error(`${line}; an ACTIVE seat - the path that admitted it did not record it`);
-      } else {
-        this.logger.warn(line);
-      }
+      this.logger.error(
+        `[COMMIT_AT] ${who} device=${cutDeviceId(deviceId)} - an ACTIVE seat with no admission ` +
+          `recorded (the path that admitted it did not record it): floored at the group's current ` +
+          `epoch ${activeEpoch}, written once (every commit before it refused, every later one answered)`
+      );
       return { baseEpoch: activeEpoch, inferred: true };
     }
     // A concurrent writer recorded one first (an admission, or another repair): its value holds.
