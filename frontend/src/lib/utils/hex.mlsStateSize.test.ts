@@ -23,20 +23,20 @@ describe('mlsStateSize', () => {
 
   it('asks for the size, never for the bytes', async () => {
     invoke.mockResolvedValue(8_131_838);
-    expect(await mlsStateSize()).toBe(8_131_838);
-    expect(invoke).toHaveBeenCalledWith('mls_state_size');
+    expect(await mlsStateSize('user-1')).toBe(8_131_838);
+    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-1' });
     expect(invoke.mock.calls.map((c) => c[0])).not.toContain('load_mls_state');
   });
 
   it('is 0 off Tauri, where there is no native file to stat', async () => {
     tauri = false;
-    expect(await mlsStateSize()).toBe(0);
+    expect(await mlsStateSize('user-1')).toBe(0);
     expect(invoke).not.toHaveBeenCalled();
   });
 
   it('is 0 when the command fails, the same verdict as a first install', async () => {
     invoke.mockRejectedValue(new Error('no app data dir'));
-    expect(await mlsStateSize()).toBe(0);
+    expect(await mlsStateSize('user-1')).toBe(0);
   });
 });
 
@@ -60,5 +60,11 @@ describe('hasMlsState', () => {
     invoke.mockResolvedValue(1);
     await hasMlsState('user-1');
     expect(invoke.mock.calls.map((c) => c[0])).toEqual(['mls_state_size']);
+  });
+
+  it("asks about the account it was given, never the install's last one", async () => {
+    invoke.mockResolvedValue(0);
+    expect(await hasMlsState('user-2')).toBe(false);
+    expect(invoke).toHaveBeenCalledWith('mls_state_size', { userId: 'user-2' });
   });
 });

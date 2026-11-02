@@ -829,6 +829,43 @@ load whose record names another account is `device_holds_other_account` on the k
 predates the record is covered only after its owner signs in once on the new build
 ([mls-protocol](../../protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later)).
 
+### One MLS state per account on a native install (owner decision, 2026-11-02)
+
+`mls.bin` is now THE SLOT - the signed-in account's state, the one path every engine reads (the
+foreground manager, the Android push and background engines, the iOS mirror the notification
+extension decrypts with) - and every other account's state is PARKED whole under
+`{app_data_dir}/mls_accounts/<sha256(user id)>/`, with the same file names, its owner record and the
+ledgers built from it included (`mls_state_file_names` in `storage.rs`, the one list the reset uses
+too). `initialiser_mls` gives the slot to the signing-in account BEFORE it reads or seals anything, on
+every path (`select_account_state`, `commands/mls_account_state.rs`): the slot's state is parked under
+the account its `mls.owner` names, and the signing-in account's parked state comes back. **Files are
+renamed, never read or rewritten** - no MLS byte and no key is touched by a switch.
+
+- **Ownership is the owner record, never a guess.** `mls.owner` is written only after `load_or_create`
+  opened the state for that account, so it names the account that created or last opened it. That is
+  the whole migration: an existing `mls.bin` stays in the slot for the account its record names and is
+  parked under that name at the first sign-in of another account. A state with NO record is never
+  moved and never attributed: it stays in the slot, accused at ERROR (`[MLS_ACCOUNT]`), and only the
+  load's credential check says whose it is - as before.
+- **A move cut part-way is finished from a journal, not a clock.** A park creates `<hash>.parking/`
+  first, an unpark renames `<hash>/` to `<hash>.unparking/` first; the next process completes either
+  before any state is located.
+- **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
+  into the slot just handed over), any move that would overwrite a file (`rename(2)` replaces silently
+  on Unix), and a fresh start asked while the switch just brought this account's parked state back
+  (the caller decided "no state" on an answer that did not see it).
+- **Every query takes its account**: `mls_state_size`, `mls_state_absent` and `load_mls_state` answer
+  for `userId` (`account_state_file`), never for whichever account used the install last.
+- The `device_holds_other_account` gate above stays: it is what a REFUSED switch meets.
+- A deleted account's parked state goes with its wipe (`delete_user_mls_state`); the factory wipe
+  takes `mls_accounts/` with everything else.
+
+Tests: `commands/mls_account_state.rs` (A -> B -> A -> B with each account's bytes back unchanged,
+the migration by record, the unrecorded state left in place, the live-manager refusal, both cut
+moves finished, no overwrite, the deletion). **Native, verified by compiling and host tests only**:
+an A -> B -> A reading on the iPhone 12 bench phone is owed after a pre-release
+([backlog](../../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
+
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
 refusal writes nothing; a control proves the rotation is still reachable without the flag), and
@@ -1758,7 +1795,7 @@ A sign-out keeps the local state on purpose; a deletion is the one exit after wh
 - **TWO IDS THAT DIFFER ONLY BY CASE SHARE STORAGE, SO THE WIPE REFUSES THEM.** Three keys lower-case the id (archived conversations, salon unsent, salon read marks) and `canari_<id>.db` lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` would take `abc`'s unsent texts and database. `caseCollidingAccountIdsIn` reads the id-naming keys back, and when another stored id case-folds to the deleted one the wipe is refused at ERROR, naming the twins, once per start, and stays owed - never a guess at whose rows are whose.
 - **A LOST 204 WIPES NOTHING, AND THAT IS ACCEPTED, NOT DETECTED.** When the server committed the deletion but the answer never arrived, `deleteMyAccount()` throws (a transport failure, or a deadline), the error is shown, no marker is written and the session continues until its next refresh answers 401 - the ordinary expired-session path. Detecting it would mean reading "this account was deleted" out of a 401 that also means "this session expired", a distinction the server does not carry; guessing it from the refusal is the learning-by-failing the rules forbid. The cost: that account's rows stay under its device key, unreadable without its PIN, until the next device reset - and a retry of the deletion (a 401 or 404 then) does not wipe either. Owed only if a server signal ever separates the two.
 - **THE ID GUARANTEE.** The user id is the MiConnect `sub`, a `varchar(255)` copied as it comes: a UUID, a hash, a username or an email. Both sides accept exactly `[A-Za-z0-9_.@-]{1,255}` (`isWipeableAccountId`, `is_wipeable_account_id`) and REFUSE anything else, loudly, rather than normalise it: the stores were created under the raw id, so a normalised one names another file, and an id holding `:` would let the prefix keys `history_*:<id>:` reach another account's.
-- LEFT ALONE, deliberately: every other account's database, slot and keys, the in-app log, the preferences, and `mls.bin` (one file per install that may hold another account's state: [backlog](../../backlog.md), the shared `mls.bin` P3).
+- LEFT ALONE, deliberately: every other account's database, slot and keys, the in-app log, the preferences, and the `mls.bin` slot (the signed-in account's state). The deleted account's PARKED MLS state goes (`delete_user_mls_state`, [one state per account](#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)).
 - Tests: `accountLocalWipe.test.ts` (the resume against a sign-in landing before and during it, the case collision, the whole key list), `accountLocalKeys.guard.test.ts`, `auth.deletedAccount.test.ts` (`clearAuthLocally` sends no logout; `accountLiveness`; scenario A - the callback drops the marker and a tokenless resume then wipes nothing; `isDeletedAccountHere` holds after the LIVE wipe finished, and a resumed wipe leaves no flag), `pinFirstSetupRefuted.test.ts` (`account_deleted` asks no salt and no recovery), `ConversationsMiniPanel.deleted.svelte.test.ts`, `offlineUnlock.test.ts` (scenario B - the refusal precedes every store opener and `getToken`), `deletedAccountGuards.test.ts`, `user.deleteMyAccount.test.ts`, `apiFetch.test.ts` (`onAuthorization`), three Rust tests in `commands/storage.rs`, eight in `commands/push.rs` (`delete_user_push_files_tests`, App Group container included, `push_context_lock_tests`). **What only a device proves:** the SQLite file and the keystore entry are really gone on Android and iOS (where `app_config_dir()` was never read on hardware), and a second WebView tab is not a thing a phone has.
 
 ### One sign-out sent two logouts, and the vault logged the user back in during it - FIXED 2026-10-17

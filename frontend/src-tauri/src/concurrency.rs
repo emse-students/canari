@@ -232,8 +232,9 @@ fn live_manager_flag() -> &'static AtomicBool {
 /// ratchet advance when the app comes back, the resume reload is refused (`LiveAhead`) and the
 /// live state is persisted OVER the file - erasing whatever a background engine wrote meanwhile.
 /// The key-group join from a push (channel-encryption section 26) is the one background write
-/// that can be deferred to the app without losing anything, so it refuses here.
-#[cfg(any(target_os = "android", target_os = "ios", test))]
+/// that can be deferred to the app without losing anything, so it refuses here. And the account
+/// switch refuses on it on every platform (`mls_account_state.rs`): the slot is never handed to
+/// another account under a manager whose next checkpoint would write into it.
 pub(crate) fn live_manager_in_process() -> bool {
     live_manager_flag().load(Ordering::SeqCst)
 }

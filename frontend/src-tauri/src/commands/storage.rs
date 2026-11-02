@@ -534,30 +534,42 @@ pub(crate) fn remove_mls_state_held(data_dir: &std::path::Path) -> Result<(), St
     // UNDER THE `mls.bin` WRITE LOCK (the caller's): a background Welcome writes its stage and notes
     // it under one hold of that lock, so the sweep removes both or neither - never a ledger it
     // re-creates after.
-    let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
-    let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
-    let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");
-    let stages_tmp = format!("{BACKGROUND_STAGES_FILE}.tmp");
-    let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
-    for name in [
-        STALE_WELCOME_LEDGER_FILE,
-        stale_ledger_tmp.as_str(),
-        STAGED_KEY_GROUP_JOIN_FILE,
-        join_staged_tmp.as_str(),
-        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
-        join_ledger_tmp.as_str(),
-        BACKGROUND_STAGES_FILE,
-        stages_tmp.as_str(),
-        "mls.bin",
-        MLS_STATE_OWNER_FILE,
-        owner_tmp.as_str(),
-    ] {
-        let path = data_dir.join(name);
+    for name in mls_state_file_names() {
+        let path = data_dir.join(&name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
         }
     }
     Ok(())
+}
+
+/// The files that make up ONE account's MLS state at the top of `{app_data_dir}`: `mls.bin`, its owner
+/// record ([`MLS_STATE_OWNER_FILE`]), and the ledgers and push-join files built from it, with the
+/// temporaries an interrupted write of each leaves.
+///
+/// **ONE LIST FOR THE TWO THINGS DONE TO A STATE AS A WHOLE**: the reset removes it
+/// ([`remove_mls_state_held`]) and an account switch parks it aside under its owner
+/// (`mls_account_state.rs`). Two copies would drift, and a file one of them forgets is a ledger left
+/// describing the next account's state.
+///
+/// **THE ORDER IS LOAD-BEARING**: what was built from `mls.bin` first, then `mls.bin`, then its owner
+/// record LAST - a removal or a move cut part-way leaves the state WITH the record naming whose it
+/// is, never staged epoch secrets beside no state, nor a state nobody is named for.
+pub(crate) fn mls_state_file_names() -> Vec<String> {
+    let mut names = Vec::with_capacity(11);
+    for built_from_it in [
+        STALE_WELCOME_LEDGER_FILE,
+        STAGED_KEY_GROUP_JOIN_FILE,
+        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
+        BACKGROUND_STAGES_FILE,
+    ] {
+        names.push(built_from_it.to_string());
+        names.push(format!("{built_from_it}.tmp"));
+    }
+    names.push("mls.bin".to_string());
+    names.push(MLS_STATE_OWNER_FILE.to_string());
+    names.push(format!("{MLS_STATE_OWNER_FILE}.tmp"));
+    names
 }
 
 /// The file beside `mls.bin` naming the account whose state it is.
@@ -610,7 +622,7 @@ pub(crate) fn mls_state_owner(app: tauri::AppHandle) -> Option<String> {
 }
 
 /// [`mls_state_owner`] minus the `AppHandle`, testable on a real directory.
-fn read_mls_state_owner(data_dir: &std::path::Path) -> Option<String> {
+pub(crate) fn read_mls_state_owner(data_dir: &std::path::Path) -> Option<String> {
     match std::fs::read_to_string(data_dir.join(MLS_STATE_OWNER_FILE)) {
         Ok(owner) if !owner.is_empty() => Some(owner),
         Ok(_) => {
@@ -625,24 +637,47 @@ fn read_mls_state_owner(data_dir: &std::path::Path) -> Option<String> {
     }
 }
 
-/// Reads {app_data_dir}/mls.bin and returns its encrypted contents.
-/// Returns None when the file does not exist (first install).
+/// The path of `user_id`'s `mls.bin` on this install, `None` when the account has none here
+/// ([`crate::commands::mls_account_state::account_state_file`]); `Err` when the data directory or the
+/// parked states could not be read.
 ///
-/// THE SHARED READER, AND THE REASON IT IS ONE. `initialiser_mls` needs these same bytes, and
-/// until 2026-09-15 it got them by having the FRONTEND read them through the command below and
-/// hand them straight back - 8 MB across the IPC bridge twice, as a JSON array of per-byte
-/// numbers. Measured on a Pixel 6a: 29 074 883 characters of JSON per crossing, 908 ms of main
-/// thread warm, and a 2 731 ms block on a cold launch that the fingerprint prompt waited out,
-/// because the prompt is raised by an `invoke` queued behind it. Two callers, one read, no bridge.
-pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
+/// **EVERY QUERY ABOUT "THE SAVED STATE" TAKES ITS ACCOUNT** (owner, 2026-11-02): an install keeps
+/// one state per account, so "is there a state" without a subject answered for whichever account
+/// used the install last - and a fresh start decided on that answer sealed a new state over it.
+fn account_state_path(
+    app: &tauri::AppHandle,
+    user_id: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    crate::commands::mls_account_state::account_state_file(&data_dir, user_id)
+}
+
+/// Reads `user_id`'s `mls.bin` and returns its encrypted contents, `None` when the account has none
+/// on this install.
+///
+/// THE LOGIN NEVER CALLS THIS, and the reason is a measurement: `initialiser_mls` reads the file
+/// itself. Until 2026-09-15 the FRONTEND read the bytes through this command and handed them straight
+/// back - 8 MB across the IPC bridge twice, as a JSON array of per-byte numbers. Measured on a
+/// Pixel 6a: 29 074 883 characters of JSON per crossing, 908 ms of main thread warm, and a 2 731 ms
+/// block on a cold launch that the fingerprint prompt waited out.
+///
+/// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `openLocalStateWithKey`,
+/// which re-seals it in the frontend. Nothing that only wants to know whether a state exists calls
+/// it - that is what [`mls_state_size`] answers.
+#[tauri::command]
+pub(crate) fn load_mls_state(app: tauri::AppHandle, user_id: String) -> Option<Vec<u8>> {
+    log::debug!("[MLS] load_mls_state for the signing-in account");
+    let path = match account_state_path(&app, &user_id) {
+        Ok(Some(path)) => path,
+        Ok(None) => return None,
         Err(e) => {
-            log::warn!("[MLS] app_data_dir() failed: {e}");
+            log::error!("[MLS] load_mls_state: the account's state could not be located: {e}");
             return None;
         }
     };
-    let path = data_dir.join("mls.bin");
     match std::fs::read(&path) {
         Ok(b) => Some(b),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -651,17 +686,6 @@ pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
             None
         }
     }
-}
-
-/// The frontend's view of the reader above.
-///
-/// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `openLocalStateWithKey`,
-/// which re-seals it in the frontend. The LOGIN path no longer calls it - see
-/// [`read_mls_state_blob`] for what that cost - and neither does anything that only wants to know
-/// whether a state exists, which is what [`mls_state_size`] answers.
-#[tauri::command]
-pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
-    read_mls_state_blob(&app)
 }
 
 /// Whether `mls.bin` at `path` is PROVABLY absent: `Ok(true)` when the file does not exist or is
@@ -679,34 +703,40 @@ pub(crate) fn state_file_absent(path: &std::path::Path) -> Result<bool, String> 
     }
 }
 
-/// The frontend's view of [`state_file_absent`] for this install's `mls.bin`.
+/// The frontend's view of [`state_file_absent`] for `user_id`'s `mls.bin` on this install. An
+/// account with no state here is provably absent; a parked state that could not be located is an
+/// `Err`, never a "gone" that would start a re-enrolment.
 #[tauri::command]
-pub(crate) fn mls_state_absent(app: tauri::AppHandle) -> Result<bool, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    let absent = state_file_absent(&data_dir.join("mls.bin"));
-    log::debug!("[MLS] mls.bin provably absent: {absent:?}");
+pub(crate) fn mls_state_absent(app: tauri::AppHandle, user_id: String) -> Result<bool, String> {
+    let absent = match account_state_path(&app, &user_id)? {
+        Some(path) => state_file_absent(&path),
+        None => Ok(true),
+    };
+    log::debug!("[MLS] the account's mls.bin provably absent: {absent:?}");
     absent
 }
 
-/// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
+/// The SIZE of `user_id`'s `mls.bin` on this install, 0 when it has none.
 ///
 /// "Is there a saved state" is a question three call sites asked by loading the whole file: the
 /// login path, which then handed the bytes straight back to Rust, and two that only tested them
 /// for truthiness. It is one `metadata()` syscall, and a number that crosses the bridge as a
 /// number.
+///
+/// A state that could not be LOCATED answers 0, like an unreadable directory always has: a login that
+/// then starts fresh reaches `initialiser_mls`, which refuses to seal a new state over another
+/// account's file or over this account's own parked one (`Selection::Moved { unparked: true }`).
 #[tauri::command]
-pub(crate) fn mls_state_size(app: tauri::AppHandle) -> u64 {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
+pub(crate) fn mls_state_size(app: tauri::AppHandle, user_id: String) -> u64 {
+    let path = match account_state_path(&app, &user_id) {
+        Ok(Some(path)) => path,
+        Ok(None) => return 0,
         Err(e) => {
-            log::warn!("[MLS] app_data_dir() failed: {e}");
+            log::error!("[MLS] mls_state_size: the account's state could not be located: {e}");
             return 0;
         }
     };
-    match std::fs::metadata(data_dir.join("mls.bin")) {
+    match std::fs::metadata(path) {
         Ok(m) => m.len(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
         Err(e) => {
