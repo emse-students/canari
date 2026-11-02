@@ -121,3 +121,59 @@ export function widenedEntryStart(
   const target = entryWindowStart(groupCount, fullGroups);
   return target < currentStart ? target : null;
 }
+
+/**
+ * The start that fills a pane which the entry frame left SHORT, by measuring what the first frame
+ * mounted rather than jumping to the full entry window.
+ *
+ * The entry frame mounts `entryGroups` rows; a thread of one-line rows (37 px on the Mi 9T) fills
+ * ~750 px with ~20 of them, which is no more than the pane, so the old rule - "not scrollable, widen
+ * to the full 60-group entry" - mounted 60 rows (260 ms of one task on the phone, 2026-11-02 profile)
+ * to gain the 40 px of overflow a scroll event needs. The deficit is arithmetic: the average row
+ * height is what the frame measured, and the rows still missing are the deficit divided by it.
+ *
+ * @param currentStart The RESOLVED start of the window now.
+ * @param mountedGroups How many groups the window holds (`groupCount - currentStart`).
+ * @param scrollHeight Height of the mounted content.
+ * @param clientHeight Height of the pane.
+ * @param overflowPx The overflow the pane must have so that a scroll (and so pagination) can happen.
+ * @param minStep Floor of the step, so an unlucky measure still converges.
+ * @param entryStart The start of the FULL entry window: a measure alone never mounts more than that
+ *   (a window already past it grows by the measure, as a page would).
+ * @returns The lower start, or `null` when the pane already overflows or nothing is left to mount.
+ */
+export function fillStart(
+  currentStart: number,
+  mountedGroups: number,
+  scrollHeight: number,
+  clientHeight: number,
+  overflowPx: number,
+  minStep: number,
+  entryStart: number
+): number | null {
+  if (currentStart <= 0) return null;
+  const deficit = clientHeight + overflowPx - scrollHeight;
+  if (deficit < 0) return null;
+  const rowPx = scrollHeight > 0 && mountedGroups > 0 ? scrollHeight / mountedGroups : 1;
+  const rows = Math.ceil(deficit / rowPx);
+  const wanted = Math.max(0, currentStart - Math.max(1, minStep, rows));
+  return currentStart > entryStart ? Math.min(currentStart, Math.max(wanted, entryStart)) : wanted;
+}
+
+/**
+ * One step of the widen that follows the entry reveal: the start `step` groups above the current
+ * one, never past the `target` the full entry window asks for.
+ *
+ * The widen used to mount all of it in one task (40 rows, ~175 ms on the Mi 9T), blocking input
+ * right after the reveal; steps with a yield between them keep every task short whatever the
+ * thread's size, since the TARGET is bounded and each step is.
+ *
+ * @param currentStart The RESOLVED start of the window now.
+ * @param target The start the widen is heading for (`widenedEntryStart`'s answer).
+ * @param step Groups per step.
+ * @returns The next start, or `null` when the window is already at or past the target.
+ */
+export function widenStepStart(currentStart: number, target: number, step: number): number | null {
+  if (currentStart <= target) return null;
+  return Math.max(target, currentStart - Math.max(1, step));
+}

@@ -672,6 +672,56 @@ contention, not data: (1) mount only the visible bubbles in a salon's first fram
 `click`, as the first-mount analysis suggests, or the instrument's ~135 ms press keeps every row 135 ms
 over by construction.
 
+### The salon mount, named: 60 rows mounted before the reveal, not 20 (2026-11-02)
+
+**Method.** `community-open.mjs --profile-salon` (new): one V8 CPU profile per salon open, from the
+tap on the row to the first bubble, on the Mi 9T (`1.6.0`, the build of the reading above, cold
+start, BancOuverture-1 and its 200-message `general`). The release bundle is minified, so the chunks
+were dumped from the running WebView (`Debugger.getScriptSource`) and the hot positions of
+`profile-summary.mjs --sources` read against them. A profiled run is slower than a bare one
+(200 us sampling): the profile gives the SHAPE, and the milliseconds against the budget stay the bare
+runs' (the table above).
+
+**What the profile says.** In a 1064 ms window (tap to first bubble, the open is 570-920 ms of it),
+~450 ms is ONE Svelte flush mounting the page: `ChatMessageGroups` 262 ms (the bubbles; `MessageBubble`
+218 ms inclusive, the message text 59 ms of it), the chat header, the composer and the page chrome
+~190 ms, and 187 ms of native `(program)` (style and layout) after it. A DOM count after the open read
+**60 `msg-*` rows mounted**, not the 20 of the first frame.
+
+**Why 60.** `ENTRY_FIRST_FRAME_GROUPS` is 20 (F6, #1875) and works. But `fillViewportThenPin`
+then wants the pane to overflow by 40 px, so that a scroll event, and with it pagination, can happen.
+On this seed the rows are one line, 37 px: 20 rows are 740 px in a ~750 px pane, short of
+the overflow by a few pixels. The old rule for a short pane was "widen to the FULL 60-group entry", so
+the thread mounted 40 more hidden rows (~260 ms of the task, ~4.4 ms a row) for 40 px of overflow
+and only then revealed. The wiki's own test pinned it: "a thread of one-line rows settles on the
+60-row entry window" (it was documented as intended, and it was the cost).
+
+**What changed** (`ChatArea.svelte`, `renderWindow.ts`):
+- The fill pass reads what the first frame measured. `fillStart` takes the mounted height and the
+  rows mounted, computes the deficit in pixels and asks for exactly the missing rows (floor of 4 groups,
+  never more than the full entry window on a measure alone). A one-line thread of this seed fills with
+  24 rows instead of 60 before the reveal; the last of the four passes keeps the old jump, so the loop
+  still converges whatever a measure says.
+- The widen after the reveal (`widenEntryWindow`) was one task of 40 rows. It is now steps of 10
+  groups, a yield between each (`widenStepStart`), the scroll position compensated per step. No task of
+  the widen is longer than 10 rows (~45 ms on the phone) whatever the thread holds.
+- `isCoarsePointerDevice` reads the live `MediaQueryList` while somebody subscribes: every bubble
+  asked `matchMedia` on mount (~3 ms of the open).
+
+**What the instrument now does.** `--profile-salon`, and the `click` of every tap is recorded: the
+report carries `click>rail`, `click>salon msgs` and `click>reopen msgs`. Navigation starts on the
+click, and the CDP press holds the finger ~120 ms before it, so a budget counted from the finger
+landing is over by that much by construction; the `click>` columns are the ones to read against the
+200 ms, the `tap>` ones stay for continuity with the tables above. The tap columns still book the
+instrument's per-frame predicate (`querySelectorAll` and `getBoundingClientRect` once a frame), a few
+milliseconds, not removed.
+
+**Not done, and why.** The boot work that shares the thread with the tab tap (~155 ms: 32-52 API calls
+and the MLS start-up) is NOT moved in this step: nothing in the profile above names which part
+sits on the tap's critical path, and moving it blind could break the ordering that F2/F3 pin.
+The `--profile` window of the tab tap, read against this page's sources, is the next step. The
+Mi 9T re-measure needs a build carrying this change (the installed APK holds `1.6.0`).
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):

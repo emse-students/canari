@@ -25,6 +25,10 @@ function canQuery(): boolean {
  */
 export function isCoarsePointerDevice(): boolean {
   if (!canQuery()) return false;
+  // A live `MediaQueryList` is always current, so while somebody subscribes, its `matches` IS the
+  // answer: every message bubble asks on mount, and a `matchMedia` call per bubble was ~3 ms of the
+  // salon open on the Mi 9T (2026-11-02 profile) for an answer that is the same for all of them.
+  if (coarseWatch) return coarseWatch.query.matches;
   return window.matchMedia(COARSE_POINTER_QUERY).matches;
 }
 

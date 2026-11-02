@@ -30,8 +30,10 @@
   import {
     entryWindowStart,
     resolveRenderWindow,
+    fillStart,
     stepWindowOlder,
     widenedEntryStart,
+    widenStepStart,
   } from '$lib/utils/chat/renderWindow';
   import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import {
@@ -349,6 +351,12 @@
    * paint is not one long task over a whole page of rows (339-635 ms for 56-200 rows on a Mi 9T).
    */
   const ENTRY_FIRST_FRAME_GROUPS = 20;
+  /** The overflow an entered pane must have, so that a scroll event (and so pagination) can happen. */
+  const ENTRY_OVERFLOW_PX = 40;
+  /** Least number of groups one fill pass adds when the first frame left the pane short. */
+  const ENTRY_MIN_FILL_STEP = 4;
+  /** Groups the post-reveal widen adds per task (about 45 ms of mount on the Mi 9T). */
+  const ENTRY_WIDEN_STEP = 10;
   /**
    * How much history to open ABOVE a message the reader jumped to, so it lands with context rather
    * than glued to the top of the pane. It used to be a cap on rendered nodes, back when the window
@@ -454,15 +462,28 @@
    */
   async function fillViewportThenPin() {
     for (let i = 0; i < 4 && chatContainer && renderWindow.start > 0; i++) {
-      if (chatContainer.scrollHeight > chatContainer.clientHeight + 40) break;
-      // THE FIRST FILL STEP REACHES THE FULL ENTRY SIZE, NOT A PAGE (140) ABOVE THE FIRST FRAME: a
-      // thread of one-line rows would otherwise mount 160 rows before its first paint where it
-      // used to mount 60. Only a still-short viewport after that steps by a page.
+      if (chatContainer.scrollHeight > chatContainer.clientHeight + ENTRY_OVERFLOW_PX) break;
+      // THE FIRST FRAME'S OWN MEASURE SAYS HOW MANY ROWS ARE MISSING (`fillStart`), not a jump to the
+      // full entry size: a thread of one-line rows fills the pane with the 20 of the first frame, and
+      // mounting 60 hidden rows for the 40 px of overflow a scroll needs was ONE 260 ms task on the
+      // Mi 9T (2026-11-02 profile). `widenEntryWindow` brings the rest AFTER the reveal. The last
+      // pass keeps the full-entry jump so the loop converges whatever the measure says.
       const fullEntryStart = entryWindowStart(messageGroups.length, INITIAL_RENDER_GROUPS);
+      const measured = fillStart(
+        renderWindow.start,
+        messageGroups.length - renderWindow.start,
+        chatContainer.scrollHeight,
+        chatContainer.clientHeight,
+        ENTRY_OVERFLOW_PX,
+        ENTRY_MIN_FILL_STEP,
+        fullEntryStart
+      );
       windowStart =
-        renderWindow.start > fullEntryStart
-          ? fullEntryStart
-          : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
+        i === 3
+          ? renderWindow.start > fullEntryStart
+            ? fullEntryStart
+            : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP)
+          : (measured ?? renderWindow.start);
       await tick();
     }
     scrollToBottomSettled(() => {
@@ -482,20 +503,27 @@
   async function widenEntryWindow() {
     const key = lastConversationKey;
     await yieldToMainThread();
-    if (key !== lastConversationKey || !chatContainer) return;
-    const widened = widenedEntryStart(
+    const target = widenedEntryStart(
       renderWindow.start,
       messageGroups.length,
       INITIAL_RENDER_GROUPS
     );
-    if (widened === null) return;
-    const prevHeight = chatContainer.scrollHeight;
-    const prevTop = chatContainer.scrollTop;
-    Log.d('chat.entry', `widening window ${renderWindow.start} -> ${widened}`);
-    windowStart = widened;
-    await tick();
-    if (key !== lastConversationKey || !chatContainer) return;
-    chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+    if (target === null) return;
+    // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no task
+    // of the widen is longer than that many rows whatever the thread holds.
+    for (;;) {
+      if (key !== lastConversationKey || !chatContainer) return;
+      const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
+      if (next === null) return;
+      const prevHeight = chatContainer.scrollHeight;
+      const prevTop = chatContainer.scrollTop;
+      Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
+      windowStart = next;
+      await tick();
+      if (key !== lastConversationKey || !chatContainer) return;
+      chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+      await yieldToMainThread();
+    }
   }
 
   /**
