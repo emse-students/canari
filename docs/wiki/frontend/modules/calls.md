@@ -466,6 +466,25 @@ BOTH phones, logs of both ends read, bar `PASS`, never `PASS-DIRTY`:
 | VID-7 | **The quality ladder** (VQ, [measuring it](#measuring-it-on-the-phones-owed-device-verification-vq)) | the climb to 720p and the drop under throttle; the phone cost per rung recorded |
 | VID-8 | **The camera prompt** on a fresh iPhone install | the system prompt shows the new `NSCameraUsageDescription` naming video calls |
 
+#### The reading of `1.6.3-alpha.2` (2026-11-02, dev, `calls_mode = audio_video`)
+
+Phone A = the Mi 9T (release APK, console over CDP), phone B = the iPhone 12 (TestFlight, device
+syslog; its web console is not readable). ONE call, A dialling a video call to B, B backgrounded
+and locked, answered on the native ring, held 3 min, hung up by B. Evidence:
+`<harness-dir>/a1-bench/r1102-163a2/`.
+
+| Row | Verdict | What was read |
+| --- | --- | --- |
+| Native ring, B locked | **PASS, with a finding** | CallKit rang ~9 s after the dial (`[CanariCallKit] voip push`, `ringing call=... (voip, 58702 ms left)`), the caller's name shown. **Finding: it is announced as AUDIO** ("Canari audio..."), and the answer joins with B's camera OFF: `CanariReportVoipCall` (`canari_push.mm`) still sets `hasVideo = NO` - its own comment, "audio only until the video lot decides how the native ring announces video". The 1.5.2 video lot shipped without deciding it |
+| Answer from the lock screen | **PASS** (as designed) | A first answer left unattended on the locked phone did NOT join: `[CanariCallKit] call ... ended before its answer was handed over - its record dropped` when A's 60 s ring window closed (`ring window (60000 ms) closed unanswered`), CallKit having shown "00:38" connected meanwhile - the accepted behaviour of [this section](#the-iphones-answer-never-joined-and-its-decline-never-left-152-alpha2-2026-10-31) (the join waits on unlock and the app). The second answer, followed by the unlock and the app within 8 s, joined: `iceConnectionState=connected`, `E2E proven ... (connect_ms=2129)`, "Appel chiffre de bout en bout" on both |
+| VID-1, video both ways | **PASS on A's logs; B's side read on screen** | A sends VP8 (`first frame video mime=video/VP8`), the ladder climbs 480p30 -> 360p15 -> 360p30 -> 480p30 -> 720p30; B's camera, turned on in the call, reaches A after a renegotiation: `remote video keyframe received`, `video recv=video/VP8 1280x720 fps=30 decoded=2177 keyframes=7 freezes=1 (0 s)`; at the end `decrypted ... video=4000 | decrypt-failed=0`. B drew A's picture (its "lecteur flottant" control present while A's camera is on, gone while off); B's own counters (`not-vp8`, fps) are not readable on TestFlight |
+| VID-2, camera turned on mid-call (B) | **PASS** | B answered audio-only (finding above) and turned the camera on: A logged `peer -> Offer`, `remote track kind=video`, the first VP8 frame 0.3 s later; audio uninterrupted |
+| VID-3, camera switch | **PASS** | A: `camera switched to environment (replaceTrack: same sender, same transform)` and back to `user`; B: the switch control changed its preview, A kept decoding |
+| VID-4, camera off/on (A) | **PASS, one observation** | A: `camera off (turned off) - sender emptied, recvonly (renegotiating)`, then `camera on again (replaceTrack on its sender, sendrecv)`; B's remote picture went and came back. While A's camera was off, B filled the stage with its OWN preview rather than A's avatar, which the row expects |
+| Hang-up (B) | **PASS** | A: `ending call ... state=incall outcome=answered ... remote=true`, both tracks ended, "a demarre un appel qui a dure 3 minutes" in the DM |
+
+Not run: VID-5 (background mid-call), VID-6, VID-7's throttle, VID-8, and B dialling A.
+
 **The texts, written 2026-10-30** (the owner delegated the legal texts: written against the code,
 claiming nothing it does not do): `/legal/privacy` ("Appels audio et vidéo", `updated` 30/10/2026)
 and register row C21 changed together - the picture E2E like the sound, the camera only inside a

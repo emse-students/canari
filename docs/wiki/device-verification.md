@@ -81,7 +81,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 |---|---|---|---|
 | B | WP-VERIF-0 (background decrypt), WP-VERIF-2 | PASS v0.11.7 | owed |
 | B-bis | `G2` - a dismissed notification not coming back at launch, and a new one still arriving | **owed** | n/a (the record is Android's) |
-| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **owed** (needs a sender with the RC-4 writer switched on) | owed (same) |
+| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **PASS, French, DM + group, `1.6.3-alpha.2`, 2026-11-02**; English, salon (RC-8) and caption (no writer) owed | **PASS, French, DM + group, `1.6.3-alpha.2`, 2026-11-02** (and one finding, below); English, salon and caption owed |
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
@@ -338,6 +338,32 @@ one's), or any thumbnail.
 Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
+
+**Reading of 2026-11-02 (`1.6.3-alpha.2`, both phones, French; [reels-in-chat section 20](frontend/modules/reels-in-chat.md#20-the-bench-reading-of-163-alpha2-2026-11-02)).**
+The sender was the other bench phone with the dev writer on. No caption (the chat camera has no
+caption field), no salon (RC-8), English not run.
+
+| Phone | App state | Conversation | Lock screen | Verdict |
+| --- | --- | --- | --- | --- |
+| Mi 9T | killed (`HOME`, `am kill`, `pidof` empty), screen off | DM | title `<sender>`, text `🎬 CanaReel`; `decryptProto: success type=media chars=11`, `showNotification ... hasMedia=false` | **PASS** |
+| Mi 9T | same | group | title `<group> : <sender>`, text `🎬 CanaReel`; `hasMedia=false` | **PASS** |
+| iPhone 12 | backgrounded (Home), locked | group | `<group>, <sender>, 🎬 CanaReel` | **PASS** |
+| iPhone 12 | backgrounded, locked | DM | `<sender>, 🎬 CanaReel` | **PASS** |
+| iPhone 12 | killed (`ios.mjs terminate`), locked | DM | `<sender>, 🎬 CanaReel` | **PASS** |
+
+No picture of the reel on either platform. The iPhone's notifications carry one attachment on every
+message, text included (the sender's avatar, `Received replacement content ... attachments: 1`),
+so its "Piece jointe" is not a thumbnail.
+
+**One finding on the iPhone, not specific to reels (P1 iOS notifications):** in a DM created a few
+minutes earlier, while the app was open, and the app then killed with `terminate`, BOTH a reel and
+a control text read `Nouveau message de <sender>` - the generic line, so the extension did not
+decrypt. The same DM read its content once the app had been opened again and left by Home, and a
+DM killed afterwards read `🎬 CanaReel`. The group, older, read its content throughout. Read as:
+the state the extension decrypts with did not yet hold the new DM when the process was killed. The
+syslog shows the extension ran and delivered mutated content (`Service extension delivered mutated
+content`, `Delivered user visible push notification`); its `[NSE_OUTCOME]` line is not readable on a
+TestFlight build ([backlog](backlog.d/p1-ios-notifications-show-no-content.md)).
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 

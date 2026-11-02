@@ -1700,6 +1700,13 @@ security review before arming.
   "Republié par" line names reposters after associations, "vous" first for the reader who
   reposted; the author's "Republié par N personnes" menu row and its sheet; the bell row
   `member_repost`.
+  **Read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02 (before WP-F6's sheet, which that build does not
+  carry):** on an association's post the menu lists Partager, "Republier pour mes abonnés", Signaler
+  ce post, each icon 16x16 (measured on the drawn `svg`); a tap posts the repost (`201 POST
+  /api/posts/<id>/reposts`, toast "Republié pour vos abonnés"), the menu then reads "Annuler ma
+  republication", whose tap takes it back (`200 DELETE`) and the label returns. On the member's own
+  post the row is absent and the author's "Interdire les republications de ce post" shows, its icon
+  16x16 too. PASS; the iPhone not read.
 - **Not built**: a live is never reposted (accepted); an officer may repost their own association's post (accepted: refusing
   it would name them).
 - **Proof**: `posts/member-reposts.integration.spec.ts` (PostgreSQL, 121 applied twice): the D38b
