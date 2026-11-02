@@ -143,7 +143,7 @@ describe('DevicesController - the cause of a ban', () => {
 
   describe('DELETE device', () => {
     const del = (reason: string | undefined, sid: string | undefined = CALLER_SID) =>
-      controller.deleteDevice('u1', 'd2', reason, 'u1', undefined, sid);
+      controller.deleteDevice('u1', 'd2', reason, 'u1', sid);
     const askedCause = () => (query.mock.calls[0][1] as unknown[])[4];
 
     it('asks for the owner when no reason is given - every older caller is the panel', async () => {
@@ -164,7 +164,7 @@ describe('DevicesController - the cause of a ban', () => {
     });
 
     it('ends them with no exception when the caller names no session', async () => {
-      await controller.deleteDevice('u1', 'd2', undefined, 'u1', undefined, undefined);
+      await controller.deleteDevice('u1', 'd2', undefined, 'u1', undefined);
       expect(endSessions).toHaveBeenCalledWith('u1', 'd2', null);
     });
 

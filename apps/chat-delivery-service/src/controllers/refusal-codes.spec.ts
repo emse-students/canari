@@ -252,7 +252,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
     it('PIN_NOT_SET: an account that never registered a PIN', async () => {
       pinRepo.findOne.mockResolvedValue(null);
       const e = await controller
-        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
         .catch((x: unknown) => x);
       expect(codeOf(e)).toBe('PIN_NOT_SET');
     });
@@ -260,14 +260,14 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
     it('PIN_INCORRECT: a wrong current PIN, and the lost compare-and-swap alike', async () => {
       pinRepo.findOne.mockResolvedValue({ userId: 'u1', verifier: NEW });
       const wrong = await controller
-        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
         .catch((x: unknown) => x);
       expect(codeOf(wrong)).toBe('PIN_INCORRECT');
 
       pinRepo.findOne.mockResolvedValue({ userId: 'u1', verifier: OLD });
       pinRepo.update.mockResolvedValue({ affected: 0 });
       const raced = await controller
-        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
         .catch((x: unknown) => x);
       expect(codeOf(raced)).toBe('PIN_INCORRECT');
     });

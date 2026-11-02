@@ -103,16 +103,12 @@ export class SecurityController {
   ) {}
 
   /**
-   * Authorises a PIN/security operation: the caller must be the target user
-   * themselves (matched on the Nginx-injected `x-user-id` header) or a global
-   * admin. Throws {@link ForbiddenException} otherwise.
+   * Authorises a PIN/security operation: the caller must be the target user themselves (matched on
+   * the Nginx-injected `x-user-id` header). A global admin is not exempt (owner, 2026-11-02): a PIN
+   * is its holder's alone, and a reset purges their device footprint. Throws
+   * {@link ForbiddenException} otherwise.
    */
-  private assertSelfOrGlobalAdmin(
-    targetUserId: string,
-    headerUserId?: string,
-    headerGlobalAdmin?: string
-  ): void {
-    if (headerGlobalAdmin === 'true') return;
+  private assertSelf(targetUserId: string, headerUserId?: string): void {
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!caller || caller.trim().toLowerCase() !== targetUserId.trim().toLowerCase()) {
       throw new ForbiddenException('Operation restricted to the authenticated user');
@@ -144,11 +140,10 @@ export class SecurityController {
   @Post('mls/security/pin-check')
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string; salt?: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
     const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
     const safeDeviceId = sanitizeOptionalQueryValue(body.deviceId, 'deviceId');
 
@@ -224,11 +219,10 @@ export class SecurityController {
   @Get('mls/security/pin-salt/:userId')
   async getPinSalt(
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ salt: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
 
     let doc = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
 
@@ -264,11 +258,10 @@ export class SecurityController {
   @Get('mls/security/pin-status/:userId')
   async getPinStatus(
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ registered: boolean }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
     const doc = await this.pinVerifierRepo.findOne({
       where: { userId: safeUserId },
       select: { id: true },
@@ -292,11 +285,10 @@ export class SecurityController {
   @Post('mls/security/pin-change')
   async changePin(
     @Body() body: { userId: string; oldVerifier: string; newVerifier: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ ok: boolean }> {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
 
     const oldVerifier = sanitizeQueryValue(body.oldVerifier, 'oldVerifier');
     const newVerifier = sanitizeQueryValue(body.newVerifier, 'newVerifier');
@@ -367,11 +359,10 @@ export class SecurityController {
   @Post('mls/security/pin-reset')
   async resetPin(
     @Body() body: { userId: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ ok: boolean; devicesPurged: number }> {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
 
     const devices = await this.keyPackageRepo.find({
       where: { userId: safeUserId },

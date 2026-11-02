@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { cutLeafIdentity, cutUserId } from './log-repeat';
 
@@ -270,31 +270,6 @@ export function assertCallerOwnsUserId(
     throw new ForbiddenException(message);
   }
 }
-
-/**
- * {@link assertCallerOwnsUserId}, with the platform-admin exemption still in place - for the
- * DEVICE-ADMINISTRATION routes alone (a device's metadata, its revoked flag, its one-time
- * KeyPackage pool, its deletion), none of which reads or writes a group, a roster, an invitation or
- * a message. Whether an admin keeps them is the owner's open decision of 2026-11-02; until it is
- * taken they behave as before, and NO conversation route may call this.
- */
-export function assertCallerOwnsDeviceOrGlobalAdmin(
-  headerUserId: string | undefined,
-  headerGlobalAdmin: string | undefined,
-  targetUserId: string,
-  message: string
-): void {
-  const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-  if (headerGlobalAdmin === 'true' && caller && caller !== targetUserId) {
-    deviceAdminLogger.warn(
-      `[DEVICE_ADMIN] global admin ${cutUserId(caller)} acts on a device of ${cutUserId(targetUserId)}`
-    );
-    return;
-  }
-  assertCallerOwnsUserId(headerUserId, targetUserId, message);
-}
-
-const deviceAdminLogger = new Logger('DeviceAdministration');
 
 /**
  * The one form two account ids are compared in: trimmed and lower-cased, the form

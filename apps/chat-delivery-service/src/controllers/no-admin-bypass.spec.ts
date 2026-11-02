@@ -18,7 +18,7 @@ import { MessagingController } from './messaging.controller';
 import { NotificationPreferencesController } from './notification-preferences.controller';
 import { PushController } from './push.controller';
 import { SecurityController } from './security.controller';
-import { assertCallerOwnsDeviceOrGlobalAdmin, assertCallerOwnsUserId } from '../utils/sanitize';
+import { assertCallerOwnsUserId } from '../utils/sanitize';
 
 /**
  * NO PLATFORM-ADMIN BYPASS ON CONVERSATION DATA (owner, 2026-11-02).
@@ -50,24 +50,11 @@ describe('no platform-admin bypass on conversation data', () => {
   ];
 
   /**
-   * The ONLY handlers allowed to read the header, each with its reason:
-   * - the storage panel answers aggregates, never a person (kept);
-   * - device administration and the PIN routes read or write no group, roster, invitation or
-   *   message, and wait for the owner's decision (unchanged, listed in the PR of 2026-11-02).
+   * The ONLY handler allowed to read the header: the storage panel, which answers aggregates and
+   * never a person. Device administration and the PIN routes lost their exemption on the owner's
+   * decision of 2026-11-02 - each person manages their own devices and their own PIN.
    */
-  const ALLOWED = [
-    'AdminStorageController.getStorageUsage',
-    'DevicesController.deleteDevice',
-    'DevicesController.isDeviceRevoked',
-    'DevicesController.pruneDevicePrekeys',
-    'DevicesController.purgeDevicePrekeys',
-    'DevicesController.updateDeviceMetadata',
-    'SecurityController.changePin',
-    'SecurityController.checkPinVerifier',
-    'SecurityController.getPinSalt',
-    'SecurityController.getPinStatus',
-    'SecurityController.resetPin',
-  ];
+  const ALLOWED = ['AdminStorageController.getStorageUsage'];
 
   /** Every `Class.method` whose route arguments include the `x-global-admin` header. */
   const readersOfTheHeader = (): string[] => {
@@ -102,12 +89,58 @@ describe('no platform-admin bypass on conversation data', () => {
     expect(assertCallerOwnsUserId.length).toBe(3);
   });
 
-  it('keeps the device-administration exemption explicit, and to that helper alone', () => {
-    expect(() =>
-      assertCallerOwnsDeviceOrGlobalAdmin('admin', 'true', 'victim', 'refused')
-    ).not.toThrow();
-    expect(() =>
-      assertCallerOwnsDeviceOrGlobalAdmin('admin', 'false', 'victim', 'refused')
-    ).toThrow(ForbiddenException);
+  /**
+   * A controller with NO dependencies: every field it touches throws. A refusal must come from the
+   * owner check at the top of the handler, before anything is read or written - a dependency
+   * reached first would fail the case with a different error.
+   */
+  const bare = <T extends object>(cls: { prototype: T }): T =>
+    new Proxy(Object.create(cls.prototype) as T, {
+      get(target, key, receiver) {
+        if (key in cls.prototype || typeof key === 'symbol') {
+          return Reflect.get(target, key, receiver);
+        }
+        throw new Error(`dependency ${String(key)} reached before the owner check`);
+      },
+    });
+
+  describe("another person's devices: an admin who is not the owner is refused", () => {
+    const devices = bare(DevicesController);
+    it.each([
+      [
+        'PATCH metadata',
+        () => devices.updateDeviceMetadata('victim', 'd1', { deviceName: 'x' }, 'admin'),
+      ],
+      ['GET revoked', () => devices.isDeviceRevoked('victim', 'd1', 'admin')],
+      ['DELETE prekeys', () => devices.purgeDevicePrekeys('victim', 'd1', 'admin')],
+      [
+        'POST prekeys/prune',
+        () => devices.pruneDevicePrekeys('victim', 'd1', { ids: ['k'] }, 'admin'),
+      ],
+      ['DELETE device', () => devices.deleteDevice('victim', 'd1', undefined, 'admin', undefined)],
+    ])('%s', async (_route, call) => {
+      await expect(call()).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe("another person's PIN: an admin who is not the person is refused", () => {
+    const security = bare(SecurityController);
+    const verifier = 'a'.repeat(64);
+    it.each([
+      ['pin-check', () => security.checkPinVerifier({ userId: 'victim', verifier }, 'admin')],
+      ['pin-salt', () => security.getPinSalt('victim', 'admin')],
+      ['pin-status', () => security.getPinStatus('victim', 'admin')],
+      [
+        'pin-change',
+        () =>
+          security.changePin(
+            { userId: 'victim', oldVerifier: verifier, newVerifier: verifier },
+            'admin'
+          ),
+      ],
+      ['pin-reset', () => security.resetPin({ userId: 'victim' }, 'admin')],
+    ])('%s', async (_route, call) => {
+      await expect(call()).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 });

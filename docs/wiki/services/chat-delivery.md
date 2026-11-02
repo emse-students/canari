@@ -1288,8 +1288,8 @@ erasure, lives or reels.
 **A platform global admin (`X-Global-Admin: true`) is a user like any other on a person's
 conversations.** It cannot list someone's groups, read a roster it is not on, add or remove roster
 rows, mint or settle invitations on a group it is not in, read a group's history, fetch or
-acknowledge someone's queued messages, or register a device or publish KeyPackages under someone
-else's account. An admin who is not a member gets exactly the refusal any non-member gets.
+acknowledge someone's queued messages, register a device or publish KeyPackages under someone
+else's account, administer someone else's devices, or touch someone else's PIN. An admin who is not a member gets exactly the refusal any non-member gets.
 
 **Why.** Each bypass was a door around the membership checks that protect the MLS tree. The sharpest
 one: the roster-mutation check exempted an admin, so an admin could insert itself into a populated
@@ -1298,24 +1298,27 @@ block. A device registered under another account is fanned out into every one of
 groups, and a KeyPackage published under it is the key that person's next Add uses. None of this
 needs an admin to operate the platform.
 
-**What still reads the header**, by an allowlist that `src/controllers/no-admin-bypass.spec.ts`
-asserts from the route metadata - a new reader fails the suite until someone decides its side:
+**Nor another person's devices or PIN** (owner, the same day): each person manages their own
+devices - metadata, the revoked flag, the one-time KeyPackage pool, the deletion - and their own
+PIN - check, salt, status, change, reset - and an admin who is not that person is refused like
+anyone else.
 
-| Handler | Status | Why |
-| --- | --- | --- |
-| `GET mls/admin/storage` | kept | aggregates only: disk, table sizes, row counts, Redis, the media bucket - never a person |
-| `PATCH mls/devices/:u/:d/metadata`, `GET .../revoked`, `DELETE .../prekeys`, `POST .../prekeys/prune`, `DELETE mls/devices/:u/:d` | unchanged, decision owed | device administration of another person: touches no group, roster, invitation or message (a delete answers counts only); through `assertCallerOwnsDeviceOrGlobalAdmin`, which logs `[DEVICE_ADMIN]` at WARN whenever the exemption is taken |
-| `mls/security/pin-*` (check, salt, status, change, reset) | unchanged, decision owed | the PIN verifier of another person; no conversation data, but a reset purges their device footprint |
+**The one handler that still reads the header** is `GET mls/admin/storage`, which answers aggregates
+alone (disk, table sizes, row counts, Redis, the media bucket), never a person.
+`src/controllers/no-admin-bypass.spec.ts` asserts that from the route metadata of every controller,
+as an allowlist: a new reader of the header fails the suite until someone decides its side.
 
-Everything else reads no admin header: the strict `assertCallerOwnsUserId(headerUserId, target,
-message)` has no admin parameter at all, and the member checks of `members.controller.ts`,
-`invitations.controller.ts` and `authorizeHistoryGroups` take none. No frontend page used a removed
-path - every client call names its own account. The gateway's `GET /api/admin/presence` (connected
-devices, no groups) is outside this service and unchanged.
+Everything else reads no admin header: the owner check `assertCallerOwnsUserId(headerUserId, target,
+message)` has no admin parameter at all, nor do the member checks of `members.controller.ts`,
+`invitations.controller.ts`, `authorizeHistoryGroups`, or the PIN routes' `assertSelf`. No frontend
+page used a removed path - every client call names its own account. The gateway's
+`GET /api/admin/presence` is outside this service and not covered here.
 
-Pinned by `no-admin-bypass.spec.ts` (the allowlist), `members.controller.group-rosters.spec.ts` and
-`invitations.controller.vouch.spec.ts` (an admin non-member refused like a stranger), and
-`messaging.history-requester.spec.ts` (history refused, single and batch, the stream never read).
+Pinned by `no-admin-bypass.spec.ts` (the allowlist, and an admin who is not the owner refused on the
+five device routes and the five PIN routes before any dependency is reached),
+`members.controller.group-rosters.spec.ts` and `invitations.controller.vouch.spec.ts` (an admin
+non-member refused like a stranger), and `messaging.history-requester.spec.ts` (history refused,
+single and batch, the stream never read).
 
 ## Routes
 
