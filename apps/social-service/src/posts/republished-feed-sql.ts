@@ -1,4 +1,4 @@
-import { associationVisibleToUserSql } from '../spaces/reader-spaces';
+import { associationVisibleToUserSql, memberRepostCarriesSql } from '../spaces/reader-spaces';
 
 /**
  * A REPUBLICATION IS AN ASSOCIATION PUBLISHING, so the two feeds that list what associations
@@ -48,10 +48,46 @@ export function republishedForViewerSql(viewer: string, among?: string): string 
   return `EXISTS (SELECT 1 ${countedRepublicationsSql('rf_in', viewer, among)})`;
 }
 
-/** The instant the row is placed at: its latest counted republication, else its publication. */
-export function republishedFeedAtSql(viewer: string, among?: string): string {
+/** The alias {@link followedRepostLateralSql} joins as. */
+const FOLLOWED_REPOST = 'mf_followed';
+
+/**
+ * The latest MEMBER REPOST (WP-F6) of the row by one of `reposters` - a `text[]` placeholder, the
+ * viewer's ACCEPTED follows (`FollowsService.getFollowedUserIdsForUser`) - that still CARRIES the
+ * post to `viewer` (`memberRepostCarriesSql`: the reposter not muted, still seeing it first-hand, no
+ * block, same cohort side), never for an anonymous post; NULL when there is none. A `LEFT JOIN
+ * LATERAL` on `posts`, read as {@link FOLLOWED_REPOST_AT}.
+ *
+ * ONE evaluation per candidate row, read twice: the Suivis arm ADMITS a row on it and PLACES the row
+ * at it ("a repost enters the Suivis feed at the time of the repost"). The two used to be two
+ * subqueries, each running the carry check on every followed repost of every candidate. Whether the
+ * viewer may READ the post is still the arm's own `postVisibleToViewerSql`; a stale row neither
+ * surfaces a post nor dates it.
+ */
+export function followedRepostLateralSql(reposters: string, viewer: string): string {
+  return `LEFT JOIN LATERAL (
+         SELECT MAX(mf_at."repostedAt") AS at FROM member_reposts mf_at
+           JOIN users mf_at_user ON mf_at_user.id = mf_at."reposterId"
+          WHERE mf_at."postId" = posts.id AND mf_at."reposterId" = ANY(${reposters}::text[])
+            AND NOT COALESCE(posts.anonymous, false)
+            AND ${memberRepostCarriesSql('posts', 'mf_at_user', viewer)}) ${FOLLOWED_REPOST} ON true`;
+}
+
+/** The instant {@link followedRepostLateralSql} found, NULL when no followed repost carries the row. */
+export const FOLLOWED_REPOST_AT = `${FOLLOWED_REPOST}.at`;
+
+/** The row is admitted to Suivis by a followed person's repost ({@link followedRepostLateralSql}). */
+export const MEMBER_REPOSTED_BY_FOLLOWED_SQL = `${FOLLOWED_REPOST_AT} IS NOT NULL`;
+
+/**
+ * The instant the row is placed at: its latest counted republication - and, with `repostedAt` (the
+ * Suivis arm passes {@link FOLLOWED_REPOST_AT}), its latest member repost by someone the reader
+ * follows - else its publication. `GREATEST` ignores a NULL.
+ */
+export function republishedFeedAtSql(viewer: string, among?: string, repostedAt?: string): string {
+  const reposted = repostedAt ? `, ${repostedAt}` : '';
   return `GREATEST(posts."publishedAt",
-           (SELECT MAX(rf_at."republishedAt") ${countedRepublicationsSql('rf_at', viewer, among)}))`;
+           (SELECT MAX(rf_at."republishedAt") ${countedRepublicationsSql('rf_at', viewer, among)})${reposted})`;
 }
 
 /** The "Associations" feed: published by an association, or republished by one the viewer sees. */

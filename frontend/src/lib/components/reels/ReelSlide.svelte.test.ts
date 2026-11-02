@@ -11,6 +11,9 @@ import { flushSync, mount, unmount } from 'svelte';
 import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { m } from '$lib/paraglide/messages';
+import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
+
+useResizeObserverStub();
 
 vi.mock('$lib/reels/reelPreload', () => ({
   ReelPreload: class {
@@ -95,12 +98,15 @@ function reel(overrides: Partial<PostEntity> = {}): PostEntity {
   };
 }
 
-function render(post: PostEntity, active = true) {
+function render(post: PostEntity, active = true, extra: Record<string, unknown> = {}) {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(ReelSlide, {
     target,
-    props: { post, authToken: 'tok', active, preload: false },
+    props: { post, authToken: 'tok', active, preload: false, ...extra },
   });
+  flushSync();
+  // The caption's first overflow read is answered by the observer's first callback (`watchClampOverflow`).
+  fireResize();
   flushSync();
   mounted.push(() => unmount(instance));
   const q = <T extends Element>(s: string) => target.querySelector<T>(s);
@@ -345,4 +351,15 @@ it('an old reel with no picture of its frame draws the black frame, not a play g
   const { q } = render(reel(), false);
   expect(q('[data-video-first-frame-poster]')).toBeNull();
   expect(q('.bg-cn-yellow')).toBeNull();
+});
+
+it("tells the opener its file is GONE on a 410 only - a conversation's reel records it (RC-6)", () => {
+  const onMediaGone = vi.fn();
+  const { q } = render(reel(), true, { onMediaGone });
+  const stub = q<HTMLElement>('[data-post-media-stub]')!;
+  stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'unreachable' }));
+  stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'not-found' }));
+  expect(onMediaGone).not.toHaveBeenCalled();
+  stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'expired' }));
+  expect(onMediaGone).toHaveBeenCalledTimes(1);
 });

@@ -3676,7 +3676,9 @@ ciphertext, a refused open - draws the salon's initials and nothing about an aut
 on each platform: Android `push/ChannelBannerAttribution` (tested in `android-tests`) and the NSE's
 `channelBannerAttribution`; `canari_push.mm` applies the same rule inline. A held v1 session still
 opens with no author check, as the app's v1 reader does
-([legacy-compatibility](../legacy-compatibility.md)).
+([legacy-compatibility](../legacy-compatibility.md)) - so since 2026-11-01 the open's answer says
+which it was: `authorProven` is `true` under v2 and `false` under v1, and a banner NAMES its speaker
+only on `true` ([mobile](../frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)).
 
 **The verified sender of an MLS push (the native half of WP-G2-1b).** Both push decrypts
 (`decrypt_push_message_with_key` and the commit catch-up) now take the push's `senderId` in a

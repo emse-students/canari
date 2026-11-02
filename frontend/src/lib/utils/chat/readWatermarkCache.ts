@@ -16,17 +16,30 @@
 import type { Conversation } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { countUnreadForUser, mergeReadWatermark, watermarkFor } from './readState';
+import { countUnreadForUser, mergeReadWatermark, readPointFor } from './readState';
 
 /**
  * One line of `read_watermarks.ndjson`, written by `appendReadWatermark`
  * (CanariFirebaseMessagingService.kt) and its iOS twin `CanariAppendReadWatermark`
- * (canari_push.mm). Both writers must produce these two fields and nothing else.
+ * (canari_push.mm).
  */
 export interface NativeReadWatermark {
   groupId: string;
   /** The SENDER's `sentAt` for the newest message that notification was about, in ms. */
   at: number;
+  /**
+   * The SERVER's `createdAt` of that same message, in ms - the clock the conversation is ordered
+   * and read on (readState.ts). Written by Android since the owner's decision of 2026-10-31; absent
+   * from an iOS line and from one an older build wrote, which then moves the stamped mark alone.
+   */
+  serverAt?: number;
+}
+
+/** A positive, finite instant in ms, floored; `undefined` for anything else. */
+function instantOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : undefined;
 }
 
 /**
@@ -49,30 +62,49 @@ export function applyNativeReadWatermarks(
   const changed: string[] = [];
   // Collapse first: the file is already one line per conversation, but nothing about the format
   // guarantees it, and two lines for one group must not cost two merges and two saves.
-  const highest = new Map<string, number>();
+  const highest = new Map<string, { at: number; serverAt: number }>();
   for (const e of entries) {
-    if (!e?.groupId || typeof e.at !== 'number' || !Number.isFinite(e.at) || e.at <= 0) {
+    const at = instantOf(e?.at);
+    if (!e?.groupId || at === undefined) {
       appendLog(
         `[READ_WATERMARK] Entry skipped (not a watermark): ${JSON.stringify(e).slice(0, 80)}`
       );
       continue;
     }
-    highest.set(e.groupId, Math.max(highest.get(e.groupId) ?? 0, Math.floor(e.at)));
+    const held = highest.get(e.groupId);
+    highest.set(e.groupId, {
+      at: Math.max(held?.at ?? 0, at),
+      serverAt: Math.max(held?.serverAt ?? 0, instantOf(e.serverAt) ?? 0),
+    });
   }
   if (highest.size === 0) return changed;
 
   for (const [key, convo] of conversations.entries()) {
-    const at = highest.get(convo.id);
-    if (at === undefined) continue;
-    const merged = mergeReadWatermark(convo.readWatermarks, meNorm, at);
-    if (!merged) continue;
-    conversations.set(key, {
+    const mark = highest.get(convo.id);
+    if (mark === undefined) continue;
+    // TWO CLOCKS, EACH INTO ITS OWN MAP (readState.ts): `at` is the `sentAt` of the newest message
+    // the banner showed, `serverAt` the server's `createdAt` of that same message when the line
+    // carries it. Either one moving is a change.
+    const stamped = mergeReadWatermark(convo.readWatermarks, meNorm, mark.at);
+    const server =
+      mark.serverAt > 0
+        ? mergeReadWatermark(convo.serverReadWatermarks, meNorm, mark.serverAt)
+        : null;
+    if (!stamped && !server) continue;
+    const next = {
       ...convo,
-      readWatermarks: merged,
-      unreadCount: countUnreadForUser(convo.messages, watermarkFor(merged, meNorm)),
+      ...(stamped ? { readWatermarks: stamped } : {}),
+      ...(server ? { serverReadWatermarks: server } : {}),
+    };
+    const mine = readPointFor(next, meNorm);
+    conversations.set(key, {
+      ...next,
+      unreadCount: countUnreadForUser(convo.messages, mine.stamped, mine.server),
     });
     changed.push(key);
-    appendLog(`[READ_WATERMARK] ${convo.id.slice(0, 8)} read up to ${new Date(at).toISOString()}`);
+    appendLog(
+      `[READ_WATERMARK] ${convo.id.slice(0, 8)} read up to ${new Date(mark.at).toISOString()}${mark.serverAt > 0 ? ` (server ${new Date(mark.serverAt).toISOString()})` : ' (no server time on the line)'}`
+    );
   }
   return changed;
 }

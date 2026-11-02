@@ -538,3 +538,80 @@ A device that comes back registers again, the designed path; restoring one means
 positional argument), so it revoked a device id `undefined` under a user id that does not exist and
 purged nothing. That `revoked_device` row was deleted by its id a minute later, the arguments were
 passed through the environment instead, and the run guards against a call that purges no queued row.
+
+## Re-measured 2026-11-01: the same predicate names a new population
+
+Read-only, all groups: **292 devices** hold a queue and have neither a session row nor a push token,
+**70 377 rows** (about 163 MB), none revoked, all still holding a key package; none of the third
+pass's 109 has a row or a seat left. **It refills**: 1 372 rows were written to 113 of them in the
+last 24 hours (4 490 in 7 days), because 291 of them still hold 721 active seats. Deleting the rows
+alone would therefore be refilled within a day; the fix is the revoke path above, on an allowlist
+measured that day. 220 of the 292 belong to a user with a live session on another device, and 1 sent
+a frame in the last 7 days, so a fourth pass must exclude what shows life. **Not run: a fourth pass
+is the owner's decision.**
+
+## Fourth pass - 2026-11-01, and the procedure to run it again
+
+**Run by hand on 2026-11-01** on an allowlist of **286** devices measured read-only that day: the
+292 above, minus those that showed life in the last 7 days.
+
+| What | Count |
+| --- | --- |
+| Revoked through the route, every call answered 200 | **285** |
+| Skipped by the per-device re-check, because a session or a push token had appeared (it came back) | 1, which keeps its 3 queued rows, 5 seats and 1 key package |
+| Queued rows deleted, in total | **71 271** |
+| Pauses on the load guard (1-minute load above 6) | 1, after 84 devices; the run then resumed |
+| Re-count after the run, for the 285 | 0 queued rows, 0 seats, 0 key packages; 285 `revoked_device` rows written |
+
+A full-row backup of every affected table, filtered to the allowlist, was taken just before the run
+and is kept privately, outside the repository.
+
+**What is left was not counted.** The re-count above covers the 285; nobody re-ran the whole predicate after the pass. The skipped device no longer met it (it had come back), so the population right after the pass is unmeasured: it is whatever the 6 devices excluded for life, and any new orphan, made of it. The first `[ORPHAN_DEVICES]` line in production is its first reading.
+
+**The skipped device is the evidence that this stays a hand procedure.** It had no session and no
+push token for days, it was on a measured allowlist, and it came back the same day. A scheduled reaper
+was built for this population and closed unmerged (#2880, owner, 2026-11-01): at the GC's 90 days the
+hourly `detectStaleDevices` / `cleanupStaleDevices` already collect the same devices before it runs,
+and inside them no durable fact the server holds proves that a device was REPLACED rather than merely
+closed (`deviceName` is set only by a manual rename; `device_signature_key.firstSeenAt` exists only for
+devices enrolled after migration 027, with no backfill). So the GC keeps the silent devices, this
+procedure keeps the orphans, and a daily count watches for the next regrowth
+([chat-delivery](../services/chat-delivery.md#orphan-devices-the-gcs-blind-spot-counted-daily-cleaned-by-hand)).
+
+### The procedure, re-runnable
+
+**One definition.** The orphan predicate lives in ONE place,
+`apps/chat-delivery-service/src/utils/orphan-devices.ts`: queued rows, no session row, no push token,
+not revoked, and no life in the last 7 days (no key package or one-time key package published, no
+commit logged, no frame sent). The daily `[ORPHAN_DEVICES]` count, this procedure's allowlist
+(`ORPHAN_DEVICE_LIST_SQL`) and its per-device re-check (`ORPHAN_DEVICE_RECHECK_SQL`) are built from it,
+so what the report counts is what a pass would revoke; `orphan-devices.spec.ts` fails if this page
+carries a copy of the predicate. In the container the compiled statements are in
+`dist/utils/orphan-devices.js`, with their parameters from `orphanDeviceParams()`.
+
+**The life clauses are not equal.** A key package, a one-time key package or a commit is durable
+evidence: those rows outlive their delivery. A frame SENT is weak evidence, because a queued row is
+deleted once it is delivered - a device whose frames were all fetched leaves no trace in
+`queued_message`. The commit-log and key-package clauses carry the weight.
+
+The daily `[ORPHAN_DEVICES]` line says when to consider a pass; it has no threshold until the regrowth
+rate is measured ([backlog](../backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)).
+A pass is the owner's decision each time.
+
+1. **Measure the allowlist, read-only**, with `ORPHAN_DEVICE_LIST_SQL`, and save it outside the
+   repository (user id, device id, rows, seats).
+2. **Back up first**: every row of every table the route purges (`queued_message`, the seats in
+   `dm_device_group_memberships`, `key_package`, `one_time_key_package`), filtered to the allowlist,
+   kept privately. The restore is the first pass's ([the backup](#the-backup-and-how-to-restore-it)).
+3. **Call the route, never a `DELETE`**: `DELETE /api/mls/devices/:userId/:deviceId` from inside the
+   delivery container, one device at a time with a 1 s pause, the arguments passed through the
+   environment (`bun -e` drops the first positional argument - the third pass's slip).
+4. **Re-check each device right before its call** with `ORPHAN_DEVICE_RECHECK_SQL` - the same
+   predicate as step 1, the 7-day life clauses included - and skip it on `0`; that is how the fourth
+   pass kept the device that came back. The re-check and the call are NOT atomic: a device that signs
+   in between the two is revoked anyway, and comes back by registering again, the designed path.
+5. **Stop** on any status other than 200, and on a purge that removed no queued row.
+6. **Load guard**: pause while the 1-minute load is above 6, resume below it.
+7. **One device first**, checked in the database, the Redis routing set and the logs; then the rest.
+8. **Re-count afterwards**: 0 queued rows, 0 seats and 0 key packages for every revoked device, one
+   `revoked_device` row each, and the rows of every OTHER device unchanged.

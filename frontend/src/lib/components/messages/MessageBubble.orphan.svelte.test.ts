@@ -13,9 +13,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const queued = vi.fn<(id: string) => Promise<boolean | null>>();
+/** The reason the stored row records for a retired attachment; none by default. */
+const stored = vi.fn<(id: string) => Promise<'group-deleted' | 'not-a-member' | null>>();
 vi.mock('$lib/utils/chat/outbox', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/chat/outbox')>()),
   isOutboxEntryQueued: (id: string) => queued(id),
+  storedUnsentReasonOf: (id: string) => stored(id),
 }));
 
 import MessageBubble from './MessageBubble.svelte';
@@ -26,7 +29,11 @@ import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { flushMacrotask } from '../../../test/flush';
 
 const mounted: (() => void)[] = [];
-beforeEach(() => queued.mockReset());
+beforeEach(() => {
+  queued.mockReset();
+  stored.mockReset();
+  stored.mockResolvedValue(null);
+});
 afterEach(() => {
   while (mounted.length) mounted.pop()?.();
   document.body.innerHTML = '';
@@ -142,5 +149,37 @@ describe('MessageBubble - a normal send never flashes the orphan card', () => {
     end();
     await settle();
     expect(orphanShown()).toBe(true);
+  });
+});
+
+/**
+ * A FILE THE OUTBOX RETIRED FOR THE GROUP'S SAKE, AFTER A RELOAD (re-review of #2874): its entry is
+ * gone and the in-memory reason with it, so the stored row is what says why - never the orphan's
+ * "never completed", and never "refused by the server".
+ */
+describe('MessageBubble - a retired attachment after a reload', () => {
+  it('the conversation was deleted: says so, not an orphan', async () => {
+    queued.mockResolvedValue(false);
+    stored.mockResolvedValue('group-deleted');
+    await render({ isOwn: true });
+    await settle();
+    expect(stored).toHaveBeenCalledWith('m1');
+    expect(document.body.textContent).toContain(m.upload_unsent_group_deleted());
+    expect(orphanShown()).toBe(false);
+    expect(document.body.textContent).not.toContain(m.upload_failed_label());
+  });
+  it('no longer a member: says so, not an orphan', async () => {
+    queued.mockResolvedValue(false);
+    stored.mockResolvedValue('not-a-member');
+    await render({ isOwn: true });
+    await settle();
+    expect(document.body.textContent).toContain(m.upload_unsent_not_a_member());
+    expect(orphanShown()).toBe(false);
+  });
+  it('still queued: the stored row is not even asked', async () => {
+    queued.mockResolvedValue(true);
+    await render({ isOwn: true });
+    await settle();
+    expect(stored).not.toHaveBeenCalled();
   });
 });

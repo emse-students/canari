@@ -1,6 +1,7 @@
 <script lang="ts">
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+  import { noteServerTime } from '$lib/utils/chat/serverClock';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { resolve } from '$app/paths';
   /**
@@ -100,7 +101,7 @@
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
-  import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+  import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
@@ -110,7 +111,11 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
-  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { isIosTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import {
+    listenForNativeQuickReplies,
+    setNativeQuickReplySender,
+  } from '$lib/mobile/quickReplyDrain';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { buildConversationRow } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -179,7 +184,12 @@
       if (lastIncomingRingCallId !== callId) {
         lastIncomingRingCallId = callId;
         const callerName = getUserDisplayNameSync(callerId ?? '');
-        globalNotifs.startIncomingCallRingtone();
+        globalNotifs.startIncomingCallRingtone({
+          callId,
+          groupId,
+          callerId: callerId ?? '',
+          hasVideo: globalSession.callService?.incomingHasVideo ?? false,
+        });
         globalNotifs.startBlinkingTitle();
         void globalNotifs.notifyIncomingCall(callerName, groupId);
       }
@@ -189,7 +199,7 @@
     if (lastIncomingRingCallId !== null) {
       lastIncomingRingCallId = null;
     }
-    globalNotifs.stopIncomingCallRingtone();
+    globalNotifs.stopIncomingCallRingtone(`the call left the incoming state (${state})`);
     globalNotifs.stopBlinkingTitle();
     // Call left the "incoming" state (answered on any device, declined, or ended):
     // dismiss the lingering incoming-call OS notification.
@@ -389,6 +399,34 @@
   let keyReadRefused = $state(false);
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
+  });
+  // A reply typed in an iOS notification while this page holds the MLS state is handed here
+  // (`quickReplyDrain.ts`): the signed-in session is its sender, through the composer's own path.
+  $effect(() => {
+    if (!isIosTauriRuntime()) return;
+    // The account the native side stamped in `push_context.json` - the same id: only its replies
+    // are taken.
+    const accountId = globalSession.userId;
+    if (!globalSession.isLoggedIn || !accountId) {
+      setNativeQuickReplySender(null);
+      return;
+    }
+    // Re-registered (so drained again) when the set of conversations changes: a reply put back
+    // because its conversation was not loaded yet is sent once it is.
+    void globalConvs.conversations.size;
+    setNativeQuickReplySender({
+      accountId,
+      // How the queue SETTLED it, not merely that it was queued (review of #2843, H1).
+      send: async (reply) =>
+        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx())).outcome,
+      tell: (kind) =>
+        showToast(
+          kind === 'waiting' ? m.chat_quick_reply_waiting() : m.chat_quick_reply_lost(),
+          kind === 'waiting' ? 'info' : 'error',
+          8000
+        ),
+    });
+    return () => setNativeQuickReplySender(null);
   });
   $effect(() => {
     if (globalSession.isLoggedIn) keyReadRefused = false;
@@ -904,8 +942,6 @@
       storage: globalSession.storage,
       log: appendLog,
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
-      verifyCurrentUserMembership: (name: string) =>
-        globalConvs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: globalNotifs.playNotificationTone,
       playSendTone: globalNotifs.playSendTone,
       playReceiveTone: globalNotifs.playReceiveTone,
@@ -1562,6 +1598,9 @@
     const isOpenHere = isReadingConversationNow(event.conversationId, globalConvs.selectedContact);
 
     if (event.type === 'message_added') {
+      // The leader relays a frame the SERVER dated: this tab, which receives none itself, notes it
+      // like the leader did, so its own read marks are bounded the same (serverClock.ts).
+      noteServerTime(globalSession.userId || currentUserId() || '', event.message.serverTimestamp);
       const merged = mergeAnnouncedMessage(convo.messages, event.message, event.clientMessageId);
       if (!merged) return;
       if (merged.settledEcho && event.clientMessageId) {
@@ -1862,7 +1901,14 @@
           stepDone('key-group-joins');
           // The notification extension's outcomes while away (`nseOutcomes.ts`), not awaited.
           void drainNseOutcomes(appendLog);
-          if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          if (storage) {
+            await reconcileOutboxSent(storage, {
+              deviceKeyB64: globalSession.deviceKeyB64,
+              userId: globalSession.userId,
+              onDated: (id, receivedAt) =>
+                dateBackgroundSentRow(globalConvs.conversations, id, receivedAt),
+            }).catch((e) => appendLog(`[OUTBOX_MIRROR] Resume reconcile failed: ${String(e)}`));
+          }
           stepDone('outbox');
           // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the
           // reconnect, it is joined once that socket has caught up (`pendingCallAccept.ts`).
@@ -1932,6 +1978,8 @@
     // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
     // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
     const stopNativeCallAccept = listenForNativeCallAccept();
+    // The native side says a notification reply waits (`canari:quick-reply`, iOS only).
+    const stopNativeQuickReply = isIosTauriRuntime() ? listenForNativeQuickReplies() : () => {};
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1971,6 +2019,7 @@
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
       stopNativeCallAccept();
+      stopNativeQuickReply();
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);

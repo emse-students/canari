@@ -105,7 +105,37 @@ describe('handleSystemEvent - read_watermark', () => {
 
     await handleSystemEvent('read_receipt', { messageIds: ['m1'] }, ctx as any);
 
-    expect(watermarks(ctx)).toEqual({ peer: 1000 });
+    // On the server clock: the instant is the row's sort key (`readOrderKey`).
+    expect((ctx.conversations.get('g1') as any).serverReadWatermarks).toEqual({ peer: 1000 });
+  });
+
+  it('a frame that says `serverAt` moves the server-clock map and leaves the stamped one', async () => {
+    const ctx = makeCtx({
+      senderNorm: 'peer',
+      userId: 'me',
+      deliveryMeta: { queuedCreatedAt: 8000 },
+    });
+
+    await handleSystemEvent('read_watermark', { at: 7000, serverAt: 7000 }, ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).serverReadWatermarks).toEqual({ peer: 7000 });
+    expect(watermarks(ctx)).toEqual({});
+    expect(ctx.onReadStateAdvanced).toHaveBeenCalledOnce();
+  });
+
+  // A MEMBER'S MARK IS BOUNDED BY WHAT THE SERVER SAID OF THE FRAME (review of #2824): an honest
+  // sender's server mark is a row's server time, accepted before the frame was. Dated 2100, it would
+  // mark every later message read for good.
+  it('refuses a server mark dated after the frame that carries it, or with no frame time', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const y2100 = Date.UTC(2100, 0, 1);
+    for (const deliveryMeta of [{ queuedCreatedAt: 8000 }, undefined]) {
+      const ctx = makeCtx({ senderNorm: 'peer', userId: 'me', deliveryMeta });
+      await handleSystemEvent('read_watermark', { at: y2100, serverAt: y2100 }, ctx as any);
+      expect((ctx.conversations.get('g1') as any).serverReadWatermarks ?? {}).toEqual({});
+      expect(watermarks(ctx)).toEqual({});
+      expect(ctx.onReadStateAdvanced).not.toHaveBeenCalled();
+    }
   });
 
   it('takes nothing from a legacy receipt naming messages we do not hold', async () => {

@@ -442,7 +442,7 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
    */
   async assertVisibleTo(postId: string, actorId: string): Promise<void> {
     const rows: { visible: boolean }[] = await this.repo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })} AS visible
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false, memberReposts: false })} AS visible
          FROM posts WHERE posts.id = $1`,
       [postId, actorId]
     );

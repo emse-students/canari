@@ -13,6 +13,7 @@
     Undo2,
     Megaphone,
     X,
+    Ban,
   } from '@lucide/svelte';
   import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
@@ -103,6 +104,19 @@
     onRequestRepublication?: () => void;
     /** Called with the request (a proposal id) the reader cancels. */
     onWithdrawRequest?: (proposalId: string) => void;
+    /** WP-F6: may repost it to their followers - the share sheet's row. */
+    canRepost?: boolean;
+    /** WP-F6: reposted it already - the share sheet's row takes it back. */
+    repostedByMe?: boolean;
+    /** WP-F6: the repost's state after the reader's tap in the share sheet. */
+    onRepostChange?: (repostedByMe: boolean) => void;
+    /**
+     * WP-F6: the AUTHOR's own post only - whether member reposts of it are allowed now. Draws the
+     * entry that flips it; absent on anyone else's post.
+     */
+    repostsAllowed?: boolean;
+    /** WP-F6: the author picked "Autoriser" (true) or "Interdire" (false) for this post. */
+    onSetRepostConsent?: (allow: boolean) => void;
   }
 
   let {
@@ -128,6 +142,11 @@
     pendingRequests = [],
     onRequestRepublication = () => {},
     onWithdrawRequest = () => {},
+    canRepost = false,
+    repostedByMe = false,
+    onRepostChange = () => {},
+    repostsAllowed,
+    onSetRepostConsent = () => {},
   }: Props = $props();
 
   let open = $state(false);
@@ -297,6 +316,24 @@
           </button>
         {/each}
 
+        {#if repostsAllowed !== undefined}
+          <button
+            type="button"
+            role="menuitem"
+            data-repost-consent
+            onclick={() => pick(() => onSetRepostConsent(!repostsAllowed))}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            {#if repostsAllowed}
+              <Ban size={16} strokeWidth={2.5} />
+              {m.post_repost_consent_forbid()}
+            {:else}
+              <Repeat2 size={16} strokeWidth={2.5} />
+              {m.post_repost_consent_allow()}
+            {/if}
+          </button>
+        {/if}
+
         {#if canPin}
           <button
             type="button"
@@ -363,6 +400,13 @@
   </div>
 
   {#if ShareSheet}
-    <ShareSheet open={shareOpen} {postId} onClose={() => (shareOpen = false)} />
+    <ShareSheet
+      open={shareOpen}
+      {postId}
+      onClose={() => (shareOpen = false)}
+      {canRepost}
+      {repostedByMe}
+      onRepostChange={(_id, reposted) => onRepostChange(reposted)}
+    />
   {/if}
 {/if}

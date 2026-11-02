@@ -180,6 +180,11 @@
   const REPOST_TYPES = ['association_repost', 'repost_proposed'] as const;
   const isRepostNotif = $derived((REPOST_TYPES as readonly string[]).includes(notif.type));
   /**
+   * A MEMBER'S REPOST (WP-F6), named for the same reason: a PERSON the reader follows reposted a
+   * post, so it draws that person's avatar, and the body is the post's opening.
+   */
+  const isMemberRepostNotif = $derived(notif.type === 'member_repost');
+  /**
    * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
    * and the body is the event's title.
    */
@@ -498,6 +503,9 @@
         {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if isPostNotif}
         {m.notif_post_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isMemberRepostNotif}
+        {m.notif_member_repost_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'

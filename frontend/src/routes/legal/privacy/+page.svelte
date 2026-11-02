@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="31/10/2026"
+  updated="01/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -151,9 +151,9 @@
           campus, sa formation ou son espace, y compris un membre du personnel, et y compris les
           publications parues avant votre acceptation ; elle est notifiée quand vous publiez ou
           lancez un direct. Elle trouve vos publications dans son onglet « Suivis » et dans la
-          recherche, pas dans « Tout », qui reste limité aux espaces ; un direct en cours lui est
-          montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages et
-          les messages du chat d'un direct sur une de vos publications personnelles sont lus par
+          recherche, pas dans « Mon espace », qui reste limité aux espaces ; un direct en cours lui
+          est montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages
+          et les messages du chat d'un direct sur une de vos publications personnelles sont lus par
           tout son public, qui comprend donc ces abonnés. Elle ne voit jamais ce que vous publiez de
           façon anonyme. La retirer de vos abonnés ou se désabonner lui retire aussitôt cet accès ;
           un blocage, dans un sens ou dans l'autre, le lui retire aussitôt et supprime l'abonnement,
@@ -163,6 +163,37 @@
           nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande (ou son
           acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un retrait, un
           refus ou un blocage. Suivre une association ne demande rien à personne.
+        </dd>
+      </div>
+      <div>
+        <dt>Republications par les membres</dt>
+        <dd>
+          Vous pouvez republier une publication que vous voyez directement pour vos propres abonnés,
+          réels compris ; une publication que vous ne voyez que parce qu'une personne que vous
+          suivez l'a republiée ne peut pas être republiée à nouveau. Une publication que vous
+          republiez devient visible de vos abonnés acceptés (jamais d'une demande en attente), quels
+          que soient leur campus, leur formation ou leur espace, dans leur onglet « Suivis » à la
+          date de votre republication et dans la recherche, jamais dans « Mon espace » ; ceux qui ne
+          la voyaient pas encore reçoivent une notification à votre nom, une seule fois par
+          publication, quel que soit le nombre de republications. Ils voient que vous l'avez
+          republiée ; une personne qui ne vous suit pas ne le voit pas. Une publication personnelle
+          n'est republiée qu'avec l'accord de son auteur : le réglage « Autoriser mes abonnés à
+          republier mes posts » est activé par défaut, et l'auteur peut le changer pour tout son
+          compte ou publication par publication ; le désactiver retire aussitôt les republications
+          qu'il ne couvre plus. Une publication d'une association ou d'une institution qui s'adresse
+          à au moins un campus ou une formation est republiée sans accord, mais n'atteint que vos
+          abonnés acceptés ; celle d'une liste, ou d'une association réservée à ses membres, ne peut
+          pas être republiée. Une publication anonyme n'est jamais republiée. Un blocage, dans un
+          sens ou dans l'autre, empêche la republication et la retire aussitôt entre les personnes
+          concernées, et un lecteur bloqué par l'auteur ou par vous ne la voit pas. Votre
+          republication cesse d'atteindre vos abonnés dès que vous ne voyez plus vous-même la
+          publication (l'auteur vous retire de ses abonnés, vous cessez de le suivre, vous quittez
+          l'association qui la porte) ou que votre compte est restreint, et la notification qu'elle
+          leur a envoyée n'est plus affichée. Sont conservés : la republication (la publication,
+          votre compte et sa date), le réglage de chaque auteur, le choix fait pour chaque
+          publication et, pour ne jamais notifier deux fois la même personne, le fait qu'un lecteur
+          a déjà été notifié d'une publication, ou qu'elle lui a déjà été annoncée, par une
+          republication, et sa date, jusqu'à l'effacement de la publication ou de son compte.
         </dd>
       </div>
       <div>
@@ -669,6 +700,15 @@
               abonnement : jusqu'à son retrait par l'un ou l'autre, un blocage (il est aussitôt
               masqué, puis supprimé) ou la suppression d'un des deux comptes ; la trace qu'une
               notification a été envoyée : jusqu'à la suppression d'un des deux comptes
+            </td>
+          </tr>
+          <tr>
+            <td>Republications par les membres</td>
+            <td>
+              Jusqu'à ce que vous la retiriez, que l'auteur retire son accord, que la publication
+              soit masquée par la modération ou supprimée, qu'un blocage intervienne entre vous et
+              l'auteur, ou que l'un des deux comptes soit supprimé ; le réglage d'accord : tant que
+              le compte existe
             </td>
           </tr>
           <tr>

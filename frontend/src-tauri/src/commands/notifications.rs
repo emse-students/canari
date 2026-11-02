@@ -40,8 +40,13 @@
 /// Mirrors what the push payload carries, so that both triggers render the same notification:
 /// `group_name` is EMPTY for a direct message, and `sent_at` is the sender's own instant in
 /// milliseconds (0 when unknown, which costs the de-duplication of a message arriving both ways).
-/// `covers` is how many inbound messages this one banner stands for (a catch-up flush raises one
+/// `server_at` is the server's acceptance of that message (0 when the frame carried none), handed to
+/// the shade's "mark as read" and quick reply so their mark lands on the clock the conversation is
+/// ordered by (readState.ts). `covers` is how many inbound messages this one banner stands for (a catch-up flush raises one
 /// banner for N), which the Kotlin `GenericBannerLedger` credits against refused pushes.
+/// `author_proven` is whether the WebView's open PROVED the author (a salon row under a Graine v2
+/// session): a salon banner names its speaker only then, the same rule the push trigger applies to
+/// its own native open (`ChannelBannerAuthor`), so the two triggers of one message agree.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn notifier_message_natif(
@@ -52,7 +57,9 @@ pub(crate) fn notifier_message_natif(
     body: String,
     mentions_me: bool,
     sent_at: i64,
+    server_at: i64,
     covers: i32,
+    author_proven: bool,
 ) -> bool {
     #[cfg(target_os = "android")]
     {
@@ -103,7 +110,7 @@ pub(crate) fn notifier_message_natif(
             .call_static_method(
                 &class,
                 "notifyMessageFromWebSocket",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJI)Z",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZ)Z",
                 &[
                     (&args[0]).into(),
                     (&args[1]).into(),
@@ -112,7 +119,9 @@ pub(crate) fn notifier_message_natif(
                     (&args[4]).into(),
                     JValue::Bool(u8::from(mentions_me)),
                     JValue::Long(sent_at),
+                    JValue::Long(server_at),
                     JValue::Int(covers),
+                    JValue::Bool(u8::from(author_proven)),
                 ],
             )
             .and_then(|v| v.z())
@@ -141,7 +150,9 @@ pub(crate) fn notifier_message_natif(
             body,
             mentions_me,
             sent_at,
+            server_at,
             covers,
+            author_proven,
         );
         false
     }

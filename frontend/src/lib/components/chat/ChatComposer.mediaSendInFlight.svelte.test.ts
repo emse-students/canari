@@ -2,13 +2,14 @@
 /**
  * A SECOND SEND WHILE A MEDIA SEND HOLDS THE STAGING IS A NO-OP (2026-10-31).
  *
- * A member tapped Send 13 times on one staged video while the first tap waited for the media
- * barrier (the inbound queue and the membership round trip, 18 s on a stalled link), and 13 copies
- * went out. The composer's Send is enabled by "text or a staged file" and nothing else in a DM -
- * `isUploading` is raised by the salon branch only - so the fix is that `handleSendChat` claims the
+ * A member tapped Send 13 times on one staged video while the first tap was held for 18 s, and 13
+ * copies went out. The composer's Send is enabled by "text or a staged file" and nothing else in a DM
+ * - `isUploading` is raised by the salon branch only - so the fix is that `handleSendChat` claims the
  * staged files before its first await: the composer then holds no file, the button is disabled, and
- * a tap that still reaches it finds nothing to send. This drives the REAL composer against the REAL
- * messaging composable, barrier held open, and counts what reaches the outbox.
+ * a tap that still reaches it finds nothing to send. The pre-send barrier that held the send then is
+ * gone (the file is queued at the tap, chat.md "A file is queued at the tap"), but a send still
+ * awaits its durable write; this drives the REAL composer against the REAL messaging composable with
+ * that write held open, and counts what reaches the outbox.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -32,7 +33,6 @@ vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
 import ChatComposer from './ChatComposer.svelte';
 import { useMessaging, type MessagingContext } from '$lib/composables/useMessaging.svelte';
 import type { Conversation } from '$lib/types';
-import { flushMacrotask } from '../../../test/flush';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The claimed file leaves the attachment strip mid-test: its outro is a cancelled Web Animation.
@@ -46,9 +46,17 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+/** The media enqueues held open until the test settles them (the durable write still running). */
+const heldEnqueues: Array<() => void> = [];
+
 beforeEach(() => {
   enqueueMock.mockReset();
-  enqueueMock.mockResolvedValue(undefined);
+  heldEnqueues.length = 0;
+  enqueueMock.mockImplementation((entry?: { kind: string }) =>
+    entry?.kind === 'media'
+      ? new Promise<void>((resolve) => heldEnqueues.push(resolve))
+      : Promise.resolve()
+  );
   // The upload ceiling, asked once when a file is staged: answered generously.
   vi.stubGlobal(
     'fetch',
@@ -66,11 +74,9 @@ beforeEach(() => {
   URL.revokeObjectURL = () => {};
 });
 
-/** A DM whose membership check is held open until `admit` is called - the stalled round trip. */
-function heldContext(): { ctx: MessagingContext; admit: () => void } {
-  let release: (v: boolean) => void = () => {};
-  const held = new Promise<boolean>((r) => (release = r));
-  const ctx = {
+/** A DM the member can send into. */
+function dmContext(): MessagingContext {
+  return {
     conversations: new SvelteMap<string, Conversation>([
       [
         CONVO,
@@ -92,16 +98,13 @@ function heldContext(): { ctx: MessagingContext; admit: () => void } {
     },
     setSendError: vi.fn(),
     log: vi.fn(),
-    ensureMls: () => ({ waitForMessageQueueIdle: async () => {} }),
-    verifyCurrentUserMembership: () => held,
   } as unknown as MessagingContext;
-  return { ctx, admit: () => release(true) };
 }
 
 describe('the composer while a media send holds the staging', () => {
   it('disables Send, and a second tap queues nothing more', async () => {
     const messaging = useMessaging();
-    const { ctx, admit } = heldContext();
+    const ctx = dmContext();
     await messaging.handleFilesSelected(
       [new File(['%PDF'], 'a.pdf', { type: 'application/pdf' })],
       ctx
@@ -136,7 +139,7 @@ describe('the composer while a media send holds the staging', () => {
     send.click();
     flushSync();
     expect(sends).toHaveLength(1);
-    // The first send is parked in its barrier, and the composer already holds no file.
+    // The first send is parked before its write ends, and the composer already holds no file.
     expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(0);
     expect(send.disabled).toBe(true);
 
@@ -146,8 +149,8 @@ describe('the composer while a media send holds the staging', () => {
     // A tap that reaches the composable anyway (a stale button) finds nothing staged either.
     sends.push(messaging.handleSendChat(ctx, ''));
 
-    await flushMacrotask();
-    admit();
+    await vi.waitFor(() => expect(heldEnqueues).toHaveLength(1));
+    heldEnqueues[0]();
     await Promise.all(sends);
 
     expect(

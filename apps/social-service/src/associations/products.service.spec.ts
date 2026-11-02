@@ -337,6 +337,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       allowCustomAmount: false,
       customAmountMinCents: null,
       customAmountMaxCents: null,
+      // A membership product always stores the tag it grants (a legacy row without one is refused).
+      grantedTagName: overrides.type === 'membership' ? 'cotisant:bde' : null,
       ...overrides,
     }) as AssociationProduct;
 
@@ -3100,6 +3102,32 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         }
       });
 
+      // Owner, 2026-11-01: the forms granting the old key follow the retag IN ITS TRANSACTION, or they
+      // would rank the tier `unranked` and refuse every new answer. Fails without the UPDATE.
+      it('carries the new key to the forms that grant the old one, in the retag transaction', async () => {
+        const { service, manager } = retagging(sansAlcool());
+        manager.query.mockImplementation((sql: string) =>
+          Promise.resolve(String(sql).includes('UPDATE forms') ? [{ id: 'f1' }] : [])
+        );
+
+        await service.update('asso1', 'prod-sans', { variantKey: 'soft' }, false);
+
+        const call = manager.query.mock.calls.find(([sql]: [string]) =>
+          sql.includes('UPDATE forms')
+        );
+        expect(call).toBeDefined();
+        expect(call[1]).toEqual(['asso1', 'sans-alcool', 'soft']);
+        expect(call[0]).toContain('"grantsCotisation"');
+      });
+
+      it('CONTROL: a save that does not retag touches no form', async () => {
+        const { service, manager } = retagging(sansAlcool());
+        await service.update('asso1', 'prod-sans', { name: 'Renamed' } as any, false);
+        expect(
+          manager.query.mock.calls.some(([sql]: [string]) => String(sql).includes('UPDATE forms'))
+        ).toBe(false);
+      });
+
       // A tier keyed like a year before the rule is not stuck with it: renaming it away is the fix.
       it('accepts a retag FROM a year-shaped key to a plain key, and to the base tier', async () => {
         for (const variantKey of ['soft', null]) {
@@ -3268,6 +3296,17 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         }
       });
 
+      // The listing asks the SAME `cotisationGrantRefusal` as the checkout: a legacy tagless
+      // membership of an association WITH a mode must not show a buy button the checkout refuses.
+      it('a membership product storing no tag: not offered, no price, though the mode is set', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        productRepo.find.mockResolvedValue([sansAlcool({ grantedTagName: null })]);
+        assoRepo.find.mockResolvedValue([cercle()]);
+
+        const [sans] = await service.listByAssoc('asso1');
+        expect(sans).toMatchObject({ cotisationDisabled: true, viewerDueCents: null });
+      });
+
       it('CONTROL: an association with a cotisation mode sells its memberships', async () => {
         const { service, productRepo, assoRepo } = makeService();
         productRepo.find.mockResolvedValue([sansAlcool()]);
@@ -3333,6 +3372,58 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           warn.mock.calls.filter(([line]) => String(line).includes('memberPriceTag names no'))
         ).toHaveLength(1);
       });
+    });
+  });
+
+  describe('assertMembershipGrantable - the shared cotisationGrantRefusal', () => {
+    const run = (service: unknown, a: unknown, p: unknown) =>
+      (service as any).assertMembershipGrantable(a, p);
+    const disabledBody = expect.objectContaining({
+      response: expect.objectContaining({ code: 'COTISATION_DISABLED' }),
+    });
+
+    it('refuses a membership product of an association with no cotisation mode', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: null },
+          { id: 'p1', type: 'membership', grantedTagName: 'cotisant:bde' }
+        )
+      ).toThrow(disabledBody);
+    });
+
+    it('refuses a legacy membership product that stores no tag, typed, before any money moves', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: 'dated' },
+          { id: 'p1', type: 'membership', grantedTagName: null }
+        )
+      ).toThrow(
+        expect.objectContaining({
+          response: expect.objectContaining({ code: 'MEMBERSHIP_PRODUCT_UNGRANTABLE' }),
+        })
+      );
+    });
+
+    it('CONTROL: a membership with a mode and a tag, and a non-membership product, pass', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: 'dated' },
+          { id: 'p1', type: 'membership', grantedTagName: 'cotisant:bde' }
+        )
+      ).not.toThrow();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: null },
+          { id: 'p2', type: 'standard', grantedTagName: null }
+        )
+      ).not.toThrow();
     });
   });
 

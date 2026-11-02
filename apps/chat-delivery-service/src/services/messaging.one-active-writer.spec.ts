@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { IsNull } from 'typeorm';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
@@ -595,6 +596,42 @@ describe('the ONE writer of an active membership', () => {
       expect(redis.sadd).toHaveBeenCalledTimes(3);
     });
 
+    /**
+     * THE ADMISSION OF A SEAT NO COMMIT ADMITTED (`admittedByBaseEpoch`): the creator, in from the
+     * first epoch, and a key group's publisher - recorded only where none is, so neither lowers the
+     * floor an accepted commit set (`commitFloorOf`).
+     */
+    it("records a creator's or a publisher's admission only on a seat that holds none", async () => {
+      seats = [];
+      lockedManager(null);
+      deviceGroupRepo.update.mockClear();
+
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'group_creator',
+          admittedByBaseEpoch: 0,
+        })
+      ).resolves.toEqual({ ok: true });
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'distribution_publisher',
+          claim,
+          admittedByBaseEpoch: 7,
+        })
+      ).resolves.toEqual({ ok: true });
+
+      expect(deviceGroupRepo.update.mock.calls).toEqual([
+        [
+          { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
+          { admittedByBaseEpoch: 0, admissionInferred: false },
+        ],
+        [
+          { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
+          { admittedByBaseEpoch: 7, admissionInferred: false },
+        ],
+      ]);
+    });
+
     it('writes no route for a promoted seat an eviction deleted after its commit', async () => {
       // The eviction lands between the promotion's commit and the route's re-read under the lock.
       const transaction = (
@@ -833,7 +870,8 @@ describe('the CREATE_GROUP door', () => {
       'u1',
       'd1',
       expect.any(String),
-      expect.objectContaining({ tag: 'CREATE_GROUP' })
+      // In from the group's first epoch: every commit time is the creator's (`commitFloorOf`).
+      expect.objectContaining({ tag: 'CREATE_GROUP', admittedByBaseEpoch: 0 })
     );
   });
 

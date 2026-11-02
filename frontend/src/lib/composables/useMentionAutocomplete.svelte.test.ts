@@ -18,11 +18,8 @@ vi.mock('$lib/stores/userState.svelte', () => ({
 
 // apiFetch wraps global fetch with auth, so stubbing fetch is enough.
 function makeFetchStub(results: MentionUser[]) {
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => results,
-  } as Response);
+  // A real Response, headers included: who answered is read from its content type.
+  return vi.fn().mockImplementation(async () => Response.json(results));
 }
 
 function tick() {

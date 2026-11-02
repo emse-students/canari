@@ -45,6 +45,7 @@ import { MessagingService } from './services/messaging.service';
 import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
+import { reportOrphanDevices } from './utils/orphan-devices';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -68,6 +69,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportStaleBasesInterval: ReturnType<typeof setInterval>;
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
+  private reportOrphanDevicesInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -225,6 +227,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Count the orphan devices: queued rows, no session, no push token, not revoked. Purely a report,
+    // daily, and it exists because that population refilled after four hand passes and only a
+    // hand-written query ever saw it - see utils/orphan-devices.ts.
+    this.reportOrphanDevicesInterval = setInterval(() => {
+      void this.reportOrphanDevices().catch((e) =>
+        this.logger.error('[CRON] reportOrphanDevices failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     // Observe the undelivered queue. Purely a report: it deletes nothing, and it exists because
     // a single device silently accumulated 29 499 frames (39 MB) in five hours on production and
     // nothing said so - the shape was only found by hand, a day later.
@@ -281,7 +292,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'stale pending invitations purge (24h), ' +
-        'expired device revocations purge (24h) scheduled'
+        'expired device revocations purge (24h), orphan device report (24h) scheduled'
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
@@ -319,6 +330,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportSingleHolderGroups', () => this.reportSingleHolderGroups()],
       // After `pruneExpiredCommitLog` above, so a floor it just raised is read as a floor.
       ['reportCommitLogHealth', () => this.reportCommitLogHealth()],
+      // After the GC above, so it counts only what the GC left - the population it cannot reach.
+      ['reportOrphanDevices', () => this.reportOrphanDevices()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -372,6 +385,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportStaleBasesInterval);
     clearInterval(this.reportSingleHolderInterval);
     clearInterval(this.reportCommitLogInterval);
+    clearInterval(this.reportOrphanDevicesInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -1128,6 +1142,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const sorted = [...values].sort((a, b) => a - b);
     const rank = (q: number) => sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
     return `p50=${rank(0.5)} p90=${rank(0.9)} max=${sorted[sorted.length - 1]}`;
+  }
+
+  /** The daily orphan-device count - read-only; see {@link reportOrphanDevices}. */
+  private async reportOrphanDevices() {
+    await reportOrphanDevices(this.groupRepo.manager, this.logger);
   }
 
   /**

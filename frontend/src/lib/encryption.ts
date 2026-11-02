@@ -93,10 +93,25 @@ export async function sealBytes(
 }
 
 /**
+ * THE BYTES CANNOT BE READ WITH THIS KEY, AND NEVER WILL BE: the AES-GCM tag did not verify (another
+ * key, or corrupted bytes: WebCrypto's `OperationError`) or the plaintext is not the JSON this module
+ * writes (`SyntaxError`). Those two only - anything else the engine throws may pass and is rethrown
+ * as it is. A type, so a caller can tell this permanent answer from a failure that may pass without
+ * reading a message.
+ */
+export class PayloadUnreadableError extends Error {
+  constructor() {
+    super('Decryption failed. Wrong device key?');
+    this.name = 'PayloadUnreadableError';
+  }
+}
+
+/**
  * Decrypt a ciphertext blob produced by {@link encryptData}.
  *
- * Throws with "Decryption failed. Wrong device key?" if the authentication
- * tag does not verify (wrong key or data corruption).
+ * Throws {@link PayloadUnreadableError} if the authentication tag does not verify (wrong key or
+ * data corruption) or the plaintext is not JSON; anything else (the key import, an engine failure)
+ * propagates as is.
  */
 export async function decryptData(
   cipherText: Uint8Array,
@@ -104,14 +119,26 @@ export async function decryptData(
   deviceKeyB64: string
 ): Promise<unknown> {
   const key = await importDeviceKey(deviceKeyB64);
+  let plainBuf: ArrayBuffer;
   try {
-    const plainBuf = await crypto.subtle.decrypt(
+    plainBuf = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: new Uint8Array(iv) },
       key,
       new Uint8Array(cipherText)
     );
+  } catch (e) {
+    // `OperationError` is WebCrypto's answer for a tag that does not verify - the bytes and this key
+    // do not belong together, and never will. Read off the error's NAME, not `instanceof`: the
+    // DOMException class differs between realms (a test DOM, a worker), the name does not.
+    if ((e as { name?: unknown } | null)?.name === 'OperationError') {
+      throw new PayloadUnreadableError();
+    }
+    throw e;
+  }
+  try {
     return JSON.parse(new TextDecoder().decode(plainBuf));
-  } catch {
-    throw new Error('Decryption failed. Wrong device key?');
+  } catch (e) {
+    if (e instanceof SyntaxError) throw new PayloadUnreadableError();
+    throw e;
   }
 }

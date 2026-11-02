@@ -29,7 +29,7 @@ const DEAD_SOCKET_DETECTION_SECS: u64 = PING_INTERVAL_SECS * (MAX_MISSED_PONGS a
 pub const PRESENCE_TTL_SECS: u64 = 90;
 const _: () = assert!(PRESENCE_TTL_SECS > DEAD_SOCKET_DETECTION_SECS);
 use crate::ws_dispatch::{
-    WsConn, WsFrame, handle_disconnect, handle_typing, handle_welcome_request,
+    WsConn, WsFrame, handle_disconnect, handle_retired_frame, handle_typing, is_retired_frame,
 };
 
 // ── How a socket ENDED ───────────────────────────────────────────────
@@ -603,21 +603,14 @@ async fn handle_socket(
                                 handle_disconnect(&state, &user_id, &device_id, conn_id).await;
                                 break;
                             }
-                            "welcome_request" => {
-                                let conn = WsConn {
-                                    state: &state,
-                                    user_id: &user_id,
-                                    device_id: &device_id,
-                                    tx: &tx_for_dispatch,
-                                };
-                                handle_welcome_request(&conn, &frame).await;
+                            retired if is_retired_frame(retired) => {
+                                handle_retired_frame(&user_id, &device_id, &frame);
                             }
                             "typing" => {
                                 let conn = WsConn {
                                     state: &state,
                                     user_id: &user_id,
                                     device_id: &device_id,
-                                    tx: &tx_for_dispatch,
                                 };
                                 handle_typing(&conn, &frame).await;
                             }

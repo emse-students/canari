@@ -29,6 +29,7 @@ export type PushContentKey =
   | 'social_association_post'
   | 'social_followed_post'
   | 'social_association_repost'
+  | 'social_member_repost'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
@@ -585,6 +586,25 @@ export function associationRepostContent(
     actorName: associationName,
     arg: preview,
     legacyTitle: `${associationName} a relayé une publication`,
+    legacyBody: preview || 'Nouvelle publication',
+  };
+}
+
+/**
+ * A person the recipient follows reposted a post the recipient could not see until then (WP-F6).
+ * `actorName` is the REPOSTER; `arg` the post's opening.
+ */
+export function memberRepostContent(
+  reposterName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_member_repost',
+    icon,
+    actorName: reposterName,
+    arg: preview,
+    legacyTitle: `${reposterName} a republié une publication`,
     legacyBody: preview || 'Nouvelle publication',
   };
 }

@@ -49,6 +49,16 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'whether TypeORM may build the schema from the entities: an explicit TYPEORM_SYNCHRONIZE=1, refused next to NODE_ENV=production',
+    compare: 'exact',
+    why: 'each service that owns a TypeORM schema must refuse it itself at boot; no shared TS package, for the reason the CORS allowlist below gives. Its spec sits beside the core-service copy.',
+    files: [
+      'apps/core-service/src/typeorm-synchronize.ts',
+      'apps/social-service/src/typeorm-synchronize.ts',
+      'apps/chat-delivery-service/src/typeorm-synchronize.ts',
+    ],
+  },
+  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',

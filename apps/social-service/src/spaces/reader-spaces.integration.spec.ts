@@ -185,7 +185,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
@@ -236,6 +236,13 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     // who sees icmSe's post, ASKS to follow icmSe and is not answered: the column's default is a
     // request, and a request is not a follow.
     await client.query(MIGRATION_114);
+    await client.query(
+      readFileSync(join(__dirname, '..', 'migrations', '121_member_reposts.sql'), 'utf8')
+    );
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     await client.query(`INSERT INTO user_follows VALUES ('adminIcm', 'icmSe')`);
     for (const p of POSTS) {
       await client.query(
