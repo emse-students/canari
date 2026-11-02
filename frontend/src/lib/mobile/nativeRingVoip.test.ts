@@ -9,10 +9,11 @@ import { describe, expect, it } from 'vitest';
  * never what runs - the iOS CI job compiles it, and K6/K7/K8 on the iPhone are what run it.
  */
 const here = dirname(fileURLToPath(import.meta.url));
+// LF-normalised: a Windows checkout may carry CRLF, and the slices below look for a bare LF.
 const pushMm = readFileSync(
   resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_push.mm'),
   'utf8'
-);
+).replaceAll(String.fromCharCode(13, 10), String.fromCharCode(10));
 
 /** The body of the PushKit delivery handler, from its selector to the end of the method. */
 function voipHandler(): string {
@@ -47,12 +48,28 @@ describe('the VoIP push handler (Apple: every VoIP push reports a CallKit call)'
     expect(fn).toContain('notif.call.unknown_caller');
   });
 
-  it('never announces video on the native ring', () => {
+  it("announces the call's media kind from the push, and audio whenever the push cannot say", () => {
     const fn = pushMm.slice(
       pushMm.indexOf('static void CanariReportVoipCall('),
       pushMm.indexOf('static void CanariPersistVoipToken(')
     );
-    expect(fn).toContain('update.hasVideo = NO;');
-    expect(fn).not.toMatch(/update\.hasVideo = (YES|hasVideo)/);
+    // CallKit and the ringing record both carry the parameter.
+    expect(fn).toContain('update.hasVideo = hasVideo;');
+    expect(fn).toContain('@"hasVideo" : @(hasVideo)');
+    expect(fn).not.toContain('update.hasVideo = NO;');
+    // The payload is read as a string, the way the FCM data payload is: "true" is video, an absent
+    // key (a server older than this build) or anything else is audio.
+    const body = voipHandler();
+    expect(body).toContain('[data[@"hasVideo"] isKindOfClass:[NSString class]]');
+    expect(body).toContain('[(NSString *)data[@"hasVideo"] isEqualToString:@"true"]');
+    // The signed-out placeholder and the contract-keeper report are audio, ended at once.
+    expect(body).toContain('CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", NO, 0);');
+    expect(body).toContain('CanariReportVoipCall(groupId, bogusId, @"", NO, 0);');
+    // The ring itself passes what it read.
+    expect(body).toContain(
+      'CanariReportVoipCall(groupId, callId, callerId, hasVideo, ringUntilMs);'
+    );
+    // The completion names the kind it reported, so a reading can tell the path.
+    expect(fn).toMatch(/call=%@ video=%d \(voip, %lld ms left\)/);
   });
 });

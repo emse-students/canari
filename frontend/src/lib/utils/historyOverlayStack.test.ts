@@ -544,29 +544,85 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
 
 describe('historyOverlayStack - the native Back with an overlay the WebView would not step back from', () => {
   let stop: () => void = () => {};
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+  };
+  /** The depths `MainActivity` would have been told, in order (`window.canariBack`). */
+  function bridge() {
+    const depths: number[] = [];
+    (window as unknown as Record<string, unknown>).canariBack = {
+      setOverlayDepth: (d: number) => depths.push(d),
+    };
+    return depths;
+  }
+  const native = () => (window as unknown as Record<string, () => boolean>).__canariBackFromNative;
   afterEach(() => {
     stop();
     vi.unstubAllGlobals();
   });
 
-  it('takes the Back when an overlay is open, stepping the history; leaves it otherwise', async () => {
+  it('two fast Backs close one overlay each and never reach the page below them', async () => {
     const h = fakeHistory();
+    const depths = bridge();
     stop = initHistoryOverlayStack();
-    const native = (window as unknown as Record<string, () => boolean>).__canariBackFromNative;
-    expect(typeof native).toBe('function');
-    // Nothing open: the Back is the activity's (root, or the page's own router entry).
-    expect(native()).toBe(false);
-    expect(h.index).toBe(0);
-
     history.pushState({ sveltekit: 1 }, '');
+    const closeTake = vi.fn();
     const closeQuestion = vi.fn();
+    pushHistoryOverlay(closeTake);
     pushHistoryOverlay(closeQuestion);
-    // `canGoBack()` said no, so the activity asked the page: the overlay closes, nothing else.
-    expect(native()).toBe(true);
-    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(depths.at(-1)).toBe(2);
+
+    // Both presses arrive before either traversal lands: the depth falls at the CALL.
+    expect(native()()).toBe(true);
+    expect(depths.at(-1)).toBe(1);
+    expect(native()()).toBe(true);
+    expect(depths.at(-1)).toBe(0);
+    // A third press has nothing to close: the activity may leave.
+    expect(native()()).toBe(false);
+    await settle();
+
     expect(closeQuestion).toHaveBeenCalledWith('back');
+    expect(closeTake).toHaveBeenCalledWith('back');
+    // On the page's own entry (the router's second), never past it to the previous page.
     expect(h.index).toBe(1);
-    expect(native()).toBe(false);
+    expect(depths.at(-1)).toBe(0);
+  });
+
+  it('promises nothing at a router entry, off the iOS-style no-entry runtime, or on a ghost', async () => {
+    // The pointer on the router's own entry although an overlay is on the stack.
+    let h = fakeHistory();
+    let depths = bridge();
+    stop = initHistoryOverlayStack();
+    pushHistoryOverlay(vi.fn());
+    expect(depths.at(-1)).toBe(1);
+    history.replaceState({ sveltekit: 9 }, '');
+    expect(native()()).toBe(false);
+    expect(h.index).toBe(1);
+    stop();
+
+    // A runtime that writes no entries: the stack is kept for the gesture, nothing is steppable.
+    h = fakeHistory();
+    depths = bridge();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    pushHistoryOverlay(vi.fn());
+    expect(depths.at(-1)).toBe(0);
+    expect(native()()).toBe(false);
+    expect(h.index).toBe(0);
+    stop();
+
+    // The pointer on a ghost above a live overlay.
+    h = fakeHistory();
+    depths = bridge();
+    stop = initHistoryOverlayStack();
+    history.pushState({ sveltekit: 1 }, '');
+    const closeBelow = vi.fn();
+    const closeAbove = vi.fn();
+    pushHistoryOverlay(closeBelow);
+    pushHistoryOverlay(closeAbove);
+    releaseHistoryOverlay(closeAbove);
+    expect(depths.at(-1)).toBe(0);
+    expect(native()()).toBe(false);
+    expect(h.index).toBe(3);
   });
 });
 

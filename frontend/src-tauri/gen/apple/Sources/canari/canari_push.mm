@@ -3877,9 +3877,9 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
                                          update:update
                                      completion:^(NSError *_Nullable error) {
                                        if (error == nil) {
-                                         NSLog(@"[CanariCallKit] %@ call=%@ (voip, %lld ms left)",
+                                         NSLog(@"[CanariCallKit] %@ call=%@ video=%d (voip, %lld ms left)",
                                                endAtOnce ? @"reported" : @"ringing", callId,
-                                               remainingMs);
+                                               hasVideo, remainingMs);
                                        } else {
                                          NSLog(@"[CanariCallKit] voip report refused call=%@ "
                                                @"duplicate=%d: %@",

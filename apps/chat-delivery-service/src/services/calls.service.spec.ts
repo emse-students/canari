@@ -665,7 +665,12 @@ describe('CallsService', () => {
       it('never announces video when calls_mode is audio only (B2): refused, no VoIP push', async () => {
         callsMode = 'audio';
         apnsVoip.sendVoipPush.mockClear();
-        await expect(service.ringGroup('caller', 'group-1', 'call-3', true)).rejects.toBeDefined();
+        const refusal = await service
+          .ringGroup('caller', 'group-1', 'call-3', true)
+          .catch((e: unknown) => e);
+        expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+          code: 'CALLS_VIDEO_DISABLED',
+        });
         expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
       });
 
