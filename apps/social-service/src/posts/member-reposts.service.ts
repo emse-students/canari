@@ -11,9 +11,12 @@ import { Repository, type EntityManager } from 'typeorm';
 import { isBlockedBetween } from '../common/user-blocks';
 import { RedisService } from '../common/redis/redis.service';
 import { acceptedFollowSql } from '../follows/follow-status';
+import { PERSON_KEY, decodeFollowCursor, encodeFollowCursor } from '../follows/follow-cursor';
+import { clampLimit } from '../follows/follow-requests.service';
 import { previewOf } from '../push/push-content';
 import {
   NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
+  memberRepostCarriesSql,
   memberRepostablePostSql,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
@@ -38,7 +41,36 @@ export const MEMBER_REPOST_CODES = {
   already: 'MEMBER_REPOST_ALREADY',
   /** The consent of a post may be set only by its author, on a personal post. */
   notAuthor: 'MEMBER_REPOST_NOT_AUTHOR',
+  /**
+   * The author asked to remove a repost their list does not show: none by that person, or one by
+   * someone a block or the review cohort keeps off the list. ONE answer for both, so the removal
+   * is no probe of who reposted.
+   */
+  notListed: 'MEMBER_REPOST_NOT_LISTED',
 } as const;
+
+/** One person on the author's list of who reposted their post (`MemberRepostsService.reposters`). */
+export interface ReposterEntry {
+  userId: string;
+  /** When they reposted it. */
+  createdAt: Date;
+  /** Opaque: passed back as `after`, the next page starts right after this row (`follow-cursor.ts`). */
+  cursor: string;
+}
+
+/**
+ * The SQL of "repost row `mr` by reposter row `reposter` (a `users` alias) of post row `post` is one
+ * its AUTHOR is shown" - on the author's list, in the card's count, and as what the author may
+ * remove. It is `memberRepostCarriesSql` asked with the AUTHOR as the reader: the reposter on the
+ * author's side of the review cohort, no block either way between them, not muted, and still seeing
+ * the post first-hand. So the author learns who reposted only among the people the app otherwise
+ * lets them meet, and a stale row - one that reaches nobody - is neither listed nor counted.
+ */
+export function repostShownToAuthorSql(post: string, mr: string, reposter: string): string {
+  return `(${mr}."postId" = ${post}.id AND ${post}."associationId" IS NULL
+    AND NOT COALESCE(${post}.anonymous, false)
+    AND ${memberRepostCarriesSql(post, reposter, `${post}."authorId"`)})`;
+}
 
 /**
  * What may be reposted: a post the reposter sees FIRST-HAND - its own audience, the author's
@@ -222,20 +254,127 @@ export class MemberRepostsService {
       );
     });
     await this.dropFeedCacheOf([actorId]);
-    await this.tellNewlyReached(post as unknown as PostRow, actorId, recipients);
+    const reposted = post as unknown as PostRow;
+    if (!reposted.associationId) await this.dropAuthorCountOf(reposted.authorId);
+    await this.tellNewlyReached(reposted, actorId, recipients);
     return { postId };
   }
 
-  /** The reposter takes their own repost back. 404 when there is none. */
+  /**
+   * The reposter takes their own repost back. 404 when there is none. The post's author is read in
+   * the same statement: a personal post's author caches a `repostCount` this changes.
+   */
   async unrepost(postId: string, actorId: string): Promise<{ ok: true }> {
-    const result: unknown = await this.repo.manager.query(
-      `DELETE FROM member_reposts WHERE "postId" = $1 AND "reposterId" = $2`,
-      [postId, actorId]
-    );
-    const removed = Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
-    if (removed === 0) throw new NotFoundException('Repost not found');
+    const gone: { authorId: string; associationId: string | null }[] =
+      await this.repo.manager.query(
+        `WITH gone AS (
+           DELETE FROM member_reposts WHERE "postId" = $1 AND "reposterId" = $2 RETURNING "postId")
+         SELECT p."authorId", p."associationId" FROM gone JOIN posts p ON p.id = gone."postId"`,
+        [postId, actorId]
+      );
+    if (gone.length === 0) throw new NotFoundException('Repost not found');
     this.logger.log(`[REPOST-M] ${postId.slice(0, 8)} unreposted by ${actorId.slice(0, 8)}`);
     await this.dropFeedCacheOf([actorId]);
+    if (!gone[0].associationId) await this.dropAuthorCountOf(gone[0].authorId);
+    return { ok: true };
+  }
+
+  /**
+   * The AUTHOR's list of who reposted their personal post, the most recent first, one page after
+   * `after` (keyset on `(repostedAt, reposterId)`, `follow-cursor.ts`). Only the people
+   * `repostShownToAuthorSql` lets the author see. Anyone but the author of a personal,
+   * non-anonymous post gets the 404 of a post not seen: the list confirms nothing to them.
+   */
+  async reposters(
+    postId: string,
+    actorId: string,
+    limit: number,
+    after: string | undefined
+  ): Promise<ReposterEntry[]> {
+    const cursor = decodeFollowCursor(after, PERSON_KEY);
+    const post = await this.loadPost(this.repo.manager, postId);
+    if (!isOwnPersonalPost(post, actorId)) {
+      this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} reposters refused: not its author`);
+      throw postNotFound();
+    }
+    const params: unknown[] = [postId, clampLimit(limit)];
+    const afterClause = cursor
+      ? `AND (mr."repostedAt", mr."reposterId") < ($${params.push(cursor.at)}::timestamptz, $${params.push(cursor.id)}::varchar)`
+      : '';
+    const rows: { userId: string; createdAt: Date; sortKey: string }[] =
+      await this.repo.manager.query(
+        `SELECT mr."reposterId" AS "userId", mr."repostedAt" AS "createdAt",
+                mr."repostedAt"::text AS "sortKey"
+           FROM member_reposts mr
+           JOIN posts p ON p.id = mr."postId"
+           JOIN users u ON u.id = mr."reposterId"
+          WHERE mr."postId" = $1 AND ${repostShownToAuthorSql('p', 'mr', 'u')}
+            ${afterClause}
+          ORDER BY mr."repostedAt" DESC, mr."reposterId" DESC
+          LIMIT $2`,
+        params
+      );
+    this.logger.debug(
+      `[REPOST-M] ${postId.slice(0, 8)} reposters listed to its author: ${rows.length}` +
+        (cursor ? ' after a cursor' : '')
+    );
+    return rows.map(({ userId, createdAt, sortKey }) => ({
+      userId,
+      createdAt,
+      cursor: encodeFollowCursor(sortKey, userId),
+    }));
+  }
+
+  /**
+   * The AUTHOR removes ONE repost of their personal post (owner, 2026-11-02): a plain delete, under
+   * the consent lock then the post row - the order `repost` and `setPostConsent` take - so it cannot
+   * interleave with a repost or a consent change of the same author. Only a repost the author's
+   * list shows may go (`repostShownToAuthorSql`); any other answers ONE typed 404, so the removal
+   * tells the author nothing the list does not.
+   *
+   * The reposter is NOT told: their card simply stops offering "Annuler ma republication", as after
+   * a withdrawn consent. They may repost the post again while the author consents - a durable
+   * per-person refusal was not asked for; an author who wants no reposts at all withdraws consent on
+   * the post. `member_repost_notices` is left alone, as every removal leaves it: a reader told once
+   * about this post is never told again, whoever reposts it later.
+   */
+  async removeRepostAsAuthor(
+    postId: string,
+    actorId: string,
+    reposterId: string
+  ): Promise<{ ok: true }> {
+    await this.repo.manager.transaction(async (manager) => {
+      const post = await this.loadPost(manager, postId);
+      if (!isOwnPersonalPost(post, actorId)) {
+        this.logger.debug(
+          `[REPOST-M] ${postId.slice(0, 8)} author removal refused: not its author`
+        );
+        throw postNotFound();
+      }
+      await lockAuthorConsent(manager, actorId);
+      await lockPostRow(manager, postId);
+      const gone: unknown[] = await manager.query(
+        `WITH gone AS (
+           DELETE FROM member_reposts mr USING posts p, users u
+            WHERE mr."postId" = $1 AND mr."reposterId" = $2
+              AND p.id = mr."postId" AND u.id = mr."reposterId"
+              AND ${repostShownToAuthorSql('p', 'mr', 'u')}
+           RETURNING mr."reposterId")
+         SELECT "reposterId" FROM gone`,
+        [postId, reposterId]
+      );
+      if (gone.length === 0) {
+        this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} author removal: no listed repost`);
+        throw new NotFoundException({
+          code: MEMBER_REPOST_CODES.notListed,
+          message: 'Repost not found',
+        });
+      }
+    });
+    this.logger.log(
+      `[REPOST-M] ${postId.slice(0, 8)} repost by ${reposterId.slice(0, 8)} removed by its author`
+    );
+    await this.dropFeedCacheOf([actorId, reposterId]);
     return { ok: true };
   }
 
@@ -380,6 +519,24 @@ export class MemberRepostsService {
   }
 
   /**
+   * Drops the AUTHOR's own cached pages after a repost of their personal post is added or taken
+   * back: their card carries `repostCount`, and a cached page would show a count the reposter list
+   * contradicts for up to the page's TTL. Their followers' pages are untouched - a repost changes
+   * nothing they are shown. Best effort, logged.
+   */
+  private async dropAuthorCountOf(authorId: string): Promise<void> {
+    try {
+      const dropped = await invalidatePostListCacheFor(this.redis, [authorId]);
+      this.logger.debug(`[CACHE] member repost write: ${dropped} page(s) of its author dropped`);
+    } catch (e: unknown) {
+      this.logger.warn(
+        "[CACHE] the author's feed cache was not dropped after a member repost write",
+        e
+      );
+    }
+  }
+
+  /**
    * Drops the cached feed pages a repost write can change, and only those: the pages of `people`
    * themselves (a reposter's `repostedByMe`, an author's `repostConsent`) and of each one's ACCEPTED
    * followers - the only readers `memberRepostReachesUserSql` opens a post to through a reposter and
@@ -429,6 +586,15 @@ async function recordNotices(
     [postId, [...new Set(recipientIds)]]
   );
   return rows.map((r) => r.recipientId);
+}
+
+/**
+ * `post` is a personal, non-anonymous post `actorId` wrote - the only kind whose reposters its
+ * author is shown and may remove. An entity post's `authorId` is the officer who wrote it in the
+ * association's name: it has no consent to give, and no reposter list either.
+ */
+function isOwnPersonalPost(post: PostRow | null, actorId: string): boolean {
+  return !!post && post.authorId === actorId && !post.associationId && !post.anonymous;
 }
 
 /** An HTTP refusal carrying a stable `code` - the client maps the code, never the message. */

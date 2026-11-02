@@ -224,6 +224,11 @@ export interface PostEntity {
    * follows the account setting) and what applies now. Absent on every other card.
    */
   repostConsent?: { override: boolean | null; effective: boolean };
+  /**
+   * WP-F6: beside `repostConsent`, on the reader's OWN personal post only, how many people the
+   * author is shown as having reposted it - the menu's "Republie par N personnes".
+   */
+  repostCount?: number;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;

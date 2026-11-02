@@ -4114,6 +4114,18 @@
   "post_republish_error": "L'action a échoué. Réessayez.",
   "post_republished_by": "Republié par {names}",
   "post_republished_by_more": "Republié par {names} +{count}",
+  "post_republished_by_you": "Republié par vous",
+  "post_republished_by_you_and": "Republié par vous et {name}",
+  "post_republished_by_you_and_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Republié par vous, {name} et {count} autre",
+        "countPlural=other": "Republié par vous, {name} et {count} autres"
+      }
+    }
+  ],
   "post_request_republication_action": "Republier au nom d'une association",
   "post_request_dialog_title": "Demander à l'auteur",
   "post_request_dialog_hint": "L'auteur de la publication décidera. Rien ne sera visible avant son accord.",
@@ -5017,6 +5029,21 @@
   "post_repost_consent_allowed_toast": "Republications autorisées pour ce post",
   "post_repost_consent_forbidden_toast": "Republications interdites pour ce post",
   "post_repost_consent_error": "Le réglage n'a pas pu être enregistré.",
+  "post_reposters_menu": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Republié par {count} personne",
+        "countPlural=other": "Republié par {count} personnes"
+      }
+    }
+  ],
+  "post_reposters_title": "Republié par",
+  "post_reposters_empty": "Personne ne republie ce post pour le moment.",
+  "post_reposters_remove": "Retirer",
+  "post_reposters_remove_confirm": "Retirer la republication de {name} ? Ses abonnés ne verront plus ce post par son intermédiaire. {name} n'en sera pas averti.",
+  "post_reposters_remove_error": "La republication n'a pas pu être retirée.",
   "settings_allow_reposts_label": "Autoriser mes abonnés à republier mes posts",
   "settings_allow_reposts_hint": "Vos abonnés pourront republier vos posts pour leurs propres abonnés. Vous pouvez changer ce choix post par post depuis le menu d'une publication. Les publications anonymes ne sont jamais republiées.",
   "settings_allow_reposts_error": "Le réglage n'a pas pu être enregistré.",
