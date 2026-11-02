@@ -1385,6 +1385,11 @@ and `[CanariIOS]` (shell) lines.
    published to the page (opens a link=1)`; then the app shows Y. On the web tab of the same account
    X keeps its badge and the peer shows no "Vu" in X; Y falls to 0. `resumePending=0`, or the
    publish line before the tap line, means UIKit's order differs from the one the fix relies on.
+   The ordering itself is read from three lines: `didBecomeActive: awaiting the notification-center
+   round trip`, the tap line (before it or after it - either is the argument's case), then `round
+   trip answered: publishing the foreground edge (opening: yes)`. A tap line AFTER `round trip answered` refutes the argument the shell rests
+   on (the notification center's connection is not ordered) - LIKELY, never proven, until this is
+   read; step 8 reads the same three lines for the page's own notification.
 6. **A plain resume still reads X.** Repeat step 5, but open the app from its icon: X is marked
    read (the web tab drops X's badge, "Vu" in X on the peer).
 7. **The same on the Mi 9T** (the Android half, #2937): steps 5 and 6 with the app on X, tapping Y's

@@ -71,6 +71,14 @@ describe('the foreground contract between the shells and the page', () => {
     const roundTrip = completes.indexOf('getNotificationSettingsWithCompletionHandler:');
     expect(roundTrip).toBeGreaterThan(noResume);
     expect(completes.indexOf('CanariPublishForeground(opening);')).toBeGreaterThan(roundTrip);
+    // The ordering is an argument, not a proof: both ends of the round trip are logged, so the
+    // device reading (device-verification LA steps 5 and 8) places the tap line between them.
+    const awaiting = completes.indexOf('awaiting the notification-center round trip');
+    expect(awaiting).toBeGreaterThan(noResume);
+    expect(awaiting).toBeLessThan(roundTrip);
+    const answered = completes.indexOf('round trip answered: publishing the foreground edge');
+    expect(answered).toBeGreaterThan(roundTrip);
+    expect(answered).toBeLessThan(completes.indexOf('CanariPublishForeground(opening);'));
     // The tap is accepted as the resume's while one is in progress, even on an active app.
     expect(objcBody(ios, 'void CanariNoteResumeOpening(')).toContain(
       'state == UIApplicationStateActive && !g_resumePending'

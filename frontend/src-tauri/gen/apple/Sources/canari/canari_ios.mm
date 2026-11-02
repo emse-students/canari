@@ -1088,10 +1088,11 @@ void canari_ios_bootstrap(void) {
   // `didBecomeActive` (with scenes it can come after). So `didBecomeActive` does not publish: it asks
   // the notification center a question and publishes from the ANSWER, on the main queue. A response
   // that caused this activation either came with the activation itself (FrontBoard's scene action,
-  // handled before the activation completes) or on the notification center's own connection, which
-  // delivers in order - the response was sent before our question was even asked, so its delegate
-  // call reaches the main queue before our answer does. Either way `CanariNoteResumeOpening` has run
-  // by the time the block below does: an ordering on one connection, not a delay.
+  // handled before the activation completes) or on the notification center's own connection. That
+  // the connection delivers the response before the answer to a question asked AFTER it was sent is
+  // LIKELY BUT UNPROVEN: Apple documents no such ordering, so it is an ordering argument, not a
+  // delay, and it is what device-verification LA steps 5 and 8 measure (the two NSLogs below, read
+  // against `[RESUME-OPEN]`, show whether the tap was noted before the edge was published).
   //
   // Only the didBecomeActive that completes a resume publishes; one after Control Center or a Face
   // ID sheet finds no resume pending, says nothing, and drops any link a cold launch left behind.
@@ -1103,6 +1104,9 @@ void canari_ios_bootstrap(void) {
                   g_resumeOpening = nil;
                   return;
                 }
+                NSLog(@"[CanariIOS] didBecomeActive: awaiting the notification-center round trip "
+                      @"before publishing the edge (opening noted so far: %@)",
+                      g_resumeOpening ? @"yes" : @"no");
                 [[UNUserNotificationCenter currentNotificationCenter]
                     getNotificationSettingsWithCompletionHandler:^(__unused UNNotificationSettings *s) {
                       dispatch_async(dispatch_get_main_queue(), ^{
@@ -1112,6 +1116,9 @@ void canari_ios_bootstrap(void) {
                         g_isOnScreen = true;
                         NSString *opening = g_resumeOpening;
                         g_resumeOpening = nil;
+                        NSLog(@"[CanariIOS] round trip answered: publishing the foreground edge "
+                              @"(opening: %@)",
+                              opening ? @"yes" : @"no");
                         CanariPublishForeground(opening);
                       });
                     }];
