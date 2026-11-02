@@ -61,7 +61,7 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 MERGED (#2859, migration 121).** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 IN PRODUCTION since `v1.6.1` (#2859, migrations 121 and 123; hardened by #2917, and #2920 made the posts of lists and members-only associations non-repostable).** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -224,9 +224,9 @@ ordinary review.
   space / other space x personal / anonymous / association post), the read-grants spec unchanged,
   and the privacy-policy paragraph in the same pull request.
 - **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
-  review before arming). MERGED as #2859, migration 121**
+  review before arming). IN PRODUCTION since `v1.6.1` (#2859, migration 121), hardened by #2917 (migration 123); since #2920 the posts of lists and members-only associations are not repostable**
   ([as built](profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
-  it changes who sees what, so its release rides the owner's go. The plan as
+  it changed who sees what, and shipped on the owner's go. The plan as
   written: The consent setting (per author, per post); the SQL beside the
   republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
   on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
@@ -240,7 +240,9 @@ ordinary review.
   retention table) arrived in the F5 and F6 pull requests, and this package re-read them against
   the code (the `FOLLOW_ASKS_PER_DAY` cap of 50, the notice row kept until an erasure, the refusal
   and withdrawal deletes, the F6 consent default ON, the erasure deletes of `member_reposts` and
-  `user_repost_settings`) and found them exact. The terms (`/legal/cgu`) name followers only for
+  `user_repost_settings`) and found them exact; #2917 and #2920 had already amended C5 and the
+  privacy page in step ("notified, or announced to, through a repost"; lists and members-only
+  associations not repostable), so this package changes neither. The terms (`/legal/cgu`) name followers only for
   lives and need nothing; the D37-D41 table of
   [profiles-and-access](profiles-and-access.md#d37-d41---what-each-surface-shows) was the one stale
   line, now corrected.
