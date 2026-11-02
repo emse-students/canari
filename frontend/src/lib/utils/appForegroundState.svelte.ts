@@ -24,8 +24,6 @@ export function createAppForegroundState(
      * decided here.
      */
     onResume?: (opening: string | null) => void;
-    /** Runs on each background edge. */
-    onLeave?: () => void;
   } = {}
 ): { readonly current: boolean; destroy(): void } {
   let current = $state(isAppInForeground());
@@ -33,7 +31,6 @@ export function createAppForegroundState(
     if (foreground === current) return;
     Log.d(`[FOREGROUND] app ${foreground ? 'back in the foreground' : 'in the background'}`);
     if (foreground) hooks.onResume?.(opening);
-    else hooks.onLeave?.();
     current = foreground;
   });
   return {

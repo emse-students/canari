@@ -1,6 +1,8 @@
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { chatTargetOfLink } from '$lib/mobile/chatLinkTarget';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import { onAppForegroundChange } from '$lib/utils/appForeground';
+import { createAppForegroundState } from '$lib/utils/appForegroundState.svelte';
 import { Log } from '$lib/utils/Log';
 import { describeDeepLink } from '$lib/utils/logSanitize';
 
@@ -24,11 +26,29 @@ import { describeDeepLink } from '$lib/utils/logSanitize';
  *   {@link followResumeSelection};
  * - a chat target's landing was published and has ended (displayed and released, abandoned,
  *   superseded) - read from `notifNav` in {@link resumeOpeningHolds} itself;
- * - a link to anything else navigated - {@link endResumeOpeningOnNavigation};
+ * - a link to anything else navigated - {@link noteOpenNavigated};
  * - a tap on a notification the PAGE raised ({@link PAGE_NOTIFICATION_OPENING}): its landing was
- *   published and has ended, or the page's tap handler said it routes nowhere -
- *   {@link endResumeOpeningUnrouted};
+ *   published and has ended;
+ * - the open was routed NOWHERE (a link nothing claims, a tap with no identity) -
+ *   {@link noteOpenRoutedNowhere};
  * - the app left the screen again, or the next resume carried no link.
+ *
+ * EITHER ORDER, THE SAME ANSWER. The link reaches the page's router - and its landing, navigation or
+ * "nowhere" - through a channel of its own, before OR after the edge. So every outcome is a
+ * SEQUENCE (`notifNav.landing`, {@link noteOpenNavigated}, {@link noteOpenRoutedNowhere}),
+ * snapshotted when the app LEAVES the screen: at the edge, an outcome counted since the leave is read
+ * as this open's, and one counted after the edge ends the hold. A flag cleared by an event that came
+ * first would hold for ever.
+ *
+ * KEYS, NOT IDS. A link and `notifNav.pending` carry a GROUP id; the selection is a MAP key, and the
+ * two differ for every DM and group. Every comparison resolves the group id through the conversation
+ * map first (`resolveConversationKey`, handed in), as the landing itself does.
+ *
+ * A RELOAD DROPS THE HOLD, AND NOTHING IT COVERED SURVIVES THE RELOAD: the selection lives in memory
+ * only (`useConversations`) and a reload starts with none. The one selection carried across a load,
+ * `canari_pending_contact`, is written only by an explicit "open this conversation" elsewhere in the
+ * app, never by a resume - so after the reload the conversation the hold covered is neither shown
+ * nor read.
  *
  * The hold only ever WITHHOLDS a mark, so its failure mode is a read marked later, never a read
  * claimed for a conversation nobody saw ([read-receipt-privacy](../../../../../docs/wiki/read-receipt-privacy.md), door 1).
@@ -45,23 +65,31 @@ import { describeDeepLink } from '$lib/utils/logSanitize';
  */
 export const PAGE_NOTIFICATION_OPENING = `${MOBILE_APP_PROTOCOL}//page-notification`;
 
+type Resolve = (id: string) => string | null;
+
 /** What a resume that opens something holds. */
 interface ResumeOpening {
-  /** The conversation that was on screen when the app came back: the one that must not be marked. */
+  /** The conversation (MAP key) on screen when the app came back: the one that must not be marked. */
   heldKey: string;
-  /** The conversation the link opens, or `null` for a link to anything else (a post, a page). */
+  /**
+   * `chat`: a chat link, its target known; `landing`: a page notification, whose landing names the
+   * target; `page`: a link to anything else.
+   */
+  kind: 'chat' | 'landing' | 'page';
+  /** The GROUP id a `chat` hold opens. */
   target: string | null;
-  /** A page notification's tap: the target is whatever landing the page publishes for it. */
-  byLanding: boolean;
-  /** `notifNav.pending` at the resume: a landing the tap published before the edge reached the page. */
-  pendingAtOpen: string | null;
-  /** `notifNav.landing` at the resume: a later one means the link's landing has been published. */
   landingAtOpen: number;
-  /** Whether that landing was ALREADY pending at the resume (the link reached the page first). */
-  landingAlready: boolean;
+  nowhereAtOpen: number;
+  navigatedAtOpen: number;
+  resolve: Resolve;
 }
 
 let opening = $state<ResumeOpening | null>(null);
+/** Opens routed nowhere, and navigations, ever: compared, never reset. */
+let nowhereSeq = $state(0);
+let navigatedSeq = $state(0);
+/** The outcome counters when the app last LEFT the screen: what is counted after is the resume's. */
+let atLeave = { landing: notifNav.landing, nowhere: 0, navigated: 0 };
 
 /** The landing store, injected so the tests drive it. */
 export interface LandingState {
@@ -69,35 +97,69 @@ export interface LandingState {
   readonly landing: number;
 }
 
+/** The app left the screen: the last open is over, and what is counted from now on is the next one's. */
+function noteLeave(): void {
+  if (opening) Log.d('[RESUME-OPEN] the app left - the hold ends');
+  opening = null;
+  atLeave = { landing: notifNav.landing, nowhere: nowhereSeq, navigated: navigatedSeq };
+}
+// Module-level, so a leave is seen whatever page is mounted when it happens.
+onAppForegroundChange((foreground) => {
+  if (!foreground) noteLeave();
+});
+
 /**
  * Called on every foreground edge (false -> true), in the dispatch that announces it, with the link
  * that edge carried and the conversation on screen. A resume with no link ends any hold: a plain
  * resume reads what is on screen, as it always did.
+ *
+ * @param resolve a group id to its map key, over the live conversation map.
  */
 export function noteResumeOpening(
   link: string | null,
   selected: string | null | undefined,
+  resolve: Resolve,
   nav: LandingState = notifNav
 ): void {
-  if (!link || !selected) {
-    if (opening) Log.d('[RESUME-OPEN] plain resume - the hold ends');
-    opening = null;
-    return;
+  opening = null;
+  if (!link || !selected) return;
+  const landedSinceLeave = nav.landing !== atLeave.landing;
+  const nothing = (why: string) =>
+    Log.d(`[RESUME-OPEN] resume opens ${describeDeepLink(link)} - nothing held: ${why}`);
+  if (nowhereSeq !== atLeave.nowhere) return nothing('the open was already routed nowhere');
+
+  let kind: ResumeOpening['kind'];
+  let target: string | null = null;
+  if (link === PAGE_NOTIFICATION_OPENING) {
+    if (landedSinceLeave) {
+      // The page's tap handler published its landing before the edge: that landing names it.
+      if (nav.pending === null) return nothing('its landing already ended');
+      kind = 'chat';
+      target = nav.pending;
+    } else {
+      kind = 'landing';
+    }
+  } else {
+    target = chatTargetOfLink(link);
+    if (target !== null) {
+      kind = 'chat';
+      if (landedSinceLeave && nav.pending !== target) return nothing('its landing already ended');
+    } else {
+      if (navigatedSeq !== atLeave.navigated) return nothing('it already navigated');
+      kind = 'page';
+    }
   }
-  const byLanding = link === PAGE_NOTIFICATION_OPENING;
-  const target = byLanding ? null : chatTargetOfLink(link);
-  if (target === selected) {
-    opening = null;
-    Log.d('[RESUME-OPEN] the resume opens the conversation already on screen - nothing held');
-    return;
+  if (target !== null && resolve(target) === selected) {
+    return nothing('it opens the conversation already on screen');
   }
   opening = {
     heldKey: selected,
+    kind,
     target,
-    byLanding,
-    pendingAtOpen: nav.pending,
     landingAtOpen: nav.landing,
-    landingAlready: target !== null && nav.pending === target,
+    nowhereAtOpen: nowhereSeq,
+    navigatedAtOpen: navigatedSeq,
+    resolve,
   };
   Log.d(
     `[RESUME-OPEN] resume opens ${describeDeepLink(link)}: ${selected.slice(0, 12)} is not read until it lands`
@@ -105,30 +167,32 @@ export function noteResumeOpening(
 }
 
 /**
- * Whether the read of `key` is withheld because the resume that showed it is opening something
- * else. Reactive: it reads this module's state and `notifNav`'s, so an effect that asks re-runs when
- * the hold ends.
+ * Whether the read of `key` (a MAP key) is withheld because the resume that showed it is opening
+ * something else. Reactive: it reads this module's state, `notifNav`'s and the conversation map
+ * (through the resolver), so an effect that asks re-runs when the hold ends.
  */
 export function resumeOpeningHolds(key: string, nav: LandingState = notifNav): boolean {
   const o = opening;
   if (!o || key !== o.heldKey) return false;
-  if (o.byLanding) {
-    // Published after the edge: the landing names the target, and only another one holds `key`.
-    if (nav.landing !== o.landingAtOpen) return nav.pending !== null && nav.pending !== key;
-    // Published BEFORE the edge reached the page: that landing is the tap's, while it lasts.
-    if (o.pendingAtOpen !== null && o.pendingAtOpen !== key) return nav.pending === o.pendingAtOpen;
-    // Not published yet: held until the page's tap handler publishes it or says it routes nowhere.
-    return true;
+  if (nowhereSeq !== o.nowhereAtOpen) return false;
+  switch (o.kind) {
+    case 'page':
+      return navigatedSeq === o.navigatedAtOpen;
+    case 'landing':
+      // Not published yet: held until the page's tap handler publishes it (or says "nowhere").
+      if (nav.landing === o.landingAtOpen) return true;
+      return nav.pending !== null && o.resolve(nav.pending) !== key;
+    case 'chat':
+      if (o.target !== null && o.resolve(o.target) === key) return false;
+      if (nav.pending === o.target) return true;
+      // Not pending: not yet published (hold), or published and since ended (release).
+      return nav.landing === o.landingAtOpen;
   }
-  if (o.target === null) return true;
-  if (nav.pending === o.target) return true;
-  // Not pending: either not yet published (hold), or published and since ended (release).
-  return nav.landing === o.landingAtOpen && !o.landingAlready;
 }
 
 /**
- * `MainChatPage` hands every selection here, in a `pre` effect ahead of the receipt effect: once it
- * is not the held one, the hold is over (the landing selected its target, or the reader chose).
+ * Every selection is handed here, in a `pre` effect ahead of the receipt effect: once it is not the
+ * held one, the hold is over (the landing selected its target, or the reader chose).
  */
 export function followResumeSelection(selected: string | null | undefined): void {
   if (opening && selected !== opening.heldKey) {
@@ -137,26 +201,42 @@ export function followResumeSelection(selected: string | null | undefined): void
   }
 }
 
-/** A navigation completed: a link to anything but a conversation has been followed. */
-export function endResumeOpeningOnNavigation(): void {
-  if (opening && opening.target === null && !opening.byLanding) {
-    Log.d('[RESUME-OPEN] the link navigated - the hold ends');
-    opening = null;
-  }
+/** A navigation completed (`afterNavigate`): a link to a page has been followed. */
+export function noteOpenNavigated(): void {
+  navigatedSeq += 1;
 }
 
 /**
- * The page's tap handler routed a page notification's tap NOWHERE (no identity, a notification this
- * session did not post): no landing will come, so the conversation on screen is what the reader sees.
+ * An open was routed NOWHERE: a link the router does not claim, a page notification's tap with no
+ * identity or one this session did not post. No landing and no navigation will come, so the
+ * conversation on screen is what the reader sees. Counted, so it also ends a hold noted AFTER it.
  */
-export function endResumeOpeningUnrouted(why: string): void {
-  if (opening?.byLanding) {
-    Log.d(`[RESUME-OPEN] the tap routes nowhere (${why}) - the hold ends`);
-    opening = null;
-  }
+export function noteOpenRoutedNowhere(why: string): void {
+  nowhereSeq += 1;
+  Log.d(`[RESUME-OPEN] an open routes nowhere (${why})${opening ? ' - the hold ends' : ''}`);
 }
 
-/** The app left the screen: whatever the last resume opened is over. */
-export function endResumeOpening(): void {
-  opening = null;
+/**
+ * THE RECEIPT EFFECT'S FOREGROUND, AWARE OF WHAT A RESUME OPENS - the ONE wiring `MainChatPage` uses
+ * and the tests drive. Created during component (or effect-root) initialisation: it registers the
+ * `pre` effect that ends the hold when the selection moves, ahead of the receipt effect.
+ *
+ * @param selected the conversation on screen (map key).
+ * @param resolve a group id to its map key (`resolveConversationKey` over the live map).
+ */
+export function createResumeReadGate(
+  selected: () => string | null | undefined,
+  resolve: Resolve
+): { readonly current: boolean; holds(key: string): boolean; destroy(): void } {
+  const foreground = createAppForegroundState({
+    onResume: (link) => noteResumeOpening(link, selected(), resolve),
+  });
+  $effect.pre(() => followResumeSelection(selected()));
+  return {
+    get current() {
+      return foreground.current;
+    },
+    holds: (key) => resumeOpeningHolds(key),
+    destroy: () => foreground.destroy(),
+  };
 }

@@ -398,7 +398,7 @@ describe('the review of #2937', () => {
     expect(leader.get('channel_s1')!.unreadCount).toBe(0);
   });
 
-  it('drops every event a tab of ANOTHER account published, and an unstamped one', () => {
+  it('drops every event a tab of ANOTHER account published, and one a signed-out tab did', () => {
     const mine = dmDevice(true);
     signedIn = 'someone-else';
     publishConversationRead('g1', 2000, { at: 2000, clock: 'server' });
@@ -408,6 +408,16 @@ describe('the review of #2937', () => {
 
     expect(mine.get('g1')!.unreadCount).toBe(2);
     expect(watermarkFor(mine.get('g1')!.serverReadWatermarks, 'me')).toBe(0);
+  });
+
+  it('accepts an UNSTAMPED event: a tab of the bundle from before the stamp is still this account', () => {
+    const mine = dmDevice(true);
+    publishConversationRead('g1', 2000, { at: 2000, clock: 'server' });
+    const { account: _stamp, ...oldBundle } = tabChannel[0];
+    deliverOne(oldBundle, mine, 'me', () => false);
+
+    expect(mine.get('g1')!.unreadCount).toBe(0);
+    expect(watermarkFor(mine.get('g1')!.serverReadWatermarks, 'me')).toBe(2000);
   });
 
   it("relays only the entry that moved, and a peer's mark leaves this tab's badge alone", async () => {

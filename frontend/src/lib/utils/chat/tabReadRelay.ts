@@ -40,12 +40,29 @@ const READ_EVENTS = new Set<string>(['conversation_read', 'read_state', 'unread_
  * are per browser; a tab signed into another account hears the same channel, and a
  * `conversation_read` from it would advance THIS account's own watermark (review of #2937).
  *
+ * AN UNSTAMPED EVENT IS ACCEPTED: it comes from a tab still running the bundle from before the stamp
+ * (`account` absent, not empty), and dropping it cut a mixed-version browser's tabs off from each
+ * other - an `own_message_composed` from the old tab never reached the new one. The window this
+ * leaves is an OLD tab of ANOTHER account in the same browser; an origin holds one refresh credential,
+ * so two accounts never hold live sessions side by side
+ * ([sessions](../../../../../docs/wiki/sessions.md#a-token-that-names-another-account-than-the-local-identity-is-refused-2026-10-10)),
+ * and the window closes with the old tab's next load. A stamp that is EMPTY (a signed-out tab) or
+ * names another account is dropped.
+ *
  * @returns `false` when the event must be ignored.
  */
 export function tabEventIsAddressedHere(event: TabMessageEvent, me: string): boolean {
-  if (event.account && me && event.account.toLowerCase() === me.toLowerCase()) return true;
+  if (!me) {
+    Log.d(`[TAB-SYNC] ${event.type} dropped - this tab is signed out`);
+    return false;
+  }
+  if (event.account === undefined) {
+    Log.d(`[TAB-SYNC] ${event.type} from a tab of an older bundle (unstamped) - accepted`);
+    return true;
+  }
+  if (event.account.toLowerCase() === me.toLowerCase()) return true;
   Log.d(
-    `[TAB-SYNC] ${event.type} from ${event.account ? `account ${event.account.slice(0, 8)}` : 'an unstamped tab'} dropped - this tab is ${me ? me.slice(0, 8) : 'signed out'}`
+    `[TAB-SYNC] ${event.type} from ${event.account ? `account ${event.account.slice(0, 8)}` : 'a signed-out tab'} dropped - this tab is ${me.slice(0, 8)}`
   );
   return false;
 }
