@@ -151,7 +151,7 @@ can stay on.
 
 ### How it interlocks with the P1 iOS-notifications entry
 
-[p1-ios-notifications-show-no-content](p1-ios-notifications-show-no-content.md) is still measuring
+The P1 iOS-notifications entry (withdrawn from the backlog by the owner on 2026-11-03, unreviewed for too long) was measuring
 whether the extension RUNS and decrypts on the bench and on a user's phone (`[NSE_OUTCOME]`,
 `peakMB`, killed vs fallback). The wake mode makes the extension the ONLY source of content on iOS:
 the server's alert no longer even names the sender, and a tap on a banner the extension did not

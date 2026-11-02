@@ -1318,7 +1318,7 @@ reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-noth
 **Reported by the owner from a real user on iOS 1.5.3: iPhone notifications show no content, and the
 user's exported log held nothing about it** - the extension logged through `NSLog` only, which a
 tethered Mac's Console.app sees and nothing else. Three changes, one pull request
-([backlog](../backlog.d/p1-ios-notifications-show-no-content.md) holds the readings owed):
+(its backlog entry was withdrawn by the owner on 2026-11-03, unreviewed for too long):
 
 - **The outcome log.** `NseOutcomeLog` (in `NotificationService.swift`) appends ONE line per
   notification to `nse_outcomes.ndjson` in the App Group: `outcome` (`decrypted`, `fallback`,

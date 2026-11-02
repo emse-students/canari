@@ -400,7 +400,7 @@ DM killed afterwards read `🎬 CanaReel`. The group, older, read its content th
 the state the extension decrypts with did not yet hold the new DM when the process was killed. The
 syslog shows the extension ran and delivered mutated content (`Service extension delivered mutated
 content`, `Delivered user visible push notification`); its `[NSE_OUTCOME]` line is not readable on a
-TestFlight build ([backlog](backlog.d/p1-ios-notifications-show-no-content.md)).
+TestFlight build (its backlog entry was withdrawn by the owner on 2026-11-03).
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 
