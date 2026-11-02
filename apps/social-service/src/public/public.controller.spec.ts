@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { PATH_METADATA } from '@nestjs/common/constants';
+import { GUARDS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { PublicController } from './public.controller';
 import { AssociationsService } from '../associations/associations.service';
 import { ProductsService } from '../associations/products.service';
@@ -125,17 +125,56 @@ describe("PublicController.getMemberAvatar (a public roster row's photo)", () =>
     expect(res.body).toEqual(Buffer.from([7, 8, 9]));
   });
 
-  it('passes a 404 (no photo) and a 304 (unchanged) through bodyless', async () => {
-    for (const status of [404, 304]) {
-      const controller = makeController('acct-1');
-      global.fetch = jest.fn(() =>
-        Promise.resolve(new Response(null, { status }))
-      ) as unknown as typeof fetch;
-      const res = makeRes();
-      await controller.getMemberAvatar('m-1', '"v1"', res as unknown as AvatarRes);
-      expect(res.statusCode).toBe(status);
-      expect(res.send).not.toHaveBeenCalled();
-    }
+  it('passes a 304 (unchanged) through bodyless, with its ETag', async () => {
+    const controller = makeController('acct-1');
+    global.fetch = jest.fn(() =>
+      Promise.resolve(new Response(null, { status: 304, headers: { etag: '"v1"' } }))
+    ) as unknown as typeof fetch;
+    const res = makeRes();
+    await controller.getMemberAvatar('m-1', '"v1"', res as unknown as AvatarRes);
+    expect(res.statusCode).toBe(304);
+    expect(res.headers['etag']).toBe('"v1"');
+    expect(res.send).not.toHaveBeenCalled();
+  });
+
+  /** "Nobody" and "no photo" are one fact from outside, so not even a header tells them apart. */
+  it('answers a row on no roster and a member with no photo with the same bodyless 404', async () => {
+    const unknown = makeRes();
+    await makeController(null).getMemberAvatar('m-x', undefined, unknown as unknown as AvatarRes);
+
+    global.fetch = jest.fn(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 404,
+          headers: { 'cache-control': 'public, max-age=600', 'content-type': 'text/plain' },
+        })
+      )
+    ) as unknown as typeof fetch;
+    const noPhoto = makeRes();
+    await makeController('acct-1').getMemberAvatar(
+      'm-1',
+      undefined,
+      noPhoto as unknown as AvatarRes
+    );
+
+    expect(unknown.statusCode).toBe(404);
+    expect(noPhoto.statusCode).toBe(404);
+    expect(noPhoto.headers).toEqual(unknown.headers);
+    expect(unknown.headers).toEqual({ 'Cache-Control': 'public, max-age=600' });
+    expect(unknown.send).not.toHaveBeenCalled();
+    expect(noPhoto.send).not.toHaveBeenCalled();
+  });
+
+  /**
+   * NO THROTTLE ON THE RELAY, AND THAT IS PINNED. A roster or a carte draws a hundred faces and
+   * more, and the showcase's server-side proxy brings every visitor from one address: a per-address
+   * bucket would turn its photos into initials, and a throttler's refusal is a JSON body handed to
+   * an `<img>`.
+   */
+  it('carries no guard at all, so no throttle can refuse a face', () => {
+    const proto = PublicController.prototype as unknown as Record<string, object>;
+    const handler = proto['getMemberAvatar'];
+    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toBeUndefined();
   });
 
   it('answers 502 no-store when core-service does not answer, so nothing remembers the outage', async () => {

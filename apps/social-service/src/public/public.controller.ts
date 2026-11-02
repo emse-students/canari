@@ -91,6 +91,21 @@ export type PublicCarteResponse = Omit<PublishedCarteResponse, 'units'> & {
 const MEMBER_AVATAR_TIMEOUT_MS = 5_000;
 
 /**
+ * How long a "no photo" answer may be kept: core's avatar route caches its own absence for the
+ * same ten minutes, so a photo added later shows within one such window either way.
+ */
+const NO_PHOTO_CACHE_CONTROL = 'public, max-age=600';
+
+/**
+ * The ONE "no photo here" answer of the member-photo relay: a bodyless 404 with one header. A row
+ * on no public roster and a member with no photo get exactly this, so they cannot be told apart.
+ */
+function answerNoPhoto(res: Response): void {
+  res.set({ 'Cache-Control': NO_PHOTO_CACHE_CONTROL });
+  res.status(404).end();
+}
+
+/**
  * Unauthenticated read-only API consumed by the portail-etu showcase, and since 2026-09-20 by the
  * link previews of shared Canari URLs.
  * Reachable via the nginx `/api/public/` location, which - unlike every other
@@ -156,17 +171,22 @@ export class PublicController {
   /**
    * The photo of one row of a public roster - the `avatarUrl` every public member carries.
    *
-   * WHY A ROSTER ROW AND NOT AN ACCOUNT: the showcase draws each member's photo, and until
-   * 2026-11-02 it did so from the account id the roster handed out, which named the person to any
-   * system that keys on it. Keyed by the row, the photo stays exactly as public as the roster that
-   * lists it - a member who leaves the association takes their row, and so their photo, with them.
+   * WHY A ROSTER ROW AND NOT AN ACCOUNT: the showcase draws each member's photo, and an account id
+   * names the person to any system that keys on it. Keyed by the row, the photo stays exactly as
+   * public as the roster that lists it - a member who leaves the association takes their row, and
+   * so their photo, with them.
    *
-   * Relayed from core-service's avatar route over the Docker network, its answer passed through as
-   * it is: the image with its ETag and caching, a bodyless 404 for no photo, a bodyless 502
-   * `no-store` for an upstream that did not answer. Throttled per address like the other public
-   * route that does work for a caller with no session.
+   * Relayed from core-service's avatar route over the Docker network: the image (or a 304) with
+   * its ETag and caching, a bodyless 404 for no photo, a bodyless 502 `no-store` for an upstream
+   * that did not answer. EVERY ANSWER IS BODYLESS EXCEPT THE IMAGE - an `<img>` handed a JSON body
+   * logs three console lines for one miss (core's `getAvatar` says why).
+   *
+   * NO THROTTLE, ON PURPOSE, AND THE SPEC PINS IT. One roster or one carte draws a hundred faces
+   * and more, every revalidation (a 304) is a request, and the showcase's server-side proxy brings
+   * all its visitors from ONE address: a per-address bucket sized for anything but faces would turn
+   * the showcase's photos into initials. The work is one primary-key read and the hop to core's
+   * avatar route, which carries no throttle either.
    */
-  @UseGuards(ClientIpThrottlerGuard)
   @Get('members/:memberId/avatar')
   async getMemberAvatar(
     @Param('memberId') memberId: string,
@@ -175,8 +195,7 @@ export class PublicController {
   ): Promise<void> {
     const userId = await this.associations.publicMemberUserId(memberId);
     if (!userId) {
-      res.set({ 'Cache-Control': 'no-store' });
-      res.status(404).end();
+      answerNoPhoto(res);
       return;
     }
     const abort = new AbortController();
@@ -186,6 +205,12 @@ export class PublicController {
         headers: ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {},
         signal: abort.signal,
       });
+      if (upstream.status === 404) {
+        // The same answer as a row on no public roster: from outside, "nobody" and "no photo" are
+        // one fact, and must not be told apart by a header.
+        answerNoPhoto(res);
+        return;
+      }
       for (const name of ['content-type', 'cache-control', 'etag']) {
         const value = upstream.headers.get(name);
         if (value) res.setHeader(name, value);
@@ -280,8 +305,7 @@ export class PublicController {
     const carte = await this.poster.getPublished();
     if (!carte) throw new NotFoundException('No published carte');
     // Each card's photo by its roster row, the address the public roster hands out. The card's
-    // `userId` is still served beside it: the showcase keys its card list on that field, so it
-    // moves to `avatarUrl` before the field can go (docs/wiki/anonymous-surface.md).
+    // `userId` is served beside it: the showcase keys its card list on that field.
     const avatars = await this.associations.publicAvatarUrlsFor(
       carte.units.flatMap((u) =>
         u.cards.map((c) => ({ associationId: u.assoId, userId: c.userId }))

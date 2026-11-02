@@ -1141,13 +1141,13 @@ export class AssociationsService {
   /**
    * Public members list for the read-only showcase (portail-etu vitrine).
    *
-   * EXACTLY WHAT THE SHOWCASE DRAWS, AND NOTHING THAT NAMES A PERSON ACROSS SYSTEMS (owner,
-   * 2026-11-02): the name, the role, the promo, whether they sit on the board, and the photo as a
-   * URL. The account id (`userId`) and the join date are gone - the photo is reached through the
-   * roster row (`avatarUrl`, {@link publicMemberAvatarUrl}) rather than through the account. `id`
-   * is the roster row's own random id: it names one line of one public roster, and the showcase
-   * keys its list on it. Never the raw permission bitmask. Ordered like the public members grid
-   * (sortOrder, then createdAt). See docs/wiki/anonymous-surface.md.
+   * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
+   * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
+   * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
+   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
+   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * Ordered like the public members grid (sortOrder, then createdAt). See
+   * docs/wiki/anonymous-surface.md.
    */
   async listMembersPublic(associationId: string): Promise<PublicMember[]> {
     const rows = await this.memberRepo
@@ -1168,6 +1168,7 @@ export class AssociationsService {
       .filter((r) => !isInReviewCohort(r.m_userId))
       .map((r) => ({
         id: r.m_id,
+        userId: r.m_userId,
         role: r.m_role,
         isAdmin: Number(r.m_permissions ?? 0) > 0,
         // The same precedence every other surface uses - this line built its own, preferring
@@ -1176,6 +1177,7 @@ export class AssociationsService {
         firstName: r.firstName || null,
         lastName: r.lastName || null,
         promo: r.promo ?? null,
+        createdAt: r.m_createdAt,
         avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
   }

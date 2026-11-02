@@ -9,7 +9,8 @@ link preview of ONE shared association post. Everything else Canari answers with
 either a **capability** (a signed or unguessable link that a member handed out), a **liveness probe**,
 or a **value about nobody** (a platform setting).
 
-This page is the route-by-route table, audited on 2026-11-02. The gates that hold it:
+This page lists, route by route, what Canari serves to a visitor without an account BY INTENT, and
+what was closed on 2026-11-02 when the rule was applied. The gates that hold it:
 
 - `.github/scripts/tests/auth-request-coverage.test.mjs` - every route behind an `auth_request`
   location is authorized or declared in `PUBLIC_BY_INTENT` with a reason; `CLOSED_TO_ANONYMOUS`
@@ -41,8 +42,7 @@ roster's.
 
 ## Canari's anonymous surface, route by route
 
-**Closed** = a session is now required. **Stripped** = still public, fields cut to the showcase's.
-**Kept** = public, with the reason.
+**Closed** = a session is now required. **Kept** = public by intent, with the reason.
 
 ### Data routes (social-service, core-service)
 
@@ -55,15 +55,13 @@ roster's.
 | `GET /api/forms/:id/calendar-link` | **closed** | an agenda entry; the showcase has no agenda |
 | `GET /api/public/posts` (the 500 newest association posts) | **closed (owner 2026-11-02)** - the route is gone | a feed, not a link preview; its one consumer, the sitemap, lists no post any more |
 | `GET /api/public/associations`, `.../slug/:slug` | kept | the showcase's own source: exactly its entity fields |
-| `GET /api/public/associations/slug/:slug` (its `members`), `GET /api/public/associations/:id/members` | **stripped** | now name, role, promo, board flag and a photo URL; the account id and the join date are gone. `id` is the roster row's own random id (the showcase keys its list on it) |
-| `GET /api/public/members/:memberId/avatar` | kept (new) | the roster's photo, reached through the roster row rather than the account: exactly as public as the roster line that lists it, gone when the member leaves |
-| `GET /api/public/carte` | kept | the showcase's carte; each card gains `avatarUrl` (the roster-row photo). Its `userId` is still served while the showcase keys its card list on it, and goes once the showcase reads `avatarUrl` |
+| `GET /api/public/associations/slug/:slug` (its `members`), `GET /api/public/associations/:id/members` | kept | the showcase's roster: name, role, promo, board flag, and the photo as `avatarUrl` |
+| `GET /api/public/members/:memberId/avatar` | kept (new) | the roster's photo, reached through the roster row rather than the account: exactly as public as the roster line that lists it, gone when the member leaves. Bodyless on every miss, and unthrottled - a roster or a carte draws a hundred faces, and the showcase's proxy brings all its visitors from one address |
+| `GET /api/public/carte` | kept | the showcase's carte; each card carries `avatarUrl` like a roster member |
 | `GET /api/public/posts/:id/preview`, `/preview-image` | **kept - owner decision** | the link preview of one shared association post |
 | `GET /api/public/forms/:id`, `POST .../submit`, `POST .../receipts/confirm` | kept - capability | a form its association chose to make public, answered by a guest on its shared link; the reply is an allowlist naming no owner and no association ([forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)) |
 | `GET /api/public/cotisant-status` | kept - not anonymous | Le Cercle's server-to-server check, refused without its API key |
 | `GET /api/external/profile/:sub` | kept - not anonymous | Sky's server-to-server read, refused without its API key |
-| `GET /api/associations/:id/events` | being closed on `feat/moderation-scope-and-agenda` | an agenda; not touched here |
-| `GET /api/associations/calendar/feed`, `feed.ics` | kept - capability | an anonymous read must carry a selection signed for a signed-in member, or name one event by its id (the "add to my calendar" link); otherwise refused |
 | `GET /api/bookings/:bookingId/calendar.ics` | kept - capability | an HMAC bound to one of the booking's people |
 | `GET /api/media/public/:id` | kept - capability | association logos and group/community pictures, by unguessable id |
 | `GET /api/media/public/live/...` | kept | ciphertext under a key only a viewer is handed |
@@ -92,9 +90,15 @@ public form's `/f/` page (`isSignedOutPath`), so it was never a consumer of the 
 
 ## Consumers checked
 
-- **portail-etu**: reads `/api/public/associations*` and `/api/public/carte`. The roster no longer
-  carries the account id its member photos were built from, so those photos fall back to initials
-  until it reads `avatarUrl`; its list keys (`id`) are unchanged. The carte is unchanged for it.
+- **portail-etu**: reads `/api/public/associations*` and `/api/public/carte`; every field it reads
+  is still served, and `avatarUrl` is added beside them.
+
+## The `avatarUrl` contract
+
+`avatarUrl` (on a public roster member and on a carte card) is an **absolute URL on Canari's public
+origin** - the first entry of `FRONTEND_URL`, as every link this service writes for somebody else
+(`common/frontend-url.ts`). A consumer on another origin uses it as it is, with no prefix. It
+answers the image (with an ETag), a 304, or a bodyless 404 when there is no photo.
 - **The signed-in app and the native apps**: every closed route is called with the session.
 - **The sitemap, the head injector**: changed above.
 - **Le Cercle, Sky**: API-key routes, unchanged.
