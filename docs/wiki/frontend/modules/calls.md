@@ -399,6 +399,14 @@ neither form is in this repository - and decide together with B5's wording, so t
 readings below pass on the Mi 9T AND the iPhone 12. Until then production stays at `audio`
 (or `off`), and every 1.5.2 binary carries video that nothing on screen offers.
 
+**Where it stands (read 2026-11-02, read-only `GET /api/version`).** Production answers
+`calls: { mode: "audio_video" }` with `minClientVersion` `1.5.1`, and dev answers `audio_video`
+too: video is OPEN in production (the owner reports it in use and working), so the switch was
+flipped before the VID readings below were taken. Neither of the two conditions decided below is
+on record either (the floor is `1.5.1`, not `1.5.2`; VID-6 has no reading). The readings stay
+owed, now as a check of what is live rather than a gate; they are folded into the bench campaign
+on `1.6.3-alpha.2`.
+
 **What moved, in one commit** (draft PR on `feat/calls-video-production`):
 
 | Moves | File | Asserted by |
