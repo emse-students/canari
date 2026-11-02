@@ -190,7 +190,11 @@ async function tamperArm(n, { edit, undo, needle, companions = [] }) {
       // THE SALON LOAD SEQUENCE, kept on every verdict: a run where the refused row stayed on screen
       // (1 in 5, 2026-10-22) recorded only its unexplained lines, so the loads that drew, superseded
       // and withdrew were lost with the run. A PASS keeps them too, to compare against.
-      loadTrail: consoleLines(w2).filter((l) => /\[CHANNEL\] (?:.*\bstored |history load)/.test(l)),
+      // AND EVERY LINE NAMING THE TAMPERED ROW: a row that reached memory live (a replay after the
+      // reload) is the other way it can stay on screen, and only its own lines tell the two apart.
+      loadTrail: consoleLines(w2).filter(
+        (l) => /\[CHANNEL\] (?:.*\bstored |history load)/.test(l) || l.includes(row.id.slice(0, 8))
+      ),
       serverSince: since,
     });
   } finally {
