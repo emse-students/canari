@@ -4,6 +4,10 @@ import {
   resolveRenderWindow,
   stepWindowOlder,
   widenedEntryStart,
+  fillStart,
+  widenStepStart,
+  ENTRY_OVERFLOW_PX,
+  OLDER_TRIGGER_PX,
 } from './renderWindow';
 
 /**
@@ -153,5 +157,50 @@ describe('entry window - the first frame mounts the viewport tail only', () => {
     expect(widenedEntryStart(10, 200, 60)).toBeNull();
     expect(widenedEntryStart(0, 56, 60)).toBeNull();
     expect(widenedEntryStart(140, 200, 60)).toBeNull();
+  });
+});
+
+describe('fillStart - the rows a short first frame is missing, by the rows own height', () => {
+  // Pane 700, target overflow 120 (ENTRY_OVERFLOW_PX): the rows must span 820 minus the chrome.
+  it('asks for the deficit divided by the measured row height, with a floor', () => {
+    // 20 rows of 36 px = 720: 100 px short = 3 rows -> the floor of 4.
+    expect(fillStart(36, 20, 720, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(32);
+    // 20 rows of 20 px = 400: 420 px short = 21 rows.
+    expect(fillStart(36, 20, 400, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(15);
+    // The scroller's padding counts as content.
+    expect(fillStart(36, 20, 720, 60, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(32);
+    expect(fillStart(36, 20, 720, 100, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
+  });
+
+  it('clears the pagination trigger: the overflow it aims for is past OLDER_TRIGGER_PX', () => {
+    expect(ENTRY_OVERFLOW_PX).toBeGreaterThan(OLDER_TRIGGER_PX);
+    // 30 px of overflow is a filled pane for scrolling and still inside the trigger: not enough.
+    expect(fillStart(36, 20, 730, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).not.toBeNull();
+    expect(
+      fillStart(36, 20, 700 + OLDER_TRIGGER_PX + 1, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)
+    ).not.toBeNull();
+    expect(fillStart(36, 20, 700 + ENTRY_OVERFLOW_PX, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
+  });
+
+  it('is null when the pane already overflows or nothing is hidden', () => {
+    expect(fillStart(36, 20, 960, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
+    expect(fillStart(0, 20, 400, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
+  });
+
+  it('never mounts more than the full entry window on a measure alone, and never past the list', () => {
+    // 20 rows of 2 px: far too many wanted, capped at the entry start (140 of a 200 list = 60 rows).
+    expect(fillStart(180, 20, 40, 0, 700, ENTRY_OVERFLOW_PX, 4, 140)).toBe(140);
+    // A window already past the entry start pages by the measure instead.
+    expect(fillStart(100, 60, 600, 0, 700, ENTRY_OVERFLOW_PX, 4, 140)).toBe(78);
+    expect(fillStart(3, 20, 100, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(0);
+  });
+});
+
+describe('widenStepStart - the widen after the reveal, a few groups per task', () => {
+  it('steps towards the target and stops on it', () => {
+    expect(widenStepStart(140, 100, 10)).toBe(130);
+    expect(widenStepStart(104, 100, 10)).toBe(100);
+    expect(widenStepStart(100, 100, 10)).toBeNull();
+    expect(widenStepStart(50, 100, 10)).toBeNull();
   });
 });

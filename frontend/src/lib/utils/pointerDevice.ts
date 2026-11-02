@@ -25,7 +25,25 @@ function canQuery(): boolean {
  */
 export function isCoarsePointerDevice(): boolean {
   if (!canQuery()) return false;
-  return window.matchMedia(COARSE_POINTER_QUERY).matches;
+  return sharedQuery().matches;
+}
+
+/** The one `MediaQueryList` for the coarse query, with the `matchMedia` that made it. */
+let shared: { ask: typeof window.matchMedia; query: MediaQueryList } | null = null;
+
+/**
+ * THE ONE LIVE `MediaQueryList`, created on first use and read by everybody. Every message bubble
+ * asks on mount (its `$state` initialiser runs before any subscriber exists), and a `matchMedia`
+ * call per bubble was ~3 ms of the salon open on the Mi 9T (2026-11-02 profile) for an answer that is
+ * the same for all of them. A live list's `matches` is always current. It is rebuilt if
+ * `window.matchMedia` is a different function than the one that made it (a test swapping the stub),
+ * which a browser never does.
+ */
+function sharedQuery(): MediaQueryList {
+  const ask = window.matchMedia;
+  if (!shared || shared.ask !== ask)
+    shared = { ask, query: ask.call(window, COARSE_POINTER_QUERY) };
+  return shared.query;
 }
 
 /** Everyone listening through {@link onCoarsePointerChange}; one entry per subscription. */
@@ -49,7 +67,7 @@ export function onCoarsePointerChange(listener: (coarse: boolean) => void): () =
   const subscription = { listener };
   coarseSubscribers.add(subscription);
   if (!coarseWatch) {
-    const query = window.matchMedia(COARSE_POINTER_QUERY);
+    const query = sharedQuery();
     const handler = (event: MediaQueryListEvent) => {
       for (const { listener: notify } of coarseSubscribers) {
         // Isolated per subscriber: one throwing component must not leave the others on the old answer.
