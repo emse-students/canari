@@ -606,7 +606,7 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
   expire" and the age only. A `410` met INSIDE the viewer shows the player's own expired state; the tile
   behind it is only told by the hint (a tile that learned from the `410` would need the viewer to report
   back - left for RC-9 to measure).
-- **Viewer**: the feed's `ReelViewer` on ONE post-shaped entity (`reelMessageAsPost`), `loadPage` empty
+- **Viewer**: the feed's `ReelViewer` on ONE post-shaped entity (`reelMessageAsPost`, which carries the sender as `authorId` so the slide draws the sender's avatar and profile link, not the "UI" fallback of an empty id; the post `id` stays the message's), `loadPage` empty
   (a conversation's reels are not the feed's; the chain through the conversation's other reels of 3.2 is
   not built). **The save button is in the bar next to the volume, for every reel** (D-save), so the feed
   viewer changed too. A reel message is NOT forwardable (the bubble drops the action).
@@ -1116,6 +1116,10 @@ from it, designed:
    than ~9 at 60 s; nothing is fetched before a tap, 3.1). **The chat cap still holds**: with any
    chat row ticked, a take longer than `chatMaxDurationMs` (60 s) cannot be sent to the chats - the
    rows say so in the sheet, and CanaReels alone takes the 90 s.
+   **Checked and closed as designed (2026-11-02, the `1.6.3-alpha.2` bench):** the camera tab recorded 62 s
+   and the sheet then withheld the chats ("Cette video depasse 60 s ..."). That is this decision, not a
+   defect: the tab's take is also a feed reel (90 s), and nothing knows at the shutter which row will be
+   ticked. The `chat` destination (a composer's camera) arms its ring at `chatMaxDurationMs`.
 2. **One upload, the publish step's** (`reel-pending`, then claimed by the post). The take adopts it
    (15.2): the publish step writes its `uploadedRef` into the take's row DURABLY, right after the
    upload and BEFORE `POST /api/posts`, then the take puts its chat hold (15.3) and the sends go -
