@@ -625,12 +625,14 @@ services:
       # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL are absent for the same reason as in
       # `docker-compose.prod.yml`: this image is nginx serving a build, nothing reads them at
       # runtime, and a `VITE_` variable is baked in at BUILD time.
-    # WHICH REPLICAS THIS nginx MAY CHOOSE, written by the deploy (infrastructure/lib/rolling.sh) and
-    # read-only here: a replica is taken out of this list - by a reload, proven - before it is
-    # stopped. The edge reads the same directory through its own mount of edge/.
+    # WHERE THIS nginx SENDS EACH SERVICE, written by the deploy (infrastructure/lib/rolling.sh) and
+    # read-only here: a replica is taken out - by a reload, proven - before it is stopped. The edge
+    # reads the same directory through its own mount of edge/. NOT `edge/rotation` as
+    # `/etc/nginx/rotation`, the `upstream` lists of 1.6.2: the deploy library of 1.6.2, run by a
+    # rollback, must find no `rotation` path in this image to drain it by DNS rather than refuse it.
     # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
     volumes:
-      - ./edge/rotation:/etc/nginx/rotation:ro
+      - ./edge/targets:/etc/nginx/targets:ro
     expose:
       - "80"
     # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means

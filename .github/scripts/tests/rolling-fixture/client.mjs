@@ -3,6 +3,9 @@
 // got. A POST on purpose - it is the request nginx may NOT replay once a byte has been sent, so it is
 // the one a careless replacement turns into a 502 ("Echec de l'envoi").
 //
+// Prints {statuses, versions, maxMs, failed}: `failed` holds the first 20 non-200 answers with the
+// moment each was sent, so a failure can be placed in the deploy's timeline.
+//
 // Usage: bun client.mjs <url> <stop-file> [concurrency]
 import { existsSync } from 'node:fs';
 
@@ -11,6 +14,7 @@ const concurrency = Number(concurrencyArg ?? 4);
 const statuses = new Map();
 const versions = new Map();
 let maxMs = 0;
+const failed = [];
 
 async function worker() {
   while (!existsSync(stopFile)) {
@@ -37,6 +41,9 @@ async function worker() {
       key = `transport:${e?.code ?? e?.message ?? e}`;
     }
     maxMs = Math.max(maxMs, Date.now() - started);
+    if (key !== '200') {
+      failed.push({ key, sent: new Date(started).toISOString(), ms: Date.now() - started });
+    }
     statuses.set(key, (statuses.get(key) ?? 0) + 1);
   }
 }
@@ -47,5 +54,6 @@ console.log(
     statuses: Object.fromEntries(statuses),
     versions: Object.fromEntries(versions),
     maxMs,
+    failed: failed.slice(0, 20),
   })
 );
