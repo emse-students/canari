@@ -59,9 +59,22 @@ describe('the foreground contract between the shells and the page', () => {
     const begins = observer('UIApplicationWillEnterForegroundNotification');
     expect(begins).toContain('g_resumePending = true;');
     expect(begins).not.toContain('CanariPublishForeground');
+    // ...and it is PUBLISHED from the answer of a notification-center round trip, so a tap whose
+    // delegate call comes after `didBecomeActive` is still noted first; a `didBecomeActive` with no
+    // resume pending drops any link a cold launch left.
     const completes = observer('UIApplicationDidBecomeActiveNotification');
-    expect(completes).toContain('if (!g_resumePending) return;');
-    expect(completes).toContain('CanariPublishForeground(opening);');
+    const noResume = completes.indexOf('if (!g_resumePending) {');
+    expect(noResume).toBeGreaterThan(-1);
+    expect(completes.slice(noResume, completes.indexOf('return;', noResume))).toContain(
+      'g_resumeOpening = nil;'
+    );
+    const roundTrip = completes.indexOf('getNotificationSettingsWithCompletionHandler:');
+    expect(roundTrip).toBeGreaterThan(noResume);
+    expect(completes.indexOf('CanariPublishForeground(opening);')).toBeGreaterThan(roundTrip);
+    // The tap is accepted as the resume's while one is in progress, even on an active app.
+    expect(objcBody(ios, 'void CanariNoteResumeOpening(')).toContain(
+      'state == UIApplicationStateActive && !g_resumePending'
+    );
     const loadObserver = ios.slice(
       ios.indexOf('@implementation CanariLoadObserver'),
       ios.indexOf('@end', ios.indexOf('@implementation CanariLoadObserver'))
@@ -69,12 +82,16 @@ describe('the foreground contract between the shells and the page', () => {
     expect(loadObserver).toContain('CanariPublishForeground(nil);');
   });
 
-  it('iOS notes a tap on a PAGE notification for the resume, with the page marker, before handing it to the plugin', async () => {
+  it('iOS notes a tap on a PAGE notification, with the page marker, only when a plugin takes it and before it does', async () => {
     const { PAGE_NOTIFICATION_OPENING } = await import('./chat/resumeOpening.svelte');
     const push = readFileSync('src-tauri/gen/apple/Sources/canari/canari_push.mm', 'utf8');
     const note = push.indexOf(`CanariNoteResumeOpening(@"${PAGE_NOTIFICATION_OPENING}");`);
     expect(note).toBeGreaterThan(-1);
     expect(note).toBeLessThan(push.indexOf('didReceiveNotificationResponse:response', note));
+    // Only inside the branch that HAS a plugin to hand it to: without one no handler names anything.
+    const branch = push.lastIndexOf('if ([plugin respondsToSelector:_cmd]) {', note);
+    expect(branch).toBeGreaterThan(-1);
+    expect(push.slice(branch, note)).not.toContain('}');
   });
 
   it('iOS notes a tapped notification for the resume BEFORE the page is told of the tap', () => {

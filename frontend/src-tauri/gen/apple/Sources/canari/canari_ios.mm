@@ -542,28 +542,17 @@ static void CanariPublishSafeAreaInsets(void) {
   }
 }
 
-/// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
-/// `window.__canariDynamicTypeBodyPx` - `followIosDynamicType` in `lib/utils/textZoom.ts` turns it
-/// into `--type-scale`.
-///
-/// WHY NATIVE SAYS IT, when a `-apple-system-body` probe reads the same size at start-up: a size
-/// changed while the app was in the background applied only after a cold start, 3 of 3 (iPhone 12,
-/// 1.2.9-alpha.1, 2026-10-15) - the page re-read its probe on `visibilitychange` and either was not
-/// told or read WebKit's size before WebKit had learnt the new one. UIKit KNOWS the size when it
-/// posts the change, so the value is carried from there instead of re-derived through a probe
-/// (docs/wiki/frontend/mobile.md, Dynamic Type). Points are CSS pixels at the page's 1:1 viewport.
-/// Sent on the change itself, on every activation (a change made while suspended), and after every
-/// page load (a reloaded page starts from its probe again).
 /// Whether the app is ON SCREEN: false from `didEnterBackground` until the resume completes. Not
 /// `g_isInForeground`, which is ACTIVE only and turns false for the Face ID sheet, Control Center or a
 /// permission alert - none of which takes the conversation off the screen, and every one of which
 /// would have re-run the page's "back in the foreground" work in the middle of an unlock.
 static volatile bool g_isOnScreen = true;
 
-/// True from `willEnterForeground` to the `didBecomeActive` that completes that resume. The page is
-/// told the app is back only THEN, because a tapped notification reaches the delegate inside that
-/// span: the resume's edge carries the link it opens, and the page does not read the conversation
-/// left on screen (owner, 2026-11-02; `resumeOpening.svelte.ts`). Main thread only.
+/// True from `willEnterForeground` until the resume is PUBLISHED to the page - which is not at
+/// `didBecomeActive` itself but one round trip to the notification center later (see the observer).
+/// A tapped notification noted while this is true belongs to this resume: its link rides the edge,
+/// and the page does not read the conversation left on screen (owner, 2026-11-02;
+/// `resumeOpening.svelte.ts`). Main thread only.
 static bool g_resumePending = false;
 
 /// The link the resume in progress opens (a tapped notification), or nil. Main thread only.
@@ -572,8 +561,10 @@ static NSString *_Nullable g_resumeOpening = nil;
 void CanariNoteResumeOpening(NSString *deepLink) {
   void (^note)(void) = ^{
     UIApplicationState state = [UIApplication sharedApplication].applicationState;
-    // A tap while the app is already active (a banner over the open app) is not a resume.
-    if (state == UIApplicationStateActive) {
+    // A tap on an app that is active with NO resume in progress (a banner over the open app) is not
+    // a resume. Active WITH one in progress is: the delegate may run after `didBecomeActive`, and
+    // the edge is not published until the round trip below says it has had its chance.
+    if (state == UIApplicationStateActive && !g_resumePending) {
       NSLog(@"[CanariIOS] notification tap on an active app - not a resume, nothing held");
       return;
     }
@@ -633,6 +624,18 @@ static void CanariPublishForeground(NSString *_Nullable opening) {
         opening.length > 0 ? 1 : 0);
 }
 
+/// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
+/// `window.__canariDynamicTypeBodyPx` - `followIosDynamicType` in `lib/utils/textZoom.ts` turns it
+/// into `--type-scale`.
+///
+/// WHY NATIVE SAYS IT, when a `-apple-system-body` probe reads the same size at start-up: a size
+/// changed while the app was in the background applied only after a cold start, 3 of 3 (iPhone 12,
+/// 1.2.9-alpha.1, 2026-10-15) - the page re-read its probe on `visibilitychange` and either was not
+/// told or read WebKit's size before WebKit had learnt the new one. UIKit KNOWS the size when it
+/// posts the change, so the value is carried from there instead of re-derived through a probe
+/// (docs/wiki/frontend/mobile.md, Dynamic Type). Points are CSS pixels at the page's 1:1 viewport.
+/// Sent on the change itself, on every activation (a change made while suspended), and after every
+/// page load (a reloaded page starts from its probe again).
 static void CanariPublishDynamicType(void) {
   static CGFloat published = -1;
   WKWebView *webView = CanariFindWebView();
@@ -1080,18 +1083,38 @@ void canari_ios_bootstrap(void) {
               usingBlock:^(__unused NSNotification *note) {
                 g_resumePending = true;
               }];
+  // THE RESUME IS PUBLISHED WHEN A TAP THAT CAUSED IT HAS HAD ITS CHANCE TO BE NOTED, IN EITHER
+  // ORDER. UIKit does not promise whether `didReceiveNotificationResponse` runs before or after
+  // `didBecomeActive` (with scenes it can come after). So `didBecomeActive` does not publish: it asks
+  // the notification center a question and publishes from the ANSWER, on the main queue. A response
+  // that caused this activation either came with the activation itself (FrontBoard's scene action,
+  // handled before the activation completes) or on the notification center's own connection, which
+  // delivers in order - the response was sent before our question was even asked, so its delegate
+  // call reaches the main queue before our answer does. Either way `CanariNoteResumeOpening` has run
+  // by the time the block below does: an ordering on one connection, not a delay.
+  //
   // Only the didBecomeActive that completes a resume publishes; one after Control Center or a Face
-  // ID sheet finds no resume pending and says nothing (the app never left the screen).
+  // ID sheet finds no resume pending, says nothing, and drops any link a cold launch left behind.
   [nc addObserverForName:UIApplicationDidBecomeActiveNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(__unused NSNotification *note) {
-                if (!g_resumePending) return;
-                g_resumePending = false;
-                g_isOnScreen = true;
-                NSString *opening = g_resumeOpening;
-                g_resumeOpening = nil;
-                CanariPublishForeground(opening);
+                if (!g_resumePending) {
+                  g_resumeOpening = nil;
+                  return;
+                }
+                [[UNUserNotificationCenter currentNotificationCenter]
+                    getNotificationSettingsWithCompletionHandler:^(__unused UNNotificationSettings *s) {
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                        // Left again meanwhile (didEnterBackground cleared it): nothing to publish.
+                        if (!g_resumePending) return;
+                        g_resumePending = false;
+                        g_isOnScreen = true;
+                        NSString *opening = g_resumeOpening;
+                        g_resumeOpening = nil;
+                        CanariPublishForeground(opening);
+                      });
+                    }];
               }];
   [nc addObserverForName:UIKeyboardWillChangeFrameNotification
                   object:nil
