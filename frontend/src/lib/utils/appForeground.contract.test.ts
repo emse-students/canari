@@ -69,6 +69,14 @@ describe('the foreground contract between the shells and the page', () => {
     expect(loadObserver).toContain('CanariPublishForeground(nil);');
   });
 
+  it('iOS notes a tap on a PAGE notification for the resume, with the page marker, before handing it to the plugin', async () => {
+    const { PAGE_NOTIFICATION_OPENING } = await import('./chat/resumeOpening.svelte');
+    const push = readFileSync('src-tauri/gen/apple/Sources/canari/canari_push.mm', 'utf8');
+    const note = push.indexOf(`CanariNoteResumeOpening(@"${PAGE_NOTIFICATION_OPENING}");`);
+    expect(note).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(push.indexOf('didReceiveNotificationResponse:response', note));
+  });
+
   it('iOS notes a tapped notification for the resume BEFORE the page is told of the tap', () => {
     const push = readFileSync('src-tauri/gen/apple/Sources/canari/canari_push.mm', 'utf8');
     const note = push.indexOf('CanariNoteResumeOpening(deepLink);');

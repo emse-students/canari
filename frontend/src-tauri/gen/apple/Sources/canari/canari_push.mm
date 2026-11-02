@@ -5521,6 +5521,10 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
     // plugin emits `actionPerformed`, which the page's `onAction` routes (`useNotifications.svelte.ts`).
     // One posted by an earlier process is not classified here and takes Canari's path below.
     id<UNUserNotificationCenterDelegate> plugin = g_forwardNotifDelegate;
+    // FIRST: the resume this tap belongs to says it opens a page notification, whose conversation
+    // only the page's own handler can name - the conversation left on screen is held until it does
+    // (`PAGE_NOTIFICATION_OPENING`, resumeOpening.svelte.ts). The same string as the page's.
+    CanariNoteResumeOpening(@"fr.emse.canari://page-notification");
     if ([plugin respondsToSelector:_cmd]) {
       NSLog(@"[CanariPush] notification tap on a page notification - handed to the plugin");
       [plugin userNotificationCenter:center

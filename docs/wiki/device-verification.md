@@ -1390,6 +1390,11 @@ and `[CanariIOS]` (shell) lines.
 7. **The same on the Mi 9T** (the Android half, #2937): steps 5 and 6 with the app on X, tapping Y's
    notification - X keeps its badge, Y is read; from the launcher X is read. The logcat shows
    `onResume: opens a link=true` for the tap.
+8. **A notification the page raised itself (iPhone).** With the app on X, press Home within a few
+   seconds of a message in Y arriving over the live socket (the page raises its own notification
+   before suspension; the push for the same message is then suppressed). Tap it. Expect
+   `notification tap on a page notification - handed to the plugin` after `notification tap during a
+   resume`, then `foreground=true published to the page (opens a link=1)`; Y opens, X keeps its badge.
 
 ## LF. A read reaches the other devices when the iPhone leaves the app - owed on the iPhone 12
 
