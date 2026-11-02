@@ -47,3 +47,18 @@ Ecrits des maintenant mais publies plus tard : appel video, sonnerie native, liv
 | 18 | Appels audio | membre |
 | 19 | Securite : PIN, nouvel appareil, sauvegarde | membre |
 | later | Appel video, sonnerie native, lives, reel dans le chat | membre |
+
+## Etat (2026-11-02)
+
+Faits, un dossier et un PDF chacun : 0 a 17 et 19 ci-dessus, plus (captures prises sur le Mi 9T,
+theme sombre de l'app) : camera et CanaReels (refait, mobile seulement, geste "glisser vers la
+droite" depuis le fil), passer en direct, appels audio, messages vocaux.
+Ajoutes ensuite (web, bureau) : annuaire, listes et institutions, tableau de bord.
+Restent : refaire les captures telephone en theme clair (Mi 9T a redemander a Master), puis la
+ligne "later" (appel video, sonnerie native, reel dans le chat : attendre alpha.2).
+Limites connues : l'export Docs n'applique ni l'en-tete ni le logo Les Rootz ; les captures
+telephone sont en theme sombre.
+
+- **Documents et aide (checked 2026-11-02)**: `/documents` is the reviewer-only page ("Relecture", needs reviewer access, no test account has it) and `/help` holds only `lydia-pro`, already covered by the Lydia tutorial: no separate tutorial.
+
+- **Review fixes (2026-11-02)**: no author byline on the covers, the device-id line masked on the Settings captures, raw phone captures and byte-identical duplicates not committed (a screenshot used by two tutorials is kept once, in the first folder that uses it).
