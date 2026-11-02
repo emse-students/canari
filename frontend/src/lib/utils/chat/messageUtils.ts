@@ -287,6 +287,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
       ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
       ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
+      ...(m.mediaPurgedAt ? { mediaPurgedAt: m.mediaPurgedAt } : {}),
       ...(m.pageKey ? { pageKey: m.pageKey } : {}),
     } satisfies ChatMessage;
   });

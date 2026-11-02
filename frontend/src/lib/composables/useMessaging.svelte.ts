@@ -1068,6 +1068,8 @@ export function useMessaging() {
                 isDeleted: upgraded.isDeleted,
                 isEdited: upgraded.isEdited,
                 ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
+                // A reel's recorded 410 is this device's own fact (RC-6): kept across the rewrite.
+                ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
                 isFcmPreview: false,
                 ...proofFields,
               },
@@ -1321,6 +1323,8 @@ export function useMessaging() {
             isFcmPreview: false,
             ...(pm.authorship ? { authorship: pm.authorship } : {}),
             ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            // This device's record of a reel's 410 (RC-6), carried over the wholesale rewrite.
+            ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
           });
         }
         continue;
@@ -2606,6 +2610,91 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * RECORDS THE `410` A CONVERSATION REEL'S VIEWER MET (RC-6, [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)
+   * 15.4): on the message in memory, so every later render of the row draws the tombstone, and on
+   * its local row, so a reload does too - one `410` per message per device, never one per scroll.
+   *
+   * A local fact, the first one kept: a row already carrying it is left alone. The conversation is
+   * read from the map NOW (the one on screen first, the viewer was opened from it), and a write that
+   * fails is said with its cost - the next tap on that tile asks the server again.
+   */
+  async function recordReelPurged(
+    messageId: string,
+    atMs: number,
+    ctx: MessagingContext
+  ): Promise<void> {
+    const selected = ctx.selectedNow();
+    const keys = [
+      ...(selected ? [selected] : []),
+      ...[...ctx.conversations.keys()].filter((k) => k !== selected),
+    ];
+    const key = keys.find((k) =>
+      ctx.conversations.get(k)?.messages.some((msg) => msg.id === messageId)
+    );
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: no loaded conversation holds it`
+      );
+    } else {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (convo.messages[idx].mediaPurgedAt) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+    }
+    if (!ctx.storage) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not persisted: no storage - a reload asks again`
+      );
+      return;
+    }
+    try {
+      // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
+      // hold it from before a reload of another tab), so "already recorded" is asked of the row
+      // itself, and an existing record is never overwritten - memory is aligned to it instead.
+      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      if (!stored) {
+        ctx.log(
+          `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+        );
+        return;
+      }
+      if (stored.mediaPurgedAt) {
+        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx);
+        ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
+        return;
+      }
+      await ctx.storage.updateMessage(messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
+      // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
+      // what tells "on disk" from "asked".
+      const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      ctx.log(
+        back?.mediaPurgedAt
+          ? `[REEL] 410 on ${messageId.slice(0, 8)} recorded on its row`
+          : `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+      );
+    } catch (e) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (${String(e).slice(0, 120)}) - a reload asks again`
+      );
+    }
+  }
+
+  /** Sets memory's copy of a message's recorded 410 to the stored instant, read from the map NOW. */
+  function alignMemoryPurge(messageId: string, atMs: number, ctx: MessagingContext): void {
+    for (const [key, convo] of ctx.conversations) {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (idx === -1) continue;
+      if (convo.messages[idx].mediaPurgedAt === atMs) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+      return;
+    }
+  }
+
   /** Sends an "edit_message" MLS system message and updates the message content and editedAt in the local conversation state. Only the original sender can edit their own message. */
   async function handleEditMessage(messageId: string, text: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
@@ -2937,6 +3026,7 @@ export function useMessaging() {
     /** Sends a delete_message MLS event and marks the message as deleted locally. */
     handleDeleteMessage,
     handleDeleteReelEverywhere,
+    recordReelPurged,
     /** Sends an edit_message MLS event and updates the message content locally. */
     handleEditMessage,
     /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */
