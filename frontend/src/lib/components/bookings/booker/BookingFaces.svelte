@@ -25,7 +25,7 @@
 {#if people.length > 0}
   <div class="flex min-w-0 items-center gap-2" role="img" aria-label={label} title={label}>
     <span class="inline-flex shrink-0 items-center" aria-hidden="true">
-      {#each faces.shown as person, i (person.id)}
+      {#each faces.shown as person, i (`${person.id}:${i}`)}
         <span class="ring-cn-surface rounded-full ring-2 {i > 0 ? '-ml-2' : ''}">
           <Avatar userId={person.id} size="sm" shape="circle" fallbackLabel={person.name} />
         </span>

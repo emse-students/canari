@@ -6,6 +6,8 @@ import {
   type ParticipantRow,
 } from './booking-views';
 
+import { DELETED_ACCOUNT } from '../internal/account-erasure';
+
 const HOLDER = 'h'.repeat(64);
 const IN = 'i'.repeat(64);
 const OUT = 'o'.repeat(64);
@@ -82,6 +84,16 @@ describe('bookingView', () => {
       { id: 'x', name: 'Two' },
     ]);
     expect(view([], HOLDER)).toEqual([]);
+  });
+
+  it('sends an empty id for every erased account, so they share no key', () => {
+    const erased = [
+      { ...people[0], userId: DELETED_ACCOUNT, userName: 'Gone' },
+      { ...people[0], userId: DELETED_ACCOUNT + ':2', userName: 'Gone too' },
+    ];
+    expect(
+      bookingView(booking, erased, 'people', 'occupied', HOLDER).others?.map((o) => o.id)
+    ).toEqual(['', '']);
   });
 
   it.each([

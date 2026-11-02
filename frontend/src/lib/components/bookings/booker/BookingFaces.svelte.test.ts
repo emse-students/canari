@@ -27,6 +27,14 @@ describe('BookingFaces', () => {
     expect(document.querySelector('[role="img"]')).toBeNull();
   });
 
+  it('draws two people sharing an id (erased accounts) without a duplicate-key error', () => {
+    render([
+      { id: '', name: 'A' },
+      { id: '', name: 'B' },
+    ]);
+    expect(document.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain('A, B');
+  });
+
   it('labels the whole stack with every name and counts the faces past three', () => {
     render(['Alice', 'Bob', 'Chloe', 'Dan', 'Eve'].map(person));
     expect(document.querySelector('[role="img"]')?.getAttribute('aria-label')).toContain(
