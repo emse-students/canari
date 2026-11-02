@@ -3,7 +3,10 @@
 import { Logger } from '@nestjs/common';
 import { PostAnnounceScheduler } from './post-announce.scheduler';
 import type { Post } from './entities/post.entity';
-import { announceRecipientsSql } from '../spaces/reader-spaces';
+import {
+  RECORD_ANNOUNCED_THROUGH_REPOST_SQL,
+  announceRecipientsSql,
+} from '../spaces/reader-spaces';
 
 /**
  * NOBODY WAS TOLD ABOUT A POST, and these pin the things that decide who now is.
@@ -190,6 +193,25 @@ describe('PostAnnounceScheduler', () => {
       associationLogoUrl: null,
       associationLogoMediaId: null,
     });
+  });
+
+  it('records, in the stamp transaction, the readers it reaches through a member repost (told-once ledger)', async () => {
+    const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'hello' };
+    await scheduler([post], tables({ audience: ['u1', 'u2'] })).announcePosts();
+    const ledger = queries.filter((q) => q.sql === RECORD_ANNOUNCED_THROUGH_REPOST_SQL);
+    expect(ledger).toEqual([
+      { sql: RECORD_ANNOUNCED_THROUGH_REPOST_SQL, params: ['p1', ['u1', 'u2']] },
+    ]);
+    // Before the send: a failure of the bell cannot leave the ledger unwritten.
+    expect(queries.indexOf(ledger[0])).toBeLessThan(
+      queries.findIndex((q) => q.sql.startsWith('SELECT name, "logoUrl"'))
+    );
+  });
+
+  it('writes no ledger row for a post nobody is told about', async () => {
+    const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'hello' };
+    await scheduler([post], tables({ audience: [] })).announcePosts();
+    expect(queries.some((q) => q.sql === RECORD_ANNOUNCED_THROUGH_REPOST_SQL)).toBe(false);
   });
 
   it('tells only the followers about a personal post', async () => {

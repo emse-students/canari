@@ -1595,7 +1595,14 @@ security review before arming.
   `member_repost_notices` (`ON CONFLICT DO NOTHING RETURNING`) and tells only the pairs it wrote -
   whoever reposts the post, however often. At most once: a pair is recorded even if the push after
   the commit fails (that loss is logged). The repost's answer is `{ postId }` and carries no count
-  of who was reached.
+  of who was reached. **The announcement writes its share (2026-11-02, review of #2917)**: an
+  entity post not yet announced is told nothing at the repost, and the sweep tells everyone who
+  sees it - so in its stamp transaction the sweep records in the same ledger the readers it reaches
+  ONLY through a member repost (`RECORD_ANNOUNCED_THROUGH_REPOST_SQL`, `post-announce.scheduler.ts`).
+  Without it, a take-back then a repost found them newly reached and told them a second time,
+  `member_repost` after `association_post`. Migration 123 holds a SHARE ROW EXCLUSIVE lock on
+  `posts` until its COMMIT, backfill included: writes to `posts` (reactions and comments live in the
+  row) wait for it, reads do not - its comment says so since the same date.
 - **Suivis at the repost's time**: the followed arm admits a post a followed person reposted and
   places it at the latest of its publication, its counted republications and its reposts by people
   the reader follows (`republishedFeedAtSql`). **One `LEFT JOIN LATERAL` per candidate
@@ -1630,7 +1637,11 @@ security review before arming.
   post; 404 to anyone else). **Every one is throttled per caller (2026-11-02)**,
   `UserResourceThrottlerGuard` (the routes name `:postId`, which it does not read, so the bucket is
   the caller alone across every post): 20 reposts or take-backs a minute, 10 consent changes, 60
-  reads of the setting (`member-reposts.controller.ts`, asserted by its throttle spec).
+  reads of the setting (`member-reposts.controller.ts`, asserted by its throttle spec). **Counted
+  PER REPLICA**: `ThrottlerModule.forRoot` names no storage, so the counts are one process's
+  memory - N replicas allow up to N times each limit, and a restart forgets them. It bounds a loop,
+  it is not a quota; the told-once ledger, not the throttle, is what keeps a reader from a second
+  notice.
 - **The client**: the share sheet's "Republier pour mes abonnés" / "Annuler ma republication" row
   (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
   ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the

@@ -5,7 +5,10 @@ import { Repository, IsNull, LessThanOrEqual } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { previewOf } from '../push/push-content';
-import { announceRecipientsSql } from '../spaces/reader-spaces';
+import {
+  RECORD_ANNOUNCED_THROUGH_REPOST_SQL,
+  announceRecipientsSql,
+} from '../spaces/reader-spaces';
 
 /**
  * HOW MANY UNANNOUNCED POSTS ONE TICK TAKES.
@@ -191,7 +194,13 @@ export class PostAnnounceScheduler {
       const rows: unknown = await manager.query(announceRecipientsSql(!post.associationId), [
         post.id,
       ]);
-      return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
+      const recipientIds = Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
+      // The readers this announcement reaches through a member repost are told NOW, so a later
+      // repost of the post must not tell them again: the ledger the repost path reads.
+      if (recipientIds.length > 0) {
+        await manager.query(RECORD_ANNOUNCED_THROUGH_REPOST_SQL, [post.id, recipientIds]);
+      }
+      return recipientIds;
     });
   }
 }

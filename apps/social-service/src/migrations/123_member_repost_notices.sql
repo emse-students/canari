@@ -22,9 +22,14 @@
 --
 -- Idempotent for CD: IF NOT EXISTS, and ON CONFLICT DO NOTHING for the backfill.
 --
--- LOCK TIMEOUT: the foreign key takes a SHARE ROW EXCLUSIVE lock on `posts`, read by every feed; if
--- a long transaction holds it, this migration gives up after five seconds rather than queue every
--- query behind it. The deploy then fails loudly, and a re-run is safe.
+-- LOCKS: the foreign key takes a SHARE ROW EXCLUSIVE lock on `posts` and holds it until COMMIT, so
+-- for the length of this transaction - the backfill's scan of `post_notifications` included - every
+-- WRITE to `posts` waits (a new post, an edit, and the reactions and comments stored in the row);
+-- reads are not blocked. The backfill is the cost: one pass over `post_notifications` filtered on
+-- `type`, matching only the `member_repost` rows (none before WP-F6 shipped).
+-- LOCK TIMEOUT: if a long transaction holds `posts`, this migration gives up after five seconds
+-- rather than queue every write behind its request. The deploy then fails loudly, and a re-run is
+-- safe.
 SET lock_timeout = '5s';
 
 BEGIN;

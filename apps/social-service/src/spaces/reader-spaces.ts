@@ -504,6 +504,24 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
+ * THE ANNOUNCEMENT'S SHARE OF THE TOLD-ONCE LEDGER (WP-F6): of the readers the sweep is telling about
+ * post `$1` (`$2`, a `text[]`), the ones who see it ONLY through a member repost are recorded in
+ * `member_repost_notices`, in the sweep's own transaction. A repost of an entity post not yet
+ * announced tells nobody (the sweep will), so without this the repost path's ledger never held those
+ * readers: a take-back then a repost - by the same member or another - found them newly reached
+ * again and told them a second time, as `member_repost` after `association_post`. A reader who sees
+ * the post first-hand is left out: no take-back makes them newly reached. Nothing is written for a
+ * post nobody reposted.
+ */
+export const RECORD_ANNOUNCED_THROUGH_REPOST_SQL = `INSERT INTO member_repost_notices ("postId", "recipientId")
+  SELECT rn_post.id, rn_user.id FROM posts rn_post
+    JOIN users rn_user ON rn_user.id = ANY($2::text[])
+   WHERE rn_post.id = $1
+     AND EXISTS (SELECT 1 FROM member_reposts rn_rep WHERE rn_rep."postId" = rn_post.id)
+     AND NOT ${postVisibleToUserSql('rn_post', 'rn_user', { memberReposts: false })}
+  ON CONFLICT DO NOTHING`;
+
+/**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM
  * `:name`). An absent viewer (NULL) matches no `users` row, so it sees nothing.
  */
