@@ -6,6 +6,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { routePageNotificationTap } from '$lib/utils/chat/pageNotificationTap';
+import { notePageTapsUnroutable } from '$lib/utils/chat/resumeOpening.svelte';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
@@ -156,10 +157,11 @@ export function useNotifications() {
         '[NOTIF] This plugin build exposes no onAction, so a tap cannot be observed at all. Taps ' +
           'open the app on whatever it was last showing.'
       );
+      notePageTapsUnroutable('this plugin build exposes no onAction');
       return;
     }
     try {
-      (
+      const registered = (
         onAction as unknown as (
           cb: (action: { notification?: { id?: number } | null }) => void
         ) => Promise<unknown>
@@ -192,10 +194,16 @@ export function useNotifications() {
           );
         }
       });
+      // A plugin whose registration REJECTS later is as unroutable as one that throws now.
+      void Promise.resolve(registered).catch((e: unknown) => {
+        console.warn(`[NOTIF] The notification-tap listener could not be registered: ${String(e)}`);
+        notePageTapsUnroutable('the listener registration was refused');
+      });
     } catch (e) {
       // Registration itself threw - a plugin version whose `onAction` rejects the shape above. The
       // latch stays set: calling it again would throw again.
       console.warn(`[NOTIF] The notification-tap listener could not be registered: ${String(e)}`);
+      notePageTapsUnroutable('the listener registration threw');
     }
   }
   let browserPermissionRetryAbort: AbortController | null = null;
