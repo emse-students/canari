@@ -1421,8 +1421,17 @@ unchanged (its conversation is the target, no sheet).
   be posted.
 - **The tab reaches the messaging layer through a registry** (`reelSendBridge.ts`): the layout's
   `ChatBackgroundService` registers a HOST (the live conversations, the account, `send`, `adopt`,
-  `endWait`), so the capture screen, the sheet and the publish step import neither the chat singleton
-  nor the outbox (the MLS engine). No host (no session) = a toast, the review kept.
+  `endWait`). What it buys is the no-session case (no host = a toast, the review kept); it does NOT
+  isolate the import graph - the capture screen already reaches the chat singleton and the outbox
+  through the publish step's pickers.
+- **A take never waits for a step that will not come.** After the write of a *both* press, if the
+  screen was left, the clip changed or the sheet's Back was pressed during the await, the take's wait
+  ends at once (`host.endWait`); `ReelCapture`'s teardown ends a live wait too. A second press of the
+  same clip never queues again, and "Envoyer" is disabled while the write runs.
+- **A block is not refused by the server on a DM message** ([moderation-and-blocking](../../moderation-and-blocking.md)),
+  so the chat rows stay disabled until `listBlockedUsers` answered and for good when it failed (said,
+  the feed row still works); the send set is `ticked AND currently listed`; the feed row waits for
+  the mute answer (a failed read leaves it open: the publish step asks again before any upload).
 - **i18n**: `reel_sendto_*` in `fr.json` and `en.json` (action, title, back, feed row, muted, search, empty,
   no match, kinds, row label, chip remove, cap, silenced, too long, sending (plural), send (plural),
   unavailable, failed).

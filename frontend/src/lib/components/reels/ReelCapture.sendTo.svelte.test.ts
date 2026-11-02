@@ -55,6 +55,7 @@ vi.mock('$lib/posts/postIdentity', async (orig) => ({
   listPostAsAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/moderation/muteCheck', () => ({
+  MutedError: class MutedError extends Error {},
   cachedMuteStatus: () => null,
   getMuteStatus: async () => ({ isMuted: false, mutedReason: null }),
 }));
@@ -378,5 +379,94 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     await settle();
     expect(target.querySelector('[data-reel-send]')).toBeNull();
     expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  /** A press of "both" whose write is still under way: the test settles it when it chooses. */
+  async function pressBothHeld() {
+    let settleSend: (v: { takeId: string; queued: number }) => void = () => {};
+    host.send.mockImplementationOnce(
+      () => new Promise((resolve) => (settleSend = resolve)) as never
+    );
+    const rendered = await render({ publishDeps: publishDeps() });
+    await rendered.hold();
+    await click(rendered.target, '[data-reel-next]');
+    await click(rendered.target, '[data-reel-send-feed]');
+    await click(rendered.target, '[data-reel-send-row="g-1"]');
+    await click(rendered.target, '[data-reel-send-submit]');
+    return { ...rendered, settleSend: () => settleSend({ takeId: 't-1', queued: 1 }) };
+  }
+
+  it('"Envoyer" is disabled while the write is under way, so one take is never queued twice', async () => {
+    const { target, settleSend } = await pressBothHeld();
+    expect(target.querySelector<HTMLButtonElement>('[data-reel-send-submit]')!.disabled).toBe(true);
+    target.querySelector<HTMLButtonElement>('[data-reel-send-submit]')!.click();
+    await settle();
+    expect(host.send).toHaveBeenCalledTimes(1);
+    settleSend();
+    await settle();
+  });
+
+  it('Back on the sheet DURING the write: the publish step does not open, and the take stops waiting at once', async () => {
+    const { target, settleSend } = await pressBothHeld();
+    await click(target, '[data-reel-send] header button');
+    settleSend();
+    await settle();
+    expect(target.querySelector('[data-reel-publish]')).toBeNull();
+    expect(host.endWait).toHaveBeenCalledWith('t-1');
+  });
+
+  it('the screen LEFT during the write: the take stops waiting at once', async () => {
+    const { settleSend } = await pressBothHeld();
+    unmount(mounted.pop()!);
+    settleSend();
+    await settle();
+    expect(host.endWait).toHaveBeenCalledWith('t-1');
+  });
+
+  it('the screen left with the publish step open ends the wait', async () => {
+    const { target, settleSend } = await pressBothHeld();
+    settleSend();
+    await settle();
+    expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
+    host.endWait.mockClear();
+    unmount(mounted.pop()!);
+    expect(host.endWait).toHaveBeenCalledWith('t-1');
+  });
+
+  it('a write that REJECTS is said, logged, keeps the sheet, and queues nothing twice', async () => {
+    host.send.mockRejectedValueOnce(new Error('boom'));
+    const { target, hold } = await render();
+    await hold();
+    await click(target, '[data-reel-next]');
+    await click(target, '[data-reel-send-row="g-1"]');
+    await click(target, '[data-reel-send-submit]');
+    expect(toasts()).toContain(m.reel_sendto_failed());
+    expect(target.querySelector('[data-reel-send]')).not.toBeNull();
+    expect(target.querySelector<HTMLButtonElement>('[data-reel-send-submit]')!.disabled).toBe(
+      false
+    );
+  });
+
+  it('a publish that fails AFTER the adoption and is retried adopts the new upload and ends the wait each time', async () => {
+    const deps = publishDeps();
+    deps.createPost = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('post refused'))
+      .mockResolvedValueOnce({ id: 'p-1' } as never);
+    const { target, hold } = await render({ publishDeps: deps });
+    await hold();
+    await click(target, '[data-reel-next]');
+    await click(target, '[data-reel-send-feed]');
+    await click(target, '[data-reel-send-row="g-1"]');
+    await click(target, '[data-reel-send-submit]');
+    await click(target, '[data-reel-publish-submit]');
+    expect(host.adopt).toHaveBeenCalledTimes(1);
+    expect(host.endWait).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[role="alert"]')).not.toBeNull();
+    await click(target, '[data-reel-publish-submit]');
+    expect(host.adopt).toHaveBeenCalledTimes(2);
+    expect((host.adopt.mock.calls as unknown[][])[1][0]).toBe('t-1');
+    expect(deps.createPost).toHaveBeenCalledTimes(2);
+    expect(host.endWait).toHaveBeenCalledTimes(2);
   });
 });

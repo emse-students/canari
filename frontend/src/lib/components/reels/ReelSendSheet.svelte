@@ -42,9 +42,11 @@
     onclose: () => void;
     /** The press: whether CanaReels is ticked, and the conversation keys, in tick order. */
     onsend: (choice: { feed: boolean; targetKeys: string[] }) => void;
+    /** A press is being written: "Envoyer" waits, so one take can never be queued twice. */
+    sending?: boolean;
   }
 
-  let { clip, host, cap, chatCapMs, onclose, onsend }: Props = $props();
+  let { clip, host, cap, chatCapMs, onclose, onsend, sending = false }: Props = $props();
 
   let query = $state('');
   let feedTicked = $state(false);
@@ -52,6 +54,12 @@
   let capNotice = $state(false);
   let peerNames = $state<Record<string, string>>({});
   let blockedPeerIds = $state<ReadonlySet<string>>(new Set());
+  /**
+   * Whether the blocked list was ANSWERED. A block does not refuse a DM message server-side
+   * (moderation-and-blocking.md: a failure to ask is not an answer), so until it is read - and for
+   * good if the read fails - the chat rows stay disabled rather than listing a blocked person.
+   */
+  let blocksState = $state<'pending' | 'read' | 'failed'>('pending');
   /** `null` until asked: the feed row is not offered as muted on a guess. */
   let muted = $state<boolean | null>(cachedMuteStatus()?.isMuted ?? null);
   let heading = $state<HTMLElement | null>(null);
@@ -59,9 +67,11 @@
   /** A silenced take cannot reach a chat: the audio track is dropped only by the feed's publish. */
   const silenced = $derived(clip.soundRemoved === true);
   const tooLong = $derived(clip.durationMs !== undefined && clip.durationMs > chatCapMs);
-  const chatsBlocked = $derived(silenced || tooLong);
+  const chatsBlocked = $derived(silenced || tooLong || blocksState !== 'read');
   const feedMuted = $derived(muted === true);
-  const count = $derived(selected.length + (feedTicked ? 1 : 0));
+  /** The feed row waits for the mute answer; a tick made before it never survives (`feedSend`). */
+  const feedUnknown = $derived(muted === null);
+  const feedSend = $derived(feedTicked && muted === false);
 
   const overlay = bindHistoryOverlay(
     () => true,
@@ -85,6 +95,21 @@
       blockedPeerIds,
     })
   );
+  /** Every conversation the sheet lists, whatever the search says: what a tick must still belong to. */
+  const listedKeys = $derived(
+    new Set(
+      reelSendCandidates({
+        conversations: host.conversations(),
+        currentUserId: host.userId(),
+        peerNames,
+        query: '',
+        blockedPeerIds,
+      }).map((c) => c.key)
+    )
+  );
+  /** THE SEND SET IS selected AND currently listed: a tick on a row that is no longer one is dropped. */
+  const sendKeys = $derived(chatsBlocked ? [] : selected.filter((k) => listedKeys.has(k)));
+  const count = $derived(sendKeys.length + (feedSend ? 1 : 0));
   const labelOf = (key: string) =>
     candidates.find((c) => c.key === key)?.label ??
     [...host.conversations()].find(([k]) => k === key)?.[1].name ??
@@ -97,16 +122,33 @@
     // at the publish and at each send. A failed read lists everything: the server is the authority.
     void getMuteStatus().then(
       (s) => (muted = s.isMuted),
-      (e: unknown) => console.warn('[reel-send] the mute status could not be read', e)
+      // The publish step asks the mute again before anything is uploaded, so a failed read here
+      // leaves the feed row open: that ask is the answer.
+      (e: unknown) => {
+        console.warn(
+          '[reel-send] the mute status could not be read - the publish step asks again',
+          e
+        );
+        muted = false;
+      }
     );
     void listBlockedUsers().then(
-      (rows) => (blockedPeerIds = new Set(rows.map((r) => r.userId))),
-      (e: unknown) => console.warn('[reel-send] the blocked list could not be read', e)
+      (rows) => {
+        blockedPeerIds = new Set(rows.map((r) => r.userId));
+        blocksState = 'read';
+      },
+      (e: unknown) => {
+        console.error(
+          '[reel-send] the blocked list could not be read: the chat rows stay disabled',
+          e
+        );
+        blocksState = 'failed';
+      }
     );
   });
 
   function toggleFeed() {
-    if (feedMuted) return;
+    if (feedMuted || feedUnknown) return;
     feedTicked = !feedTicked;
     capNotice = false;
   }
@@ -120,9 +162,9 @@
   }
 
   function send() {
-    if (count === 0) return;
-    console.debug(`[reel-send] press: feed=${feedTicked}, ${selected.length} conversation(s)`);
-    onsend({ feed: feedTicked, targetKeys: [...selected] });
+    if (count === 0 || sending) return;
+    console.debug(`[reel-send] press: feed=${feedSend}, ${sendKeys.length} conversation(s)`);
+    onsend({ feed: feedSend, targetKeys: [...sendKeys] });
   }
 
   const ROW =
@@ -155,8 +197,8 @@
     <button
       type="button"
       role="checkbox"
-      aria-checked={feedTicked}
-      disabled={feedMuted}
+      aria-checked={feedSend}
+      disabled={feedMuted || feedUnknown}
       class={ROW}
       onclick={toggleFeed}
       data-reel-send-feed
@@ -167,7 +209,7 @@
         <Film size={20} strokeWidth={2.25} />
       </span>
       <span class="min-w-0 flex-1 text-sm font-semibold">{m.reel_sendto_feed_row()}</span>
-      {@render tick(feedTicked)}
+      {@render tick(feedSend)}
     </button>
     {#if feedMuted}
       <p class="text-text-muted text-2xs px-3 pb-1" role="note" data-reel-send-muted>
@@ -187,7 +229,11 @@
       />
     </div>
 
-    {#if silenced}
+    {#if blocksState === 'failed'}
+      <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-blocks-unread>
+        {m.reel_sendto_blocks_unread()}
+      </p>
+    {:else if silenced}
       <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-silent>
         {m.reel_sendto_sound_removed_chats()}
       </p>
@@ -257,9 +303,9 @@
         {m.reel_sendto_cap({ count: cap })}
       </p>
     {/if}
-    {#if selected.length > 0}
+    {#if sendKeys.length > 0}
       <ul class="mb-2 flex gap-2 overflow-x-auto" data-reel-send-chips>
-        {#each selected as key (key)}
+        {#each sendKeys as key (key)}
           <li class="shrink-0">
             <button
               type="button"
@@ -278,7 +324,7 @@
       <Button
         type="button"
         class="shrink-0 px-6 py-2 text-sm font-bold"
-        disabled={count === 0}
+        disabled={count === 0 || sending}
         onclick={send}
         data-reel-send-submit
       >

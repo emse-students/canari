@@ -3961,6 +3961,7 @@
   "reel_sendto_sound_removed_chats": "Removed sound cannot apply to a conversation send: this video can only be posted.",
   "reel_sendto_sheet_unavailable": "Sending to conversations is not ready, try again in a moment.",
   "reel_sendto_too_long_for_chats": "This video is over {seconds} s: it can only be posted, not sent to a conversation.",
+  "reel_sendto_blocks_unread": "Your blocked list could not be read: sending to conversations is unavailable, you can still post.",
   "reel_sendto_failed": "The send could not be queued.",
   "reel_sendto_send": [
     {

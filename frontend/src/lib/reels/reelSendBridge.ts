@@ -3,10 +3,11 @@
  *
  * The conversations, the account and the outbox live in the layout's `ChatBackgroundService`, which
  * lasts the whole session - the camera tab is a route of its own and holds none of them. The service
- * registers a HOST here; the tab reads it when the member opens "Envoyer a...". Going through a
- * registry keeps the capture screen, its sheet and the publish step free of the chat singleton and of
- * the outbox's import graph (the MLS engine), which they have no business loading. With no host
- * (no session) the tab says the send is not ready; it never sends into a void.
+ * registers a HOST here; the tab reads it when the member opens "Envoyer a...". What the registry
+ * buys is the NO-SESSION case: with no host the tab says the send is not ready and never sends into
+ * a void. It does NOT isolate the import graph - the capture screen already reaches the chat
+ * singleton, the outbox and the MLS engine through the publish step's pickers; it only avoids ADDING
+ * a direct dependency of the sheet and the publish step on the outbox's adopt calls.
  */
 import type { Conversation } from '$lib/types';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';

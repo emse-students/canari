@@ -46,6 +46,7 @@
     type DestinationRules,
     type CaptureEvent,
     type CaptureState,
+    type ReelClip,
     type LimitsFault,
   } from '$lib/reels/reelCapture';
   import { ReelRecorder, ReelRecorderError } from '$lib/reels/reelRecorder';
@@ -194,6 +195,8 @@
   let sendOpen = $state(false);
   /** A press is writing the take's rows: a second press waits for it. */
   let sendingTake = $state(false);
+  /** The clip whose take was queued: a second press of the same clip never queues a duplicate. */
+  let queuedClip: ReelClip | null = null;
   /**
    * The take already queued for conversations while the publish step is open over it (feed AND chats,
    * 15.5): that step uploads the file the take adopts, and its Back never withdraws the sends.
@@ -453,6 +456,10 @@
   async function sendTakeTo(choice: { feed: boolean; targetKeys: string[] }) {
     if (capture.kind !== 'review' || sendingTake) return;
     const clip = capture.clip;
+    if (clip === queuedClip) {
+      console.warn('[reel-capture] send-to: this take is already queued - not queued twice');
+      return;
+    }
     const plan = reelSendPlan(choice.feed, choice.targetKeys.length);
     console.debug(`[reel-capture] send-to: ${plan}, ${choice.targetKeys.length} conversation(s)`);
     if (plan === 'none') return;
@@ -479,7 +486,18 @@
         showToast(m.reel_sendto_failed(), 'error');
         return;
       }
+      queuedClip = clip;
       showToast(m.reel_sendto_sending({ count: queued.queued }), 'info');
+      // THE MEMBER MAY HAVE LEFT DURING THE AWAIT (a tab switch, a Back on the sheet, a discard): the
+      // publish step the take waits for will then never mount, so the wait ends NOW - otherwise the
+      // take would sit in `publishing` for ever. The sends are queued and go on.
+      const stillHere =
+        !destroyed && capture.kind === 'review' && capture.clip === clip && sendOpen;
+      if (!stillHere) {
+        console.warn('[reel-capture] send-to: the take was left during the write - the wait ends');
+        if (plan === 'both') host.endWait(queued.takeId);
+        return;
+      }
       sendOpen = false;
       if (plan === 'both') {
         chatTake = { id: queued.takeId, host };
@@ -488,6 +506,9 @@
         // Chats only: the camera is free at once, every target shows its own bubble.
         dismissTake();
       }
+    } catch (e) {
+      console.error('[reel-capture] send-to failed before any send was queued', e);
+      showToast(m.reel_sendto_failed(), 'error');
     } finally {
       sendingTake = false;
     }
@@ -789,6 +810,8 @@
   }
 
   onDestroy(() => {
+    // A take waiting for the publish step must not wait for ever once the screen is gone.
+    chatTake?.host.endWait(chatTake.id);
     destroyed = true;
     clearHoldTimer();
     abandonRecording();
@@ -928,6 +951,7 @@
         cap={sendTargetCap}
         {chatCapMs}
         onclose={() => (sendOpen = false)}
+        sending={sendingTake}
         onsend={(choice) => void sendTakeTo(choice)}
       />
     {:else if publishOpen && limits}

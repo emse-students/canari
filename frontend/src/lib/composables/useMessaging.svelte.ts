@@ -2236,6 +2236,7 @@ export function useMessaging() {
     // IN FLIGHT FROM BEFORE THE ROWS: a bubble must not read the outbox's "absent" during the
     // durable write as an orphan (outboxActivity).
     const endInflights = targets.map((t) => beginOutboxEnqueue(t.messageId));
+    let queued = false;
     try {
       const rows = buildChatReelTake({
         takeId,
@@ -2273,22 +2274,37 @@ export function useMessaging() {
         }
         console.error(`[MEDIA] chat reel ${takeId.slice(0, 8)}… queued, with a fault:`, e);
       }
+      queued = true;
       ctx.log(
         `[MEDIA] chat reel ${takeId.slice(0, 8)}… of ${file.size} bytes queued raw to ${targets.length} conversation(s) - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
       );
-      // The echoes' rows are already on disk (written with the take): drawn only, never written again.
+      // The echoes' rows are already on disk (written with the take): drawn only, never written
+      // again. A failure drawing one is the bubble's, never the take's: the queue owns the sends.
       for (const [i, send] of rows.sends.entries()) {
         const key = targets[i].conversationKey;
-        await addMessageToChat(ctx.userId, send.message.content, key, ctx, {
-          messageId: send.message.id,
-          status: 'pending',
-          timestamp: new SvelteDate(sentAt),
-          skipDbSave: true,
-        });
-        await ctx.saveConversation(key);
+        try {
+          await addMessageToChat(ctx.userId, send.message.content, key, ctx, {
+            messageId: send.message.id,
+            status: 'pending',
+            timestamp: new SvelteDate(sentAt),
+            skipDbSave: true,
+          });
+          await ctx.saveConversation(key);
+        } catch (e) {
+          console.error(
+            `[MEDIA] chat reel ${takeId.slice(0, 8)}… queued, but its bubble in ${key.slice(0, 8)}… could not be drawn:`,
+            e
+          );
+        }
       }
       ctx.playSendTone?.();
       return { takeId, queued: targets.length };
+    } catch (e) {
+      if (queued) throw e;
+      // BEFORE the write: the bytes could not be read or the rows not built - nothing is queued.
+      console.error(`[MEDIA] chat reel ${takeId.slice(0, 8)}… NOT queued:`, e);
+      ctx.setSendError(m.chat_media_send_error_generic());
+      return null;
     } finally {
       for (const end of endInflights) end();
     }

@@ -158,4 +158,25 @@ describe('sendChatReelTakeTo', () => {
     expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_send_error_generic());
     expect(ctx.conversations.get('key-g-1')!.messages).toHaveLength(0);
   });
+
+  it('bytes that cannot be read queue nothing and are SAID, never an unhandled rejection', async () => {
+    const messaging = await freshMessaging();
+    const file = take();
+    file.arrayBuffer = async () => {
+      throw new Error('unreadable');
+    };
+    const ctx = makeContext();
+    expect(await messaging.sendChatReelTakeTo(file, ['key-g-1'], ctx)).toBeNull();
+    expect(enqueueTakeMock).not.toHaveBeenCalled();
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_send_error_generic());
+  });
+
+  it('a bubble that cannot be drawn after the write never fails the take: the queue owns the sends', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    (ctx.saveConversation as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('disk'));
+    const out = await messaging.sendChatReelTakeTo(take(), ['key-g-1', 'key-g-2'], ctx);
+    expect(out?.queued).toBe(2);
+    expect(enqueueTakeMock).toHaveBeenCalledTimes(1);
+  });
 });

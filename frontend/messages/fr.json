@@ -3961,6 +3961,7 @@
   "reel_sendto_sound_removed_chats": "Le son retiré ne peut pas s'appliquer à un envoi en conversation : cette vidéo ne peut être que publiée.",
   "reel_sendto_sheet_unavailable": "L'envoi en conversation n'est pas prêt, réessayez dans un instant.",
   "reel_sendto_too_long_for_chats": "Cette vidéo dépasse {seconds} s : elle ne peut être que publiée, pas envoyée en conversation.",
+  "reel_sendto_blocks_unread": "Impossible de vérifier vos blocages : l'envoi en conversation est indisponible, vous pouvez encore publier.",
   "reel_sendto_failed": "L'envoi n'a pas pu être mis en file.",
   "reel_sendto_send": [
     {

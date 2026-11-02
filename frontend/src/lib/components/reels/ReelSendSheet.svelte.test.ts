@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
@@ -11,14 +12,21 @@ import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimatio
  */
 afterAll(adoptTransitionAnimations());
 
-const mute = vi.hoisted(() => ({ muted: false }));
+const mute = vi.hoisted(() => ({ muted: false, hang: false }));
 vi.mock('$lib/moderation/muteCheck', () => ({
   cachedMuteStatus: () => null,
-  getMuteStatus: async () => ({ isMuted: mute.muted, mutedReason: null }),
+  getMuteStatus: async () => {
+    if (mute.hang) return new Promise(() => {});
+    return { isMuted: mute.muted, mutedReason: null };
+  },
 }));
-const blocked = vi.hoisted(() => ({ ids: [] as string[] }));
+const blocked = vi.hoisted(() => ({ ids: [] as string[], mode: 'ok' as 'ok' | 'fail' | 'hang' }));
 vi.mock('$lib/users/blocks', () => ({
-  listBlockedUsers: async () => blocked.ids.map((userId) => ({ userId })),
+  listBlockedUsers: async () => {
+    if (blocked.mode === 'fail') throw new Error('offline');
+    if (blocked.mode === 'hang') return new Promise(() => {});
+    return blocked.ids.map((userId) => ({ userId }));
+  },
 }));
 vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async () => null,
@@ -60,13 +68,14 @@ function convo(
   ];
 }
 
-const rows = [
+const baseRows = () => [
   convo('g-old', 'Old', 1),
   convo('g-new', 'New', 9),
   convo('channel_s', 'Salon', 20, { conversationType: 'channel' }),
   convo('d-1', 'Dana', 5, { conversationType: 'direct', directPeerId: 'peer-dana' }),
 ];
-const host = { conversations: () => rows, userId: () => ME };
+const rows = new SvelteMap(baseRows());
+const host = { conversations: () => rows.entries(), userId: () => ME };
 const video = () => new Blob(['v'], { type: 'video/mp4' });
 
 const mounted: Record<string, unknown>[] = [];
@@ -75,7 +84,11 @@ let onclose = vi.fn();
 
 beforeEach(() => {
   mute.muted = false;
+  mute.hang = false;
   blocked.ids = [];
+  blocked.mode = 'ok';
+  rows.clear();
+  for (const [k, v] of baseRows()) rows.set(k, v);
   onsend = vi.fn();
   onclose = vi.fn();
 });
@@ -93,7 +106,7 @@ async function settle() {
 }
 
 async function open(
-  props: Partial<{ clip: object; cap: number; chatCapMs: number }> = {}
+  props: Partial<{ clip: object; cap: number; chatCapMs: number; sending: boolean }> = {}
 ): Promise<void> {
   mounted.push(
     mount(ReelSendSheet, {
@@ -224,5 +237,54 @@ describe('ReelSendSheet', () => {
     await open();
     document.querySelector<HTMLButtonElement>('header button')!.click();
     expect(onclose).toHaveBeenCalledTimes(1);
+  });
+
+  it('the chat rows stay disabled until the blocked list has answered: a blocked DM is never tickable', async () => {
+    blocked.mode = 'hang';
+    await open();
+    expect(row('d-1').disabled).toBe(true);
+    row('d-1').click();
+    await settle();
+    expect(submit().disabled).toBe(true);
+  });
+
+  it('a blocked list that could not be read keeps the chat rows disabled, says so, and still lets the member post', async () => {
+    blocked.mode = 'fail';
+    await open();
+    expect(row('g-old').disabled).toBe(true);
+    expect(document.querySelector('[data-reel-send-blocks-unread]')).not.toBeNull();
+    feed().click();
+    await settle();
+    submit().click();
+    expect(onsend).toHaveBeenCalledWith({ feed: true, targetKeys: [] });
+  });
+
+  it('a feed tick made before the mute answer does not exist: the row waits for it', async () => {
+    mute.hang = true;
+    await open();
+    expect(feed().disabled).toBe(true);
+    feed().click();
+    await settle();
+    expect(feed().getAttribute('aria-checked')).toBe('false');
+    expect(submit().disabled).toBe(true);
+  });
+
+  it('the send set is what is ticked AND still listed: a row that left the list is not sent', async () => {
+    await open();
+    row('g-old').click();
+    row('d-1').click();
+    await settle();
+    // The member is removed from a conversation while the sheet is open.
+    rows.delete('d-1');
+    await settle();
+    submit().click();
+    expect(onsend).toHaveBeenCalledWith({ feed: false, targetKeys: ['g-old'] });
+  });
+
+  it('"Envoyer" is disabled while a press is being written', async () => {
+    await open({ sending: true });
+    row('g-old').click();
+    await settle();
+    expect(submit().disabled).toBe(true);
   });
 });
