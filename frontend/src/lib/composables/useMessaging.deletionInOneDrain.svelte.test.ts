@@ -60,6 +60,10 @@ function makeStore() {
       for (const msg of msgs) await put(msg);
     }),
     getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    getMessagesByIds: vi.fn(async (ids: string[]) => ({
+      rows: new Map(ids.filter((id) => rows.has(id)).map((id) => [id, { ...rows.get(id) }])),
+      unreadable: new Set<string>(),
+    })),
     updateMessage: vi.fn(async (id: string, patch: any) => {
       const row = rows.get(id);
       if (!row) return;

@@ -109,11 +109,19 @@ export async function vetBundle<E extends BundleEntry>(
     held: Map<string, BundleHeldRow>;
     relayer: string;
     mutateHeld: boolean;
+    /**
+     * Whether a held row may take a TOMBSTONE even where `mutateHeld` is false. A deletion is the one
+     * mutation an addressed answer must still carry onto a held row: the reconciliation state key
+     * counts it, so two devices that differ only on a deletion would otherwise never agree. It is
+     * vetted exactly as any other (`vetRestoredDelete`: the author's signed event, or the author
+     * relaying a row it vouches for).
+     */
+    tombstoneHeld?: boolean;
   },
   log: Log,
   onForged: ForgedReport
 ): Promise<VettedBundle<E>> {
-  const { entries, fresh, held, relayer, mutateHeld } = input;
+  const { entries, fresh, held, relayer, mutateHeld, tombstoneHeld = false } = input;
   const out: VettedBundle<E> = {
     fresh: [],
     unverified: 0,
@@ -166,10 +174,16 @@ export async function vetBundle<E extends BundleEntry>(
   //    added, the one just upgraded, or the one held. The last copy of an id speaks for a held row.
   const lastById = new Map(entries.map((e) => [e.id, e]));
   const targets = new Map<string, { entry: E; row: BundleHeldRow }>();
-  if (mutateHeld) {
-    for (const [id, entry] of lastById) {
-      const row = held.get(id);
-      if (row) targets.set(id, { entry, row: { ...row, senderId: row.senderId ?? '' } });
+  /** Held rows that may take a tombstone and nothing else (`tombstoneHeld`). */
+  const tombstoneOnly = new Set<string>();
+  for (const [id, entry] of lastById) {
+    const row = held.get(id);
+    if (!row) continue;
+    if (mutateHeld) {
+      targets.set(id, { entry, row: { ...row, senderId: row.senderId ?? '' } });
+    } else if (tombstoneHeld && entry.isDeleted === true && !row.isDeleted) {
+      targets.set(id, { entry, row: { ...row, senderId: row.senderId ?? '' } });
+      tombstoneOnly.add(id);
     }
   }
   for (const [id, up] of out.upgrades) {
@@ -191,6 +205,12 @@ export async function vetBundle<E extends BundleEntry>(
   for (const [id, { entry, row }] of targets) {
     const target = { id, senderId: row.senderId ?? '', content: row.content };
     const decision: BundleRowDecision = {};
+    if (tombstoneOnly.has(id) && !out.upgrades.has(id) && !freshIndex.has(id)) {
+      decision.del = await vetRestoredDelete(keys, groupId, target, entry, relayer, log);
+      if (decision.del.kind === 'forged') onForged('delete', id, decision.del.why);
+      out.decisions.set(id, { entry, decision });
+      continue;
+    }
     if (Array.isArray(entry.reactions) && entry.reactions.length > 0) {
       const outcome = await vetRestoredReactions(keys, groupId, id, entry.reactions, relayer, log);
       if (outcome.forged > 0) onForged('reaction', id, `${outcome.forged} forged`);
@@ -205,6 +225,72 @@ export async function vetBundle<E extends BundleEntry>(
       if (decision.edit.kind === 'forged') onForged('edit', id, decision.edit.why);
     }
     out.decisions.set(id, { entry, decision });
+  }
+  return out;
+}
+
+/** What a bundle does to a tombstone written before its target (`deletedBeforeArrival`). */
+export interface SettledMarkers {
+  /** The target's own author is proven: the tombstone stays and takes this place in the order. */
+  absorb: Map<string, { timestamp: number; serverTimestamp?: number }>;
+  /** A different author is proven: the deleter's claim fails and the entry is added in its place. */
+  replace: Set<string>;
+}
+
+/**
+ * Settles the tombstones this device wrote for deletions that arrived before their message, against
+ * the copies of those messages a bundle carries - on PROOF, never on the relayer's word.
+ *
+ * A marker names the deleter, not a proven author (`StoredMessage.deletedBeforeArrival`). The
+ * bundle's copy is the first evidence of who wrote the message, so the author-only rule is checked
+ * here: an author proven equal to the deleter leaves the tombstone in place, at the message's own
+ * time; one proven different refutes the claim and the message is restored. A copy that proves no
+ * author changes nothing - a relayer naming a different sender is exactly what it would write to
+ * resurrect a message its author deleted.
+ */
+export async function settleMarkers<E extends BundleEntry>(
+  keys: AuthorKeySource,
+  groupId: string,
+  entries: E[],
+  markers: Map<string, { senderId: string }>,
+  relayer: string,
+  log: Log,
+  onForged: ForgedReport
+): Promise<SettledMarkers> {
+  const out: SettledMarkers = { absorb: new Map(), replace: new Set() };
+  for (const entry of entries) {
+    const marker = markers.get(entry.id);
+    if (!marker || out.absorb.has(entry.id) || out.replace.has(entry.id)) continue;
+    const verdict = await vetRestoredMessage(keys, groupId, entry, relayer, log);
+    if (verdict.kind === 'forged') {
+      onForged('message', entry.id, verdict.why);
+      continue;
+    }
+    const proven =
+      verdict.kind === 'verified'
+        ? canonicalUserId(entry.senderId)
+        : verdict.kind === 'relayer-is-author'
+          ? canonicalUserId(relayer)
+          : null;
+    if (proven === null) {
+      log(
+        `[HISTORY_BUNDLE] ${entry.id.slice(0, 8)}: a copy of a message deleted before it arrived proves no author - the tombstone stands`
+      );
+      continue;
+    }
+    if (proven === canonicalUserId(marker.senderId)) {
+      out.absorb.set(entry.id, {
+        timestamp: verdict.kind === 'verified' ? verdict.timestamp : entry.timestamp,
+        ...(typeof entry.serverTimestamp === 'number'
+          ? { serverTimestamp: entry.serverTimestamp }
+          : {}),
+      });
+    } else {
+      log(
+        `[HISTORY_BUNDLE] ${entry.id.slice(0, 8)}: its author is ${proven.slice(0, 8)}, not ${canonicalUserId(marker.senderId).slice(0, 8)} who deleted it before it arrived - only an author may delete, the message is restored`
+      );
+      out.replace.add(entry.id);
+    }
   }
   return out;
 }

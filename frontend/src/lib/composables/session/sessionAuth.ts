@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import { clearHeldEdits } from '$lib/utils/chat/heldEdits';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -3413,6 +3414,8 @@ export function tearDownLiveSession(
   // restore this session queued would refill the map as the account that just left.
   cb.invalidateRestores();
   cb.conversations.clear();
+  // An edit held for a message that never came belongs to the account that just left.
+  clearHeldEdits();
   cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
   cb.setSelectedContact(null);

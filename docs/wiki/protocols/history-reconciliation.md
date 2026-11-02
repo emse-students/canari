@@ -1557,11 +1557,11 @@ and gone for good - its frame is consumed (`noteFrameConsumed`), so the archive 
   in neither memory nor the store. The flush then rendered and persisted the deleted text. The same
   shape covers a body that reaches the device only later, through a bundle or a replay.
 
-The handler now asks the store when memory has no row (`getMessage`), authorises against the stored
-row, and tombstones it at rest. When neither holds the target, the deletion is KEPT as a tombstone
-row under the target's id, flagged `deletedBeforeArrival`, written only where no row stands
-(`saveMessageIfAbsent` - an insert the store's key constraint refuses, because `getMessage` reads an
-undecryptable row as `null` like an absent one). Its `senderId` is the DELETER's claim. Every seam
+The handler now asks the store when memory has no row (`getMessagesByIds`), authorises against
+the stored row, and tombstones it at rest. When neither holds the target, the deletion is KEPT as a
+tombstone row under the target's id, flagged `deletedBeforeArrival`, written only where no row
+stands (`saveMessageIfAbsent` - an insert the store's key constraint refuses, so a row this device
+cannot decrypt is never overwritten). Its `senderId` is the DELETER's claim. Every seam
 that materialises a body settles it there (`bodyMeetsTombstone`, `messageMerge.ts`): the live add and
 the batch flush (`useMessaging.svelte.ts`) and the replay's row builder (`replayedStoredRow`). The
 deleter's own body is ABSORBED - the tombstone stays and takes the body's place in the order
@@ -1571,18 +1571,51 @@ upgraded back into its body either (`shouldUpgradeMessage`). Pinned by
 `useMessaging.deletionInOneDrain.svelte.test.ts` (the report's shape, failing before the fix),
 `systemMessageHandler.deletionReach.test.ts` and `saveMessageIfAbsent.test.ts`.
 
-**What this does NOT cover, measured in code on the same day:**
+**Edits, reactions and re-deliveries reach the store too (2026-11-02, the same PR).** Memory is
+a window, so every seam that mutates or adds a row asks the store about the ids memory does not
+show - in ONE read per batch, keyed by id (`getMessagesByIds`, a `WHERE id IN` chunked under the
+bound-parameter cap on SQLite, one get per id on IndexedDB), never a full-table read:
 
-- the edit and reaction handlers have the same memory-only lookup, so an edit or a reaction whose
-  target is stored but not shown is dropped the same way;
-- `addMessageToChat` and `batchAddMessages` deduplicate against memory only and write with a
-  full-row `put`, so a body re-delivered for a row stored but not shown (a broadcast or join bundle
-  restating old history) replaces that row - a stored tombstone included;
-- an ADDRESSED bundle (a reconciliation answer, `addOnly`) never applies a tombstone to a held row,
-  while the state key counts `deleted`: two devices that disagree only on a deletion keep
-  disagreeing, and keep exchanging digests;
-- a `deletedBeforeArrival` tombstone met by a bundle keeps the deletion frame's date - only the three
-  seams above move it to the body's place.
+- `edit_message` (`applyEdit`) finds a stored target exactly as the deletion does, authorises it
+  against the stored author, and rewrites the stored row. An edit whose target is not here yet is
+  HELD (`heldEdits.ts`, the newest per id by `editSupersedes`) and applied when the body
+  materialises, with the same author check - a held edit by anybody else is dropped;
+- a reaction (`reactionFrame.ts`) is merged into a stored row; one whose target is absent stays in
+  `messageReactions` and is written with the body when it arrives;
+- `addMessageToChat` and `batchAddMessages` settle a re-delivered body against the stored row
+  (`storedBodyVerdict`): a stored row is never overwritten - a tombstone stays a tombstone, an edit
+  and its reactions stay - only a notification preview is upgraded, and a row this device cannot
+  open is left alone;
+- the bundle merge counts a stored row as HELD (never added over itself) and merges onto it in the
+  store (`mergeVettedIntoStore`), the rows memory shows being merged as before;
+- a `deletedBeforeArrival` tombstone that a bundle meets is settled ON PROOF (`settleMarkers`,
+  `bundleVetting.ts`): the copy's author proven equal to the deleter keeps the tombstone at the
+  message's own time; proven different restores the message; a copy that proves no author changes
+  nothing;
+- an ADDRESSED answer still only adds, EXCEPT a deletion onto a held row (`tombstoneHeld`, vetted by
+  `vetRestoredDelete` like any other), and the answerer sends every tombstone in its window with
+  what the asker lacks (`withTombstones`). The state key counts `deleted` while the digest names
+  ids only, so before this two devices differing only on a deletion exchanged digests forever. The
+  cost is every tombstone in the window on each digest answer, and the answer is skipped entirely
+  when the state keys already agree;
+- on SQLite a message row names its conversation, so the marker path saves the conversation row
+  first - the expected order of a group joined in the same drain - and an absent conversation in
+  MEMORY is logged as a defect, because the inbound handler refuses that frame before it decrypts.
+
+Pinned by `useMessaging.mutationsReachTargets.svelte.test.ts`,
+`systemMessageHandler.bundleReachesStore.test.ts` and the tombstone cases of
+`groupActions.historyBundle.test.ts`.
+
+**What is still open, and why each one is not built here:**
+
+- a held edit lives for the session (cleared at sign-out): surviving a restart needs a local table,
+  which is a migration;
+- an EDIT or a REACTION that differs between two devices does not converge through reconciliation:
+  the digest names ids, so the answerer cannot know the asker's state of a row it holds - carrying
+  state in the digest is a protocol change;
+- the legacy `remove_reaction` frame still looks in memory only;
+- an edit or deletion replayed from the archive whose target is absent at replay time is still
+  dropped by the replay path.
 
 **The shared-log half is not, and it needs a decision.** The server holds ciphertext and cannot tell
 which stream entry carries a given message, so nothing there can act on a deletion by itself. Three

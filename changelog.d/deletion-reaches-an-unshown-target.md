@@ -1,3 +1,3 @@
 ### Fixed - a message deleted while a device was away stayed on that device
 
-A deletion whose message was stored but not on screen, or not yet received (both arriving in one catch-up), was dropped; it now tombstones the stored row or is kept until its message arrives ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#deletion-purges)).
+A deletion, an edit or a reaction whose message was stored but not on screen, or not yet received, was dropped; each now reaches the stored row or waits for its message, a re-delivered message no longer overwrites a stored one, and two devices that differ only on a deletion now converge ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#deletion-purges)).

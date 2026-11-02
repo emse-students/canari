@@ -369,3 +369,46 @@ describe('history is withheld from an unverified device', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('sendHistoryBundleForIds - the tombstones a digest answer carries', () => {
+  // The digest names ids, the state key that asked for it counts deletions: a deletion the asker
+  // missed on a message it HOLDS is invisible to the id diff, so the answer carries every tombstone.
+  it('sends the tombstones in the window with what the asker lacks, and nothing else', async () => {
+    const mlsService = createMlsServiceStub();
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['lacked'],
+      {
+        storage: storageWith([
+          storedMessage('lacked'),
+          storedMessage('shared'),
+          { ...storedMessage('deleted'), isDeleted: true, content: 'deleted' },
+        ]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+    );
+
+    const ids = (sentBundle(mlsService).data.messages as Array<{ id: string }>).map((r) => r.id);
+    expect(ids.sort()).toEqual(['deleted', 'lacked']);
+  });
+
+  it('answers with the tombstones alone when the asker lacks no id', async () => {
+    const mlsService = createMlsServiceStub();
+    await sendHistoryBundleForIds(
+      GROUP,
+      [],
+      {
+        storage: storageWith([{ ...storedMessage('deleted'), isDeleted: true, content: 'x' }]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+    );
+
+    expect(sentBundle(mlsService).data.messages).toHaveLength(1);
+  });
+});

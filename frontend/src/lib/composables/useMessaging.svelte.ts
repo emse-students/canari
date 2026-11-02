@@ -135,6 +135,8 @@ import {
 import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
+import { takeHeldEdit, type HeldEdit } from '$lib/utils/chat/heldEdits';
+import type { StoredRowsById } from '$lib/db/types';
 import {
   absorbedTombstone,
   bodyMeetsTombstone,
@@ -216,6 +218,14 @@ function mediaKindFromEnvelope(type: string): number {
 }
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
+/** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
+type StoredBodyVerdict =
+  | { kind: 'new' }
+  | { kind: 'unreadable'; id: string }
+  | { kind: 'held'; id: string }
+  | { kind: 'absorb'; row: StoredMessage }
+  | { kind: 'upgrade'; row: StoredMessage; content: string };
+
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
   /**
@@ -1129,6 +1139,27 @@ export function useMessaging() {
       return;
     }
 
+    // NOT SHOWN IS NOT NEW. Memory is a window, so a body it does not show may be a row the store
+    // holds - a re-delivery, a bundle restating old history - and writing it would replace that row
+    // whole: its tombstone, its edit, its reactions. The store is asked, by the one id.
+    const persisted = !(options.skipDbSave ?? isChannelConversationId(normalized));
+    if (meets !== 'replace' && persisted && ctx.storage) {
+      const stored = await storedRowsFor(ctx, [newMsg.id]);
+      const verdict = storedBodyVerdict(stored, newMsg.id, senderId, content);
+      if (verdict.kind !== 'new') {
+        await settleStoredBody(verdict, newMsg, ctx);
+        return;
+      }
+    }
+    // What reached this device before the body - an edit, reactions - lands with it.
+    const heldMutations = takeHeldMutations(newMsg.id, newMsg.senderId);
+    if (heldMutations.edit) {
+      newMsg.content = applyEditToBody(newMsg.content, heldMutations.edit.text);
+      newMsg.isEdited = true;
+      newMsg.editedAt = new SvelteDate(heldMutations.edit.editedAt);
+    }
+    if (heldMutations.reactions) newMsg.reactions = heldMutations.reactions;
+
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
     const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
@@ -1237,11 +1268,12 @@ export function useMessaging() {
           id: newMsg.id,
           conversationId: normalized,
           senderId: newMsg.senderId,
-          content,
+          content: newMsg.content,
           timestamp: newMsg.timestamp.getTime(),
           serverTimestamp: options.serverTimestamp,
           ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
           ...proofFields,
+          ...heldMutationFields(heldMutations),
         };
         // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
         // the echo and then queuing it was two awaits, and a document torn down between them left a
@@ -1288,6 +1320,142 @@ export function useMessaging() {
    * Used by history replay and bulk catch-up to avoid O(n) individual updates that would
    * cause UI jank. Advances `lastMessageAt` to the newest REAL (non-notice) message of the batch.
    */
+  /** The rows the store holds under `ids` - `null` when it could not be asked, which is said. */
+  async function storedRowsFor(
+    ctx: MessagingContext,
+    ids: readonly string[]
+  ): Promise<StoredRowsById | null> {
+    if (!ctx.storage) return null;
+    try {
+      return await ctx.storage.getMessagesByIds(ids, ctx.deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] the store could not say whether it holds ${ids.length} arriving message(s) - they are written as new:`,
+        e
+      );
+      return null;
+    }
+  }
+
+  /**
+   * What an arriving body does, given what the store holds under its id while memory shows nothing.
+   *
+   * - `new`: nothing stands there, or a tombstone written before its target whose claim this body
+   *   refutes (`bodyMeetsTombstone` -> `replace`): the body is written.
+   * - `unreadable`: a row this device cannot open - never written over.
+   * - `held`: a stored row, the same message - left as the store holds it, tombstone and edits and
+   *   reactions included. Writing the body would have replaced the row whole.
+   * - `absorb`: a tombstone written before its target, by this body's author - it takes the body's
+   *   place in the order and stays a tombstone.
+   * - `upgrade`: a stored notification preview the body upgrades, exactly as a shown one is.
+   */
+  function storedBodyVerdict(
+    stored: StoredRowsById | null,
+    id: string,
+    senderId: string,
+    content: string
+  ): StoredBodyVerdict {
+    if (!stored) return { kind: 'new' };
+    if (stored.unreadable.has(id)) return { kind: 'unreadable', id };
+    const row = stored.rows.get(id);
+    if (!row) return { kind: 'new' };
+    const meets = bodyMeetsTombstone(row, senderId);
+    if (meets === 'replace') {
+      console.error(
+        `[ADD_MSG] ${id.slice(0, 8)}: a deletion that arrived before it was claimed by ${row.senderId.slice(0, 8)}, and its author is ${senderId.toLowerCase().slice(0, 8)} - only an author may delete, the message replaces the tombstone`
+      );
+      return { kind: 'new' };
+    }
+    if (meets === 'absorb') return { kind: 'absorb', row };
+    if (shouldUpgradeMessage(row, content)) return { kind: 'upgrade', row, content };
+    return { kind: 'held', id };
+  }
+
+  /**
+   * Carries out a {@link storedBodyVerdict} other than `new`. The row is not shown, and it stays
+   * that way: the page that reaches it reads it from the store. `body` is the arriving message when
+   * the live path has one, for its position.
+   */
+  async function settleStoredBody(
+    verdict: Exclude<StoredBodyVerdict, { kind: 'new' }>,
+    body: ChatMessage | null,
+    ctx: MessagingContext
+  ) {
+    if (verdict.kind === 'unreadable') {
+      console.warn(
+        `[ADD_MSG] ${verdict.id.slice(0, 8)} is stored under a key this device cannot open - the arriving copy does not overwrite it`
+      );
+      return;
+    }
+    if (verdict.kind === 'held') {
+      console.log(`[ADD_MSG] Duplicate ignored id=${verdict.id} - stored, not shown`);
+      return;
+    }
+    if (!ctx.storage) return;
+    try {
+      if (verdict.kind === 'absorb') {
+        console.log(
+          `[ADD_MSG] ${verdict.row.id.slice(0, 8)} reached this device after its deletion - the stored tombstone stays`
+        );
+        await ctx.storage.updateMessage(
+          verdict.row.id,
+          {
+            ...(body ? { timestamp: body.timestamp.getTime() } : {}),
+            ...(body?.serverTimestamp !== undefined
+              ? { serverTimestamp: body.serverTimestamp }
+              : {}),
+            deletedBeforeArrival: false,
+          },
+          ctx.deviceKeyB64
+        );
+        return;
+      }
+      console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
+      await ctx.storage.updateMessage(
+        verdict.row.id,
+        { content: verdict.content, isFcmPreview: false },
+        ctx.deviceKeyB64
+      );
+    } catch (e) {
+      console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
+    }
+  }
+
+  /**
+   * The mutations that reached this device before the body `id` by `authorId` did: an edit held by
+   * the live handler (`heldEdits.ts`, the author's only) and the reactions `messageReactions` kept.
+   */
+  function takeHeldMutations(
+    id: string,
+    authorId: string
+  ): { edit?: HeldEdit; reactions?: MessageReaction[] } {
+    const taken = takeHeldEdit(id, authorId);
+    if (taken && 'refused' in taken) {
+      console.error(
+        `[ADD_MSG] ${id.slice(0, 8)}: an edit that arrived before it came from ${taken.refused.by.slice(0, 8)}, and its author is ${authorId.toLowerCase().slice(0, 8)} - only an author may edit, dropped`
+      );
+    }
+    const reactions = messageReactions.get(id);
+    return {
+      ...(taken && 'edit' in taken ? { edit: taken.edit } : {}),
+      ...(reactions && reactions.length > 0 ? { reactions } : {}),
+    };
+  }
+
+  /** The stored fields of {@link takeHeldMutations}: the edit with its proof, the reactions. */
+  function heldMutationFields(held: { edit?: HeldEdit; reactions?: MessageReaction[] }) {
+    return {
+      ...(held.edit
+        ? {
+            isEdited: true,
+            editedAt: held.edit.editedAt,
+            ...(held.edit.proof ? { editProof: held.edit.proof } : {}),
+          }
+        : {}),
+      ...(held.reactions ? { reactions: held.reactions } : {}),
+    };
+  }
+
   /**
    * Writes a tombstone that has just absorbed its body (`absorbedTombstone`): the body's position,
    * and no longer awaiting anything. The tombstone's content and its deletion proof stay as stored.
@@ -1363,6 +1531,15 @@ export function useMessaging() {
     // conversation rather than with the batch. It has to work at any size, so it is an index.
     // Ids seen during THIS batch are added to it too, which is what the separate dedup set did.
     const byId = indexMessagesById(convo.messages);
+    // NOT SHOWN IS NOT NEW (see `addMessageToChat`): the ids memory does not show are asked of the
+    // store in ONE read, whose cost is the batch's and never the conversation's.
+    const persisted = !isChannelConversationId(normalized);
+    const notShown = messages
+      .map((pm) => normalizeMessageId(pm.messageId))
+      .filter((id): id is string => id !== undefined && !byId.has(id));
+    const stored =
+      persisted && ctx.storage && notShown.length > 0 ? await storedRowsFor(ctx, notShown) : null;
+    const storedVerdicts: Array<Exclude<StoredBodyVerdict, { kind: 'new' }>> = [];
     const toStore: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
@@ -1413,6 +1590,14 @@ export function useMessaging() {
         byId.delete(id);
       }
       const existingMsg = byId.get(id);
+      if (!existingMsg && meets !== 'replace') {
+        const verdict = storedBodyVerdict(stored, id, pm.senderId, pm.content);
+        if (verdict.kind !== 'new') {
+          storedVerdicts.push(verdict);
+          // Settled once in this batch: a second copy of the id meets the same verdict.
+          continue;
+        }
+      }
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
         const upgraded = mergeMessageUpgrade(existingMsg, {
           content: pm.content,
@@ -1442,16 +1627,24 @@ export function useMessaging() {
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
       const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
+      // What reached this device before the body - an edit, reactions - lands with it.
+      const heldMutations = takeHeldMutations(id, pm.senderId);
       const newMsg: ChatMessage = {
         id,
         senderId: pm.senderId.toLowerCase(),
-        content: pm.content,
+        content: heldMutations.edit
+          ? applyEditToBody(pm.content, heldMutations.edit.text)
+          : pm.content,
         timestamp: new SvelteDate(resolvedTimestamp),
         isOwn,
         replyTo: pm.replyTo,
         isSystem,
         ingestSequence: pm.ingestSequence,
         ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+        ...(heldMutations.edit
+          ? { isEdited: true, editedAt: new SvelteDate(heldMutations.edit.editedAt) }
+          : {}),
+        ...(heldMutations.reactions ? { reactions: heldMutations.reactions } : {}),
       };
       brandNew.push(newMsg);
       if (pm.authorProven === true) authorProvenIds.add(id);
@@ -1463,7 +1656,7 @@ export function useMessaging() {
           id,
           conversationId: normalized,
           senderId: newMsg.senderId,
-          content: pm.content,
+          content: newMsg.content,
           timestamp: (newMsg.timestamp instanceof Date
             ? newMsg.timestamp
             : new SvelteDate(newMsg.timestamp)
@@ -1472,8 +1665,12 @@ export function useMessaging() {
           ...(isSystem ? { readBy: [] } : {}),
           ...(pm.authorship ? { authorship: pm.authorship } : {}),
           ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+          ...heldMutationFields(heldMutations),
         });
       }
+    }
+    for (const verdict of storedVerdicts) {
+      await settleStoredBody(verdict, null, ctx);
     }
 
     if (upgradedById.size === 0 && brandNew.length === 0) {

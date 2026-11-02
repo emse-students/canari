@@ -1648,17 +1648,26 @@ export async function sendHistoryBundleForIds(
     since: number;
     /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
     requestId?: string;
+    /**
+     * Also send every TOMBSTONE this device holds in the window, whether the asker lacks the id or
+     * not - the answer to a digest. The digest names ids only, while the state key that asked for
+     * it counts deletions too: two devices that differ only on a deletion compare equal ids, and the
+     * ids alone never told the asker what it missed - it asked again at every connection, for ever.
+     * A tombstone carries no body, and the asker applies it to the row it holds on its author's
+     * proof (`vetBundle`, `tombstoneHeld`).
+     */
+    withTombstones?: boolean;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since, requestId } = opts;
+  const { to, chunkSize = 200, since, requestId, withTombstones = false } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
   }
 
   const wanted = new Set(ids);
-  if (wanted.size === 0) return;
+  if (wanted.size === 0 && !withTombstones) return;
 
   const held = await readHistoryMessages(groupId, deps);
   if (held === null) {
@@ -1666,7 +1675,7 @@ export async function sendHistoryBundleForIds(
     // against another member rather than concluding it is already complete.
     return;
   }
-  const matching = held.filter((m) => wanted.has(m.id));
+  const matching = held.filter((m) => wanted.has(m.id) || (withTombstones && m.isDeleted === true));
   const selected = matching.filter((m) => isWithinHistoryRange(Number(m.timestamp), since));
   const clipped = matching.length - selected.length;
   if (clipped > 0) {

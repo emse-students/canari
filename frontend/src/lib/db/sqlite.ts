@@ -24,6 +24,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
+  StoredRowsById,
 } from './types';
 import { FeedPageUnreadableError } from './types';
 import {
@@ -83,6 +84,7 @@ import {
   type OrderKeyDerivation,
 } from './orderKeyDerivation';
 import {
+  MAX_BOUND_PARAMETERS,
   MESSAGE_ROWS_PER_STATEMENT,
   ORDER_AT_FILL_ROWS_PER_STATEMENT,
   SEALED_SWAP_ROWS_PER_STATEMENT,
@@ -731,6 +733,43 @@ export class SqliteStorage implements IStorage {
       console.warn('Failed to decrypt SQLite row', id);
       return null;
     }
+  }
+
+  /** See {@link IStorage.getMessagesByIds}: primary-key `IN` lists, as many as the bound allows. */
+  async getMessagesByIds(ids: readonly string[], deviceKeyB64: string): Promise<StoredRowsById> {
+    const out: StoredRowsById = { rows: new Map(), unreadable: new Set() };
+    const unique = [...new Set(ids)];
+    for (const batch of chunk(unique, MAX_BOUND_PARAMETERS)) {
+      const placeholders = batch.map((_, i) => `$${i + 1}`).join(', ');
+      const rows: any[] = await this.db.select(
+        `SELECT * FROM messages WHERE id IN (${placeholders})`,
+        batch
+      );
+      for (const row of rows) {
+        try {
+          const payload = (await decryptData(
+            base64ToUint8(row.cipher_text),
+            base64ToUint8(row.iv),
+            deviceKeyB64
+          )) as Record<string, unknown>;
+          out.rows.set(
+            row.id,
+            fromMessagePayload(
+              {
+                id: row.id,
+                conversationId: row.conversation_id,
+                timestamp: rowTimestampMs(row.timestamp),
+              },
+              payload
+            )
+          );
+        } catch {
+          console.warn('Failed to decrypt SQLite row', row.id);
+          out.unreadable.add(row.id);
+        }
+      }
+    }
+    return out;
   }
 
   /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */

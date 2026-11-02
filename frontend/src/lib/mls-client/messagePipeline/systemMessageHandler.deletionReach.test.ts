@@ -19,7 +19,10 @@ function makeCtx(rows: Record<string, any>, senderNorm = PEER) {
   conversations.set('g1', { id: 'g1', unreadCount: 0, messages: [] });
   const store = new Map<string, any>(Object.entries(rows));
   const storage = {
-    getMessage: vi.fn(async (id: string) => store.get(id) ?? null),
+    getMessagesByIds: vi.fn(async (ids: string[]) => ({
+      rows: new Map(ids.filter((id) => store.has(id)).map((id) => [id, store.get(id)])),
+      unreadable: new Set<string>(),
+    })),
     updateMessage: vi.fn(async (id: string, patch: any) => {
       const row = store.get(id);
       if (row) store.set(id, { ...row, ...patch });
@@ -117,5 +120,34 @@ describe('handleSystemEvent - a delete_message that arrives before its target', 
 
     expect(conversations.get('g1').messages).toHaveLength(0);
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('left as it is'));
+  });
+});
+
+describe('handleSystemEvent - the conversation row comes before the tombstone that names it', () => {
+  it('saves the conversation first, so a store with a foreign key has a row to name', async () => {
+    // On SQLite a message row names its conversation; a group joined during the very drain that
+    // carries the deletion may not have reached the store yet.
+    const { ctx, storage } = makeCtx({});
+
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
+
+    expect(ctx.saveConversation).toHaveBeenCalledWith('g1');
+    expect(ctx.saveConversation.mock.invocationCallOrder[0]).toBeLessThan(
+      storage.saveMessageIfAbsent.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('leaves a row this device cannot open alone, even absent from memory', async () => {
+    const { ctx, storage } = makeCtx({});
+    storage.getMessagesByIds.mockResolvedValueOnce({
+      rows: new Map(),
+      unreadable: new Set(['m1']),
+    } as never);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
+
+    expect(storage.saveMessageIfAbsent).not.toHaveBeenCalled();
+    expect(storage.updateMessage).not.toHaveBeenCalled();
   });
 });

@@ -165,6 +165,14 @@ export interface PageKey {
  * `id` and `conversationId` are the row's identity, never patchable: a reaction may not move a
  * message to another conversation. Applied by `mergeStoredMessage`.
  */
+/** The answer of {@link IStorage.getMessagesByIds}. */
+export interface StoredRowsById {
+  /** The rows found and opened, by id. */
+  rows: Map<string, StoredMessage>;
+  /** The ids a row stands under that this device cannot open - never to be written over. */
+  unreadable: Set<string>;
+}
+
 export type StoredMessagePatch = Partial<Omit<StoredMessage, 'id' | 'conversationId'>>;
 
 /**
@@ -715,6 +723,15 @@ export interface IStorage {
    * caller that needs the pair to be indivisible must run where nothing else writes.
    */
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
+  /**
+   * The rows stored under `ids`, read by primary key in one pass - what a seam that is handed a
+   * batch of messages asks before it writes, so a row stored but not on screen is never written
+   * over. Its cost is the batch's, never the conversation's.
+   *
+   * `unreadable` names the ids a row stands under that this device key cannot open: `getMessage`
+   * reports those as `null` like an absent row, and only an absent one may be written.
+   */
+  getMessagesByIds(ids: readonly string[], deviceKeyB64: string): Promise<StoredRowsById>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
   /**

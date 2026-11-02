@@ -22,6 +22,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
+  StoredRowsById,
 } from './types';
 import { FeedPageUnreadableError } from './types';
 import {
@@ -880,6 +881,51 @@ export class IndexedDbStorage implements IStorage {
     // and an absent row as `null`, and neither is a reason to write.
     if (!msg) return;
     await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
+  }
+
+  /** See {@link IStorage.getMessagesByIds}: one read transaction, one `get` per id. */
+  async getMessagesByIds(ids: readonly string[], deviceKeyB64: string): Promise<StoredRowsById> {
+    const out: StoredRowsById = { rows: new Map(), unreadable: new Set() };
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return out;
+    const db = this.ensureDb();
+    const found: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readonly');
+      const store = tx.objectStore('messages');
+      const rows: any[] = [];
+      for (const id of unique) {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          if (req.result) rows.push(req.result);
+        };
+      }
+      tx.oncomplete = () => resolve(rows);
+      tx.onerror = () => reject(tx.error);
+    });
+    for (const existing of found) {
+      try {
+        const payload = (await decryptData(
+          existing.cipherText,
+          existing.iv,
+          deviceKeyB64
+        )) as Record<string, unknown>;
+        out.rows.set(
+          existing.id,
+          fromMessagePayload(
+            {
+              id: existing.id,
+              conversationId: existing.conversationId,
+              timestamp: existing.timestamp,
+            },
+            payload
+          )
+        );
+      } catch {
+        console.warn('Failed to decrypt message', existing.id);
+        out.unreadable.add(existing.id);
+      }
+    }
+    return out;
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */

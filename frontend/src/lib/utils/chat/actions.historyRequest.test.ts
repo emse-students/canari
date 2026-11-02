@@ -313,7 +313,7 @@ describe('handleHistoryRequest - with a digest', () => {
       ['only-ours'],
       expect.anything(),
       // `since: 0` is the requester's own window, restated: this digest stated none.
-      { to: REQUESTER, since: 0 }
+      { to: REQUESTER, since: 0, withTombstones: true }
     );
   });
 
@@ -327,6 +327,7 @@ describe('handleHistoryRequest - with a digest', () => {
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
       to: REQUESTER,
       since: 0,
+      withTombstones: true,
     });
     expect(sendHistoryPull).not.toHaveBeenCalled();
   });
@@ -380,7 +381,7 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { to: REQUESTER, since: 0 }
+      { to: REQUESTER, since: 0, withTombstones: true }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.
@@ -411,6 +412,7 @@ describe('handleHistoryRequest - with a digest', () => {
       expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
         to: REQUESTER,
         since: THEIR_SINCE,
+        withTombstones: true,
       });
     });
 

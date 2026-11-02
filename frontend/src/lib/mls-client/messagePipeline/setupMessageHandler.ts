@@ -14,7 +14,6 @@ import {
   normalizeMessageId,
 } from '$lib/utils/chat/messageUtils';
 import { receivedNoticeTime } from '$lib/utils/chat/visibleNotices';
-import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   requestReAdd,
   cancelReAdd,
@@ -55,6 +54,7 @@ import { createMlsStatePersister } from '../mlsStatePersister';
 import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
+import { applyReactionFrame } from './reactionFrame';
 import type { MessageHandlerDeps } from './deps';
 import {
   membershipIsDurablyLost,
@@ -1260,40 +1260,19 @@ async function handleKnownGroup({
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
     } else if (msg.reaction) {
-      const msgId = msg.reaction.messageId ?? '';
-      const emoji = msg.reaction.emoji ?? '';
-      const reactions = messageReactions.get(msgId) || [];
-      // Both legs arrive here: `removed` says which. A frame from before the field existed carries
-      // false, which is what it meant - it could only ever place a reaction.
-      // `at` is the sender's clock; an undated frame reads as 0 and loses to anything dated.
-      const updated = applyReaction(
-        reactions,
+      await applyReactionFrame(
+        {
+          storage,
+          deviceKey,
+          conversations,
+          messageReactions,
+          log,
+        },
+        convoKey,
         sender,
-        emoji,
-        Number(msg.reaction.at ?? 0),
-        msg.reaction.removed === true,
+        msg.reaction,
         authorship
       );
-      if (updated) {
-        messageReactions.set(msgId, updated);
-        const c = conversations.get(convoKey);
-        if (c) {
-          const idx = c.messages.findIndex((m) => m.id === msgId);
-          if (idx !== -1) {
-            const next = [...c.messages];
-            next[idx] = { ...next[idx], reactions: updated };
-            conversations.set(convoKey, { ...c, messages: next });
-            if (storage) {
-              // A reaction changes the reactions. Writing the whole row here used to clear the
-              // delete/edit flags, so reacting to an edited message resurrected the original body
-              // on the next reload.
-              await storage
-                .updateMessage(next[idx].id, { reactions: updated }, deviceKey())
-                .catch(() => {});
-            }
-          }
-        }
-      }
     } else if (msg.call) {
       onCallSignal?.(
         sender,
