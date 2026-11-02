@@ -53,6 +53,7 @@ import {
   createOutbox,
   type OutboxController,
   type OutboxDeps,
+  UPLOAD_STALL_HINT_MS,
   type PreparedOutboxMedia,
 } from './outbox';
 import { clearAllUploads, uploadViewOf } from './uploadProgress.svelte';
@@ -80,6 +81,9 @@ import type { PreparedVideo } from '$lib/video/prepareVideoForUpload';
 import { m } from '$lib/paraglide/messages';
 import { attachFakeOutboxSql } from '../../../test/outboxSqlFake';
 import { FakeSessionServer } from '../../../test/fakeUploadSessionServer';
+import { useLoadBounds, waitForEvent, waitForEventNoClock } from '../../../test/loadBound';
+
+useLoadBounds();
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 /** Small parts, so a small prepared file is several of them. */
@@ -188,9 +192,14 @@ interface LifeOptions {
   afterFullRead?: () => Promise<void>;
   /** Messages TOMBSTONED on this device (deleted for everyone): their stored row says `isDeleted`. */
   tombstones?: string[];
+  /** Replaces the whole transfer, for a transport that answers neither progress nor its own abort. */
+  uploadMedia?: OutboxDeps['uploadMedia'];
 }
 
 const ACCEPT = async () => undefined;
+
+/** Every life a case started and did not kill itself: `afterEach` ends them (see there). */
+const openLives = new Set<{ kill(): void }>();
 
 /** One run of the app on the world's disk. `kill()` stops it cold. */
 function life(w: World, opts: LifeOptions = {}) {
@@ -330,7 +339,7 @@ function life(w: World, opts: LifeOptions = {}) {
     recoverRosterDisagreement: vi.fn(async () => undefined),
     isGroupHealthy: (id: string) => !opts.deleted?.includes(id),
     markDeletedRemotely: vi.fn(),
-    uploadMedia,
+    uploadMedia: opts.uploadMedia ?? uploadMedia,
     prepareMedia,
     releaseUpload: (uploadId, why) =>
       live(async () => {
@@ -350,17 +359,20 @@ function life(w: World, opts: LifeOptions = {}) {
         return opts.release ? opts.release() : ('answered' as const);
       }),
   });
-  return {
+  const handle = {
     outbox,
     mls,
     conversations,
     notices,
     kill() {
       alive = false;
+      openLives.delete(handle);
       // Its timers and transfers end with it; nothing it does reaches the disk or the server.
       outbox.dispose();
     },
   };
+  openLives.add(handle);
+  return handle;
 }
 
 /** How many MLS sends a life made. */
@@ -386,11 +398,16 @@ async function sentReel(w: World, l: ReturnType<typeof life>) {
  * send citing it, and nothing left on the disk but the take's small sent record (no file).
  */
 async function expectDeliveredOnce(w: World, l: ReturnType<typeof life>, n: number) {
-  await vi.waitFor(() => expect(sends(l)).toBe(n));
-  await vi.waitFor(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+  await waitForEvent(() => expect(sends(l)).toBe(n));
+  await waitForEvent(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
   expect(w.sql.rows.get(ID)!.kind).toBe('reel-take');
-  const record = (await w.storage.getOutboxEntry(ID, KEY, { withFile: false }))!;
-  expect(record.take?.state).toBe('sent');
+  // THE RECORD IS WRITTEN AFTER THE LAST SEND, not with it: the sends count and the row's presence are
+  // both true a write before `state` reads 'sent', so it is waited for as an event, never read once.
+  const record = await waitForEvent(async () => {
+    const row = await w.storage.getOutboxEntry(ID, KEY, { withFile: false });
+    expect(row?.take?.state).toBe('sent');
+    return row!;
+  });
   expect(record.take?.sends.every((s) => s.sent)).toBe(true);
   expect(w.server.stored.size).toBe(1);
   const { media, opened } = await sentReel(w, l);
@@ -408,7 +425,7 @@ async function expectDeliveredOnce(w: World, l: ReturnType<typeof life>, n: numb
   expect(new Set(l.mls.sendMessage.mock.calls.map((c) => c[0]))).toEqual(
     new Set(GROUPS.slice(0, n))
   );
-  await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+  await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
 }
 
 const PARTS = Math.ceil((20 + PREPARED.length + 16) / PART);
@@ -438,7 +455,15 @@ beforeEach(() => {
   tab.handlers.length = 0;
   connectivity.reset();
 });
-afterEach(() => clearAllUploads());
+afterEach(() => {
+  // A LIFE A CASE LEFT RUNNING IS KILLED BEFORE THE NEXT CASE STARTS. The upload views are one
+  // module-level store keyed by the take's id, the same in every case: a life still draining its
+  // transfer would patch its phase into the NEXT case's view (a take 'preparing' or 'stalled' that
+  // case never started, seen as `uploadViewOf(VIEW)` not undefined) - only a loaded machine stretches
+  // the drain long enough to reach it.
+  for (const l of openLives) l.kill();
+  clearAllUploads();
+});
 
 describe.each([1, 3])(
   'a chat reel through the outbox, a take with %i send(s) (RC-5, RC-13)',
@@ -462,7 +487,7 @@ describe.each([1, 3])(
           }),
       });
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+      await waitForEvent(() => expect(w.prepares).toHaveLength(1));
       expect(sameBytes(w.prepares[0], RAW)).toBe(true);
       expect(uploadViewOf(VIEW)?.phase).toBe('preparing');
       expect(uploadViewOf(VIEW)?.prepared).toBe(0);
@@ -482,7 +507,7 @@ describe.each([1, 3])(
       const w = world();
       const first = life(w, { prepare: () => NEVER() });
       await enqueueTake(first, N);
-      await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+      await waitForEvent(() => expect(w.prepares).toHaveLength(1));
       first.kill();
 
       const second = life(w);
@@ -508,7 +533,7 @@ describe.each([1, 3])(
         return execute(q, p);
       };
       await enqueueTake(first, N);
-      await vi.waitFor(() => expect(rewrites).toBe(1));
+      await waitForEvent(() => expect(rewrites).toBe(1));
       expect((await w.blobs.list()).map((b) => b.id).sort()).toEqual([ID, `${ID}#b`]);
       w.sql.db.execute = execute;
 
@@ -533,7 +558,7 @@ describe.each([1, 3])(
         return del(id);
       };
       await enqueueTake(first, N);
-      await vi.waitFor(() => expect(killed).toBe(true));
+      await waitForEvent(() => expect(killed).toBe(true));
       expect(w.server.sent).toEqual([]);
 
       const second = life(w);
@@ -547,7 +572,7 @@ describe.each([1, 3])(
       const first = life(w);
       const hung = hangPart(w, 2, () => first.kill());
       await enqueueTake(first, N);
-      await vi.waitFor(hung.hit);
+      await waitForEvent(hung.hit);
       expect(w.server.partsReceived()).toBe(2);
       w.server.fault = () => undefined;
 
@@ -570,7 +595,7 @@ describe.each([1, 3])(
         return undefined;
       };
       await enqueueTake(first, N);
-      await vi.waitFor(() => expect(w.server.stored.size).toBe(1));
+      await waitForEvent(() => expect(w.server.stored.size).toBe(1));
       w.server.fault = () => undefined;
       const putsBefore = w.server.partsReceived();
 
@@ -592,7 +617,7 @@ describe.each([1, 3])(
         },
       });
       await enqueueTake(first, N);
-      await vi.waitFor(() => expect(reached).toBe(true));
+      await waitForEvent(() => expect(reached).toBe(true));
       const requests = w.server.sent.length;
 
       const second = life(w);
@@ -615,11 +640,11 @@ describe.each([1, 3])(
           ),
       });
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+      await waitForEvent(() => expect(w.prepares).toHaveLength(1));
       await cancelAll(l, N);
-      await vi.waitFor(() => expect(aborted).toBe(true));
-      await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
-      await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+      await waitForEvent(() => expect(aborted).toBe(true));
+      await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
+      await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
       expect(w.server.sent).toEqual([]);
       expect(sends(l)).toBe(0);
     });
@@ -629,11 +654,11 @@ describe.each([1, 3])(
       const l = life(w);
       const hung = hangPart(w, 1);
       await enqueueTake(l, N);
-      await vi.waitFor(hung.hit);
+      await waitForEvent(hung.hit);
       await cancelAll(l, N);
-      await vi.waitFor(() => expect(w.server.seen.some((r) => r.method === 'DELETE')).toBe(true));
+      await waitForEvent(() => expect(w.server.seen.some((r) => r.method === 'DELETE')).toBe(true));
       expect([...w.server.sessions.values()][0].closed).toBe(true);
-      await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+      await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
       expect(sends(l)).toBe(0);
     });
 
@@ -653,7 +678,7 @@ describe.each([1, 3])(
           ),
       });
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
+      await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
       expect(w.sql.rows.has(ID)).toBe(true);
       const kept = (await w.storage.getOutboxEntry(ID, KEY))!;
       expect(sameBytes(kept.media?.fileBytes, RAW)).toBe(true);
@@ -678,7 +703,7 @@ describe.each([1, 3])(
         },
       });
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
+      await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
       expect(w.sql.rows.has(ID)).toBe(true);
       const kept = (await w.storage.getOutboxEntry(ID, KEY))!;
       expect(sameBytes(kept.media?.fileBytes, RAW)).toBe(true);
@@ -696,19 +721,21 @@ describe.each([1, 3])(
       let puts = 0;
       w.server.fault = (method) => (method === 'PUT' && ++puts === 2 ? 'drop' : undefined);
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(uploadViewOf(VIEW)?.phase).toBe('waiting'));
+      await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('waiting'));
       const [session] = [...w.server.sessions.keys()];
       expect(w.server.sessions.get(session)!.closed).toBeUndefined();
       await cancelAll(l, N);
-      await vi.waitFor(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
-      expect(w.sql.rows.size).toBe(0);
-      await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+      await waitForEvent(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+      await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
+      await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     });
 
     it('a cancel of an entry PARKED AS FAILED (no answer, three attempts) releases its session', async () => {
       // THE LADDER IS WHAT REACHES THE PARK (a member's Retry starts the no-answer count again), so its
       // timer is driven by hand - advanced, never waited for, and no time is asserted. Only the timer
-      // and the clock it reads are faked; fake-IndexedDB keeps its own real scheduling.
+      // and the clock it reads are faked; fake-IndexedDB keeps its own real scheduling. EVERY WAIT
+      // HERE IS `waitForEventNoClock`: `vi.waitFor` advances a faked clock by its interval on each
+      // poll, and a loaded machine polls enough times for that to cross the backoff by itself.
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
       try {
         const w = world();
@@ -717,8 +744,8 @@ describe.each([1, 3])(
           method === 'PUT' && path.endsWith('/parts/1') ? 'reset' : undefined;
         await enqueueTake(l, N);
         for (let attempt = 1; attempt <= 3; attempt++) {
-          await vi.waitFor(() => expect(w.settled).toBeGreaterThanOrEqual(attempt));
-          await vi.waitFor(() =>
+          await waitForEventNoClock(() => expect(w.settled).toBeGreaterThanOrEqual(attempt));
+          await waitForEventNoClock(() =>
             expect(['waiting', 'failed']).toContain(uploadViewOf(VIEW)?.phase)
           );
           // To the backoff timer and NEVER PAST IT: overshooting moved the faked clock under the next
@@ -731,16 +758,60 @@ describe.each([1, 3])(
             await new Promise((resolve) => setImmediate(resolve));
           }
         }
-        await vi.waitFor(() => expect(uploadViewOf(VIEW)?.phase).toBe('failed'));
+        await waitForEventNoClock(() => expect(uploadViewOf(VIEW)?.phase).toBe('failed'));
         const [session] = [...w.server.sessions.keys()];
         expect(w.server.sessions.size).toBe(1);
         expect(w.server.sessions.get(session)!.closed).toBeUndefined();
         await cancelAll(l, N);
-        await vi.waitFor(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+        await waitForEventNoClock(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
         l.kill();
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe('a disposed transfer whose transport answers nothing, not even its abort', () => {
+      /**
+       * Enters the upload with a transfer that never settles and ignores its signal, then ends the
+       * life (a sign-out: `dispose` aborts it and clears the views). The sends stay queued, so the
+       * take's views still resolve - which is what lets a stray write recreate one. Every wait is the
+       * clock-free one: no time passes but what a case advances.
+       */
+      async function disposedStuckTransfer() {
+        const w = world();
+        let transport: Parameters<NonNullable<LifeOptions['uploadMedia']>>[1] | undefined;
+        const l = life(w, {
+          uploadMedia: (_media, t) => {
+            transport = t;
+            return new Promise(() => undefined);
+          },
+        });
+        await enqueueTake(l, N);
+        await waitForEventNoClock(() => expect(transport).toBeDefined());
+        expect(uploadViewOf(VIEW)?.phase).toBe('preparing');
+        l.kill();
+        expect(transport!.signal?.aborted).toBe(true);
+        expect(uploadViewOf(VIEW)).toBeUndefined();
+        return transport!;
+      }
+
+      it('its stall hint stops with the abort: the view never becomes `stalled` again', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+        try {
+          await disposedStuckTransfer();
+          // Past the hint's threshold and several of its ticks: only the abort stops them.
+          await vi.advanceTimersByTimeAsync(UPLOAD_STALL_HINT_MS + 3 * 2_000);
+          expect(uploadViewOf(VIEW)).toBeUndefined();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('a late progress event of it shows nothing', async () => {
+        const transport = await disposedStuckTransfer();
+        transport.onProgress?.({ loaded: 4096, total: 8192 });
+        expect(uploadViewOf(VIEW)).toBeUndefined();
+      });
     });
 
     it('a cancel AFTER A RELAUNCH, before any transfer restarted, releases the session the row recorded', async () => {
@@ -748,7 +819,7 @@ describe.each([1, 3])(
       const first = life(w);
       const hung = hangPart(w, 2, () => first.kill());
       await enqueueTake(first, N);
-      await vi.waitFor(hung.hit);
+      await waitForEvent(hung.hit);
       // The second life may start its own flush as it is created: whatever it sends never lands, so
       // the parts and the object counted below are the first life's. Only the release is served.
       w.server.fault = (method) => (method === 'DELETE' ? undefined : 'hang');
@@ -756,10 +827,10 @@ describe.each([1, 3])(
 
       const second = life(w);
       await cancelAll(second, N);
-      await vi.waitFor(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+      await waitForEvent(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
       expect(w.server.partsReceived()).toBe(2);
       expect(w.sql.rows.size).toBe(0);
-      await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+      await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     });
 
     it('a TEARDOWN (the app killed mid-upload) never releases the session: the next life resumes it', async () => {
@@ -767,10 +838,10 @@ describe.each([1, 3])(
       const first = life(w);
       const hung = hangPart(w, 2);
       await enqueueTake(first, N);
-      await vi.waitFor(hung.hit);
+      await waitForEvent(hung.hit);
       // dispose() aborts the transfer with the same reason a cancel uses.
       first.outbox.dispose();
-      await vi.waitFor(() => expect(w.settled).toBe(1));
+      await waitForEvent(() => expect(w.settled).toBe(1));
       expect(w.server.sent.some((r) => r.method === 'DELETE')).toBe(false);
       first.kill();
       w.server.fault = () => undefined;
@@ -793,7 +864,7 @@ describe.each([1, 3])(
         return execute(q, p);
       };
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
+      await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
       expect(w.server.sent).toEqual([]);
       w.sql.db.execute = execute;
       const kept = (await w.storage.getOutboxEntry(ID, KEY))!;
@@ -809,13 +880,13 @@ describe.each([1, 3])(
         },
       });
       await enqueueTake(l, N);
-      await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+      await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
       expect(l.notices).toEqual(Array(N).fill('too long to send'));
       expect(uploadViewOf(VIEW)?.phase).not.toBe('error');
       expect(w.server.sent).toEqual([]);
       expect(sends(l)).toBe(0);
       expect(w.prepares).toHaveLength(1);
-      await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+      await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     });
 
     it('A FLAKY LINK (a seeded share of the parts lost): each retry resumes, one object is stored, no part is sent twice without cause', async () => {
@@ -839,8 +910,8 @@ describe.each([1, 3])(
       for (let round = 0; round < 40 && sends(l) === 0; round++) {
         // Wait for THIS attempt to end, then the member's Retry (it skips the backoff, never a clock).
         const before = w.settled;
-        await vi.waitFor(() => expect(w.settled > before || sends(l) > 0).toBe(true));
-        await vi.waitFor(() =>
+        await waitForEvent(() => expect(w.settled > before || sends(l) > 0).toBe(true));
+        await waitForEvent(() =>
           expect(sends(l) > 0 || uploadViewOf(VIEW)?.phase === 'waiting').toBe(true)
         );
         if (sends(l) === 0) l.outbox.retryUpload(VIEW);
@@ -887,6 +958,13 @@ async function sentIds(w: World): Promise<string[]> {
   return ((await takeRow(w))?.take?.sends ?? []).filter((s) => s.sent).map((s) => s.id);
 }
 
+/**
+ * Waits for the take's record to say `sent`. The record is written one statement AFTER the queue rows
+ * leave and the MLS sends are made, so a case that saw those and read the record once raced it.
+ */
+const takeRecordSent = (w: World) =>
+  waitForEvent(async () => expect((await takeRow(w))?.take?.state).toBe('sent'));
+
 describe('one take, several conversations (RC-13)', () => {
   it('THE TAKE AND ITS SENDS ARE ONE STATEMENT: written together, and a write that fails leaves neither', async () => {
     const w = world();
@@ -912,10 +990,10 @@ describe('one take, several conversations (RC-13)', () => {
     const w = world();
     const l = life(w, { deleted: ['g2'] });
     await enqueueTake(l, 3);
-    await vi.waitFor(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+    await waitForEvent(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
     expect(new Set(l.mls.sendMessage.mock.calls.map((c) => c[0]))).toEqual(new Set(['g1', 'g3']));
+    await takeRecordSent(w);
     expect(await sentIds(w)).toEqual([SEND_IDS[0], SEND_IDS[2]]);
-    expect((await takeRow(w))?.take?.state).toBe('sent');
     expect(w.uploads).toBe(1);
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
     // THE RECORD IS NO QUEUED WORK: no flush reads, drives or counts it.
@@ -943,13 +1021,14 @@ describe('one take, several conversations (RC-13)', () => {
         }),
     });
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+    await waitForEvent(() => expect(w.prepares).toHaveLength(1));
     expect(await l.outbox.cancelPending(SEND_IDS[1])).toBe(true);
     expect(w.sql.rows.has(ID)).toBe(true);
     expect(aborted).toBe(false);
     finish();
-    await vi.waitFor(() => expect(sends(l)).toBe(2));
-    await vi.waitFor(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+    await waitForEvent(() => expect(sends(l)).toBe(2));
+    await waitForEvent(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+    await takeRecordSent(w);
     expect(await sentIds(w)).toEqual([SEND_IDS[0], SEND_IDS[2]]);
   });
 
@@ -966,12 +1045,12 @@ describe('one take, several conversations (RC-13)', () => {
         ),
     });
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+    await waitForEvent(() => expect(w.prepares).toHaveLength(1));
     expect(await l.outbox.cancelTakeEverywhere(SEND_IDS[2])).toBe(3);
-    await vi.waitFor(() => expect(aborted).toBe(true));
+    await waitForEvent(() => expect(aborted).toBe(true));
     // KEPT `releasing` while its transfer ran, deleted once it ended with no file.
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
-    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     expect(sends(l)).toBe(0);
   });
 
@@ -981,8 +1060,8 @@ describe('one take, several conversations (RC-13)', () => {
     const rows = takeRows(3);
     rows.sends[1].entry.media!.expiresAtMs = 1_000;
     await l.outbox.enqueueTake(rows.take, rows.sends);
-    await vi.waitFor(() => expect(sends(l)).toBe(2));
-    await vi.waitFor(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+    await waitForEvent(() => expect(sends(l)).toBe(2));
+    await waitForEvent(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
     expect(l.notices).toEqual([m.outbox_reel_send_expired()]);
     expect(new Set(l.mls.sendMessage.mock.calls.map((c) => c[0]))).toEqual(new Set(['g1', 'g3']));
   });
@@ -1058,7 +1137,7 @@ describe('one take, several conversations (RC-13)', () => {
     const ref = await publishStepUpload(w);
     await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
     l.outbox.endPublishWait(ID);
-    await vi.waitFor(() => expect(sends(l)).toBe(3));
+    await waitForEvent(() => expect(sends(l)).toBe(3));
     const { media } = await sentReel(w, l);
     expect(media.mediaId).not.toBe(ref.mediaId);
     expect(w.uploads).toBe(1);
@@ -1092,7 +1171,7 @@ describe('one take, several conversations (RC-13)', () => {
           }
         : undefined;
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
     expect(w.server.sent.filter((r) => r.method === 'POST' && r.path === '')).toHaveLength(1);
     expect(sends(l)).toBe(0);
@@ -1104,7 +1183,7 @@ describe('one take, several conversations (RC-13)', () => {
     w.server.fault = (method, path, n) =>
       method === 'POST' && path === '' && n === 1 ? 429 : undefined;
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(['waiting', 'retrying']).toContain(uploadViewOf(VIEW)?.phase));
+    await waitForEvent(() => expect(['waiting', 'retrying']).toContain(uploadViewOf(VIEW)?.phase));
     l.outbox.retryUpload(VIEW);
     await expectDeliveredOnce(w, l, 3);
     expect(l.notices).toEqual([]);
@@ -1117,7 +1196,7 @@ describe('one take, several conversations (RC-13)', () => {
     const ref = await publishStepUpload(w);
     await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
     l.outbox.endPublishWait(ID);
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
     expect(w.uploads).toBe(0);
     expect(w.prepares).toHaveLength(0);
@@ -1129,10 +1208,10 @@ describe('one take, several conversations (RC-13)', () => {
     // The body has left and the server stored the object; the member cancels before the ref is written.
     const l: ReturnType<typeof life> = life(w, { afterUpload: () => cancelAll(l, 3) });
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     const [stored] = [...w.server.stored.keys()];
     expect(w.events).toEqual([`release ${stored}`]);
-    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+    await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     expect(sends(l)).toBe(0);
   });
 
@@ -1148,14 +1227,14 @@ describe('one take, several conversations (RC-13)', () => {
       },
     });
     await enqueueTake(first, 3);
-    await vi.waitFor(() => expect(asked).toBe(true));
+    await waitForEvent(() => expect(asked).toBe(true));
     const row = (await takeRow(w))!;
     expect(row.take?.state).toBe('releasing');
     const mediaId = row.media!.uploadedRef!.mediaId;
 
     const second = life(w);
     await second.outbox.flush();
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(w.events).toEqual([`release ${mediaId}`, `release ${mediaId}`]);
     expect(sends(second)).toBe(0);
   });
@@ -1170,16 +1249,16 @@ describe('one take, several conversations (RC-13)', () => {
         // Every send withdrawn while this write is held: the last one's settle then waits for the
         // take's lock, which the preparation's write holds.
         cancel = cancelAll(l, 3);
-        await vi.waitFor(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
+        await waitForEvent(() => expect(SEND_IDS.some((id) => w.sql.rows.has(id))).toBe(false));
       }
       return execute(q, p);
     };
     l = life(w);
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(cancel).not.toBeNull());
+    await waitForEvent(() => expect(cancel).not.toBeNull());
     await cancel;
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
-    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
     expect(w.server.stored.size).toBe(0);
     expect(sends(l)).toBe(0);
   });
@@ -1188,11 +1267,11 @@ describe('one take, several conversations (RC-13)', () => {
     const w = world();
     const l: ReturnType<typeof life> = life(w, { afterFullRead: () => cancelAll(l, 3) });
     await enqueueTake(l, 3);
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     await l.outbox.flush();
     expect(w.prepares).toHaveLength(0);
     expect(w.uploads).toBe(0);
-    expect(uploadViewOf(VIEW)).toBeUndefined();
+    await waitForEvent(() => expect(uploadViewOf(VIEW)).toBeUndefined());
   });
 
   it('TWO SENDS ENDING AT ONCE are marked one after the other: the record names both, nothing released', async () => {
@@ -1227,14 +1306,14 @@ describe('one take, several conversations (RC-13)', () => {
     };
     first = life(w);
     await enqueueTake(first, 1);
-    await vi.waitFor(() => expect(killed).toBe(true));
+    await waitForEvent(() => expect(killed).toBe(true));
     expect(await sentIds(w)).toEqual([SEND_IDS[0]]);
     w.sql.db.execute = execute;
 
     const second = life(w);
     await second.outbox.flush();
-    await vi.waitFor(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
-    expect((await takeRow(w))?.take?.state).toBe('sent');
+    await waitForEvent(async () => expect([...w.sql.rows.keys()]).toEqual([ID]));
+    await takeRecordSent(w);
     expect(w.events.filter((e) => e === 'send g1').length).toBeLessThanOrEqual(2);
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
     expect(w.uploads).toBe(1);
@@ -1249,7 +1328,7 @@ describe('one take, several conversations (RC-13)', () => {
         ),
     });
     await enqueueTake(leader, 1);
-    await vi.waitFor(() => expect(w.prepares).toHaveLength(1));
+    await waitForEvent(() => expect(w.prepares).toHaveLength(1));
     tab.role = 'follower';
     const follower = life(w);
     const before = await takeRow(w);
@@ -1276,7 +1355,7 @@ describe('one take, several conversations (RC-13)', () => {
 
     tab.role = 'leader';
     await leader.outbox.flush();
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
   });
 
   it('L1: a `releasing` write that FAILS while the transfer runs is owed, written again by the drive, and the late file released in this page life', async () => {
@@ -1301,7 +1380,7 @@ describe('one take, several conversations (RC-13)', () => {
         },
       });
       await enqueueTake(l, 3);
-      await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+      await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
       expect(failed).toBe(true);
       expect(warn.mock.calls.some((c) => String(c[0]).includes('NOT recorded, owed'))).toBe(true);
       const [stored] = [...w.server.stored.keys()];
@@ -1328,7 +1407,7 @@ describe('one take, several conversations (RC-13)', () => {
 
     tab.role = 'leader';
     await life(w, { tombstones: [SEND_IDS[0]] }).outbox.flush();
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(w.events.filter((e) => e.startsWith('release'))).toEqual([`release ${media.mediaId}`]);
   });
 
@@ -1338,8 +1417,8 @@ describe('one take, several conversations (RC-13)', () => {
     rows.take.media!.expiresAtMs = 1_000;
     const first = life(w);
     await first.outbox.enqueueTake(rows.take, rows.sends);
-    await vi.waitFor(() => expect(sends(first)).toBe(1));
-    await vi.waitFor(async () => expect((await takeRow(w))?.take?.state).toBe('sent'));
+    await waitForEvent(() => expect(sends(first)).toBe(1));
+    await takeRecordSent(w);
     first.kill();
 
     tab.role = 'follower';
@@ -1350,7 +1429,7 @@ describe('one take, several conversations (RC-13)', () => {
 
     tab.role = 'leader';
     await life(w).outbox.flush();
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
   });
 
@@ -1387,7 +1466,7 @@ describe('one take, several conversations (RC-13)', () => {
       takeId: ID,
       uploaded: { ref, durationMs: 4200 },
     });
-    await vi.waitFor(() =>
+    await waitForEvent(() =>
       expect(tabOutboxMock.acknowledgeReelTakeAdoption).toHaveBeenCalledWith(ID)
     );
     l.kill();
@@ -1401,8 +1480,8 @@ describe('one take, several conversations (RC-13)', () => {
     const { media } = await sentReel(w, l);
     // The channel delivers it to the leader's handler (the one this life registered).
     tab.handlers[0]({ type: 'outbox_reel_send_deleted', messageId: SEND_IDS[0] });
-    await vi.waitFor(() => expect(w.events).toContain(`release ${media.mediaId}`));
-    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    await waitForEvent(() => expect(w.events).toContain(`release ${media.mediaId}`));
+    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
   });
 
   it('A TAKE PAST WHAT ONE TAKE MAY CARRY is refused, typed, before anything is written - on either engine', async () => {
@@ -1461,7 +1540,7 @@ describe('one take, several conversations (RC-13)', () => {
         rows.sends[0].entry.media!.expiresAtMs = EXPIRES;
         await l.outbox.enqueueTake(rows.take, rows.sends);
       }
-      await vi.waitFor(() => expect(w.prepares).toHaveLength(2));
+      await waitForEvent(() => expect(w.prepares).toHaveLength(2));
       // A take whose file is READY (nothing to encode) goes straight to a slot.
       const ready = buildChatReelTake({
         takeId: ID,
@@ -1476,7 +1555,9 @@ describe('one take, several conversations (RC-13)', () => {
       ready.take.media!.expiresAtMs = EXPIRES;
       ready.sends[0].entry.media!.expiresAtMs = EXPIRES;
       await l.outbox.enqueueTake(ready.take, ready.sends);
-      await vi.waitFor(() => expect(l.mls.sendMessage.mock.calls.map((c) => c[0])).toEqual(['g3']));
+      await waitForEvent(() =>
+        expect(l.mls.sendMessage.mock.calls.map((c) => c[0])).toEqual(['g3'])
+      );
       l.kill();
     } finally {
       release();

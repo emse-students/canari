@@ -1668,16 +1668,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
       // Started after the preparation, which moves no byte and is not a stall.
       let lastMoved = Date.now();
-      hint = setInterval(() => {
+      const stallHint = setInterval(() => {
         if (Date.now() - lastMoved > UPLOAD_STALL_HINT_MS)
           patchUpload(entry.id, { phase: 'stalled' });
       }, 2_000);
+      hint = stallHint;
+      // A WITHDRAWN OR DISPOSED TRANSFER SHOWS NOTHING MORE, even while its request has not yet
+      // answered the abort: the `finally` below clears the timer only once the upload SETTLES, and a
+      // transfer stuck behind a dead storage or socket never does - its timer then wrote `stalled`
+      // into the view of whatever took the id next (the intermittent 'WHILE THE DRIVE READS THE TAKE').
+      control.signal.addEventListener('abort', () => clearInterval(stallHint), { once: true });
       const described = media;
       uploaded = await uploadMedia(
         media,
         {
           signal: control.signal,
           onProgress: ({ loaded, total }) => {
+            // A WITHDRAWN TRANSFER REPORTS NOTHING: a late progress event of a request that has not
+            // yet answered its abort would recreate the view `clearUpload` just removed, for an entry
+            // that is gone. (`persist` below is NOT guarded the same way: a session opened after the
+            // abort must still be remembered in `openSessions`, because that is what releases it.)
+            if (control.signal.aborted) return;
             lastMoved = Date.now();
             attemptLoaded = Math.max(attemptLoaded, loaded);
             patchUpload(entry.id, { phase: 'uploading', loaded, total });
