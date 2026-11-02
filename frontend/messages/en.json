@@ -5020,5 +5020,9 @@
   "settings_allow_reposts_label": "Allow my followers to repost my posts",
   "settings_allow_reposts_hint": "Your followers will be able to repost your posts to their own followers. You can change this post by post from a post's menu. Anonymous posts are never reposted.",
   "settings_allow_reposts_error": "The setting could not be saved.",
-  "notif_member_repost_text": "reposted:"
+  "notif_member_repost_text": "reposted:",
+  "bookings_owner_label": "Create as",
+  "bookings_owner_personal": "Me",
+  "bookings_owner_current": "This association",
+  "bookings_owner_load_error": "Your associations could not be loaded: only the current choice is offered."
 }
