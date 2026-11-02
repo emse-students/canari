@@ -1393,7 +1393,17 @@ does not show at all. Every platform took this path (web, Android, iOS share it)
   aborts the transfer and withdraws the row; a late progress event of the aborted request is dropped.
 - **A failure is classified at its throw and the row stays:** no answer while offline is `waiting`
   and owed to the reconnect (`salonOwed.ts`), no answer online is `stalled`, a status is `refused`
-  (the banner says the server's reason), anything else is a local `error`. Each offers Retry.
+  (the banner says the server's reason), a body DELIVERED with no answer in time
+  (`UploadAnswerTimeoutError`) is `unanswered` - never a stall, the server may hold the file and a
+  Retry uploads a second one - and anything else is a local `error`. Each offers Retry and cancel.
+  `SessionExpiredError` is a session end: the row goes, nothing is sent.
+- **"Offline" is known because the upload is counted.** `fetchUpload` (every media upload: this one,
+  the DM/group outbox's, a form's file) settles its request through `trackRequestOutcome`, the half
+  of `trackedFetch` that feeds the connectivity store. Before, only `trackedFetch` did, so a link lost
+  mid-upload left `isOffline` false and the reconnect retried nothing (review of #2944).
+- **The account that tapped is carried** (`signOutGeneration()`, read at the tap): an attempt checks
+  it before its start, after the gate and after the upload, and a signed-out generation withdraws its
+  row and sends nothing, as the DM branch drops its write.
 - **Not offered:** "put back in the composer" (`takeBackSalonSend` refuses an attachment - it could
   give back the caption, not the file). **Memory only**, as the salon text in flight: a reload
   mid-upload loses the row and the file together, never a row naming nothing.

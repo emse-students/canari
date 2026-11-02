@@ -32,7 +32,13 @@
 import type { OutboxEntry } from '$lib/db';
 import type { MediaRef } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
-import { UploadAbortedError, UploadNetworkError, UploadStalledError } from '$lib/utils/uploadXhr';
+import {
+  UploadAbortedError,
+  UploadAnswerTimeoutError,
+  UploadNetworkError,
+  UploadStalledError,
+} from '$lib/utils/uploadXhr';
+import { SessionExpiredError, signOutGeneration } from '$lib/stores/auth';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 import type { SalonGateOutcome } from '$lib/utils/graine/salonSendGate';
@@ -71,7 +77,23 @@ export type SalonAttachmentFailure =
   | { kind: 'gate'; reason: Exclude<SalonGateOutcome, { kind: 'ready' }>['reason'] }
   | { kind: 'upload'; status: number | null; error: unknown };
 
+/**
+ * The echo of a salon attachment could not be drawn (its salon left the conversation map since the
+ * tap): no row, so no upload - the caller gives the file back to the staging.
+ */
+export class SalonEchoNotDrawnError extends Error {
+  constructor(readonly messageId: string) {
+    super(`the echo of salon attachment ${messageId.slice(0, 8)}… could not be drawn`);
+    this.name = 'SalonEchoNotDrawnError';
+  }
+}
+
 interface Attachment {
+  /**
+   * The account generation that tapped (`signOutGeneration`): an attempt of a generation that has
+   * since signed out sends nothing and withdraws its row, as the MLS branch drops its write.
+   */
+  generation: number;
   messageId: string;
   conversationKey: string;
   sentAt: number;
@@ -94,6 +116,8 @@ const owedKey = (messageId: string) => `attachment:${messageId}`;
  * Returns at once: the row carries every later state.
  */
 export function startSalonAttachment(input: {
+  /** `signOutGeneration()` read AT THE TAP, before any await. */
+  generation: number;
   messageId: string;
   conversationKey: string;
   sentAt: number;
@@ -102,6 +126,15 @@ export function startSalonAttachment(input: {
   deps: SalonAttachmentDeps;
 }): void {
   const item: Attachment = { ...input, attempts: 0, control: null };
+  if (signOutGeneration() !== item.generation) {
+    // Signed out between the tap and here (the echo write is an await): nothing of the leaving
+    // account may start, and its row goes.
+    input.deps.log(
+      `[MEDIA] salon attachment ${item.messageId.slice(0, 8)}… not started: signed out since the tap`
+    );
+    input.deps.withdraw();
+    return;
+  }
   attachments.set(item.messageId, item);
   setUploadOwner(item.messageId, {
     retry: () => retrySalonAttachment(item.messageId),
@@ -177,6 +210,18 @@ function forget(item: Attachment): void {
   forgetOwedSalonWrite(owedKey(item.messageId));
 }
 
+/**
+ * True (and the row withdrawn, nothing sent) when the account that tapped has signed out since.
+ */
+function endedSession(item: Attachment, when: string): boolean {
+  if (signOutGeneration() === item.generation) return false;
+  if (attachments.get(item.messageId) !== item) return true;
+  item.deps.log(`[MEDIA] ${item.messageId.slice(0, 8)}… dropped: signed out ${when}`);
+  forget(item);
+  item.deps.withdraw();
+  return true;
+}
+
 /** Parks the row in `phase`, with its Retry (the bubble's ring offers it). */
 function park(item: Attachment, phase: UploadPhase): void {
   patchUpload(item.messageId, { phase });
@@ -193,6 +238,7 @@ async function runAttempt(messageId: string): Promise<void> {
   try {
     const gate = await deps.gate();
     if (control.signal.aborted || attachments.get(messageId) !== item) return;
+    if (endedSession(item, 'while its salon was loading')) return;
     if (gate.kind === 'refused') {
       if (gate.reason === 'session-ended') {
         // The account that drew this row has left: nothing of it may go out under the next.
@@ -226,6 +272,7 @@ async function runAttempt(messageId: string): Promise<void> {
       settleUploadFailure(item, error);
       return;
     }
+    if (endedSession(item, 'during its upload')) return;
     if (attachments.get(messageId) !== item) {
       // Cancelled as the last byte landed: the blob is the server's to expire, nothing is sent.
       deps.log(`[MEDIA] ${id}… uploaded after its cancel - not sent`);
@@ -255,13 +302,30 @@ async function runAttempt(messageId: string): Promise<void> {
 }
 
 /**
- * An upload that did not complete, classified at its throw: no answer while offline is owed to the
- * reconnect; no answer while online is `stalled` (nothing moved, Retry offered); an ANSWER - a
- * status - is `refused` with the server's reason on the banner; anything else is a local `error`.
+ * An upload that did not complete, classified at its throw:
+ * - the session ended (`SessionExpiredError`): the row goes, nothing is sent - the sign-out follows;
+ * - the body was DELIVERED and the server did not answer in time (`UploadAnswerTimeoutError`): it may
+ *   have stored the file, so this is not a stall - `unanswered`, and a Retry uploads it again;
+ * - no answer at all while offline: `waiting`, owed to the reconnect; while online: `stalled`;
+ * - an ANSWER - a status - is `refused`, the server's reason on the banner;
+ * - anything else is a local `error`.
  */
 function settleUploadFailure(item: Attachment, error: unknown): void {
   const { deps, messageId } = item;
   const id = messageId.slice(0, 8);
+  if (error instanceof SessionExpiredError) {
+    deps.log(`[MEDIA] ${id}… dropped: the session expired during its upload`);
+    forget(item);
+    deps.withdraw();
+    return;
+  }
+  if (error instanceof UploadAnswerTimeoutError) {
+    deps.log(
+      `[MEDIA] ${id}… the body was delivered but the server did not answer in time - a Retry uploads it again: ${String(error)}`
+    );
+    park(item, 'unanswered');
+    return;
+  }
   const status = refusalStatus(error);
   const noAnswer =
     status === null &&

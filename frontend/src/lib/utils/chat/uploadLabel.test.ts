@@ -12,6 +12,7 @@ it.each([
   ['retrying', () => m.upload_retrying()],
   ['preparing', () => m.upload_preparing()],
   ['refused', () => m.upload_refused()],
+  ['unanswered', () => m.upload_unanswered()],
 ] as const)('%s has its own honest caption and no percentage', (phase, expected) => {
   expect(uploadCaption(view(phase), 1000)).toBe(expected());
   expect(uploadPercent({ ...view(phase), total: 100, loaded: 50 })).toBeNull();

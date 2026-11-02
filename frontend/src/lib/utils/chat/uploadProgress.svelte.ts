@@ -36,6 +36,9 @@ import type { UnsentReason } from '$lib/db/types';
  * - `refused`: the server ANSWERED the upload with a refusal (a status). Written only by a salon
  *   attachment (`salonAttachmentSend.ts`), whose banner says the server's reason; the outbox retires
  *   a refused DM file for good instead. Terminal until the member retries or deletes.
+ * - `unanswered`: the whole body was DELIVERED and the server did not answer in time - it may have
+ *   stored the file. Written only by a salon attachment; never a stall, since a Retry uploads the
+ *   file again rather than resuming it.
  * - `error`: the attempts kept failing for a reason that is not the network (an unreadable file, an
  *   unexpected error) - terminal until the member retries or deletes; nothing runs on its own.
  * - `queued`: the entry is in the queue and has not started (its turn has not come, or the file is
@@ -60,6 +63,7 @@ export type UploadPhase =
   | 'blocked'
   | 'failed'
   | 'refused'
+  | 'unanswered'
   | 'error';
 
 export interface UploadView {
@@ -188,6 +192,7 @@ export function uploadPercent(view: UploadView): number | null {
     view.phase === 'blocked' ||
     view.phase === 'failed' ||
     view.phase === 'refused' ||
+    view.phase === 'unanswered' ||
     view.phase === 'error'
   )
     return null;

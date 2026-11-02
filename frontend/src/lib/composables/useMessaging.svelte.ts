@@ -31,6 +31,7 @@ import {
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import {
   forgetSalonAttachments,
+  SalonEchoNotDrawnError,
   startSalonAttachment,
   type SalonAttachmentDeps,
 } from '$lib/utils/chat/salonAttachmentSend';
@@ -1769,9 +1770,11 @@ export function useMessaging() {
             // The salon left the map since the tap (`addMessageToChat` buffers instead of drawing):
             // no row means no upload, and the catch gives the file back to the staging.
             if (!ctx.conversations.get(sentFrom)?.messages.some((row) => row.id === messageId)) {
-              throw new Error(`the echo of ${messageId.slice(0, 8)}… could not be drawn`);
+              throw new SalonEchoNotDrawnError(messageId);
             }
             startSalonAttachment({
+              // The account that TAPPED: a sign-out during the echo write above starts nothing.
+              generation: tapGeneration,
               messageId,
               conversationKey: sentFrom,
               sentAt,
