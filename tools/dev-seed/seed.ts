@@ -562,7 +562,7 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     id: uuid(`event:${e.key}`),
     associationId: assoId(e.association),
     title: e.title,
-    description: `Evenement fictif organise par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
+    description: `Événement fictif organisé par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
     startsAt: ahead(e.days, e.hour),
     endsAt: ahead(e.days, e.hour + 2),
     createdBy: userId(e.author),
