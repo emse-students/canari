@@ -1088,8 +1088,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         registering = devices()
           .registerDevice(
             { userId: NEWCOMER.userId, deviceId: NEWCOMER.deviceId, keyPackage: 'a2V5' },
-            NEWCOMER.userId,
-            undefined
+            NEWCOMER.userId
           )
           .catch((e: unknown) => e);
         outcome = await waitsOrFinishes(registering);
@@ -1111,8 +1110,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
 
       await devices().registerDevice(
         { userId: NEWCOMER.userId, deviceId: NEWCOMER.deviceId, keyPackage: 'a2V5' },
-        NEWCOMER.userId,
-        undefined
+        NEWCOMER.userId
       );
 
       expect(await seatsOfGroup(NEWCOMER)).toBe(1);
