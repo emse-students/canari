@@ -87,7 +87,7 @@ describe('DevicesController - a missing row is 404, a malformed request stays 40
 
   it('answers 404 when metadata is set on a device that is not there', async () => {
     await expect(
-      controller.updateDeviceMetadata('u1', 'd1', { deviceName: 'Mi 9T' }, 'u1', undefined)
+      controller.updateDeviceMetadata('u1', 'd1', { deviceName: 'Mi 9T' }, 'u1')
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(keyPackageRepo.save).not.toHaveBeenCalled();
   });
@@ -97,9 +97,9 @@ describe('DevicesController - a missing row is 404, a malformed request stays 40
    * the swap above would have traded one wrong status for another.
    */
   it('keeps 400 for a metadata request with no field to write', async () => {
-    await expect(
-      controller.updateDeviceMetadata('u1', 'd1', {}, 'u1', undefined)
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.updateDeviceMetadata('u1', 'd1', {}, 'u1')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
     // It refuses on the body alone, before it ever looks for the row.
     expect(keyPackageRepo.findOne).not.toHaveBeenCalled();
   });

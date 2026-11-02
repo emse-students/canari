@@ -100,7 +100,7 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
 
   const register = (deviceId: string) =>
     controller
-      .registerDevice({ userId: 'u1', deviceId, keyPackage: 'a2V5' }, 'u1', undefined)
+      .registerDevice({ userId: 'u1', deviceId, keyPackage: 'a2V5' }, 'u1')
       .catch((e: unknown) => e);
 
   const reasonOf = async (deviceId: string): Promise<unknown> =>
@@ -183,8 +183,7 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
           deviceId: 'd-owner',
           keyPackages: [{ keyPackage: 'a2V5', notAfter: null }],
         },
-        'u1',
-        undefined
+        'u1'
       )
       .catch((e: unknown) => e);
     expect(failure).toMatchObject({ status: 403, response: { code: 'DEVICE_REVOKED_BY_OWNER' } });

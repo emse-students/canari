@@ -140,17 +140,12 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
    * the invitation reads its baseline, then the Add built on `epoch` carrying that generation.
    */
   const invitationAdd = async (epoch: number) => {
-    const { seatGeneration } = await members().getGroupUserMembers(
-      GROUP,
-      INVITER.userId,
-      undefined,
-      '1'
-    );
+    const { seatGeneration } = await members().getGroupUserMembers(GROUP, INVITER.userId, '1');
     return commitAt(epoch, true, GROUP, seatGeneration);
   };
   /** The adding member's member-add call after its accept (`registerMember`). */
   const register = (caller = INVITER.userId) =>
-    members().addGroupMember(GROUP, { userId: INVITEE.userId }, caller, undefined);
+    members().addGroupMember(GROUP, { userId: INVITEE.userId }, caller);
   /** The invitee's roster flag, or `null` when they hold no seat. */
   const awaitingFlag = async (): Promise<boolean | null> => {
     const [seat]: { awaitingAdmission: boolean }[] = await q(
@@ -185,8 +180,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       ds
     );
   /** The removal of `INVITEE` through its route, by `caller` - the inviter, or the invitee leaving. */
-  const remove = (caller: string) =>
-    members().removeGroupMember(GROUP, INVITEE.userId, caller, undefined);
+  const remove = (caller: string) => members().removeGroupMember(GROUP, INVITEE.userId, caller);
   /** What the server holds for the invitee: seats, open intervals and device rows. */
   const enrolment = async (group = GROUP) => {
     const count = async (sql: string) => {
@@ -643,12 +637,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
     it('an Add decided before the Decline is refused whole, and the member-add call after it enrols nobody', async () => {
       await ask();
       // The Add's roster read, made while the ask was open: the generation before the Decline.
-      const { seatGeneration } = await members().getGroupUserMembers(
-        GROUP,
-        INVITER.userId,
-        undefined,
-        '1'
-      );
+      const { seatGeneration } = await members().getGroupUserMembers(GROUP, INVITER.userId, '1');
       await decline();
       // The Add built on that read arrives at the unchanged epoch, then a client registers the person.
       await expect(commitAt(1, true, GROUP, seatGeneration)).resolves.toMatchObject(refusedAdmit);
@@ -679,12 +668,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
 
     it('declined, then asked AGAIN: an Add built before the Decline does not lift the new ask', async () => {
       await ask();
-      const { seatGeneration } = await members().getGroupUserMembers(
-        GROUP,
-        INVITER.userId,
-        undefined,
-        '1'
-      );
+      const { seatGeneration } = await members().getGroupUserMembers(GROUP, INVITER.userId, '1');
       await decline();
       // The person follows the link again: a new awaiting seat, a new ask.
       await ask();
@@ -814,7 +798,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       );
       try {
         await expect(
-          members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId, undefined)
+          members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId)
         ).resolves.toEqual({ status: 'added' });
         expect((await enrolment(fresh)).seats).toBe(1);
       } finally {
@@ -834,9 +818,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       );
       try {
         await expect(
-          refusalOf(
-            members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId, undefined)
-          )
+          refusalOf(members().addGroupMember(fresh, { userId: INVITEE.userId }, INVITEE.userId))
         ).resolves.toEqual({ status: 403, name: 'MEMBERSHIP_NOT_ALLOWED' });
         expect(await enrolment(fresh)).toEqual({ seats: 0, openIntervals: 0, devices: 0 });
         const [roster]: { n: string }[] = await q(
@@ -847,7 +829,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
 
         // ...and the real creator still enrols itself afterwards.
         await expect(
-          members().addGroupMember(fresh, { userId: INVITER.userId }, INVITER.userId, undefined)
+          members().addGroupMember(fresh, { userId: INVITER.userId }, INVITER.userId)
         ).resolves.toEqual({ status: 'added' });
         const seats: { userId: string; awaitingAdmission: boolean }[] = await q(
           `SELECT "userId", "awaitingAdmission" FROM dm_group_members WHERE "groupId" = $1`,
@@ -869,9 +851,7 @@ maybe('an Add enrols its invitee with the accepted commit (PostgreSQL)', () => {
       ]);
       try {
         await expect(
-          refusalOf(
-            members().addGroupMember(legacy, { userId: INVITEE.userId }, INVITEE.userId, undefined)
-          )
+          refusalOf(members().addGroupMember(legacy, { userId: INVITEE.userId }, INVITEE.userId))
         ).resolves.toEqual({ status: 403, name: 'MEMBERSHIP_NOT_ALLOWED' });
         // The locked writer refuses it too, whoever asks.
         await expect(
