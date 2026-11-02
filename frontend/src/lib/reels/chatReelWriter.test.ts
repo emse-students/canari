@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CHAT_REEL_RETENTION_MS,
-  CHAT_REEL_WRITER_ENABLED,
   captureCapMs,
   chatReelAllowed,
   ChatReelCapMissingError,
@@ -17,9 +16,18 @@ import { destinationRules } from './reelCapture';
 import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 
 describe('the chat reel writer', () => {
-  it('is OFF in a production build (no VITE_DEPLOY_ENVIRONMENT): production stays off', () => {
-    expect(CHAT_REEL_WRITER_ENABLED).toBe(false);
-    expect(chatReelAllowed(false)).toBe(false);
+  it('is OFF in a production build (VITE_DEPLOY_ENVIRONMENT unset): production stays off', async () => {
+    // Stubbed, never inherited: a developer's local .env must not decide this test.
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
+    vi.resetModules();
+    try {
+      const fresh = await import('./chatReelWriter');
+      expect(fresh.CHAT_REEL_WRITER_ENABLED).toBe(false);
+      expect(fresh.chatReelAllowed(false)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 
   it.each([
