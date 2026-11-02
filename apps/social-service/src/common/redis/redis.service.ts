@@ -148,6 +148,25 @@ export class RedisService implements OnModuleDestroy {
   }
 
   /**
+   * SCAN `match`, then DEL only the keys `select` keeps - one pass over the keyspace, for a cache
+   * whose key carries a field the glob cannot single out (the feed cache's viewer, which sits between
+   * fields that vary). Same cost as {@link deleteByPattern}; it spares every entry not selected.
+   */
+  async deleteMatching(match: string, select: (key: string) => boolean): Promise<number> {
+    let deleted = 0;
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', match, 'COUNT', 200);
+      cursor = next;
+      const chosen = keys.filter(select);
+      if (chosen.length > 0) {
+        deleted += await this.client.del(...chosen);
+      }
+    } while (cursor !== '0');
+    return deleted;
+  }
+
+  /**
    * Of `userIds`, the ones with at least one device online right now, lower-cased.
    *
    * The gateway writes `user:online:{userId}:{deviceId}` (TTL 90 s, refreshed on every pong) in

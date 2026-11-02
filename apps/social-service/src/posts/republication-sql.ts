@@ -83,21 +83,26 @@ export async function dropRepublicationsOf(
       [postId]
     )
   );
-  const memberReposts = await dropMemberRepostsOf(manager, postId);
+  const memberReposts = (await dropMemberRepostsOf(manager, postId)).length;
   return { republications, proposals, memberReposts };
 }
 
 /**
  * Deletes every member repost of a post (WP-F6) - the hide's share, through `dropRepublicationsOf`,
  * and a withdrawn per-post consent's (`MemberRepostsService.setPostConsent`). A DELETED post needs
- * it not: its foreign key cascades.
+ * it not: its foreign key cascades. Answers the reposters whose row went (one row per reposter, the
+ * key), so a caller can drop exactly their audiences' cached feeds.
  */
 export async function dropMemberRepostsOf(
   manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
   postId: string
-): Promise<number> {
-  const result = await manager.query(`DELETE FROM member_reposts WHERE "postId" = $1`, [postId]);
-  return Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
+): Promise<string[]> {
+  const rows = await manager.query(
+    `WITH gone AS (DELETE FROM member_reposts WHERE "postId" = $1 RETURNING "reposterId")
+     SELECT "reposterId" FROM gone`,
+    [postId]
+  );
+  return Array.isArray(rows) ? (rows as { reposterId: string }[]).map((r) => r.reposterId) : [];
 }
 
 /**

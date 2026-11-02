@@ -9,9 +9,12 @@ import { PostMediaRetentionService } from './post-media-retention.service';
 import {
   inAssociationsFeedSql,
   republishedFeedAtSql,
-  memberRepostedAmongSql,
+  followedRepostLateralSql,
+  FOLLOWED_REPOST_AT,
+  MEMBER_REPOSTED_BY_FOLLOWED_SQL,
   republishedForViewerSql,
 } from './republished-feed-sql';
+import { postVisibleToViewerSql } from '../spaces/reader-spaces';
 
 /**
  * "ASSOCIATIONS" AND "SUIVIS" HOLD WHAT ASSOCIATIONS REPUBLISH, AT THE REPUBLICATION'S DATE (user,
@@ -80,6 +83,16 @@ describe('PostsService feeds of what associations republish', () => {
 
       expect(feed().sql).toContain(`ORDER BY ${republishedFeedAtSql('$3')} DESC, posts.id DESC`);
     });
+
+    it("leaves a MEMBER repost's reach out: it appears in Suivis only (WP-F6)", async () => {
+      const { service, feed } = makeService();
+      await service.listPosts({ limit: 10, offset: 0, feed: 'associations', viewerUserId: 'v1' });
+
+      const { sql } = feed();
+      expect(sql).toContain(postVisibleToViewerSql('posts', '$3', { memberReposts: false }));
+      expect(sql).not.toContain('vis_mrep');
+      expect(sql).not.toContain('member_reposts');
+    });
   });
 
   describe('Suivis', () => {
@@ -100,8 +113,20 @@ describe('PostsService feeds of what associations republish', () => {
       const { service, feed } = makeService();
       await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
 
-      expect(feed().sql).toContain(`OR ${memberRepostedAmongSql('$4', '$5')}`);
-      expect(memberRepostedAmongSql('$4', '$5')).toContain('NOT COALESCE(posts.anonymous, false)');
+      const { sql } = feed();
+      expect(sql).toContain(followedRepostLateralSql('$4', '$5'));
+      expect(sql).toContain(`OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}`);
+      expect(followedRepostLateralSql('$4', '$5')).toContain(
+        'NOT COALESCE(posts.anonymous, false)'
+      );
+    });
+
+    it('evaluates the followed-repost carry check ONCE per row, for admission and placement', async () => {
+      const { service, feed } = makeService();
+      await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
+
+      // The lateral is the only `mf_at` subquery: admission and the ORDER BY read its column.
+      expect(feed().sql.match(/FROM member_reposts mf_at/g)).toHaveLength(1);
     });
 
     it('places a row at the latest republication by a followed association', async () => {
@@ -109,7 +134,7 @@ describe('PostsService feeds of what associations republish', () => {
       await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
 
       expect(feed().sql).toContain(
-        `ORDER BY posts.pinned DESC, ${republishedFeedAtSql('$5', '$3', '$4')} DESC, posts.id DESC`
+        `ORDER BY posts.pinned DESC, ${republishedFeedAtSql('$5', '$3', FOLLOWED_REPOST_AT)} DESC, posts.id DESC`
       );
     });
   });

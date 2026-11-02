@@ -70,8 +70,6 @@ export function repostRefusalMessage(code: string | null, status: number | null)
   switch (code) {
     case 'MEMBER_REPOST_ANONYMOUS':
       return m.post_repost_refused_anonymous();
-    case 'MEMBER_REPOST_BLOCKED':
-      return m.post_repost_refused_blocked();
     case 'MEMBER_REPOST_NOT_ALLOWED':
       return m.post_repost_refused_not_allowed();
     case 'MEMBER_REPOST_ALREADY':
