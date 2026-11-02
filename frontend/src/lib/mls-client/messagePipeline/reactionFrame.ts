@@ -57,7 +57,8 @@ export async function applyReactionFrame(
   let sealedElsewhere = false;
   if (storage) {
     try {
-      const found = await storage.getMessagesByIds([msgId], deviceKey());
+      // Scoped to THIS conversation: a frame of one conversation never reaches a row of another.
+      const found = await storage.getMessagesByIds(convoKey, [msgId], deviceKey());
       if (found.unreadable.has(msgId)) {
         console.warn(
           `[REACTION] ${msgId.slice(0, 8)} is stored under a key this device cannot open - left as it is`
@@ -122,8 +123,25 @@ export async function applyReactionFrame(
   }
   // A reaction changes the reactions. Writing the whole row here used to clear the delete/edit
   // flags, so reacting to an edited message resurrected the original body on the next reload.
+  // Folded into the row as it stands AT THE WRITE (a compare-and-set): a reaction another frame
+  // stored since the read above is kept, never overwritten by the copy read before it.
   await storage
-    .updateMessage(msgId, { reactions: updated }, deviceKey())
+    .mergeMessages(
+      convoKey,
+      [msgId],
+      (current) => {
+        const folded = applyReaction(
+          current.reactions ?? [],
+          sender,
+          emoji,
+          at,
+          removed,
+          authorship
+        );
+        return folded ? { ...current, reactions: folded } : null;
+      },
+      deviceKey()
+    )
     .catch((e: unknown) =>
       log(`[REACTION] reaction on ${msgId.slice(0, 8)} not persisted: ${String(e)}`)
     );

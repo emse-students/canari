@@ -114,7 +114,7 @@ describe('a message and its mutations delivered in one drain', () => {
     expect(d.shown()).toEqual([]);
     // What the digest, the state key and a bundle are read from.
     expect(await d.storage.getMessages(CONVO, KEY)).toEqual([]);
-    expect((await d.storage.getMessagesByIds(['m1'], KEY)).rows.size).toBe(0);
+    expect((await d.storage.getMessagesByIds(CONVO, ['m1'], KEY)).rows.size).toBe(0);
     expect((await pending(d.storage)).entries).toMatchObject([
       { messageId: 'm1', sender: PEER, kind: 'delete' },
     ]);
@@ -372,6 +372,8 @@ describe('a mutation kept before its message, met by a relayed copy (findings 6 
     const row = await d.storage.getMessage('m1', KEY);
     expect(row).toMatchObject({ senderId: PEER, content: 'hello' });
     expect(row?.isDeleted).toBeFalsy();
-    expect((await pending(d.storage)).entries).toEqual([]);
+    // RETAINED, not discarded: the copy's author is a claim nobody proved, so a deletion by
+    // someone else may be the real author's - it waits for a proven copy (review of #2936, P3).
+    expect((await pending(d.storage)).entries).toMatchObject([{ sender: OTHER, kind: 'delete' }]);
   });
 });

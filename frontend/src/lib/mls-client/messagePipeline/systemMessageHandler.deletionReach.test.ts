@@ -19,7 +19,7 @@ function makeCtx(rows: Record<string, any>, senderNorm = PEER) {
   conversations.set('g1', { id: 'g1', unreadCount: 0, messages: [] });
   const store = new Map<string, any>(Object.entries(rows));
   const storage = {
-    getMessagesByIds: vi.fn(async (ids: string[]) => ({
+    getMessagesByIds: vi.fn(async (_c: string, ids: string[]) => ({
       rows: new Map(ids.filter((id) => store.has(id)).map((id) => [id, store.get(id)])),
       unreadable: new Set<string>(),
     })),
@@ -27,9 +27,21 @@ function makeCtx(rows: Record<string, any>, senderNorm = PEER) {
       const row = store.get(id);
       if (row) store.set(id, { ...row, ...patch });
     }),
+    mergeMessages: vi.fn(async (_c: string, ids: string[], merge: (row: any) => any) => {
+      const written = new Set<string>();
+      for (const id of ids) {
+        const row = store.get(id);
+        const next = row ? merge({ ...row }) : null;
+        if (next) {
+          store.set(id, next);
+          written.add(id);
+        }
+      }
+      return written;
+    }),
     saveMessagesIfAbsent: vi.fn(),
-    putPendingMutation: vi.fn(async () => ({ written: true, evicted: 0 })),
-    getPendingMutations: vi.fn(async () => ({ entries: [], unreadable: 0 })),
+    putPendingMutation: vi.fn(async () => ({ written: true, kept: true, evicted: 0 })),
+    getPendingMutations: vi.fn(async () => ({ entries: [], removedUnreadable: 0 })),
     deletePendingMutations: vi.fn(),
   };
   const ctx = {
@@ -83,7 +95,7 @@ describe('handleSystemEvent - a delete_message whose target is stored but not sh
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
 
     expect(store.get('m1').isDeleted).toBeUndefined();
-    expect(storage.updateMessage).not.toHaveBeenCalled();
+    expect(storage.mergeMessages).not.toHaveBeenCalled();
     expect(storage.putPendingMutation).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Refused a delete'));
   });
@@ -105,7 +117,7 @@ describe('handleSystemEvent - a delete_message that arrives before its target', 
         rank: 0,
         at: 5_000,
       },
-      expect.any(Number),
+      { perSender: expect.any(Number), perConversation: expect.any(Number) },
       'device-key'
     );
     expect(store.size).toBe(0);
@@ -137,6 +149,6 @@ describe('handleSystemEvent - a delete_message that arrives before its target', 
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
 
     expect(storage.putPendingMutation).not.toHaveBeenCalled();
-    expect(storage.updateMessage).not.toHaveBeenCalled();
+    expect(storage.mergeMessages).not.toHaveBeenCalled();
   });
 });

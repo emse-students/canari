@@ -138,7 +138,12 @@ import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import type { PendingMutation, StoredRowsById } from '$lib/db/types';
-import { settleAgainstPending, type SettledFields } from '$lib/utils/chat/pendingMutations';
+import {
+  settleAgainstPending,
+  type SettledFields,
+  type Settlement,
+} from '$lib/utils/chat/pendingMutations';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import {
   logDiscarded,
   pendingFor,
@@ -1135,7 +1140,7 @@ export function useMessaging() {
     const arriving = persisted && !options.outboxEntry;
     let settled: Settled = { message: newMsg, fields: null, consumed: [] };
     if (arriving) {
-      const stored = await storedRowsFor(ctx, [newMsg.id]);
+      const stored = await storedRowsFor(ctx, normalized, [newMsg.id]);
       const verdict = storedBodyVerdict(stored, newMsg.id, content);
       if (verdict.kind !== 'new') {
         await settleStoredBodies([verdict], normalized, ctx);
@@ -1325,14 +1330,19 @@ export function useMessaging() {
     };
   }
 
-  /** The rows the store holds under `ids` - `null` when it could not be asked, which is said. */
+  /**
+   * The rows the store holds under `ids` IN `conversationId` - `null` when it could not be asked,
+   * which is said. A row of another conversation reads as absent: a body never lands on, nor is
+   * judged against, a row of a conversation it was not sent in.
+   */
   async function storedRowsFor(
     ctx: MessagingContext,
+    conversationId: string,
     ids: readonly string[]
   ): Promise<StoredRowsById | null> {
     if (!ctx.storage || ids.length === 0) return null;
     try {
-      return await ctx.storage.getMessagesByIds(ids, ctx.deviceKeyB64);
+      return await ctx.storage.getMessagesByIds(conversationId, ids, ctx.deviceKeyB64);
     } catch (e) {
       console.error(
         `[ADD_MSG] the store could not say whether it holds ${ids.length} arriving message(s) - they are written only where no row stands:`,
@@ -1387,7 +1397,7 @@ export function useMessaging() {
   function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
     if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
     const settlement = settleAgainstPending(msg, waiting);
-    logDiscarded(settlement.discarded, msg.senderId);
+    logDiscarded(settlement, msg.senderId);
     if (settlement.fields?.reactions) messageReactions.set(msg.id, settlement.fields.reactions);
     console.log(
       `[ADD_MSG] ${msg.id.slice(0, 8)} met ${waiting.length} mutation(s) that arrived before it`
@@ -1395,7 +1405,8 @@ export function useMessaging() {
     return {
       message: settlement.fields ? settledChatMessage(msg, settlement.fields) : msg,
       fields: settlement.fields,
-      consumed: [...waiting],
+      // Not every entry: one retained for a proven copy of an unproven body stays kept.
+      consumed: settlement.consumed,
     };
   }
 
@@ -1403,7 +1414,7 @@ export function useMessaging() {
   async function removeSettled(ctx: MessagingContext, consumed: readonly PendingMutation[]) {
     if (!ctx.storage || consumed.length === 0) return;
     try {
-      await ctx.storage.deletePendingMutations(consumed);
+      await ctx.storage.deletePendingMutations(consumed, ctx.deviceKeyB64);
     } catch (e) {
       console.error(
         `[ADD_MSG] ${consumed.length} settled pending mutation(s) were not removed:`,
@@ -1421,7 +1432,7 @@ export function useMessaging() {
     console.log(
       `[ADD_MSG] ${ids.length} arriving message(s) of "${normalized}" found a row written meanwhile - the stored row stands`
     );
-    const stored = await storedRowsFor(ctx, ids);
+    const stored = await storedRowsFor(ctx, normalized, ids);
     const c = ctx.conversations.get(normalized);
     if (!stored || !c) return;
     const rows = new SvelteMap(
@@ -1462,23 +1473,37 @@ export function useMessaging() {
       const waiting =
         (await pendingFor(pendingDeps(ctx), normalized, [verdict.row.id])).get(verdict.row.id) ??
         [];
-      const settlement =
-        waiting.length > 0
-          ? settleAgainstPending({ ...verdict.row, content: verdict.content }, waiting)
-          : null;
-      if (settlement) logDiscarded(settlement.discarded, verdict.row.senderId);
+      const { content } = verdict;
+      let settlement: Settlement | null = null;
       try {
-        console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
-        await ctx.storage.updateMessage(
-          verdict.row.id,
-          {
-            content: verdict.content,
-            isFcmPreview: false,
-            ...(settlement?.fields ? settledStoredPatch(settlement.fields) : {}),
+        // A compare-and-set on the row as it stands AT THE WRITE: a row deleted, edited or upgraded
+        // since the read above is no longer a preview, and is left as it is.
+        const written = await ctx.storage.mergeMessages(
+          normalized,
+          [verdict.row.id],
+          (current) => {
+            if (!shouldUpgradeMessage(current, content)) return null;
+            const next =
+              waiting.length > 0 ? settleAgainstPending({ ...current, content }, waiting) : null;
+            settlement = next;
+            return mergeStoredMessage(current, {
+              content,
+              isFcmPreview: false,
+              ...(next?.fields ? settledStoredPatch(next.fields) : {}),
+            });
           },
           ctx.deviceKeyB64
         );
-        await removeSettled(ctx, waiting);
+        const done = settlement as Settlement | null;
+        if (done) logDiscarded(done, verdict.row.senderId);
+        if (written.size > 0) {
+          console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
+          if (done) await removeSettled(ctx, done.consumed);
+        } else {
+          console.log(
+            `[ADD_MSG] ${verdict.row.id.slice(0, 8)} is no longer a stored preview - the arriving body leaves it as it is`
+          );
+        }
       } catch (e) {
         console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
       }
@@ -1532,7 +1557,8 @@ export function useMessaging() {
       ),
     ];
     const notShown = batchIds.filter((id) => !byId.has(id));
-    const stored = persisted && notShown.length > 0 ? await storedRowsFor(ctx, notShown) : null;
+    const stored =
+      persisted && notShown.length > 0 ? await storedRowsFor(ctx, normalized, notShown) : null;
     const waiting = persisted
       ? await pendingFor(pendingDeps(ctx), normalized, batchIds)
       : new SvelteMap<string, PendingMutation[]>();

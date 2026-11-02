@@ -1,3 +1,5 @@
 ### Fixed - a message deleted while a device was away stayed on that device
 
 A deletion, an edit or a reaction whose message was stored but not on screen now reaches the stored row; one whose message has not arrived yet is kept in a local store of its own and applied, by the message's author only, when the message arrives - including across a restart and through the archive replay ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#mutations-that-arrive-before-their-message)).
+
+Every rewrite of a stored message is now a compare-and-set on a row revision, so a deletion stored while the archive replay or a bundle merge was rewriting the row is never overwritten; a lookup by message id is scoped to its conversation; and the waiting mutations are bounded per sender, tagged rather than named at rest, and moved with the device key on a PIN change ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#every-rewrite-of-a-stored-message-is-a-compare-and-set-review-of-2936-p1)).

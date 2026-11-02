@@ -27,10 +27,23 @@ function makeCtx(senderNorm: string, rows: Record<string, any>, shown: any[] = [
   conversations.set(GROUP, { id: GROUP, unreadCount: 0, messages: shown });
   const store = new Map<string, any>(Object.entries(rows));
   const storage = {
-    getMessagesByIds: vi.fn(async (ids: string[]) => ({
+    getMessagesByIds: vi.fn(async (_c: string, ids: string[]) => ({
       rows: new Map(ids.filter((id) => store.has(id)).map((id) => [id, { ...store.get(id) }])),
       unreadable: new Set<string>(),
     })),
+    mergeMessages: vi.fn(async (_c: string, ids: string[], merge: (row: any) => any) => {
+      const written = new Set<string>();
+      for (const id of ids) {
+        const row = store.get(id);
+        const next = row ? merge({ ...row }) : null;
+        if (next) {
+          store.set(id, next);
+          written.add(id);
+        }
+      }
+      return written;
+    }),
+    getPendingMutations: vi.fn(async () => ({ entries: [], removedUnreadable: 0 })),
     updateMessage: vi.fn(async (id: string, patch: any) => {
       const row = store.get(id);
       if (!row) return;

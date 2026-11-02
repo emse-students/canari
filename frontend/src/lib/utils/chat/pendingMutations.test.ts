@@ -35,11 +35,35 @@ describe('settleAgainstPending', () => {
 
   it("discards a non-author's deletion - and it cannot stand in front of the author's", () => {
     const mallory = e({ sender: 'mallory' });
-    expect(settleAgainstPending(body, [mallory])).toEqual({ fields: null, discarded: [mallory] });
+    expect(settleAgainstPending(body, [mallory])).toEqual({
+      fields: null,
+      discarded: [mallory],
+      retained: [],
+      consumed: [mallory],
+    });
     // Both kept (one entry per sender): the author's still applies.
     const both = settleAgainstPending(body, [mallory, e({})]);
     expect(both.fields?.isDeleted).toBe(true);
     expect(both.discarded).toEqual([mallory]);
+  });
+
+  it("RETAINS a non-author deletion or edit when the body's author is only a claim - nothing applied, nothing consumed", () => {
+    const mallory = e({ sender: 'mallory' });
+    const forged = e({ sender: 'mallory', kind: 'edit', rank: 9, text: 'x' });
+    const reaction = e({ sender: 'mallory', kind: 'reaction', slot: '👍', rank: 3 });
+    const out = settleAgainstPending({ ...body, restoredUnverified: true }, [
+      mallory,
+      forged,
+      reaction,
+    ]);
+    expect(out.fields?.isDeleted).toBeUndefined();
+    expect(out.fields?.content).toBeUndefined();
+    expect(out.discarded).toEqual([]);
+    expect(out.retained).toEqual([mallory, forged]);
+    // The reaction is everyone's, so it is applied and consumed whatever the authorship.
+    expect(out.consumed).toEqual([reaction]);
+    // Once the body is PROVEN, the same entries are discarded for good.
+    expect(settleAgainstPending(body, [mallory, forged]).consumed).toEqual([mallory, forged]);
   });
 
   it("applies the author's LATEST edit and never a non-author's, however far in the future", () => {

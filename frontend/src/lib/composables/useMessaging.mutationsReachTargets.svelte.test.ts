@@ -17,11 +17,14 @@ import {
   DRAIN,
   KEY,
   OTHER_KEY,
+  deleteFrame,
   editFrame,
   makeDevice,
   freshStoreName,
   reactionFrame,
+  systemContext,
 } from './pendingMutations.test-helper';
+import { handleSystemEvent } from '$lib/mls-client/messagePipeline/systemMessageHandler';
 
 /** Same notification-name stub as `useMessaging.bulkIngest.svelte.test.ts`. */
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
@@ -216,5 +219,66 @@ describe('a body re-delivered for a stored row memory does not show', () => {
       content: 'sealed elsewhere',
     });
     expect(rewrite).not.toHaveBeenCalled();
+  });
+});
+
+describe('a frame of one conversation naming a message of ANOTHER (review of #2936, P1)', () => {
+  // A message id is global in the store. A member of A who is (or was) also in B must not reach a
+  // row of B through a frame sent in A - deleting, editing or reacting to it there, or a relayed
+  // bundle rewriting it. A row of another conversation reads as ABSENT to every one of them.
+  const IN_B = 'conversation-b';
+  const rowOfB = () => storedBody({ id: 'b1', conversationId: IN_B, content: BODY });
+
+  async function deviceWithRowOfB() {
+    const d = await device();
+    await d.storage.saveConversation({ id: IN_B, name: 'b', lifecycle: 'active', updatedAt: 1 });
+    await d.storage.saveMessage(rowOfB(), KEY);
+    return d;
+  }
+
+  async function rowOfBAfter() {
+    return (await d0!.storage.getMessagesByIds(IN_B, ['b1'], KEY)).rows.get('b1');
+  }
+  let d0: Awaited<ReturnType<typeof deviceWithRowOfB>> | null = null;
+
+  it('a deletion sent in A never tombstones it', async () => {
+    d0 = await deviceWithRowOfB();
+    await deleteFrame(d0, PEER, 'b1');
+    expect(await rowOfBAfter()).toMatchObject({ content: BODY });
+    expect((await rowOfBAfter())?.isDeleted).toBeFalsy();
+  });
+
+  it('an edit sent in A never rewrites it', async () => {
+    d0 = await deviceWithRowOfB();
+    await editFrame(d0, PEER, 'b1', 'rewritten through A', 4_000);
+    expect(await rowOfBAfter()).toMatchObject({ content: BODY });
+    expect((await rowOfBAfter())?.isEdited).toBeFalsy();
+  });
+
+  it('a reaction sent in A never lands on it', async () => {
+    d0 = await deviceWithRowOfB();
+    await reactionFrame(d0, OTHER, 'b1', '👍', 5_000);
+    expect((await rowOfBAfter())?.reactions ?? []).toEqual([]);
+  });
+
+  it('a bundle relayed in A never merges onto it', async () => {
+    d0 = await deviceWithRowOfB();
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [
+          {
+            id: 'b1',
+            senderId: PEER,
+            content: m.chat_system_message_deleted(),
+            timestamp: 1_000,
+            isDeleted: true,
+          },
+        ],
+      },
+      systemContext(d0, PEER)
+    );
+    expect(await rowOfBAfter()).toMatchObject({ content: BODY });
+    expect((await rowOfBAfter())?.isDeleted).toBeFalsy();
   });
 });

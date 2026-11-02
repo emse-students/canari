@@ -1,8 +1,10 @@
 /**
- * The store of mutations whose message is not here yet (`PendingMutation`) and the insert-only
- * message write (`saveMessagesIfAbsent`), on BOTH backends - IndexedDB through `fake-indexeddb`,
- * SQLite through `SqliteStorage.init` run for real against `node:sqlite` - and the upgrade of a
- * database each backend's previous build left behind (IndexedDB v12, SQLite v17).
+ * The store of mutations whose message is not here yet (`PendingMutation`), the insert-only message
+ * write (`saveMessagesIfAbsent`), the compare-and-set every rewrite of a message row goes through
+ * (`mergeMessages`, `updateMessage`) and the conversation scope of `getMessagesByIds` - on BOTH
+ * backends: IndexedDB through `fake-indexeddb`, SQLite through `SqliteStorage.init` run for real
+ * against `node:sqlite`. And the upgrade of a database each backend's previous build left behind
+ * (IndexedDB v12, SQLite v17).
  */
 import 'fake-indexeddb/auto';
 import { IndexedDbStorage } from './indexeddb';
@@ -10,10 +12,12 @@ import { SqliteStorage } from './sqlite';
 import { SCHEMA_VERSION } from './sqliteMigrations';
 import type { IStorage, PendingMutation, StoredMessage } from './types';
 import { encryptData } from '../encryption';
-import { toMessagePayload } from './messagePayload';
+import { mergeStoredMessage, toMessagePayload } from './messagePayload';
+import { replayedMutationsOnto, replayedStoredRow } from '$lib/utils/chat/history';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
+const ROOMY = { perSender: 100, perConversation: 1000 };
 let n = 0;
 
 /** A real `node:sqlite` engine behind the plugin's `execute`/`select`. */
@@ -42,23 +46,88 @@ async function sqliteOver(db: unknown): Promise<SqliteStorage> {
   return storage;
 }
 
-async function openSqlite(): Promise<IStorage> {
-  return sqliteOver(sqliteEngine().db);
+/** What a test reads and damages underneath a backend, in its own terms. */
+interface Rig {
+  storage: IStorage;
+  /** Every pending-mutation row as stored, serialised - what a disk image would show. */
+  pendingAtRest(): Promise<string>;
+  /** Overwrites every pending-mutation row's sealed bytes with bytes that do not open. */
+  corruptPending(): Promise<void>;
+  /** The revision a message row stands at. */
+  revisionOf(id: string): Promise<number>;
+  /** Stores `value` as a message row's timestamp, as an older build or a phone backup did. */
+  setTimestamp(id: string, value: unknown): Promise<void>;
 }
 
-async function openIdb(): Promise<IStorage> {
+async function sqliteRig(): Promise<Rig> {
+  const { engine, db } = sqliteEngine();
+  const storage = await sqliteOver(db);
+  return {
+    storage,
+    pendingAtRest: async () =>
+      JSON.stringify(engine.prepare('SELECT * FROM pending_mutations').all()),
+    corruptPending: async () => {
+      engine.exec(`UPDATE pending_mutations SET cipher_text = '${btoa('not a sealed payload!!')}'`);
+    },
+    revisionOf: async (id) =>
+      Number(
+        (engine.prepare('SELECT rev FROM messages WHERE id = ?').get(id) as { rev: number }).rev
+      ),
+    setTimestamp: async (id, value) => {
+      engine.prepare('UPDATE messages SET timestamp = ? WHERE id = ?').run(value as never, id);
+    },
+  };
+}
+
+async function idbRig(): Promise<Rig> {
   const storage = new IndexedDbStorage(`pending-${Date.now()}-${n++}`);
   await storage.init();
-  return storage;
+  const db = (storage as unknown as { ensureDb(): IDBDatabase }).ensureDb();
+  const all = (store: string) =>
+    new Promise<any[]>((resolve, reject) => {
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  const rewrite = (store: string, change: (row: any) => any) =>
+    new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      const os = tx.objectStore(store);
+      const req = os.getAll();
+      req.onsuccess = () => {
+        for (const row of req.result) {
+          const next = change(row);
+          if (next) os.put(next);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  return {
+    storage,
+    pendingAtRest: async () =>
+      JSON.stringify(await all('pendingMutations'), (_k, v) =>
+        v instanceof Uint8Array ? Array.from(v) : v
+      ),
+    corruptPending: () =>
+      rewrite('pendingMutations', (row) => ({
+        ...row,
+        cipherText: new TextEncoder().encode('not a sealed payload!!'),
+      })),
+    revisionOf: async (id) => Number((await all('messages')).find((r) => r.id === id)?.rev),
+    setTimestamp: (id, value) =>
+      rewrite('messages', (row) => (row.id === id ? { ...row, timestamp: value } : null)),
+  };
 }
 
 afterEach(() => {
   vi.doUnmock('@tauri-apps/plugin-sql');
+  vi.restoreAllMocks();
 });
 
-const backends: Array<[string, () => Promise<IStorage>]> = [
-  ['IndexedDbStorage', openIdb],
-  ['SqliteStorage', openSqlite],
+const backends: Array<[string, () => Promise<Rig>]> = [
+  ['IndexedDbStorage', idbRig],
+  ['SqliteStorage', sqliteRig],
 ];
 
 const entry = (over: Partial<PendingMutation> = {}): PendingMutation => ({
@@ -72,114 +141,239 @@ const entry = (over: Partial<PendingMutation> = {}): PendingMutation => ({
   ...over,
 });
 
-const body = (id: string, content = 'the body'): StoredMessage => ({
+const body = (id: string, content = 'the body', conversationId = 'conv'): StoredMessage => ({
   id,
-  conversationId: 'conv',
+  conversationId,
   senderId: 'alice',
   content,
   timestamp: 1_000,
 });
 
-describe.each(backends)('%s - pending mutations', (_name, open) => {
-  it('keeps an entry sealed and reads it back by message id, and only those asked', async () => {
-    const storage = await open();
+/**
+ * Makes `storage`'s NEXT compare-and-set read be followed, before its write, by `meanwhile` - the
+ * write of another writer landing between the read and the write, exactly where the old
+ * read-then-write lost it. Deterministic: the hook runs after the read resolved, before it returns.
+ */
+function writeBetweenReadAndWrite(storage: IStorage, meanwhile: () => Promise<unknown>): void {
+  const target = storage as unknown as {
+    readRows: (...args: unknown[]) => Promise<unknown>;
+  };
+  const read = target.readRows.bind(storage);
+  let fired = false;
+  target.readRows = async (...args: unknown[]) => {
+    const out = await read(...args);
+    if (!fired) {
+      fired = true;
+      await meanwhile();
+    }
+    return out;
+  };
+}
+
+describe.each(backends)('%s - pending mutations', (_name, rig) => {
+  it('keeps an entry sealed, its key TAGGED, and reads it back by message id, and only those asked', async () => {
+    const { storage, pendingAtRest } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
     await storage.putPendingMutation(
       entry({ kind: 'edit', rank: 5, text: 'secret edit' }),
-      10,
+      ROOMY,
       KEY
     );
-    await storage.putPendingMutation(entry({ messageId: 'm2' }), 10, KEY);
+    await storage.putPendingMutation(
+      entry({ messageId: 'm2', sender: 'bob-the-reactor', kind: 'reaction', slot: '🦜' }),
+      ROOMY,
+      KEY
+    );
 
     const read = await storage.getPendingMutations('conv', ['m1'], KEY);
-    expect(read.entries).toEqual([entry({ kind: 'edit', rank: 5, text: 'secret edit' })]);
-    expect(read.unreadable).toBe(0);
+    expect(read).toEqual({
+      entries: [entry({ kind: 'edit', rank: 5, text: 'secret edit' })],
+      removedUnreadable: 0,
+    });
     expect((await storage.getPendingMutations('other', ['m1'], KEY)).entries).toEqual([]);
+    // Nothing at rest names who reacted with what to which message.
+    const disk = await pendingAtRest();
+    for (const clear of ['bob-the-reactor', '🦜', 'secret edit', '"m2"', '"alice"']) {
+      expect(disk).not.toContain(clear);
+    }
   });
 
   it('needs no conversation row - an entry may come before the conversation reaches the store', async () => {
-    const storage = await open();
-    const write = await storage.putPendingMutation(entry(), 10, KEY);
-    expect(write).toEqual({ written: true, evicted: 0 });
+    const { storage } = await rig();
+    const write = await storage.putPendingMutation(entry(), ROOMY, KEY);
+    expect(write).toEqual({ written: true, kept: true, evicted: 0 });
   });
 
   it('keeps the larger rank under one key, the first on a tie - decided in the write', async () => {
-    const storage = await open();
+    const { storage } = await rig();
     const edit = (rank: number, text: string) => entry({ kind: 'edit', rank, text });
-    expect((await storage.putPendingMutation(edit(5, 'five'), 10, KEY)).written).toBe(true);
-    expect((await storage.putPendingMutation(edit(3, 'three'), 10, KEY)).written).toBe(false);
-    expect((await storage.putPendingMutation(edit(5, 'tie'), 10, KEY)).written).toBe(false);
-    expect((await storage.putPendingMutation(edit(9, 'nine'), 10, KEY)).written).toBe(true);
+    expect((await storage.putPendingMutation(edit(5, 'five'), ROOMY, KEY)).written).toBe(true);
+    expect((await storage.putPendingMutation(edit(3, 'three'), ROOMY, KEY)).written).toBe(false);
+    expect((await storage.putPendingMutation(edit(5, 'tie'), ROOMY, KEY)).written).toBe(false);
+    expect((await storage.putPendingMutation(edit(9, 'nine'), ROOMY, KEY)).written).toBe(true);
     const read = await storage.getPendingMutations('conv', ['m1'], KEY);
     expect(read.entries.map((e) => e.text)).toEqual(['nine']);
   });
 
   it('keeps one entry per sender and kind, so another sender never displaces the author', async () => {
-    const storage = await open();
-    await storage.putPendingMutation(entry({ sender: 'mallory' }), 10, KEY);
-    await storage.putPendingMutation(entry({ sender: 'alice' }), 10, KEY);
+    const { storage } = await rig();
+    await storage.putPendingMutation(entry({ sender: 'mallory' }), ROOMY, KEY);
+    await storage.putPendingMutation(entry({ sender: 'alice' }), ROOMY, KEY);
     await storage.putPendingMutation(
       entry({ sender: 'mallory', kind: 'edit', rank: 9e15, text: 'far future' }),
-      10,
+      ROOMY,
       KEY
     );
     await storage.putPendingMutation(
       entry({ sender: 'alice', kind: 'edit', rank: 5, text: 'mine' }),
-      10,
+      ROOMY,
       KEY
     );
     const read = await storage.getPendingMutations('conv', ['m1'], KEY);
     expect(read.entries).toHaveLength(4);
   });
 
-  it('evicts the OLDEST entries past the cap, by count, and says how many', async () => {
-    const storage = await open();
-    for (let i = 0; i < 3; i++) {
-      await storage.putPendingMutation(entry({ messageId: `m${i}`, at: 100 + i }), 3, KEY);
+  it("a FLOOD by one sender evicts only that sender's own entries, never another member's deletion", async () => {
+    const { storage } = await rig();
+    const limits = { perSender: 3, perConversation: 1000 };
+    await storage.putPendingMutation(entry({ sender: 'alice', at: 1 }), limits, KEY);
+    let evicted = 0;
+    for (let i = 0; i < 20; i++) {
+      const write = await storage.putPendingMutation(
+        entry({ sender: 'mallory', messageId: `x${i}`, at: 100 + i }),
+        limits,
+        KEY
+      );
+      evicted += write.evicted;
     }
-    const fourth = await storage.putPendingMutation(entry({ messageId: 'm9', at: 50 }), 3, KEY);
-    expect(fourth).toEqual({ written: true, evicted: 1 });
-    // The oldest by the frame's server time went - here the one just written.
-    const left = await storage.getPendingMutations('conv', ['m0', 'm1', 'm2', 'm9'], KEY);
-    expect(left.entries.map((e) => e.messageId).sort()).toEqual(['m0', 'm1', 'm2']);
-    const fifth = await storage.putPendingMutation(entry({ messageId: 'm7', at: 500 }), 3, KEY);
-    expect(fifth.evicted).toBe(1);
-    const after = await storage.getPendingMutations('conv', ['m0', 'm1', 'm2', 'm7'], KEY);
-    expect(after.entries.map((e) => e.messageId).sort()).toEqual(['m1', 'm2', 'm7']);
+    expect(evicted).toBe(17);
+    expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toEqual([
+      entry({ sender: 'alice', at: 1 }),
+    ]);
+    const flood = Array.from({ length: 20 }, (_, i) => `x${i}`);
+    const left = await storage.getPendingMutations('conv', flood, KEY);
+    // The sender's three newest stay.
+    expect(left.entries.map((e) => e.messageId).sort()).toEqual(['x17', 'x18', 'x19']);
+  });
+
+  it('evicts a reaction before a deletion or an edit of the same sender, whatever their age', async () => {
+    const { storage } = await rig();
+    const limits = { perSender: 2, perConversation: 1000 };
+    await storage.putPendingMutation(entry({ messageId: 'old-delete', at: 1 }), limits, KEY);
+    await storage.putPendingMutation(
+      entry({ messageId: 'new-reaction', kind: 'reaction', slot: '👍', at: 500 }),
+      limits,
+      KEY
+    );
+    const third = await storage.putPendingMutation(
+      entry({ messageId: 'edit', kind: 'edit', rank: 2, text: 't', at: 100 }),
+      limits,
+      KEY
+    );
+    expect(third).toEqual({ written: true, kept: true, evicted: 1 });
+    const left = await storage.getPendingMutations(
+      'conv',
+      ['old-delete', 'new-reaction', 'edit'],
+      KEY
+    );
+    expect(left.entries.map((e) => e.messageId).sort()).toEqual(['edit', 'old-delete']);
+  });
+
+  it('says when the write evicted the very entry it wrote - written, not kept', async () => {
+    const { storage } = await rig();
+    const limits = { perSender: 2, perConversation: 1000 };
+    await storage.putPendingMutation(entry({ messageId: 'a', at: 1 }), limits, KEY);
+    await storage.putPendingMutation(entry({ messageId: 'b', at: 2 }), limits, KEY);
+    const reaction = await storage.putPendingMutation(
+      entry({ messageId: 'c', kind: 'reaction', slot: '👍', at: 3 }),
+      limits,
+      KEY
+    );
+    expect(reaction).toEqual({ written: true, kept: false, evicted: 1 });
+  });
+
+  it('over the conversation bound, the sender holding the most loses its lowest entry', async () => {
+    const { storage } = await rig();
+    const limits = { perSender: 100, perConversation: 4 };
+    await storage.putPendingMutation(entry({ sender: 'alice', at: 1 }), limits, KEY);
+    for (let i = 0; i < 4; i++) {
+      await storage.putPendingMutation(
+        entry({ sender: 'mallory', messageId: `x${i}`, at: 100 + i }),
+        limits,
+        KEY
+      );
+    }
+    expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toHaveLength(1);
+    const left = await storage.getPendingMutations('conv', ['x0', 'x1', 'x2', 'x3'], KEY);
+    expect(left.entries.map((e) => e.messageId).sort()).toEqual(['x1', 'x2', 'x3']);
   });
 
   it('removes an entry only at the rank it was read at', async () => {
-    const storage = await open();
+    const { storage } = await rig();
     const old = entry({ kind: 'reaction', slot: '👍', rank: 1 });
-    await storage.putPendingMutation(old, 10, KEY);
-    await storage.putPendingMutation({ ...old, rank: 2, removed: true }, 10, KEY);
-    await storage.deletePendingMutations([old]);
+    await storage.putPendingMutation(old, ROOMY, KEY);
+    await storage.putPendingMutation({ ...old, rank: 2, removed: true }, ROOMY, KEY);
+    await storage.deletePendingMutations([old], KEY);
     expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toHaveLength(1);
-    await storage.deletePendingMutations([{ ...old, rank: 2 }]);
+    await storage.deletePendingMutations([{ ...old, rank: 2 }], KEY);
     expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toHaveLength(0);
   });
 
-  it('never opens an entry sealed under another key - it is reported, not applied', async () => {
-    const storage = await open();
-    await storage.putPendingMutation(entry(), 10, OTHER_KEY);
+  it('removes an entry whose bytes no longer open under the key that tagged it, and counts it', async () => {
+    const { storage, corruptPending } = await rig();
+    await storage.putPendingMutation(entry(), ROOMY, KEY);
+    await corruptPending();
     expect(await storage.getPendingMutations('conv', ['m1'], KEY)).toEqual({
       entries: [],
-      unreadable: 1,
+      removedUnreadable: 1,
+    });
+    // Gone: the next read finds nothing to remove.
+    expect(await storage.getPendingMutations('conv', ['m1'], KEY)).toEqual({
+      entries: [],
+      removedUnreadable: 0,
+    });
+  });
+
+  it('never finds an entry tagged under another key', async () => {
+    const { storage } = await rig();
+    await storage.putPendingMutation(entry(), ROOMY, OTHER_KEY);
+    expect(await storage.getPendingMutations('conv', ['m1'], KEY)).toEqual({
+      entries: [],
+      removedUnreadable: 0,
+    });
+  });
+
+  it('moves every entry to a new device key - re-sealed AND re-tagged - and resumes', async () => {
+    const { storage } = await rig();
+    await storage.putPendingMutation(entry({ kind: 'edit', rank: 3, text: 'x' }), ROOMY, KEY);
+    expect(await storage.resealPendingMutations(KEY, OTHER_KEY)).toEqual({
+      resealed: 1,
+      alreadyNew: 0,
+      unreadable: 0,
+    });
+    expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toEqual([]);
+    expect((await storage.getPendingMutations('conv', ['m1'], OTHER_KEY)).entries).toEqual([
+      entry({ kind: 'edit', rank: 3, text: 'x' }),
+    ]);
+    expect(await storage.resealPendingMutations(KEY, OTHER_KEY)).toEqual({
+      resealed: 0,
+      alreadyNew: 1,
+      unreadable: 0,
     });
   });
 
   it('goes with its conversation', async () => {
-    const storage = await open();
+    const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
-    await storage.putPendingMutation(entry(), 10, KEY);
+    await storage.putPendingMutation(entry(), ROOMY, KEY);
     await storage.deleteConversation('conv');
     expect((await storage.getPendingMutations('conv', ['m1'], KEY)).entries).toEqual([]);
   });
 });
 
-describe.each(backends)('%s - saveMessagesIfAbsent', (_name, open) => {
+describe.each(backends)('%s - saveMessagesIfAbsent', (_name, rig) => {
   it('writes only where no row stands and names what it wrote', async () => {
-    const storage = await open();
+    const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
     await storage.saveMessage({ ...body('m1'), isDeleted: true, content: 'deleted' }, KEY);
 
@@ -191,7 +385,7 @@ describe.each(backends)('%s - saveMessagesIfAbsent', (_name, open) => {
   });
 
   it('never writes over a row this device cannot open', async () => {
-    const storage = await open();
+    const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
     await storage.saveMessage(body('m1', 'sealed elsewhere'), OTHER_KEY);
 
@@ -199,6 +393,163 @@ describe.each(backends)('%s - saveMessagesIfAbsent', (_name, open) => {
     expect(await storage.getMessage('m1', OTHER_KEY)).toMatchObject({
       content: 'sealed elsewhere',
     });
+  });
+});
+
+describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, rig) => {
+  async function twoConversations(storage: IStorage) {
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveConversation({ id: 'conv-b', name: 'b', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessages([body('m1'), body('b1', 'in B', 'conv-b')], KEY);
+  }
+
+  it('reads a row of another conversation as ABSENT, and says so', async () => {
+    const { storage } = await rig();
+    await twoConversations(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const found = await storage.getMessagesByIds('conv', ['m1', 'b1'], KEY);
+
+    expect([...found.rows.keys()]).toEqual(['m1']);
+    expect(found.unreadable.size).toBe(0);
+    expect(warn.mock.calls.flat().join(' ')).toContain('another conversation');
+  });
+
+  it('never rewrites a row of another conversation', async () => {
+    const { storage } = await rig();
+    await twoConversations(storage);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const written = await storage.mergeMessages(
+      'conv',
+      ['b1'],
+      (row) => ({ ...row, content: 'rewritten through A' }),
+      KEY
+    );
+
+    expect(written.size).toBe(0);
+    expect(await storage.getMessage('b1', KEY)).toMatchObject({ content: 'in B' });
+  });
+
+  it('raises the revision on every write', async () => {
+    const { storage, revisionOf } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('m1'), KEY);
+    const first = await revisionOf('m1');
+    await storage.saveMessage(body('m1', 'again'), KEY);
+    await storage.updateMessage('m1', { isEdited: true }, KEY);
+    expect(await revisionOf('m1')).toBe(first + 2);
+  });
+
+  it('a replay write racing a LIVE DELETE keeps the tombstone (the replay gap)', async () => {
+    const { storage } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('m1', 'the secret'), KEY);
+    // The live drain stores the author's deletion between the replay's read and its write.
+    writeBetweenReadAndWrite(storage, () =>
+      storage.updateMessage('m1', { isDeleted: true, content: 'deleted', authorship: null }, KEY)
+    );
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const merge = vi.fn((current: StoredMessage) =>
+      replayedStoredRow(
+        { senderId: 'alice', content: 'the secret', timestamp: new Date(1_000) } as never,
+        current,
+        { id: current.id, conversationId: 'conv', userId: 'me' }
+      )
+    );
+
+    await storage.mergeMessages('conv', ['m1'], merge, KEY);
+
+    expect(merge).toHaveBeenCalledTimes(2);
+    expect(merge.mock.calls[1][0]).toMatchObject({ isDeleted: true });
+    expect(await storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(log.mock.calls.flat().join(' ')).toContain('merged again');
+  });
+
+  it("the post-save pass racing a LIVE EDIT keeps the later edit and both members' reactions", async () => {
+    const { storage } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('m1', 'v0'), KEY);
+    writeBetweenReadAndWrite(storage, () =>
+      storage.updateMessage(
+        'm1',
+        {
+          content: 'live v2',
+          isEdited: true,
+          editedAt: 2_000,
+          reactions: [{ userId: 'bob', emoji: '👍', at: 5 }] as never,
+        },
+        KEY
+      )
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await storage.mergeMessages(
+      'conv',
+      ['m1'],
+      (current) =>
+        replayedMutationsOnto(current, {
+          reactions: [{ userId: 'carol', emoji: '🎉', at: 7 }] as never,
+          edit: { by: 'alice', content: 'replayed v1', editedAt: new Date(1_000) },
+        }),
+      KEY
+    );
+
+    const row = await storage.getMessage('m1', KEY);
+    expect(row).toMatchObject({ content: 'live v2', editedAt: 2_000 });
+    expect(row?.reactions?.map((r) => (r as { userId: string }).userId).sort()).toEqual([
+      'bob',
+      'carol',
+    ]);
+  });
+
+  it('two updateMessage calls racing each other both land', async () => {
+    const { storage } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('m1'), KEY);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await Promise.all([
+      storage.updateMessage('m1', { serverTimestamp: 42 }, KEY),
+      storage.updateMessage('m1', { isEdited: true, editedAt: 9 }, KEY),
+      storage.updateMessage('m1', { mediaPurgedAt: 7 }, KEY),
+    ]);
+
+    expect(await storage.getMessage('m1', KEY)).toMatchObject({
+      serverTimestamp: 42,
+      isEdited: true,
+      editedAt: 9,
+      mediaPurgedAt: 7,
+    });
+  });
+
+  it('a merge that changes nothing writes nothing', async () => {
+    const { storage, revisionOf } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('m1'), KEY);
+    const before = await revisionOf('m1');
+    expect((await storage.mergeMessages('conv', ['m1'], () => null, KEY)).size).toBe(0);
+    expect(await revisionOf('m1')).toBe(before);
+    // And `mergeStoredMessage` is what callers fold a patch with.
+    expect(mergeStoredMessage(body('m1'), { isEdited: true })).toMatchObject({ isEdited: true });
+  });
+
+  it('reads a window by the same rule on both backends, timestamps stored as text included', async () => {
+    const { storage, setTimestamp } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessages(
+      [body('old'), body('as-text'), body('unreadable'), { ...body('new'), timestamp: 9_000 }],
+      KEY
+    );
+    await setTimestamp('as-text', '5000');
+    await setTimestamp('unreadable', 'not a time');
+
+    const since = await storage.getMessagesSince('conv', 2_000, KEY);
+
+    expect(since.map((m) => [m.id, m.timestamp]).sort()).toEqual([
+      ['as-text', 5_000],
+      ['new', 9_000],
+    ]);
   });
 });
 
@@ -236,22 +587,30 @@ describe('the upgrade of a database the previous build left', () => {
     await storage.init();
 
     expect(await storage.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
-    expect((await storage.putPendingMutation(entry(), 10, KEY)).written).toBe(true);
+    expect((await storage.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
+    // A row from before revisions reads at 0, and the compare-and-set takes it from there.
+    await storage.updateMessage('m1', { isEdited: true }, KEY);
+    expect(await storage.getMessage('m1', KEY)).toMatchObject({ isEdited: true });
   });
 
-  it('SQLite v17 -> v18 creates the table, stamps 18 and keeps every message', async () => {
+  it('SQLite v17 -> v18 creates the table, adds `rev`, stamps 18 and keeps every message', async () => {
     const { engine, db } = sqliteEngine();
     const first = await sqliteOver(db);
     await first.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
     await first.saveMessage(body('m1'), KEY);
-    // What a v17 build left: no `pending_mutations`, stamped 17.
-    engine.exec('DROP TABLE pending_mutations; PRAGMA user_version = 17;');
+    // What a v17 build left: no `pending_mutations`, no `messages.rev`, stamped 17.
+    engine.exec(
+      'DROP TABLE pending_mutations; ALTER TABLE messages DROP COLUMN rev; PRAGMA user_version = 17;'
+    );
 
     const upgraded = await sqliteOver(db);
 
     expect(SCHEMA_VERSION).toBe(18);
     expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 18 });
+    expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 0 });
     expect(await upgraded.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
-    expect((await upgraded.putPendingMutation(entry(), 10, KEY)).written).toBe(true);
+    expect((await upgraded.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
+    await upgraded.updateMessage('m1', { isEdited: true }, KEY);
+    expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 1 });
   });
 });

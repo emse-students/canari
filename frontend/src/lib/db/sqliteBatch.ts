@@ -41,8 +41,12 @@ export const MESSAGE_COLUMNS = 7;
 export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESSAGE_COLUMNS);
 
 /**
- * `INSERT OR REPLACE` for `rows` message rows, with positional placeholders - or `INSERT OR IGNORE`
+ * An upsert for `rows` message rows, with positional placeholders - or `INSERT OR IGNORE`
  * (`onConflict: 'ignore'`) for a write that must never replace a row already stored.
+ *
+ * NOT `INSERT OR REPLACE`: a replace deletes the row and inserts a new one, which would reset its
+ * revision (`rev`). The upsert raises it instead, so a compare-and-set that read the row before this
+ * write cannot write over it (`messageCas.ts`).
  *
  * The placeholders are numbered across the whole statement (`$1…$6`, `$7…$12`, …) because that is
  * what the plugin's SQLite binding expects; a repeated `$1` per tuple would bind every row to the
@@ -63,9 +67,16 @@ export function messageInsertSql(
     );
     return `(${placeholders.join(', ')})`;
   });
+  const columns =
+    'messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending)';
+  if (onConflict === 'ignore')
+    return `INSERT OR IGNORE INTO ${columns} VALUES ` + tuples.join(', ');
   return (
-    `INSERT OR ${onConflict === 'ignore' ? 'IGNORE' : 'REPLACE'} INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ` +
-    tuples.join(', ')
+    `INSERT INTO ${columns} VALUES ` +
+    tuples.join(', ') +
+    ' ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, timestamp = excluded.timestamp, ' +
+    'iv = excluded.iv, cipher_text = excluded.cipher_text, order_at = excluded.order_at, ' +
+    'order_pending = excluded.order_pending, rev = messages.rev + 1'
   );
 }
 
@@ -172,10 +183,12 @@ export function sealedSwapStatement(
   const where = swaps
     .map((s) => `(${key} = ${next(s.id)} AND cipher_text = ${next(s.expected)})`)
     .join(' OR ');
+  // A message re-sealed is a new revision: a compare-and-set that read it before must retry.
+  const revision = store === 'messages' ? ', rev = rev + 1' : '';
   return {
     sql:
       `UPDATE ${table} SET iv = CASE ${key} ${ivCase} END, ` +
-      `cipher_text = CASE ${key} ${cipherCase} END WHERE ${where}`,
+      `cipher_text = CASE ${key} ${cipherCase} END${revision} WHERE ${where}`,
     params,
   };
 }

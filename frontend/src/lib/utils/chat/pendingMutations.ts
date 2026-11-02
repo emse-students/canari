@@ -32,8 +32,9 @@ import { applyReaction } from './messageReactions';
 import { m } from '$lib/paraglide/messages';
 
 /**
- * The most entries one conversation keeps; past it the OLDEST (by the frame's server time) are
- * evicted and the eviction is logged at warn with its count. A count, never a clock: an entry is
+ * The most entries one conversation keeps; past it the sender holding the most loses its lowest
+ * entry (reactions first, then the oldest by the frame's server time), and the evictions are counted
+ * and said at warn ({@link PENDING_MUTATIONS_PER_SENDER} bounds each sender first). A count, never a clock: an entry is
  * not wrong because it is old - its message may still come - only because the store must be bounded.
  *
  * 1000 because the entries a correct device needs are those of mutations whose message is in flight:
@@ -46,6 +47,23 @@ import { m } from '$lib/paraglide/messages';
  */
 export const PENDING_MUTATIONS_PER_CONVERSATION = 1000;
 
+/**
+ * The most entries ONE SENDER keeps in one conversation; past it that sender loses its own lowest -
+ * a reaction before a deletion or an edit, then the oldest. A member flooding mutations of ids that
+ * never arrive therefore evicts only their own entries, never another member's deletion.
+ *
+ * 200 because a sender's live entries are the mutations of their own in-flight messages (deletions
+ * and edits) and their reactions to everyone's: a fifth of the conversation bound, so at least five
+ * senders fill the conversation before the larger bound has anything to choose between.
+ */
+export const PENDING_MUTATIONS_PER_SENDER = 200;
+
+/** The two bounds, as `IStorage.putPendingMutation` takes them. */
+export const PENDING_MUTATION_LIMITS = {
+  perSender: PENDING_MUTATIONS_PER_SENDER,
+  perConversation: PENDING_MUTATIONS_PER_CONVERSATION,
+} as const;
+
 /** The part of a message a settlement reads: its author and the state the entries may change. */
 export interface SettleTarget {
   id: string;
@@ -55,6 +73,12 @@ export interface SettleTarget {
   isEdited?: boolean;
   editedAt?: Date | number | null;
   reactions?: MessageReaction[];
+  /**
+   * The body came from a bundle with no proof of its author: its `senderId` is a CLAIM. A deletion
+   * or an edit by someone else is then not refused for good - it may be the real author's - so it is
+   * RETAINED, neither applied nor consumed, until a proven copy of the body settles it.
+   */
+  restoredUnverified?: boolean;
 }
 
 /** What settling a message's pending entries changes on it. */
@@ -74,8 +98,15 @@ export interface SettledFields {
 export interface Settlement {
   /** The fields to write onto the message, or `null` when the entries change nothing. */
   fields: SettledFields | null;
-  /** The deletions and edits refused because their sender is not the message's author. */
+  /** The deletions and edits refused for good: their sender is not the PROVEN author. */
   discarded: PendingMutation[];
+  /**
+   * The deletions and edits by someone other than an UNPROVEN author (`restoredUnverified`): not
+   * applied, and not consumed - they wait for a proven copy of the body.
+   */
+  retained: PendingMutation[];
+  /** Every entry this settlement disposed of - applied or discarded; what a writer may remove. */
+  consumed: PendingMutation[];
 }
 
 /**
@@ -91,13 +122,15 @@ export function settleAgainstPending(
 ): Settlement {
   const author = canonicalUserId(target.senderId);
   const discarded: PendingMutation[] = [];
+  const retained: PendingMutation[] = [];
   let deletion: PendingMutation | null = null;
   const edits: PendingMutation[] = [];
   const reactions: PendingMutation[] = [];
   for (const entry of entries) {
     if (entry.kind === 'reaction') reactions.push(entry);
-    else if (canonicalUserId(entry.sender) !== author) discarded.push(entry);
-    else if (entry.kind === 'delete') deletion = deletion ?? entry;
+    else if (canonicalUserId(entry.sender) !== author) {
+      (target.restoredUnverified ? retained : discarded).push(entry);
+    } else if (entry.kind === 'delete') deletion = deletion ?? entry;
     else edits.push(entry);
   }
 
@@ -146,5 +179,11 @@ export function settleAgainstPending(
   }
   if (reacted) fields.reactions = folded;
 
-  return { fields: Object.keys(fields).length > 0 ? fields : null, discarded };
+  const kept = new Set(retained);
+  return {
+    fields: Object.keys(fields).length > 0 ? fields : null,
+    discarded,
+    retained,
+    consumed: entries.filter((entry) => !kept.has(entry)),
+  };
 }

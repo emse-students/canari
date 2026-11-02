@@ -1335,7 +1335,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   describe('the device key is read at each write, never captured at setup', () => {
     it('seals a reaction arriving after the key changed under the NEW key', async () => {
       let currentKey = 'key-before-pin-change';
-      const updateMessage = vi.fn().mockResolvedValue(undefined);
+      const mergeMessages = vi.fn(
+        async (_c: string, ids: string[], merge: (row: any) => any, _key: string) =>
+          merge(target) ? new Set(ids) : new Set()
+      );
       const target = { id: 'm-target', senderId: 'user-a', content: 'hi' } as any;
       const conversations = createTestConversations([
         [groupId, emptyConversation(groupId, { messages: [target] })],
@@ -1344,7 +1347,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         conversations,
         // Shown AND stored: a reaction is written at rest only to a row that stands there.
         storage: {
-          updateMessage,
+          mergeMessages,
           getMessagesByIds: vi.fn(async () => ({
             rows: new Map([['m-target', target]]),
             unreadable: new Set(),
@@ -1369,8 +1372,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
 
       expect(ok).toBe(true);
-      expect(updateMessage).toHaveBeenCalledTimes(1);
-      expect(updateMessage.mock.calls[0][2]).toBe('key-after-pin-change');
+      expect(mergeMessages).toHaveBeenCalledTimes(1);
+      expect(mergeMessages.mock.calls[0][3]).toBe('key-after-pin-change');
     });
 
     it('republishes key material under the NEW key after a PIN change', async () => {

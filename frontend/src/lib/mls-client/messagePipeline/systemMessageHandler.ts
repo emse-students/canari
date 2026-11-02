@@ -71,7 +71,8 @@ import type {
   StoredMessagePatch,
   StoredRowsById,
 } from '$lib/db/types';
-import { keepPendingMutation } from '$lib/utils/chat/pendingMutationStore';
+import { keepPendingMutation, settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { applyReactionFrame } from './reactionFrame';
 
 /**
@@ -204,15 +205,18 @@ async function applyDeletion(targetId: string, ctx: SystemEventContext): Promise
       // the message being deleted are not this handler's to rewrite. The original signed bytes go
       // with the body (`authorship`/`editProof: null`), and the author's signed deletion stays, so a
       // bundle can prove the tombstone to a device that missed it.
-      await storage.updateMessage(
-        targetId,
-        {
-          isDeleted: true,
-          content: tombstoneBody,
-          authorship: null,
-          editProof: null,
-          ...(authorship ? { deleteProof: authorship } : {}),
-        },
+      const tombstone = {
+        isDeleted: true,
+        content: tombstoneBody,
+        authorship: null,
+        editProof: null,
+        ...(authorship ? { deleteProof: authorship } : {}),
+      };
+      // A compare-and-set scoped to this conversation, like every rewrite of a stored row.
+      await storage.mergeMessages(
+        convoKey,
+        [targetId],
+        (current) => mergeStoredMessage(current, tombstone),
         deviceKey()
       );
     } catch (e) {
@@ -288,7 +292,8 @@ async function storedTarget(
 ): Promise<StoredTarget> {
   if (!ctx.storage) return { kind: 'absent' };
   try {
-    const found = await ctx.storage.getMessagesByIds([targetId], ctx.deviceKey());
+    // Scoped to THIS conversation: a frame of one conversation never reaches a row of another.
+    const found = await ctx.storage.getMessagesByIds(ctx.convoKey, [targetId], ctx.deviceKey());
     const row = found.rows.get(targetId);
     if (row) return { kind: 'stored', row };
     if (found.unreadable.has(targetId)) {
@@ -392,15 +397,21 @@ async function applyEdit(
     return;
   }
   try {
-    // The author's signed edit replaces any earlier one: it is what proves THIS body.
-    await storage.updateMessage(
-      targetId,
-      {
-        content: editedContent,
-        isEdited: true,
-        editedAt: editedAtMs,
-        editProof: authorship ?? null,
-      },
+    // The author's signed edit replaces any earlier one: it is what proves THIS body. Decided again
+    // on the row as it stands at the write (a compare-and-set): a deletion or a later edit stored
+    // since the read above wins, and the text is applied to the body the row holds THEN.
+    await storage.mergeMessages(
+      convoKey,
+      [targetId],
+      (current) =>
+        current.isDeleted || !editSupersedes({ editedAt: editedAtMs, content: newText }, current)
+          ? null
+          : mergeStoredMessage(current, {
+              content: applyEditToBody(current.content, newText),
+              isEdited: true,
+              editedAt: editedAtMs,
+              editProof: authorship ?? null,
+            }),
       deviceKey()
     );
   } catch (e) {
@@ -416,7 +427,7 @@ async function storedRowsForBundle(
   const none: StoredRowsById = { rows: new Map(), unreadable: new Set() };
   if (!ctx.storage || ids.length === 0) return none;
   try {
-    return await ctx.storage.getMessagesByIds(ids, ctx.deviceKey());
+    return await ctx.storage.getMessagesByIds(ctx.convoKey, ids, ctx.deviceKey());
   } catch (e) {
     console.error(
       `[HISTORY_BUNDLE] the store could not say which of ${ids.length} relayed message(s) it holds - they are vetted as new: ${String(e)}`
@@ -463,6 +474,21 @@ function mergedRowPatch(
   };
 }
 
+/** A stored row as `mergeVettedRow` reads one. */
+function storedRowForMerge(row: StoredMessage) {
+  return {
+    id: row.id,
+    senderId: row.senderId,
+    content: row.content,
+    ...(row.isDeleted ? { isDeleted: true } : {}),
+    ...(row.isEdited ? { isEdited: true } : {}),
+    ...(typeof row.editedAt === 'number' ? { editedAt: new Date(row.editedAt) } : {}),
+    ...(row.reactions ? { reactions: row.reactions } : {}),
+    ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
+    ...(row.serverTimestamp !== undefined ? { serverTimestamp: row.serverTimestamp } : {}),
+  };
+}
+
 /**
  * Merges a vetted bundle onto the rows memory does NOT show, in the store (`mergeVettedRow`, the one
  * rule): a held row that is stored but outside memory's window, and a row the bundle added that
@@ -478,39 +504,51 @@ async function mergeVettedIntoStore<E extends BundleEntry>(
   const ids = [...decisions.keys()].filter((id) => !shown.has(id));
   if (ids.length === 0) return;
   const stored = await storedRowsForBundle(ctx, ids);
+  const candidates = [...stored.rows.keys()].filter((id) => decisions.has(id));
   let merged = 0;
-  for (const row of stored.rows.values()) {
-    const vetted = decisions.get(row.id);
-    if (!vetted) continue;
-    const out = mergeVettedRow(
-      {
-        id: row.id,
-        senderId: row.senderId,
-        content: row.content,
-        ...(row.isDeleted ? { isDeleted: true } : {}),
-        ...(row.isEdited ? { isEdited: true } : {}),
-        ...(typeof row.editedAt === 'number' ? { editedAt: new Date(row.editedAt) } : {}),
-        ...(row.reactions ? { reactions: row.reactions } : {}),
-        ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
-        ...(row.serverTimestamp !== undefined ? { serverTimestamp: row.serverTimestamp } : {}),
-      },
-      vetted.entry,
-      vetted.decision,
-      senderNorm,
-      row.reactions
-    );
-    if (!out.changed) continue;
-    merged++;
+  if (candidates.length > 0) {
     try {
-      await storage.updateMessage(
-        row.id,
-        mergedRowPatch(out.next, out.reactions, out.bodyEdited, out.editProof, out.deleteProof),
-        deviceKey()
-      );
+      // Merged onto each row as it stands AT THE WRITE (a compare-and-set): the read above only
+      // chose the candidates, so a deletion stored meanwhile is what the merge sees and keeps.
+      merged = (
+        await storage.mergeMessages(
+          convoKey,
+          candidates,
+          (row) => {
+            const vetted = decisions.get(row.id);
+            if (!vetted) return null;
+            const out = mergeVettedRow(
+              storedRowForMerge(row),
+              vetted.entry,
+              vetted.decision,
+              senderNorm,
+              row.reactions
+            );
+            return out.changed
+              ? mergeStoredMessage(
+                  row,
+                  mergedRowPatch(
+                    out.next,
+                    out.reactions,
+                    out.bodyEdited,
+                    out.editProof,
+                    out.deleteProof
+                  )
+                )
+              : null;
+          },
+          deviceKey()
+        )
+      ).size;
     } catch (e) {
-      log(`[HISTORY_BUNDLE] merged state of ${row.id.slice(0, 8)} not persisted: ${String(e)}`);
+      log(
+        `[HISTORY_BUNDLE] merged state of ${candidates.length} stored row(s) not persisted: ${String(e)}`
+      );
     }
   }
+  // A row this bundle PROVED may now settle what waited for it: a deletion or an edit by its author
+  // that was retained while the stored copy's author was only a claim (`restoredUnverified`).
+  await settlePendingFor(ctx, convoKey, [...decisions.keys()]);
   if (merged > 0) {
     log(
       `[HISTORY_BUNDLE] merged metadata onto ${merged} stored message(s) not shown in ${convoKey.slice(0, 8)}…`
@@ -1426,7 +1464,13 @@ export async function handleSystemEvent(
           );
           for (const [id, up] of upgrades) {
             try {
-              await storage?.updateMessage(id, upgradePatch(up), deviceKey());
+              // Scoped to this conversation, a compare-and-set like every rewrite of a stored row.
+              await storage?.mergeMessages(
+                convoKey,
+                [id],
+                (current) => mergeStoredMessage(current, upgradePatch(up)),
+                deviceKey()
+              );
             } catch (e) {
               log(`[AUTHORSHIP] upgrade of ${id.slice(0, 8)} not persisted: ${String(e)}`);
             }
@@ -1546,15 +1590,19 @@ export async function handleSystemEvent(
                   // a deletion, which must purge it at rest: the tombstone is meant to be all that
                   // survives, and writing the row without it put the original text back on disk -
                   // and on an edit the AUTHOR's own bundle carried, which supersedes it.
-                  await storage.updateMessage(
-                    msg.id,
-                    mergedRowPatch(
-                      msg,
-                      messageReactions.get(msg.id),
-                      bodyEditedIds.has(msg.id),
-                      editProofs.get(msg.id),
-                      deleteProofs.get(msg.id)
-                    ),
+                  // Scoped to THIS conversation: memory may show an id the store holds in another
+                  // (a relayed copy naming it), and that row is never this bundle's to rewrite.
+                  const patch = mergedRowPatch(
+                    msg,
+                    messageReactions.get(msg.id),
+                    bodyEditedIds.has(msg.id),
+                    editProofs.get(msg.id),
+                    deleteProofs.get(msg.id)
+                  );
+                  await storage.mergeMessages(
+                    convoKey,
+                    [msg.id],
+                    (current) => mergeStoredMessage(current, patch),
                     deviceKey()
                   );
                 } catch (e) {

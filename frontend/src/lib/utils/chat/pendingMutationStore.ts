@@ -15,10 +15,12 @@
  */
 import type { Conversation, ChatMessage, MessageReaction } from '$lib/types';
 import type { IStorage, PendingMutation, StoredMessagePatch } from '$lib/db/types';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import {
-  PENDING_MUTATIONS_PER_CONVERSATION,
+  PENDING_MUTATION_LIMITS,
   settleAgainstPending,
   type SettledFields,
+  type Settlement,
   type SettleTarget,
 } from './pendingMutations';
 
@@ -40,6 +42,27 @@ export interface PendingMutationDeps {
 
 /** A short id for a log line. */
 const short = (id: string) => id.slice(0, 8);
+
+/** Entries the bounds evicted so far in this session, per conversation (see {@link countEvictions}). */
+const evictedSoFar = new Map<string, number>();
+
+/** The largest power of two at or below `n` (0 for 0). */
+const powerFloor = (n: number) => (n <= 0 ? 0 : 2 ** (31 - Math.clz32(n)));
+
+/**
+ * Counts `n` evictions in `conversationId` and says so at warn each time the session's total for it
+ * reaches a new power of two (1, 2, 4, 8, ...): a flood is visible, with its size, in a handful of
+ * lines - never one line per put, which is the noise that hides the next defect.
+ */
+function countEvictions(conversationId: string, n: number): void {
+  const before = evictedSoFar.get(conversationId) ?? 0;
+  const after = before + n;
+  evictedSoFar.set(conversationId, after);
+  if (powerFloor(after) === powerFloor(before)) return;
+  console.warn(
+    `[PENDING] ${short(conversationId)}... is over its bounds of mutations awaiting their message (${PENDING_MUTATION_LIMITS.perSender} per sender, ${PENDING_MUTATION_LIMITS.perConversation} in all) - ${after} evicted this session, reactions first, then the oldest`
+  );
+}
 
 /**
  * Keeps `entry`, whose target is neither shown nor stored, then looks for the target once more - it
@@ -77,22 +100,20 @@ export async function keepPendingMutation(
   try {
     write = await storage.putPendingMutation(
       { ...entry, at: frameAt },
-      PENDING_MUTATIONS_PER_CONVERSATION,
+      PENDING_MUTATION_LIMITS,
       deviceKey()
     );
   } catch (e) {
     console.error(`[PENDING] ${what} arrived before its message and could not be kept:`, e);
     return;
   }
-  if (write.evicted > 0) {
-    console.warn(
-      `[PENDING] ${short(entry.conversationId)}… holds more than ${PENDING_MUTATIONS_PER_CONVERSATION} mutations awaiting their message - the ${write.evicted} oldest evicted`
-    );
-  }
+  if (write.evicted > 0) countEvictions(entry.conversationId, write.evicted);
   log(
-    write.written
-      ? `[PENDING] ${what} arrived before its message - kept for it`
-      : `[PENDING] ${what} arrived before its message - a later one of the same sender is already kept`
+    !write.written
+      ? `[PENDING] ${what} arrived before its message - a later one of the same sender is already kept`
+      : write.kept
+        ? `[PENDING] ${what} arrived before its message - kept for it`
+        : `[PENDING] ${what} arrived before its message - written, then evicted by the same write (its sender is over the bound and this was its lowest)`
   );
   await settlePendingFor(deps, entry.conversationId, [entry.messageId]);
 }
@@ -120,9 +141,11 @@ export async function pendingFor(
     );
     return out;
   }
-  if (read.unreadable > 0) {
+  if (read.removedUnreadable > 0) {
+    // Found under this key's tags, so written under this key: bytes that no longer open are damaged,
+    // and nothing could ever apply them. Removed by the read itself, said once for the batch.
     console.warn(
-      `[PENDING] ${read.unreadable} mutation(s) awaiting messages of ${short(conversationId)}… are sealed under a key this device no longer holds - never applied`
+      `[PENDING] ${read.removedUnreadable} mutation(s) awaiting messages of ${short(conversationId)}... no longer open under this device's key - removed`
     );
   }
   for (const entry of read.entries) {
@@ -133,11 +156,22 @@ export async function pendingFor(
   return out;
 }
 
-/** Logs each entry a settlement refused: only a message's author may delete or edit it. */
-export function logDiscarded(discarded: readonly PendingMutation[], author: string): void {
-  for (const entry of discarded) {
+/**
+ * Logs what a settlement refused: each entry discarded for good (only a message's author may delete
+ * or edit it), and the ones retained because the body's author is a claim nobody proved.
+ */
+export function logDiscarded(
+  settlement: Pick<Settlement, 'discarded' | 'retained'>,
+  author: string
+): void {
+  for (const entry of settlement.discarded) {
     console.warn(
       `[PENDING] Discarded a ${entry.kind} of ${short(entry.messageId)} by ${short(entry.sender)} - its author is ${short(author)}, and only an author may ${entry.kind} it`
+    );
+  }
+  if (settlement.retained.length > 0) {
+    console.log(
+      `[PENDING] ${settlement.retained.length} mutation(s) of ${short(settlement.retained[0].messageId)} by someone other than its claimed, unproven author ${short(author)} - kept for a proven copy`
     );
   }
 }
@@ -173,7 +207,7 @@ export async function settlePendingFor(
   conversationId: string,
   ids: readonly string[]
 ): Promise<void> {
-  const { storage, deviceKey, conversations, messageReactions, log } = deps;
+  const { storage, deviceKey, conversations, log } = deps;
   if (!storage) return;
   const waiting = await pendingFor(deps, conversationId, ids);
   if (waiting.size === 0) return;
@@ -183,10 +217,11 @@ export async function settlePendingFor(
   );
   let stored: Map<string, SettleTarget>;
   try {
-    stored = (await storage.getMessagesByIds([...waiting.keys()], deviceKey())).rows;
+    stored = (await storage.getMessagesByIds(conversationId, [...waiting.keys()], deviceKey()))
+      .rows;
   } catch (e) {
     console.error(
-      `[PENDING] the store could not say which of ${waiting.size} message(s) of ${short(conversationId)}… it holds - their mutations stay kept:`,
+      `[PENDING] the store could not say which of ${waiting.size} message(s) of ${short(conversationId)}... it holds - their mutations stay kept:`,
       e
     );
     return;
@@ -195,49 +230,69 @@ export async function settlePendingFor(
   const consumed: PendingMutation[] = [];
   for (const [id, entries] of waiting) {
     const atRest = stored.get(id);
-    // Settled against the row at rest when there is one: it is what must carry the entries, and the
-    // screen may already show some of them (`keepUntilStored` in the system handler).
-    const target = atRest ?? shown.get(id);
-    if (!target) continue;
-    const settlement = settleAgainstPending(target, entries);
-    const fields = settlement.fields;
-    if (fields) {
-      if (fields.reactions) messageReactions.set(id, fields.reactions);
-      const c = conversations.get(conversationId);
-      if (c && shown.has(id)) {
-        conversations.set(conversationId, {
-          ...c,
-          messages: c.messages.map((row) =>
-            row.id === id ? settledChatMessage(row, fields) : row
-          ),
-        });
-      }
-    }
     if (!atRest) {
+      const onScreen = shown.get(id);
+      if (!onScreen) continue;
+      const settlement = settleAgainstPending(onScreen, entries);
+      if (settlement.fields) showSettled(deps, conversationId, id, settlement.fields);
       log(
         `[PENDING] ${short(id)} is shown and not stored yet - ${entries.length} mutation(s) applied to the screen, kept for its write`
       );
       continue;
     }
-    logDiscarded(settlement.discarded, target.senderId);
-    consumed.push(...entries);
-    if (!fields) continue;
-    log(
-      `[PENDING] ${short(id)} met ${entries.length} mutation(s) that arrived before it - ${shown.has(id) ? 'shown and stored' : 'stored, not shown'}`
-    );
+    // Settled against the row at rest - what must carry the entries - INSIDE the compare-and-set:
+    // `merge` sees the row as it stands at the write, never the copy read above.
+    let settlement: Settlement | null = null;
     try {
-      await storage.updateMessage(id, settledStoredPatch(fields), deviceKey());
+      await storage.mergeMessages(
+        conversationId,
+        [id],
+        (current) => {
+          const next = settleAgainstPending(current, entries);
+          settlement = next;
+          return next.fields ? mergeStoredMessage(current, settledStoredPatch(next.fields)) : null;
+        },
+        deviceKey()
+      );
     } catch (e) {
       // Not removed: the entries are kept and settle again at the next look.
       console.error(`[PENDING] the settled state of ${short(id)} was not persisted:`, e);
-      consumed.splice(consumed.length - entries.length, entries.length);
+      continue;
     }
+    const done = settlement as Settlement | null;
+    if (!done) {
+      log(`[PENDING] ${short(id)} left the store before its mutations settled - they stay kept`);
+      continue;
+    }
+    logDiscarded(done, atRest.senderId);
+    consumed.push(...done.consumed);
+    if (!done.fields) continue;
+    showSettled(deps, conversationId, id, done.fields);
+    log(
+      `[PENDING] ${short(id)} met ${done.consumed.length} mutation(s) that arrived before it - ${shown.has(id) ? 'shown and stored' : 'stored, not shown'}`
+    );
   }
   if (consumed.length === 0) return;
   try {
-    await storage.deletePendingMutations(consumed);
+    await storage.deletePendingMutations(consumed, deviceKey());
   } catch (e) {
     // Settling them again is a no-op (see the module header), so a failed removal costs a re-read.
     console.error(`[PENDING] ${consumed.length} settled mutation(s) were not removed:`, e);
   }
+}
+
+/** Applies settled `fields` to what the screen draws of message `id`. */
+function showSettled(
+  deps: Pick<PendingMutationDeps, 'conversations' | 'messageReactions'>,
+  conversationId: string,
+  id: string,
+  fields: SettledFields
+): void {
+  if (fields.reactions) deps.messageReactions.set(id, fields.reactions);
+  const c = deps.conversations.get(conversationId);
+  if (!c || !c.messages.some((row) => row.id === id)) return;
+  deps.conversations.set(conversationId, {
+    ...c,
+    messages: c.messages.map((row) => (row.id === id ? settledChatMessage(row, fields) : row)),
+  });
 }

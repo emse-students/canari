@@ -1613,13 +1613,27 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   frame (`proof`), its rank (an edit's `editedAt`, a reaction's `at`, 0 for a deletion) and the
   frame's server time (`at`). A larger rank replaces an entry, the first wins a tie, decided in the
   write itself (`putPendingMutation`). The text, the removal flag and the proof are sealed under the
-  device key; an entry sealed under a key this device no longer holds is counted `unreadable` and
-  never applied;
+  device key;
+- **nothing at rest says who reacted with what to which message**: the message id, the sender and
+  the slot are stored only as TAGS - HMAC-SHA256 under a key derived from the device key
+  (`deviceKeyTag` in `encryption.ts`, labelled per field), truncated to 16 bytes - and in full only
+  inside the sealed payload (`pendingMutationCodec.ts`). The conversation, the kind, its eviction
+  tier, the rank and the frame time stay clear: they are what the store decides on without opening
+  anything, and a message row names its conversation in clear too. A PIN change re-seals AND
+  re-tags every entry (`resealPendingMutations`, from `resealDeviceKeyStores`), resumably;
+- **read by key prefix**: `getPendingMutations` asks one primary-key range per message
+  (`[conversation, messageTag]`), never the conversation's whole set. An entry found there whose bytes
+  no longer open under the key that tagged it is damaged and can never apply: it is REMOVED by the
+  same read - only while it still holds the bytes read - and the count is said once per read;
 - **settled against the AUTHOR only, when the message is written** (`settleAgainstPending`): the
   author's deletion, else the author's latest edit (`editSupersedes`), then everyone's reactions
   (`applyReaction`). A deletion or an edit by anybody else is discarded and said at warn - so a
   non-author's deletion can neither suppress the message nor stand in front of the author's, and a
-  non-author's far-future edit can never displace the author's. Every writer settles through it: the
+  non-author's far-future edit can never displace the author's. **Discarded only against a PROVEN
+  author**: a body restored from a bundle with no proof (`restoredUnverified`) names its author as a
+  claim, so a deletion or an edit by someone else is RETAINED - neither applied nor consumed - and a
+  proven copy settles it later (`settlePendingFor` runs after the bundle merge for that reason).
+  The settlement returns what it `consumed`, and only that is removed. Every writer settles through it: the
   live add and the batch flush (`useMessaging.svelte.ts`), the bundle merge (through the batch) and
   the archive replay (`history.ts`, whose replayed deletions, edits and reactions of a message it
   does not show are kept the same way, and whose written rows are settled after the write);
@@ -1631,27 +1645,87 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   and the writer's own look after its write settles it at rest. Removal is conditional on the rank
   read, so a newer entry kept meanwhile survives;
 - **held edits survive a restart**: they are rows of this store, not of memory;
-- **not kept from before the floor**: a frame older than the conversation's shared history floor
-  names a message that can never be answered to this device, so it is not kept. A frame with no
-  server time is not kept either, said at error - no delivery route of this build omits it;
-- **bounded by COUNT per conversation, never by a clock** (`PENDING_MUTATIONS_PER_CONVERSATION`,
-  1000). Past it the OLDEST by server time are evicted, in the same write, and the count is said at
-  warn. Why 1000: an entry exists only between a mutation and its message, which a drain closes in
-  one pass and a bundle or the replay within a session - a conversation holds a handful of them in
-  the ordinary case. The cases that leave entries waiting for good are mutations of a message this
-  device will never receive (below the floor of another member, a body that was never relayed);
-  1000 sealed entries are tens of kilobytes per conversation, and a clock would decide wrongly in
-  both directions.
+- **not kept from before the floor - dated by the FRAME, which is sound**: a frame older than the
+  conversation's shared history floor is not kept. The frame's server time is an UPPER bound on its
+  target's time (a message exists before anything that names it), so a frame below the floor names
+  a message below the floor, which is never answered to this device. The converse does not hold - a
+  frame AFTER the floor may name a message from before it - and that is the open item below, not a
+  defect of the gate: the target's own time is not knowable here (message ids are random UUIDv4,
+  with no time in them, and a `delete_message` carries only the id). A frame with no server time is
+  not kept either, said at error - no delivery route of this build omits it;
+- **bounded by COUNT, never by a clock - per SENDER first, then per conversation**
+  (`PENDING_MUTATIONS_PER_SENDER` 200, `PENDING_MUTATIONS_PER_CONVERSATION` 1000). A sender over its
+  bound loses its OWN lowest entry; a conversation over its bound takes one from the sender holding
+  the most (the smallest tag on a tie). Within a sender a REACTION goes before a deletion or an edit
+  (losing one costs an emoji, losing the others puts back a text its author took away), then the
+  oldest frame first, ties by key - the same order on both backends (`bySenderTierAt` then the
+  primary key on IndexedDB, `ORDER BY tier, at, message_tag, ...` on SQLite). So a member flooding
+  mutations of ids that never arrive evicts only their own, never another member's deletion. The
+  write reports `{written, kept, evicted}` - `kept` is false when the same write evicted the entry it
+  wrote, and it is never then logged as kept - and evictions are COUNTED per conversation and said at
+  warn when the session's total reaches 1, 2, 4, 8..., never once per put. Why 1000: an entry
+  exists only between a mutation and its message, which a drain closes in one pass and a bundle or
+  the replay within a session - a conversation holds a handful in the ordinary case. The entries
+  that wait for good are mutations of a message this device will never receive; 1000 sealed entries
+  are tens of kilobytes per conversation, and a clock would decide wrongly in both directions. Why
+  200 per sender: a fifth of that, so at least five senders fill a conversation before the larger
+  bound has anything to choose between.
 
 The serialisation the writers rely on is the per-group drain: `MlsPerGroupScheduler.drain` awaits
 each frame's handler, and the drain's end (`onDrainEnd` -> `endBulkMessageIngest` ->
 `batchAddMessages`) is awaited before the group is released, so within a conversation the handlers
 and the bulk flush never interleave. The archive replay writes outside the drain, which is why
-every new row is written only where none stands and every writer looks again after its write.
+every new row is written only where none stands, every writer looks again after its write, and
+**every rewrite of a stored row is a compare-and-set** (below).
 
-Pinned by `pendingMutationsStore.test.ts` (both backends, and the upgrade of a v12 IndexedDB and a v17
-SQLite store), `pendingMutations.test.ts`, `useMessaging.deletionInOneDrain.svelte.test.ts` (each
-finding of the review by number, and both races) and `historySystemEvents.test.ts`.
+#### Every rewrite of a stored message is a compare-and-set (review of #2936, P1)
+
+A rewrite used to read the row, await (decrypting, the caller's work) and write the whole row back:
+the archive replay did it for every row it already held (`saveMessages` of rows rebuilt from a read
+taken before the await) and again in its post-save pass, and `updateMessage` itself was the same
+read-modify-write. A deletion the live drain stored in between was overwritten by the copy read
+before it - the body back on disk, for good.
+
+Each message row now carries a revision (`rev`; IndexedDB records, and `messages.rev` on SQLite,
+added by the unshipped v18 step), raised by EVERY write: `saveMessages`, the pair and reel-take
+writes (a get and a put in their own transaction on IndexedDB, an upsert `rev = messages.rev + 1` on
+SQLite - never `INSERT OR REPLACE`, which would reset it), and the PIN-change re-seal. A rewrite goes
+through `IStorage.mergeMessages(conversationId, ids, merge)` (`messageCas.ts`): each row is read
+with its revision, `merge` - a pure function of the row as it stands - gives the row to write, and
+the write applies only while the revision is still the one read: on IndexedDB a get, a compare and a
+put in ONE readwrite transaction with every payload sealed before it opens, on SQLite
+`UPDATE ... WHERE id = ? AND rev = ?`. A row that moved is read and merged again. **Termination is a
+proof, not a clock**: a retry happens only when another writer COMMITTED that row in between.
+`updateMessage` is that loop with `mergeStoredMessage`. The replay's known rows, its post-save pass
+(`replayedMutationsOnto`: reactions merged pair by pair, a tombstone final, an older edit refused),
+the live edit, deletion and reaction writes, the bundle merges and the stored-preview upgrade all
+compute their change INSIDE `merge`, from the current row.
+
+The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
+taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding
+it across a store walk would serialise unrelated groups' commits behind a disk read. The
+compare-and-set closes the same gap per row, on every writer, at no cost when nothing races.
+
+#### A lookup by id is scoped to its conversation (review of #2936, P1, security)
+
+A message id is global in the store. `getMessagesByIds(conversationId, ids)` - and `mergeMessages` -
+read a row of ANOTHER conversation as absent and say so at warn, on both backends. Every caller that
+answers a frame passes the frame's conversation: the deletion and edit lookups (`storedTarget`), the
+reaction lookup (`reactionFrame.ts`), the settlement (`settlePendingFor`), the bundle's stored rows
+(`storedRowsForBundle`) and its merges, and the arriving-body verdicts (`storedRowsFor`). A member of
+A therefore cannot delete, edit, react to or relay over a row of B through a frame sent in A
+(`useMessaging.mutationsReachTargets.svelte.test.ts`). The window read is aligned too:
+`getMessagesSince` applies ONE rule on both backends (`storedTimeInWindow`) - a timestamp an older
+build stored as text is read and dated on IndexedDB as SQLite always did.
+
+Pinned by `pendingMutationsStore.test.ts` (both backends: tags at rest, the per-sender flood, the
+tier order, `kept`, the damaged-entry removal, the re-seal, the scope, the three races - a replay
+write against a live delete, the post-save pass against a live edit, `updateMessage` against itself -
+and the upgrade of a v12 IndexedDB and a v17 SQLite store), `pendingMutations.test.ts`,
+`pendingMutationStore.test.ts` (the eviction warnings), `useMessaging.deletionInOneDrain.svelte.test.ts`
+(each finding of the review by number, and both races),
+`useMessaging.mutationsReachTargets.svelte.test.ts` (the conversation scope) and
+`historySystemEvents.test.ts`.
 
 **What is still open, and why each one is not built here:**
 
@@ -1659,12 +1733,11 @@ finding of the review by number, and both races) and `historySystemEvents.test.t
   the digest names ids, so the answerer cannot know the asker's state of a row it holds - carrying
   state in the digest is a protocol change;
 - a deletion sent AFTER this device's admission of a message from BEFORE it is kept until evicted:
-  the floor gate dates the FRAME, and a `delete_message` names only the target's id - knowing the
-  target's own time needs it on the wire, a protocol change. Such an entry is never shown and never
-  relayed, and since the message is never answered to this device it simply ages out by count;
-- the replay rewrites a row it already held (`saveMessages` over the merge it read): a live
-  mutation landing between that read and that write is lost at rest. The replay's own new rows are
-  written only where none stands.
+  the floor gate dates the FRAME (an upper bound on the target's time, so it never drops a live
+  entry), and the target's own time is nowhere this device can read it - the id is a random UUIDv4
+  and a `delete_message` names only the id; putting it on the wire is a protocol change. Such an
+  entry is never shown and never relayed, and since the message is never answered to this device it
+  ages out by count, its sender's first.
 
 **The shared-log half is not, and it needs a decision.** The server holds ciphertext and cannot tell
 which stream entry carries a given message, so nothing there can act on a deletion by itself. Three
