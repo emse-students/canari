@@ -18,6 +18,7 @@
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { bookingPlace } from '$lib/bookings/columns';
+  import { bookingOthers, othersNames } from '$lib/bookings/others';
   import { answerText } from '$lib/forms/answerText';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
@@ -45,6 +46,10 @@
   let { space, resource, unit, mine, nowMs, onClose }: Props = $props();
 
   const booking = $derived(unit.state === 'booked' ? unit.booking : null);
+  /** The holder has their own line above, and the viewer is never listed as one of "the others". */
+  const invitees = $derived(
+    booking ? bookingOthers(booking).filter((p) => p.id !== booking.holderId) : []
+  );
   const coming = $derived(booking ? Date.parse(booking.startsAt) > nowMs : false);
   const isHolder = $derived(mine?.holder ?? false);
   const isParticipant = $derived(!!booking?.mine && !isHolder);
@@ -134,10 +139,10 @@
             <dt class="text-text-muted text-xs font-semibold">{m.bookings_detail_holder()}</dt>
             <dd class="text-text-main">{booking.holderName}</dd>
           </div>
-          {#if booking.participantNames?.length}
+          {#if invitees.length}
             <div>
               <dt class="text-text-muted text-xs font-semibold">{m.bookings_detail_people()}</dt>
-              <dd class="text-text-main">{booking.participantNames.join(', ')}</dd>
+              <dd class="text-text-main">{othersNames(invitees)}</dd>
             </div>
           {/if}
         </dl>

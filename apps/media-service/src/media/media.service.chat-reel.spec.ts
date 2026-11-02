@@ -18,7 +18,7 @@ import {
   InternalServerErrorException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { MediaService, isRetentionClass } from './media.service';
+import { CHAT_REEL_OVER_BUDGET, MediaService, isRetentionClass } from './media.service';
 
 const UUID_REEL_OLD = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UUID_REEL_NEW = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -372,6 +372,8 @@ describe('chat-reel: the per-member daily budget (500 MB)', () => {
 
     await expect(refused).rejects.toBeInstanceOf(HttpException);
     await expect(refused).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+    // A VERDICT, typed for the client (RC-13): it fails the take instead of retrying it all day.
+    await expect(refused).rejects.toMatchObject({ response: { code: CHAT_REEL_OVER_BUDGET } });
     expect(put).toEqual([]);
   });
 

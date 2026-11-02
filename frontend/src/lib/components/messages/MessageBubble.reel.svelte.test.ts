@@ -6,7 +6,7 @@
  * The rendering of the tile itself is `MessageMediaRenderer.reel.svelte.test.ts`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
@@ -22,6 +22,10 @@ vi.mock('$lib/media', async (orig) => ({
       return new Promise<string>(() => {});
     }
   },
+}));
+
+vi.mock('$lib/components/reels/ReelViewer.svelte', async () => ({
+  default: (await import('../reels/ReelViewerStub.test-helper.svelte')).default,
 }));
 
 import MessageBubble from './MessageBubble.svelte';
@@ -67,7 +71,7 @@ function video(extra: Partial<MediaRef> = {}): MediaRef {
   };
 }
 
-function render(ref: MediaRef, onForward = vi.fn()) {
+function render(ref: MediaRef, onForward = vi.fn(), extra: Record<string, unknown> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(MessageBubble, {
@@ -81,6 +85,7 @@ function render(ref: MediaRef, onForward = vi.fn()) {
       timestamp: new Date('2026-10-05T10:00:00Z'),
       isOwn: false,
       onForward,
+      ...extra,
     },
   });
   mounted.push(() => void unmount(app));
@@ -106,6 +111,37 @@ describe('MessageBubble - a reel message', () => {
   it('offers no forward: the media ref carries the key', () => {
     render(video({ intent: 'reel-message' }));
     expect(menuLabels().some((l) => l.includes(m.msg_forward_label()))).toBe(false);
+  });
+
+  it("hands the viewer's 410 up with ITS message id, and draws the tombstone (RC-6)", async () => {
+    const onReelPurged = vi.fn();
+    render(video({ intent: 'reel-message', expiresAtMs: Date.now() + 86_400_000 }), vi.fn(), {
+      onReelPurged,
+    });
+    document.querySelector<HTMLButtonElement>('[data-reel-tile]')!.click();
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+      await tick();
+    }
+    flushSync();
+    document.querySelector<HTMLButtonElement>('[data-reel-viewer-stub-gone]')!.click();
+    flushSync();
+    expect(onReelPurged).toHaveBeenCalledTimes(1);
+    expect(onReelPurged.mock.calls[0][0]).toBe('m1');
+    expect(typeof onReelPurged.mock.calls[0][1]).toBe('number');
+    expect(
+      document.querySelector<HTMLElement>('[data-reel-tombstone]')!.dataset.reelTombstone
+    ).toBe('deleted');
+  });
+
+  it('draws a recorded 410 (reelPurgedAt) as the tombstone with no tap', () => {
+    render(video({ intent: 'reel-message', expiresAtMs: Date.now() + 86_400_000 }), vi.fn(), {
+      reelPurgedAt: Date.now() - 1000,
+    });
+    expect(document.querySelector('[data-reel-tile]')).toBeNull();
+    expect(
+      document.querySelector<HTMLElement>('[data-reel-tombstone]')!.dataset.reelTombstone
+    ).toBe('deleted');
   });
 });
 

@@ -1,3 +1,4 @@
+import { isErasedAccount } from '../internal/account-erasure';
 /**
  * WHAT EACH VIEWER RECEIVES OF A BOOKING - decided here, on the server, never by a screen hiding a
  * field it was sent (D9, D32). Pure, so every viewer x setting pair is a table test
@@ -72,7 +73,18 @@ export interface BookingView {
    * of `holderName` (one branch in `bookingView`): where the name is not shown, neither is this.
    */
   holderId?: string;
+  /**
+   * The invitees' names whoever asks. Still read by organiser/UpcomingBookings.svelte and
+   * booking-export.ts: do not delete. Booker-facing surfaces use `others`.
+   */
   participantNames?: string[];
+  /**
+   * THE OTHER PEOPLE OF THE BOOKING, from the VIEWER's point of view: the holder then the
+   * participants still in, the viewer left out. Sent exactly where `holderName` is.
+   * `participantNames` names the invitees whoever asks, so an invitee read their OWN name as
+   * "Avec : <me>".
+   */
+  others?: { id: string; name: string }[];
   answers?: Record<string, unknown> | null;
   /**
    * The ORGANISER's reading of the FILE answers (D7, WP-B6), as forms' submissions carry it: the
@@ -149,6 +161,15 @@ export function bookingView(
     view.holderName = booking.holderName;
     view.holderId = booking.holderId;
     view.participantNames = inBooking.map((p) => p.userName);
+    view.others = [
+      { id: booking.holderId, name: booking.holderName },
+      ...inBooking.map((p) => ({ id: p.userId, name: p.userName })),
+    ]
+      .filter((p) => p.id !== viewerId)
+      // An erased account's id is the shared sentinel: sent as '' (no photo to ask for, and two
+      // erased people must not share a key). The id is as public as holderId: the avatar route has
+      // no guard and the profile read needs only a signed-in caller (core-service users.controller).
+      .map((p) => (isErasedAccount(p.id) ? { ...p, id: '' } : p));
   }
   if (relation === 'manager') view.answers = booking.answers;
   return view;

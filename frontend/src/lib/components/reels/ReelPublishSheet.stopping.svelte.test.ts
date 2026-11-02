@@ -149,7 +149,9 @@ describe('ReelPublishSheet - a Back during a publish it cannot stop', () => {
 
     mute.release();
     await settle();
-    expect(deps.prepare).toHaveBeenCalledTimes(1);
+    // THE ENCODER LEASE (RC-13) refuses an aborted publish before the re-encode is even called; it
+    // reaches the sheet as the same 'aborted' fault the re-encode itself would have thrown.
+    expect(deps.prepare).not.toHaveBeenCalled();
     expect(deps.upload).not.toHaveBeenCalled();
     expect(deps.createPost).not.toHaveBeenCalled();
   });

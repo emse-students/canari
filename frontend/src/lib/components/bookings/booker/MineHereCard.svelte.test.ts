@@ -32,6 +32,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
+
 describe('MineHereCard', () => {
   it('says there is nothing, under its heading, when the list is empty', () => {
     render([]);
@@ -42,7 +44,7 @@ describe('MineHereCard', () => {
 
   it('draws one row per booking, on the space clock, with the people or the column', () => {
     render([
-      row('a', { participantNames: ['Lea M.'] }),
+      row('a', { others: [{ id: 'u-lea', name: 'Lea M.' }] }),
       row('b', { resource: { id: 'r2', name: 'Table 2' } as MyBooking['resource'] }),
     ]);
     const rows = [...document.querySelectorAll('li')];

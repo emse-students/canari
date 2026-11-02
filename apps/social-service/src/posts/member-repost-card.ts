@@ -1,4 +1,8 @@
-import { memberRepostCarriesSql, postVisibleToViewerSql } from '../spaces/reader-spaces';
+import {
+  memberRepostablePostSql,
+  memberRepostCarriesSql,
+  postVisibleToViewerSql,
+} from '../spaces/reader-spaces';
 import { acceptedFollowSql } from '../follows/follow-status';
 import { FIRST_HAND, repostConsentSql, type RepostConsent } from './member-reposts.service';
 
@@ -62,6 +66,7 @@ export async function memberRepostContext(
                 AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
                 AND NOT (posts."associationId" IS NULL AND posts."authorId" = $2)
                 AND ${postVisibleToViewerSql('posts', '$2', FIRST_HAND)}
+                AND ${memberRepostablePostSql('posts')}
                 AND NOT (posts."associationId" IS NULL AND EXISTS (SELECT 1 FROM user_blocks mc_block
                   WHERE (mc_block."blockerId" = $2 AND mc_block."blockedId" = posts."authorId")
                      OR (mc_block."blockerId" = posts."authorId" AND mc_block."blockedId" = $2)))

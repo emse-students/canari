@@ -13,6 +13,7 @@ import type {
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
+  OutboxBlobRef,
   OutboxEntry,
   PageKey,
   PendingGroupExit,
@@ -41,6 +42,8 @@ import {
   mergeOutboxEntry,
   OutboxPayloadUnreadableError,
   outboxClearColumns,
+  outboxKindHoldsBlob,
+  REEL_TAKE_RECORDS,
   type OutboxClearColumns,
 } from './outboxCodec';
 import type { GraineClearColumns } from './graineCodec';
@@ -85,6 +88,9 @@ import {
   SEALED_SWAP_ROWS_PER_STATEMENT,
   chunk,
   messageInsertSql,
+  OUTBOX_ROWS_PER_STATEMENT,
+  OUTBOX_UPDATE_ROW_SQL,
+  outboxInsertSql,
   orderAtFillStatement,
   sealedStoreTable,
   sealedSwapStatement,
@@ -1045,28 +1051,75 @@ export class SqliteStorage implements IStorage {
    */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     await writeOutboxWithBlob(this.blobs, entry, async (blobKeyB64) => {
-      const encrypted = await encryptData(encodeOutboxSensitive(entry, blobKeyB64), deviceKeyB64);
-      const c = outboxClearColumns(entry);
       await this.db.execute(
-        `INSERT OR REPLACE INTO outbox
-         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at, iv, cipher_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [
-          c.id,
-          c.conversationId,
-          c.sentAt,
-          c.kind,
-          c.status,
-          c.attempts,
-          c.lastAttemptAt ?? null,
-          c.nextAttemptAt ?? null,
-          c.serverErrors ?? 0,
-          c.createdAt,
-          uint8ToBase64(encrypted.iv),
-          uint8ToBase64(encrypted.cipherText),
-        ]
+        outboxInsertSql(1),
+        await this.outboxRowParams(entry, blobKeyB64, deviceKeyB64)
       );
     });
+  }
+
+  /**
+   * See {@link IStorage.saveReelTake}. The take and its sends are ONE `INSERT` (the plugin's largest
+   * atomic unit), so no kill leaves one without the other; the messages follow in a second write,
+   * the entries first as for a single send (`saveMessageWithOutboxEntry`).
+   */
+  async saveReelTake(
+    take: OutboxEntry,
+    sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+    deviceKeyB64: string
+  ): Promise<void> {
+    const rows = 1 + sends.length;
+    // NEVER SPLIT: two statements would be two transactions, and the point is one.
+    if (rows > OUTBOX_ROWS_PER_STATEMENT) {
+      throw new Error(`a reel take with ${sends.length} sends does not fit one outbox statement`);
+    }
+    await writeOutboxWithBlob(this.blobs, take, async (blobKeyB64) => {
+      const params = [
+        ...(await this.outboxRowParams(take, blobKeyB64, deviceKeyB64)),
+        ...(
+          await Promise.all(
+            sends.map((s) => this.outboxRowParams(s.entry, undefined, deviceKeyB64))
+          )
+        ).flat(),
+      ];
+      await this.db.execute(outboxInsertSql(rows), params);
+    });
+    try {
+      await this.saveMessages(
+        sends.map((s) => s.message),
+        deviceKeyB64
+      );
+    } catch (e) {
+      console.error(
+        `[DB] reel take ${take.id.slice(0, 8)}… and its ${sends.length} send(s) written, their messages NOT - the queue sends them, the echoes are missing:`,
+        e
+      );
+      throw new OutboxEntryWrittenAloneError(take.id, e);
+    }
+  }
+
+  /** The `OUTBOX_COLUMNS` parameters of one outbox row, its payload sealed under the device key. */
+  private async outboxRowParams(
+    entry: OutboxEntry,
+    blob: OutboxBlobRef | undefined,
+    deviceKeyB64: string
+  ): Promise<unknown[]> {
+    const encrypted = await encryptData(encodeOutboxSensitive(entry, blob), deviceKeyB64);
+    const c = outboxClearColumns(entry);
+    return [
+      c.id,
+      c.conversationId,
+      c.sentAt,
+      c.kind,
+      c.status,
+      c.attempts,
+      c.lastAttemptAt ?? null,
+      c.nextAttemptAt ?? null,
+      c.serverErrors ?? 0,
+      c.createdAt,
+      uint8ToBase64(encrypted.iv),
+      uint8ToBase64(encrypted.cipherText),
+    ];
   }
 
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
@@ -1096,7 +1149,9 @@ export class SqliteStorage implements IStorage {
       `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at,
          CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
          CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
-       FROM outbox ORDER BY sent_at ASC, id ASC`
+       FROM outbox WHERE conversation_id <> $1 ORDER BY sent_at ASC, id ASC`,
+      // A SENT-TAKE RECORD IS NOT QUEUED WORK (RC-13): no flush decrypts, drives or counts it.
+      [REEL_TAKE_RECORDS]
     );
     const out: OutboxEntry[] = [];
     for (const row of rows) {
@@ -1104,6 +1159,20 @@ export class SqliteStorage implements IStorage {
         row.kind === 'media'
           ? decodeOutboxEntry(this.outboxClearOf(row), undefined)
           : await this.decodeOutboxRow(row, deviceKeyB64);
+      if (entry) out.push(entry);
+    }
+    return out;
+  }
+
+  /** See {@link IStorage.getReelTakeRecords}: the records the queue read leaves out. */
+  async getReelTakeRecords(deviceKeyB64: string): Promise<OutboxEntry[]> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM outbox WHERE conversation_id = $1 ORDER BY sent_at ASC, id ASC',
+      [REEL_TAKE_RECORDS]
+    );
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      const entry = await this.decodeOutboxRow(row, deviceKeyB64);
       if (entry) out.push(entry);
     }
     return out;
@@ -1136,7 +1205,10 @@ export class SqliteStorage implements IStorage {
     });
   }
 
-  /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
+  /**
+   * Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent - and
+   * still a no-op when the row is deleted between the read and the write (see the write below).
+   */
   async updateOutboxEntry(
     id: string,
     patch: Partial<OutboxEntry>,
@@ -1170,7 +1242,23 @@ export class SqliteStorage implements IStorage {
     // The row read above is the small one: a blob-format row carries a key, not the file, so the
     // post-upload patch (uploadedRef, fileBytes dropped) rewrites ~1 KB and never the attachment.
     const merged = mergeOutboxEntry(entry, patch);
-    await this.saveOutboxEntry(merged, deviceKeyB64);
+    // AN UPDATE, NEVER AN `INSERT OR REPLACE`: a row deleted while this merge was decrypting (a
+    // withdrawal, a send) stays deleted - the replace would put it back, and the flusher would then
+    // send a message the member withdrew. One statement: the existence check and the write are one.
+    let gone = false;
+    await writeOutboxWithBlob(this.blobs, merged, async (blobKeyB64) => {
+      const res = await this.db.execute(
+        OUTBOX_UPDATE_ROW_SQL,
+        await this.outboxRowParams(merged, blobKeyB64, deviceKeyB64)
+      );
+      gone = res.rowsAffected === 0;
+    });
+    if (gone) {
+      appendLog(`[DB] outbox ${id.slice(0, 8)}… deleted during its update - not written back`);
+      // Bytes this patch carried went to a blob slot no row names: given back now.
+      if (merged.media?.fileBytes?.length) await deleteOutboxBlobQuietly(this.blobs, id);
+      return;
+    }
     if (outboxBlobReleased(merged)) await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
@@ -1191,7 +1279,8 @@ export class SqliteStorage implements IStorage {
       );
     }
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
-    if (kind === 'media' || kind === 'unknown') await deleteOutboxBlobQuietly(this.blobs, id);
+    if (outboxKindHoldsBlob(kind) || kind === 'unknown')
+      await deleteOutboxBlobQuietly(this.blobs, id);
   }
 
   /** See {@link IStorage.sweepOutboxBlobs}. */

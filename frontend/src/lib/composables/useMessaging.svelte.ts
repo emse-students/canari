@@ -76,8 +76,9 @@ import {
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
-import { chatReelPendingDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
+import { isChatReelTake } from '$lib/reels/chatReelWriter';
 import { capturePosterOf } from '$lib/reels/capturePoster';
+import { buildChatReelTake } from '$lib/reels/chatReelTake';
 import {
   applyEditToBody,
   envelopeBodyText,
@@ -107,7 +108,10 @@ import {
   applyOutboxPendingStatuses,
   awaitOutboxSettled,
   enqueueOutboxMessage,
+  enqueueOutboxTake,
   isEnqueueQuotaFailure,
+  outboxReelSendDeleted,
+  sentOutboxTakeOf,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
 import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
@@ -1064,6 +1068,8 @@ export function useMessaging() {
                 isDeleted: upgraded.isDeleted,
                 isEdited: upgraded.isEdited,
                 ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
+                // A reel's recorded 410 is this device's own fact (RC-6): kept across the rewrite.
+                ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
                 isFcmPreview: false,
                 ...proofFields,
               },
@@ -1317,6 +1323,8 @@ export function useMessaging() {
             isFcmPreview: false,
             ...(pm.authorship ? { authorship: pm.authorship } : {}),
             ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            // This device's record of a reel's 410 (RC-6), carried over the wholesale rewrite.
+            ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
           });
         }
         continue;
@@ -1701,11 +1709,6 @@ export function useMessaging() {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
             // (the optimistic message shows a skeleton + pending clock until then).
             const type = mediaTypeFromMime(entry.file.type);
-            // A chat reel's declaration, made at the send so its 30 days count from it. Empty for
-            // anything else: an ordinary attachment is encoded exactly as before. The take is RAW
-            // (RC-5): its intent and expiry are declared now, its LENGTH once the outbox has
-            // prepared it - the encoder is what measures it.
-            const reelDeclaration = entry.prepareRaw ? chatReelPendingDeclaration(sentAt) : {};
             const placeholder = serializeEnvelope(
               mkMediaEnvelope(
                 {
@@ -1720,7 +1723,6 @@ export function useMessaging() {
                   height: entry.height,
                   ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
-                  ...reelDeclaration,
                 },
                 captionForFile
               )
@@ -1748,8 +1750,6 @@ export function useMessaging() {
                   ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                   caption: captionForFile,
                   ...(entry.voiceNote ? { voiceNote: true } : {}),
-                  ...reelDeclaration,
-                  ...(entry.prepareRaw ? { prepare: entry.prepareRaw } : {}),
                   fileBytes,
                 },
                 status: 'pending',
@@ -2180,12 +2180,21 @@ export function useMessaging() {
   }
 
   /**
-   * Queues the chat camera's RAW take as its own message, at once (reels-in-chat RC-5). Nothing is
-   * prepared here: the outbox prepares it inside the upload task, where a kill, a cancel and a weak
-   * link are already handled, and the bubble shows the preparation's progress. Only the ThumbHash
-   * of the camera's first picture is computed now, so the tile has its picture from the first frame.
+   * Queues the chat camera's RAW take, at once, as a TAKE with ONE SEND (reels-in-chat RC-5, RC-13):
+   * the single conversation is the one-target case of "Envoyer à...", through the same rows and the
+   * same transaction. Nothing is prepared here: the outbox prepares the take inside its upload task,
+   * where a kill, a cancel and a weak link are already handled, and the bubble shows the progress.
+   * Only the ThumbHash of the camera's first picture is computed now, so the tile has its picture
+   * from the first frame.
    */
   async function sendChatReelTake(file: File, ctx: MessagingContext) {
+    const sendKey = ctx.selectedContact;
+    const convo = sendKey ? ctx.conversations.get(sendKey) : undefined;
+    if (!sendKey || !convo) {
+      ctx.log(`[MEDIA] a chat reel take was NOT sent: no conversation is open`);
+      return;
+    }
+    const tapGeneration = signOutGeneration();
     let placeholder: string | undefined;
     const poster = capturePosterOf(file);
     if (poster) {
@@ -2194,12 +2203,59 @@ export function useMessaging() {
         (await placeholderForImageFile(new File([poster], 'poster.jpg', { type: poster.type }))) ??
         undefined;
     }
-    ctx.log(
-      `[MEDIA] a chat reel take of ${file.size} bytes sent raw - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
-    );
-    await handleSendChat(ctx, '', {
-      files: [{ file, prepareRaw: 'chat-reel', ...(placeholder ? { placeholder } : {}) }],
-    });
+    const sentAt = Date.now();
+    const messageId = crypto.randomUUID();
+    // IN FLIGHT FROM BEFORE THE ROWS: the bubble must not read the outbox's "absent" during the
+    // durable write as an orphan (outboxActivity).
+    const endInflight = beginOutboxEnqueue(messageId);
+    try {
+      const rows = buildChatReelTake({
+        takeId: crypto.randomUUID(),
+        sentAt,
+        senderId: ctx.userId,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        mimeType: file.type,
+        fileName: file.name,
+        placeholder,
+        targets: [{ messageId, groupId: convo.id, conversationKey: sendKey }],
+      });
+      // THE ACCOUNT IS ASKED BEFORE THE WRITE: a sign-out during the reads above would hand this take
+      // to the next account's queue (review of #2874, M1).
+      if (signOutGeneration() !== tapGeneration) {
+        ctx.log(`[MEDIA] chat reel ${messageId.slice(0, 8)}… dropped: signed out since the tap`);
+        return;
+      }
+      try {
+        await enqueueOutboxTake(rows.take, rows.sends);
+      } catch (e) {
+        // THE ROWS ARE ON DISK (their echo may not be): the queue owns the take and sends it, so the
+        // bubble is drawn below. Anything else wrote nothing, and the member is told.
+        if (!(e instanceof MessageWrittenError)) {
+          ctx.log(`[MEDIA] chat reel ${messageId.slice(0, 8)}… NOT queued: ${String(e)}`);
+          ctx.setSendError(
+            isEnqueueQuotaFailure(e)
+              ? m.chat_media_send_error_storage_full()
+              : m.chat_media_send_error_generic()
+          );
+          return;
+        }
+        console.error(`[MEDIA] chat reel ${messageId.slice(0, 8)}… queued, with a fault:`, e);
+      }
+      ctx.log(
+        `[MEDIA] chat reel ${messageId.slice(0, 8)}… of ${file.size} bytes queued raw - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
+      );
+      // The echo's row is already on disk (written with the take): drawn only, never written again.
+      await addMessageToChat(ctx.userId, rows.sends[0].message.content, sendKey, ctx, {
+        messageId,
+        status: 'pending',
+        timestamp: new SvelteDate(sentAt),
+        skipDbSave: true,
+      });
+      await ctx.saveConversation(sendKey);
+      ctx.playSendTone?.();
+    } finally {
+      endInflight();
+    }
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
@@ -2462,6 +2518,39 @@ export function useMessaging() {
   }
 
   /**
+   * "Supprimer partout" (reels-in-chat 15.7): deletes, for everyone, every message the take of
+   * `messageId` went out as - in each conversation, each through the one delete path
+   * ({@link deleteMessage}) - and the last one gives the file's hold back (D-delete-one). A message
+   * no take names is deleted alone. A conversation no longer on this device is skipped and said.
+   * Returns how many messages were deleted.
+   */
+  async function handleDeleteReelEverywhere(messageId: string, ctx: MessagingContext) {
+    const record = await sentOutboxTakeOf(messageId);
+    const sends = record?.sends ?? [];
+    ctx.log(
+      `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${sends.length} message(s) of take ${record?.takeId.slice(0, 8) ?? '(none)'}…`
+    );
+    let deleted = 0;
+    for (const send of sends) {
+      const found = [...ctx.conversations.entries()].find(([, c]) => c.id === send.conversationId);
+      if (!found) {
+        ctx.log(
+          `[MEDIA] ${send.id.slice(0, 8)}…: its conversation is not on this device - skipped`
+        );
+        continue;
+      }
+      const [convoKey, convo] = found;
+      const act: ControlAct = { kind: 'delete' };
+      const outcome = await deleteMessage(send.id, controlDeps(ctx, convo));
+      settleControl(ctx, convo.id, send.id, act, outcome !== 'refused');
+      if (outcome === 'refused') continue;
+      await applyDeleteLocally(outcome, send.id, convoKey, ctx);
+      deleted++;
+    }
+    return deleted;
+  }
+
+  /**
    * The local half of a delete the queue took (or that never needed it): a withdrawal drops the row,
    * a broadcast tombstones it. Reads the conversation from the map at THIS moment, by key.
    */
@@ -2471,6 +2560,10 @@ export function useMessaging() {
     convoKey: string,
     ctx: MessagingContext
   ): Promise<void> {
+    // A CHAT REEL DELETED FOR EVERYONE (D-delete-one, RC-13): its take's record marks it, and the
+    // file's hold is given back once no message citing it stands. A withdrawal settles the take
+    // inside the outbox already; anything but a reel's send is ignored there.
+    if (outcome === 'broadcast') await outboxReelSendDeleted(messageId);
     // A withdrawal is not a deletion the peers have to be told about - it is a message that never
     // existed anywhere but here, so the row goes, rather than becoming a tombstone standing for
     // nothing. Measured before the fix: every withdrawal left a row no other device held, which
@@ -2514,6 +2607,91 @@ export function useMessaging() {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(key, { ...convo, messages: msgs });
       await persistLocalMutation(msgs[idx], ctx);
+    }
+  }
+
+  /**
+   * RECORDS THE `410` A CONVERSATION REEL'S VIEWER MET (RC-6, [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)
+   * 15.4): on the message in memory, so every later render of the row draws the tombstone, and on
+   * its local row, so a reload does too - one `410` per message per device, never one per scroll.
+   *
+   * A local fact, the first one kept: a row already carrying it is left alone. The conversation is
+   * read from the map NOW (the one on screen first, the viewer was opened from it), and a write that
+   * fails is said with its cost - the next tap on that tile asks the server again.
+   */
+  async function recordReelPurged(
+    messageId: string,
+    atMs: number,
+    ctx: MessagingContext
+  ): Promise<void> {
+    const selected = ctx.selectedNow();
+    const keys = [
+      ...(selected ? [selected] : []),
+      ...[...ctx.conversations.keys()].filter((k) => k !== selected),
+    ];
+    const key = keys.find((k) =>
+      ctx.conversations.get(k)?.messages.some((msg) => msg.id === messageId)
+    );
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: no loaded conversation holds it`
+      );
+    } else {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (convo.messages[idx].mediaPurgedAt) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+    }
+    if (!ctx.storage) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not persisted: no storage - a reload asks again`
+      );
+      return;
+    }
+    try {
+      // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
+      // hold it from before a reload of another tab), so "already recorded" is asked of the row
+      // itself, and an existing record is never overwritten - memory is aligned to it instead.
+      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      if (!stored) {
+        ctx.log(
+          `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+        );
+        return;
+      }
+      if (stored.mediaPurgedAt) {
+        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx);
+        ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
+        return;
+      }
+      await ctx.storage.updateMessage(messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
+      // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
+      // what tells "on disk" from "asked".
+      const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      ctx.log(
+        back?.mediaPurgedAt
+          ? `[REEL] 410 on ${messageId.slice(0, 8)} recorded on its row`
+          : `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+      );
+    } catch (e) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (${String(e).slice(0, 120)}) - a reload asks again`
+      );
+    }
+  }
+
+  /** Sets memory's copy of a message's recorded 410 to the stored instant, read from the map NOW. */
+  function alignMemoryPurge(messageId: string, atMs: number, ctx: MessagingContext): void {
+    for (const [key, convo] of ctx.conversations) {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (idx === -1) continue;
+      if (convo.messages[idx].mediaPurgedAt === atMs) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+      return;
     }
   }
 
@@ -2847,6 +3025,8 @@ export function useMessaging() {
     handleAddReaction,
     /** Sends a delete_message MLS event and marks the message as deleted locally. */
     handleDeleteMessage,
+    handleDeleteReelEverywhere,
+    recordReelPurged,
     /** Sends an edit_message MLS event and updates the message content locally. */
     handleEditMessage,
     /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */

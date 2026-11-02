@@ -14,7 +14,7 @@
  *  - the salon purge's allowlist: the row's author must be the uploader, and a chat hold must exist.
  */
 import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
-import { MediaService } from './media.service';
+import { CHAT_REEL_OVER_BUDGET, MediaService } from './media.service';
 
 const ALICE = 'alice';
 const BOB = 'bob';
@@ -47,6 +47,7 @@ type Internals = {
   logger: Record<'log' | 'debug' | 'warn' | 'error', (msg: string) => void>;
   persistMetadata: () => Promise<void>;
   purgeExpiredMedia: () => Promise<void>;
+  purgeOrphanedChunks: () => Promise<void>;
   sweepIntervalMs: number;
   uploadLocks: Map<string, Promise<void>>;
 };
@@ -88,6 +89,10 @@ function serviceWith(items: Record<string, Entry>, sizes: Record<string, number>
   internals.logger = { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} };
   internals.uploadLocks = new Map();
   internals.persistMetadata = () => Promise.resolve();
+  // The sweep runs under a mocked FUTURE `Date.now()`, at which every file in the process-wide
+  // `chunks_temp` looks older than 24 h: the real orphan purge would delete the live staged
+  // uploads of specs running in parallel workers (cwd is shared). Not under test here.
+  internals.purgeOrphanedChunks = () => Promise.resolve();
   internals.sweepIntervalMs = 60_000;
   return { service, deleted, sweep: () => internals.purgeExpiredMedia() };
 }
@@ -205,6 +210,8 @@ describe('the chat hold route: owner-only, idempotent, charged once', () => {
     const refusal = await service.holdForChat(PENDING, ALICE, NOW).catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(HttpException);
     expect((refusal as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    // The discriminator the client fails the take on (RC-13), never the sentence.
+    expect((refusal as HttpException).getResponse()).toMatchObject({ code: CHAT_REEL_OVER_BUDGET });
     expect(items[PENDING].holds).toBeUndefined();
     expect(items[PENDING].retentionClass).toBe('reel-pending');
   });
