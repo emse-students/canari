@@ -505,7 +505,7 @@ are for one engineer including tests, in days.
 | **RC-9** | **Campaign rows and the hardware pass**: DM, group and salon, web + Android + iOS, a weak-network run, the 30-day crossing on a bench with the window shortened, an expiry read of every surface. **Amended 2026-10-30**: one take sent from the tab to a DM, a group and a salon at once (one upload on the server, three messages); a send refused in one target while the others go; a moderator's purge in the salon read as a tombstone in the DM; the two encoders never running together (15.2) | new rows on [cross-client-testing](../../cross-client-testing.md) through `bun rows.mjs`; the user's look on both phones | 3 | RC-4 to RC-8, RC-12 to RC-14 |
 | RC-10 | *Later*: "opened" signal (D3), then view once for DMs (3.4, with its own `minClientVersion` gate) | its own study when asked | - | RC-9 |
 | RC-11 | *Later*: prepare while the member reviews | measured battery cost on discarded takes | 1.5 | RC-5 |
-| **RC-12** | **The "Envoyer à..." sheet** (15.1, 15.8): the tab's review action, `ReelSendSheet` with "Publier sur CanaReels" first, the list source and its permission filter, the search, multi-select and the server's target cap, the hand-over to `ReelPublishSheet` when the feed row is ticked, i18n, accessibility | component tests: the feed row is first and alone reproduces today's path byte for byte; a read-only or muted salon is not listed; the cap; Back returns to the take; a press writes ONE take and N sends (asserted on the outbox fake) | 3 | RC-13 (to send); RC-8 for the salon rows |
+| **RC-12** | **Built 2026-11-02, switch OFF ([section 18](#18-what-the-send-to-sheet-rc-12-built-2026-11-02)).** **The "Envoyer à..." sheet** (15.1, 15.8): the tab's review action, `ReelSendSheet` with "Publier sur CanaReels" first, the list source and its permission filter, the search, multi-select and the server's target cap, the hand-over to `ReelPublishSheet` when the feed row is ticked, i18n, accessibility | component tests: the feed row is first and alone reproduces today's path byte for byte; a read-only or muted salon is not listed; the cap; Back returns to the take; a press writes ONE take and N sends (asserted on the outbox fake) | 3 | RC-13 (to send); RC-8 for the salon rows |
 | **RC-13** | **Built 2026-11-01, switch OFF ([section 17](#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)).** **The multi-target outbox** (15.2, 15.7): the take row and N send rows written in one transaction, the take withdrawn when no send names it (durable reference, no counter), per-send failure and retry, the "expired before it was sent" refusal, the sent-take record and "Supprimer partout", the encoder lease shared with `publishReel`; the take ADOPTING the publish step's upload (`awaitsPublish`, the ref written before the post, the chat hold before the first send - 15.5); **RC-5's single-target entry becomes the one-send case** (one path) | the RC-5 kill-at-each-stage suite re-run with 3 sends, plus: a kill between the take and its sends (impossible by the transaction, asserted), one send refused for good while two go, a cancel of one send keeps the take, the last cancel releases the session and deletes the blob, a send held past its hint fails for good; feed + chats: ONE upload on the fake server, a post refused after the upload still sends the chats, a publish step left before its upload makes the take upload its own | 5 | RC-5, RC-14 |
 | **RC-14** | **BUILT 2026-11-01 ([section 16](#16-what-the-shared-file-server-package-rc-14-built-2026-11-01)).** **Server changes for a shared file** (15.3, 15.4, 15.7): media-service HOLDS per object (`post`, `chat` with its due time), the sweep and stats reading them, an owner-only idempotent chat-hold route (moving a `reel-pending` to `chat-reel`), the post claim accepting `chat-reel` -> `reel`, `reel-purge` carrying its reason (`moderation` purges, `author`/`retention` release), the sender's `DELETE` releasing its hold; the salon send declares the reel's `mediaId` on its `channel_messages` row (**an additive migration, APPROVED by the owner 2026-10-30**); `chat-reel-purge`'s allowlist = moderator of THAT salon + the row names the id + the blob's owner is the row's proven author + a `chat` hold; `chatReelMaxTargets` in `reel-limits`; the owner-delete justification rewritten in [media-service](../../services/media-service.md#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09) | media-service: a published-and-sent file survives its post's author delete and its 30-day chat hold alone, goes with the last hold, goes at once on a moderation purge; a held `reel-pending` is not swept at 24 h; social-service spec and the real-database path: a moderator of salon S cannot purge a blob only salon T names, nor one whose owner is not the row's author; a lying declaration of another member's id is refused; every later reader gets `410` | 4.5 | RC-2; lands WITH RC-8's purge, deployed on both estates before any client creates a hold |
 **Total for the first usable version (RC-0 to RC-9): about 21-23 engineer-days; send-to-many
@@ -902,7 +902,7 @@ upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreg
   Every question of 15.9 is answered.
 
 **The server half (RC-14) is built** (2026-11-01, [section 16](#16-what-the-shared-file-server-package-rc-14-built-2026-11-01));
-the client halves (RC-12, RC-13, the RC-6 amendment) are not.
+the client halves are RC-13 (built, [section 17](#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)), RC-12 (built behind the switch, [section 18](#18-what-the-send-to-sheet-rc-12-built-2026-11-02)) and the RC-6 amendment (not).
 
 **What this breaks in the sections above, on purpose.** Until now a reel message was filmed inside
 ONE conversation (section 1) and its blob served that conversation alone: 2.2 and media-service
@@ -1382,3 +1382,63 @@ sheet, so they land with RC-12 over the controller and composable functions abov
 `finally`**, on every way the publish step ends (posted, refused, cancelled, thrown): a take whose
 publish wait is never ended waits for that page life - and posts the tab's `reel_sendto_failed_in`
 notice. It caps the targets at `chatReelTargetCap` (above). Owed on devices: the RC-0 re-run and the readings, with the switch.
+
+## 18. What the send-to sheet (RC-12) built (2026-11-02)
+
+Sections 15.1 and 15.8 as designed, on the camera TAB only, behind `CHAT_REEL_WRITER_ENABLED = false`
+(owner, 2026-11-02: build it now, ship it behind the existing switch). **Inert while the switch is
+off**: `sendToOffered` in `ReelCapture` is false, the review says "Suivant" and opens the publish step
+exactly as before, no sheet is mounted, nothing is queued. Filming from inside a conversation is
+unchanged (its conversation is the target, no sheet).
+
+- **When it is offered.** The tab's review of a VIDEO, with the writer on AND the server's reel-limits
+  carrying both `chatMaxDurationMs` and a usable `chatReelMaxTargets` (`chatReelTargetCap`, the smaller
+  of the server's count and `REEL_TAKE_MAX_SENDS`; never a guessed number). A photo keeps "Suivant"
+  (below). The review's action reads `reel_sendto_action`; the editor's Next goes to the sheet too.
+- **The sheet** (`ReelSendSheet.svelte`): its own history entry above the take's (Back returns to the
+  review), the feed row first (disabled with its own sentence when the mute check says muted - asked
+  once at open, the server answers again at the publish), a local search, one list in the conversation
+  list's order, a checkbox per row (`role=checkbox`, name "<name>, <kind>"), the ticked targets as
+  removable chips, "Envoyer (N)" disabled at 0, and a tick past the cap REFUSED with
+  `reel_sendto_cap`. The feed row never counts against the cap (it is not a send).
+- **The list** (`reelSendTargets.ts`, pure): DMs and groups; NOT a salon (RC-8, D-salons-later), a
+  `removed` conversation, a never-admitted invitation, a DM with a blocked person (`listBlockedUsers`,
+  read at open). A group not ready yet is listed - it queues like any message.
+- **The press** (`ReelCapture.sendTakeTo`, by `reelSendPlan`): *feed alone* = the publish step, byte for
+  byte, nothing queued; *chats alone* = `sendChatReelTakeTo` (one take, N sends, ONE outbox
+  transaction, one bubble per target; the chat camera's `sendChatReelTake` is now its one-target
+  case), a `reel_sendto_sending` toast, and the camera is free at once; *both* = the take is written
+  FIRST with `awaitsPublish` and a take id, then the publish step opens with `chatTake`: it hands its
+  upload to `adoptOutboxPublishedUpload` before `POST /api/posts` (the `onUploaded` hook RC-13 left)
+  and ends the wait (`endOutboxPublishWait`) when it ends, however. **Back from the publish step
+  after the sends were queued ends the take** (the sends are never withdrawn, and a return to the
+  review would offer a second send of the same take).
+- **Withheld from the chats**, said in a sentence under the search: a take whose sound was removed
+  (the chat take has no audio-drop path, so it would have been sent WITH sound -
+  `reel_sendto_sound_removed_chats`), and a take known to be over `chatMaxDurationMs`
+  (`reel_sendto_too_long_for_chats`; `ReelClip.durationMs` is the recorder's clock or the gallery
+  container's, absent when unknown, and the outbox still refuses a long one for good). Both can still
+  be posted.
+- **The tab reaches the messaging layer through a registry** (`reelSendBridge.ts`): the layout's
+  `ChatBackgroundService` registers a HOST (the live conversations, the account, `send`, `adopt`,
+  `endWait`), so the capture screen, the sheet and the publish step import neither the chat singleton
+  nor the outbox (the MLS engine). No host (no session) = a toast, the review kept.
+- **i18n**: `reel_sendto_*` in `fr.json` and `en.json` (action, title, back, feed row, muted, search, empty,
+  no match, kinds, row label, chip remove, cap, silenced, too long, sending (plural), send (plural),
+  unavailable, failed).
+
+**Tests**: `reelSendTargets.test.ts` (the filter, the cap, the plan), `ReelSendSheet.svelte.test.ts` (first
+row, no salon, a11y names, ticks and cap, search, blocked, muted, silenced, too long),
+`ReelCapture.sendTo.svelte.test.ts` (switch off byte-identical, the four plans against a fake host, the
+adoption BEFORE `createPost`, Back after the sends, no host), `useMessaging.reelTakeTo.svelte.test.ts`
+(one enqueue for N targets, the wait, dedupe, a refused write, a sign-out).
+
+**Not built, and why** - for the owner and the next session:
+
+- **A photo from the tab through the sheet** (D-photo, 15.1): the outbox take is video-only
+  (`MediaKind` video, `prepare: 'chat-reel'`); a photo send needs the take to carry an image and an
+  `ephemeral` upload, a change to RC-13's rows. Until then a photo keeps "Suivant" and publishes.
+- **Salons** wait for RC-8.
+- **"Suivant" is not renamed in the iOS/Android native strings** - nothing native changed.
+- **Owed**: the RC-9 hardware pass (the sheet on both phones, one take to a DM and a group, the feed
+  AND chats case with ONE upload on the server), and the sheet's own look read on a phone.

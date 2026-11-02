@@ -95,6 +95,8 @@
     WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
+  import { registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
   import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
@@ -1481,8 +1483,20 @@
     setMlsSessionLostHandler((why) => void handleMlsSessionLost(why));
     // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
     setSignOutHandler(handleSignedOut);
+    // The camera tab's send-to sheet (RC-12) lists and queues through this layer, never its own.
+    const stopReelSendHost = registerReelSendHost({
+      conversations: () => globalConvs.conversations.entries(),
+      userId: () => globalSession.userId,
+      send: (file, keys, opts) =>
+        globalSession.isLoggedIn
+          ? globalMessaging.sendChatReelTakeTo(file, keys, msgCtx(), opts)
+          : Promise.resolve(null),
+      adopt: adoptOutboxPublishedUpload,
+      endWait: endOutboxPublishWait,
+    });
 
     return () => {
+      stopReelSendHost();
       stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);

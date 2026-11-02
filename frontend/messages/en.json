@@ -3945,6 +3945,43 @@
   "reels_review_edit": "Edit the photo or video",
   "reels_review_add": "Add",
   "reel_chat_send": "Send",
+  "reel_sendto_action": "Send to...",
+  "reel_sendto_title": "Send to",
+  "reel_sendto_back": "Back to the video",
+  "reel_sendto_feed_row": "Post to CanaReels",
+  "reel_sendto_feed_muted": "You cannot post right now: your account is muted.",
+  "reel_sendto_search": "Search conversations",
+  "reel_sendto_empty": "No conversation to send this video to.",
+  "reel_sendto_no_match": "No conversation matches.",
+  "reel_sendto_kind_direct": "conversation",
+  "reel_sendto_kind_group": "group conversation",
+  "reel_sendto_row_label": "{name}, {kind}",
+  "reel_sendto_chip_remove": "Remove {name}",
+  "reel_sendto_cap": "You can pick {count} conversations at most.",
+  "reel_sendto_sound_removed_chats": "Removed sound cannot apply to a conversation send: this video can only be posted.",
+  "reel_sendto_sheet_unavailable": "Sending to conversations is not ready, try again in a moment.",
+  "reel_sendto_too_long_for_chats": "This video is over {seconds} s: it can only be posted, not sent to a conversation.",
+  "reel_sendto_failed": "The send could not be queued.",
+  "reel_sendto_send": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Send ({count})",
+        "countPlural=other": "Send ({count})"
+      }
+    }
+  ],
+  "reel_sendto_sending": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Sending to {count} conversation",
+        "countPlural=other": "Sending to {count} conversations"
+      }
+    }
+  ],
   "reels_review_next": "Next",
   "reels_editor_title": "Edit capture",
   "reels_editor_back": "Back to preview",
