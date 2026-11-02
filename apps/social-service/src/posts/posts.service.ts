@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+import { assertWithinPostAttachmentCap } from './post-attachment-cap';
 import {
   memberRepostContext,
   EMPTY_MEMBER_REPOST_CONTEXT,
@@ -991,6 +992,8 @@ export class PostsService {
       data.media = data.images;
     }
     delete data.images;
+    // The cap on a post's attachments (typed 400); a reel carries its one video and never reaches it.
+    assertWithinPostAttachmentCap(Array.isArray(data.media) ? data.media.length : 0);
 
     // THE KIND IS DECIDED HERE AND NOWHERE ELSE. The controller has already refused a malformed
     // reel (`assertCreateKindShape`); this stamps the three columns that stand or fall together and
@@ -1876,10 +1879,11 @@ export class PostsService {
     }
     post.markdown = data.markdown;
 
-    if (data.media !== undefined) {
-      post.media = data.media;
-    } else if (data.images !== undefined) {
-      post.media = data.images;
+    const nextMedia = data.media ?? data.images;
+    if (nextMedia !== undefined) {
+      // Refused past the cap unless the post already held that many: an old post is never stranded.
+      assertWithinPostAttachmentCap(nextMedia.length, post.media?.length ?? 0);
+      post.media = nextMedia;
     }
 
     if (data.polls !== undefined) {

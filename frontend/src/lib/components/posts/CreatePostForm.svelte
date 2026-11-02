@@ -1,6 +1,8 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { admitAttachments, attachmentCapNotice } from '$lib/posts/attachmentCap';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onDestroy, onMount } from 'svelte';
@@ -418,7 +420,13 @@
    * indistinguishable from a picked one, which is what was asked (user, 2026-09-18: *"Que glisser
    * deposer ajoute le media au post (comme si on cliquait sur Medias -> Envoi du fichier)"*).
    */
-  function addFiles(files: File[]) {
+  function addFiles(incoming: File[]) {
+    if (incoming.length === 0) return;
+    // At most ten attachments a post: as many as fit are taken, the rest are said out loud.
+    const admitted = admitAttachments(selectedFiles.length, incoming);
+    const notice = attachmentCapNotice(admitted);
+    if (notice) showToast(notice);
+    const files = admitted.accepted;
     if (files.length === 0) return;
     selectedFiles = [...selectedFiles, ...files];
     filePreviews = [
@@ -793,6 +801,7 @@
 
     <PostComposerBar
       onFiles={addFiles}
+      attachmentCount={selectedFiles.length}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}

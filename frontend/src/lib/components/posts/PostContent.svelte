@@ -80,6 +80,15 @@
   const documentMedia = $derived<PostMediaRef[]>(
     postMedia.filter((media) => !isLightboxable(media))
   );
+  /**
+   * SEVERAL DOCUMENTS ARE A LIST OF ROWS, ONE IS A CARD (owner, 2026-11-02): each file carried its
+   * own first-page preview, so a post of five PDFs was a column of five pages. From two files on
+   * every file is a compact row - icon, name, size, download - with no preview and no download
+   * until it is tapped; audio is not a file and keeps its player.
+   */
+  const compactDocuments = $derived(
+    documentMedia.filter((media) => resolveMediaType(media) === 'file').length >= 2
+  );
   /** Square cells and a "+N" past four (`postGalleryLayout`), for a post of two media or more. */
   const gallery = $derived(postGalleryLayout(lightboxMedia.length));
 
@@ -252,7 +261,7 @@
       {/if}
       {#each documentMedia as media, i (`${i}:${media.mediaId}`)}
         <div class={gallery.shape !== 'none' || i > 0 ? 'mt-2' : ''} data-gallery-document>
-          {@render singleMedia(media)}
+          {@render singleMedia(media, false, compactDocuments)}
         </div>
       {/each}
     {/if}
@@ -261,7 +270,7 @@
 
 <!-- One attachment drawn at its own shape: a single-attachment post, a lone picture beside files,
      and each file row under a gallery. -->
-{#snippet singleMedia(media: PostMediaRef, asReel = false)}
+{#snippet singleMedia(media: PostMediaRef, asReel = false, compact = false)}
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
   {@const isVideo = resolveMediaType(media) === 'video'}
   <div use:nearViewport={watchNear(media)}>
@@ -286,6 +295,7 @@
         {authToken}
         letterbox={reserved}
         deferred={!nearMedia.has(media.mediaId)}
+        compact={compact && resolveMediaType(media) === 'file'}
         onOpen={asReel ? () => (reelViewerOpen = true) : undefined}
         {postInfo}
       />

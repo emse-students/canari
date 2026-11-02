@@ -157,11 +157,16 @@ describe('CreatePostForm - closing keeps the media', () => {
 
 describe('CreatePostForm - the strip of picked files', () => {
   it('draws "IMG_1" at index 1 and "IMG_" at index 11 as two tiles (their name+index keys collided)', async () => {
+    // Twelve is only reachable through a restored draft (the picker stops at ten), which is the
+    // path an old over-cap composer state could still arrive by.
+    holdPostComposerMedia(
+      Array.from(
+        { length: 12 },
+        (_, i) =>
+          new File(['x'], i === 1 ? 'IMG_1' : i === 11 ? 'IMG_' : `p${i}`, { type: 'image/png' })
+      )
+    );
     const { target } = await open();
-    for (let i = 0; i < 12; i++) {
-      const name = i === 1 ? 'IMG_1' : i === 11 ? 'IMG_' : `p${i}`;
-      pick(target, new File(['x'], name, { type: 'image/png' }));
-    }
     expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(12);
   });
 });

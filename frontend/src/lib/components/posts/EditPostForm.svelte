@@ -1,6 +1,8 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { admitAttachments, attachmentCapNotice } from '$lib/posts/attachmentCap';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
@@ -197,7 +199,13 @@
    * The picker, a drop and a paste all end here: the editor body is Markdown and cannot hold an
    * image, so the only place one can go is this list (user, 2026-09-18).
    */
-  function addFiles(files: File[]) {
+  function addFiles(incoming: File[]) {
+    if (incoming.length === 0) return;
+    // At most ten attachments a post, kept ones included: as many as fit are taken, the rest are said.
+    const admitted = admitAttachments(existingMedia.length + newFiles.length, incoming);
+    const notice = attachmentCapNotice(admitted);
+    if (notice) showToast(notice);
+    const files = admitted.accepted;
     if (files.length === 0) return;
     newFiles = [...newFiles, ...files];
     newFilePreviews = [
@@ -537,6 +545,7 @@
 
     <PostComposerBar
       onFiles={addFiles}
+      attachmentCount={existingMedia.length + newFiles.length}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
