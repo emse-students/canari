@@ -8,6 +8,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { wipeDeletedAccountLocalData } from '$lib/utils/accountLocalWipe';
+import { markDeletedAccountWipePending } from '$lib/utils/deletedAccountMarker';
 
 /**
  * Everything still on this device that a factory wipe was supposed to remove.
@@ -138,6 +139,12 @@ export async function wipeAccountOfRevokedDevice(userId: string): Promise<string
   console.log(
     `[RESET] wiping the revoked account ${userId.slice(0, 8)} only - another account stays`
   );
+  // OWED BEFORE THE FIRST STEP, AND FINISHED FROM DURABLE STATE (round 7 of the review of #2919): the
+  // marker the deleted-account wipe resumes from. A step that fails leaves it, and the next start
+  // resumes the wipe (`resumePendingDeletedAccountWipes`); the wipe clears it once nothing failed.
+  // Until then an offline unlock of this account is refused, as for a deleted one - and an online
+  // sign-in of the account drops it (`forgetDeletedAccountOnSignIn`): its data is a new session's.
+  markDeletedAccountWipePending(userId);
   const failures: string[] = [];
   try {
     // No sweep: the slot may be another account's. `delete_user_mls_state` refuses under a live
@@ -155,8 +162,11 @@ export async function wipeAccountOfRevokedDevice(userId: string): Promise<string
     }))
   );
   if (failures.length > 0) {
+    for (const failure of failures) {
+      console.error(`[RESET] the revoked account's wipe did not finish: ${failure}`);
+    }
     console.error(
-      `[RESET] the revoked account's wipe left ${failures.length} step(s): ${failures.join(', ')}`
+      `[RESET] the revoked account's wipe left ${failures.length} step(s) - it resumes at the next start`
     );
   } else {
     console.log("[RESET] the revoked account's local data is gone; the other accounts keep theirs");

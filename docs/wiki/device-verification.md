@@ -1155,28 +1155,41 @@ lines.
    committed`, and no `terminer_session_mls` with a sweep; A's state - parked under A's directory - has
    the same sha256 as before, and A then signs in with its history. With the network cut before the
    reset, expect `the PIN reset is rolled back` and B's old PIN still opening B's history.
-4c. **An unproven state survives a reset and goes back to its owner.** Install a build from before the
-   owner record, sign A in, then install the pre-release over it (A's `mls.bin`, no `mls.owner`). Sign
-   in as B: B's PIN cannot open the saved state it is offered (A's), and the gate says so. B takes "forgot PIN": expect `the slot's
-   state of UNPROVEN owner set aside as unproven.residue-0` and B choosing a new PIN. Sign in as A:
-   expect `a state of unproven owner set aside earlier is offered to the signing-in account`, A's
-   history opens, and `mls.owner` names A.
-4d. **B revoking the phone with A parked leaves A whole.** With A parked and B signed in, remove this
-   phone from B's device list on another device. Expect `another account's MLS state is on this install
-   - only the revoked account is wiped` (or `other account(s) recorded`), never `wiping this device back
-   to a fresh install`; then A signs in with its history, its PIN and its biometric unlock.
-5. **The greps, over the whole run, each ZERO:** `residue`, `TWO STATES`, `cut part-way`,
-   `sign-in refused`, `superseded`, `not the push's account`, `a PIN reset was cut` (step 4c's own
-   `UNPROVEN owner set aside` line is expected there and nowhere else).
-6. **The files** (`xcrun devicectl device info files` on the app container and the App Group): ONE
-   64-hex directory under `mls_accounts/`, with no `.parking`, `.unparking` or `.residue-<n>` suffix;
-   `mls.owner` in the slot names B; the App Group `mls.bin` has the same sha256 as the slot's.
+4c. **An unproven state is never shown to a new account, and goes back to its owner.** On a SECOND
+   install (or after steps 5-7 below are read: this step leaves A's state where steps 1-4 did not),
+   install a build from before the owner record, sign A in, then install the pre-release over it (A's
+   `mls.bin`, no `mls.owner`). Sign in as B, who never signed in on this install: expect `the slot's
+   state of UNPROVEN owner set aside as unproven.residue-<n>` at B's sign-in, and B's PIN gate is B's
+   ordinary one - "Créer mon PIN" when B has no PIN yet, "Déverrouiller" otherwise - which opens with
+   B's own PIN on a fresh state. B never sees "Mon PIN a changé sur un autre appareil → Récupérer mes
+   messages", nor any failure to open a saved state (round 6 offered B A's state, and B met it). Sign out,
+   sign in as A: expect `a state of unproven owner set aside earlier is offered to the signing-in
+   account`, A's history opens, and `mls.owner` names A.
+4d. **B revoking the phone with A parked leaves A whole, and takes B's key.** With A parked and B signed
+   in, note B's keystore alias (`<B's userId>_<B's deviceId>`, in `keystore_aliases.xml` on Android, the
+   `[DEL-LOCAL]` lines on iOS). Remove this phone from B's device list on another device. Expect
+   `another account's MLS state is on this install - only the revoked account is wiped` (or `other
+   account(s) recorded`), never `wiping this device back to a fresh install`; then `[DEL-LOCAL] ... done`
+   for B. Afterwards B's alias is ABSENT from the keystore (`BiometricService.isKeyPresent` false; on
+   Android no `<B's alias>` entry), and the run holds ZERO `no keystore entry can be named` lines and
+   ZERO `the revoked account's wipe did not finish` lines. A then signs in with its history, its PIN and
+   its biometric unlock.
+5. **The greps, over the whole run, each ZERO:** `TWO STATES`, `cut part-way`, `sign-in refused`,
+   `superseded`, `not the push's account`, `a PIN reset was cut`, `no keystore entry can be named`,
+   `wipe did not finish`. `residue` appears ONLY on step 4c's install (`UNPROVEN owner set aside as
+   unproven.residue-<n>`), never on the install of steps 1-4.
+6. **The files** (`xcrun devicectl device info files` on the app container and the App Group), on the
+   install of steps 1-4, once step 4d ended with A signed in: NO 64-hex directory under
+   `mls_accounts/` - A's state is in the slot again and B's went with its revoked wipe - and no
+   `.parking`, `.unparking`, `.resetting` or `.residue-<n>` entry; `mls_accounts/unproven.declined`
+   absent or empty (B's entry from 4b, if its reset committed, is pruned by the wipe of B);
+   `mls.owner` in the slot names A; the App Group `mls.bin` has the same sha256 as the slot's.
 7. **The mirror's cost:** between the two `didBecomeActive` mirror lines of one activation, under
    about 100 ms; and every `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it
    M ms` line of the run, both numbers noted - a wait in the hundreds of milliseconds is a main-thread
    stall behind a multi-megabyte write, and blocks the stable like step 5.
 
-**Any line of step 5, a missing content in steps 1-4, or a second directory in step 6 blocks the
+**Any line of step 5, a missing content in steps 1-4, a key of B left in step 4d, or any directory or suffix in step 6 blocks the
 stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).
 
 ## X. The scroll after an edge swipe - owed on the Mi 9T

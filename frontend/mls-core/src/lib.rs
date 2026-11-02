@@ -365,6 +365,12 @@ impl StateLoadRefusal {
     pub fn is_slot_owner_unrecorded(&self) -> bool {
         self.code == Some(SLOT_OWNER_UNRECORDED)
     }
+
+    /// True when the saved state OPENED and carries ANOTHER identity (`IDENTITY_MISMATCH`): the one
+    /// verdict that proves the bytes are not the signing-in account's, read from the `code` field.
+    pub fn is_identity_mismatch(&self) -> bool {
+        self.code == Some("IDENTITY_MISMATCH")
+    }
 }
 
 impl From<MlsError> for StateLoadRefusal {

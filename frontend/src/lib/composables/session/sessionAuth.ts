@@ -722,7 +722,7 @@ export async function resetDeviceAsFreshImpl(
     commitFailure = e;
     console.error('[SECURITY] the PIN reset could not remove the local MLS state:', e);
   }
-  await endAccountSessionLocally(ctx, userIdToReset, cb);
+  await endAccountSessionLocally(ctx, userIdToReset, cb, { eraseAccountRecords: true });
   if (commitFailure !== null) throw commitFailure;
 }
 
@@ -732,9 +732,50 @@ export async function resetDeviceAsFreshImpl(
  * way: the PIN reset through its staged commit, the revoked device through its wipe (round 6 of the
  * review of #2919: the revoked path used to run the PIN reset's refusable removal first, and a
  * refusal skipped `clearAuth` and the wipe).
+ *
+ * **`eraseAccountRecords: false` ENDS THE SESSION AND ERASES NOTHING** (round 7 of the review of
+ * #2919): the revoked wipe of ONE account ({@link runRevokedDeviceWipe}) leaves the device id, the
+ * database and the at-rest marker to `wipeAccountOfRevokedDevice`, which needs them. Erased here first,
+ * the wipe found no device id and no marker, named no keystore entry, and left the revoked account's
+ * key in the platform keystore - the very thing a revocation is for.
  */
 async function endAccountSessionLocally(
   ctx: SessionContext,
+  userIdToReset: string,
+  cb: ChatSessionCallbacks,
+  { eraseAccountRecords }: { eraseAccountRecords: boolean }
+): Promise<void> {
+  if (eraseAccountRecords) {
+    await eraseAccountRecordsLocally(userIdToReset, cb);
+  } else {
+    cb.log('[SECURITY] the account session ends here; its records are left to the account wipe');
+  }
+
+  // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
+  // the signed-in user this IS the handle closed by the erase and `close()` is idempotent - the call
+  // stays because the two are not the same fact: a wipe can target another user's store, and
+  // dropping a reference never closes a connection, which is what defers a later delete.
+  try {
+    await ctx.getStorage()?.close();
+  } catch (e) {
+    console.warn('[SECURITY] could not close the session database:', e);
+  }
+
+  ctx.resetMls();
+  ctx.setStorage(null);
+  ctx.setMyDeviceId('');
+  ctx.setIsLoggedIn(false);
+  ctx.setIsWsConnected(false);
+  clearDeviceKeyAndWrapKey();
+  clearUserLocally();
+  cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
+}
+
+/**
+ * The account's records a session end erases when nothing else will: its device id, its
+ * sync-guide and device-name keys, its database rows, and - once those are gone - its at-rest marker.
+ */
+async function eraseAccountRecordsLocally(
   userIdToReset: string,
   cb: ChatSessionCallbacks
 ): Promise<void> {
@@ -773,25 +814,6 @@ async function endAccountSessionLocally(
       cb.log
     );
   }
-
-  // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
-  // the signed-in user this IS the handle closed just above and `close()` is idempotent - the call
-  // stays because the two are not the same fact: a wipe can target another user's store, and
-  // dropping a reference never closes a connection, which is what defers a later delete.
-  try {
-    await ctx.getStorage()?.close();
-  } catch (e) {
-    console.warn('[SECURITY] could not close the session database:', e);
-  }
-
-  ctx.resetMls();
-  ctx.setStorage(null);
-  ctx.setMyDeviceId('');
-  ctx.setIsLoggedIn(false);
-  ctx.setIsWsConnected(false);
-  clearDeviceKeyAndWrapKey();
-  clearUserLocally();
-  cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
 }
 
 /**
@@ -929,9 +951,12 @@ async function runRevokedDeviceWipe(ctx: SessionContext, cb: ChatSessionCallback
     // PIN" reset's `removeMlsState`, which became account-scoped and refusable - and a refusal threw
     // past `clearAuth` and the wipe: the revoked phone stayed signed in, its reset was never recorded,
     // and every PIN check ran it again. The MLS state goes with the wipe below, whichever it is.
-    await endAccountSessionLocally(ctx, userId, cb);
-    // Read BEFORE `clearAuth`, while every record the answer reads is still in place.
+    //
+    // THE SCOPE IS READ FIRST, while every record the answer reads is still in place - and it decides
+    // what the session end erases (round 7): the ONE-account wipe needs the device id and the at-rest
+    // marker to name the account's keystore entry, so the session end leaves them to it.
     const scope = await revokedWipeScope(userId);
+    await endAccountSessionLocally(ctx, userId, cb, { eraseAccountRecords: scope === 'install' });
     await clearAuth();
     if (scope === 'install') {
       await wipeDeviceToFactory();

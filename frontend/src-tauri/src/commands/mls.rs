@@ -113,30 +113,14 @@ pub(crate) async fn initialiser_mls(
                 &keystore,
             )
             .map_err(StateLoadRefusal::from)?;
-            let manager = match MlsManager::load_with_key(
-                &user_id,
-                &device_id,
-                encrypted_state.clone(),
+            let manager = load_state_with_key(
+                &data_dir,
+                claim,
+                (&user_id, &device_id),
+                encrypted_state,
+                legacy_pin.as_deref(),
                 &key,
-            ) {
-                Ok(manager) => manager,
-                Err(e) => {
-                    let migrated = match (&encrypted_state, &legacy_pin) {
-                        (Some(blob), Some(pin)) => {
-                            migrate_legacy_state_blob(&data_dir, claim, blob, pin, &key)
-                        }
-                        _ => None,
-                    };
-                    match migrated {
-                        Some(resealed) => {
-                            log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
-                            MlsManager::load_with_key(&user_id, &device_id, Some(resealed), &key)
-                                .map_err(StateLoadRefusal::from)?
-                        }
-                        None => return Err(StateLoadRefusal::from(e)),
-                    }
-                }
-            };
+            )?;
             Ok((manager, key))
         })
     })
@@ -205,7 +189,12 @@ fn sign_in(
         // unfinished move is typed (`SLOT_MOVE_UNFINISHED`), anything else carries a `null` code.
         // The process is marked warm in the selection's own hold, and the claim that hold returns
         // is what every later step of THIS sign-in is checked against.
-        let selection = install.select(data_dir, user_id)?;
+        //
+        // A STATE OF UNPROVEN OWNER IS OFFERED ONLY TO A SIGN-IN THAT EXPECTS A STATE (round 7 of the
+        // review of #2919): its login measured one, which it does only for an account that signed in
+        // on this install before, or it hands bytes over. A brand-new account never meets one.
+        let expects_state = encrypted_state.is_some() || state_on_disk == Some(true);
+        let selection = install.select(data_dir, user_id, expects_state)?;
         let claim = install.claimed()?;
         // A FRESH START OVER A SAVED STATE IS REFUSED, whatever the selection (round 4): the caller
         // chose "no state" on an answer that did not see it. Only the rotation says it replaces one.
@@ -233,7 +222,30 @@ fn sign_in(
             }
         };
         install.starts_fresh = encrypted_state.is_none();
-        load(encrypted_state, claim)
+        let loaded = load(encrypted_state, claim);
+        // AN UNPROVEN STATE THAT OPENED AS ANOTHER IDENTITY IS PROVABLY NOT THIS ACCOUNT'S (round 7):
+        // put back aside under the next name, so the next offer is the next residue and the identity
+        // rotation the frontend answers this with finds the slot free. Only on that verdict - a state
+        // sealed under another key may be this account's under its old PIN, whose recovery reads it
+        // from the slot.
+        if let Err(refusal) = &loaded {
+            if selection == crate::commands::mls_account_state::Selection::UnprovenLeftInSlot
+                && refusal.is_identity_mismatch()
+            {
+                match crate::concurrency::while_claim_current(claim, || {
+                    crate::commands::mls_account_state::return_unproven_aside_held(data_dir)
+                }) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => log::error!(
+                        "[MLS] the unproven state that opened as another identity could not be put back aside: {e}"
+                    ),
+                    Err(superseded) => log::error!(
+                        "[MLS] the unproven state that opened as another identity is left in the slot: {superseded}"
+                    ),
+                }
+            }
+        }
+        loaded
     };
     match attempt(&mut install) {
         Ok((manager, key)) => {
@@ -303,12 +315,16 @@ impl InstallGuard {
         &mut self,
         data_dir: &std::path::Path,
         user_id: &str,
+        expects_state: bool,
     ) -> Result<
         crate::commands::mls_account_state::Selection,
         crate::commands::mls_account_state::SelectionRefused,
     > {
-        let (selection, claim) =
-            crate::commands::mls_account_state::select_account_state(data_dir, user_id)?;
+        let (selection, claim) = crate::commands::mls_account_state::select_account_state(
+            data_dir,
+            user_id,
+            expects_state,
+        )?;
         self.claim = Some(claim);
         self.selected = Some((data_dir.to_path_buf(), user_id.to_string()));
         Ok(selection)
@@ -500,25 +516,46 @@ pub(crate) async fn terminer_session_mls(
     .map_err(|e| e.to_string())?
 }
 
-/// Opens a pre-v0.11.0 `mls.bin` (Argon2id, `[salt (16) || nonce (12) || ciphertext]`) with `pin`
-/// and rewrites it sealed under `key`, returning the re-sealed bytes.
-///
-/// Returns `None` when the blob is not that envelope or `pin` does not open it - the caller then
-/// keeps the original load error and falls back to recovery. The rewrite happens here rather than
-/// being left to the opportunistic save on the JS side: a snapshot left in the legacy envelope
-/// replays this migration on every launch, and any failure in between resurfaces as a bogus
-/// "PIN changed on another device".
-///
-/// The rewrite happens ONLY while the sign-in's session is current
-/// ([`crate::concurrency::while_claim_current`]): a sign-in ended while it loaded writes nothing into
-/// a slot that may be another account's by now (round 4 of the review of #2919).
-fn migrate_legacy_state_blob(
+/// The load of a sign-in once its key is resolved: the state under `key`, and - when that fails and
+/// the caller holds the PIN - the pre-v0.11.0 envelope re-sealed under `key`, written into the slot
+/// ONLY ONCE IT LOADED AS THIS ACCOUNT (round 7 of the review of #2919: a legacy blob the PIN opens
+/// may be ANOTHER account's under the same PIN - an unproven state offered to this one - and writing
+/// it first rewrote that account's state under this account's key, for good).
+fn load_state_with_key(
     data_dir: &std::path::Path,
     claim: crate::concurrency::SessionClaim,
-    blob: &[u8],
-    pin: &str,
+    (user_id, device_id): (&str, &str),
+    encrypted_state: Option<Vec<u8>>,
+    legacy_pin: Option<&str>,
     key: &[u8; 32],
-) -> Option<Vec<u8>> {
+) -> Result<MlsManager, StateLoadRefusal> {
+    let e = match MlsManager::load_with_key(user_id, device_id, encrypted_state.clone(), key) {
+        Ok(manager) => return Ok(manager),
+        Err(e) => e,
+    };
+    let resealed = match (&encrypted_state, legacy_pin) {
+        (Some(blob), Some(pin)) => reseal_legacy_state_blob(blob, pin, key),
+        _ => None,
+    };
+    let Some(resealed) = resealed else {
+        return Err(StateLoadRefusal::from(e));
+    };
+    let manager = load_resealed_legacy_state(data_dir, claim, &resealed, |bytes| {
+        MlsManager::load_with_key(user_id, device_id, Some(bytes), key)
+    })?
+    .ok_or_else(|| StateLoadRefusal::from(e))?;
+    log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
+    Ok(manager)
+}
+
+/// Opens a pre-v0.11.0 `mls.bin` (Argon2id, `[salt (16) || nonce (12) || ciphertext]`) with `pin`
+/// and returns it sealed under `key` - WRITING NOTHING. The caller loads the result first and only
+/// then persists it ([`load_resealed_legacy_state`], round 7 of the review of #2919: a blob the PIN
+/// opens may be another account's under the same PIN, and was rewritten before its load refused it).
+///
+/// Returns `None` when the blob is not that envelope or `pin` does not open it - the caller then
+/// keeps the original load error and falls back to recovery.
+fn reseal_legacy_state_blob(blob: &[u8], pin: &str, key: &[u8; 32]) -> Option<Vec<u8>> {
     if blob.len() < 16 + 12 {
         return None;
     }
@@ -526,21 +563,42 @@ fn migrate_legacy_state_blob(
     let legacy_key = mls_core::security::derive_key_from_pin_owned(pin.to_string(), salt).ok()?;
     let plain = mls_core::security::decrypt_blob(&legacy_key, sealed).ok()?;
 
-    let resealed = MlsManager::encrypt_state_blob_with_key(&plain, key)
+    MlsManager::encrypt_state_blob_with_key(&plain, key)
         .map_err(|e| log::error!("[MLS] Re-sealing the legacy snapshot failed: {e}"))
-        .ok()?;
+        .ok()
+}
+
+/// LOADS a legacy snapshot re-sealed by [`reseal_legacy_state_blob`] and, only once it loaded as
+/// this account, writes it into the slot. `Err` is the load's refusal, the slot untouched; `Ok(None)`
+/// a load that succeeded and a write that did not (the caller keeps its original error, as before).
+///
+/// The write is here rather than left to the opportunistic save on the JS side: a snapshot left in
+/// the legacy envelope replays the migration on every launch, and any failure in between resurfaces
+/// as a bogus "PIN changed on another device". It happens ONLY while the sign-in's session is
+/// current ([`crate::concurrency::while_claim_current`]): a sign-in ended while it loaded writes
+/// nothing into a slot that may be another account's by now (round 4 of the review of #2919).
+fn load_resealed_legacy_state(
+    data_dir: &std::path::Path,
+    claim: crate::concurrency::SessionClaim,
+    resealed: &[u8],
+    load: impl FnOnce(Vec<u8>) -> Result<MlsManager, mls_core::MlsError>,
+) -> Result<Option<MlsManager>, StateLoadRefusal> {
+    let manager = load(resealed.to_vec()).map_err(|e| {
+        log::warn!("[MLS] the re-sealed legacy snapshot did not load - nothing written: {e}");
+        StateLoadRefusal::from(e)
+    })?;
     let path = data_dir.join("mls.bin");
     match crate::concurrency::while_claim_current(claim, || {
-        crate::concurrency::write_mls_bin_atomically(&path, &resealed)
+        crate::concurrency::write_mls_bin_atomically(&path, resealed)
     }) {
-        Ok(Ok(())) => Some(resealed),
+        Ok(Ok(())) => Ok(Some(manager)),
         Ok(Err(e)) => {
             log::error!("[MLS] Persisting the re-sealed snapshot failed: {e}");
-            None
+            Ok(None)
         }
         Err(superseded) => {
             log::error!("[MLS] the re-sealed snapshot is NOT written: {superseded}");
-            None
+            Ok(None)
         }
     }
 }
@@ -2082,7 +2140,7 @@ mod tests {
     ) -> InstallGuard {
         crate::concurrency::forget_live_manager_for_test();
         let mut install = InstallGuard::new(manager.clone(), key.clone());
-        install.select(dir, user).unwrap();
+        install.select(dir, user, true).unwrap();
         install
     }
 
@@ -2198,7 +2256,7 @@ mod tests {
         let a = selected_attempt(&manager, &key, &dir, "guard-a");
         // B's sign-in is refused by the selection, and its guard drops.
         let mut b = InstallGuard::new(manager.clone(), key.clone());
-        assert!(b.select(&dir, "guard-b").is_err());
+        assert!(b.select(&dir, "guard-b", true).is_err());
         b.refused(&StateLoadRefusal::from(
             "a foreground MLS session is still open".to_string(),
         ));
@@ -2209,7 +2267,7 @@ mod tests {
         );
         // A third account is therefore still refused, with nothing moved.
         let mut c = InstallGuard::new(manager.clone(), key.clone());
-        assert!(c.select(&dir, "guard-c").is_err());
+        assert!(c.select(&dir, "guard-c", true).is_err());
         drop(c);
         assert!(crate::concurrency::live_manager_in_process());
 
@@ -2236,7 +2294,7 @@ mod tests {
 
         let first = selected_attempt(&manager, &key, &dir, "guard-a");
         let mut second = InstallGuard::new(manager.clone(), key.clone());
-        second.select(&dir, "guard-a").unwrap();
+        second.select(&dir, "guard-a", true).unwrap();
         second
             .install(
                 MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
@@ -2257,7 +2315,7 @@ mod tests {
         crate::concurrency::end_native_session(&manager, &key, None, "test sign-out").unwrap();
         let earlier = selected_attempt(&manager, &key, &dir, "guard-a");
         let mut later = InstallGuard::new(manager.clone(), key.clone());
-        later.select(&dir, "guard-a").unwrap();
+        later.select(&dir, "guard-a", true).unwrap();
         later.refused(&StateLoadRefusal::from(
             mls_core::MlsError::KeystoreKeyUnavailable("sheet cancelled".into()),
         ));
@@ -2289,6 +2347,89 @@ mod tests {
         }
     }
 
+    /// A pre-v0.11.0 `mls.bin` of `user`, sealed under `pin` as `encrypt_with_pin` did.
+    fn legacy_state_of(user: &str, pin: &str) -> Vec<u8> {
+        let plain = MlsManager::load_or_create(user, "d9", None)
+            .unwrap()
+            .save_state()
+            .unwrap();
+        let salt = mls_core::security::generate_salt().unwrap();
+        let pin_key =
+            mls_core::security::derive_key_from_pin_owned(pin.to_string(), &salt).unwrap();
+        let mut blob = salt.to_vec();
+        blob.extend(mls_core::security::encrypt_blob(&pin_key, &plain).unwrap());
+        blob
+    }
+
+    /// The sign-in of an account that signed in here before, its load the command's own
+    /// ([`load_state_with_key`]) with the PIN that opens the legacy envelope.
+    fn legacy_sign_in(
+        dir: &std::path::Path,
+        user: &str,
+        manager: &Slot,
+        key: &KeySlot,
+    ) -> Result<String, StateLoadRefusal> {
+        sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            SignIn {
+                data_dir: dir,
+                user_id: user,
+                encrypted_state: None,
+                state_on_disk: Some(true),
+                replaces_unopened_state: false,
+            },
+            |state, claim| {
+                load_state_with_key(dir, claim, (user, "d9"), state, Some("1234"), &KEY_A)
+                    .map(|m| (m, KEY_A))
+            },
+        )
+    }
+
+    /// ROUND 7 (M1): a legacy state of unproven owner that the account's PIN OPENS but that carries
+    /// ANOTHER identity is NEVER rewritten under this account's key - the re-seal is written only once
+    /// it loaded as this account. It is put back aside byte for byte, for its owner. The account's
+    /// OWN legacy state still migrates.
+    #[test]
+    fn a_legacy_state_of_another_identity_is_never_rewritten() {
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+
+        let dir = data_dir("legacy-other-identity");
+        let other = legacy_state_of("guard-other", "1234");
+        std::fs::write(dir.join("mls.bin"), &other).unwrap();
+        let refusal = legacy_sign_in(&dir, "guard-a", &manager, &key).unwrap_err();
+        assert!(refusal.is_identity_mismatch(), "{refusal:?}");
+        assert!(manager.lock().unwrap().is_none());
+        assert!(
+            !dir.join("mls.bin").exists(),
+            "put back aside, the slot free"
+        );
+        assert_eq!(
+            std::fs::read(
+                dir.join("mls_accounts")
+                    .join("unproven.residue-0")
+                    .join("mls.bin")
+            )
+            .unwrap(),
+            other,
+            "the other identity's legacy state was rewritten"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let dir = data_dir("legacy-own-identity");
+        let own = legacy_state_of("guard-a", "1234");
+        std::fs::write(dir.join("mls.bin"), &own).unwrap();
+        legacy_sign_in(&dir, "guard-a", &manager, &key).unwrap();
+        let written = std::fs::read(dir.join("mls.bin")).unwrap();
+        assert_ne!(written, own, "the account's own legacy state is re-sealed");
+        crate::concurrency::end_native_session(&manager, &key, None, "test: done").unwrap();
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// ROUND 4 (H1), THROUGH THE COMMAND'S OWN SEQUENCE: account A's sign-in is in its load (a
     /// biometric sheet, an Argon2) when the page reloads, another sign-in's failure ends the process
     /// session from the page (an UNCLAIMED end), and account B signs in and takes the slot. A's load
@@ -2311,7 +2452,7 @@ mod tests {
                 crate::concurrency::end_native_session(&manager, &key, None, "test: unclaimed end")
                     .unwrap();
                 let _session_of_b =
-                    crate::commands::mls_account_state::select_account_state(&dir, "guard-b")
+                    crate::commands::mls_account_state::select_account_state(&dir, "guard-b", true)
                         .unwrap();
                 std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "guard-b").unwrap();
                 std::fs::write(dir.join("mls.bin"), b"state-b").unwrap();
