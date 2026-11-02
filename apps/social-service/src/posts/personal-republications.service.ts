@@ -289,7 +289,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
       `SELECT posts.id, posts.markdown, posts."publishedAt" AS "createdAt", posts."feedNotifiedAt"
          FROM posts
         WHERE posts.id = ANY($1::uuid[])
-          AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}`,
+          AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })}`,
       [postIds, viewerId]
     );
     const hidden = postIds.length - rows.length;
@@ -388,7 +388,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
     actorId: string
   ): Promise<void> {
     const rows: { visible: boolean }[] = await manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })} AS visible
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })} AS visible
          FROM posts WHERE posts.id = $1`,
       [postId, actorId]
     );

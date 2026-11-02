@@ -191,6 +191,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'This membership product grants no tag: it cannot be sold until it is repaired.',
+          'MEMBERSHIP_PRODUCT_UNGRANTABLE',
+          409
+        )
+      )
+    ).toBe(m.shop_cotisation_disabled());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           "This product is reserved to the association's cotisants",
           'PRODUCT_COTISANTS_ONLY',
           403

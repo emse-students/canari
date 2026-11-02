@@ -337,10 +337,14 @@ describe('uploadResumable', () => {
     const id = row.last!.uploadId!;
     const lines: string[] = [];
     server.fault = (method) => (method === 'DELETE' ? 'drop' : undefined);
-    await releaseUploadSession(server.port(), id, 'withdrawn', (l) => lines.push(l));
+    expect(await releaseUploadSession(server.port(), id, 'withdrawn', (l) => lines.push(l))).toBe(
+      'unanswered'
+    );
     expect(lines.some((l) => l.includes('NOT released'))).toBe(true);
     server.fault = () => undefined;
-    await releaseUploadSession(server.port(), id, 'withdrawn', (l) => lines.push(l));
+    expect(await releaseUploadSession(server.port(), id, 'withdrawn', (l) => lines.push(l))).toBe(
+      'answered'
+    );
     expect(server.sessions.get(id)!.closed).toBe(true);
   });
 

@@ -483,7 +483,10 @@ mod through_the_mirror {
     #[test]
     fn a_v2_push_opens_against_its_mirrored_session() {
         let dir = mirror("v2-ok", GRAINE_V2_CHANNEL, v2_entry(0));
-        assert_is_the_frozen_message(&open_v2(&dir, GRAINE_V2_CHANNEL, GRAINE_V2_MINTER, true));
+        let info = open_v2(&dir, GRAINE_V2_CHANNEL, GRAINE_V2_MINTER, true);
+        assert_is_the_frozen_message(&info);
+        // Minter and signature checked: a banner may name the author.
+        assert_eq!(info["authorProven"], true);
     }
 
     #[test]
@@ -556,5 +559,7 @@ mod through_the_mirror {
             PushLanguage::French,
         );
         assert_is_the_frozen_message(&info);
+        // Opened for whoever it names, so nothing proved the author: a banner names nobody.
+        assert_eq!(info["authorProven"], false);
     }
 }

@@ -76,7 +76,8 @@ export async function verifyPushSecret(
 }
 
 /**
- * Proves the PushSecret of a route whose BODY names the device (`userId`, `deviceId`), BEFORE any
+ * Proves the PushSecret of a route that names the device (`userId`, `deviceId`) - in its BODY, or
+ * in its QUERY for a GET (`mls/push/wake`) - BEFORE any
  * guard that counts per user - so a quota is spent only by the device that holds the secret, and a
  * stranger naming someone's ids is refused before it can exhaust theirs.
  */
@@ -92,9 +93,12 @@ export class PushSecretGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Record<string, unknown>>();
     const headers = (req.headers ?? {}) as Record<string, string | undefined>;
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
-    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    // A GET has no body: its route names the device in the query. Every other verb, in the body.
+    // One source per verb, never a merge - a guard that proved one pair while the handler read the
+    // other would open the second pair's queue.
+    const source = ((req.method === 'GET' ? req.query : req.body) ?? {}) as Record<string, unknown>;
+    const userId = sanitizeQueryValue(source.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(source.deviceId ?? '', 'deviceId');
     await verifyPushSecret(
       this.pushTokenRepo,
       this.logger,

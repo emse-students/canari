@@ -140,12 +140,7 @@ describe('the one attachment menu - Android app', () => {
     openMenu();
 
     expect(opened).toEqual([]);
-    expect(entries()).toEqual([
-      'Photothèque',
-      'Ouvrir la caméra',
-      'Tous les fichiers',
-      'CanaReels',
-    ]);
+    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
     expect(plus().getAttribute('aria-expanded')).toBe('true');
   });
 
@@ -193,19 +188,14 @@ describe('the one attachment menu - Android app', () => {
     expect(plus().getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('"CanaReels" opens the camera TAB (a place, not a picker), and closes the menu', () => {
+  it('offers ONE camera entry: no CanaReels tab entry, and no navigation from the menu', () => {
     stubMatchMedia(true);
     mountComposer();
-    const opened = spyOnPickers();
-
     openMenu();
-    menuItem('CanaReels').click();
-    flushSync();
 
-    expect(nav.goto).toHaveBeenCalledTimes(1);
-    expect(String(nav.goto.mock.calls[0]![0])).toMatch(/\/camera$/);
-    expect(opened).toEqual([]);
-    expect(plus().getAttribute('aria-expanded')).toBe('false');
+    expect(entries().filter((e) => /cam[ée]ra|CanaReel/i.test(e))).toEqual(['Ouvrir la caméra']);
+    expect(entries()).not.toContain('CanaReels');
+    expect(nav.goto).not.toHaveBeenCalled();
   });
 
   it('hands what an input picked to the upload path', () => {
@@ -233,12 +223,7 @@ describe('the one attachment menu - iOS app', () => {
     const opened = spyOnPickers();
 
     openMenu();
-    expect(entries()).toEqual([
-      'Photothèque',
-      'Ouvrir la caméra',
-      'Tous les fichiers',
-      'CanaReels',
-    ]);
+    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
     menuItem('Photothèque').click();
     flushSync();
     await tick();

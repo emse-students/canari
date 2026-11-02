@@ -35,7 +35,12 @@ vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
   createPost: vi.fn(),
   getReelLimits: () =>
-    Promise.resolve({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 }),
+    Promise.resolve({
+      maxDurationMs: 90_000,
+      chatMaxDurationMs: 60_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    }),
 }));
 
 vi.mock('$lib/components/reels/CameraOverlay.svelte', async () => ({

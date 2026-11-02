@@ -8,7 +8,7 @@
 # 2026-09-03, when the bump's push was rejected and the whole chain quietly declined to run. This is
 # the same mechanism, used on purpose.
 #
-# THE FIVE QUESTIONS, in the order that makes a refusal cheapest to read:
+# THE SIX QUESTIONS, in the order that makes a refusal cheapest to read:
 #
 #   1. Is the version a version?          - a typo must not reach a store band computation
 #   2. Is the released commit on `main`?  - it reached the trunk through a pull request; where
@@ -20,6 +20,9 @@
 #   5. Are the release notes written?     - stable releases only; Apple REFUSES a submission
 #                                           without them, and finding that out at the end costs
 #                                           the bump, production, Play and a macOS build first
+#   6. Does it ship a held migration      - one the owner must approve (a marker, or a statement
+#      without the owner's approval?        that is not plainly additive) and has not; the deploy
+#                                           would refuse it, after the store builds
 #
 # WHY THERE IS NO BYPASS INPUT. A skip flag is a fallback path, and reaching one means the primary
 # path failed - so the fix belongs there. The emergency path is unchanged and is not in software: a
@@ -33,6 +36,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/release-preconditions.sh
 source "$HERE/lib/release-preconditions.sh"
+# The owner's hold on a migration - the deploy's own judge, read here by gate 6.
+# shellcheck source-path=SCRIPTDIR source=../../infrastructure/lib/migration-hold.sh
+source "$HERE/../../infrastructure/lib/migration-hold.sh"
 
 REPO="${REPO:-${GITHUB_REPOSITORY:-emse-students/canari}}"
 VERSION="${VERSION:-}"
@@ -229,6 +235,42 @@ else
     hint 'so it cannot silently describe the release before last. Write it, first line'
     hint "\"version: $VERSION\", then publish this release again."
   fi
+fi
+
+# -- 6 -------------------------------------------------------------------------------------------
+step 'no migration the owner must approve ships without the approval'
+# THE DEPLOY'S QUESTION, ASKED OF THE TREE: "which files has production's ledger not recorded?"
+# becomes "which files changed since the commit production SERVES?". That commit is `prod-released`,
+# the tag the production deploy moves itself once it has succeeded - after `apply_migrations`, so
+# every migration of that commit is in the ledger (`release-shipped.sh` reads the same marker). The
+# latest stable TAG was the first version's base, and it asks less: a stable whose deploy failed is not
+# in production's ledger, and its held files would have passed here (review of #2873). For a
+# pre-release, dev's ledger is at or ahead of production's, so this asks at least what the dev deploy
+# will. The commit is fetched shallow: the comparison needs two trees, not the history between them.
+PROD_SHA="$(gh api "repos/$REPO/git/ref/tags/prod-released" --jq '.object.sha')" || PROD_SHA=""
+if ! [[ "$PROD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  refuse "could not read the prod-released marker, so nothing names what production has applied (read: '${PROD_SHA:-nothing}')"
+elif ! git fetch -q --depth 1 origin "$PROD_SHA" && ! git rev-parse -q --verify "$PROD_SHA^{commit}" >/dev/null; then
+  refuse "could not fetch ${PROD_SHA:0:8} (prod-released) to compare its migrations with this release's"
+else
+  HELD_OUT="$(held_migrations_since "$PROD_SHA" HEAD)"
+  HELD_RC=$?
+  case "$HELD_RC" in
+    0)
+      ok "nothing held and unapproved since production's ${PROD_SHA:0:8} (prod-released; $(grep -c . <<<"$HELD_OUT") migration file(s) examined, $(grep -c '^approved ' <<<"$HELD_OUT") approved by the owner)"
+      ;;
+    1)
+      while read -r _ file sum reason; do
+        refuse "$file is held for the owner - $reason - and infrastructure/migration-approvals.txt does not approve this content ($sum)"
+      done < <(grep '^refused ' <<<"$HELD_OUT")
+      hint 'The deploy would refuse it after the bump and the store builds. The OWNER merges the line'
+      hint '"<file> <sha256>" into infrastructure/migration-approvals.txt by hand (such a pull request'
+      hint 'is never armed for auto-merge), then cuts a NEW tag: a rerun re-reads this same commit.'
+      ;;
+    *)
+      refuse "could not decide - ${HELD_OUT##*undecidable }"
+      ;;
+  esac
 fi
 
 printf '\n'

@@ -67,6 +67,8 @@
     <string name="notif_social_followed_post_body">New post</string>
     <string name="notif_social_association_repost_title">%1$s shared a post</string>
     <string name="notif_social_association_repost_body">New post</string>
+    <string name="notif_social_member_repost_title">%1$s reposted a post</string>
+    <string name="notif_social_member_repost_body">New post</string>
     <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
     <string name="notif_social_repost_proposed_body">A post to share</string>
     <string name="notif_social_repost_personal_requested_title">%1$s asks to share your post</string>

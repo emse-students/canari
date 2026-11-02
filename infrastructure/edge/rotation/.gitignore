@@ -1,0 +1,3 @@
+# The replica lists infrastructure/lib/rolling.sh writes at every deploy: never tracked.
+*
+!.gitignore

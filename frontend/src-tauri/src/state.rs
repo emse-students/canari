@@ -19,9 +19,11 @@ pub(crate) struct AppState {
 /// process, or ended by [`crate::concurrency::end_native_session`] (a sign-out, an account switch, a
 /// failed `initialiser_mls`, a state sweep).
 ///
-/// **IT IS THE CONTRACT THAT CROSSES THE TAURI BOUNDARY, NOT THE SENTENCE AFTER IT.** A command's error
-/// is a string on the bridge, so the TypeScript side reads this code (`isMlsManagerAbsent`) the way it
-/// reads `KEYSTORE_KEY_UNAVAILABLE`, and never the prose. A command waiting on the manager mutex while a
+/// **IT IS THE CONTRACT THAT CROSSES THE TAURI BOUNDARY, NOT THE SENTENCE AFTER IT.** Unlike the
+/// `STATE_*` and `KEYSTORE_KEY_UNAVAILABLE` codes (typed `{ code, message }` since step 1), this one is
+/// still a string on the bridge, read by the TypeScript side (`isMlsManagerAbsent`) as a leading
+/// token and never the prose. It moves in the separately reviewed step 2, with the other string
+/// prefixes; until then the boundary has two conventions, on purpose. A command waiting on the manager mutex while a
 /// teardown holds it receives this once the teardown releases it - it never acts on the previous
 /// account's manager and never waits for a new one.
 pub(crate) const MLS_MANAGER_ABSENT: &str = "MLS_MANAGER_ABSENT";

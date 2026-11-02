@@ -103,9 +103,12 @@ What that decided:
   lens the device lacks is still a typed `unavailable`. The rest of this item is the phone case
   (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
   WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
-  camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
-  persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
-  reports another lens than asked is `console.error`ed. Nothing ever retries on the other lens.
+  camera opens on the FRONT one by default. Since 2026-11-01 it opens on the lens last used anywhere in the
+  app, one memory per device, written once a flip's open succeeded (`reels/cameraLens.ts`,
+  [reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). A lens the phone lacks is an
+  `OverconstrainedError` -> `unavailable`, logged; a track that reports another lens than asked is
+  `console.error`ed. A flip never retries on the other lens; only the FIRST open on a remembered rear lens
+  falls back, once, logged.
 - **The torch is a capability of the LENS**, read from the open track - so its button exists on the
   back lens and not on the Mi 9T's front one.
 - **Releasing a lens before opening the other** is what the session does anyway (a recorder cannot
@@ -420,7 +423,7 @@ web page cannot remove.
 | | Swipe from the feed (`/camera` tab) | "+" -> new post -> "Caméra" chip | The post editor's camera |
 | --- | --- | --- | --- |
 | Component | `ReelCapture destination="feed"` | `PostComposerBar reel` -> `CameraOverlay` -> `ReelCapture destination="post"` | `PostComposerBar` (no `reel`) -> `destination="post-edit"` |
-| Capture | front lens, the preview's crop, 90 s ring from `reel-limits` | the same | the same |
+| Capture | the lens last used (front by default), the preview's crop, 90 s ring from `reel-limits` | the same | the same |
 | Microphone | with the lens: refused = no camera | asked apart: refused = photos only | asked apart |
 | A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (30 days) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
 | What the step adds from the composer | - | an amber notice "CanaReel : supprimé au bout de 30 jours" BEFORE "Publier", and "Garder comme post", which hands the video back to the composer as before | - |
@@ -826,7 +829,7 @@ sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `P
 the tabs that narrowed the open tab to its reels). On the phone the user found the two stacked bars
 ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no Reels tab in any bar.
 
-1. **One row**: the three tabs (Associations / Suivis / Tout) and, at its right end, a clap icon
+1. **One row**: the three tabs (Associations / Suivis / Mon espace, "Tout" until 1.6) and, at its right end, a clap icon
    (`ReelsEntryButton`, named "Ouvrir les CanaReels"). The row is `FeedTabRow`: when it is too narrow
    (390 px at 2x text) the TABS scroll sideways with a fade, the icon never wraps or leaves. The
    SELECTED tab is scrolled into full view on arrival and on every selection
@@ -1231,6 +1234,5 @@ and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never pa
 **Fix, at capture time**: a reel is prepared with `trimToVideo` (`prepareVideoForUpload`,
 `videoSpanTrim`): the output is cut to the video track's own span, so no pass shows a still picture
 over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
-a seek-free loop (re-appending the segments to MSE) is a design of its own, in
-[backlog](../../backlog.md#p3---a-reels-loop-holds-its-first-frame-210-ms-longer-than-the-file-says-on-the-mi-9t-measured-2026-10-16-not-built).
+a seek-free loop (re-appending the segments to MSE) is a design of its own, not built.
 A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.

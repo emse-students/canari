@@ -8,6 +8,7 @@
   import SeenByHeads from '../messages/SeenByHeads.svelte';
   import type { ChatMessage, MessageReaction, ReadWatermarks } from '$lib/types';
   import { readersOf } from '$lib/utils/chat/readState';
+  import { messageDate, messageTime } from '$lib/utils/chat/messageOrder';
   import {
     isMessageGroupRow,
     type MessageGroup,
@@ -59,6 +60,12 @@
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
     /**
+     * A conversation reel's viewer met its `410` at `atMs`: record it on the message's local row,
+     * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
+     * this mount.
+     */
+    onReelPurged?: (messageId: string, atMs: number) => void;
+    /**
      * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to the bubbles
      * only when the rule lets the viewer pin here. Absent = no ranks (DM, group).
      */
@@ -82,6 +89,8 @@
      * DERIVED from it here rather than stored on the message, so there is one copy of the fact.
      */
     readWatermarks?: ReadWatermarks;
+    /** The same read state on the server's clock (`readState.ts`); a row is read by either map. */
+    serverReadWatermarks?: ReadWatermarks;
     /**
      * Groups and salons: message id -> the members whose head sits under it (`seenByAnchors`, over
      * the WHOLE conversation). When given, it replaces the DM receipt under the sender's own last
@@ -108,6 +117,7 @@
     canModerate = false,
     onBeginEdit,
     onTogglePin,
+    onReelPurged,
     pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
     pinnedIds = [],
@@ -117,11 +127,13 @@
     isDirect = false,
     isMobile = false,
     readWatermarks,
+    serverReadWatermarks,
     seenBy,
   }: Props = $props();
 
   /** Everyone who has read `msg`, its author excluded. */
-  const readersOfMessage = (msg: ChatMessage): string[] => readersOf(msg, readWatermarks);
+  const readersOfMessage = (msg: ChatMessage): string[] =>
+    readersOf(msg, readWatermarks, serverReadWatermarks);
 
   const pinnedSet = $derived(new Set(pinnedIds));
 
@@ -247,7 +259,7 @@
             messageId={msg.id}
             senderId={msg.senderId}
             content={msg.content}
-            timestamp={msg.timestamp}
+            timestamp={messageDate(msg)}
             isOwn={msg.isOwn}
             isSystem={msg.isSystem}
             replyTo={msg.replyTo}
@@ -257,7 +269,7 @@
             {onJoinChannel}
             {onReact}
             {currentUserId}
-            shouldAnimate={msg.timestamp.getTime() > switchTime}
+            shouldAnimate={messageTime(msg) > switchTime}
             {authToken}
             {isMobile}
           />
@@ -322,7 +334,7 @@
               messageId={msg.id}
               senderId={msg.senderId}
               content={msg.content}
-              timestamp={msg.timestamp}
+              timestamp={messageDate(msg)}
               isOwn={msg.isOwn}
               isSystem={msg.isSystem}
               replyTo={msg.replyTo}
@@ -332,6 +344,8 @@
               isReadReceiptAnchor={msg.id === lastReadOwnMessageId}
               isEdited={msg.isEdited}
               restoredUnverified={msg.restoredUnverified}
+              reelPurgedAt={msg.mediaPurgedAt}
+              {onReelPurged}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}
@@ -364,7 +378,7 @@
                 : undefined}
               pinned={pinnedSet.has(msg.id)}
               {currentUserId}
-              shouldAnimate={msg.timestamp.getTime() > switchTime}
+              shouldAnimate={messageTime(msg) > switchTime}
               searchTerm={searchQuery}
               {authToken}
               {isMobile}

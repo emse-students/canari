@@ -82,7 +82,6 @@ function makeContext() {
     ensureMls: vi.fn(),
     log: vi.fn(),
     saveConversation: vi.fn().mockResolvedValue(undefined),
-    verifyCurrentUserMembership: vi.fn().mockResolvedValue(true),
     playNotificationTone: vi.fn(),
     playReceiveTone: vi.fn(),
     sendSystemNotification: vi.fn().mockResolvedValue(undefined),
@@ -300,6 +299,47 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
       content: ENVELOPE,
       isFcmPreview: false,
     });
+  });
+
+  it("keeps THIS device's record of a reel's 410 across the upgrade's wholesale rewrite (RC-6)", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = withPreview();
+    const row = conversations.get(CONVO)!;
+    conversations.set(CONVO, {
+      ...row,
+      messages: [{ ...row.messages[0], mediaPurgedAt: 4242 }],
+    });
+
+    await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+
+    expect(conversations.get(CONVO)!.messages[0].mediaPurgedAt).toBe(4242);
+    expect(saveMessage.mock.calls[0][0]).toMatchObject({ id: 'photo-1', mediaPurgedAt: 4242 });
+  });
+
+  it("keeps it through batchAddMessages' upgrade too, the other seam that rewrites the row", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = withPreview();
+    const saveMessages = vi.fn().mockResolvedValue(undefined);
+    (ctx as unknown as { storage: Record<string, unknown> }).storage = {
+      ...(ctx.storage as unknown as Record<string, unknown>),
+      saveMessages,
+    };
+    const row = conversations.get(CONVO)!;
+    conversations.set(CONVO, {
+      ...row,
+      messages: [{ ...row.messages[0], mediaPurgedAt: 4242 }],
+    });
+
+    await messaging.batchAddMessages(
+      [{ senderId: PEER, content: ENVELOPE, messageId: 'photo-1' }],
+      CONVO,
+      ctx,
+      'restore'
+    );
+
+    expect(conversations.get(CONVO)!.messages[0].mediaPurgedAt).toBe(4242);
+    const written = saveMessages.mock.calls.flatMap((c) => c[0] as { id: string }[]);
+    expect(written.find((r) => r.id === 'photo-1')).toMatchObject({ mediaPurgedAt: 4242 });
   });
 
   it('does not add a second bubble, and the flush adds nothing either', async () => {

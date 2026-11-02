@@ -6,9 +6,12 @@
     formatDay,
     formatDayHead,
     formatTimeRange,
+    firstUsefulMin,
+    formatTimeRangeParts,
     gridUnitLimit,
+    isOfferedStart,
+    unitText,
     isPastUnit,
-    windowRefusal,
     type DayColumn,
     type WeekLayout,
   } from '$lib/bookings/grid';
@@ -16,23 +19,23 @@
     blockDensity,
     buildRuns,
     cutRange,
+    edgeScrollDirection,
     spanOf,
+    stackedLines,
     type GridRun,
     type RunKind,
+    type StackedLines,
   } from '$lib/bookings/gridRuns';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
-  import { getInitials } from '$lib/utils/avatar';
-  import { User } from '@lucide/svelte';
+  import HolderAvatar from '$lib/components/bookings/booker/HolderAvatar.svelte';
   import { onMount } from 'svelte';
   import { gridDragHint } from '$lib/bookings/gridHint';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * THE WEEK OF ONE COLUMN (D46, D48): the days as columns, as the agenda's week, each unit placed
-   * on a shared hour axis; on a phone the same component draws ONE day. A day with nothing offered
-   * folds to a narrow strip (Q-R10). Every unit is a button with its whole reading as its name;
+   * THE WEEK OF ONE COLUMN (D46): the days as columns, as the agenda's week, each unit placed on a
+   * shared hour axis. It is the grid from `md` up; a phone draws the same week as a planning list
+   * (`PlanningList`, D55). A day with nothing offered folds to a narrow strip (Q-R10). Every unit is a button with its whole reading as its name;
    * what tapping it does is the page's (`onPick`). A free unit the booking window refuses now (over,
    * too soon, too far, not open yet) is drawn greyed and DISABLED on the booker's grid: it is not
    * offered, so no sheet opens on it. Should the server still refuse at the send, its typed refusal
@@ -45,9 +48,18 @@
    * invisible button, so a press, a tap or a drag still lands on the step under the pointer and the
    * keyboard still walks the units. A block that is too short for its text says less (name and
    * range, then avatar and range, then the avatar alone) and the whole reading stays in its tooltip
-   * and its accessible name. The avatar is the initials placeholder: the server sends a booker's
+   * and its accessible name. A block too NARROW for a row (a week column, or one of two lanes, under
+   * about 7rem) stacks instead: avatar, then name, then the hours, each truncated, and under about
+   * 5rem the hours take two lines (start, then end). Height still decides how many of those lines
+   * exist, so text is dropped only when it cannot fit at all, never because the block is narrow. The avatar is the initials placeholder: the server sends a booker's
    * name and, exactly where it sends the name, their id (`holderId`), which the shared `Avatar` turns into
    * their photo; where the name is hidden the block shows an anonymous icon ([bookings-chantier]).
+   *
+   * THE AXIS IS THE WHOLE DAY AND ONE HOUR HEIGHT (`HOUR_REM`), whatever the week holds: the booker
+   * is never told the space's availability rules, so no hour can be proven unbookable here, and an
+   * axis drawn from the week's units would change shape from week to week and jump on a booking.
+   * The grid scrolls inside a capped box (the day's header sticks) and opens on the first hour a
+   * booker may take, once, when it appears.
    *
    * A DRAG PICKS SEVERAL UNITS AT ONCE: press a free unit and drag down or up the same DAY, and the
    * range follows the pointer, held by `dragRange` to free touching units and to what one booking
@@ -66,8 +78,6 @@
     /** The column drawn: a space with several columns shows one at a time. */
     resource: BookerResource;
     layout: WeekLayout;
-    /** `day` draws one column without its axis header and never folds it (the phone). */
-    mode: 'week' | 'day';
     /** The organiser's dashboard: a drag draws a block, not a booking (WP-R5). */
     blockMode?: boolean;
     nowMs: number;
@@ -77,6 +87,12 @@
      * is never offered again; `null` while none was refused.
      */
     lastRefusedStart?: number | null;
+    /**
+     * The grid's vertical scroll, kept by the PARENT: a week with nothing offered unmounts the grid,
+     * and the reader must come back to where they were. `null` = never opened: it opens on the first
+     * useful hour (`firstUsefulMin`).
+     */
+    scrollTop?: number | null;
     onPick: (resource: BookerResource, unit: SlotUnit, count?: number) => void;
   }
 
@@ -84,24 +100,46 @@
     space,
     resource,
     layout,
-    mode,
     blockMode = false,
     nowMs,
     lastRefusedStart = null,
+    scrollTop = $bindable(null),
     onPick,
   }: Props = $props();
 
   /** Whether the reader's primary pointer is a finger: the drag hint names only the gesture that applies. */
   let coarse = $state(isCoarsePointerDevice());
+  /** The scrolling box of the grid. */
+  let scroller = $state<HTMLElement | null>(null);
   onMount(() => {
+    if (scroller) {
+      if (scrollTop !== null) {
+        // Back from a week that unmounted the grid: the reader's place, not the opening hour.
+        scroller.scrollTop = scrollTop;
+      } else {
+        const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        const at = remOf(firstUsefulMin(layout, space, nowMs, blockMode) - layout.startMin);
+        // The box opens half a rem above the first useful hour, so that hour's unit is not under the top edge.
+        scroller.scrollTop = Math.max(0, (at - 0.5) * rem);
+        scrollTop = scroller.scrollTop;
+      }
+    }
     coarse = isCoarsePointerDevice();
-    return onCoarsePointerChange((value) => (coarse = value));
+    const stopWatching = onCoarsePointerChange((value) => (coarse = value));
+    return () => {
+      stopWatching();
+      if (edgeFrame !== null) cancelAnimationFrame(edgeFrame);
+    };
   });
 
   /** How long a finger must rest on a unit before a drag draws a range instead of scrolling. */
   const HOLD_MS = 250;
   /** Finger travel (px) before the hold has elapsed that means "scroll", not "draw". */
   const SCROLL_SLOP_PX = 8;
+  /** Within this distance (px) of the scrolling box's top or bottom a drag scrolls the box. */
+  const EDGE_PX = 32;
+  /** How far (px) the box scrolls per pointer move while a drag is at its edge. */
+  const EDGE_STEP_PX = 12;
   /** Pointer travel (px) that turns a mouse press into a drag. */
   const DRAG_SLOP_PX = 4;
 
@@ -202,16 +240,50 @@
       if (travelled <= DRAG_SLOP_PX) return;
       beginSelection(press);
     }
-    // The pointer is captured, so the unit under it is found by position, not by event target.
-    const hit = cellAt(document.elementFromPoint(e.clientX, e.clientY));
+    followEdge(e.clientX, e.clientY);
+    selectAt(e.clientX, e.clientY);
+  }
+
+  /** The unit under the pointer joins the range (the pointer is captured, so found by position). */
+  function selectAt(x: number, y: number) {
+    const hit = cellAt(document.elementFromPoint(x, y));
     if (hit && selection && hit.day === selection.day) {
       selection = { ...selection, current: hit.idx };
     }
   }
 
+  let edgeDirection: -1 | 0 | 1 = 0;
+  let edgeAt = { x: 0, y: 0 };
+  let edgeFrame: number | null = null;
+
+  /**
+   * A range drawn at the top or bottom edge of the scrolling box carries the box with it, and keeps
+   * doing so while the pointer is HELD there (a frame loop that ends when the pointer leaves the
+   * edge or the range ends), so a range can start at the edge and still reach the units beyond it.
+   */
+  function followEdge(x: number, y: number) {
+    edgeAt = { x, y };
+    if (!scroller) return;
+    const box = scroller.getBoundingClientRect();
+    edgeDirection = edgeScrollDirection(y, box, window.innerHeight, EDGE_PX);
+    if (edgeDirection !== 0 && edgeFrame === null) edgeFrame = requestAnimationFrame(edgeStep);
+  }
+
+  function edgeStep() {
+    edgeFrame = null;
+    if (!selection || edgeDirection === 0 || !scroller) return;
+    const before = scroller.scrollTop;
+    scroller.scrollTop += edgeDirection * EDGE_STEP_PX;
+    // At the scroll limit the box did not move: the loop ends instead of spinning in place.
+    if (scroller.scrollTop === before) return;
+    selectAt(edgeAt.x, edgeAt.y);
+    edgeFrame = requestAnimationFrame(edgeStep);
+  }
+
   function handlePointerUp(e: PointerEvent) {
     if (!press || e.pointerId !== press.pointerId) return;
     const range = selected;
+    edgeDirection = 0;
     clearPress();
     // No range was drawn: a plain tap, and the click that follows opens the sheet.
     if (!selection) return;
@@ -238,38 +310,21 @@
   }
 
   /**
-   * Whether tapping a unit does anything: everything does on the organiser's block grid, and a
-   * free unit on the booker's grid only while the booking window takes its start. One that cannot
-   * be booked now is drawn greyed and is not a control at all.
+   * Whether tapping a unit does anything: a taken unit always opens its reading, a free one only
+   * where `isOfferedStart` says (the booking window for a booker; a block that has not begun for
+   * the organiser). One that cannot be booked now is drawn greyed and is not a control at all.
    */
   function offered(unit: SlotUnit): boolean {
-    return blockMode || unit.state !== 'free' || bookableStart(unit);
-  }
-
-  /** Whether a booking may START at this unit now: the booking window takes it, and the server has not refused it, or a later start, as a start. */
-  function bookableStart(unit: SlotUnit): boolean {
-    return (
-      windowRefusal(space, unit.startMs, nowMs) === null &&
-      (lastRefusedStart === null || unit.startMs > lastRefusedStart)
-    );
+    return unit.state !== 'free' || isOfferedStart(space, unit, nowMs, lastRefusedStart, blockMode);
   }
 
   /** What a cell says, and whether the booking window refuses it now. */
   function reading(unit: SlotUnit): { text: string; closed: boolean; past: boolean } {
-    if (unit.state === 'booked') {
-      const who = unit.booking.mine
-        ? m.bookings_cell_mine()
-        : (unit.booking.holderName ?? m.bookings_cell_booked());
-      return { text: who, closed: false, past: false };
-    }
-    if (unit.state === 'blocked') {
-      return { text: unit.blockReason || m.bookings_cell_blocked(), closed: false, past: false };
-    }
-    if (bookableStart(unit)) {
-      return { text: m.bookings_cell_free(), closed: false, past: false };
-    }
+    // The SAME rule as `offered()` and `planning.ts`: what is drawn free is what a tap acts on.
+    const bookable = offered(unit);
+    const text = unitText(unit, bookable);
     // A free unit already over keeps its name for a screen reader but is not written in the cell.
-    return { text: m.bookings_cell_closed(), closed: true, past: isPastUnit(unit, nowMs) };
+    return { text, closed: !bookable, past: !bookable && isPastUnit(unit, nowMs) };
   }
 
   /** What a unit is, for the eye: the booking window and the device's clock decide free from closed. */
@@ -298,6 +353,7 @@
     const unit = run.units[0];
     const text = reading(unit).text;
     const time = formatTimeRange(run.startMs, run.endMs, space.timeZone);
+    const timeParts = formatTimeRangeParts(run.startMs, run.endMs, space.timeZone);
     const label = m.bookings_cell_label({
       resource: resource.name,
       time: formatBookingRange(run.startMs, run.endMs, space.timeZone),
@@ -308,6 +364,7 @@
     return {
       text,
       time,
+      timeParts,
       label,
       holder,
       holderId,
@@ -329,7 +386,7 @@
   const bodyRem = $derived(((layout.endMin - layout.startMin) / 60) * layout.remPerHour);
   const remOf = (min: number) => (min * layout.remPerHour) / 60;
   const hourLabel = (min: number) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:00`;
-  const folded = (day: DayColumn) => mode === 'week' && day.state === 'closed';
+  const folded = (day: DayColumn) => day.state === 'closed';
   /** Open days share the width, a folded one is a strip; an open day never gets narrower than a label. */
   const columns = $derived(
     `3rem ${layout.days.map((d) => (folded(d) ? '2.25rem' : 'minmax(4.25rem, 1fr)')).join(' ')}`
@@ -338,8 +395,10 @@
 
 <!-- The week scrolls inside its own box, never the page, and the hour axis stays in view (sticky). -->
 <div
-  class="border-cn-border bg-cn-surface relative overflow-x-auto rounded-2xl border"
+  class="border-cn-border bg-cn-surface relative max-h-[75dvh] overflow-auto rounded-2xl border"
   data-swipe-nav-ignore
+  bind:this={scroller}
+  onscroll={() => scroller && (scrollTop = scroller.scrollTop)}
 >
   {#if selected && selectedReading}
     <p
@@ -352,23 +411,24 @@
     </p>
   {/if}
   <div role="group" aria-label={m.bookings_grid_caption({ space: space.name })}>
-    {#if mode === 'week'}
-      <div class="grid gap-x-1 pe-1" style:grid-template-columns={columns}>
-        <span class="bg-cn-surface sticky left-0 z-10"></span>
-        {#each layout.days as day (day.date)}
-          {@const head = formatDayHead(day.date)}
-          <div
-            class="text-text-muted py-2 text-center text-xs leading-tight font-bold"
-            aria-label={folded(day)
-              ? `${formatDay(day.date)} : ${m.bookings_day_closed()}`
-              : formatDay(day.date)}
-          >
-            <span class="block first-letter:uppercase">{head.weekday}</span>
-            <span class="text-text-main text-sm">{head.num}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <div
+      class="bg-cn-surface sticky top-0 z-20 grid gap-x-1 pe-1"
+      style:grid-template-columns={columns}
+    >
+      <span class="bg-cn-surface sticky left-0 z-10"></span>
+      {#each layout.days as day (day.date)}
+        {@const head = formatDayHead(day.date)}
+        <div
+          class="text-text-muted py-2 text-center text-xs leading-tight font-bold"
+          aria-label={folded(day)
+            ? `${formatDay(day.date)} : ${m.bookings_day_closed()}`
+            : formatDay(day.date)}
+        >
+          <span class="block first-letter:uppercase">{head.weekday}</span>
+          <span class="text-text-main text-sm">{head.num}</span>
+        </div>
+      {/each}
+    </div>
     <div
       class="grid gap-x-1 pe-1 select-none [-webkit-touch-callout:none]"
       style:grid-template-columns={columns}
@@ -433,7 +493,12 @@
                       <span class="text-2xs block truncate opacity-80">{r.time}</span>
                     {/if}
                   {:else}
-                    {@render bookingFace(r, density, run.units[0])}
+                    {@render bookingFace(
+                      r,
+                      density,
+                      stackedLines(remOf(run.heightMin)),
+                      run.units[0]
+                    )}
                   {/if}
                 </span>
               </button>
@@ -530,35 +595,41 @@
 {/if}
 
 {#snippet bookingFace(
-  r: { text: string; time: string; holder: string | undefined; holderId: string | undefined },
+  r: {
+    text: string;
+    time: string;
+    timeParts: { start: string; end: string };
+    holder: string | undefined;
+    holderId: string | undefined;
+  },
   density: 'full' | 'line' | 'icon',
+  stacked: StackedLines,
   unit: SlotUnit
 )}
-  <span class="flex items-start gap-1.5">
-    {#if r.holderId}
-      <Avatar userId={r.holderId} size="sm" shape="circle" fallbackLabel={r.holder ?? ''} />
-    {:else if r.holder}
-      <AvatarPlaceholder
-        seed={unit.state === 'booked' ? unit.booking.id : ''}
-        initials={getInitials(r.holder)}
-        class="h-6 w-6 shrink-0 rounded-full text-xs"
-      />
-    {:else}
-      <AvatarPlaceholder
-        seed={unit.state === 'booked' ? unit.booking.id : ''}
-        class="h-6 w-6 shrink-0 rounded-full"
-      >
-        <User class="h-3 w-3" aria-hidden="true" />
-      </AvatarPlaceholder>
-    {/if}
-    {#if density !== 'icon'}
-      <span class="min-w-0 flex-1 @max-[6rem]:hidden">
-        {#if density === 'full'}
-          <span class="block truncate font-semibold">{r.text}</span>
-          <span class="text-text-muted text-2xs block truncate">{r.time}</span>
-        {:else}
-          <span class="text-text-muted block truncate font-semibold tabular-nums">{r.time}</span>
+  <!-- Wide (the container holds 7rem): avatar and text in a row. Narrower: the same, stacked. -->
+  <span class="flex flex-col items-start gap-1 @min-[7rem]:flex-row @min-[7rem]:gap-1.5">
+    <HolderAvatar {unit} />
+    {#if density === 'full'}
+      <span class="w-full min-w-0 flex-1">
+        <span class="block truncate font-semibold">{r.text}</span>
+        <!-- One line of hours, or two (start, end) where the block is under 5rem wide. -->
+        <span
+          class="text-text-muted text-2xs block truncate {stacked >= 3
+            ? '@max-[5rem]:hidden'
+            : stacked === 2
+              ? ''
+              : '@max-[7rem]:hidden'}">{r.time}</span
+        >
+        {#if stacked >= 3}
+          <span class="text-text-muted text-2xs hidden @max-[5rem]:block" data-time-split>
+            <span class="block truncate">{r.timeParts.start}</span>
+            <span class="block truncate">{r.timeParts.end}</span>
+          </span>
         {/if}
+      </span>
+    {:else if density === 'line'}
+      <span class="hidden min-w-0 flex-1 @min-[7rem]:block">
+        <span class="text-text-muted block truncate font-semibold tabular-nums">{r.time}</span>
       </span>
     {/if}
   </span>

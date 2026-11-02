@@ -33,7 +33,7 @@ pub(crate) fn read_and_clear_app_data_file(
 }
 
 /// The claim itself, on a plain directory: rename `{dir}/{name}` to a claim name, read it, delete it.
-fn take_handoff(dir: &std::path::Path, name: &str, tag: &str) -> Option<String> {
+pub(crate) fn take_handoff(dir: &std::path::Path, name: &str, tag: &str) -> Option<String> {
     match claim_and_read(dir, name, "draining", read_handoff) {
         Ok(Claimed::Nothing) => None,
         Ok(Claimed::Protected) => {

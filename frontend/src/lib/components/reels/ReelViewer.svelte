@@ -77,6 +77,13 @@
      * absent: a transform-only entrance (`expandFrom`). Null: no entrance drawn here.
      */
     expandOrigin?: { x: number; y: number } | null;
+    /**
+     * A reel's file answered `410` (`ReelSlide`'s `onMediaGone`), named by its post id. A
+     * conversation's opener records it on the message so the tile behind draws the tombstone
+     * (RC-6, [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md) 15.4); the feed passes
+     * nothing.
+     */
+    onMediaGone?: (postId: string) => void;
   }
 
   let {
@@ -86,6 +93,7 @@
     loadPage = listAllReels,
     likerId,
     expandOrigin = null,
+    onMediaGone,
   }: Props = $props();
 
   /**
@@ -604,6 +612,7 @@
               active={i === index}
               preload={i === index + 1 && currentSettled}
               onReady={() => markSettled(i)}
+              onMediaGone={onMediaGone ? () => onMediaGone(reels[i].id) : undefined}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
               rail={railFor(reels[i])}
             />
@@ -672,10 +681,18 @@
     {/if}
 
     {#if ShareSheet && shareFor}
+      {@const sharedReel = reels.find((r) => r.id === shareFor)}
       <ShareSheet
         open
         postId={shareFor}
         onClose={() => (shareFor = null)}
+        canRepost={sharedReel?.canRepost === true}
+        repostedByMe={sharedReel?.repostedByMe === true}
+        onRepostChange={(id, reposted) => {
+          // WP-F6: the server's answer, written onto the reel so the next sheet offers the right row.
+          const reel = reels.find((r) => r.id === id);
+          if (reel) setPost({ ...reel, repostedByMe: reposted, canRepost: !reposted });
+        }}
         onSentInApp={() => {
           // The link waits in a conversation's composer, under this viewer: step aside for it.
           console.debug('[reel-viewer] closed: the reel was sent into a conversation');

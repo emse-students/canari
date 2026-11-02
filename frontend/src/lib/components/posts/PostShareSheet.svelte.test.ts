@@ -11,10 +11,14 @@ import type { Conversation } from '$lib/types';
 const sendPostLinkInApp = vi.fn();
 const copyPostLink = vi.fn();
 const sharePostLinkOut = vi.fn();
+const repostToMyFollowers = vi.fn(async (_id: string) => true);
+const undoMyRepost = vi.fn(async (_id: string) => false);
 vi.mock('$lib/posts/sharePost', () => ({
   sendPostLinkInApp: (...a: unknown[]) => sendPostLinkInApp(...a),
   copyPostLink: (...a: unknown[]) => copyPostLink(...a),
   sharePostLinkOut: (...a: unknown[]) => sharePostLinkOut(...a),
+  repostToMyFollowers: (id: string) => repostToMyFollowers(id),
+  undoMyRepost: (id: string) => undoMyRepost(id),
 }));
 
 let native = false;
@@ -77,6 +81,38 @@ function button(text: string): HTMLButtonElement {
   if (!found) throw new Error(`no button "${text}"`);
   return found as HTMLButtonElement;
 }
+
+describe('PostShareSheet - the member repost row (WP-F6)', () => {
+  function openWith(props: Record<string, unknown>) {
+    const instance = mount(PostShareSheet, {
+      target: document.body,
+      props: { open: true, postId: 'p1', onClose: vi.fn(), ...props },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+  }
+
+  it('is not drawn when the server offers no repost', () => {
+    openWith({});
+    expect(document.querySelector('[data-repost-row]')).toBeNull();
+  });
+
+  it('reposts, and hands the host the answer', async () => {
+    const onRepostChange = vi.fn();
+    openWith({ canRepost: true, onRepostChange });
+    button('Republier pour mes abonnés').click();
+    expect(repostToMyFollowers).toHaveBeenCalledWith('p1');
+    await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith('p1', true));
+  });
+
+  it('takes a repost back when the reader reposted it', async () => {
+    const onRepostChange = vi.fn();
+    openWith({ repostedByMe: true, onRepostChange });
+    button('Annuler ma republication').click();
+    expect(undoMyRepost).toHaveBeenCalledWith('p1');
+    await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith('p1', false));
+  });
+});
 
 describe('PostShareSheet', () => {
   it('lists the conversations newest first', () => {

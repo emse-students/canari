@@ -127,7 +127,7 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
@@ -154,9 +154,14 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
       '074_coorganise.sql',
       '078_read_grants.sql',
       '114_user_follow_status.sql',
+      '121_member_reposts.sql',
     ]) {
       await client.query(migration(name));
     }
+    // A member repost reaches nobody from a muted reposter (WP-F6): the predicate reads this table.
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false)`
+    );
     // 071 gave both (ICM, saint-etienne); A2 addresses the whole Gardanne campus instead.
     await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A2]);
     await client.query(

@@ -1,4 +1,8 @@
-import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
+import {
+  assertOkMlsDeliveryResponse,
+  deliveryKeepalivePost,
+  type DeliveryRefusal,
+} from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
@@ -18,6 +22,7 @@ import {
   refusalOrigin,
 } from '$lib/utils/apiJson';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { readServerInstant, type ServerInstant } from './serverInstant';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
 import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
@@ -800,15 +805,52 @@ export interface RefusedAdmit {
 }
 
 /**
- * The refusals after which a Welcome to that device CANNOT be delivered - an ALLOWLIST, because
- * acting on one drops the Welcome. `no_key_package` alone: `POST /api/mls/welcome` resolves its
- * target by that very row and refuses it `WELCOME_TARGET_UNKNOWN`, and a revoked id never registers
- * again. NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
- * `registerMember` before its Welcome, which then lands. Every other reason, and any reason added
- * later, leaves the Welcome to be sent and answered as before.
+ * The refusals after which a Welcome to that device CANNOT be delivered, each with why - an
+ * ALLOWLIST, because acting on one drops the Welcome. Read off the delivery service's own gates
+ * (`resolveWelcomeTarget` and `lockWelcomeSeat`, which `POST /api/mls/welcome` holds every Welcome
+ * to), never guessed:
+ *
+ * - `no_key_package`: the Welcome's target is resolved by that very row, so it is refused
+ *   `WELCOME_TARGET_UNKNOWN`, and a revoked id never registers again.
+ * - `unresolved_identity`: a placeholder id, which no KeyPackage row can carry (registration refuses
+ *   one), so the same `WELCOME_TARGET_UNKNOWN`.
+ * - `not_entitled`: a key group's member gate answered that this person is not a member of its
+ *   community or salon, and the Welcome's target is asked the same question - `403
+ *   WELCOME_TARGET_NOT_MEMBER`.
+ * - `departure_in_progress`: the person's departure from the key group is being written; the
+ *   Welcome's seat claim is re-read under the seat lock and refused for it.
+ *
+ * WHAT BRINGS THE DEVICE BACK, for the two key-group reasons: never this Welcome, and never a
+ * member's next Add either - the refused leaf is still in the tree, and an admission skips a device
+ * that already holds one. A person granted access later (or whose departure is decided cancelled)
+ * re-enters by the device's OWN external join, once its seat claim holds again; that commit removes
+ * the stale leaf as it adds the new one. Until then the stray sweep may collect the seatless leaf.
+ *
+ * NOT `not_enrolled`: a re-invite the commit could not enrol is enrolled by the sender's own
+ * `registerMember` before its Welcome, which then lands. NOT `already_active`: the device is routed
+ * already and the Welcome stores and lands (a re-Add). NOT `committer`: never a Welcome target. Any
+ * reason added later leaves the Welcome to be sent and answered as before.
  */
+const UNDELIVERABLE_WELCOME_BECAUSE: Readonly<Partial<Record<AdmitRefusalReason, string>>> = {
+  no_key_package: 'no device is registered under it - revoked, or its account erased',
+  unresolved_identity: 'its identity is an unresolved placeholder no device registers under',
+  not_entitled: 'the key group refused the person as not entitled to it',
+  departure_in_progress: 'the person is leaving the key group',
+};
+
+/**
+ * Why a Welcome to a device refused for `reason` cannot be delivered, for the decision line - or
+ * `null` when it can: any reason {@link UNDELIVERABLE_WELCOME_BECAUSE} does not name.
+ */
+export function whyWelcomeUndeliverable(reason: AdmitRefusalReason): string | null {
+  return Object.hasOwn(UNDELIVERABLE_WELCOME_BECAUSE, reason)
+    ? (UNDELIVERABLE_WELCOME_BECAUSE[reason] ?? null)
+    : null;
+}
+
+/** Whether a Welcome to a device the gate refused for `reason` can never be delivered. */
 export function admitRefusalMakesWelcomeUndeliverable(reason: AdmitRefusalReason): boolean {
-  return reason === 'no_key_package';
+  return whyWelcomeUndeliverable(reason) !== null;
 }
 
 /**
@@ -1035,11 +1077,14 @@ export class MlsDeliveryApi {
    * The headers every `/api/mls/*` request carries: the bearer token, and WHICH DEVICE IS ASKING.
    *
    * `X-Canari-Device` is here rather than at a call site because the device id is known in exactly
-   * one place and every future log line that wants it would otherwise need its own plumbing. It is
-   * self-asserted and DIAGNOSTIC ONLY - nginx authenticates the USER alongside it and no server
-   * decision reads it, so the most a client can do by lying is misattribute its own request inside
-   * its own account. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id` and
-   * friends from the auth subrequest, and client headers it does not name pass through.
+   * one place and every route that reads it would otherwise need its own plumbing. It is
+   * self-asserted, and nginx authenticates only the USER alongside it - so it is never proof of a
+   * device, only a choice among the authenticated user's OWN devices. Some server decisions do read
+   * it: the commit-time floor of `fetchCommitAcceptedAt` is read off the seat it names (a 400
+   * without it), and the own-removal date off that device's row. Lying can therefore only pick
+   * another of the user's own seats - never another account's - and a seat's floor is no wider than
+   * that seat's admission. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id`
+   * and friends from the auth subrequest, and client headers it does not name pass through.
    *
    * `'pending'` travels like any other value. It is the client's own literal for an unresolved
    * identity, the server already knows it as one, and a log line reading `device=pending` names a
@@ -1060,13 +1105,14 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, or
-   * `null` when it sent none (transport failure, non-2xx, non-JSON) - see `deliveryKeepalivePost`.
+   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, a
+   * {@link DeliveryRefusal} when it refused the caller on membership, or `null` when it sent neither
+   * (transport failure, any other non-2xx, non-JSON) - see `deliveryKeepalivePost`.
    */
   async deliveryPost(
     path: string,
     body: Record<string, unknown>
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown> | DeliveryRefusal | null> {
     return deliveryKeepalivePost(
       this.historyUrl,
       path,
@@ -1488,7 +1534,12 @@ export class MlsDeliveryApi {
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId }),
       });
-      if (res.ok) return;
+      if (res.ok) {
+        // `{ status: 'added' }`: a portal's `200` enrolled nobody. Still swallowed below, as every
+        // outcome but the typed refusals is (legacy-compatibility.md), but logged as what it is.
+        assertAnsweredByApi(res, `POST /api/mls/groups/members (group ${groupId.slice(0, 8)})`);
+        return;
+      }
       const refusal = await refusalFromResponse(res, 'registerMember refused');
       if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
       if (refusal.code === REVIEW_COHORT_BOUNDARY_CODE) throw new ReviewCohortBoundaryError(userId);
@@ -1781,6 +1832,36 @@ export class MlsDeliveryApi {
       refusedAdmits?: RefusedAdmit[];
       userIds?: string[];
     };
+  }
+
+  /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch`
+   * (`GET /api/mls/commits/:groupId/accepted-at`, members only), as a {@link ServerInstant}.
+   * Throws when the server gave no answer about the commit (transport, 5xx, 429).
+   */
+  async fetchCommitAcceptedAt(groupId: string, baseEpoch: number): Promise<ServerInstant> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/commits/${encodeURIComponent(groupId)}/accepted-at?baseEpoch=${baseEpoch}`,
+      { headers: await this.auth() }
+    );
+    const answer = await readServerInstant(res, 'acceptedAt');
+    if (!answer) throw await refusalFromResponse(res, 'Commit accepted-at HTTP error');
+    return answer;
+  }
+
+  /**
+   * When THIS device's own seat in `groupId` was removed (`GET /api/mls/groups/:groupId/own-removal`,
+   * read of the requester's own rows, so a removed device may ask), as a {@link ServerInstant}.
+   * Throws when the server gave no answer (transport, 5xx, 429).
+   */
+  async fetchOwnRemovalAt(groupId: string): Promise<ServerInstant> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}/own-removal`,
+      { headers: await this.auth() }
+    );
+    const answer = await readServerInstant(res, 'removedAt');
+    if (!answer) throw await refusalFromResponse(res, 'Own removal HTTP error');
+    return answer;
   }
 
   /**
@@ -2384,7 +2465,10 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Renames a group on the server. Throws on non-2xx. */
+  /**
+   * Renames a group on the server. Throws on non-2xx, and `NotFromApiError` on a 2xx that is not the
+   * API's (`{ status: 'renamed' }`): a portal's `200` renamed nothing.
+   */
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'PATCH',
@@ -2392,9 +2476,13 @@ export class MlsDeliveryApi {
       body: JSON.stringify({ name }),
     });
     if (!res.ok) throw await refusalFromResponse(res, 'Rename failed');
+    assertAnsweredByApi(res, `PATCH /api/mls/groups (group ${groupId.slice(0, 8)})`);
   }
 
-  /** Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx. */
+  /**
+   * Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx, and
+   * `NotFromApiError` on a 2xx that is not the API's (`{ status: 'updated', imageMediaId }`).
+   */
   async setGroupImage(groupId: string, mediaId: string | null): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/image`, {
       method: 'PATCH',
@@ -2402,6 +2490,7 @@ export class MlsDeliveryApi {
       body: JSON.stringify({ mediaId }),
     });
     if (!res.ok) throw await refusalFromResponse(res, 'setGroupImage failed');
+    assertAnsweredByApi(res, `PATCH /api/mls/groups/image (group ${groupId.slice(0, 8)})`);
   }
 
   /**

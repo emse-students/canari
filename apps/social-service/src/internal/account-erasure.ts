@@ -57,6 +57,12 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'user_follows.followerUserId': { action: 'delete' },
   'user_follows.followedUserId': { action: 'delete' },
   'user_follow_notices.followerUserId': { action: 'delete' },
+  // WP-F6: the account's reposts go with it; reposts OF its personal posts go with those posts
+  // (the foreign key); its consent setting is its own.
+  'member_reposts.reposterId': { action: 'delete' },
+  'user_repost_settings.userId': { action: 'delete' },
+  // ...and the record that they were told about someone's repost (migration 123).
+  'member_repost_notices.recipientId': { action: 'delete' },
   'user_follow_notices.followedUserId': { action: 'delete' },
   'association_follows.followerUserId': { action: 'delete' },
   'association_push_mutes.userId': { action: 'delete' },
@@ -471,6 +477,12 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'user_follows',
     sql: `DELETE FROM user_follows WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
+  },
+  { label: 'member_reposts', sql: `DELETE FROM member_reposts WHERE "reposterId" = $1` },
+  { label: 'user_repost_settings', sql: `DELETE FROM user_repost_settings WHERE "userId" = $1` },
+  {
+    label: 'member_repost_notices',
+    sql: `DELETE FROM member_repost_notices WHERE "recipientId" = $1`,
   },
   {
     label: 'user_follow_notices',

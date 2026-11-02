@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
@@ -95,7 +96,16 @@ import {
   registerPendingGroupExitDrain,
   unregisterPendingGroupExitDrain,
 } from '$lib/utils/chat/pendingGroupExits';
+import {
+  flushUploadReleaseMarks,
+  registerUploadReleaseDrain,
+  releaseUploadDurably,
+  unregisterUploadReleaseDrain,
+  ownerBoundToken,
+  type SessionReleaser,
+} from '$lib/utils/chat/uploadReleaseMarks';
 import { m } from '$lib/paraglide/messages';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
   forgetProvenDeadEnds,
@@ -169,7 +179,11 @@ import { startPushService, stopPushService } from '$lib/services/PushNotificatio
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
-import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+import {
+  adoptOrphanedMirrorEntries,
+  dateBackgroundSentRow,
+  reconcileOutboxSent,
+} from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/utils/sessionLog';
 import { Log } from '$lib/utils/Log';
@@ -209,15 +223,16 @@ import {
   flushOutbox,
   resumeOutboxGroup,
   applyOutboxPendingStatuses,
-  OutboxPrepareRefusedError,
-  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
+import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
+  patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
   setCallSystemMessageContext,
+  type CallEndTime,
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -391,6 +406,12 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
  * the eventual re-encode happen at the right epoch.
  */
 export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  // THE OWNER IS BOUND HERE, ONCE: these deps serve one session's outbox, whose rows are that
+  // account's. Read at call time, an account switch in the middle of a drive would hold, release or
+  // give back the first account's files under the second's identity (owner-bound, so refused - and
+  // the release owed to the first account would then be lost with its outbox).
+  const ownerId = ctx.getUserId();
+  const ownerToken = ownerTokenOf(ownerId);
   return {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
@@ -452,67 +473,40 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       );
     },
     prepareMedia: prepareQueuedChatReel,
+    // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
+    // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
+      await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
+    },
+    // A CHAT-REEL TAKE'S FILE (RC-13), under the same owner-bound token: the hold on an adopted feed
+    // upload, and its release once no message cites it. Both owed in the take row, not here.
+    holdChatReel: async (mediaId: string) => {
       const { MediaService } = await import('$lib/media');
-      await new MediaService().releaseResumableUpload(uploadId, getToken, why);
+      return new MediaService().holdChatReel(mediaId, ownerToken);
+    },
+    releaseChatReel: async (mediaId: string) => {
+      const { MediaService } = await import('$lib/media');
+      return new MediaService().releaseChatReel(mediaId, ownerToken);
     },
   };
 }
 
+/** A token that is `ownerId`'s and nobody else's (`ownerBoundToken`): another account's is refused. */
+function ownerTokenOf(ownerId: string): () => Promise<string> {
+  return ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+}
+
 /**
- * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
- * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget). A cancel is
- * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
- * failure of the take.
+ * The releaser of `ownerId`'s resumable sessions: one media-service `DELETE` each, under a token that
+ * is `ownerId`'s and nobody else's (`ownerBoundToken`). Another account signed in meanwhile gets
+ * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
  */
-async function prepareQueuedChatReel(
-  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
-): Promise<PreparedOutboxMedia> {
-  const [
-    { MediaService },
-    { prepareVideoForUpload, isVideoPrepareError },
-    { UploadAbortedError },
-    { videoPrepareFailureMessage, isUnpreparableFault },
-  ] = await Promise.all([
-    import('$lib/media'),
-    import('$lib/video/prepareVideoForUpload'),
-    import('$lib/utils/uploadXhr'),
-    import('$lib/video/videoPrepareMessages'),
-  ]);
-  const raw = media.fileBytes ?? new Uint8Array(0);
-  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
-    type: media.mimeType,
-  });
-  const limits = await new MediaService().uploadLimits();
-  try {
-    const prepared = await prepareVideoForUpload(source, {
-      maxBytes: limits?.maxPlaintextBytes,
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
-    return {
-      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
-      mimeType: prepared.file.type,
-      fileName: prepared.file.name,
-      width: prepared.width,
-      height: prepared.height,
-      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
-    };
-  } catch (e) {
-    if (isVideoPrepareError(e) && e.fault === 'aborted') {
-      throw new UploadAbortedError(opts.signal.reason);
-    }
-    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
-    // good with the composer's own sentence for it, never a retry that is refused the same way.
-    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
-      throw new OutboxPrepareRefusedError(
-        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
-        e
-      );
-    }
-    throw e;
-  }
+function releaserFor(ownerId: string): SessionReleaser {
+  const token = ownerTokenOf(ownerId);
+  return async (uploadId, why) => {
+    const { MediaService } = await import('$lib/media');
+    return new MediaService().releaseResumableUpload(uploadId, token, why);
+  };
 }
 
 /**
@@ -589,7 +583,9 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
 }
 
 /**
- * The login failure for a saved state that `init` refused to open or replace (`noFreshStart`).
+ * The login failure for a saved state that `init` refused to open or replace - under `noFreshStart`,
+ * or for a cause that proves nothing about the bytes, which is never replaced
+ * (`recoveryOfStateLoadFailure`).
  *
  * READ FROM THE TYPE, NEVER FROM `reason.message`: it used to compare the message against one
  * shared marker, which collapsed every cause into one screen. Three answers now, each with the
@@ -597,7 +593,9 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
  * `device_holds_other_account`, the gate withholding the reset. A framed state whose header names
  * another key (`rotated`) is a fact - the old PIN opens it - and says so without the "otherwise
  * damaged" branch, which the fingerprint has ruled out. A legacy blob or an untyped failure is
- * still only the observation, and keeps the sentence naming both remedies.
+ * still only the observation, and keeps the sentence naming both remedies. An `unknown` cause proves
+ * nothing and gets a retry-first sentence with no reset. `keystore_unavailable` never reaches here
+ * (`recoveryOfStateLoadFailure` rethrows it to the PIN modal).
  */
 export function savedStateFailure(
   reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError | MlsStateWriteRefusedError
@@ -616,6 +614,11 @@ export function savedStateFailure(
   }
   if (reason.reason === 'unreadable_now') {
     return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
+  }
+  // An untyped cause (IPC fault, disk read, panic, install lock) proves nothing about the bytes: it
+  // never earns the "damaged, only a reset helps" sentence, which pushes towards a destructive act.
+  if (reason.reason === 'unknown') {
+    return new LoginFailure('local_state_unknown', m.auth_local_state_unknown());
   }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
@@ -1928,6 +1931,12 @@ export async function loginImpl(
     // Group exits this device decided and the server never answered. Same lifecycle and the same
     // seam as the one above: a delete or a leave that met no server is owed until one answers, and
     // the answer cannot be waited for with a timer (see `pendingGroupExits`).
+    // Upload sessions a withdrawal could not give back (made offline): owed until one answers.
+    // The owner is FIXED here: a pass started for this account never sends under the next one's token.
+    {
+      const ownerId = ctx.getUserId();
+      registerUploadReleaseDrain({ ownerId, release: releaserFor(ownerId), log: cb.log });
+    }
     registerPendingGroupExitDrain({
       getStorage: () => ctx.getStorage(),
       ensureMls: () => ctx.ensureMls(),
@@ -1999,16 +2008,25 @@ export async function loginImpl(
     };
     setCallSystemMessageContext(callSystemCtx);
     ctx.getCallService()?.setChatNotifier({
-      onCallStarted: (groupId: string, callId: string) =>
-        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
-      onCallEnded: (groupId: string, callId: string, outcome?: CallEndReason, starterId?: string) =>
+      onCallStarted: (groupId: string, callId: string, at: EventTime) =>
+        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId(), at),
+      onCallEnded: (
+        groupId: string,
+        callId: string,
+        at: CallEndTime,
+        outcome?: CallEndReason,
+        starterId?: string
+      ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
           groupId,
           callId,
+          at,
           outcome,
           starterId ?? ctx.getUserId()
         ),
+      onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
+        patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
 
     setupMessageHandler({
@@ -2057,13 +2075,14 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg) => {
+      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
-          ctx.getUserId()
+          ctx.getUserId(),
+          at
         );
         void ctx
           .getCallService()
@@ -2209,9 +2228,11 @@ export async function loginImpl(
       // Reconcile background sends (killed app) first: remove from the outbox any
       // messages already delivered by the native service, BEFORE re-deriving "pending"
       // statuses (otherwise an already-sent message would be shown as pending again).
-      await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
-        cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
-      );
+      await reconcileOutboxSent(ctx.getStorage()!, {
+        deviceKeyB64: ctx.getDeviceKey(),
+        userId: ctx.getUserId(),
+        onDated: (id, receivedAt) => dateBackgroundSentRow(cb.conversations, id, receivedAt),
+      }).catch((e) => cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`));
       stopIfSignedOut('outbox-reconcile');
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();
@@ -2485,6 +2506,8 @@ export async function loginImpl(
       // Same moment, and NOT covered by the reconnect listener: an app killed while offline comes
       // back with the link already up, so no `online` edge ever fires for the exit it still owes.
       void flushPendingGroupExits();
+      // Same reason for an upload session a withdrawal made offline could not give back.
+      void flushUploadReleaseMarks();
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -3305,6 +3328,8 @@ export function tearDownLiveSession(
   // Same reason: an exit owed by the user who just signed out must not be replayed with the next
   // one's token. The row survives in storage, and that user's next login replays it.
   unregisterPendingGroupExitDrain();
+  // And a session release owed by that user: their marks stay, for their next sign-in.
+  unregisterUploadReleaseDrain();
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();

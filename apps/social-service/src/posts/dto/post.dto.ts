@@ -516,3 +516,16 @@ export class RepublicationTargetDto {
   @IsUUID()
   associationId: string;
 }
+
+/** The author's account-wide consent to member reposts (WP-F6). */
+export class RepostAccountConsentDto {
+  @IsBoolean()
+  allowReposts: boolean;
+}
+
+/** One post's override of that consent (WP-F6): `null` follows the account setting again. */
+export class RepostPostConsentDto {
+  @ValidateIf((_o, v) => v !== null)
+  @IsBoolean()
+  allowReposts: boolean | null;
+}

@@ -356,7 +356,9 @@ describe('what the calls switches must never take with them', () => {
   });
 
   it('keeps the ring channels declared, so a revival needs no notification-settings migration', () => {
-    expect(pushService).toMatch(/CHANNEL_CALLS\s*=\s*"canari_calls"/);
+    expect(pushService).toMatch(
+      /CHANNEL_CALLS\s*=\s*fr\.emse\.canari\.call\.IncomingRing\.CHANNEL_ID/
+    );
     expect(pushService).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions_v2"/);
   });
 

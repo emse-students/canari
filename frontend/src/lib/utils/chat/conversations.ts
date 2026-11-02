@@ -27,7 +27,7 @@ import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/di
 import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
-import { isUnreadForUser, watermarkFor } from './readState';
+import { isUnreadForUser, readPointFor } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
@@ -102,6 +102,7 @@ export function toConversationMeta(
     // the one local-clock value here), else `startedAt`, else 0.
     updatedAt: conversationRecency(convo),
     readWatermarks: convo.readWatermarks,
+    serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     imageMediaId: convo.imageMediaId ?? null,
@@ -189,6 +190,27 @@ export function findConversationKeyByGroupId(
   if (conversations.has(groupId)) return groupId;
   for (const [key, convo] of conversations) {
     if (convo.id === groupId) return key;
+  }
+  return undefined;
+}
+
+/**
+ * The key and row of the DIRECT conversation with `peerId`, or `undefined`.
+ *
+ * THE ONE PREDICATE A DUPLICATE-GROUP MERGE RE-KEYS ON (`setupMessageHandler`, the Welcome of a DM
+ * whose peer already has a row): the row is moved to the key of the group just joined. A send made
+ * under the old key follows it by asking the same question (`handleSendChat`), so the two cannot
+ * disagree about which row a DM is.
+ */
+export function findDirectConversationByPeer(
+  conversations: Map<string, Conversation>,
+  peerId: string
+): [string, Conversation] | undefined {
+  const peer = peerId.toLowerCase();
+  for (const entry of conversations) {
+    const convo = entry[1];
+    if ((convo.conversationType ?? 'group') !== 'direct') continue;
+    if ((convo.directPeerId ?? convo.contactName).toLowerCase() === peer) return entry;
   }
   return undefined;
 }
@@ -441,6 +463,7 @@ export interface ConversationRowSpec {
   imageMediaId?: string | null;
   lastMessageAt?: number;
   readWatermarks?: Conversation['readWatermarks'];
+  serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
@@ -481,6 +504,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const imageMediaId = spec.imageMediaId !== undefined ? spec.imageMediaId : existing?.imageMediaId;
   const lastMessageAt = spec.lastMessageAt ?? existing?.lastMessageAt;
   const readWatermarks = spec.readWatermarks ?? existing?.readWatermarks;
+  const serverReadWatermarks = spec.serverReadWatermarks ?? existing?.serverReadWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
@@ -499,6 +523,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(imageMediaId !== undefined ? { imageMediaId } : {}),
     ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
     ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+    ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
@@ -841,6 +866,7 @@ export function restoredConversationRow(
     // succeeds and the value is silently absent for the rest of the session - the unread recount
     // below would then count messages this user has already read on another device.
     readWatermarks: meta.readWatermarks,
+    serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
     awaitingAdmission: meta.awaitingAdmission,
@@ -958,12 +984,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       if (live) {
         const lastMessageAt = live.lastMessageAt ?? meta.updatedAt;
         const readWatermarks = live.readWatermarks ?? meta.readWatermarks;
+        const serverReadWatermarks = live.serverReadWatermarks ?? meta.serverReadWatermarks;
         const historyFloor = live.historyFloor ?? meta.historyFloor;
         const startedAt = live.startedAt ?? meta.startedAt;
         ctx.conversations.set(meta.id, {
           ...live,
           ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
           ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+          ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
           ...(historyFloor !== undefined ? { historyFloor } : {}),
           ...(startedAt !== undefined ? { startedAt } : {}),
         });
@@ -1202,10 +1230,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             // a message delivered live while the replay ran is not in it, so counting the page alone
             // both dropped that message from the display and then wrote a badge that did not include
             // it - the same stale read, once as a loss and once as an undercount.
-            const myWatermark = watermarkFor(current.readWatermarks, ctx.userId.toLowerCase());
+            const mine = readPointFor(current, ctx.userId.toLowerCase());
             const messages = mergeMessagePage(current.messages, refreshedMsgs);
             const newUnreadCount = messages.filter(
-              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark)
+              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
             ).length;
             ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
             for (const m of refreshedMsgs) {

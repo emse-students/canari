@@ -4,7 +4,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
-import { claimReelMedia, purgeReelMedia, type ReelPurgeOutcome } from '../internal/reel-media';
+import {
+  claimReelMedia,
+  purgeReelMedia,
+  type ReelPurgeOutcome,
+  type ReelPurgeReason,
+} from '../internal/reel-media';
 
 /**
  * Keeps the media service's retention class in step with what the feed actually references.
@@ -143,17 +148,20 @@ export class PostMediaRetentionService implements OnModuleInit {
   }
 
   /**
-   * Deletes a reel's blobs now - the comments' too, each under its own uploader - and reports
-   * whether ALL of them are gone (`deleted`/`absent`), or left alone as not the named owner's
-   * (`refused`, terminal), or still there (`failed`, retry).
+   * Ends a reel's blobs now - the comments' too, each under its own uploader - for `reason`, and
+   * reports whether ALL of them are done with (`deleted`/`absent`, or `released`: the post's hold
+   * went and a conversation's chat hold keeps the file, reels-in-chat 15.3), or left alone as not the
+   * named owner's (`refused`, terminal), or still there (`failed`, retry).
    *
    * Throws on a transport failure. See `purgeReelMedia`.
    */
   async purgeReelBlobs(
-    items: Array<{ mediaId: string; ownerId: string }>
+    items: Array<{ mediaId: string; ownerId: string }>,
+    reason: ReelPurgeReason
   ): Promise<Record<string, ReelPurgeOutcome>> {
     if (items.length === 0) return Object.create(null) as Record<string, ReelPurgeOutcome>;
-    return purgeReelMedia(this.httpService, items);
+    this.logger.debug(`[REEL] purging ${items.length} blob(s), reason ${reason}`);
+    return purgeReelMedia(this.httpService, items, reason);
   }
 
   /**

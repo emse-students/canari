@@ -45,6 +45,7 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia' as const,
       callsMode: 'off' as const,
       livesMode: 'off' as const,
+      pushMode: 'full' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -58,6 +59,7 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia' as const,
       callsMode: 'off' as const,
       livesMode: 'off' as const,
+      pushMode: 'full' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -73,6 +75,7 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
     });
 
     await service.ensureDefaults();
@@ -110,6 +113,7 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -159,6 +163,7 @@ describe('PlatformService', () => {
         paymentProvider: provider,
         callsMode: 'off',
         livesMode: 'off',
+        pushMode: 'full',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -230,6 +235,7 @@ describe('PlatformService', () => {
         paymentProvider: provider,
         callsMode: 'off',
         livesMode: 'off',
+        pushMode: 'full',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -286,6 +292,7 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -306,6 +313,7 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -352,6 +360,19 @@ describe('PlatformService', () => {
     expect(result.callsMode).toBe('audio');
     expect(result.minClientVersion).toBe('0.13.0');
     expect(warn.mock.calls.map((c) => String(c[0]))).toContain('livesMode off -> on by=aaaaaaaa');
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the push switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ pushMode: 'wake' }, ADMIN);
+
+    expect(result.pushMode).toBe('wake');
+    expect(result.livesMode).toBe('on');
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain('pushMode full -> wake by=aaaaaaaa');
     warn.mockRestore();
   });
 

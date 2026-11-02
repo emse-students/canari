@@ -132,7 +132,7 @@ services:
     # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
     # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
     # name it has.
-    image: adminer@sha256:251295c1cd51d3889f1c42ffa4864b24eeab51f0caf395cfe5bf4726c5ec9a2a
+    image: adminer@sha256:400af848ac3f57938abde4867677df1b195674d232c8896a27d111d04b9c088c
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
@@ -154,6 +154,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
     build:
@@ -226,6 +227,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3010
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     build:
@@ -398,6 +400,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3012
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-latest}
     restart: always
     build:
@@ -474,6 +477,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3014
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-latest}
     restart: always
     build:
@@ -548,6 +552,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:-latest}
     restart: always
     environment:
@@ -581,6 +586,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: edge:80
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
     environment:
@@ -593,6 +599,12 @@ services:
       # `ALLOW_ORIGIN`, which is a CORS allowlist and not an origin.
     # NO HOST PORT SINCE 2026-10-17 - the edge below holds it, so a release can start this
     # container's successor beside it (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+    # WHICH REPLICAS THIS nginx MAY CHOOSE, written by the deploy (infrastructure/lib/rolling.sh) and
+    # read-only here: a replica is taken out of this list - by a reload, proven - before it is
+    # stopped. The edge reads the same directory through its own mount of edge/.
+    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
+    volumes:
+      - ./edge/rotation:/etc/nginx/rotation:ro
     expose:
       - "80"
     # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means
@@ -617,7 +629,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.31.8-alpine@sha256:1ef7ca94d7879df82421428ce13bd1eaa412404953859cf7a5b6512c25e67a60
+    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
     restart: always
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
     # The DIRECTORY, not the file: `git reset --hard` replaces a file by a new inode, and a bind mount

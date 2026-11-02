@@ -455,6 +455,9 @@ describe('InternalController - the community distribution group', () => {
           tag: 'DISTRIBUTION_PUBLISHER',
           authority: 'distribution_publisher',
           claim: { groupId: 'g-1', userId: PUBLISHER.userId, generation: 0, owed: false },
+          // The creating device sends no commit: it holds the group at the published epoch, and
+          // that is recorded only on a seat no commit admitted.
+          admittedByBaseEpoch: 7,
         }
       );
     });

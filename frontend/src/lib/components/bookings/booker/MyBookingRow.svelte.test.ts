@@ -40,6 +40,7 @@ const BOOKING = {
   privateInfo: null,
   reminderMinutes: 60,
   participantNames: ['Lea M.'],
+  others: [{ id: 'u-lea', name: 'Lea M.' }],
 } as unknown as MyBooking;
 
 const mounted: (() => void)[] = [];
@@ -70,6 +71,8 @@ afterEach(() => {
   document.body.innerHTML = '';
   vi.restoreAllMocks();
 });
+
+vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 
 it('reads when, where and who on the row, and names the reminder for a screen reader', () => {
   open();
