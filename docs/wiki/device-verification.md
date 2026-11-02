@@ -1355,7 +1355,7 @@ the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-view
    turn it; with the comments sheet open the wheel scrolls the list; over an unfolded caption it
    scrolls the caption.
 
-## LA. Read state follows the iPhone leaving and coming back - owed on the iPhone 12
+## LA. Read state follows the iPhone leaving and coming back - owed on the iPhone 12 (step 7 on the Mi 9T)
 
 **ANY FAILURE HERE BLOCKS THE STABLE** that carries the iOS read-lifecycle fix (the follow-up to
 #2937). The fix is verified by compiling and by the source contract
@@ -1379,6 +1379,17 @@ and `[CanariIOS]` (shell) lines.
    the peer).
 4. **The badge after a resume.** Leave the iPhone on another conversation, read the first one on the web tab,
    come back. The iPhone's badge for it is 0 without a reload.
+5. **A notification for Y does not read X.** Open conversation X, press Home, and have the peer
+   send a message in X and then one in Y. Tap Y's notification. Expect, in the device console,
+   `[CanariIOS] notification tap during a resume (state=1, resumePending=1)` BEFORE `foreground=true
+   published to the page (opens a link=1)`; then the app shows Y. On the web tab of the same account
+   X keeps its badge and the peer shows no "Vu" in X; Y falls to 0. `resumePending=0`, or the
+   publish line before the tap line, means UIKit's order differs from the one the fix relies on.
+6. **A plain resume still reads X.** Repeat step 5, but open the app from its icon: X is marked
+   read (the web tab drops X's badge, "Vu" in X on the peer).
+7. **The same on the Mi 9T** (the Android half, #2937): steps 5 and 6 with the app on X, tapping Y's
+   notification - X keeps its badge, Y is read; from the launcher X is read. The logcat shows
+   `onResume: opens a link=true` for the tap.
 
 ## LF. A read reaches the other devices when the iPhone leaves the app - owed on the iPhone 12
 

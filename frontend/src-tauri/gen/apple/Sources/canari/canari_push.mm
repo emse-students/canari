@@ -5595,6 +5595,9 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
   // The page takes the link from durable state (`CanariQueueNotificationTap`), never from an
   // `openURL` on our own scheme: a cold start's tap arrives before the WebView exists.
   if (deepLink.length > 0) {
+    // FIRST, before the page can be told: the resume this tap belongs to announces its link with
+    // the foreground edge, so the conversation left on screen is not read (canari_ios.mm).
+    CanariNoteResumeOpening(deepLink);
     CanariQueueNotificationTap(deepLink);
   }
   completionHandler();

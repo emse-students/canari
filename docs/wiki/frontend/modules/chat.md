@@ -4355,8 +4355,16 @@ only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutati
   the page. That meant `isAppInForeground()` was always `true` on iOS, so `arrivalContextNow` counted a frame
   the JS processed in the seconds before suspension as read on arrival. The shell now writes
   `window.__canariForeground` and dispatches `canari:foreground` on the **background/foreground
-  pair** (`didEnterBackground` / `willEnterForeground`) and after every page load
-  (`CanariPublishForeground`). This is the same contract as Android's `MainActivity.pushForeground`, asserted for
+  pair** and after every page load (`CanariPublishForeground`): leaving at `didEnterBackground`;
+  coming back when the resume COMPLETES - the resume begins at `willEnterForeground`
+  (`g_resumePending`) and is published by the `didBecomeActive` that ends it. A tapped notification
+  reaches the delegate inside that span (`CanariNoteResumeOpening`, called before the tap is queued
+  for the page), so the edge carries the link it opens (`detail.opening`), as Android's does - the
+  shared hold of [the resume that opens something](#read-state-between-devices---the-census-2026-11-02)
+  then applies unchanged. That the delegate runs before `didBecomeActive` is UIKit's order as
+  documented, not yet read on this iPhone: check LA step 5 reads it (`resumePending=1` in the tap's
+  line), and a failure blocks the stable. A `didBecomeActive` with no resume pending (Control
+  Centre, a Face ID sheet) publishes nothing. This is the same contract as Android's `MainActivity.pushForeground`, asserted for
   both shells by `utils/appForeground.contract.test.ts`. The ACTIVE pair was deliberately not chosen: Control
   Centre, a Face ID sheet and the notification shade resign ACTIVE without leaving the screen, and
   a read on screen must not stop counting because a system sheet passed over it. The page now hears
