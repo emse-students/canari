@@ -1,6 +1,6 @@
 # Spaces, audiences and dependencies - a reform proposal (2026-11-02)
 
-**Status: PROPOSAL, revised after each of the owner's four rounds of answers the same day (section
+**Status: PROPOSAL, revised after each of the owner's five rounds of answers the same day (section
 0). Nothing is built.** Written for the owner to decide. It extends
 [profiles-and-access](profiles-and-access.md) (D16-D41, the audiences chantier, WP-C read grants,
 WP-F5/F6) and does not restate it. Every `file:line` is from `main` at the time of writing
@@ -49,6 +49,11 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 | 4 | D4 | "Selon le changement": a date move re-opens every slice, an audience change only the slices whose spaces changed, text none | 4.2 |
 | 4 | D5 | *"Et si plusieurs associations/listes/institutions sont partenaires d'un evenement, comment on gere tout ca ? Est-ce qu'on interdit des partenariats ?"* | section 5 |
 | 4 | D6 | *"On peut faire le point sur toutes les differences/similarites entre associations/listes/institutions si tu veux"* | section 6 |
+| 5 | E1 | **Partnerships are KEPT** | section 5.3 |
+| 5 | E2 | **A partner edits the text and the poster, and may withdraw; only the organiser changes the date, the audience or the partner list, and only the organiser deletes** | closes P14 (5.2, WP-Q1) |
+| 5 | E3 | **A BDE MAY delete an association or list that depends on it**, as today; the `MANAGE_ASSO` comment that says otherwise is wrong and is corrected (WP-R5) | section 6, row 8 |
+| 5 | E4 | **Lists LOSE Lydia payments, the shop and the document vault** (the owner's choice, against this page's recommendation) | WP-L (section 8.1); existing data waits for his explicit decision |
+| 5 | E5 | **No BDE ever governs an institution** (decided in another thread; fixed at the predicate level by #2949 - archive, members, profile, audience, and every path that asks the same predicate) | WP-R0's institution half is #2949 |
 
 ## 1. The current model
 
@@ -124,7 +129,7 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 | P11 | **One validation for many audiences** | entity 3-7; 1832; 637-641 | an event validated by one BDE appears in another BDE's spaces |
 | P12 | **An institution cannot narrow an item** | 411-436, 637-641 | the School reaches everyone or nobody |
 | P13 | **Accepting a co-organisation widens a VALIDATED event with no validation** | `coorganisation/coorganisation.service.ts:281-300` (`apply` inserts the row, the status is untouched) | the event appears in the partner's spaces on the strength of a validation given for the organiser's |
-| P14 | **A co-organiser may delete the organiser's event** | `deleteCalendarEvent`'s member branch, `associations.service.ts:2770-2777`, matches co-owners via 1382-1401 | documented in D39 as built ("edit, poster, delete"), never decided for a partner of another campus |
+| P14 | **A co-organiser may delete the organiser's event** | `deleteCalendarEvent`'s member branch, `associations.service.ts:2770-2777`, matches co-owners via 1382-1401 | documented in D39 as built ("edit, poster, delete"); **decided otherwise by E2** - closed by WP-Q1 |
 
 ## 2. Two axes: audience and dependencies (C2)
 
@@ -179,7 +184,7 @@ depends on it.
 
 | Power | Over an association or list WITH a parent BDE | Over a BDE, an institution, or an entity with no parent |
 | --- | --- | --- |
-| `MANAGE_ASSO` (administer: members, documents, forms, products; minus `SUPER_ADMIN_EXCLUDED_FLAGS`) | the parent BDE's holders, and the platform admin | the platform admin (and the entity's own officers, as today, for its own data) |
+| `MANAGE_ASSO` (administer: members, documents, forms, products; minus `SUPER_ADMIN_EXCLUDED_FLAGS`) | the parent BDE's holders, and the platform admin | the platform admin (and the entity's own officers, as today, for its own data); **never a BDE over an institution (E5, #2949)** |
 | institution members | - | **the platform admin ONLY** (G6) |
 | `MODERATE` its posts, comments, lives | the parent BDE's holders | the platform admin |
 | `VALIDATE_EVENTS` | per SPACE, never per entity: the governor of each space the event reaches (section 4) | same |
@@ -369,14 +374,18 @@ slice); a read-time-only change (a governor reassigned) is announced by the admi
   decisions of governors left with no space become inert; nothing else re-opens.
 - **A partner's audience changes**: the event's spaces follow at read time; governors whose set
   changed are re-asked (4.2).
-- **Edits**: D4 applies per slice whoever edits; under the recommended rule of question 2, a partner
-  can no longer move the date or delete the event (closes P14).
+- **Edits (E2)**: a partner edits the text and the poster and may withdraw; only the organiser
+  changes the date, the event's audience or the partner list, and only the organiser deletes (closes
+  P14). In code: `assertMayWriteEvent` returns which side the caller writes from (the organiser, or
+  a co-organiser through `findCalendarEventForAssociation`), and `updateCalendarEvent` /
+  `deleteCalendarEvent` refuse a co-organiser-side date, audience, `coOwnerIds` or delete with one
+  typed 403 (`CALENDAR_PARTNER_ORGANISER_ONLY`). D4 applies per slice whoever edits.
 - **Partners of every type stay allowed** (an institution co-organising with an association is the
   School-and-a-club case). A list co-organising is allowed today and nothing argues against it.
 
-### 5.3 Forbid partnerships? No.
+### 5.3 Forbid partnerships? No - kept (E1).
 
-**Recommendation: keep them.** They are the ONLY way an event crosses from one governor's spaces to
+**Decided: keep them.** They are the ONLY way an event crosses from one governor's spaces to
 another's - republication carries posts, not events (D38) - so forbidding them would leave an
 inter-campus event no route at all, against G4's intent. What makes them risky today is P13 and P14,
 and both are fixed by the slices and by narrowing a partner's rights, not by forbidding the feature.
@@ -397,15 +406,15 @@ different things today.
 | 5 | Item audience | none (D38) | none | none | institution only may narrow (C1) | Differs |
 | 6 | Who governs (validate, manage, moderate) | any BDE its audience reaches (`bde.ts:35-41`) | same | same - a reaching BDE manages its members and may delete it (P8) | parent BDE, else platform admin; events per space governor | Differs |
 | 7 | Members managed by | own `MANAGE_MEMBERS`, governing BDEs, admin (`GlobalAdminOrAssociationRoleGuard` -> `mayAct`) | same | same in CODE; D20 and WP6e say "added nominatively by an admin" | association, list: own officers, parent BDE, admin; institution: **admin only** (G6) | Differs; **Disagree** (institution) |
-| 8 | Deleted by | admin, or `MANAGE_ASSO` in a governing BDE (controller 743-757; client `editSections.ts`, `delete: isGlobalAdmin \|\| isSuperAdmin`); the flag's own comment says it "does not include deleting an association" (`association-member.entity.ts:20-24`) | same | same (P8) | institution: admin only; association, list: question 3 | Differs; **Disagree** (comment vs code) |
+| 8 | Deleted by | admin, or `MANAGE_ASSO` in a governing BDE (controller 743-757; client `editSections.ts`, `delete: isGlobalAdmin \|\| isSuperAdmin`); the flag's own comment says it "does not include deleting an association" (`association-member.entity.ts:20-24`) | same | same (P8) | association, list: platform admin or the PARENT BDE's `MANAGE_ASSO` holders (E3, as today but scoped to the parent); institution: platform admin only (E5, #2949); the flag's comment corrected (WP-R5) | Differs (scope); **Disagree** (comment vs code, the comment is wrong) |
 | 9 | Profile edited by | `MANAGE_MEMBERS` holders, governing BDEs, admin (`PATCH :id`, 770-771); quota admin only; cotisation fields need `MANAGE_PRODUCTS` | same | same | super tier = parent BDE; institution: own officers + admin | Differs (super tier) |
 | 10 | Posting as | `POST_AS_ASSO`; never through the super tier (`SUPER_ADMIN_EXCLUDED_FLAGS`) | same (since 2026-10-31) | same | unchanged | - |
 | 11 | Republishes others' posts | yes | **yes since 2026-10-31** (`posts/republication-sql.ts:7-11`); WP6e in profiles-and-access still says "a list still does not" | yes | unchanged | **Disagree** (wiki stale) |
 | 12 | Asks a person to republish their post (D38b) | yes | no | no (`republication-sql.ts:19`) | unchanged | - |
 | 13 | Its posts member-repostable (WP-F6) | yes, if it has a rule | **never** (`reader-spaces.ts:318-336`) | yes, if it has a rule | unchanged | - |
 | 14 | Events | `PROPOSE_EVENT`; validated by a governing BDE | same | same; with no rule, no validator (P9) | per space governor (section 4) | Differs |
-| 15 | Co-organises | yes, any type (`resolveSender`) | yes | yes | unchanged; partner rights per question 2 | Differs (rights) |
-| 16 | Lydia, payout, shop, vault | yes; `MANAGE_PAYOUT_ACCOUNT` never through the super tier | **yes in code** - no server or client type check (`editSections.ts:70-90`) - while the entity comment says lists are "associations minus the banking/shop/vault features" (`association.entity.ts:177-180`) | yes | question 4 | **Disagree** (comment vs code) |
+| 15 | Co-organises | yes, any type (`resolveSender`) | yes | yes | unchanged; a partner edits text and poster and may withdraw, the organiser alone changes date, audience, partners, and deletes (E2) | Differs (rights) |
+| 16 | Lydia, payout, shop, vault | yes; `MANAGE_PAYOUT_ACCOUNT` never through the super tier | **yes in code** - no server or client type check (`editSections.ts:70-90`) - while the entity comment says lists are "associations minus the banking/shop/vault features" (`association.entity.ts:177-180`) | yes | association, institution: unchanged; **list: none of the three (E4, WP-L)** - the comment becomes true | Differs; **Disagree** today (comment vs code) |
 | 17 | Payment delegation | `paymentParentAssociationId`, any type, financial only | same | same | unchanged, kept apart from the governance parent (2.2) | - |
 | 18 | Bookings, forms, cotisation, partnerships | yes, by their flags; no type check | same | same | unchanged | - |
 | 19 | Moderation of its content | any BDE holding `MODERATE` (global) | same | same | parent BDE, else platform admin (2.4) | Differs |
@@ -428,19 +437,30 @@ panel: associations and lists under at most one BDE, BDEs and institutions under
 levels enforced by triggers; spaces under at most one governor, a BDE or an institution; all set by
 the platform admin with a journal. The parent manages and moderates its children; space governors
 validate event slices and moderate their students' personal content; the platform admin governs
-the rest. Institutions may narrow an item. Partnerships stay, validated per slice. Moderators hide
-and delete, never edit.
+the rest. Institutions may narrow an item. Partnerships stay, validated per slice; a partner edits
+text and poster and may withdraw, the organiser alone changes the rest and deletes. Lists hold no
+money features. Moderators hide and delete, never edit.
+
+**Quick wins - each ships BEFORE the reform, alone, on today's model:**
+
+| WP | What | Why it cannot wait | Data change |
+| --- | --- | --- | --- |
+| **WP-Q1** | Partner rights (E2, closes P14): `assertMayWriteEvent` returns the side the caller writes from; a co-organiser-side date, audience, `coOwnerIds` change or delete is refused with one typed 403 (`CALENDAR_PARTNER_ORGANISER_ONLY`); the event form hides those controls for a partner; `coorganisation.integration.spec.ts` gains the four refusals and the allowed text, poster and withdrawal | a partner can delete another campus's event today | none |
+| **WP-Q2** | P13 interim: accepting a co-organisation on a VALIDATED event returns it to `pending` (status, `validatedAt`, `validatedBy` cleared) in the acceptance's own transaction (`CoorganisationService.apply`, `coorganisation.service.ts:281-300`), logged, and the event's validators notified as for a proposal - the date-move rule applied to the new reach. Superseded by WP-E, where an acceptance re-opens only the new governors' slices | today an acceptance widens a validated event with no validation | none |
+| **WP-L** | The list money gate (E4), detailed in 8.1 | the owner's decision | none by itself; existing data waits for the owner (8.1) |
+
+**The reform:**
 
 | WP | What | Ships alone because | Data change |
 | --- | --- | --- | --- |
-| **WP-R0** | Institutions out of the super-admin tier: members, delete (G6, P8); the moderator's EDIT removed (G3, P7) | predicates only | none |
+| **WP-R0** | The institution half is **#2949** (E5, at the predicate level). What remains: the moderator's EDIT removed (G3, P7) | one capability | none |
 | **WP-R1** | Audience bounds per SPACE (`GOVERNED_SPACES_SQL`) | server checks; closes P3 | none |
 | **WP-D1** | `parentAssociationId` generalised to associations; the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
-| **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes | ships when the owner says the parents are set; closes P1, P5, P9 | none |
+| **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes; deletion of an association or list by its parent BDE (E3) | ships when the owner says the parents are set; closes P1, P5, P9 | none |
 | **WP-R4** | `MODERATE` scoped (2.4) | needs WP-D2; closes P6 | none |
 | **WP-I** | Institution item audience (section 3) | additive; closes P12 | **two tables: owner's yes** |
-| **WP-E** | Events per slice (section 4) and partnerships under it (section 5): the decisions table, the space-governor predicate, both agendas and the `.ics`, per-slice notifications, D4's re-opening, the partner rights of question 2, `EXPLAIN` | needs WP-D1 (space governors) and, for institutions, WP-I; closes P11, P13, P14 | **one table + the event migration of 4.3: owner's yes** |
-| **WP-R5** | Parent presets; `openedAt` and "OPEN spaces" removed; the stale WP6e line on lists and the two code comments of section 6 corrected | cosmetics | dropping `openedAt`: owner's yes |
+| **WP-E** | Events per slice (section 4) and partnerships under it (section 5): the decisions table, the space-governor predicate, both agendas and the `.ics`, per-slice notifications, D4's re-opening (replacing WP-Q2's whole-event demotion), `EXPLAIN` | needs WP-D1 (space governors) and, for institutions, WP-I; closes P11, P13 | **one table + the event migration of 4.3: owner's yes** |
+| **WP-R5** | Parent presets; `openedAt` and "OPEN spaces" removed; the stale WP6e line on lists; **the `MANAGE_ASSO` comment (`association-member.entity.ts:20-24`) corrected to say it includes deleting an association or list the BDE governs (E3)** | cosmetics | dropping `openedAt`: owner's yes |
 
 Each WP changes its tests (`bde.integration.spec.ts`, `spaces.service.spec.ts`,
 `associations.service.create-default-audience.spec.ts`,
@@ -449,19 +469,61 @@ Each WP changes its tests (`bde.integration.spec.ts`, `spaces.service.spec.ts`,
 agenda and moderation specs) and updates [profiles-and-access](profiles-and-access.md) (D20, D22,
 D23, D33, D39 amended) and [calendar](frontend/modules/calendar.md).
 
-## 9. Questions for the owner (fifth round)
+### 8.1 WP-L - lists lose Lydia payments, the shop and the vault (E4)
 
-1. **Faut-il interdire les partenariats entre associations, listes et institutions sur un événement ?**
-   - (Recommandé) Non, on les garde : c'est le seul moyen pour un événement de passer d'un campus ou d'un BDE à l'autre. Chaque partenaire accepte, l'audience est l'union des partenaires, et chaque responsable (BDE ou institution) valide pour ses propres formations ; l'arrivée d'un partenaire remet l'événement en attente seulement chez les nouveaux responsables.
-   - Oui, on les interdit entre campus différents seulement.
-   - Oui, on les interdit complètement.
-2. **Que peut faire un partenaire (pas l'organisateur) sur un événement co-organisé ?**
-   - (Recommandé) Modifier le texte et l'affiche, et se retirer ; seul l'organisateur change la date, l'audience et la liste des partenaires, ou supprime l'événement.
-   - Comme aujourd'hui : tout, y compris changer la date et supprimer l'événement entier.
-   - Seulement se retirer.
-3. **Un BDE peut-il supprimer une association ou une liste qui dépend de lui ?**
-   - (Recommandé) Non : il peut l'archiver, mais la suppression (définitive) reste à l'admin plateforme.
-   - Oui, comme aujourd'hui.
-4. **Les listes ont-elles droit aux paiements Lydia, à la boutique et au coffre-fort de documents ?**
-   - (Recommandé) Oui, comme aujourd'hui dans l'application : on ne retire rien, et on corrige seulement la note du code qui dit le contraire.
-   - Non : on les retire aux listes, comme le prévoyait cette note.
+**One place on the server, by type.** A single map beside `SUPER_ADMIN_EXCLUDED_FLAGS`
+(`association-member.entity.ts`), `TYPE_EXCLUDED_FLAGS = { list: MANAGE_PAYOUT_ACCOUNT |
+MANAGE_PRODUCTS | MANAGE_DOCUMENTS }`, read by `mayAct` and `mayActOnAny`
+(`associations.service.ts:2018-2077`): no tier - the platform admin included - holds an excluded
+flag on a list, so every route already guarded by those flags refuses with no edit of its own. The
+paths no flag guards ask the same map through one helper (`assertTypeMayHold(type, flag)`): a
+buyer's product checkout, a payment-delegation request, the Lydia readiness and enrolment, a
+document upload. One typed refusal code (`LIST_FEATURE_UNAVAILABLE`). What exactly "Lydia payments"
+covers for a list - its own account only, or also paid forms, the cotisation product (a shop
+product, `provisionCotisationProduct`) and a payment routed through a parent's account - is
+**question 1**.
+
+**The client** reads the same map: `editRights` (`frontend/src/lib/associations/editSections.ts:70-90`)
+returns `payoutAccount`, `products` and `documents` false for a list, so the Paiements, Achats,
+Délégation and Documents sections are not drawn; one shared list of the excluded features, no second
+copy.
+
+**Existing data - read-only counts first** (aggregates; no agent runs them against production):
+
+```sql
+SELECT
+  (SELECT count(*) FROM associations
+     WHERE type = 'list' AND "lydiaAccountId" IS NOT NULL)                         AS lists_with_lydia,
+  (SELECT count(*) FROM associations
+     WHERE type = 'list' AND "paymentParentAssociationId" IS NOT NULL)             AS lists_with_delegation,
+  (SELECT count(DISTINCT p."associationId") FROM association_products p
+     JOIN associations a ON a.id = p."associationId" WHERE a.type = 'list')        AS lists_with_products,
+  (SELECT count(*) FROM association_products p
+     JOIN associations a ON a.id = p."associationId" WHERE a.type = 'list')        AS list_products,
+  (SELECT count(*) FROM product_checkouts c
+     JOIN associations a ON a.id = c."associationId" WHERE a.type = 'list')        AS list_checkouts,
+  (SELECT count(*) FROM purchase_records r
+     JOIN associations a ON a.id = r."associationId" WHERE a.type = 'list')        AS list_purchase_records,
+  (SELECT count(DISTINCT d."associationId") FROM association_documents d
+     JOIN associations a ON a.id = d."associationId" WHERE a.type = 'list')        AS lists_with_documents,
+  (SELECT count(*) FROM association_documents d
+     JOIN associations a ON a.id = d."associationId" WHERE a.type = 'list')        AS list_documents;
+```
+
+**Nothing is disabled or removed on an existing list without the owner's explicit decision, and
+nothing is deleted automatically.** If any count is above zero, WP-L does not ship until the owner
+has said what happens to that data (question 2); the gate never deletes a row, a document or an
+order, and a purchase already made stays in its buyer's history.
+
+## 9. Questions for the owner (sixth round)
+
+Decided in round five, so no longer asked: partnerships kept (E1), the partner's rights (E2), a BDE
+may delete its dependent associations and lists (E3), lists lose the money features (E4).
+
+1. **Pour une liste, que couvre exactement « plus de paiements Lydia » ?**
+   - (Recommandé) Tout ce qui encaisse de l'argent : son propre compte Lydia, la boutique (y compris le produit de cotisation), les formulaires payants et le paiement via le compte Lydia du BDE parent. Les formulaires gratuits restent.
+   - Seulement son propre compte Lydia, la boutique et le coffre-fort ; elle garde les formulaires payants et la cotisation, encaissés via le compte de son BDE.
+2. **Si des listes ont déjà un compte Lydia, des produits, des commandes ou des documents, qu'en fait-on ?**
+   - (Recommandé) On gèle : plus rien de nouveau (ni vente, ni dépôt), mais tout l'existant reste consultable et téléchargeable, les commandes restent dans l'historique des acheteurs, rien n'est supprimé.
+   - On retire l'accès aux gestionnaires de la liste, et seul l'admin plateforme peut encore consulter ou exporter ces données.
+   - On attend de voir les chiffres avant de décider.
