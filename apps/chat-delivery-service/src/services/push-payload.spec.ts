@@ -13,6 +13,7 @@ import {
   FCM_DATA_LIMIT,
   IOS_NOTIFICATION_SOUND,
   PushMessageInput,
+  buildWakeApnsRequest,
 } from './push-payload';
 
 const baseInput: PushMessageInput = {
@@ -573,5 +574,28 @@ describe('the inline-proto budget', () => {
     const apnsBytes = measureApnsPayload(buildApnsRequest(filled, fields).payload);
     expect(dataBytes).toBeLessThan(FCM_DATA_LIMIT);
     expect(dataBytes + apnsBytes).toBeGreaterThan(FCM_DATA_LIMIT);
+  });
+});
+
+describe('buildWakeApnsRequest', () => {
+  it('keeps a mentions frame passive and soundless, and names nothing', () => {
+    const request = buildWakeApnsRequest('q-1', false, true, 'en');
+    expect(request.payload).toEqual({
+      aps: {
+        'mutable-content': 1,
+        alert: { title: 'Canari', body: 'New message' },
+        'interruption-level': 'passive',
+      },
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+    });
+    expect(request.pushType).toBe('alert');
+  });
+
+  it('plays the message trill on an ordinary frame', () => {
+    const aps = buildWakeApnsRequest('q-1', false, false, 'fr').payload.aps;
+    expect(aps.sound).toBe(IOS_NOTIFICATION_SOUND.message);
+    expect(aps['interruption-level']).toBeUndefined();
   });
 });

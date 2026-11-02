@@ -29,7 +29,7 @@ import {
   publishIfAddressable,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getMessaging, type Message } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
@@ -89,6 +89,7 @@ import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { readPushMode } from '../utils/push-mode';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -120,6 +121,8 @@ import {
 import {
   buildPushDataFields,
   buildApnsRequest,
+  buildWakeApnsRequest,
+  buildWakeDataFields,
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
@@ -849,6 +852,8 @@ export function capLoggedDevices(ids: readonly string[]): string[] {
  */
 interface FanOutTally {
   pushed: number;
+  /** Of `pushed`, how many left as a content-free wake-up (`push_mode = 'wake'`). */
+  woken: number;
   pushes: Promise<unknown>[];
 }
 
@@ -1097,39 +1102,61 @@ export class MessagingService {
   }
 
   /**
-   * Send a data-only FCM push to every token registered for a given queued
-   * message's recipient.  Data-only means onMessageReceived() fires even when
-   * the app is in the background, letting the Android service decrypt and
-   * display the notification locally.
+   * The FCM message of a content-free wake-up push for one token: the Android data map, or the APNs
+   * request in the device's language - nothing else (`buildWakeDataFields`, `buildWakeApnsRequest`).
+   * Android keeps the full push's priority and TTL: a wake that arrives late is fetched late, and the
+   * row it names is still queued.
+   *
+   * @param pt - The destination token, whose platform and locale decide the shape.
+   * @param input - The frame's description, read for its id, `silent` and `mentionsOnly` only.
    */
-  private async sendFcmForQueued(
+  private buildWakeMessage(pt: PushToken, input: PushMessageInput): Message {
+    if (pt.platform === 'ios') {
+      const request = buildWakeApnsRequest(
+        input.queuedMessageId,
+        input.silent,
+        !!input.mentionsOnly,
+        pt.locale
+      );
+      return {
+        token: pt.token,
+        apns: {
+          payload: request.payload,
+          headers: {
+            'apns-push-type': request.pushType,
+            'apns-priority': String(request.priority),
+          },
+        },
+      };
+    }
+    return {
+      token: pt.token,
+      data: buildWakeDataFields(input.queuedMessageId, input.silent),
+      android: { priority: 'high', ttl: 86_400_000 },
+    };
+  }
+
+  /**
+   * Everything a push says about one queued frame, decided ONCE for both carriers: the full push
+   * (`sendFcmForQueued`) and the wake-up fetch (`GET /mls/push/wake`, which a device calls instead
+   * of reading the push when `push_mode = 'wake'`). Two copies of these decisions would be two
+   * answers to "does this frame draw, and under which names" for one frame.
+   *
+   * `proto` is left empty: how the ciphertext travels is the carrier's question.
+   *
+   * @param queued - The queued row (its recipient decides the switches and the level).
+   * @param groupId - The conversation the frame belongs to.
+   * @param senderId - Its author.
+   * @param silent - The sender's own "draw nothing" (receipts, own-device copies, control frames).
+   * @param traceId - The send's trace, for the decision lines.
+   */
+  async describeQueuedFrame(
     queued: QueuedMessage,
-    traceId: string,
     groupId: string,
     senderId: string,
-    silent = false,
-    batch?: FanOutTally
-  ): Promise<void> {
-    if (getApps().length === 0) return;
-
-    const pushTokens = await this.pushTokenRepo.find({
-      where: { userId: queued.recipientId, deviceId: queued.deviceId },
-    });
-
-    if (pushTokens.length === 0) {
-      // A RATE, NOT AN EVENT: every desktop and web device has no token for ever, so this fired
-      // once per addressee per send. Said once per device, then at its 10th, 100th... send; the
-      // population is `tools/cross-client-harness/devices.mjs --unpushable`, not this line.
-      const nth = this.noPushTokenRepeats.hit(`${queued.recipientId}:${queued.deviceId}`);
-      if (nth !== null) {
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] No push token for user=${cutUserId(queued.recipientId)} device=${cutDeviceId(queued.deviceId)}` +
-            (nth === 1 ? ' (repeats are counted, printed at 10, 100...)' : ` - send #${nth} to it`)
-        );
-      }
-      return;
-    }
-
+    silent: boolean,
+    traceId: string
+  ): Promise<PushMessageInput> {
     // THE RECIPIENT'S "MESSAGES" SWITCH. The frame must still REACH the device - an MLS ciphertext is
     // state the account needs to stay decryptable, so it cannot be dropped like a social push - but it
     // may be told to draw nothing: the same `silent` the own-device copies and receipts already use,
@@ -1219,17 +1246,9 @@ export class MessagingService {
     // when decryption fails in the background (SQLite lock / MLS state absent).
     const senderName = await resolveUserDisplayName(this.groupRepo.manager, senderId);
 
-    // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
-    // service and avoids auth issues when the app is cold-started. FCM caps the
-    // DATA MAP at 4 KB, keys included - so what the ciphertext may occupy is
-    // whatever the other nine fields leave, computed from the fields themselves
-    // (`inlineProtoBudget`). A constant chosen ahead of them bounded the wrong
-    // quantity and let a long sender or group name push the map past the limit.
-    const protoB64 = queued.proto ?? queued.content ?? '';
-
     // Shared, transport-agnostic description consumed by both the FCM data
     // payload and the APNs custom keys (see push-payload.ts).
-    const messageInput: PushMessageInput = {
+    return {
       groupId,
       queuedMessageId: queued.id,
       senderId,
@@ -1237,7 +1256,7 @@ export class MessagingService {
       groupName,
       isGroup,
       isKeyDistribution,
-      // Filled in below once the budget the other fields leave is known.
+      // Filled in by the carrier: the full push once the budget is known, the wake fetch whole.
       proto: '',
       // Own-device copies, read receipts and welcome packets are not shown.
       silent: drawNothing,
@@ -1245,6 +1264,54 @@ export class MessagingService {
       isWelcome: !!queued.isWelcome,
       createdAt: queued.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * Send a data-only FCM push to every token registered for a given queued
+   * message's recipient.  Data-only means onMessageReceived() fires even when
+   * the app is in the background, letting the Android service decrypt and
+   * display the notification locally.
+   */
+  private async sendFcmForQueued(
+    queued: QueuedMessage,
+    traceId: string,
+    groupId: string,
+    senderId: string,
+    silent = false,
+    batch?: FanOutTally
+  ): Promise<void> {
+    if (getApps().length === 0) return;
+
+    const pushTokens = await this.pushTokenRepo.find({
+      where: { userId: queued.recipientId, deviceId: queued.deviceId },
+    });
+
+    if (pushTokens.length === 0) {
+      // A RATE, NOT AN EVENT: every desktop and web device has no token for ever, so this fired
+      // once per addressee per send. Said once per device, then at its 10th, 100th... send; the
+      // population is `tools/cross-client-harness/devices.mjs --unpushable`, not this line.
+      const nth = this.noPushTokenRepeats.hit(`${queued.recipientId}:${queued.deviceId}`);
+      if (nth !== null) {
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] No push token for user=${cutUserId(queued.recipientId)} device=${cutDeviceId(queued.deviceId)}` +
+            (nth === 1 ? ' (repeats are counted, printed at 10, 100...)' : ` - send #${nth} to it`)
+        );
+      }
+      return;
+    }
+
+    // ONE DESCRIPTION OF THE FRAME, shared with `GET /mls/push/wake`: a wake-up push leaves it here
+    // and the device fetches the same map the full push would have carried.
+    const messageInput = await this.describeQueuedFrame(queued, groupId, senderId, silent, traceId);
+    const { senderName, groupName } = messageInput;
+
+    // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
+    // service and avoids auth issues when the app is cold-started. FCM caps the
+    // DATA MAP at 4 KB, keys included - so what the ciphertext may occupy is
+    // whatever the other nine fields leave, computed from the fields themselves
+    // (`inlineProtoBudget`). A constant chosen ahead of them bounded the wrong
+    // quantity and let a long sender or group name push the map past the limit.
+    const protoB64 = queued.proto ?? queued.content ?? '';
 
     const carriage = decideProtoCarriage(messageInput, protoB64);
     const inlineProto = carriage.proto;
@@ -1293,39 +1360,54 @@ export class MessagingService {
     // ten pushes in one run, twice over (2026-08-29 and 2026-08-30). FCM ignores the apns block
     // for an Android token and the data map is redundant for an iOS one - the APNs payload is
     // self-contained by design - so each token now carries exactly the half it reads.
+    //
+    // THE WAKE-UP PUSH (owner, 2026-11-02): two locks, ANDed - the estate's `push_mode` and the
+    // token's own `wakeCapable` (its binary declared it understands one). The switch is read only
+    // when some destination could take a wake, and never cached; an unreadable switch throws, and
+    // this device's push is not sent (the fan-out logs it; the frame stays queued).
+    const pushMode = pushTokens.some((pt) => pt.wakeCapable)
+      ? await readPushMode(this.groupRepo.manager, this.logger)
+      : 'full';
     for (const pt of pushTokens) {
+      const wake = pushMode === 'wake' && pt.wakeCapable;
       try {
         await getMessaging().send(
-          pt.platform === 'ios'
-            ? {
-                token: pt.token,
-                apns: {
-                  // Built HERE and not once above: the fallback body is the one sentence this
-                  // server still composes, and only the token says which language to compose it
-                  // in. Everything else in the payload is identical across devices.
-                  payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
-                  headers: {
-                    'apns-push-type': apnsPushType,
-                    'apns-priority': String(apnsPriority),
+          wake
+            ? this.buildWakeMessage(pt, messageInput)
+            : pt.platform === 'ios'
+              ? {
+                  token: pt.token,
+                  apns: {
+                    // Built HERE and not once above: the fallback body is the one sentence this
+                    // server still composes, and only the token says which language to compose it
+                    // in. Everything else in the payload is identical across devices.
+                    payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
+                    headers: {
+                      'apns-push-type': apnsPushType,
+                      'apns-priority': String(apnsPriority),
+                    },
                   },
-                },
-              }
-            : {
-                token: pt.token,
-                data: dataFields,
-                android: {
-                  priority: 'high',
-                  ttl: 86_400_000,
-                },
-              }
+                }
+              : {
+                  token: pt.token,
+                  data: dataFields,
+                  android: {
+                    priority: 'high',
+                    ttl: 86_400_000,
+                  },
+                }
         );
         if (batch) {
           // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
           // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
           batch.pushed++;
+          if (wake) batch.woken++;
         } else {
           this.logger.log(
-            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
+            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} ` +
+              (wake
+                ? `mode=wake`
+                : `mode=full inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`)
           );
         }
       } catch (e) {
@@ -2132,7 +2214,7 @@ export class MessagingService {
     // unreachable anyway, because the filter above kept only online recipients. Passing it rather
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
-    const tally: FanOutTally = { pushed: 0, pushes: [] };
+    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
     for (const queued of queuedRows) {
       // Reuses the presence answer taken above rather than asking Redis a second time. A device
       // that went offline in between is covered the same way it always was: the row survives and
@@ -2153,7 +2235,7 @@ export class MessagingService {
       const attempted = tally.pushes.length;
       void Promise.all(tally.pushes).then(() =>
         this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s)`
+          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
         )
       );
     }

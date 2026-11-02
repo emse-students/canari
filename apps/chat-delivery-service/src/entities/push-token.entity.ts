@@ -87,6 +87,16 @@ export class PushToken {
   @Column({ type: 'uuid', nullable: true })
   sessionId: string | null;
 
+  /**
+   * Whether this device's binary understands a content-free wake-up push (migration 045).
+   *
+   * Written on EVERY `POST /mls/push/register`, false unless the body says `wake: true`: an old build
+   * and a downgrade are never sent a frame they would drop. A wake push goes to this token only when
+   * `platform_config.push_mode = 'wake'` AND this is true (`MessagingService.sendFcmForQueued`).
+   */
+  @Column({ type: 'boolean', default: false })
+  wakeCapable: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

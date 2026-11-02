@@ -429,6 +429,100 @@ export function buildApnsRequest(
 }
 
 /**
+ * The data map of a CONTENT-FREE WAKE-UP push (`platform_config.push_mode = 'wake'`, owner
+ * 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+ *
+ * Everything {@link buildPushDataFields} would have said - the conversation, the sender, both names,
+ * the kinds, the level, the ciphertext - stays on our server; the device fetches it by
+ * `queuedMessageId` (`GET /api/mls/push/wake`) and runs it through the path a full push takes. What
+ * remains is what the transports cannot do without:
+ *
+ * - `type: 'wake'`, the discriminator every native dispatcher branches on;
+ * - `queuedMessageId`, an opaque random id of the device's OWN queued row - it names nobody;
+ * - `silent`, the one bit the platform needs: on iOS a silent frame must be a background push and a
+ *   visible one an alert, so Apple sees it anyway, and on Android it decides whether a failed fetch
+ *   owes a notification.
+ *
+ * @param queuedMessageId - The queued row the device will fetch.
+ * @param silent - Whether the frame draws nothing (`PushMessageInput.silent`, as decided at send).
+ */
+export function buildWakeDataFields(
+  queuedMessageId: string,
+  silent: boolean
+): Record<string, string> {
+  return { type: 'wake', queuedMessageId, silent: silent ? 'true' : 'false' };
+}
+
+/**
+ * The APNs request of a WAKE-UP push: the same three fields as {@link buildWakeDataFields}, and an
+ * `aps` block that names nothing.
+ *
+ * A visible frame is an alert titled `Canari` with the localized generic body, so the extension runs
+ * (`mutable-content: 1`) and rewrites it from what it fetches; no `thread-id`, because the thread is
+ * the conversation id - the extension files it once it knows. A `mentions` frame stays `passive`,
+ * KNOWINGLY: it says "a quiet frame", not who or where, and without it a non-mention would ring
+ * whenever the extension does not run. A silent frame is a background push, exactly as today.
+ *
+ * @param queuedMessageId - The queued row the device will fetch.
+ * @param silent - Whether the frame draws nothing.
+ * @param mentionsOnly - The recipient's level for this conversation is `mentions`.
+ * @param locale - The device's language, for the generic body only.
+ */
+export function buildWakeApnsRequest(
+  queuedMessageId: string,
+  silent: boolean,
+  mentionsOnly: boolean,
+  locale?: string | null
+): ApnsRequest {
+  const fields = buildWakeDataFields(queuedMessageId, silent);
+  if (silent) {
+    return {
+      payload: { aps: { 'content-available': 1 }, ...fields },
+      pushType: 'background',
+      priority: 5,
+    };
+  }
+  return {
+    payload: {
+      aps: {
+        'mutable-content': 1,
+        alert: { title: 'Canari', body: apnsFallbackBody(locale) },
+        ...(mentionsOnly
+          ? { 'interruption-level': 'passive' }
+          : { sound: IOS_NOTIFICATION_SOUND.message }),
+      },
+      ...fields,
+    },
+    pushType: 'alert',
+    priority: 10,
+  };
+}
+
+/**
+ * What `GET /api/mls/push/wake` answers, typed so a native reader branches on `status` and never on
+ * prose.
+ *
+ * - `frame`: `fields` is EXACTLY the data map a full push would have carried
+ *   ({@link buildPushDataFields}, computed at fetch time by the same description the send path uses),
+ *   with the ciphertext inline whatever its size - our own TLS has no 4 KB budget. A Welcome still
+ *   carries none: its bundle (with the ratchet tree) is fetched through `fetch-proto`, as before.
+ * - `gone`: the queued row is not there - the app drained or acknowledged it since the push left.
+ *   An answer, not a failure: there is nothing new to draw.
+ */
+export type WakeAnswer = { status: 'frame'; fields: Record<string, string> } | { status: 'gone' };
+
+/**
+ * Builds the `frame` answer for a fetched queued row.
+ *
+ * @param input - The frame's description, `proto` ignored.
+ * @param protoB64 - The row's ciphertext as queued.
+ */
+export function buildWakeFrameAnswer(input: PushMessageInput, protoB64: string): WakeAnswer {
+  const proto = input.isWelcome ? '' : protoB64;
+  return { status: 'frame', fields: buildPushDataFields({ ...input, proto }) };
+}
+
+/**
  * Builds the APNs request for a non-MLS internal push (community channel messages,
  * social posts, form reminders and their silent read-receipt frames), sent through
  * {@link https | sendPushToUser}.
