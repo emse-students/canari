@@ -532,6 +532,26 @@ conversation" - the in-conversation camera is a complete writer on its own, and 
 targets to the same outbox shape. **The switch is turned on in a PRE-RELEASE, read on both bench
 phones (the Mi 9T and the iPhone 12), before any stable carries it.** RC-9 closes both.
 
+#### The writer switch for dev only (owner, 2026-11-02)
+
+The owner's decision of 2026-11-02: the switch turns on **for dev only**, once the bench readings pass;
+production stays off until he says so. **Mechanism: the build's environment, the precedent of
+`CALLS_ENABLED`'s lot 1.** `CHAT_REEL_WRITER_ENABLED = deployEnvironment() === 'development'`: a
+build made for `dev.canari-emse.fr` (the dev web estate and every pre-release store build, which
+`android.yml`, `ios.yml` and `build.yml` point at dev and nowhere else) carries
+`VITE_DEPLOY_ENVIRONMENT=development`; production web and every STABLE store build never set it.
+Deterministic and compile-time: no timer, no server read, no fallback, no migration. A dev writer
+only ever writes on the dev estate, whose members all run dev builds or pre-releases, every one
+above the reader floor ([legacy-compatibility](../../legacy-compatibility.md)).
+
+**What it does not give, said plainly:** no production kill switch without a store release - the
+production flip is a later one-line pull request for a stable. **The alternative, if the owner wants
+one,** is a server mode as `calls_mode` / `lives_mode` are: a `platform_config.chat_reels_mode`
+column (an additive migration), served by `/api/version`, read by the composer with the build
+switch, set in `/admin/platform`. Larger (a migration, six copies of the mode values and their
+agreement test), and it only hides the camera: a reel message is ciphertext the server cannot
+recognise, so no server-side refusal backs it - which is why the build switch is preferred here.
+
 **Release shape.** The reader (RC-1 contract + RC-6 tile, so every client can DRAW a reel message and
 its tombstone) ships before the writer (RC-4 camera entry), the order used for Graine v2 and the
 segmented media writer: a message a client cannot draw is worse than one it draws as a plain video.
@@ -690,7 +710,7 @@ reel message does, and nothing sends one until RC-4 (behind its OFF switch); the
 
 ## 13. What the writer wiring (RC-4) built, and what it did not (2026-10-18)
 
-**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety**, the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049) wired into the queued preparation (`profile: 'chat'` and the 60 s cap, section 14), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
+**Draft, and OFF: `CHAT_REEL_WRITER_ENABLED = false` in `reels/chatReelWriter.ts` is the whole of its safety** (since 2026-11-02 it reads `deployEnvironment() === 'development'`: ON in a dev build only, see [the switch for dev only](#the-writer-switch-for-dev-only-owner-2026-11-02)), the precedent of `SEGMENTED_MEDIA_WRITER_ENABLED`. Flipping that one line needs RC-3 (#2049) wired into the queued preparation (`profile: 'chat'` and the 60 s cap, section 14), RC-5 and RC-7 shipped and the readers at the `minClientVersion` floor; a test pins it `false`.
 
 - **The camera**: `destinationRules('chat', chatFilms)` lets a chat camera film (`photoOnly` off, the microphone asked `separate`, as the post camera does, so a refused microphone keeps the photos). `ChatArea` passes `reelMessages = !isChannel`, so **a salon never films** (its send path is RC-8's); `ChatComposer` asks `chatReelAllowed(...)`.
 - **The mark**: a video handed back by the chat camera is marked on the FILE (`markChatReelTake`, a `WeakSet` like `capturePoster.ts`), because the composers' one attachment path is `File[]`. A gallery pick is never marked.
