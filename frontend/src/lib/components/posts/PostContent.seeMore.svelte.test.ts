@@ -10,6 +10,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import PostContent from './PostContent.svelte';
+import { flushFrames, useFrameQueue } from '../../../test/frameQueue';
+
+useFrameQueue();
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -35,6 +38,8 @@ async function mountPost(markdown: string) {
   mounted.push(() => void unmount(app));
   flushSync();
   await tick();
+  // The first overflow read is batched onto the next frame (`watchClampOverflow`).
+  flushFrames();
   flushSync();
   return target;
 }

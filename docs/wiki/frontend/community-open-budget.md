@@ -750,6 +750,39 @@ Mi 9T re-measure needs a build carrying this change (the installed APK holds `1.
   the exported log alone (its `[A] refresh✓`, `[INIT] MLS ready`, `[WORKSPACE-LOAD]` and `[API]`
   lines carry the chain of section 3). Nothing is installed, driven or signed in.
 
+### The tab tap's boot work, named: Feed cards, not boot (2026-11-02)
+
+A `--profile` of a cold tab tap (1.6.0, Mi 9T at 1x CPU, three runs, read with
+`tools/cold-start/profile-summary.mjs --sources` against the dumped chunks) puts the ~155 ms of
+"boot work" next to the tap in two groups.
+
+- **On the tap's critical path, and moved:** the Feed's `PostCard`s, mounted by the tap itself.
+  Emoji segmentation (`splitEmojiText` through `Intl.Segmenter`) about 52 ms, the first
+  `scrollHeight` read of `watchClampOverflow` (a forced style + layout per card, interleaved with
+  the next card's writes) about 43 ms, markdown lexing about 23 ms.
+- **Overlapping the tap only because the bench taps early, and NOT moved:** MLS
+  `syncGroupCachesFromNative` 24 ms, `apiFetch` + plugin-http about 53 ms, the gateway 10 ms,
+  `reconcileSendRatchets` about 6 ms. They end with the vault unlock; a person's first tap comes
+  later. Moving them later would delay `whenMlsReady()`.
+
+What changed: `splitEmojiText` returns at once for an all-ASCII string (the shape that cannot hold
+an emoji picture; a test runs every code point 0..127 and CRLF through `emojiSvgSrc` to pin it),
+and `watchClampOverflow` batches the first read of every box that asks in one frame into ONE
+next-frame pass (the first read pays the layout, the others find it clean; the observer keeps the
+answer current as before).
+
+**Ordering kept, untouched:** F2 (the key-group step waits on `whenMlsReady()`) and F3
+(`loadChannelHistory` fetches at once, decodes only after `whenSalonEntryDecided`). No MLS or API
+call moved, so the existing F2/F3 tests still pin them. The frame-batched read is pinned by
+`clampOverflow.test.ts` (nothing read while mounting, one pass for every box, teardown cancels) on
+a manual frame queue (`src/test/frameQueue.ts`).
+
+**The instrument:** each frame the harness runs a predicate per watcher; its cost used to land in
+the booked number. `community-open.mjs` now times that loop and the report books it as
+`probe ms, hub open / salon open / cached reopen`, separate from the open's own time.
+
+Owed: the Mi 9T before/after, after the next pre-release.
+
 ## 8. Evidence
 
 `<harness-dir>/a1-bench/r1014-community-open/` (off the repository):
