@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/associations/api', () => ({
   listAssociations: vi.fn(),
   listMyAssociations: vi.fn(),
+  getMyBdeReach: vi.fn(),
+  SUPER_ADMIN_EXCLUDED_FLAGS: 1,
   // The real flag values: POST_AS_ASSO is bit 0.
   AssociationPermissionFlag: { POST_AS_ASSO: 1 },
   hasPermissionFlag: (permissions: number, flag: number) => (permissions & flag) !== 0,

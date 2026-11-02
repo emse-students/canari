@@ -25,6 +25,16 @@ export function cotisationModeOf(
 }
 
 /**
+ * The condition without its cotisation criterion, in either mode. A tier key only means something
+ * in ONE entity's catalogue, so a change of owner forgets it (as `forgetTierSelection` does for a
+ * form's beneficiary); the promo, formation and answer criteria are the person's and stay.
+ */
+export function forgetAudienceTiers(condition: AudienceCondition): AudienceCondition {
+  const { cotisation: _held, notCotisation: _notHeld, ...rest } = condition;
+  return rest;
+}
+
+/**
  * The condition with its cotisation criterion moved under `mode`'s key, the tiers kept. The other
  * key is always removed: the server refuses a condition carrying both.
  */
