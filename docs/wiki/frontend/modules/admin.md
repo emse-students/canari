@@ -45,7 +45,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
 | `/admin/read-access` | Two tabs: named readers (platform admin only) and public-document reviewers ([below](#read-access-adminread-access)) | BDE super-admin (reviewers tab only) or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
-| `/admin/spaces` | Spaces & audiences: three sections (associations, lists, institutions), the BDE star | Platform admin |
+| `/admin/spaces` | Every association, list and institution (searched, filtered, paged), its spaces, the BDE star, and the create form ([below](#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) | Platform admin |
 | `/admin/platform` | Maintenance, minimum client version | Platform admin |
 | `/admin/users` | User list, admin flag | Platform admin |
 | `/admin/status` | Presence and connections | Platform admin |
@@ -141,6 +141,68 @@ on success - checked to FAIL when the field clears unconditionally; the readers'
 the sheet, then clears; `src/test/pickUser.ts` picks through the real search), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
 for a global admin, the reviewers alone and no read-grants request for a BDE super-admin, the hub
 for anyone else).
+
+## The catalogue and the create form (`/admin/spaces`, owner 2026-11-02)
+
+**The platform admin reaches EVERY entity here, member or not.** The page reads
+`GET /api/associations/admin/catalogue?type=&q=&after=&limit=` (`AdminAssociationsController`, guarded
+`NginxAuthGuard` + `GlobalAdminGuard` + a per-user throttle), never the reader's directory. A BDE is
+refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own campus
+([association-permissions](../../association-permissions.md#creating-an-entity-two-routes-two-tiers)).
+
+- **Every row has two links**: the public page and the management hub, both under the base of its kind
+  (`entityBase`: `/lists` for a list, `/associations` otherwise). The management page admits a non-member
+  platform admin (`canEdit = isGlobalAdmin() || ...`, then `editRights`, which reads `isGlobalAdmin`
+  first). The zero-member audit of 2026-11-02 read every tab and found no tab that needs a membership.
+  Every row also shows its member count, so an empty entity reads "0 membre".
+- **Search, type filter, keyset pages.** One request per visible kind, ordered `(name, id)` and paged on
+  that pair (`(a.name, a.id) > cursor`). A page costs the same at any depth, and a row created meanwhile
+  never shifts the next page. The search runs on the server (`strpos` over the lowercased name or
+  slug). Its answers are numbered when sent, so an answer older than the one on screen is dropped.
+  "Afficher plus" asks for the cursor the last page gave. Each row carries its audience rules, which
+  replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds,
+  [legacy-compatibility](../../legacy-compatibility.md)).
+  Measured 2026-11-02, read-only: production holds 97 entities (49 associations, 44 lists, 4
+  institutions; 49 of them already have no member), dev holds 10. The paging is there so that the
+  count does not matter.
+- **The create form** (`AdminEntityCreateForm.svelte`, `POST /api/associations/admin`) asks for exactly
+  four things:
+  - a name;
+  - a kind;
+  - its spaces (`CellPicker`, written as `toRules(cells)`);
+  - an OPTIONAL first admin, picked from the accounts and given `firstAdminPresetFor(kind)`. This is
+    the kind's admin preset, except for an institution. **An institution's members are managed by
+    the platform admin only** (owner, 2026-11-02), so its first admin never holds `MANAGE_MEMBERS`.
+    The server refuses that bit on an institution with `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
+    before any write, and never strips it silently. `MANAGE_MEMBERS` also gates the profile, the logo
+    and the tags (`PATCH :id`), so the platform admin keeps those as well.
+
+  **The default is no member at all, and the creating admin never becomes one.** Logo, description and
+  cotisations stay on the management page. The server writes the row, its rules and the first admin in
+  ONE transaction, through `AssociationsService.create` with a placement: no second creation path
+  exists. A first admin that names no account is the typed `ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN` and
+  leaves no row behind. An `everyone` rule on an association or a list is refused with
+  `AUDIENCE_EVERYONE_INSTITUTION_ONLY`, as on every audience write. The explicit spaces replace the
+  creator-campus default, so a platform admin with no campus on their profile can still create.
+- **The slug preview is the server's answer** (`GET /api/associations/admin/slug-preview?name=`,
+  `previewDerivedSlug`). It walks the same `slugCandidates`, skipping a taken slug or a cotisation-stem
+  collision, so `-2` and `-3` appear as the create would take them. It is asked once the name has
+  rested for 300 ms and is numbered like the search. The create stays the authority: a concurrent
+  create may move the slug on by one suffix, and the link follows what the create answered.
+
+Tests:
+- `admin-create.integration.spec.ts` (PostgreSQL): no member; a first admin; an unknown admin rolls the
+  row back; `-2`, with the preview naming it first; the stem walk; explicit spaces; the `everyone`
+  refusal; a BDE `MANAGE_ASSO` holder refused; keyset paging over tied names, search and counts; a forged
+  cursor. A control removing the platform-admin check and loosening the keyset to `>=` fails two cases.
+- `admin-associations.controller.spec.ts`: the guards, and the one creation call.
+- `AdminEntityCreateForm.svelte.test.ts`: the preview and the stale answer it drops, which a control
+  without the guard fails; the default with no member; the spaces and the first admin's preset; a typed
+  refusal; a blank name. `editSections.test.ts`: `firstAdminPresetFor` (no `MANAGE_MEMBERS` on an
+  institution) and `entityBase`. The integration file also refuses an institution first admin holding
+  `MANAGE_MEMBERS`.
+- `page.catalogue.svelte.test.ts`: both links per row and the member count; "show more"; the server
+  search; the type filter; opening the form.
 
 ## Cercle top-ups (`/admin/cercle`)
 
