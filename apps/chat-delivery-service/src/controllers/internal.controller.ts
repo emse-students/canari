@@ -630,7 +630,15 @@ export class InternalController {
           publisherUserId,
           publisherDeviceId,
           group.id,
-          { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher', claim }
+          {
+            tag: 'DISTRIBUTION_PUBLISHER',
+            authority: 'distribution_publisher',
+            claim,
+            // The device that CREATED the key group sends no commit, so none recorded its
+            // admission: it holds the group at the published epoch. Written only on a seat with no
+            // admission, so a device that external-joined keeps the floor its commit set.
+            admittedByBaseEpoch: body.baseEpoch as number,
+          }
         )
       : { ok: false, reason: 'not_on_roster' };
     if (!entitled) {

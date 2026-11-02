@@ -158,6 +158,44 @@ export class DeviceGroupMembership {
   admittedAtEpoch: number | null;
 
   /**
+   * The base epoch of the commit that last ADMITTED this device - the floor of what
+   * `GET mls/commits/:groupId/accepted-at` answers it (`commitFloorOf`): the time of that commit and
+   * of every later one, never of an older one. A member is not handed the group's past (user,
+   * 2026-10-21), and the acceptance time of a commit made before they came in is that past.
+   *
+   * WHY A COLUMN AND NOT A CLOCK (owner, 2026-11-02). The floor was read as "the last commit accepted
+   * at or before the arrival", and every arrival record could predate the admission: a group
+   * conversation's stretch `joinedAt` is written by the enrolment BEFORE the Add, so the floor landed
+   * one commit early; a key-group device kicked and re-added keeps its row and its `createdAt`, so it
+   * was answered the commits made while it was out. The commit gate KNOWS the admission - it is the
+   * commit it is accepting - so it writes it here, with the advance, on EVERY admission: a member's
+   * Add (`admits`, and the target of the Welcome it carries), an external join (the committer's own
+   * commit), and the group's creation (0: nothing precedes the creator). Unlike
+   * {@link admittedAtEpoch} it is never cleared by a transition: an active member keeps its floor.
+   *
+   * NULL MEANS NO ADMISSION IS RECORDED, and the floor never reads it as "no floor". A KICK clears
+   * it (`deactivateDeviceMembership` with `removedFromTreeAt`): the seat is refused until the Add
+   * that answers the kick records a new one. A demotion with no kick (the stale-device cron, a
+   * self-report) leaves it, since the leaf stays in the tree. An ACTIVE seat found NULL (admitted by
+   * a path that did not record it) is floored at the group's current epoch by its first ask and
+   * written once (`commitFloorOf`, {@link admissionInferred}); a PENDING one is never inferred - it
+   * may not be admitted yet - and is refused until a commit admits it. Rows from before migration 044
+   * were backfilled by it with the same rule (refuse rather than leak).
+   */
+  @Column({ type: 'integer', nullable: true, default: null })
+  admittedByBaseEpoch: number | null;
+
+  /**
+   * `true` when {@link admittedByBaseEpoch} is NOT an admission but a floor INFERRED where none was
+   * recorded: the group's epoch at migration 044's backfill, or at the first ask that found the seat
+   * with none. Read only to say, in a refusal's log line, which floor refused - an inferred floor
+   * refuses commits the device may really have been admitted before, and a reader of that line must
+   * know it is not the admission. Cleared by every recorded admission.
+   */
+  @Column({ type: 'boolean', default: false })
+  admissionInferred: boolean;
+
+  /**
    * When a commit admitted this device into the group - the evidence `withheldWindows` reads a
    * person's ARRIVAL from (their earliest row), so a newcomer is withheld everything before it.
    *
