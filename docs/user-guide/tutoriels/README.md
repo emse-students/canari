@@ -58,3 +58,5 @@ Restent : refaire les captures telephone en theme clair (Mi 9T a redemander a Ma
 ligne "later" (appel video, sonnerie native, reel dans le chat : attendre alpha.2).
 Limites connues : l'export Docs n'applique ni l'en-tete ni le logo Les Rootz ; les captures
 telephone sont en theme sombre.
+
+- **Documents et aide (checked 2026-11-02)**: `/documents` is the reviewer-only page ("Relecture", needs reviewer access, no test account has it) and `/help` holds only `lydia-pro`, already covered by the Lydia tutorial: no separate tutorial.
