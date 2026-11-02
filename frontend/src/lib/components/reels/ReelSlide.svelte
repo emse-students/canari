@@ -37,6 +37,7 @@
   import PostMedia from '$lib/components/posts/PostMedia.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import type { PostEntity } from '$lib/posts/api';
+  import type { MediaFailureCause } from '$lib/utils/mediaErrors';
   import PostAuthorAvatar from '$lib/components/posts/PostAuthorAvatar.svelte';
   import PostMarkdown from '$lib/components/posts/PostMarkdown.svelte';
   import {
@@ -87,9 +88,21 @@
      * being watched first.
      */
     onReady?: () => void;
+    /**
+     * The media service answered `410`: the reel's file is gone for good. A conversation's reel
+     * records it on its message so the tile behind draws the tombstone (RC-6); a feed reel has
+     * no such record and passes nothing.
+     */
+    onMediaGone?: () => void;
   }
 
-  let { post, authToken, active, preload, onLike, rail, onReady }: Props = $props();
+  let { post, authToken, active, preload, onLike, rail, onReady, onMediaGone }: Props = $props();
+
+  function onMediaFailure(cause: MediaFailureCause) {
+    if (cause !== 'expired' || !onMediaGone) return;
+    console.debug(`[reel-viewer] ${post.id} answered 410 - its file is gone, the opener is told`);
+    onMediaGone();
+  }
 
   /**
    * The page this row is drawn as. A row the CanaReels rule does not cover (the server chose it,
@@ -304,6 +317,7 @@
           poster={posterUrl}
           onLoaded={onMediaLoaded}
           {onPlaybackBlocked}
+          onFailure={onMediaFailure}
         />
       {:else if video}
         <!-- A NEIGHBOUR DRAWS ITS FIRST FRAME, NO PLAYER: a mounted player claims playback. -->

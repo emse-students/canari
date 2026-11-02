@@ -87,6 +87,7 @@ export function toMessagePayload(msg: StoredMessage): Record<string, unknown> {
   if (msg.deleteProof) payload.deleteProof = msg.deleteProof;
   if (msg.restoredUnverified) payload.restoredUnverified = true;
   if (msg.unsentReason) payload.unsentReason = msg.unsentReason;
+  if (msg.mediaPurgedAt) payload.mediaPurgedAt = msg.mediaPurgedAt;
   return payload;
 }
 
@@ -154,5 +155,6 @@ export function fromMessagePayload(
     deleteProof: recordedAuthorship(payload.deleteProof),
     restoredUnverified: payload.restoredUnverified === true ? true : undefined,
     unsentReason: unsentReason(payload.unsentReason),
+    mediaPurgedAt: positiveNumber(payload.mediaPurgedAt),
   };
 }

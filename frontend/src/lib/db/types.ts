@@ -119,6 +119,13 @@ export interface StoredMessage {
    */
   unsentReason?: UnsentReason;
   /**
+   * When THIS device met the `410` of the conversation reel this message carries (Unix ms, its own
+   * clock), RC-6. A LOCAL fact - never relayed, never a peer's - read by the tile to draw "CanaReel
+   * supprime" (before the sender's expiry hint) or "expire" (after) across reloads, so the `410` is
+   * asked once per message per device, never once per scroll.
+   */
+  mediaPurgedAt?: number;
+  /**
    * Where the page read that returned this row found it on the store's order key. Set by
    * `getMessagesPage` only, never persisted (the payload projection names its fields), and carried
    * onto the screen row so "load older" pages below what the STORE handed back - never below a row

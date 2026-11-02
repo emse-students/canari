@@ -12,15 +12,26 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import MessageMediaRenderer from './MessageMediaRenderer.svelte';
 import type { MediaRef } from '$lib/media';
 import { m } from '$lib/paraglide/messages';
+import { resetGoneReelCopiesForTest } from '$lib/reels/chatReelCache';
 
 vi.mock('$lib/components/reels/ReelViewer.svelte', async () => ({
   default: (await import('../reels/ReelViewerStub.test-helper.svelte')).default,
+}));
+
+const evicted: string[] = [];
+vi.mock('$lib/utils/mediaBlobCache', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/mediaBlobCache')>()),
+  evictCachedReelCiphertext: async (mediaId: string) => {
+    evicted.push(mediaId);
+  },
 }));
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
+  evicted.length = 0;
+  resetGoneReelCopiesForTest();
 });
 
 const SENT_AT = new Date(Date.now() - 3 * 3600_000);
@@ -103,7 +114,8 @@ describe('MessageMediaRenderer - a reel message', () => {
       })
     );
     expect(tile()).toBeNull();
-    const tomb = document.querySelector('[data-reel-tombstone]')!;
+    const tomb = document.querySelector<HTMLElement>('[data-reel-tombstone]')!;
+    expect(tomb.dataset.reelTombstone).toBe('expired');
     expect(tomb.textContent).toContain(m.reel_chat_expired());
     expect(
       document.querySelector<HTMLElement>('[data-media-frame]')!.getAttribute('style')
@@ -114,6 +126,63 @@ describe('MessageMediaRenderer - a reel message', () => {
     render(video({ intent: 'reel-message', expiresAtMs: Date.now() + 86_400_000 }));
     expect(tile()).not.toBeNull();
     expect(document.querySelector('[data-reel-tombstone]')).toBeNull();
+  });
+});
+
+describe('MessageMediaRenderer - a reel whose file is gone before its hint (RC-6, the 410)', () => {
+  const tomb = () => document.querySelector<HTMLElement>('[data-reel-tombstone]');
+  const HINT = Date.now() + 10 * 86_400_000;
+
+  async function settle() {
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+      await tick();
+    }
+    flushSync();
+  }
+
+  it('a 410 met in the viewer turns the tile into "CanaReel supprime" and is reported ONCE', async () => {
+    const onReelPurged = vi.fn();
+    render(video({ intent: 'reel-message', expiresAtMs: HINT }), { onReelPurged });
+    tile()!.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>('[data-reel-viewer-stub-gone]')!.click();
+    document.querySelector<HTMLButtonElement>('[data-reel-viewer-stub-gone]')!.click();
+    flushSync();
+    expect(onReelPurged).toHaveBeenCalledTimes(1);
+    expect(typeof onReelPurged.mock.calls[0][0]).toBe('number');
+    expect(tile()).toBeNull();
+    expect(tomb()!.dataset.reelTombstone).toBe('deleted');
+    expect(tomb()!.textContent).toContain(m.reel_chat_deleted());
+    expect(tomb()!.getAttribute('aria-label')).not.toContain(m.reel_chat_expired());
+  });
+
+  it('a 410 recorded on the row draws the tombstone after a reload, with no request and no tap', () => {
+    render(
+      video({ intent: 'reel-message', expiresAtMs: HINT, placeholder: 'AAgKBAAAAAAAAAAAAAAA' }),
+      { reelPurgedAt: Date.now() - 1000 }
+    );
+    expect(tile()).toBeNull();
+    expect(tomb()!.dataset.reelTombstone).toBe('deleted');
+    expect(document.querySelector('[data-reel-viewer-stub]')).toBeNull();
+    expect(
+      document.querySelector<HTMLElement>('[data-media-frame]')!.getAttribute('style')
+    ).not.toContain('url(');
+  });
+
+  it('a 410 recorded AFTER the hint reads "CanaReel expire"', () => {
+    const hint = Date.now() - 5000;
+    render(video({ intent: 'reel-message', expiresAtMs: hint }), { reelPurgedAt: hint + 1 });
+    expect(tomb()!.dataset.reelTombstone).toBe('expired');
+    expect(tomb()!.textContent).toContain(m.reel_chat_expired());
+  });
+
+  it("drops the tombstone's cached ciphertext, once per page life, and never a live reel's", () => {
+    render(video({ intent: 'reel-message', expiresAtMs: HINT }));
+    expect(evicted).toEqual([]);
+    render(video({ intent: 'reel-message', mediaId: 'gone-1', expiresAtMs: Date.now() - 1 }));
+    render(video({ intent: 'reel-message', mediaId: 'gone-1', expiresAtMs: Date.now() - 1 }));
+    expect(evicted).toEqual(['gone-1']);
   });
 });
 

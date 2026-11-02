@@ -499,7 +499,7 @@ are for one engineer including tests, in days.
 | **RC-3** | **The chat profile** in `prepareVideoForUpload` / `videoEncodingPlan.ts` | plan unit tests (sizes at 20/60/90 s fit `maxBytes`), and the device table of RC-0 re-run for the shipped numbers | 1 | RC-0 |
 | **RC-4** | **Capture destination**: `destination` prop, the overlay layer with its history entries and `fullscreen-place-open`, the composer camera button and "+" entry, "Envoyer", the photo-as-image branch, the accessible shutter toggle, the mute check; i18n | component tests (the overlay mounts, Back ends take then review then layer, the photo goes the image path, the feed destination is byte-identical), harness row on both phones | 3 | RC-1, RC-3 |
 | **RC-5** | **Outbox**: the raw-take store, the prepared file OUTSIDE the row, states `preparing`/`sending`/`failed`, cancel, resume; the resumable chunk upload and its server offset route | outbox tests for each state and a crash at each stage (no double upload, no lost take); chunk-resume unit on media-service; a throttled-network run (`offline-and-weak-network` is the model) | 4-5 | RC-2, RC-4, the weak-network PR |
-| **RC-6** | **The tile and the viewer**: `MessageMediaRenderer` reel branch, tombstone, conversation mode of `ReelViewer`, no save/forward, cache hygiene at expiry, accessibility. **Amended 2026-10-30 (15.4)**: a `410` met in the viewer is reported back to the tile and kept on the message's local row (`purged`), drawn "CanaReel supprimé" before the hint's expiry and "expiré" after - a shared blob can now vanish from a conversation nobody in it touched | **a mounting test of the branch** (lesson of #1229), every state, reduced motion, the action sheet drops forward/copy, `410` and the hint both draw the tombstone; a `410` from the viewer persists `purged` and survives a reload | 3.5 | RC-1, RC-2 |
+| **RC-6** | **Built 2026-11-02 ([section 18](#18-what-the-tile-and-viewer-package-rc-6-built-2026-11-02)).** **The tile and the viewer**: `MessageMediaRenderer` reel branch, tombstone, conversation mode of `ReelViewer`, no save/forward, cache hygiene at expiry, accessibility. **Amended 2026-10-30 (15.4)**: a `410` met in the viewer is reported back to the tile and kept on the message's local row (`purged`), drawn "CanaReel supprimé" before the hint's expiry and "expiré" after - a shared blob can now vanish from a conversation nobody in it touched | **a mounting test of the branch** (lesson of #1229), every state, reduced motion, the action sheet drops forward/copy, `410` and the hint both draw the tombstone; a `410` from the viewer persists `purged` and survives a reload | 3.5 | RC-1, RC-2 |
 | **RC-7** | **Push** (BUILT 2026-10-19, section 12): `mediaKind` reel and the `PushText::Reel` line in the shared Rust scanner, which Android, the iOS NSE and `canari_push.mm` all call; no thumbnail | Rust unit tests (Kotlin changed by comments only, nothing to unit-test there; no native string table changes); on a phone with the app killed, a DM, a group and a salon each read on the lock screen (the device-verification check B pattern) | 2 | RC-1 |
 | **RC-8** | **Salons and moderation**: the salon send path, social-service's moderator delete purging through `chat-reel-purge` (ownership allowlist), the user-report entry from the tile's menu, optionally the disclosed report (D8) | social-service unit and the real-database path for the delete; a moderator run on the bench | 2.5 | RC-2, RC-6 |
 | **RC-9** | **Campaign rows and the hardware pass**: DM, group and salon, web + Android + iOS, a weak-network run, the 30-day crossing on a bench with the window shortened, an expiry read of every surface. **Amended 2026-10-30**: one take sent from the tab to a DM, a group and a salon at once (one upload on the server, three messages); a send refused in one target while the others go; a moderator's purge in the salon read as a tombstone in the DM; the two encoders never running together (15.2) | new rows on [cross-client-testing](../../cross-client-testing.md) through `bun rows.mjs`; the user's look on both phones | 3 | RC-4 to RC-8, RC-12 to RC-14 |
@@ -523,7 +523,7 @@ on both estates before any client creates a hold. Owed, in this order:
 (3b) **RC-13 - built 2026-11-01 (section 17), before the switch as decided: once a reel is written in the field, a
 single-target RC-5 row persisted in a member's outbox would need a legacy decoder when the shape
 changes; while the switch is off no such row exists anywhere**; (4) RC-6 (with its 410 amendment,
-since a shared blob can vanish under any tile); (5) **the salons stay out of the writer until RC-8
+since a shared blob can vanish under any tile) - **built 2026-11-02, section 18**; (5) **the salons stay out of the writer until RC-8
 lands (D-salons-later)**: the switch turns on for DMs and groups, a salon keeps its photo-only camera
 (`reelMessages = !isChannel`, section 13), so RC-8 is NOT a precondition of the switch; (6) the
 readers at the `minClientVersion` floor. **RC-12 (the sheet) follows the switch, in the NEXT release
@@ -1382,3 +1382,44 @@ sheet, so they land with RC-12 over the controller and composable functions abov
 `finally`**, on every way the publish step ends (posted, refused, cancelled, thrown): a take whose
 publish wait is never ended waits for that page life - and posts the tab's `reel_sendto_failed_in`
 notice. It caps the targets at `chatReelTargetCap` (above). Owed on devices: the RC-0 re-run and the readings, with the switch.
+
+## 18. What the tile and viewer package (RC-6) built (2026-11-02)
+
+Most of RC-6 shipped with the reader (RC-1, section 8b: the tile branch and its mounting test, the
+hint tombstone, the conversation viewer on one slide, no forward, no share). This package adds the
+**410 amendment of 15.4** and the cache rule of 3.3. Nothing here changes the wire.
+
+- **The 410 travels up, typed.** `PostMedia` gains `onFailure(cause)` (the `mediaFailureCause`
+  vocabulary, never a message); `ReelSlide` turns `expired` alone into `onMediaGone`; `ReelViewer`
+  hands it to its opener with the post id. The feed passes nothing.
+- **It is recorded on the message's LOCAL row.** `StoredMessage.mediaPurgedAt` (Unix ms, this
+  device's clock, written by both engines through `messagePayload`, never relayed: a history bundle
+  is parsed field by field and does not carry it) and `ChatMessage.mediaPurgedAt`.
+  `useMessaging.recordReelPurged` writes it in memory and through `updateMessage`, keeps the FIRST
+  instant, and reads the row back before saying it is on disk (`updateMessage` writes nothing on an
+  absent row, silently). The tile draws the tombstone at once from its own state either way.
+- **Which tombstone** is one pure function, `reelTombstoneOf(ref, purgedAt, now)`: a `410` recorded
+  BEFORE the sender's hint is `deleted` ("CanaReel supprime"), at or after it `expired`; no record
+  falls back to the hint against the clock. A `410` on a reel with NO hint reads `expired` - every
+  writer sets the hint, so such a reel comes from no shipped writer. The reason is never drawn.
+- **The local copy goes with the tombstone (3.3).** `dropGoneReelCopy` deletes the Cache API
+  ciphertext (`evictCachedReelCiphertext`) once per media id per page life; the next page life asks
+  again, a delete of an absent entry being a no-op. Without it a purged reel would replay from the
+  cache with no `410` ever asked.
+- **Reduced motion** needs nothing of its own: the global `prefers-reduced-motion` rule of
+  `app.css` takes every transition and animation of the tile to nothing.
+- **"Copy" stays** in the action sheet: it copies the CAPTION text, never the `MediaRef` - 3.3's
+  "forward / copy" is about the media reference, which forward and share already refuse.
+- **Known limit, kept:** a salon page refresh rewrites its rows whole (`storeSalonPage`), so a
+  salon reel's record does not survive it and the next tap asks once more. Salons are out of the
+  writer until RC-8 (D-salons-later).
+- **Pinned** by `chatReel.test.ts` (`reelTombstoneOf`), `messagePayload.test.ts` (the field round
+  trips, a malformed one is refused), `PostMedia.failure.svelte.test.ts` (`onFailure('expired')`
+  once), `ReelSlide.svelte.test.ts` (only a `410` is handed up), `MessageMediaRenderer.reel.svelte.test.ts`
+  (the viewer's `410` draws "supprime" and is reported ONCE; a recorded one draws it after a reload
+  with no tap; after the hint it reads "expire"; the cache drop once and never for a live reel) and
+  `useMessaging.reelPurged.svelte.test.ts` (memory and row, another conversation, the first instant
+  kept, a lost write said).
+- **Owed on devices:** with the writer on, a reel purged by its sender (`Supprimer pour tout le
+  monde`) read on the other phone as "CanaReel supprime" after one tap, and still so after a
+  relaunch with the network cut.

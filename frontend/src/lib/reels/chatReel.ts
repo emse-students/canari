@@ -27,6 +27,35 @@ export function isReelMessageExpired(ref: Pick<MediaRef, 'expiresAtMs'>, nowMs: 
 }
 
 /**
+ * Which tombstone a reel message's tile draws, or `null` while it is still watchable.
+ *
+ * - `deleted` ("CanaReel supprime"): the blob answered `410` BEFORE the sender's expiry hint - an
+ *   early loss (a moderator's purge in another conversation that shares the file, the sender's
+ *   delete, an account deletion). The REASON is never drawn: a DM is not told a salon was moderated.
+ * - `expired` ("CanaReel expire"): the hint has passed, or the `410` came after it.
+ *
+ * Two facts decide, in this order: the `410` THIS device met and recorded on the message's local
+ * row (`purgedAtMs`, the instant it was met), then the hint read against `nowMs`. A `410` on a
+ * message with NO hint reads `expired`: every writer sets the hint (`chatReelDeclaration`), so a
+ * hint-less reel is from no shipped writer and the neutral reading is the class's ordinary end.
+ * Pure: both instants are passed in.
+ */
+export type ReelTombstone = 'deleted' | 'expired';
+
+/** See {@link ReelTombstone}: the purge instant this device recorded first, then the hint. */
+export function reelTombstoneOf(
+  ref: Pick<MediaRef, 'expiresAtMs'>,
+  purgedAtMs: number | null | undefined,
+  nowMs: number
+): ReelTombstone | null {
+  if (typeof purgedAtMs === 'number' && purgedAtMs > 0) {
+    const hinted = typeof ref.expiresAtMs === 'number' && ref.expiresAtMs > 0;
+    return hinted && !isReelMessageExpired(ref, purgedAtMs) ? 'deleted' : 'expired';
+  }
+  return isReelMessageExpired(ref, nowMs) ? 'expired' : null;
+}
+
+/**
  * The post-shaped entity the reel viewer plays for a received reel message. The viewer is the
  * feed's (`ReelViewer`), so the message is given the one shape it reads: the video with its key,
  * the sender's name, the day it was sent and the caption.
