@@ -152,7 +152,7 @@ const SLOW_LINK = (cfg) => `(function (cfg) {
  * blocked main thread delays the mark exactly as it delays the paint). Re-armed every run.
  */
 const PROBE = `(function () {
-  window.__cob = { marks: {}, watch: {}, hb: [], lt: [], taps: [], clicks: [] };
+  window.__cob = { marks: {}, watch: {}, hb: [], lt: [], taps: [], clicks: [], probe: [] };
   if (window.__cobHb) clearInterval(window.__cobHb);
   window.__cobHb = setInterval(function () { window.__cob.hb.push(Math.round(performance.now())); }, 50);
   // ONE observer per page: a warm run re-arms this probe, and a second observer doubled every entry.
@@ -176,6 +176,11 @@ const PROBE = `(function () {
   (function frame() {
     var c = window.__cob;
     // A watch marks the first frame its condition holds AFTER a frame where it did not (see arm()).
+    // THE PROBE'S OWN COST IS TIMED AND KEPT: the predicates query the DOM and force layout once a
+    // frame, and a mark is taken after them, so that time is inside every mark. It is recorded as
+    // [start, duration] per frame and reported as its own column (probe ms), never silently booked
+    // to the app.
+    var probeFrom = performance.now(), probed = Object.keys(c.watch).length > 0;
     Object.keys(c.watch).forEach(function (k) {
       try {
         var w = c.watch[k];
@@ -183,6 +188,7 @@ const PROBE = `(function () {
         else if (w.low) { c.marks[k] = Math.round(performance.now()); delete c.watch[k]; }
       } catch (e) {}
     });
+    if (probed) c.probe.push([Math.round(probeFrom), Math.round((performance.now() - probeFrom) * 10) / 10]);
     if (c === window.__cob) requestAnimationFrame(frame);
   })();
   return JSON.stringify({ origin: performance.timeOrigin, now: performance.now() });
@@ -504,7 +510,7 @@ async function oneRun(index, warmCx) {
   const page = JSON.parse(
     await evaluate(
       cx,
-      'JSON.stringify({ api: window.__cobNet ? window.__cobNet.log : [], hb: window.__cob.hb, lt: window.__cob.lt, res: performance.getEntriesByType("resource").map(function (e) { return [e.name, Math.round(e.startTime)]; }) })'
+      'JSON.stringify({ api: window.__cobNet ? window.__cobNet.log : [], hb: window.__cob.hb, lt: window.__cob.lt, probe: window.__cob.probe, res: performance.getEntriesByType("resource").map(function (e) { return [e.name, Math.round(e.startTime)]; }) })'
     )
   );
   const ev = cx.events.slice(eventsFrom);
@@ -550,6 +556,7 @@ async function oneRun(index, warmCx) {
   // [path, start, handed back, bytes, method, headers in] of every first-party call through window.fetch.
   row.api = page.api;
   row.longTasks = page.lt;
+  row.probe = page.probe;
   row.gaps = [];
   for (let i = 1; i < page.hb.length; i++) {
     const g = page.hb[i] - page.hb[i - 1];
