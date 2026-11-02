@@ -148,6 +148,12 @@ is never an end.
 
 ## Seen, ended, replayed
 
+**Who sees the welcome tour (owner, 2026-11-02): every account that has never seen it, ONCE - new and
+existing accounts alike.** There is no account-age or first-sign-in condition anywhere: a help starts
+when the ACCOUNT's seen set (server-side, per account) lacks it, and nothing else about the account is
+read. It can be skipped at any step and replayed from Settings (pinned in `guideEngine.test.ts` and
+`seenHelps.test.ts`).
+
 Every end records the help as seen: Next on the last step, "Passer", Esc, Back, and leaving the page
 (the navigation drain). The reader met it, and Settings > Preferences > "Revoir la visite" replays
 it (`replayGuide('welcome-tour')`, then the feed - the tour applies to `/posts`, where every control

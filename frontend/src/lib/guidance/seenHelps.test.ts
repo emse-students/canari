@@ -159,6 +159,19 @@ describe('SeenHelps', () => {
     expect(store.has('welcome-tour')).toBe(true);
   });
 
+  it('keys the seen record per account: one account having seen the tour says nothing of another', async () => {
+    apiFetch.mockResolvedValueOnce(json(200, { seen: ['welcome-tour'] }));
+    await store.load('u1');
+    expect(store.has('welcome-tour')).toBe(true);
+    store.reset();
+    // u2 signs in on the same device: its own server answer and its own local copy decide.
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [] }));
+    await store.load('u2');
+    expect(store.ready).toBe(true);
+    expect(store.has('welcome-tour')).toBe(false);
+    expect(localStorage.getItem(ACCOUNT_KEY.seenHelps('u2'))).not.toContain('welcome-tour');
+  });
+
   it('forgets the account on reset, and drops an answer that belongs to it', async () => {
     let answer: (r: Response) => void = () => {};
     apiFetch.mockReturnValueOnce(new Promise<Response>((r) => (answer = r)));

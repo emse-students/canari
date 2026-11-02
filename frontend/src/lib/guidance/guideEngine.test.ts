@@ -131,6 +131,24 @@ describe('GuideEngine', () => {
     expect(h.markSeen).toHaveBeenCalledWith('welcome-tour');
   });
 
+  it('shows the welcome tour once to EVERY account that has not seen it - new or existing alike', () => {
+    // Owner, 2026-11-02: no new-account condition. The engine reads nothing about an account but its
+    // seen set, so an account years old that never saw the tour gets it exactly like one made today.
+    h.engine.consider(true, '/posts');
+    expect(h.stepId()).toBe('one');
+    h.engine.end('skipped');
+    expect(h.markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
+    // Once seen, never again on its own - only a replay from Settings brings it back.
+    h.engine.consider(true, '/posts');
+    expect(h.engine.view).toBeNull();
+
+    // Another account on the same install, existing, that never saw it: shown to it too, once.
+    h.engine.reset();
+    h.seen.clear();
+    h.engine.consider(true, '/posts');
+    expect(h.stepId()).toBe('one');
+  });
+
   it('does not start a seen help again', () => {
     h.seen.add('welcome-tour');
     h.engine.consider(true, '/posts');
