@@ -14,6 +14,7 @@ import {
   IOS_NOTIFICATION_SOUND,
   PushMessageInput,
   buildWakeApnsRequest,
+  buildWakeDataFields,
 } from './push-payload';
 
 const baseInput: PushMessageInput = {
@@ -589,6 +590,7 @@ describe('buildWakeApnsRequest', () => {
       type: 'wake',
       queuedMessageId: 'q-1',
       silent: 'false',
+      notifLevel: 'mentions',
     });
     expect(request.pushType).toBe('alert');
   });
@@ -597,5 +599,29 @@ describe('buildWakeApnsRequest', () => {
     const aps = buildWakeApnsRequest('q-1', false, false, 'fr').payload.aps;
     expect(aps.sound).toBe(IOS_NOTIFICATION_SOUND.message);
     expect(aps['interruption-level']).toBeUndefined();
+  });
+});
+
+describe('buildWakeDataFields', () => {
+  it('says mentions for a visible frame of a mentions-only conversation, and nothing else', () => {
+    expect(buildWakeDataFields('q-1', false, true)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+      notifLevel: 'mentions',
+    });
+    expect(buildWakeDataFields('q-1', false, false)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+    });
+  });
+
+  it('drops the level from a silent frame, as the full map does', () => {
+    expect(buildWakeDataFields('q-1', true, true)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'true',
+    });
   });
 });

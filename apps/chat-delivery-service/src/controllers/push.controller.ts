@@ -95,6 +95,21 @@ const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex
  */
 export const KEY_GROUP_PUSH_LIMIT_PER_MINUTE = 64;
 
+/**
+ * Wake-up fetches one user may make per minute on `mls/push/wake` (one per wake push a device
+ * received; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+ *
+ * Sized on the device, not on an average: Android posts at most 5 notifications a second per app
+ * (`NotificationManagerService.MAX_PACKAGE_ENQUEUE_RATE`), so 300 a minute is every VISIBLE frame a
+ * phone can show, and the same again is left for the silent ones (receipts, own-device copies) that
+ * wake it without drawing. A refusal is the throttler's `429`; the device treats it as a failed
+ * fetch (logged, accused), and the frame stays queued for the next open.
+ */
+export const WAKE_FETCH_LIMIT_PER_MINUTE = 600;
+
+/** A queued row's id is a uuid (`QueuedMessage.id`): anything else is refused before Postgres sees it. */
+const QUEUED_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
 
@@ -424,9 +439,12 @@ export class PushController {
    * carried, for the device that was woken (owner, 2026-11-02;
    * docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
    *
-   * Auth: `Authorization: PushSecret {secret}` with the device's own `userId` and `deviceId`, exactly
-   * as `fetch-proto` - the Android service and the iOS extension and app already hold that secret and
-   * have no JWT. The row is found by (id, recipient, device), so a secret opens only its own queue.
+   * Auth: `Authorization: PushSecret {secret}` with the device's own `userId` and `deviceId` in the
+   * QUERY - the Android service and the iOS extension and app already hold that secret and have no
+   * JWT. Proven ONCE by `PushSecretGuard` (which reads a GET's ids from its query), then counted per
+   * user by `PushSecretThrottlerGuard` ({@link WAKE_FETCH_LIMIT_PER_MINUTE}). The row is found by
+   * (id, recipient, device), so a secret opens only its own queue; a `messageId` that is not a uuid
+   * is a `400`, never a query Postgres refuses with a `500`.
    *
    * `silent` is the bit the wake push carried (`buildWakeDataFields`): the sender's "draw nothing"
    * is decided at send time and is not on the row, so it travels with the device. Everything else is
@@ -435,9 +453,10 @@ export class PushController {
    * Answers `{status: 'frame', fields}` or `{status: 'gone'}` (`WakeAnswer`); one line per fetch, so
    * `[PUSH_SEND] mode=wake` minus `[PUSH_WAKE] served|gone` is the wakes no device acted on.
    */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: WAKE_FETCH_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @Get('mls/push/wake')
   async fetchWakeFrame(
-    @Headers('authorization') authHeader: string,
     @Query('messageId') messageIdRaw: string,
     @Query('userId') userIdRaw: string,
     @Query('deviceId') deviceIdRaw: string,
@@ -450,8 +469,10 @@ export class PushController {
       throw new BadRequestException('silent must be "true" or "false"');
     }
     const silent = silentRaw === 'true';
-
-    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    if (!QUEUED_ID_RE.test(messageId)) {
+      throw new BadRequestException('messageId must be a queued message id');
+    }
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
 
     const found = await this.queuedMessageRepo.findOne({
       where: { id: messageId, recipientId: userId, deviceId },
@@ -474,14 +495,23 @@ export class PushController {
         `[PUSH_WAKE] queued=${messageId} carries groupId=${groupId ? 'set' : 'absent'} senderId=${senderId ? 'set' : 'absent'} - served as it is`
       );
     }
+    // Its decisions were logged when the push left; the fetch repeats none of them.
     const input = await this.messagingService.describeQueuedFrame(
       queued,
       groupId,
       senderId,
       silent,
-      `wake-${messageId.slice(0, 8)}`
+      `wake-${messageId.slice(0, 8)}`,
+      'fetch'
     );
-    const answer = buildWakeFrameAnswer(input, queued.proto ?? '');
+    // The ciphertext exactly as the full push and `fetch-proto` read it, legacy row accused alike.
+    if (!queued.proto && queued.content) {
+      this.logger.warn(
+        `[PUSH] LEGACY_CONTENT_ROW queuedId=${queued.id} recipient=${userId}:${deviceId} - ` +
+          `row carries no proto; served from the retired content column (wake)`
+      );
+    }
+    const answer = buildWakeFrameAnswer(input, queued.proto ?? queued.content ?? '');
     this.logger.log(
       `[PUSH_WAKE] served queued=${messageId} device=${cutDeviceId(deviceId)} silent=${input.silent} welcome=${input.isWelcome}`
     );

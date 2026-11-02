@@ -20,25 +20,34 @@ export type PushMode = 'full' | 'wake';
 /** The two values, the same list as the column's CHECK (asserted across every copy). */
 export const PUSH_MODES: readonly PushMode[] = ['full', 'wake'];
 
+/** Whether this process has already accused a missing `platform_config` row (see `readPushMode`). */
+let missingRowAccused = false;
+
 /**
  * The mode as the database holds it RIGHT NOW. Read for every push that has a wake-capable
  * destination, never cached: turning the switch off must hold from the next push.
  *
- * Absent row: `full`, which is the column's default - core creates the row at boot, so an absent row
- * is a database core-service has not started against yet. Logged at ERROR, apart from a real `full`:
- * a switch left at its default is a decision, a missing row is a defect. A value outside the two, and
- * a failed query, THROW: the caller does not send that device's push and its fan-out logs the error;
- * the frame stays queued and is delivered at the device's next open. A switch nobody can read is
- * never guessed in either direction.
+ * Absent row: `full`, and that is not a guess - it is the value the row is CREATED with (the
+ * column's `DEFAULT 'full'`, and core's `DEFAULT_ROW`), and core creates the row at boot, so an
+ * absent row is a database core-service has not started against yet and the switch has never been
+ * moved. Accused at ERROR ONCE PER PROCESS (`[PUSH_MODE]`), never once per push: the defect is one
+ * fact about the database, and a line per push would bury it. A value outside the two, and a failed
+ * query, THROW: the caller does not send that device's push and its fan-out logs the error; the
+ * frame stays queued and is delivered at the device's next open. A value nobody can read is never
+ * guessed in either direction.
  */
 export async function readPushMode(manager: EntityManager, logger: Logger): Promise<PushMode> {
   const rows: { push_mode?: unknown }[] = await manager.query(
     `SELECT push_mode FROM platform_config WHERE id = 1 LIMIT 1`
   );
   if (rows.length === 0) {
-    logger.error(
-      '[PUSH_SEND] platform_config row 1 is MISSING - push_mode read as full (has core-service booted against this database?)'
-    );
+    if (!missingRowAccused) {
+      missingRowAccused = true;
+      logger.error(
+        '[PUSH_MODE] platform_config row 1 is MISSING - push_mode read as full, the value the row is created with ' +
+          '(has core-service booted against this database?); said once per process'
+      );
+    }
     return 'full';
   }
   const value = rows[0]?.push_mode;
