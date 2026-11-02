@@ -35,7 +35,7 @@ const mounted: (() => void)[] = [];
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   roles.global = true;
 });
 
@@ -86,7 +86,7 @@ function seed() {
 it('shows the totals, the versions with their share, and the 24-hour chart', async () => {
   seed();
   const page = await render();
-  await vi.waitFor(() => expect(page.querySelector('svg[role="img"]')).not.toBeNull());
+  await vi.waitFor(() => expect(page.querySelector('[role="slider"]')).not.toBeNull());
 
   expect(page.querySelector('[data-testid="status-users"]')?.textContent?.trim()).toBe('3');
   expect(page.querySelector('[data-testid="status-devices"]')?.textContent?.trim()).toBe('4');
@@ -95,7 +95,7 @@ it('shows the totals, the versions with their share, and the 24-hour chart', asy
   expect(versions).toHaveLength(2);
   expect(versions[0].textContent).toContain('1.5.4');
   expect(versions[0].textContent).toContain('75');
-  expect(page.querySelectorAll('svg[role="img"] polygon').length).toBeGreaterThan(0);
+  expect(page.querySelectorAll('svg polygon').length).toBeGreaterThan(0);
 });
 
 it('draws no list of people or devices, and no identifier', async () => {
@@ -116,4 +116,78 @@ it('sends a non-admin back to the admin home without asking the gateway anything
   await vi.waitFor(() => expect(goto).toHaveBeenCalled());
   const { apiFetch } = await import('$lib/utils/apiFetch');
   expect(apiFetch).not.toHaveBeenCalled();
+});
+
+async function mockedFetch() {
+  const { apiFetch } = await import('$lib/utils/apiFetch');
+  return vi.mocked(apiFetch);
+}
+
+it('keeps a history failure on screen when the live counts then succeed', async () => {
+  seed();
+  const fetch = await mockedFetch();
+  fetch.mockImplementation((url: string | URL | Request) =>
+    Promise.resolve(
+      String(url).endsWith('/history')
+        ? new Response('{}', { status: 500 })
+        : new Response(JSON.stringify(responses.now), { status: 200 })
+    )
+  );
+  const page = await render();
+  const banner = () => page.querySelector('[class*="border-red-err"]');
+  await vi.waitFor(() => expect(banner()).not.toBeNull());
+
+  // A second live read succeeds; the history source is still failing and the banner must say so.
+  const before = fetch.mock.calls.length;
+  page.querySelector<HTMLButtonElement>('button')?.click();
+  await vi.waitFor(() => expect(fetch.mock.calls.length).toBeGreaterThan(before));
+  expect(banner()).not.toBeNull();
+});
+
+it('stops polling while the tab is hidden and reads again when it is shown', async () => {
+  seed();
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const fetch = await mockedFetch();
+  fetch.mockClear();
+  const page = await render();
+  const calls = () => fetch.mock.calls.length;
+  expect(calls()).toBe(2);
+
+  const hide = (hidden: boolean) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+  hide(true);
+  await vi.advanceTimersByTimeAsync(180_000);
+  expect(calls()).toBe(2);
+
+  hide(false);
+  expect(calls()).toBe(4);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(calls()).toBe(5);
+  expect(page.querySelector('[data-testid="status-devices"]')).not.toBeNull();
+  vi.useRealTimers();
+});
+
+it('gives the chart readout to the keyboard', async () => {
+  seed();
+  const page = await render();
+  const chart = await vi.waitFor(() => {
+    const svg = page.querySelector<HTMLElement>('[role="slider"]');
+    expect(svg).not.toBeNull();
+    return svg!;
+  });
+  const readout = () => page.querySelector('[aria-live="polite"]')?.textContent?.trim() ?? '';
+  expect(chart.getAttribute('tabindex')).toBe('0');
+  expect(readout()).toBe('');
+
+  chart.dispatchEvent(new FocusEvent('focus'));
+  await vi.waitFor(() => expect(readout()).not.toBe(''));
+  const latest = readout();
+
+  chart.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  await vi.waitFor(() => expect(readout()).not.toBe(latest));
+
+  chart.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await vi.waitFor(() => expect(readout()).toBe(''));
 });

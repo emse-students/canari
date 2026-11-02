@@ -409,7 +409,7 @@ pub async fn get_admin_presence(
             return unavailable("Presence store unavailable");
         }
     };
-    match crate::census::read_census(&mut con).await {
+    match crate::census::read_census(&mut con, 1).await {
         Ok(census) => (StatusCode::OK, Json(census)).into_response(),
         Err(e) => {
             tracing::warn!(
@@ -442,9 +442,15 @@ pub async fn get_admin_presence_history(
             return unavailable("Presence store unavailable");
         }
     };
-    let now = chrono::Utc::now().timestamp();
-    match crate::census::read_series(&mut con, crate::census::SAMPLES_KEY, now).await {
-        Ok(samples) => (
+    // REDIS's clock, the one the series is written against: nothing scored in the future is served.
+    let result = match crate::census::redis_now(&mut con).await {
+        Ok(now) => crate::census::read_series(&mut con, &state.census_key, now)
+            .await
+            .map(|samples| (now, samples)),
+        Err(e) => Err(e),
+    };
+    match result {
+        Ok((now, samples)) => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "now": now,
@@ -933,15 +939,20 @@ mod tests {
         crate::census::note_client(&mut con, &conn_key, &kind, 60)
             .await
             .unwrap();
-        // The history route reads the production series key: a sample there is what it serves.
-        let census = crate::census::read_census(&mut con).await.unwrap();
-        let minute = chrono::Utc::now().timestamp() / 60 * 60;
-        crate::census::record_sample(&mut con, crate::census::SAMPLES_KEY, minute, &census)
+        // The history route reads the state's series key, a key of THIS test's own - never the one
+        // production reads. The sample is cut at 1 (not the series' minimum of 3) so the seeded
+        // device's version is on the wire to be looked for.
+        let census = crate::census::read_census(&mut con, 1).await.unwrap();
+        let now = crate::census::redis_now(&mut con).await.unwrap();
+        let census_key = format!("it:monitor:{}", uuid::Uuid::new_v4());
+        crate::census::record_sample(&mut con, &census_key, now - now % 60, &census)
             .await
             .unwrap();
 
         let audience = PresenceAudience::new(String::new(), String::new(), String::new());
-        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let mut state = AppState::new(client, "test-secret".to_string(), audience);
+        state.census_key = census_key;
+        let state = Arc::new(state);
         let app = Router::new()
             .route("/api/admin/presence", get(get_admin_presence))
             .route(

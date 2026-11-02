@@ -29,7 +29,10 @@
   let history = $state<CensusHistory | null>(null);
   let lastUpdated = $state<Date | null>(null);
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  // ONE failure flag per source: a success of one must never clear the failure of the other.
+  let nowFailed = $state(false);
+  let historyFailed = $state(false);
+  const error = $derived(nowFailed || historyFailed ? m.admin_status_unknown_error() : null);
   let nowTimer: ReturnType<typeof setInterval>;
   let historyTimer: ReturnType<typeof setInterval>;
 
@@ -46,10 +49,10 @@
     try {
       census = await getJson<Census>('/api/admin/presence');
       lastUpdated = new Date();
-      error = null;
+      nowFailed = false;
     } catch (e) {
       Log.d('admin.status.fetchNow failed', e);
-      error = m.admin_status_unknown_error();
+      nowFailed = true;
     } finally {
       loading = false;
     }
@@ -58,9 +61,10 @@
   async function fetchHistory() {
     try {
       history = await getJson<CensusHistory>('/api/admin/presence/history');
+      historyFailed = false;
     } catch (e) {
       Log.d('admin.status.fetchHistory failed', e);
-      error = m.admin_status_unknown_error();
+      historyFailed = true;
     }
   }
 
@@ -75,14 +79,42 @@
       return;
     }
     refreshAll();
-    nowTimer = setInterval(() => void fetchNow(), NOW_REFRESH_MS);
-    historyTimer = setInterval(() => void fetchHistory(), HISTORY_REFRESH_MS);
+    startPolling();
+    document.addEventListener('visibilitychange', onVisibility);
   });
 
   onDestroy(() => {
+    stopPolling();
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibility);
+    }
+  });
+
+  /** Both pollers, started together. A hidden tab polls nothing: see {@link onVisibility}. */
+  function startPolling() {
+    stopPolling();
+    nowTimer = setInterval(() => void fetchNow(), NOW_REFRESH_MS);
+    historyTimer = setInterval(() => void fetchHistory(), HISTORY_REFRESH_MS);
+  }
+
+  function stopPolling() {
     clearInterval(nowTimer);
     clearInterval(historyTimer);
-  });
+  }
+
+  /**
+   * A tab nobody is looking at stops asking the gateway (each request scans the presence keys); the
+   * moment it is shown again it reads once at once and resumes - the page never shows a number a
+   * hidden tab left stale.
+   */
+  function onVisibility() {
+    if (document.hidden) {
+      stopPolling();
+      return;
+    }
+    refreshAll();
+    startPolling();
+  }
 
   const platforms = $derived(census ? [...devicesByPlatform(census).entries()] : []);
   const platformOrder = $derived(census ? layersOf([{ t: 0, ...census }]) : ([] as string[]));

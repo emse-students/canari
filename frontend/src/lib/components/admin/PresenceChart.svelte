@@ -28,6 +28,30 @@
   let hovered = $state<number | null>(null);
   const reading = $derived(hovered === null ? null : (buckets[hovered] ?? null));
 
+  /**
+   * The readout is reachable without a pointer: the chart takes focus, shows the latest minute, and
+   * the arrows, Home and End walk the minutes. Escape clears it.
+   */
+  function onKey(event: KeyboardEvent) {
+    const last = buckets.length - 1;
+    if (last < 0) return;
+    const at = hovered ?? last;
+    const next: Record<string, number> = {
+      ArrowLeft: Math.max(at - 1, 0),
+      ArrowRight: Math.min(at + 1, last),
+      Home: 0,
+      End: last,
+    };
+    if (event.key === 'Escape') {
+      hovered = null;
+    } else if (event.key in next) {
+      hovered = next[event.key];
+    } else {
+      return;
+    }
+    event.preventDefault();
+  }
+
   function moveTo(event: PointerEvent) {
     const rect = (event.currentTarget as Element).getBoundingClientRect();
     if (rect.width === 0 || buckets.length === 0) return;
@@ -39,71 +63,84 @@
   function clock(t: number): string {
     return new Date(t * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
+  const readingText = $derived(
+    !reading
+      ? ''
+      : reading.sample
+        ? m.admin_status_chart_reading({
+            time: clock(reading.t),
+            devices: reading.sample.devices,
+            users: reading.sample.users,
+          })
+        : m.admin_status_chart_reading_gap({ time: clock(reading.t) })
+  );
   const hoverX = $derived(hovered === null ? 0 : ((hovered + 0.5) / buckets.length) * 100);
 </script>
 
 <div class="text-xs">
   <div class="text-text-muted mb-1 flex justify-between">
     <span>{m.admin_status_chart_peak({ count: peak })}</span>
-    <span class="min-h-4">
-      {#if reading}
-        {#if reading.sample}
-          {m.admin_status_chart_reading({
-            time: clock(reading.t),
-            devices: reading.sample.devices,
-            users: reading.sample.users,
-          })}
-        {:else}
-          {m.admin_status_chart_reading_gap({ time: clock(reading.t) })}
-        {/if}
-      {/if}
-    </span>
+    <span class="min-h-4" aria-live="polite">{readingText}</span>
   </div>
 
   <div class="relative">
-    <svg
-      viewBox="0 0 {BOX.width} {BOX.height}"
-      preserveAspectRatio="none"
-      role="img"
+    <div
+      role="slider"
+      tabindex="0"
       aria-label={m.admin_status_chart_aria()}
-      class="border-cn-border block h-48 w-full touch-none rounded-lg border bg-(--cn-surface)"
+      aria-orientation="horizontal"
+      aria-valuemin={0}
+      aria-valuemax={Math.max(buckets.length - 1, 0)}
+      aria-valuenow={hovered ?? Math.max(buckets.length - 1, 0)}
+      aria-valuetext={readingText}
+      class="rounded-lg"
       onpointermove={moveTo}
       onpointerdown={moveTo}
       onpointerleave={() => (hovered = null)}
+      onkeydown={onKey}
+      onfocus={() => (hovered ??= buckets.length - 1)}
+      onblur={() => (hovered = null)}
     >
-      {#each [0.25, 0.5, 0.75] as fraction (fraction)}
-        <line
-          x1="0"
-          x2={BOX.width}
-          y1={BOX.height * fraction}
-          y2={BOX.height * fraction}
-          stroke="var(--cn-border)"
-          stroke-width="1"
-          vector-effect="non-scaling-stroke"
-        />
-      {/each}
-      {#each bands as band, i (i)}
-        <polygon
-          points={band.points}
-          fill={platformColor(band.layer)}
-          fill-opacity="0.85"
-          stroke={platformColor(band.layer)}
-          stroke-width="1"
-          vector-effect="non-scaling-stroke"
-        />
-      {/each}
-      {#if hovered !== null}
-        <line
-          x1={(hoverX / 100) * BOX.width}
-          x2={(hoverX / 100) * BOX.width}
-          y1="0"
-          y2={BOX.height}
-          stroke="var(--text-muted)"
-          stroke-width="1"
-          vector-effect="non-scaling-stroke"
-        />
-      {/if}
-    </svg>
+      <svg
+        viewBox="0 0 {BOX.width} {BOX.height}"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        class="border-cn-border block h-48 w-full touch-none rounded-lg border bg-(--cn-surface)"
+      >
+        {#each [0.25, 0.5, 0.75] as fraction (fraction)}
+          <line
+            x1="0"
+            x2={BOX.width}
+            y1={BOX.height * fraction}
+            y2={BOX.height * fraction}
+            stroke="var(--cn-border)"
+            stroke-width="1"
+            vector-effect="non-scaling-stroke"
+          />
+        {/each}
+        {#each bands as band, i (i)}
+          <polygon
+            points={band.points}
+            fill={platformColor(band.layer)}
+            fill-opacity="0.85"
+            stroke={platformColor(band.layer)}
+            stroke-width="1"
+            vector-effect="non-scaling-stroke"
+          />
+        {/each}
+        {#if hovered !== null}
+          <line
+            x1={(hoverX / 100) * BOX.width}
+            x2={(hoverX / 100) * BOX.width}
+            y1="0"
+            y2={BOX.height}
+            stroke="var(--text-muted)"
+            stroke-width="1"
+            vector-effect="non-scaling-stroke"
+          />
+        {/if}
+      </svg>
+    </div>
     {#if empty}
       <p
         class="text-text-muted pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center"
@@ -132,4 +169,5 @@
     {/each}
   </ul>
   <p class="text-text-muted mt-2">{m.admin_status_chart_gap_hint()}</p>
+  <p class="text-text-muted mt-1">{m.admin_status_chart_small_cells_hint()}</p>
 </div>

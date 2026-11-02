@@ -312,6 +312,11 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
+  // `get_admin_presence` and `get_admin_presence_history` ask that claim through ONE helper,
+  // `presence.rs::is_global_admin`, which holds the literal above (2026-11-02). The handlers name
+  // the helper, not the header, and a helper that stopped reading the header would be a handler
+  // credited by a name - so the helper's own body is asserted below to still read it.
+  'is_global_admin',
   // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
   // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
   // also refuses a refresh token.
@@ -570,7 +575,16 @@ for (const loc of locations) {
       );
       continue;
     }
-    if (RUST_AUTH.some((idiom) => body.includes(idiom))) {
+    // A handler credited by the NAME of the global-admin helper is credited only while that
+    // helper's own body still reads the header: a helper that stopped asking would otherwise
+    // keep every caller's handler "authorized" by a name.
+    const helperBody = body.includes('is_global_admin') ? rustFnBody(dir, 'is_global_admin') : null;
+    const helperAsks = helperBody !== null && helperBody.includes('x-global-admin');
+    if (
+      RUST_AUTH.some(
+        (idiom) => body.includes(idiom) && (idiom !== 'is_global_admin' || helperAsks)
+      )
+    ) {
       rustAuthorized++;
       continue;
     }

@@ -1409,6 +1409,7 @@
   "admin_status_chart_axis_middle": "il y a 12 h",
   "admin_status_chart_axis_end": "maintenant",
   "admin_status_chart_gap_hint": "Un trou est une période que personne n'a mesurée (le serveur qui redémarre, par exemple), pas une période sans personne de connecté.",
+  "admin_status_chart_small_cells_hint": "Dans cet historique, toute plateforme ou version de moins de 3 appareils est fusionnée dans « Autre », pour que personne ne soit isolable.",
   "admin_status_versions_heading": "Versions en ligne en ce moment",
   "admin_status_versions_hint": "Part des appareils connectés, pour peser une décision de version minimale.",
   "admin_status_versions_empty": "Personne n'est connecté.",

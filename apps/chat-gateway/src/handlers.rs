@@ -680,11 +680,8 @@ async fn note_client(
     client: &crate::census::ClientKind,
 ) {
     if let Err(e) = crate::census::note_client(con, conn_key, client, PRESENCE_TTL_SECS).await {
-        tracing::warn!(
-            "[census] could not record the declaration of {}: {}",
-            conn_key,
-            e
-        );
+        // No conn_key: it holds a user id, and the census names nobody.
+        tracing::warn!("[census] could not record a device's declaration: {}", e);
     }
 }
 
