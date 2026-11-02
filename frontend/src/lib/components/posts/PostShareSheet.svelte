@@ -29,10 +29,9 @@
   import { canShareOut } from '$lib/sharing/shareOut';
   import {
     copyPostLink,
-    repostToMyFollowers,
     sendPostLinkInApp,
     sharePostLinkOut,
-    undoMyRepost,
+    toggleMyRepost,
   } from '$lib/posts/sharePost';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
@@ -200,7 +199,7 @@
           data-repost-row
           onclick={() =>
             act((id) => {
-              const write = repostedByMe ? undoMyRepost(id) : repostToMyFollowers(id);
+              const write = toggleMyRepost(id, repostedByMe);
               void write.then((reposted) => onRepostChange?.(id, reposted));
             })}
         >

@@ -13,6 +13,12 @@
 import { it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostActionsMenu from './PostActionsMenu.svelte';
+import { toggleMyRepost } from '$lib/posts/sharePost';
+
+vi.mock('$lib/posts/sharePost', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/sharePost')>()),
+  toggleMyRepost: vi.fn(async (_id: string, repostedByMe: boolean) => !repostedByMe),
+}));
 
 const mounted: (() => void)[] = [];
 
@@ -165,4 +171,39 @@ it('offers no request entry by default', () => {
     (el) => el.textContent ?? ''
   );
   expect(labels.some((t) => t.includes("Republier au nom d'une association"))).toBe(false);
+});
+
+function openMenu(props: Parameters<typeof mountMenu>[0]) {
+  mountMenu(props).querySelector('button')!.click();
+  flushSync();
+  return document.body.querySelector('[data-repost-row]') as HTMLElement | null;
+}
+
+it('draws the repost row only when the server granted it or the reader already reposted', () => {
+  expect(openMenu({})).toBeNull();
+});
+
+it('reposts through the shared helper and reports the answer', async () => {
+  const onRepostChange = vi.fn();
+  const row = openMenu({ canRepost: true, onRepostChange });
+  expect(row?.textContent).toContain('Republier pour mes abonnés');
+  row!.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith(true));
+  expect(toggleMyRepost).toHaveBeenCalledWith('p1', false);
+});
+
+it('takes the repost back when the reader already made it', async () => {
+  const onRepostChange = vi.fn();
+  const row = openMenu({ repostedByMe: true, onRepostChange });
+  expect(row?.textContent).toContain('Annuler ma republication');
+  row!.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith(false));
+  expect(toggleMyRepost).toHaveBeenCalledWith('p1', true);
+});
+
+it('never lets a menu row icon shrink when its label wraps', () => {
+  openMenu({ canRepost: true, canRequestRepublication: true });
+  const rows = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
+  expect(rows.length).toBeGreaterThan(1);
+  for (const row of rows) expect(row.className).toContain('[&>svg]:shrink-0');
 });
