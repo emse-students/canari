@@ -23,6 +23,7 @@ import {
   type EditorLine,
   type StoredLine,
   type Weekday,
+  displayTime,
 } from './availability';
 
 /** The painter's grain in minutes (Q-R11): the exact times are typed in the lines below it. */
@@ -268,9 +269,13 @@ export function applyTemplate(rows: readonly EditorLine[], key: TemplateKey): Ed
   return next;
 }
 
-/** One day's runs as the reader says them: "08:00 - 23:00, 14:00 - 24:00"; empty when closed. */
+/** One day's runs as the reader says them: "08:00 - 23:00, 14:00 - 00:00"; empty when closed. */
 export function formatRuns(runs: readonly Run[]): string {
-  return runs.map(([start, end]) => `${timeOfMinutes(start)} - ${timeOfMinutes(end)}`).join(', ');
+  return runs
+    .map(
+      ([start, end]) => `${displayTime(timeOfMinutes(start))} - ${displayTime(timeOfMinutes(end))}`
+    )
+    .join(', ');
 }
 
 /*

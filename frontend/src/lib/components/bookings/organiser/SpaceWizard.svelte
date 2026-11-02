@@ -16,7 +16,7 @@
   import {
     lineProblem,
     MAX_AVAILABILITY_LINES,
-    timeChoices,
+    timeOptions,
     weekdayNames,
   } from '$lib/bookings/availability';
   import {
@@ -408,20 +408,14 @@
                   id="wizard-date-{i}-start"
                   label={m.bookings_avail_start()}
                   value={row.start}
-                  options={timeChoices(timeStep, false, row.start).map((t) => ({
-                    value: t,
-                    label: t,
-                  }))}
+                  options={timeOptions(timeStep, false, row.start)}
                   onValueChange={(v) => (draft.rows[i] = { ...row, start: v })}
                 />
                 <Select
                   id="wizard-date-{i}-end"
                   label={m.bookings_avail_end()}
                   value={row.end}
-                  options={timeChoices(timeStep, true, row.end).map((t) => ({
-                    value: t,
-                    label: t,
-                  }))}
+                  options={timeOptions(timeStep, true, row.end)}
                   onValueChange={(v) => (draft.rows[i] = { ...row, end: v })}
                 />
               </li>

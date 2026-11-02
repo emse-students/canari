@@ -22,7 +22,7 @@
     fromStoredLines,
     lineProblem,
     MAX_AVAILABILITY_LINES,
-    timeChoices,
+    timeOptions,
     toStoredLines,
     weekdayNames as weekdayNamesIn,
     type Closure,
@@ -158,8 +158,7 @@
     touch();
   }
 
-  const timeOptions = (asEnd: boolean, current: string) =>
-    timeChoices(step, asEnd, current).map((t) => ({ value: t, label: t }));
+  const timeOptionsOf = (asEnd: boolean, current: string) => timeOptions(step, asEnd, current);
 
   /** The painter changed the exact hours of a run: applied to the rows, false when it cannot be. */
   function editRunOf(run: SelectedRun, start: number, end: number): boolean {
@@ -465,7 +464,7 @@
         id="avail-{resourceId}-{i}-start"
         label={m.bookings_avail_start()}
         value={row.start}
-        options={timeOptions(false, row.start)}
+        options={timeOptionsOf(false, row.start)}
         onValueChange={(v) => {
           rows[i] = { ...row, start: v };
           touch();
@@ -475,7 +474,7 @@
         id="avail-{resourceId}-{i}-end"
         label={m.bookings_avail_end()}
         value={row.end}
-        options={timeOptions(true, row.end)}
+        options={timeOptionsOf(true, row.end)}
         onValueChange={(v) => {
           rows[i] = { ...row, end: v };
           touch();
