@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
+import { OLDER_TRIGGER_PX } from '$lib/utils/chat/renderWindow';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 /** Sender heads ask for a name and an avatar over HTTP; neither is what the entry window is about. */
@@ -42,10 +43,26 @@ function modelGeometry() {
   const proto = HTMLElement.prototype;
   const sh = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
   const ch = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  // A BROWSER NEVER REPORTS A `scrollHeight` BELOW THE PANE'S `clientHeight`: a short list reads as
+  // the pane's own height. The model clamps the same way, so the fill is tested against geometry
+  // the DOM can produce (an unclamped model let a fill that measured nothing pass).
   Object.defineProperty(proto, 'scrollHeight', {
     configurable: true,
     get(this: HTMLElement) {
-      return this.querySelectorAll(ROW_SELECTOR).length * rowPx;
+      return Math.max(this.querySelectorAll(ROW_SELECTOR).length * rowPx, PANE_PX);
+    },
+  });
+  // Rows are stacked from the top of the scroller, `rowPx` each: what the fill measures.
+  const rect = Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect');
+  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value(this: HTMLElement) {
+      if (!this.matches(ROW_SELECTOR)) return rect!.value.call(this);
+      const rows = [
+        ...(this.closest('[class*="overflow-y"]')?.querySelectorAll(ROW_SELECTOR) ?? []),
+      ];
+      const top = rows.indexOf(this) * rowPx;
+      return { top, bottom: top + rowPx, left: 0, right: 0, width: 0, height: rowPx, x: 0, y: top };
     },
   });
   Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => PANE_PX });
@@ -54,6 +71,7 @@ function modelGeometry() {
     delete (proto as unknown as Record<string, unknown>).clientHeight;
     if (sh) Object.defineProperty(Element.prototype, 'scrollHeight', sh);
     if (ch) Object.defineProperty(Element.prototype, 'clientHeight', ch);
+    if (rect) Object.defineProperty(Element.prototype, 'getBoundingClientRect', rect);
   });
 }
 
@@ -144,9 +162,9 @@ describe('ChatArea entry window (F6)', () => {
   });
 
   it('a thread of one-line rows fills the pane by its own measure, then widens to 60 after the reveal', async () => {
-    // 20 one-line rows (720 px) miss the 700 + 40 px a scroll needs by 20 px. The hidden frame adds
-    // what the measure asks for (the 4-group floor), NOT the full 60 - which was one 260 ms task on
-    // the Mi 9T - and the widen brings the rest after the reveal, a few rows per task.
+    // 20 one-line rows (720 px) miss the 700 + 120 px the fill aims for by 100 px. The hidden frame
+    // adds what the measure asks for (the 4-group floor), NOT the full 60 - which was one 260 ms task
+    // on the Mi 9T - and the widen brings the rest after the reveal, a few rows per task.
     rowPx = 36;
     modelGeometry();
     const target = mountArea(THREAD);
@@ -155,6 +173,24 @@ describe('ChatArea entry window (F6)', () => {
     await settleEntry();
     expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
   });
+
+  it.each([34, 36, 37, 40, 44])(
+    'rows of %i px: the revealed pane sits past the pagination trigger, so the reveal paginates nothing',
+    async (px) => {
+      // Pinned to the bottom, scrollTop = overflow. Inside OLDER_TRIGGER_PX the reveal's own scroll
+      // event would call loadOlderGroups: one more task of 140 groups.
+      rowPx = px;
+      modelGeometry();
+      const target = mountArea(THREAD);
+      await vi.advanceTimersByTimeAsync(0);
+      const el = target
+        .querySelector<HTMLElement>(ROW_SELECTOR)!
+        .closest<HTMLElement>('[class*="overflow-y"]')!;
+      expect(el.scrollHeight - PANE_PX).toBeGreaterThanOrEqual(OLDER_TRIGGER_PX);
+      await settleEntry();
+      expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+    }
+  );
 
   it('mounts 20 rows first, widens to 60, and moves scrollTop by exactly the height added', async () => {
     rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.

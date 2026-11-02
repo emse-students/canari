@@ -123,38 +123,54 @@ export function widenedEntryStart(
 }
 
 /**
+ * How close to the top of the thread a scroll must come to ask for older groups
+ * (`measureScroll`'s trigger). ONE constant, read by the trigger AND by the entry fill: a thread
+ * pinned to the bottom sits at `scrollTop = overflow`, so an entry that fills the pane with less
+ * overflow than this makes the reveal's own scroll event paginate - one more task of 140 groups, the
+ * long task the entry window exists to avoid.
+ */
+export const OLDER_TRIGGER_PX = 80;
+
+/** The overflow the entry fill aims for: past the trigger by a margin, so the reveal paginates nothing. */
+export const ENTRY_OVERFLOW_PX = OLDER_TRIGGER_PX + 40;
+
+/**
  * The start that fills a pane which the entry frame left SHORT, by measuring what the first frame
  * mounted rather than jumping to the full entry window.
  *
  * The entry frame mounts `entryGroups` rows; a thread of one-line rows (37 px on the Mi 9T) fills
  * ~750 px with ~20 of them, which is no more than the pane, so the old rule - "not scrollable, widen
  * to the full 60-group entry" - mounted 60 rows (260 ms of one task on the phone, 2026-11-02 profile)
- * to gain the 40 px of overflow a scroll event needs. The deficit is arithmetic: the average row
- * height is what the frame measured, and the rows still missing are the deficit divided by it.
+ * to gain a little overflow. The deficit is arithmetic, from the ROWS' OWN height (never
+ * `scrollHeight`, which a browser clamps to the pane's height and so cannot say how short a short
+ * list is): the rows still missing are the deficit divided by the measured row height.
  *
  * @param currentStart The RESOLVED start of the window now.
- * @param mountedGroups How many groups the window holds (`groupCount - currentStart`).
- * @param scrollHeight Height of the mounted content.
+ * @param mountedRows How many message rows the window holds.
+ * @param rowsPx Height the mounted rows span (first row's top to last row's bottom).
+ * @param chromePx What the scroller adds around them (its padding).
  * @param clientHeight Height of the pane.
- * @param overflowPx The overflow the pane must have so that a scroll (and so pagination) can happen.
+ * @param overflowPx The overflow the pane must reach (`ENTRY_OVERFLOW_PX`).
  * @param minStep Floor of the step, so an unlucky measure still converges.
  * @param entryStart The start of the FULL entry window: a measure alone never mounts more than that
  *   (a window already past it grows by the measure, as a page would).
- * @returns The lower start, or `null` when the pane already overflows or nothing is left to mount.
+ * @returns The lower start, or `null` when the pane already reaches the overflow or nothing is left
+ *   to mount.
  */
 export function fillStart(
   currentStart: number,
-  mountedGroups: number,
-  scrollHeight: number,
+  mountedRows: number,
+  rowsPx: number,
+  chromePx: number,
   clientHeight: number,
   overflowPx: number,
   minStep: number,
   entryStart: number
 ): number | null {
   if (currentStart <= 0) return null;
-  const deficit = clientHeight + overflowPx - scrollHeight;
-  if (deficit < 0) return null;
-  const rowPx = scrollHeight > 0 && mountedGroups > 0 ? scrollHeight / mountedGroups : 1;
+  const deficit = clientHeight + overflowPx - (rowsPx + chromePx);
+  if (!(deficit > 0)) return null;
+  const rowPx = rowsPx > 0 && mountedRows > 0 ? rowsPx / mountedRows : 1;
   const rows = Math.ceil(deficit / rowPx);
   const wanted = Math.max(0, currentStart - Math.max(1, minStep, rows));
   return currentStart > entryStart ? Math.min(currentStart, Math.max(wanted, entryStart)) : wanted;

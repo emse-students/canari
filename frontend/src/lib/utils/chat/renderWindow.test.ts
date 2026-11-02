@@ -6,6 +6,8 @@ import {
   widenedEntryStart,
   fillStart,
   widenStepStart,
+  ENTRY_OVERFLOW_PX,
+  OLDER_TRIGGER_PX,
 } from './renderWindow';
 
 /**
@@ -158,25 +160,39 @@ describe('entry window - the first frame mounts the viewport tail only', () => {
   });
 });
 
-describe('fillStart - the rows a short first frame is missing, by its own measure', () => {
+describe('fillStart - the rows a short first frame is missing, by the rows own height', () => {
+  // Pane 700, target overflow 120 (ENTRY_OVERFLOW_PX): the rows must span 820 minus the chrome.
   it('asks for the deficit divided by the measured row height, with a floor', () => {
-    // 20 rows of 36 px = 720 in a 700 pane that must overflow by 40: 20 px short -> the floor.
-    expect(fillStart(36, 20, 720, 700, 40, 4, 0)).toBe(32);
-    // 20 rows of 20 px = 400: 340 px short = 17 rows.
-    expect(fillStart(36, 20, 400, 700, 40, 4, 0)).toBe(19);
+    // 20 rows of 36 px = 720: 100 px short = 3 rows -> the floor of 4.
+    expect(fillStart(36, 20, 720, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(32);
+    // 20 rows of 20 px = 400: 420 px short = 21 rows.
+    expect(fillStart(36, 20, 400, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(15);
+    // The scroller's padding counts as content.
+    expect(fillStart(36, 20, 720, 60, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(32);
+    expect(fillStart(36, 20, 720, 100, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
+  });
+
+  it('clears the pagination trigger: the overflow it aims for is past OLDER_TRIGGER_PX', () => {
+    expect(ENTRY_OVERFLOW_PX).toBeGreaterThan(OLDER_TRIGGER_PX);
+    // 30 px of overflow is a filled pane for scrolling and still inside the trigger: not enough.
+    expect(fillStart(36, 20, 730, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).not.toBeNull();
+    expect(
+      fillStart(36, 20, 700 + OLDER_TRIGGER_PX + 1, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)
+    ).not.toBeNull();
+    expect(fillStart(36, 20, 700 + ENTRY_OVERFLOW_PX, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
   });
 
   it('is null when the pane already overflows or nothing is hidden', () => {
-    expect(fillStart(36, 20, 960, 700, 40, 4, 0)).toBeNull();
-    expect(fillStart(0, 20, 400, 700, 40, 4, 0)).toBeNull();
+    expect(fillStart(36, 20, 960, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
+    expect(fillStart(0, 20, 400, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBeNull();
   });
 
   it('never mounts more than the full entry window on a measure alone, and never past the list', () => {
-    // 20 rows of 2 px: 350 rows wanted, capped at the entry start (140 of a 200 list = 60 rows).
-    expect(fillStart(180, 20, 40, 700, 40, 4, 140)).toBe(140);
+    // 20 rows of 2 px: far too many wanted, capped at the entry start (140 of a 200 list = 60 rows).
+    expect(fillStart(180, 20, 40, 0, 700, ENTRY_OVERFLOW_PX, 4, 140)).toBe(140);
     // A window already past the entry start pages by the measure instead.
-    expect(fillStart(100, 60, 600, 700, 40, 4, 140)).toBe(86);
-    expect(fillStart(3, 20, 100, 700, 40, 4, 0)).toBe(0);
+    expect(fillStart(100, 60, 600, 0, 700, ENTRY_OVERFLOW_PX, 4, 140)).toBe(78);
+    expect(fillStart(3, 20, 100, 0, 700, ENTRY_OVERFLOW_PX, 4, 0)).toBe(0);
   });
 });
 

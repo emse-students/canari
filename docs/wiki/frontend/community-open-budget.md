@@ -689,24 +689,35 @@ runs' (the table above).
 **60 `msg-*` rows mounted**, not the 20 of the first frame.
 
 **Why 60.** `ENTRY_FIRST_FRAME_GROUPS` is 20 (F6, #1875) and works. But `fillViewportThenPin`
-then wants the pane to overflow by 40 px, so that a scroll event, and with it pagination, can happen.
+then wants the pane to overflow, so that a scroll event, and with it pagination, can happen.
 On this seed the rows are one line, 37 px: 20 rows are 740 px in a ~750 px pane, short of
 the overflow by a few pixels. The old rule for a short pane was "widen to the FULL 60-group entry", so
 the thread mounted 40 more hidden rows (~260 ms of the task, ~4.4 ms a row) for 40 px of overflow
 and only then revealed. The wiki's own test pinned it: "a thread of one-line rows settles on the
 60-row entry window" (it was documented as intended, and it was the cost).
 
-**What changed** (`ChatArea.svelte`, `renderWindow.ts`):
-- The fill pass reads what the first frame measured. `fillStart` takes the mounted height and the
-  rows mounted, computes the deficit in pixels and asks for exactly the missing rows (floor of 4 groups,
-  never more than the full entry window on a measure alone). A one-line thread of this seed fills with
-  24 rows instead of 60 before the reveal; the last of the four passes keeps the old jump, so the loop
-  still converges whatever a measure says.
+**What changed** (`ChatArea.svelte`, `renderWindow.ts`, review of #2914 folded in):
+- The fill pass reads what the first frame measured. `fillStart` takes the height the mounted ROWS span
+  (first row's top to last row's bottom, plus the scroller's padding) and the rows mounted, and asks for
+  the rows the deficit needs, rounded up (floor of 4 groups, never more than the full entry window on
+  a measure alone). It reads the rows and not `scrollHeight`: a browser clamps `scrollHeight` to the
+  pane's height, so a short list cannot say how short it is. The last of the four passes keeps the old
+  jump, so the loop still converges whatever a measure says. A one-line thread of this seed fills with
+  24 rows instead of 60 before the reveal.
+- The overflow it aims for, `ENTRY_OVERFLOW_PX`, clears the older-groups trigger,
+  `OLDER_TRIGGER_PX` (80): ONE constant pair, read by `measureScroll` too. A thread pinned to the
+  bottom sits at `scrollTop = overflow`; an entry filled with 40-80 px of overflow made the reveal's own
+  scroll event call `loadOlderGroups` (one task of 140 groups). Pinned by a test over row heights.
 - The widen after the reveal (`widenEntryWindow`) was one task of 40 rows. It is now steps of 10
   groups, a yield between each (`widenStepStart`), the scroll position compensated per step. No task of
-  the widen is longer than 10 rows (~45 ms on the phone) whatever the thread holds.
-- `isCoarsePointerDevice` reads the live `MediaQueryList` while somebody subscribes: every bubble
-  asked `matchMedia` on mount (~3 ms of the open).
+  the widen is longer than 10 rows (~45 ms on the phone) whatever the thread holds. It and the fill are
+  keyed on an ENTRY COUNTER (`entryEpoch`, bumped at every entry and every fill pass): a repin or an
+  A -> B -> A inside one yield retires the earlier pass instead of running a second widen beside it.
+- `isCoarsePointerDevice` reads ONE shared `MediaQueryList`, created on first use (every bubble asked
+  `matchMedia` in its `$state` initialiser, ~3 ms of the open in all).
+- Known cost, not removed: the widen's `scrollTop` writes (one per step, up to four for the 60-row
+  window) can cancel a fling already under way on iOS. They touch the reader only when the reader has
+  started scrolling inside the ~200 ms of the widen.
 
 **What the instrument now does.** `--profile-salon`, and the `click` of every tap is recorded: the
 report carries `click>rail`, `click>salon msgs` and `click>reopen msgs`. Navigation starts on the

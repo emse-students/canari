@@ -31,6 +31,8 @@
     entryWindowStart,
     resolveRenderWindow,
     fillStart,
+    ENTRY_OVERFLOW_PX,
+    OLDER_TRIGGER_PX,
     stepWindowOlder,
     widenedEntryStart,
     widenStepStart,
@@ -351,8 +353,6 @@
    * paint is not one long task over a whole page of rows (339-635 ms for 56-200 rows on a Mi 9T).
    */
   const ENTRY_FIRST_FRAME_GROUPS = 20;
-  /** The overflow an entered pane must have, so that a scroll event (and so pagination) can happen. */
-  const ENTRY_OVERFLOW_PX = 40;
   /** Least number of groups one fill pass adds when the first frame left the pane short. */
   const ENTRY_MIN_FILL_STEP = 4;
   /** Groups the post-reveal widen adds per task (about 45 ms of mount on the Mi 9T). */
@@ -387,6 +387,8 @@
   let _isMobile = $state(false);
   let _composerFocused = $state(false);
   let lastConversationKey = $state('');
+  /** Counts entries (fill passes): only the latest entry's fill and widen may go on. */
+  let entryEpoch = 0;
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
@@ -461,34 +463,45 @@
    * network), then pin to the latest message.
    */
   async function fillViewportThenPin() {
+    // ONE ENTRY AT A TIME: a repin or an A -> B -> A inside one await starts a second pass, and the
+    // first must not go on alongside it (nor start its own widen).
+    const epoch = ++entryEpoch;
     for (let i = 0; i < 4 && chatContainer && renderWindow.start > 0; i++) {
-      if (chatContainer.scrollHeight > chatContainer.clientHeight + ENTRY_OVERFLOW_PX) break;
       // THE FIRST FRAME'S OWN MEASURE SAYS HOW MANY ROWS ARE MISSING (`fillStart`), not a jump to the
       // full entry size: a thread of one-line rows fills the pane with the 20 of the first frame, and
-      // mounting 60 hidden rows for the 40 px of overflow a scroll needs was ONE 260 ms task on the
-      // Mi 9T (2026-11-02 profile). `widenEntryWindow` brings the rest AFTER the reveal. The last
+      // mounting 60 hidden rows was ONE 260 ms task on the Mi 9T (2026-11-02 profile).
+      // `widenEntryWindow` brings the rest AFTER the reveal. The overflow aimed for clears the
+      // pagination trigger (`OLDER_TRIGGER_PX`), so the reveal's scroll does not paginate. The last
       // pass keeps the full-entry jump so the loop converges whatever the measure says.
       const fullEntryStart = entryWindowStart(messageGroups.length, INITIAL_RENDER_GROUPS);
+      const rows = chatContainer.querySelectorAll<HTMLElement>('[id^="msg-"]');
+      const first = rows.item(0)?.getBoundingClientRect();
+      const last = rows.item(rows.length - 1)?.getBoundingClientRect();
+      const style = getComputedStyle(chatContainer);
       const measured = fillStart(
         renderWindow.start,
-        messageGroups.length - renderWindow.start,
-        chatContainer.scrollHeight,
+        rows.length,
+        first && last ? last.bottom - first.top : 0,
+        (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0),
         chatContainer.clientHeight,
         ENTRY_OVERFLOW_PX,
         ENTRY_MIN_FILL_STEP,
         fullEntryStart
       );
+      if (measured === null) break;
       windowStart =
         i === 3
           ? renderWindow.start > fullEntryStart
             ? fullEntryStart
             : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP)
-          : (measured ?? renderWindow.start);
+          : measured;
       await tick();
+      if (epoch !== entryEpoch) return;
     }
+    if (epoch !== entryEpoch) return;
     scrollToBottomSettled(() => {
       entering = false;
-      void widenEntryWindow();
+      void widenEntryWindow(epoch);
     });
   }
 
@@ -500,9 +513,9 @@
    * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
    * lowers the start: a reader who has paginated further up keeps their wider window.
    */
-  async function widenEntryWindow() {
-    const key = lastConversationKey;
+  async function widenEntryWindow(epoch: number) {
     await yieldToMainThread();
+    if (epoch !== entryEpoch) return;
     const target = widenedEntryStart(
       renderWindow.start,
       messageGroups.length,
@@ -512,7 +525,7 @@
     // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no task
     // of the widen is longer than that many rows whatever the thread holds.
     for (;;) {
-      if (key !== lastConversationKey || !chatContainer) return;
+      if (epoch !== entryEpoch || !chatContainer) return;
       const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
       if (next === null) return;
       const prevHeight = chatContainer.scrollHeight;
@@ -520,7 +533,7 @@
       Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
       windowStart = next;
       await tick();
-      if (key !== lastConversationKey || !chatContainer) return;
+      if (epoch !== entryEpoch || !chatContainer) return;
       chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
       await yieldToMainThread();
     }
@@ -579,7 +592,7 @@
     isNearBottom = isPinnedToBottom(chatContainer);
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
-    if (chatContainer.scrollTop < 80) {
+    if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
       void loadOlderGroups();
     }
   }
@@ -1113,6 +1126,8 @@
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
         // entry never flashes the top of the conversation before teleporting down.
         entering = true;
+        // A new entry retires the previous one's fill and widen at once, not a tick later.
+        entryEpoch++;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
       } else if (hasNewMessage) {
