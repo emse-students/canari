@@ -54,7 +54,7 @@ to an account. So biometric templates exist for members who never opted in and f
 | Risk | Source | Likelihood | Severity | Level |
 | --- | --- | --- | --- | --- |
 | R1 - biometric templates of non-members processed with no basis and no information | Immich clusters every face | certain (by design) | high (Art. 9 data, no control for the person) | **HIGH** |
-| R2 - templates survive withdrawal | unlinking or deleting an account clears the link only; the Immich person and its embeddings remain | certain (by design) | high | **HIGH** |
+| R2 - templates survive withdrawal | MiGallery's own templates are erased (sealed references and their ledger, matches, consent, link, crops); in Immich only the linked person's name and birth date are cleared, and the Immich person, its faces and embeddings, the per-photograph face store and the backups remain | certain (by design) | high | **HIGH** (the Immich part) |
 | R3 - a member's photo set or face data seen by members it was not shared with | access control on person and face data **to audit** | to assess | high | **to assess** |
 | R4 - a selfie kept after the link | its deletion is done by the browser only; a closed tab leaves it | possible | medium | medium |
 | R5 - identification of a person across the whole archive (tracking attendance) | any clustering view | possible for anyone with Immich admin access | high | medium |
@@ -87,16 +87,19 @@ Ordered by the risk they lower. Each is a backlog line
    no one can be followed across the archive without a reference of them. Until it is built, inform
    at events (a notice where photographs are taken) and publish a page for non-members with an
    objection channel (`bureau@mitv.fr`).
-2. **R2** - unlinking and account deletion delete the member's reference; under option C there is
-   no person to delete, and Immich's own faces, persons and embeddings are deleted when recognition
-   leaves it.
+2. **R2** - DONE for MiGallery's own data: withdrawal, unlink, relink and account deletion erase the
+   member's sealed references and their ledger, matches, consent, link and crops
+   (`face-erasure.ts:97-122`, `face-references.ts:130-146`), and clear the linked Immich person's name
+   and birth date (`face-erasure.ts:359-363`). **OPEN**: Immich's person, faces and embeddings, the
+   per-photograph face store (`data/faces.db`) and the backups are not erased; Immich's are deleted
+   when recognition leaves it (option C).
 3. **R3** - audit who can read person and face data through MiGallery's routes and its Immich
    proxy; restrict to the person concerned and to whom they granted.
 4. **R4** - delete the selfie server-side (or never store it as an asset).
 5. **Proof of consent** - the controller keeps, per member, the consent text version and date.
 6. **Terms page** - correct MiGallery's `/cgu`: sign-in is MiConnect (not the school's CAS
    directly); the selfie deletion is immediate in the browser, not "within 24 h" server-side;
-   withdrawal does not yet delete the template; the "last updated" date must be a fixed date, not
+   the withdrawal erasure (what it does and does not reach) and the face reference ledger must be described; the "last updated" date must be a fixed date, not
    today's; Google Fonts is loaded (visitor IPs to Google) - self-host the font.
 7. **Processor agreement** between MiTV and Rootz (Art. 28).
 8. **Retention** for photographs and for the `logs` table.
