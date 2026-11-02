@@ -23,6 +23,7 @@
   import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
   import { slide } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
+  import { toggleMyRepost } from '$lib/posts/sharePost';
 
   /**
    * Props for the PostActionsMenu component.
@@ -208,7 +209,7 @@
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
   const ROW =
-    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors';
+    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors [&>svg]:shrink-0';
 </script>
 
 {#if isLoggedIn}
@@ -255,6 +256,24 @@
           <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
+
+        {#if repostedByMe || canRepost}
+          <button
+            type="button"
+            role="menuitem"
+            data-repost-row
+            onclick={() =>
+              pick(() => {
+                void toggleMyRepost(postId, repostedByMe).then((reposted) =>
+                  onRepostChange(reposted)
+                );
+              })}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Repeat2 size={16} strokeWidth={2.5} />
+            {repostedByMe ? m.post_repost_undo_label() : m.post_repost_label()}
+          </button>
+        {/if}
 
         {#if canRepublish}
           <button
