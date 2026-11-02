@@ -8,8 +8,9 @@ starting point, not as today's state. Anyone can log in to MiConnect with a Scho
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 
-> **Proposed reform (2026-11-02, partly decided):** one governing home BDE per association, list and
-> institution, separate from its audience - amending D22 and D23. See
+> **Proposed reform (2026-11-02, partly decided):** audience and dependencies as two independent axes -
+> one parent per association, list and institution, one governor per space - amending D22, D23,
+> D33 and D39. See
 > [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
 
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)

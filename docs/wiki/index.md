@@ -104,7 +104,7 @@
 - [CAS callback without state](infrastructure/cas-callback-state.md) — school CAS sign-ins that return with no code: pinned cookie, setting, measurements
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels
 - [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
-- [Spaces, audiences and attachment (proposal)](spaces-and-audiences-reform.md) — PROPOSAL 2026-11-02, for the owner to decide: one governing home BDE per association, reach kept separate and inside the home's spaces, BDE bounds per formation x campus, the migration as a plan, the work packages and the owner's open questions
+- [Spaces, audiences and dependencies (proposal)](spaces-and-audiences-reform.md) — PROPOSAL 2026-11-02, for the owner to decide: audience and dependencies as two independent axes with two admin panels, one parent per entity and one governor per space, institution-only item narrowing, events validated per governor slice, the work packages and the owner's open questions
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
