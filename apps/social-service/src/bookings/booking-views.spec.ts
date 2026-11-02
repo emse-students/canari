@@ -6,6 +6,8 @@ import {
   type ParticipantRow,
 } from './booking-views';
 
+import { DELETED_ACCOUNT } from '../internal/account-erasure';
+
 const HOLDER = 'h'.repeat(64);
 const IN = 'i'.repeat(64);
 const OUT = 'o'.repeat(64);
@@ -69,6 +71,29 @@ describe('bookingView', () => {
     const view = bookingView(booking, people, 'people', 'occupied', IN);
     expect(view).toMatchObject({ holderName: 'Holder', participantNames: ['In'], mine: true });
     expect(view).not.toHaveProperty('answers');
+  });
+
+  it('lists the OTHER people of the booking, never the viewer', () => {
+    const view = (rows: ParticipantRow[], viewer: string) =>
+      bookingView(booking, rows, 'people', 'occupied', viewer).others;
+    expect(view(people, HOLDER)).toEqual([{ id: IN, name: 'In' }]);
+    expect(view(people, IN)).toEqual([{ id: HOLDER, name: 'Holder' }]);
+    const two = [...people, { ...people[0], userId: 'x', userName: 'Two' }];
+    expect(view(two, IN)).toEqual([
+      { id: HOLDER, name: 'Holder' },
+      { id: 'x', name: 'Two' },
+    ]);
+    expect(view([], HOLDER)).toEqual([]);
+  });
+
+  it('sends an empty id for every erased account, so they share no key', () => {
+    const erased = [
+      { ...people[0], userId: DELETED_ACCOUNT, userName: 'Gone' },
+      { ...people[0], userId: DELETED_ACCOUNT + ':2', userName: 'Gone too' },
+    ];
+    expect(
+      bookingView(booking, erased, 'people', 'occupied', HOLDER).others?.map((o) => o.id)
+    ).toEqual(['', '']);
   });
 
   it.each([

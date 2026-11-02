@@ -1,10 +1,10 @@
 /**
  * MEMBER REPOSTS WITH THE AUTHOR'S CONSENT (WP-F6), against a REAL PostgreSQL - migrations 071,
- * 072, 073, 078 and 121 applied.
+ * 072, 073, 078, 121 and 123 applied.
  *
  * Drives `MemberRepostsService` through a real TypeORM connection, so the reader predicate
  * (`memberRepostReachesUserSql`), the newly-reached rule, the consent lock and the cascades are
- * PostgreSQL's. Notifications are recorded; Redis is a stub.
+ * PostgreSQL's. Notifications are recorded; Redis is a stub holding real feed-cache keys.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
@@ -18,7 +18,17 @@ import { join } from 'path';
 import { DataSource } from 'typeorm';
 import { HttpException } from '@nestjs/common';
 import type { RedisService } from '../common/redis/redis.service';
-import { postVisibleToViewerSql } from '../spaces/reader-spaces';
+import {
+  ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+  NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
+  postVisibleToViewerSql,
+} from '../spaces/reader-spaces';
+import { postListCacheKey } from './post-list-cache';
+import {
+  FOLLOWED_REPOST_AT,
+  MEMBER_REPOSTED_BY_FOLLOWED_SQL,
+  followedRepostLateralSql,
+} from './republished-feed-sql';
 import { MemberRepost } from './entities/member-repost.entity';
 import { bellRowShownSql } from './post-notifications.service';
 import { memberRepostContext } from './member-repost-card';
@@ -54,7 +64,7 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
   b2: { campus: 'saint-etienne', formation: 'ICM' },
   // An author who withdraws consent account-wide.
   nc: { campus: 'saint-etienne', formation: 'ICM' },
-  // A Gardanne author rp cannot see; also the officer of the members-only A2.
+  // A Gardanne author rp cannot see; also the officer of A2, A3 and A4.
   gx: { campus: 'gardanne', formation: 'ISMIN' },
   // Authors in NO space, whom rp sees ONLY as their accepted follower: one removes rp, rp unfollows
   // the other.
@@ -63,7 +73,12 @@ const USERS: Record<string, { campus: string | null; formation: string | null }>
 };
 
 const A1 = '00000000-0000-4000-8000-0000000c0001'; // association, reaches ICM Saint-Etienne (071)
-const A2 = '00000000-0000-4000-8000-0000000c0002'; // created after 071: no rule, its members only
+// Created after 071 with ONE rule (ISMIN x saint-etienne) that reaches nobody in the cast: rp sees
+// its posts only as a member.
+const A2 = '00000000-0000-4000-8000-0000000c0002';
+// MEMBERS-ONLY (no rule) and a LIST: their posts are never repostable (owner, 2026-11-02).
+const A3 = '00000000-0000-4000-8000-0000000c0003';
+const A4 = '00000000-0000-4000-8000-0000000c0004'; // a list addressing ICM x saint-etienne
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -94,6 +109,11 @@ const POSTS: {
   { id: P(17), authorId: 'gz', announced: true }, // the reposter unfollows the author
   { id: P(18), authorId: 'gx', associationId: A2, announced: true }, // the reposter leaves A2
   { id: P(19), authorId: 'au', announced: true }, // the reposter is muted
+  { id: P(20), authorId: 'au', announced: true }, // told once, ever; the cache of its audience only
+  { id: P(21), authorId: 'au', announced: true }, // told before migration 123 (the backfill)
+  { id: P(22), authorId: 'gx', associationId: A3, announced: true }, // members-only association
+  { id: P(23), authorId: 'gx', associationId: A4, announced: true }, // a list
+  { id: P(24), authorId: 'au', associationId: A1, announced: false }, // reposted, then announced
 ];
 
 function codeOf(err: unknown): string | undefined {
@@ -112,11 +132,30 @@ async function refusedWith(promise: Promise<unknown>): Promise<HttpException> {
   throw new Error('expected a refusal');
 }
 
-maybe('member reposts against PostgreSQL (migration 121)', () => {
+maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
   const schema = `member_repost_it_${Math.random().toString(36).slice(2, 10)}`;
   let ds: DataSource;
   let reposts: MemberRepostsService;
   const told: { type: string; postId: string; actorId: string; recipientIds: string[] }[] = [];
+  /** The feed cache: one page per reader below, rebuilt before each test. */
+  const cache = new Set<string>();
+  const CACHED_READERS = ['rp', 'fo', 'fp', 'fa', 'sb', 'sr', 'out', 'au'];
+  const pageOf = (viewer: string) =>
+    postListCacheKey({
+      feed: 'followed',
+      viewerUserId: viewer,
+      promo: undefined,
+      formation: undefined,
+      limit: 20,
+      offset: 0,
+      kind: undefined,
+      singlePhotos: false,
+    });
+  const cachedReaders = () => CACHED_READERS.filter((u) => cache.has(pageOf(u)));
+  const refillCache = () => {
+    cache.clear();
+    for (const u of CACHED_READERS) cache.add(pageOf(u));
+  };
 
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
@@ -177,11 +216,25 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
     await q(migration('121_member_reposts.sql'));
     // A replay is a no-op (the deploy ledger may run it twice).
     await q(migration('121_member_reposts.sql'));
-    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2')`, [A2]);
+    await q(migration('123_member_repost_notices.sql'));
+    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A2', 'a2'), ($2, 'A3', 'a3')`, [
+      A2,
+      A3,
+    ]);
+    await q(`INSERT INTO associations (id, name, slug, type) VALUES ($1, 'A4', 'a4', 'list')`, [
+      A4,
+    ]);
     await q(
-      `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
-      [A2]
+      `INSERT INTO association_audiences ("associationId", formation, campus)
+         VALUES ($1, 'ISMIN', 'saint-etienne'), ($2, 'ICM', 'saint-etienne')`,
+      [A2, A4]
     );
+    for (const a of [A2, A3, A4]) {
+      await q(
+        `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'gx'), ($1, 'rp')`,
+        [a]
+      );
+    }
     for (const [id, u] of Object.entries(USERS)) {
       await q(
         `INSERT INTO users (id, campus, cursus, "firstName", "lastName") VALUES ($1, $2, $3, $1, 'X')`,
@@ -222,7 +275,13 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
         return Promise.resolve(recipientIds.length);
       },
     } as unknown as PostNotificationsService;
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService;
+    const redis = {
+      deleteMatching: (_match: string, select: (key: string) => boolean) => {
+        const doomed = [...cache].filter(select);
+        for (const key of doomed) cache.delete(key);
+        return Promise.resolve(doomed.length);
+      },
+    } as unknown as RedisService;
     reposts = new MemberRepostsService(ds.getRepository(MemberRepost), notifications, redis);
   });
 
@@ -234,6 +293,7 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
 
   beforeEach(() => {
     told.length = 0;
+    refillCache();
   });
 
   describe('the refusals, D38b re-run for a member reposter', () => {
@@ -260,12 +320,15 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
       expect(codeOf(err)).toBe(MEMBER_REPOST_CODES.ownPost);
     });
 
-    it('a block works BOTH WAYS: the reposter blocked the author, or the author the reposter', async () => {
+    it('a block works BOTH WAYS, and its refusal is the 404 of a post not seen - it names no block', async () => {
+      const unseen = await refusedWith(reposts.repost(P(4), 'rp'));
       for (const id of [P(6), P(7)]) {
         const err = await refusedWith(reposts.repost(id, 'rp'));
-        expect(err.getStatus()).toBe(403);
-        expect(codeOf(err)).toBe(MEMBER_REPOST_CODES.blocked);
+        expect(err.getStatus()).toBe(404);
+        expect(err.getResponse()).toEqual(unseen.getResponse());
+        expect(await repostRows(id)).toEqual([]);
       }
+      expect(Object.values(MEMBER_REPOST_CODES)).not.toContain('MEMBER_REPOST_BLOCKED');
     });
 
     it("a post whose override says no is refused (403), and the author's other posts are not", async () => {
@@ -287,8 +350,9 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
       expect(await sees(P(1), 'out')).toBe(false);
       // "Tout" stays a feed of spaces (decision 5): the repost does not open it there.
       expect(await sees(P(1), 'fo', false)).toBe(false);
+      // The answer carries no count of who was reached.
+      expect(result).toEqual({ postId: P(1) });
       // ONLY THE NEWLY REACHED ARE TOLD (D38): not fa, who already saw it as au's follower.
-      expect(result.newlyReached).toBe(1);
       expect(told).toEqual([
         expect.objectContaining({
           type: MEMBER_REPOST_NOTIFICATION,
@@ -322,6 +386,9 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
         P(17),
         P(18),
         P(19),
+        P(20),
+        P(21),
+        P(24),
       ]);
       const forFo = await memberRepostContext(ds.manager, [P(1)], 'fo');
       expect(forFo.reposters.get(P(1))).toEqual([{ id: 'rp', name: 'rp X' }]);
@@ -355,8 +422,7 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
     });
 
     it('before its first announce, the newly reached are told at the repost (the sweep tells followers only)', async () => {
-      const result = await reposts.repost(P(13), 'rp');
-      expect(result.newlyReached).toBe(1);
+      await reposts.repost(P(13), 'rp');
       expect(told[0]?.recipientIds).toEqual(['fo']);
     });
   });
@@ -364,17 +430,16 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
   describe("a repost of an ENTITY post (Q2): no consent, the reposter's accepted followers only", () => {
     it('announced: widens to the accepted followers, tells the newly reached', async () => {
       expect(await sees(P(11), 'fo')).toBe(false);
-      const result = await reposts.repost(P(11), 'rp');
+      await reposts.repost(P(11), 'rp');
       expect(await sees(P(11), 'fo')).toBe(true);
       expect(await sees(P(11), 'fp')).toBe(false);
       // An entity post's author is no block's subject: sb blocked au, the officer, and still sees it.
       expect(await sees(P(11), 'sb')).toBe(true);
-      expect(result.newlyReached).toBe(3); // fo, fa, sb
+      expect(told[0]?.recipientIds).toEqual(['fa', 'fo', 'sb']);
     });
 
     it('not yet announced: tells nobody now - the sweep will tell everyone who sees it', async () => {
-      const result = await reposts.repost(P(12), 'rp');
-      expect(result.newlyReached).toBe(0);
+      await reposts.repost(P(12), 'rp');
       expect(told).toEqual([]);
       expect(await sees(P(12), 'fo')).toBe(true);
     });
@@ -420,6 +485,190 @@ maybe('member reposts against PostgreSQL (migration 121)', () => {
 
     it('only the author sets a post override (404 for anyone else)', async () => {
       expect((await refusedWith(reposts.setPostConsent(P(15), 'rp', true))).getStatus()).toBe(404);
+    });
+  });
+
+  describe('NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)', () => {
+    it('the write refuses it with the 404 of a post not seen, and writes nothing', async () => {
+      const unseen = await refusedWith(reposts.repost(P(4), 'rp'));
+      for (const id of [P(22), P(23)]) {
+        // rp sees it first-hand, as a member: only the rule refuses it.
+        expect(await sees(id, 'rp')).toBe(true);
+        const err = await refusedWith(reposts.repost(id, 'rp'));
+        expect(err.getStatus()).toBe(404);
+        expect(err.getResponse()).toEqual(unseen.getResponse());
+        expect(await repostRows(id)).toEqual([]);
+      }
+      expect(told).toEqual([]);
+    });
+
+    it('the card offers no repost of it', async () => {
+      const forRp = await memberRepostContext(ds.manager, [P(18), P(22), P(23)], 'rp');
+      expect([...forRp.repostable]).toEqual([P(18)]);
+    });
+
+    it('a row written before the decision carries nothing, names nobody, and is not deleted', async () => {
+      await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'rp'), ($2, 'rp')`, [
+        P(22),
+        P(23),
+      ]);
+      for (const id of [P(22), P(23)]) {
+        expect(await sees(id, 'fo')).toBe(false);
+        expect(
+          (await memberRepostContext(ds.manager, [id], 'fo')).reposters.get(id)
+        ).toBeUndefined();
+        expect(await repostRows(id)).toEqual(['rp']);
+      }
+      // Read from state: the members-only association addresses a space, and the row carries again.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
+        [A3]
+      );
+      expect(await sees(P(22), 'fo')).toBe(true);
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A3]);
+      expect(await sees(P(22), 'fo')).toBe(false);
+      await q(`DELETE FROM member_reposts WHERE "postId" = ANY($1::uuid[])`, [[P(22), P(23)]]);
+    });
+
+    it("the write's newly-reached set repeats the rule, so a rule removed after its check pushes nobody", async () => {
+      const newly = async (postId: string): Promise<string[]> =>
+        ((await q(NEWLY_REACHED_BY_MEMBER_REPOST_SQL, [postId, 'rp'])) as { id: string }[])
+          .map((r) => r.id)
+          .sort();
+      // The list, and the members-only association: nobody, though fo, fa and sb cannot see them.
+      expect(await newly(P(22))).toEqual([]);
+      expect(await newly(P(23))).toEqual([]);
+      // Read from state in the SAME statement as the "before": with a rule, A3's post reaches them.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
+        [A3]
+      );
+      expect(await newly(P(22))).toEqual(['fa', 'fo', 'sb']);
+      // The officer removes it - as if between the write's refusal check and this read.
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [A3]);
+      expect(await newly(P(22))).toEqual([]);
+    });
+  });
+
+  describe("TOLD ONCE, EVER, AND ONLY THE AUDIENCE'S FEEDS DROPPED", () => {
+    async function notices(postId: string): Promise<string[]> {
+      const rows: { recipientId: string }[] = await q(
+        `SELECT "recipientId" FROM member_repost_notices WHERE "postId" = $1 ORDER BY 1`,
+        [postId]
+      );
+      return rows.map((r) => r.recipientId);
+    }
+
+    it('repost, take back, repost: the newly reached are told the first time only', async () => {
+      await reposts.repost(P(20), 'rp');
+      expect(told.map((t) => t.recipientIds)).toEqual([['fo']]);
+      expect(await notices(P(20))).toEqual(['fo']);
+      for (let i = 0; i < 3; i++) {
+        await reposts.unrepost(P(20), 'rp');
+        await reposts.repost(P(20), 'rp');
+      }
+      // fo is newly reached on every loop - the visibility came back - and told nothing again.
+      expect(told).toHaveLength(1);
+      expect(await notices(P(20))).toEqual(['fo']);
+    });
+
+    it("a repost drops the reposter's and their ACCEPTED followers' pages, and nobody else's", async () => {
+      await reposts.unrepost(P(20), 'rp');
+      expect(cachedReaders()).toEqual(['fp', 'out', 'au']); // rp and fo, fa, sb, sr dropped
+      refillCache();
+      await reposts.repost(P(20), 'rp');
+      expect(cachedReaders()).toEqual(['fp', 'out', 'au']);
+    });
+
+    it("a consent change drops the author's pages and the removed reposts' audiences only", async () => {
+      await reposts.setPostConsent(P(20), 'au', false);
+      // au (their consent on the card) and rp's audience, whose repost went.
+      expect(cachedReaders()).toEqual(['fp', 'out']);
+      refillCache();
+      await reposts.setPostConsent(P(20), 'au', null);
+      // Nothing removed: the author and their accepted followers (fa), whose offer reads the consent.
+      expect(cachedReaders()).toEqual(['rp', 'fo', 'fp', 'sb', 'sr', 'out']);
+    });
+
+    it('a reader told before migration 123 is recorded by its backfill, and not told again', async () => {
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES ('fo', $1, $2, 'rp')`,
+        [MEMBER_REPOST_NOTIFICATION, P(21)]
+      );
+      await q(migration('123_member_repost_notices.sql'));
+      // A replay writes nothing more.
+      await q(migration('123_member_repost_notices.sql'));
+      expect(await notices(P(21))).toEqual(['fo']);
+      await reposts.repost(P(21), 'rp');
+      expect(told).toEqual([]);
+      expect(await sees(P(21), 'fo')).toBe(true);
+    });
+
+    it('an entity post reposted BEFORE its announcement: the sweep records whom the repost reached, and no later repost tells them again', async () => {
+      await reposts.repost(P(24), 'rp');
+      expect(told).toEqual([]); // not announced yet: the sweep will tell them
+      // The sweep, as `PostAnnounceScheduler.stampAndReadRecipients` runs it: ONE statement.
+      const audience: { id: string }[] = await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [
+        P(24),
+      ]);
+      const recipientIds = audience.map((r) => r.id);
+      expect(recipientIds).toEqual(expect.arrayContaining(['fo', 'fa', 'sb', 'rp']));
+      await q(`UPDATE posts SET "feedNotifiedAt" = now() WHERE id = $1`, [P(24)]);
+      // Only the readers who see it through the repost alone; rp sees it first-hand.
+      expect(await notices(P(24))).toEqual(['fa', 'fo', 'sb']);
+      // A take-back makes them newly reached again; the ledger keeps them from a second notice.
+      await reposts.unrepost(P(24), 'rp');
+      await reposts.repost(P(24), 'rp');
+      expect(told).toEqual([]);
+      // A replay of the sweep's statement adds nothing.
+      await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [P(24)]);
+      expect(await notices(P(24))).toEqual(['fa', 'fo', 'sb']);
+    });
+
+    it('the sweep records EXACTLY the readers it hands the bell through a repost: with the repost gone, neither', async () => {
+      // The take-back the two-statement version could interleave: whatever the statement's snapshot
+      // holds, the recipients and the ledger agree, because they are read from the same one.
+      await q(`UPDATE posts SET "feedNotifiedAt" = NULL WHERE id = $1`, [P(24)]);
+      await q(`DELETE FROM member_repost_notices WHERE "postId" = $1`, [P(24)]);
+      await reposts.unrepost(P(24), 'rp');
+      const without: { id: string }[] = await q(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, [
+        P(24),
+      ]);
+      expect(without.map((r) => r.id)).not.toContain('fo');
+      expect(await notices(P(24))).toEqual([]);
+      await reposts.repost(P(24), 'rp');
+      const withRepost: { id: string }[] = await q(
+        ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+        [P(24)]
+      );
+      const reachedThroughRepost = withRepost
+        .map((r) => r.id)
+        .filter((id) => !without.some((w) => w.id === id))
+        .sort();
+      expect(reachedThroughRepost).toEqual(['fa', 'fo', 'sb']);
+      expect(await notices(P(24))).toEqual(reachedThroughRepost);
+      await q(`UPDATE posts SET "feedNotifiedAt" = now() WHERE id = $1`, [P(24)]);
+    });
+
+    it('Suivis admits and places a row at the latest followed repost that still carries it, in ONE lateral', async () => {
+      const followed = async (reader: string): Promise<{ id: string; at: Date }[]> =>
+        q(
+          `SELECT posts.id, ${FOLLOWED_REPOST_AT} AS at FROM posts
+             ${followedRepostLateralSql('$1', '$2')}
+            WHERE ${MEMBER_REPOSTED_BY_FOLLOWED_SQL} AND posts.id = $3`,
+          [['rp'], reader, P(21)]
+        );
+      const repostedAt: { repostedAt: Date }[] = await q(
+        `SELECT "repostedAt" FROM member_reposts WHERE "postId" = $1 AND "reposterId" = 'rp'`,
+        [P(21)]
+      );
+      expect(await followed('fo')).toEqual([{ id: P(21), at: repostedAt[0].repostedAt }]);
+      // The reposter blocked sr: the repost carries nothing to sr, so it neither admits nor dates.
+      expect(await followed('sr')).toEqual([]);
+      // A muted reposter carries nothing.
+      await q(`INSERT INTO user_moderation ("userId", "isMuted") VALUES ('rp', true)`);
+      expect(await followed('fo')).toEqual([]);
+      await q(`DELETE FROM user_moderation WHERE "userId" = 'rp'`);
     });
   });
 

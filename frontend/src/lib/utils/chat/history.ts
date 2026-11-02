@@ -628,6 +628,9 @@ export function replayedStoredRow(
     ...(editProof && edited && !deleted ? { editProof } : {}),
     ...(deleteProof && deleted ? { deleteProof } : {}),
     ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+    // THIS DEVICE's record of a reel's 410 (RC-6): a local fact no bundle carries, so it is read
+    // from `prev` - even when `base` drops a marked copy - or a replay would revert the tombstone.
+    ...(prev?.mediaPurgedAt ? { mediaPurgedAt: prev.mediaPurgedAt } : {}),
   };
 }
 

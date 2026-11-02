@@ -3,7 +3,10 @@
 import { Logger } from '@nestjs/common';
 import { PostAnnounceScheduler } from './post-announce.scheduler';
 import type { Post } from './entities/post.entity';
-import { announceRecipientsSql } from '../spaces/reader-spaces';
+import {
+  ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+  announceRecipientsSql,
+} from '../spaces/reader-spaces';
 
 /**
  * NOBODY WAS TOLD ABOUT A POST, and these pin the things that decide who now is.
@@ -75,7 +78,8 @@ describe('PostAnnounceScheduler', () => {
     }) =>
     (sql: string) => {
       if (sql === announceRecipientsSql(true)) return (opts.followers ?? []).map((id) => ({ id }));
-      if (sql === announceRecipientsSql(false)) return (opts.audience ?? []).map((id) => ({ id }));
+      if (sql === ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL)
+        return (opts.audience ?? []).map((id) => ({ id }));
       if (sql.includes('FROM associations'))
         return opts.associationName === null
           ? []
@@ -178,7 +182,7 @@ describe('PostAnnounceScheduler', () => {
     });
     expect(batches[0].recipientIds).toEqual(['u1', 'u2', 'a1']);
     // ASKED ABOUT THIS POST, not about the feed: the recipients are the post's own readers (WP6b).
-    const asked = queries.find((q) => q.sql === announceRecipientsSql(false));
+    const asked = queries.find((q) => q.sql === ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL);
     expect(asked?.params).toEqual(['p1']);
   });
 
@@ -192,6 +196,30 @@ describe('PostAnnounceScheduler', () => {
     });
   });
 
+  it('reads the recipients and records the told-once ledger in ONE statement, so a take-back cannot split them', async () => {
+    const post: Row = { id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'hello' };
+    await scheduler([post], tables({ audience: ['u1', 'u2'] })).announcePosts();
+    // The stamp is the transaction's `update`; the ONLY statement after it, before the send, is the
+    // one that both reads the audience and writes the ledger - no second statement on a later
+    // snapshot that a concurrent `unrepost` could slip in front of.
+    const beforeSend = queries.slice(
+      0,
+      queries.findIndex((q) => q.sql.startsWith('SELECT name, "logoUrl"'))
+    );
+    expect(beforeSend).toEqual([
+      { sql: ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL, params: ['p1'] },
+    ]);
+    expect(ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL).toMatch(
+      /^WITH ann_recipients AS \([\s\S]*INSERT INTO member_repost_notices[\s\S]*JOIN ann_recipients[\s\S]*SELECT id FROM ann_recipients$/
+    );
+  });
+
+  it('asks no ledger share of a personal post, whose followers see it first-hand', async () => {
+    const post: Row = { id: 'p2', authorId: 'a2', markdown: 'coucou' };
+    await scheduler([post], tables({ followers: ['f1'] })).announcePosts();
+    expect(queries.some((q) => q.sql.includes('member_repost_notices'))).toBe(false);
+  });
+
   it('tells only the followers about a personal post', async () => {
     const post: Row = { id: 'p2', authorId: 'a2', markdown: 'coucou' };
     await scheduler([post], tables({ audience: ['u1', 'u2'], followers: ['f1'] })).announcePosts();
@@ -202,7 +230,9 @@ describe('PostAnnounceScheduler', () => {
     // The audience query must not even run: a personal post is not an announcement to the school.
     // Its followers are asked through the SAME visibility predicate, so a follower outside the
     // author's spaces is not told about a post they would get a 404 for.
-    expect(queries.some((q) => q.sql === announceRecipientsSql(false))).toBe(false);
+    expect(queries.some((q) => q.sql === ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL)).toBe(
+      false
+    );
     expect(queries.find((q) => q.sql === announceRecipientsSql(true))?.params).toEqual(['p2']);
   });
 
