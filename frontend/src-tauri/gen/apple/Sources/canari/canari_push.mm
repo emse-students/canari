@@ -556,6 +556,17 @@ void CanariMirrorPushStateToAppGroup(void) {
   for (NSString *name in @[ kMlsBinFileName, kPushContextFileName, kGraineSeedsFileName ]) {
     NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
     if (data == nil) {
+      // NO STATE IN THE SLOT MEANS NO COPY FOR THE EXTENSION (2026-11-02, one state per account):
+      // a copy kept here would be the previous account's, and the extension would decrypt the new
+      // account's pushes with it. The other inputs keep their copy, as before.
+      if ([name isEqualToString:kMlsBinFileName]) {
+        NSError *rmErr = nil;
+        NSURL *copy = [container URLByAppendingPathComponent:name];
+        if (![[NSFileManager defaultManager] removeItemAtURL:copy error:&rmErr] &&
+            !(rmErr.domain == NSCocoaErrorDomain && rmErr.code == NSFileNoSuchFileError)) {
+          NSLog(@"[CanariPush] mirror: stale %@ copy not removed: %@", name, CanariErrorReason(rmErr));
+        }
+      }
       continue;
     }
     NSError *err = nil;

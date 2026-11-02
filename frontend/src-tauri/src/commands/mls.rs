@@ -103,19 +103,20 @@ pub(crate) async fn initialiser_mls(
             // rewritten. A fresh start is the path that needs it most: without it, the new state's
             // first save would land on the previous account's file. A refusal stops the sign-in with
             // nothing moved and nothing written (`null` code: it proves nothing about the bytes).
+            // The process is marked warm in the selection's own hold, so a second sign-in cannot
+            // select the slot for its account before this one loads; `install` clears the mark if
+            // this sign-in fails.
             let selection = crate::commands::mls_account_state::select_account_state(
                 &data_dir, &user_id,
             )?;
             // A FRESH START DECIDED WITHOUT SEEING THIS ACCOUNT'S PARKED STATE IS REFUSED. The caller
             // chose "no state" on `mls_state_size`; if the switch has just brought one back, that
             // answer was wrong, and a fresh state saved now would replace it.
-            if encrypted_state.is_none()
-                && state_on_disk != Some(true)
-                && matches!(
-                    selection,
-                    crate::commands::mls_account_state::Selection::Moved { unparked: true, .. }
-                )
-            {
+            if crate::commands::mls_account_state::fresh_start_would_replace_unparked_state(
+                selection,
+                encrypted_state.is_none() && state_on_disk != Some(true),
+                &data_dir,
+            ) {
                 log::error!(
                     "[MLS] a fresh start was asked while this account's parked state was just moved into the slot - refused, nothing sealed over it"
                 );

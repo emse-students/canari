@@ -556,7 +556,7 @@ pub(crate) fn remove_mls_state_held(data_dir: &std::path::Path) -> Result<(), St
 /// record LAST - a removal or a move cut part-way leaves the state WITH the record naming whose it
 /// is, never staged epoch secrets beside no state, nor a state nobody is named for.
 pub(crate) fn mls_state_file_names() -> Vec<String> {
-    let mut names = Vec::with_capacity(11);
+    let mut names = Vec::with_capacity(12);
     for built_from_it in [
         STALE_WELCOME_LEDGER_FILE,
         STAGED_KEY_GROUP_JOIN_FILE,
@@ -566,6 +566,10 @@ pub(crate) fn mls_state_file_names() -> Vec<String> {
         names.push(built_from_it.to_string());
         names.push(format!("{built_from_it}.tmp"));
     }
+    // The temporary an interrupted `write_mls_bin_atomically` leaves (review of #2919): a copy of
+    // the account's state, which must neither outlive a reset nor stay behind in the next account's
+    // slot.
+    names.push("mls.bin.tmp".to_string());
     names.push("mls.bin".to_string());
     names.push(MLS_STATE_OWNER_FILE.to_string());
     names.push(format!("{MLS_STATE_OWNER_FILE}.tmp"));

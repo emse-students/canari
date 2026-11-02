@@ -111,6 +111,13 @@ fn with_ledger<R>(
     // Released when `lock` is dropped, on every return path.
     crate::commands::push::lock_exclusive(&lock)
         .map_err(|e| format!("lock {LEDGER_LOCK_FILE}: {e}"))?;
+    // AND THE STATE FILES' LOCK, taken second (review of #2919): the ledger is one of the files an
+    // account switch parks with its state (`mls_account_state.rs`), and a write landing between a
+    // park and its unpark put one account's ledger into the other's slot. Held across the read and
+    // the rename, so a switch sees the ledger before or after this edit, never during.
+    let _state_files = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     let path = data_dir.join(LEDGER_FILE);
     let mut map = match std::fs::read(&path) {
         Ok(bytes) => read_ledger(key, &bytes).unwrap_or_else(|why| {
@@ -422,8 +429,12 @@ pub fn prepare_key_group_join(
     staged.extend_from_slice(&sealed);
     let staged_path = data_dir.join(STAGED_STATE_FILE);
     let staged_tmp = data_dir.join(format!("{STAGED_STATE_FILE}.tmp"));
-    let written = std::fs::write(&staged_tmp, &staged)
-        .and_then(|()| std::fs::rename(&staged_tmp, &staged_path));
+    // Under the state files' lock, like every file an account switch parks with the state.
+    let written = match crate::concurrency::mls_bin_write_lock().lock() {
+        Ok(_state_files) => std::fs::write(&staged_tmp, &staged)
+            .and_then(|()| std::fs::rename(&staged_tmp, &staged_path)),
+        Err(_) => Err(std::io::Error::other("mls_bin write lock poisoned")),
+    };
     if let Err(e) = written {
         log::error!("[KG_PUSH_JOIN] post-join state not staged for group={short}: {e}");
         return refusal("stage-failed", Refusal::Defer);
@@ -447,10 +458,18 @@ pub fn prepare_key_group_join(
 /// An error here is a [`Settlement::Lost`]: the server holds a leaf this device has no secrets for.
 pub fn finish_key_group_join(data_dir: &Path) -> Result<usize, String> {
     let staged_path = data_dir.join(STAGED_STATE_FILE);
-    let staged = std::fs::read(&staged_path).map_err(|e| format!("read staged state: {e}"));
-    if let Err(e) = std::fs::remove_file(&staged_path) {
-        log::warn!("[KG_PUSH_JOIN] staged state not deleted after the finish: {e}");
-    }
+    // Read and removed under the state files' lock: a switch parks the stage with its state, so
+    // these two steps must see one slot. The install below takes the lock again for its own swap.
+    let staged = {
+        let _state_files = crate::concurrency::mls_bin_write_lock()
+            .lock()
+            .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        let staged = std::fs::read(&staged_path).map_err(|e| format!("read staged state: {e}"));
+        if let Err(e) = std::fs::remove_file(&staged_path) {
+            log::warn!("[KG_PUSH_JOIN] staged state not deleted after the finish: {e}");
+        }
+        staged
+    };
     let staged = staged?;
     if staged.len() <= 32 {
         return Err("staged state is truncated".into());
