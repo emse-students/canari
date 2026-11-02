@@ -10,17 +10,19 @@ comptent.
 
 ---
 
-## 1. Les onze droits
+## 1. Les treize droits
 
 | Droit (case a cocher) | Ce qu'il permet |
 |---|---|
 | **Publier au nom de l'asso** | Publier dans le fil d'actualites sous le nom de l'association au lieu du sien, et modifier ou supprimer les publications faites en son nom |
 | **Proposer des evenements** | Deposer un evenement dans l'agenda (il part en validation au BDE), puis le modifier ou le supprimer. Recoit les notifications de validation ou de refus |
-| **Gerer les membres** | Ajouter, retirer, renommer et reordonner les membres, **cocher leurs droits**, changer le logo et le profil de l'association, gerer les tags, les cotisants et les paliers de cotisation, exporter la liste |
+| **Gerer les membres** | Ajouter, retirer, renommer et reordonner les membres, **cocher leurs droits**, gerer les tags, les cotisants et les paliers de cotisation, exporter la liste, archiver l'association |
+| **Modifier le profil** | Changer le nom, la description, la presentation, le logo, la couleur, la categorie et l'adresse de contact de l'association (pour une liste : sa promo et son second theme ; son association parente se choisit a la creation et seul l'administrateur de la plateforme la change). Depuis le 2 novembre 2026, ce droit est separe de *Gerer les membres* ; tous ceux qui avaient *Gerer les membres* l'ont recu |
 | **Gerer les documents** | Acceder au coffre de documents prives de l'association, y deposer et y supprimer des fichiers, ecrire les notes internes |
 | **Gerer les formulaires** | Creer, modifier et supprimer les formulaires, et lire les reponses recues |
 | **Gerer la boutique et les cotisations** | La boutique, les achats et leurs exports, la delegation de paiement vers une association parente, les reglages de cotisation |
 | **Gerer les partenariats** | Creer et modifier les cartes de partenariat, leurs codes et leurs icones, voir qui a reclame un code |
+| **Gerer les reservations** | Creer, modifier et supprimer les espaces reservables (salles, creneaux) et gerer leurs reservations |
 | **Gerer le compte bancaire** | Relier le compte Lydia de l'association et renseigner sa cle privee. **C'est le droit le plus sensible : il decide ou part l'argent** |
 | **Valider les evenements** | *BDE uniquement.* Valider, modifier ou supprimer les evenements de **toutes** les associations, et deposer un evenement deja valide |
 | **Gerer les associations** | *BDE uniquement.* Creer **et supprimer** une association, et administrer **n'importe quelle** association sans en etre membre (voir section 3) |
@@ -85,15 +87,16 @@ L'onglet n'apparait que si vous avez le droit correspondant.
 
 | Onglet | Droit necessaire |
 |---|---|
-| **Profil** | visible par tous les membres ; modifiable avec *Gerer les membres* |
+| **Profil** | visible par tous les membres ; modifiable avec *Modifier le profil* |
 | **Membres** | Gerer les membres |
 | **Documents** | Gerer les documents |
 | **Formulaires** | Gerer les formulaires |
 | **Achats**, **Delegation** | Gerer la boutique et les cotisations |
-| **Cotisations** | Gerer les membres **ou** Gerer la boutique et les cotisations |
+| **Cotisations** | Gerer les membres (les cotisants) **ou** Gerer la boutique et les cotisations (les reglages) |
 | **Paiements** | Gerer le compte bancaire **ou** Gerer la boutique et les cotisations |
 | **Partenariats** | Gerer les partenariats |
-| **Danger** | administrateur de la plateforme uniquement |
+| **Reservations** | Gerer les reservations |
+| **Danger** | Gerer les membres (archiver) ; la suppression reste a l'administrateur de la plateforme et au BDE *Gerer les associations* |
 
 Les droits *Publier au nom de l'asso* et *Proposer des evenements* ne correspondent a aucun onglet :
 ils agissent dans le fil d'actualites et dans l'agenda.

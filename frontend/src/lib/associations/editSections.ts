@@ -16,6 +16,7 @@ import {
   mayActOnAssociation,
   type Association,
 } from '$lib/associations/api';
+import { mayWriteFields, PROFILE_FORM_FIELDS } from '$lib/associations/updateFields';
 
 /** The section keys, in hub order. `republications` keeps its name: old notifications link to it. */
 export const EDIT_SECTIONS = [
@@ -50,6 +51,12 @@ export function parseEditSection(value: string | null | undefined): EditSection 
 
 /** The rights the sections gate on, gathered once. */
 export interface EditRights {
+  /**
+   * Whether the profile section's controls are editable: every field the form sends is writable
+   * (`UPDATE_FIELD_RIGHTS`, all `EDIT_PROFILE`). The section itself opens for everyone, read-only
+   * without it.
+   */
+  profile: boolean;
   members: boolean;
   documents: boolean;
   products: boolean;
@@ -60,7 +67,9 @@ export interface EditRights {
   proposals: boolean;
   payoutAccount: boolean;
   audience: boolean;
-  /** The delete card inside `danger`; archiving is `members`. */
+  /** Archiving, the `danger` section's reversible card: the `archived` field's right. */
+  archive: boolean;
+  /** The delete card inside `danger`. */
   delete: boolean;
 }
 
@@ -74,6 +83,7 @@ export function editRights(
 ): EditRights {
   const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, ctx);
   return {
+    profile: mayWriteFields(PROFILE_FORM_FIELDS, ctx),
     members: may(AssociationPermissionFlag.MANAGE_MEMBERS),
     documents: may(AssociationPermissionFlag.MANAGE_DOCUMENTS),
     products: may(AssociationPermissionFlag.MANAGE_PRODUCTS),
@@ -84,12 +94,16 @@ export function editRights(
     proposals:
       may(AssociationPermissionFlag.POST_AS_ASSO) || may(AssociationPermissionFlag.PROPOSE_EVENT),
     payoutAccount: may(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT),
+    archive: mayWriteFields(['archived'], ctx),
     audience: ctx.isGlobalAdmin || (ctx.isSuperAdmin && assoType !== 'institution'),
     delete: ctx.isGlobalAdmin || ctx.isSuperAdmin,
   };
 }
 
-/** Whether `section` may be drawn for a reader holding `rights`. `profile` is the one open to all. */
+/**
+ * Whether `section` may be drawn for a reader holding `rights`. `profile` is the one open to all:
+ * drawn read-only, and editable on `rights.profile`.
+ */
 export function mayOpenEditSection(section: EditSection, rights: EditRights): boolean {
   switch (section) {
     case 'profile':
@@ -116,7 +130,7 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
     case 'audience':
       return rights.audience;
     case 'danger':
-      return rights.members;
+      return rights.archive;
   }
 }
 
@@ -155,7 +169,7 @@ export const LIST_EDIT_SECTIONS: readonly EditSection[] = EDIT_SECTIONS_BY_KIND.
 
 /** The association rights each section is gated on, mirroring `mayOpenEditSection`. */
 const SECTION_FLAGS: Record<EditSection, readonly AssociationPermissionFlag[]> = {
-  profile: [],
+  profile: [AssociationPermissionFlag.EDIT_PROFILE],
   members: [AssociationPermissionFlag.MANAGE_MEMBERS],
   payments: [
     AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,

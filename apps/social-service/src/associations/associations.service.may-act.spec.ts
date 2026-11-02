@@ -150,6 +150,17 @@ describe('AssociationsService.mayAct', () => {
     await expect(service.mayAct('bde', 'asso1', MANAGE_MEMBERS)).resolves.toBe(true);
   });
 
+  // EDIT_PROFILE (2026-11-02) is administration like the MANAGE_MEMBERS it was split from, so the
+  // super-admin tier keeps editing the profiles of the associations it governs.
+  it('grants a BDE super-admin EDIT_PROFILE on an association it governs', async () => {
+    const { service } = makeService([
+      { userId: 'bde', associationId: 'bde-asso', permissions: MANAGE_ASSO, governs: ['asso1'] },
+    ]);
+    await expect(
+      service.mayAct('bde', 'asso1', AssociationPermissionFlag.EDIT_PROFILE)
+    ).resolves.toBe(true);
+  });
+
   // WP6c step 2: MANAGE_ASSO reaches the associations the BDE's space governs, and no others.
   it('refuses a BDE super-admin of ANOTHER space', async () => {
     const { service } = makeService([

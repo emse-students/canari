@@ -6,7 +6,6 @@
     uploadAssociationLogo,
     deleteAssociationLogo,
     associationSecondLogoSrc,
-    listAssociations,
     listAssociationCategories,
     type Association,
     type AssociationCategory,
@@ -19,7 +18,6 @@
   import { wordingFor } from '$lib/associations/kindWording';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -28,7 +26,7 @@
 
   interface Props {
     asso: Association;
-    /** Whether the caller may edit the profile and logo (MANAGE_MEMBERS / global admin). */
+    /** Whether the caller may edit the profile and logo (`EDIT_PROFILE`, `editRights().profile`). */
     canEdit: boolean;
     /** Called with the refreshed association after any successful mutation. */
     onUpdated: (a: Association) => void;
@@ -50,17 +48,12 @@
   /** Managed thematic categories, loaded once for the picker. */
   let categoryOptions = $state<AssociationCategory[]>([]);
 
-  // ── List-only fields (campaign year, parent association, optional 2nd theme) ──
+  // ── List-only fields (campaign year, optional 2nd theme) ──
+  // The parent association is NOT here: it is platform-admin only (`UPDATE_FIELD_RIGHTS`), chosen at
+  // creation, so a form any profile editor submits never carries it.
   const isList = initial.type === 'list';
   let editPromo = $state<number | ''>(initial.promo ?? '');
-  let editParentId = $state(initial.parentAssociationId ?? '');
   let editName2 = $state(initial.name2 ?? '');
-  /** Candidate parent associations (regular associations only), for the select. */
-  let parentOptions = $state<Association[]>([]);
-  const parentPickerOptions = $derived<PickerOption[]>([
-    { value: '', label: m.list_new_parent_none() },
-    ...associationPickerOptions(parentOptions),
-  ]);
   const categoryPickerOptions = $derived<PickerOption[]>([
     { value: '', label: m.asso_edit_category_none() },
     ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
@@ -68,18 +61,12 @@
 
   onMount(async () => {
     // Load the thematic categories for regular associations (used by the poster generator).
-    if (!isList) {
-      try {
-        categoryOptions = await listAssociationCategories();
-      } catch {
-        categoryOptions = [];
-      }
-      return;
-    }
+    if (isList) return;
     try {
-      parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
-    } catch {
-      parentOptions = [];
+      categoryOptions = await listAssociationCategories();
+    } catch (err) {
+      console.warn('[ASSO] categories unavailable for the profile picker', err);
+      categoryOptions = [];
     }
   });
 
@@ -126,7 +113,6 @@
         ...(isList
           ? {
               promo: editPromo === '' ? null : Number(editPromo),
-              parentAssociationId: editParentId || null,
               name2: editName2.trim() || null,
             }
           : { categoryId: editCategoryId || null }),
@@ -137,7 +123,6 @@
       editContactEmail = updated.contactEmail ?? '';
       editCategoryId = updated.categoryId ?? '';
       editPromo = updated.promo ?? '';
-      editParentId = updated.parentAssociationId ?? '';
       editName2 = updated.name2 ?? '';
       onUpdated(updated);
       saveSuccess = true;
@@ -249,19 +234,6 @@
       bind:value={editPromo}
       placeholder="2027"
     />
-    <div>
-      <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
-        {m.list_new_parent_label()}
-      </label>
-      <Picker
-        id="edit-list-parent"
-        value={editParentId}
-        options={parentPickerOptions}
-        onValueChange={(v) => (editParentId = v)}
-        label={m.list_new_parent_label()}
-        variant="field"
-      />
-    </div>
   {/if}
 
   <Input

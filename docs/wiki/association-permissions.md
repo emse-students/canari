@@ -1,7 +1,7 @@
 # Association permissions
 
-> What each of the twelve `AssociationPermissionFlag` bits actually gates, measured from its call
-> sites on 2026-08-26 - not from its comment. A flag with no call site is either dead or missing its
+> What each of the thirteen `AssociationPermissionFlag` bits actually gates, measured from its call
+> sites on 2026-08-26 (`EDIT_PROFILE`, bit 12, added 2026-11-02) - not from its comment. A flag with no call site is either dead or missing its
 > check, and the enum cannot tell you which.
 >
 > User-facing version, in French: [docs/user-guide/permissions-association.md](../user-guide/permissions-association.md).
@@ -81,15 +81,15 @@ calls it and adds **no second axis of its own**.
 
 ## What each flag gates, measured
 
-54 routes declare a flag through `@SetMetadata(PERM_FLAG_KEY, ...)` +
-`GlobalAdminOrAssociationRoleGuard`. **Six of the twelve flags declare none** - they are enforced
+53 routes declare a flag through `@SetMetadata(PERM_FLAG_KEY, ...)` +
+`GlobalAdminOrAssociationRoleGuard`. **Six of the thirteen flags declare none** - they are enforced
 elsewhere, which is exactly why the audit had to read call sites rather than count decorators.
 
 | Flag | Bit | Guard-declared routes | What it actually gates |
 | --- | --- | --- | --- |
 | `POST_AS_ASSO` | 0 | 0 | `canPostAs` - publishing a post in the association's name (`posts.controller.ts`); **editing and deleting** those posts (`PostsService.assertMayManage`, and the `canManage` field it is served through); and seeing rejected events on its calendar |
 | `PROPOSE_EVENT` | 1 | 2 | `POST :id/events`, `GET :id/link-candidates`; also `PATCH`/`DELETE :id/events/:eventId` inline, and it is the audience of every event-action notification |
-| `MANAGE_MEMBERS` | 2 | 14 | members (add / rename / remove / reorder), the logo, `PATCH :id` itself, tags, cotisants and cotisation tiers, plus the exports. Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
+| `MANAGE_MEMBERS` | 2 | 11 | members (add / rename / remove / reorder), tags, cotisants and cotisation tiers, plus the exports; and the `archived` field of `PATCH :id` (`UPDATE_FIELD_RIGHTS`). Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
@@ -99,6 +99,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
 | `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module (the bookings chantier, WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
+| `EDIT_PROFILE` | 12 | 2 | the public profile: its fields of `PATCH :id` (below) and the two logo routes (`POST`/`DELETE :id/logo`, both slots). In the admin preset, offered to every kind (a list and an institution have a profile; `writablePermissions` keeps it), inherited by a BDE super-admin, and backfilled to every `MANAGE_MEMBERS` holder by migration 124 |
 
 **Deploy order and old clients for `MANAGE_BOOKINGS` (bit 11).** The admin preset is now 3871. An OLD server
 validates `permissions` against its own `ALL_PERMISSION_FLAGS` (at most 2047) and answers 400 to a mask above it,
@@ -106,6 +107,54 @@ so a new client talking to a server not yet deployed fails to add an admin - the
 `MANAGE_PARTNERSHIPS`: deploy the server first. Conversely an admin added from an OLD app keeps the old preset
 (1823, no bit 2048) and lacks the right; that is not fixed by a second backfill but by WP-B1 of the bookings
 chantier, which is where the right first has an effect.
+
+### `EDIT_PROFILE` (bit 12): the profile is not the roster, and `PATCH :id` is not one flag (owner, 2026-11-02)
+
+*"C'est un peu debile d'avoir la permission 'gerer les membres' qui permet de gerer le profil."*
+`PATCH :id` and the logo routes were gated on `MANAGE_MEMBERS`, so the only way to let someone fix
+the association's description was to let them hand out every right. The logo routes are
+`EDIT_PROFILE` now, and **`PATCH :id` asks each field's own right**: its guard admits a member, the
+association's super-admin or the platform admin, and `UPDATE_FIELD_RIGHTS`
+(`association-update-rights.ts`, the ONE table) names the right of every field. A body asks the union
+of its fields' rights; one missing refuses the whole write with a typed 403
+(`ASSOCIATION_FIELD_RIGHT_MISSING` with `right` and `fields`, or
+`ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY`), logged, so nothing is half saved.
+
+| Field | Right |
+| --- | --- |
+| `name`, `description`, `bioMarkdown`, `logoUrl`, `color`, `categoryId`, `contactEmail`; a list's `promo`, `name2`, `logoMediaId2` | `EDIT_PROFILE` |
+| `archived` | `MANAGE_MEMBERS` - ending the active life is the administrator's act, the Danger panel's, not a profile edit |
+| `cotisationEnabled`, `cotisationMode`, `cotisationExpiresAt` | `MANAGE_PRODUCTS` (D5) - alone now: a holder of it was offered the settings and then refused at the old `MANAGE_MEMBERS` guard |
+| `documentQuotaBytes` | the platform administrator alone - a typed refusal, logged at ERROR, where it used to be dropped silently |
+| `parentAssociationId` (a list's parent) | the platform administrator alone: it is a statement about ANOTHER association, set at creation. Any member manager could rewrite it before; the list profile form no longer sends it |
+
+The client draws from the same table (`frontend/src/lib/associations/updateFields.ts`:
+`editRights().profile` is `mayWriteFields(PROFILE_FORM_FIELDS)`, `archive` is `['archived']`), and
+`updateFields.test.ts` reads the server file and fails on any difference. Nothing roster-related was
+ever in that body: tags, cotisants and tiers are their own routes and stay `MANAGE_MEMBERS`.
+
+**Nobody lost a right**: migration 124 ORs bit 12 into every `association_members` row holding bit 2,
+held for the owner (`-- canari:hold-for-owner`, its approval line in
+`infrastructure/migration-approvals.txt`, merged by his hand). Proof:
+`associations.controller.edit-profile.spec.ts` runs the real guard and controller over a member's
+bitmask (an `EDIT_PROFILE` holder edits and is refused the archive; a `MANAGE_MEMBERS`-only holder is
+refused the profile and the logos and may archive; a `MANAGE_PRODUCTS`-only holder saves the
+cotisation settings; the quota and the parent are refused to every flag and accepted from the platform
+admin), and `edit-profile-migration.integration.spec.ts` runs the migration twice against PostgreSQL.
+
+**Deploy order and old clients.** `ALL_CORE_FLAGS` is 7455 and the admin preset, with the payout
+account, 7967. An old server answers 400 to a mask above 4095, so **the server deploys before the
+client**, as for `MANAGE_BOOKINGS`: a new app talking to a server not yet deployed fails to add an
+admin with the new preset, and nothing else (the profile it saves carries no new field). **A client that
+sees a bit it does not know ignores it, and keeps it**: `mayActOnAssociation` tests one flag at a
+time, the role editor counts only the flags it has a label for, and a checkbox writes `permissions ^
+flag`, so an old app toggling another right sends bit 12 back untouched (and `updateFields.test.ts`
+asserts an unknown bit grants and blocks nothing). Two old-app residues: an OLD app adding an admin
+sends the old preset (no bit 4096), so that admin manages members and cannot edit the profile until
+someone ticks *Modifier le profil* from a current app; and an old app's profile tab draws its
+controls on `MANAGE_MEMBERS`, and a list's form still sends `parentAssociationId`, which is now
+refused - its save answers 403 for anyone but the platform admin until the store update. Neither is
+backfilled again: a second backfill would undo a deliberate untick.
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references
@@ -200,7 +249,7 @@ The association Danger panel offers **archive** and **delete**, and they are not
 
 | control | route | admitted by | reversible |
 | --- | --- | --- | --- |
-| Archive | `PATCH :id { archived }` | `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so the association's own admin, and the super-admin tier | yes |
+| Archive | `PATCH :id { archived }` | `MANAGE_MEMBERS`, the `archived` field's right in `UPDATE_FIELD_RIGHTS` - so the association's own admin, and the super-admin tier | yes |
 | Delete | `DELETE :id` | `GlobalAdminOrBdeSuperAdminGuard` - global admin, or a BDE `MANAGE_ASSO` holder | **no** |
 
 Until 2026-09-09 the client gated the whole panel on the stricter of the two, so a BDE administrator

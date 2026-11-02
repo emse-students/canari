@@ -676,7 +676,7 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | GET | `/api/associations` | List all associations |
 | GET | `/api/associations/:id` | Get association detail |
 | POST | `/api/associations` | Create association (global admin or BDE `MANAGE_ASSO` flag) |
-| PATCH | `/api/associations/:id` | Update association (admin with `MANAGE_MEMBERS`) |
+| PATCH | `/api/associations/:id` | Update details: each field asks its own right (`UPDATE_FIELD_RIGHTS`: profile `EDIT_PROFILE`, `archived` `MANAGE_MEMBERS`, cotisation `MANAGE_PRODUCTS`, quota and a list's parent the platform admin) - [the field table](../association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02) |
 | GET/PUT/DELETE | `/api/associations/:id/push-mute` | The caller's push mute of one association; `GET /api/associations/me/push-mutes` lists them |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |

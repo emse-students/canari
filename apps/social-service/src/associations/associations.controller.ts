@@ -76,6 +76,11 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import {
+  ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+  ASSOCIATION_FIELD_RIGHT_MISSING,
+  rightsAskedBy,
+} from './association-update-rights';
 import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
@@ -732,7 +737,7 @@ export class AssociationsController {
    * hide the whole Danger panel behind the stricter of its two controls, so a BDE administrator
    * saw neither this nor the archive beside it.
    *
-   * Archiving stays the reversible answer and is a `PATCH` at `MANAGE_MEMBERS`; this is the one
+   * Archiving stays the reversible answer and is a `PATCH { archived }` at `MANAGE_MEMBERS`; this is the one
    * that does not come back, which is why the caller reaches `remove` rather than the service
    * being trusted to identify them.
    *
@@ -757,16 +762,18 @@ export class AssociationsController {
     return this.service.remove(id, userId);
   }
 
-  // ── Global Admin OR Association Admin (MANAGE_MEMBERS) ───────────────────
+  // ── Association details: each field asks its own right (UPDATE_FIELD_RIGHTS) ──
 
   /**
-   * Updates association details.
-   * `documentQuotaBytes` is silently ignored unless the caller is a global admin.
-   * Cotisation config fields (`cotisationEnabled`/`cotisationMode`/`cotisationExpiresAt`) require
-   * MANAGE_PRODUCTS (D5), stricter than this endpoint's baseline MANAGE_MEMBERS. When enabling,
-   * the canonical cotisation product is provisioned/synced (see `provisionCotisationProduct`).
+   * Updates association details. NOT ONE FLAG (owner, 2026-11-02): the guard admits a member, the
+   * association's super-admin or the platform admin, and each field then asks the right
+   * `UPDATE_FIELD_RIGHTS` names for it - `EDIT_PROFILE` for the profile, `MANAGE_MEMBERS` for
+   * `archived`, `MANAGE_PRODUCTS` for the cotisation settings (D5), the platform admin alone for
+   * `documentQuotaBytes` and a list's `parentAssociationId`. A body asks every right its fields
+   * ask; one missing refuses the whole write (403, typed, naming the fields), so nothing is half
+   * saved. When enabling a cotisation, the canonical product is provisioned/synced
+   * (`provisionCotisationProduct`).
    */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
   async update(
@@ -777,28 +784,51 @@ export class AssociationsController {
   ) {
     const patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin) {
-      // Only global admins may adjust document quota
-      delete patch.documentQuotaBytes;
-    }
-
-    const touchesCotisation =
-      patch.cotisationEnabled !== undefined ||
-      patch.cotisationMode !== undefined ||
-      patch.cotisationExpiresAt !== undefined;
-    if (touchesCotisation) {
-      const canManageProducts = await this.service.mayAct(
-        userId,
-        id,
-        AssociationPermissionFlag.MANAGE_PRODUCTS,
-        { isGlobalAdmin }
+    const asked = rightsAskedBy(patch);
+    this.logger.debug(
+      `[ASSO] update ${sanitizeLog(id)} fields=${Object.keys(patch).join(',') || '(none)'}`
+    );
+    if (asked.unknown.length > 0) {
+      // The whitelisting ValidationPipe strips undeclared keys, so this is a DTO field nobody
+      // placed in the table - a defect here, never a client's.
+      this.logger.error(
+        `[PERM] update ${sanitizeLog(id)}: no right for ${asked.unknown.join(',')}`
       );
-      if (!canManageProducts) {
-        throw new ForbiddenException(
-          'MANAGE_PRODUCTS permission required to edit cotisation settings'
+      throw new ForbiddenException({
+        code: ASSOCIATION_FIELD_RIGHT_MISSING,
+        message: `No right is defined for ${asked.unknown.join(', ')}`,
+      });
+    }
+    if (asked.platformAdmin.length > 0 && !isGlobalAdmin) {
+      // No screen sends these to anyone but a platform administrator: a request that does is a
+      // client defect or a hand-made call, and both are worth an accusing line.
+      this.logger.error(
+        `[PERM] update ${sanitizeLog(id)} refused for ${sanitizeLog(userId)}: ${asked.platformAdmin.join(',')} is platform-admin only`
+      );
+      throw new ForbiddenException({
+        code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+        message: `${asked.platformAdmin.join(', ')} may be changed by a platform administrator only`,
+        fields: asked.platformAdmin,
+      });
+    }
+    for (const [flag, fields] of asked.flags) {
+      if (!(await this.service.mayAct(userId, id, flag, { isGlobalAdmin }))) {
+        const name = AssociationPermissionFlag[flag];
+        this.logger.warn(
+          `[PERM] update ${sanitizeLog(id)} refused for ${sanitizeLog(userId)}: ${fields.join(',')} asks ${name}`
         );
+        throw new ForbiddenException({
+          code: ASSOCIATION_FIELD_RIGHT_MISSING,
+          message: `${name} permission required to change ${fields.join(', ')}`,
+          right: name,
+          fields,
+        });
       }
     }
+    if (asked.flags.size === 0 && asked.platformAdmin.length === 0) {
+      throw new BadRequestException('Nothing to update');
+    }
+    const touchesCotisation = asked.flags.has(AssociationPermissionFlag.MANAGE_PRODUCTS);
 
     const updated = await this.service.update(id, patch);
     // A cotisation already enabled on a list or an institution (stored before the rule) stays as it
@@ -819,7 +849,7 @@ export class AssociationsController {
    * the literal `second` is the primary slot: an unknown value must not silently write the other
    * one.
    */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
   @Post(':id/logo')
@@ -843,7 +873,7 @@ export class AssociationsController {
   }
 
   /** Removes a stored logo from an association; `?slot=second` clears the second theme's. */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
   async deleteLogo(

@@ -52,6 +52,7 @@
       { flag: AssociationPermissionFlag.POST_AS_ASSO, label: m.asso_flag_post_as() },
       { flag: AssociationPermissionFlag.PROPOSE_EVENT, label: m.asso_flag_propose_event() },
       { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: m.asso_flag_manage_members() },
+      { flag: AssociationPermissionFlag.EDIT_PROFILE, label: m.asso_flag_edit_profile() },
       { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: m.asso_flag_manage_documents() },
       { flag: AssociationPermissionFlag.MANAGE_FORMS, label: m.asso_flag_manage_forms() },
       { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: m.asso_flag_manage_products() },

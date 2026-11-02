@@ -50,6 +50,32 @@ describe('which sections a reader may open', () => {
     expect(mayOpenEditSection('formulaires', docs)).toBe(false);
   });
 
+  /**
+   * EDIT_PROFILE (owner, 2026-11-02): the profile is editable on its own right, never on
+   * MANAGE_MEMBERS, which used to carry it. The section opens for everyone, read-only without it.
+   */
+  it('makes the profile editable on EDIT_PROFILE alone, never on MANAGE_MEMBERS', () => {
+    const profile = editRights(withFlags(AssociationPermissionFlag.EDIT_PROFILE));
+    expect(profile.profile).toBe(true);
+    expect(profile.members).toBe(false);
+    expect(visibleEditSections(profile)).toEqual(['profile']);
+    const members = editRights(withFlags(AssociationPermissionFlag.MANAGE_MEMBERS));
+    expect(members.profile).toBe(false);
+    expect(mayOpenEditSection('members', members)).toBe(true);
+  });
+
+  it('lets a BDE super-admin edit the profile, as the server grants it', () => {
+    expect(editRights({ ...none, isSuperAdmin: true }).profile).toBe(true);
+    expect(editRights({ ...none, isGlobalAdmin: true }).profile).toBe(true);
+  });
+
+  it('opens the archive on MANAGE_MEMBERS, never on EDIT_PROFILE', () => {
+    const F = AssociationPermissionFlag;
+    expect(editRights(withFlags(F.MANAGE_MEMBERS)).archive).toBe(true);
+    expect(editRights(withFlags(F.EDIT_PROFILE)).archive).toBe(false);
+    expect(mayOpenEditSection('danger', editRights(withFlags(F.EDIT_PROFILE)))).toBe(false);
+  });
+
   it('opens the bookings section on MANAGE_BOOKINGS alone, never on MANAGE_FORMS (D30)', () => {
     const bookings = editRights(withFlags(AssociationPermissionFlag.MANAGE_BOOKINGS));
     expect(visibleEditSections(bookings)).toEqual(['profile', 'reservations']);
@@ -81,7 +107,7 @@ describe('which sections a reader may open', () => {
     ).toBe(true);
   });
 
-  it('gives danger to whoever may archive (members) and the audience to a global admin or BDE star', () => {
+  it('gives danger to whoever may archive and the audience to a global admin or BDE star', () => {
     expect(
       mayOpenEditSection('danger', editRights(withFlags(AssociationPermissionFlag.MANAGE_MEMBERS)))
     ).toBe(true);
@@ -220,9 +246,10 @@ describe('the permissions a kind offers are derived from its sections', () => {
       .filter((v): v is AssociationPermissionFlag => typeof v === 'number')
       .filter((f) => kindOffersFlag(kind, f));
 
-  it('offers a list exactly the seven rights its sections need', () => {
+  it('offers a list exactly the eight rights its sections need', () => {
     expect(offered('list').sort()).toEqual(
       [
+        F.EDIT_PROFILE,
         F.POST_AS_ASSO,
         F.PROPOSE_EVENT,
         F.MANAGE_MEMBERS,

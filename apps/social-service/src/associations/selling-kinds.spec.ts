@@ -18,6 +18,14 @@ describe('selling kinds', () => {
     }
   });
 
+  it('keeps EDIT_PROFILE on every kind: a list and an institution have a profile too', () => {
+    for (const type of ['association', 'list', 'institution']) {
+      expect(writablePermissions(type, F.EDIT_PROFILE | F.MANAGE_PRODUCTS) & F.EDIT_PROFILE).toBe(
+        F.EDIT_PROFILE
+      );
+    }
+  });
+
   it('leaves an association bitmask whole', () => {
     const all = F.MANAGE_PRODUCTS | F.MANAGE_PAYOUT_ACCOUNT | F.MANAGE_MEMBERS;
     expect(writablePermissions('association', all)).toBe(all);
