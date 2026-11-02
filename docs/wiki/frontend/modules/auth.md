@@ -961,7 +961,19 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   be written for** - one upgraded from a build before the owner record, whose state no sign-in of this
   build has opened - is SEEDED once, at start-up before the WebView can resolve an identity
   (`seed_opened_markers`, `lib.rs` setup): the account `push_context.json` names then, the account the
-  previous build last resolved, is marked. Eligibility, never attribution: its load decides.
+  previous build last resolved, is marked. Eligibility, never attribution: its load decides. ONLY the
+  start-up seed reads the push context (round 9): a seed that failed there is accused at ERROR, and the
+  directory created later is created UNSEEDED, said at ERROR - by then a sign-in may have rewritten the
+  push context. **AN ACCEPTED RESIDUE, pre-1.3.0 installs only**: when the previous build last resolved
+  another account than the state's owner (two accounts on one install, the last one never having
+  written a state), the seed marks the wrong account. That account is offered the state once, its key
+  does not open it, and it meets the old-PIN refusal; the state is never attributed, rewritten or lost,
+  and its owner still recovers it. Accepted because nothing older than the owner record says whose the
+  state is, and the alternative - seeding nobody - sets EVERY upgraded install's own user's state aside.
+- **An account whose own state turns out empty or cut is no longer "known"** (round 9): when the state
+  the size query or the selection locates for it (its slot, its parked one) holds no bytes, its marker
+  is removed (`forget_opened_if_own_state_empty_held`) - it would otherwise go on being offered a state
+  of unproven owner, another account's, on the strength of a state it no longer has.
 - **Residues are offered in turn, under names never reused** (rounds 7 and 8):
   `mls_accounts/unproven.counter` only grows and never goes below a name on disk, a cut `.parking`
   included; EVERY name under the unproven stem comes from it - a set-aside, a leftover of a state going
@@ -980,8 +992,11 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   declines.
 - **No move of an unproven state can be split by a crash** (round 8): it is set aside as a park
   (`unproven.residue-<n>.parking`) and brought back as an unpark (`unproven.unparking`), each finished
-  by the next look - `mls.bin` never on one side and its ledgers on the other. The reset journal, the
-  counter and the declined list are written to a flushed `.tmp` renamed into place (`write_durably`).
+  by the next look - `mls.bin` never on one side and its ledgers on the other. **Durable writes, and
+  only these** (`write_durably`: a flushed `.tmp` renamed into place, then the directory flushed on
+  Unix): the reset journal, `unproven.counter`, `unproven.declined` and the opened markers. The moves
+  themselves are renames, made crash-safe by their `.parking`/`.unparking`/`.resetting` journals, not
+  by a flush; `mls.bin` and the owner record keep their own atomic writes (`storage.rs`).
 - **A legacy (pre-v0.11.0) state is re-sealed in memory and written only once it LOADED as this
   account** (round 7, `load_state_with_key` -> `load_resealed_legacy_state`). A legacy blob opens under
   any account's PIN that matches, so an unproven state offered to the wrong account used to be
@@ -1011,18 +1026,34 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   unproven residue it set aside, written BEFORE each of those is done. ONE undo (`undo_reset_held`)
   serves the rollback and crash recovery, and it undoes the journal's own steps (the unproven state,
   the declined entry) BEFORE removing the journal and moving B's state back, so an undo cut anywhere is
-  finished by the next one. **The registry is the PAGE's** (round 8): the commit or rollback lives in
-  the WebView, so a document load (`on_page_load`, `forget_resets_of_ended_page`) releases every reset
-  staged before it - a reload during the server call used to strand the reset, skipped by the settle
-  as in flight and refused when staged again. A `<hash>.resetting` no reset of THIS page owns
-  (`RESETS_IN_FLIGHT`, account names only) was left by a page or process that died mid-reset; the server's
-  answer is not known, so the next look UNDOES IT from its journal - B's state back into the slot it
-  came from (or parked), the unproven state back into the free slot, B off the declined list - after
-  the cut parks and unparks are finished, never removing anything. Round 6 put back only B's state: B
-  stayed declined and the unproven state aside, its owner stranded. If the server had reset the PIN,
-  the restored state fails its load and the account resets again. Removing the account
-  (`remove_account_state`) mid-reset removes `<hash>.resetting`, cancels the reset (a late commit or
-  rollback finds nothing staged) and prunes B's declined entry; the unproven residue stays. The sweep (`sweepState: true`) now has ONE caller, the factory
+  finished by the next one.
+  **A reset is the PAGE's, stamped with its document** (rounds 8 and 9): the commit or rollback lives in
+  the WebView, so `RESETS_IN_FLIGHT` holds `(account, document)` - the document generation `page_ring`
+  moves on at every document start and web content death (`current_document`), with no lock taken in
+  `on_page_load` - and "in flight" means "staged by the CURRENT document". The stage, the commit and the
+  rollback each name their page's document (`thisDocumentGeneration`, `pageGatewaySocket.ts`) and are
+  REFUSED AS A TYPE (`ResetRefusal`: `RESET_NOT_STAGED_BY_THIS_PAGE`, `RESET_NOTHING_SET_APART`) when it
+  is not that page's reset, the page is gone, or nothing is set apart - never logged and answered Ok.
+  Round 8 cleared the registry on a page load instead: a stage still running across the navigation
+  registered after the clear and escaped it, and an old page's late commit after the undo removed B's
+  residues and marker over a restored state.
+  **A reset whose page is gone is settled from the SERVER'S ANSWER, never guessed** (round 9). The
+  stage journals the server's basis - the SHA-256 of B's PIN salt before the ask (`server_basis`) - and
+  answers the page only once its journal is down. A `<hash>.resetting` of a page that is gone:
+  - with a basis, the server MAY have been asked: it waits, and B's sign-in is refused meanwhile (it
+    would start fresh over B's state). The next sign-in flow adopts it before any unlock
+    (`settleUnsettledPinReset` in `startLoginFlow`, `adopt_unsettled_user_mls_reset`) and asks the
+    server (`serverPinSaltFingerprint`: `pin-status` first, since `GET pin-salt` writes for a user with
+    no salt). No PIN, or another salt: the server reset it - COMMIT, and the gate opens in first setup.
+    The same salt: it did not - ROLL BACK. No answer: nothing is guessed, and the next attempt asks
+    again. Round 8 undid every such reset, so a reload AFTER the server's reset sent B back to an old
+    PIN that opens nothing - the loop the reset exists to leave;
+  - with no journal, the server was never asked: the next look UNDOES it - B's state parked (no journal
+    says it came from the slot; B's next sign-in unparks it), nothing else was done yet.
+  Round 6 put back only B's state: B stayed declined and the unproven state aside, its owner stranded.
+  Removing the account (`remove_account_state`) mid-reset removes `<hash>.resetting`, cancels the
+  reset (a late commit or rollback is refused) and prunes B's declined entry; the unproven residue
+  stays. The sweep (`sweepState: true`) now has ONE caller, the factory
   wipe (`deviceReset.ts`).
 - **A revoked device another account still uses loses only the revoked account** (round 6). Account
   B removing "this phone" from another device ran the factory wipe, which took A's parked state,
@@ -1104,9 +1135,14 @@ state offered only to an account a state opened for; a device identity written b
 never offering it, the property of round 8; an upgraded install seeded from its push context; residues
 offered in turn under names never reused; a damaged counter falling back to the disk; a leftover taking
 the counter's next name; an unproven move cut half-way finished whole; a reset cut between its stage and
-the server, before its journal, before its declined entry or in the middle of its undo, undone whole; a
-reset whose page reloaded undone and staged again; removing an account mid-reset removes and cancels the
-reset); `commands/mls.rs` (a legacy state of another identity is never rewritten, and the account's own
+the server, before its journal, before its declined entry (B declined before, and not) or in the middle
+of its undo, undone whole; a reset whose page reloaded after the server's reset committed and staged
+again; a page that is gone settling nothing - its late commit, its rollback, its stage across a
+navigation - and a commit with nothing set apart refused as a type; an account whose own state is empty
+no longer known; the page-load and start-up seed wiring in `lib.rs`; removing an account mid-reset
+removes and cancels the reset); `composables/session/pinReset.test.ts` (an unsettled reset committed on
+no PIN or another salt, rolled back on the same salt, untouched when the server does not answer; the
+salt never asked of a user with no PIN); `commands/mls.rs` (a legacy state of another identity is never rewritten, and the account's own
 still migrates; only an installed state makes an account known; an unproven state under the account's
 older device id recognised as its own);
 `commands/storage.rs` (`save_mls_state` writes only its own account's slot, records the owner of an

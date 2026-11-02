@@ -36,10 +36,10 @@ export async function runPinReset(steps: PinResetSteps): Promise<void> {
     try {
       await steps.rollback();
     } catch (r) {
-      // Not lost: a state set apart that no reset of this process owns is put back at the next
-      // look (`settle_pending_moves_held`).
+      // Not lost: the reset stays journalled, and the next sign-in settles it from the server's
+      // answer - which says the PIN was not reset, so it is put back ({@link settleUnsettledPinReset}).
       steps.log(
-        `[PIN_RESET] ERROR: the local state could not be put back now - it is at the next start: ${String(r)}`
+        `[PIN_RESET] ERROR: the local state could not be put back now - the next sign-in puts it back: ${String(r)}`
       );
     }
     throw e;
@@ -48,4 +48,110 @@ export async function runPinReset(steps: PinResetSteps): Promise<void> {
   steps.log('[PIN_RESET] the server reset the PIN - the gate now asks for a new one');
   await steps.commit();
   steps.log('[PIN_RESET] MLS state wiped - choose a new PIN.');
+}
+
+/**
+ * The fingerprint of a PIN salt as a staged reset journals it: SHA-256, 64 lowercase hex digits. The
+ * salt is the SERVER'S fact the reset changes - `pin-reset` deletes the row that holds it, and a new
+ * PIN chosen since writes a new one - so its fingerprint before the ask, compared with the server's
+ * salt later, says whether the PIN was reset.
+ */
+export async function pinSaltFingerprint(salt: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt))
+  );
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** How the server is reached for {@link serverPinSaltFingerprint}. */
+export interface PinServer {
+  /** The chat-delivery base URL (`deliveryUrl()`). */
+  baseUrl: string;
+  /** A live access token. */
+  token: string;
+  /** Defaults to the global `fetch`. */
+  fetchFn?: typeof fetch;
+}
+
+/**
+ * The fingerprint of `userId`'s PIN salt on the server NOW ({@link pinSaltFingerprint}), or `null`
+ * when the server holds no PIN for it. THROWS when the server does not answer - "unknown" is never
+ * read as either answer.
+ *
+ * `pin-status` FIRST: `GET pin-salt` WRITES for a user with no salt (it creates the placeholder row),
+ * so it is asked only of a user the server says has one.
+ */
+export async function serverPinSaltFingerprint(
+  userId: string,
+  { baseUrl, token, fetchFn = fetch }: PinServer
+): Promise<string | null> {
+  const headers = { Authorization: `Bearer ${token}` };
+  const id = encodeURIComponent(userId);
+  const status = await fetchFn(`${baseUrl}/api/mls/security/pin-status/${id}`, { headers });
+  if (!status.ok) throw new Error(`pin-status answered ${status.status}`);
+  const { registered } = (await status.json()) as { registered: unknown };
+  if (typeof registered !== 'boolean') throw new Error('pin-status answered no registered flag');
+  if (!registered) return null;
+  const res = await fetchFn(`${baseUrl}/api/mls/security/pin-salt/${id}`, { headers });
+  if (!res.ok) throw new Error(`pin-salt answered ${res.status}`);
+  const { salt } = (await res.json()) as { salt: unknown };
+  if (typeof salt !== 'string' || salt.length === 0) throw new Error('pin-salt answered no salt');
+  return pinSaltFingerprint(salt);
+}
+
+/**
+ * The steps of {@link settleUnsettledPinReset}, injected so the decision is tested on its own.
+ */
+export interface UnsettledPinResetSteps {
+  /** Adopts the account's unsettled reset for this page: its server basis, `null` for none. */
+  adopt: () => Promise<string | null>;
+  /** {@link serverPinSaltFingerprint} for the account; throws when the server does not answer. */
+  serverSaltFingerprint: () => Promise<string | null>;
+  /** The server reset the PIN: what was set apart is removed, as the reset's own commit does. */
+  commit: () => Promise<void>;
+  /** The server did not: the stage is undone, so the old PIN still opens the state. */
+  rollback: () => Promise<void>;
+  log: (msg: string) => void;
+}
+
+/** What {@link settleUnsettledPinReset} did. */
+export type UnsettledPinResetOutcome = 'none' | 'committed' | 'rolled_back' | 'unanswered';
+
+/**
+ * SETTLES A "FORGOT PIN" RESET A PAGE THAT IS GONE LEFT UNSETTLED, FROM THE SERVER'S ANSWER (round 9
+ * of the review of #2919), at the start of every sign-in flow. Round 8 undid every such reset - and a
+ * reload AFTER the server reset the PIN sent the account back to an old PIN that opens nothing, the
+ * loop the reset exists to leave.
+ *
+ * - No PIN on the server, or a salt whose fingerprint differs from the one journalled at the stage:
+ *   the server reset the PIN (and a new one may have been chosen since) - COMMIT.
+ * - The same salt: the server did not reset it - ROLL BACK.
+ * - No answer: nothing is guessed. The reset stays adopted, the account's sign-in stays refused
+ *   natively, and the next attempt asks again.
+ */
+export async function settleUnsettledPinReset(
+  steps: UnsettledPinResetSteps
+): Promise<UnsettledPinResetOutcome> {
+  const basis = await steps.adopt();
+  if (basis === null) return 'none';
+  steps.log("[PIN_RESET] a reset left by a page that is gone is settled from the server's answer");
+  let now: string | null;
+  try {
+    now = await steps.serverSaltFingerprint();
+  } catch (e) {
+    steps.log(
+      `[PIN_RESET] ERROR: the server did not say whether the PIN was reset - the reset stays unsettled, and this account's sign-in refused until it answers: ${String(e)}`
+    );
+    return 'unanswered';
+  }
+  if (now === basis) {
+    await steps.rollback();
+    steps.log('[PIN_RESET] the server did not reset the PIN - the local state is put back');
+    return 'rolled_back';
+  }
+  await steps.commit();
+  steps.log(
+    `[PIN_RESET] the server reset the PIN (${now === null ? 'no PIN registered' : 'another salt'}) - the reset is committed, a new PIN is chosen`
+  );
+  return 'committed';
 }

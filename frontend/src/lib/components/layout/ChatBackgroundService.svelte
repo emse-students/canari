@@ -32,7 +32,11 @@
   import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
   import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
-  import { runPinReset } from '$lib/composables/session/pinReset';
+  import {
+    runPinReset,
+    serverPinSaltFingerprint,
+    settleUnsettledPinReset,
+  } from '$lib/composables/session/pinReset';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -497,12 +501,17 @@
    * implementation now, branching on the typed code and never on the message.
    */
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
-    if (code === 'account_deleted') {
-      // An account deleted from this device: nothing to retry and nothing to recover. No salt for a
-      // next try (the account exists nowhere to ask it of) and no state lookup - only the recovery
-      // a previous failure may have offered is withdrawn.
+    if (code === 'account_deleted' || code === 'revoked_device_wipe_owed') {
+      // An account deleted from this device, or a device its owner revoked whose wipe is still owed:
+      // nothing to retry and nothing to recover. No salt for a next try and no state lookup - only
+      // the recovery a previous failure may have offered is withdrawn. Each said as what it is: a
+      // revoked device's account still exists (round 9 of the review of #2919).
       canRecoverPin = false;
-      appendLog('[PIN] No salt and no recovery asked - this account was deleted from this device.');
+      appendLog(
+        code === 'account_deleted'
+          ? '[PIN] No salt and no recovery asked - this account was deleted from this device.'
+          : '[PIN] No salt and no recovery asked - this device was revoked and its wipe is still owed.'
+      );
       return;
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
@@ -1680,6 +1689,9 @@
           return;
         }
         globalSession.userId = savedUser;
+        // BEFORE ANY UNLOCK: a reset a page that is gone left unsettled holds this account's state
+        // set apart, and only the server's answer settles it (round 9 of the review of #2919).
+        await settleUnsettledPinResetOf(savedUser);
 
         // Step 1: check whether biometrics are CONFIGURED (user flag) — P1-A
         // NEVER query the keystore if the user disabled biometrics, even if a leftover key exists.
@@ -2179,6 +2191,32 @@
   }
 
   /**
+   * Settles a "forgot PIN" reset a page that is gone left unsettled, from the server's answer
+   * ({@link settleUnsettledPinReset}). A committed one leaves the account as the reset's own commit
+   * does: no state, no PIN on the server - so the gate opens in first setup. A failure is accused and
+   * leaves the reset unsettled: the account's sign-in is then refused natively, never started fresh
+   * over its state.
+   */
+  async function settleUnsettledPinResetOf(uid: string): Promise<void> {
+    try {
+      const outcome = await settleUnsettledPinReset({
+        adopt: () => globalSession.adoptUnsettledDeviceReset(uid),
+        serverSaltFingerprint: async () =>
+          serverPinSaltFingerprint(uid, { baseUrl: deliveryUrl(), token: await getToken() }),
+        commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
+        rollback: () => globalSession.rollbackDeviceReset(uid),
+        log: appendLog,
+      });
+      if (outcome === 'committed') {
+        globalSession.userId = uid;
+        isFirstPinSetup = true;
+      }
+    } catch (e) {
+      appendLog(`[PIN_RESET] ERROR: the unsettled reset could not be settled: ${String(e)}`);
+    }
+  }
+
+  /**
    * "Forgot PIN" reset: wipes the user's PIN-protected MLS state server-side (keeping
    * the account, posts and community), clears local MLS state, then re-opens the modal
    * in first-setup mode so the user chooses a new PIN. Past encrypted messages are lost.
@@ -2210,7 +2248,16 @@
     let serverReset = false;
     try {
       await runPinReset({
-        stage: () => globalSession.stageDeviceReset(uid),
+        // The server's salt NOW is journalled with the stage, so a page that is gone before it
+        // settled the reset is settled from the server's answer (round 9 of the review of #2919).
+        stage: async () => {
+          const basis = await serverPinSaltFingerprint(uid, {
+            baseUrl: deliveryUrl(),
+            token: await getToken(),
+          });
+          if (basis === null) throw new Error('the server holds no PIN for this account');
+          await globalSession.stageDeviceReset(uid, basis);
+        },
         askServer: async () => {
           // The reset deletes the account's salt; one asked before it can only be stale.
           forgetPinSaltAhead('PIN reset', appendLog);

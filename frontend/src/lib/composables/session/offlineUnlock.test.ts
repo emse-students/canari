@@ -76,7 +76,7 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
     // per-account keys after the wipe had removed them. The refusal must come before every line
     // that opens a store of the account - the landing preview's `getStorage`, the MLS state lookup -
     // and before `getToken`, whose failure is what turns a login into an offline unlock.
-    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(id))');
     expect(refusal).toBeGreaterThan(-1);
     for (const opener of [
       'storageOpen = getStorage(',
@@ -92,13 +92,17 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
 
   it('refuses with its own code and a localized message, inside the try its catch reports from', () => {
     const tryAt = loginImplBody.indexOf('  try {\n');
-    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(id))');
     expect(tryAt).toBeGreaterThan(-1);
     expect(tryAt).toBeLessThan(refusal);
-    expect(loginImplBody).toContain("throw new LoginFailure(\n        'account_deleted',");
     expect(loginImplBody).toContain(
-      'revoked ? m.auth_device_revoked_here() : m.auth_account_deleted_here()'
+      "new LoginFailure('revoked_device_wipe_owed', m.auth_device_revoked_here())"
     );
+    expect(loginImplBody).toContain(
+      "new LoginFailure('account_deleted', m.auth_account_deleted_here())"
+    );
+    // Round 9 of the review of #2919: the reason is read for the id the guard matched.
+    expect(loginImplBody).toContain('wipeReasonOf(wipedHere)');
   });
 });
 

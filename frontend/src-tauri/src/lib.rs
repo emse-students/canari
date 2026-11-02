@@ -59,8 +59,8 @@ use crate::commands::mls::{
     welcome_remis, welcomes_dus,
 };
 use crate::commands::mls_account_state::{
-    commit_user_mls_reset, delete_user_mls_state, mls_other_accounts_present,
-    rollback_user_mls_reset, stage_user_mls_reset,
+    adopt_unsettled_user_mls_reset, commit_user_mls_reset, delete_user_mls_state,
+    mls_other_accounts_present, rollback_user_mls_reset, stage_user_mls_reset,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::nse_outcomes::take_nse_outcomes;
@@ -1658,11 +1658,12 @@ pub fn run() {
             Ok(())
         })
         // A new document holds no gateway socket: whatever the previous page said about ringing a
-        // call itself is void from here (`page_ring`).
+        // call itself is void from here (`page_ring`). The same generation stamps every PIN reset a
+        // page stages, so a reset of a page that is gone is no longer in flight
+        // (`mls_account_state::current_document`) - no lock is taken here.
         .on_page_load(|_webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 page_ring::forget_on_page_load();
-                commands::mls_account_state::forget_resets_of_ended_page();
             }
         })
         .on_window_event(|window, event| {
@@ -1763,6 +1764,7 @@ pub fn run() {
             stage_user_mls_reset,
             commit_user_mls_reset,
             rollback_user_mls_reset,
+            adopt_unsettled_user_mls_reset,
             mls_other_accounts_present,
             delete_user_push_files,
             remove_native_flag,

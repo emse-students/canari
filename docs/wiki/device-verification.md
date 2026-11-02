@@ -1238,7 +1238,11 @@ lines.
    install (or after steps 5-7 below are read: this step leaves A's state where steps 1-4 did not),
    install a build from before the owner record, sign A in, then install the pre-release over it (A's
    `mls.bin`, no `mls.owner`; at the first start expect `the account its push context names is marked
-   as one a state opened for`). Sign in as B, who never signed in on this install, and MISTYPE B's PIN
+   as one a state opened for`, and NEVER `could not be seeded at start-up` nor `is created after
+   start-up`). **Accepted residue, pre-1.3.0 installs only**: if the old build's last sign-in was B's
+   (B used the phone after A and never wrote a state), the seed marks B, and B meets A's state once as
+   the old-PIN refusal - A's state stays whole and A still opens it. Record which account the seed line
+   names when the reading is taken. Sign in as B, who never signed in on this install, and MISTYPE B's PIN
    once before typing it right: expect `the slot's state of UNPROVEN owner set aside as
    unproven.residue-<n>` at B's sign-in, and B's PIN gate is B's
    ordinary one - "Créer mon PIN" when B has no PIN yet, "Déverrouiller" otherwise - which opens with

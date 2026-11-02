@@ -55,6 +55,16 @@ function askDocumentGeneration(invokeFn: Invoke): Promise<number> {
 if (isTauriRuntime()) askDocumentGeneration(invoke);
 
 /**
+ * This document's generation, for a native step that belongs to THIS page and must be refused once
+ * the page is gone - the "forgot PIN" reset's stage, commit and rollback (round 9 of the review of
+ * #2919: a commit of a page that had reloaded removed the account's residues after its reset was
+ * undone). The same answer every statement of this module names.
+ */
+export function thisDocumentGeneration(invokeFn: Invoke = invoke): Promise<number> {
+  return documentGeneration ?? askDocumentGeneration(invokeFn);
+}
+
+/**
  * The statements of this document, in the order they were made: each waits for the one before, so
  * the asynchronous ask of the generation never reorders two of them.
  */

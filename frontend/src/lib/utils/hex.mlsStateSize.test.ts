@@ -4,10 +4,14 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(
 
 let tauri = true;
 vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => tauri }));
+// The document the reset steps name: a page's own generation (`page_ring_document`).
+vi.mock('$lib/services/pageGatewaySocket', () => ({ thisDocumentGeneration: async () => 7 }));
 
 import {
   mlsStateSize,
+  adoptUnsettledMlsReset,
   hasMlsState,
+  MlsResetRefusedError,
   removeMlsState,
   rollbackMlsStateReset,
   stageMlsStateReset,
@@ -110,6 +114,7 @@ describe('hasMlsState', () => {
  * removes the slot whoever it belongs to - account B's reset deleted account A's state.
  */
 describe('the PIN reset of the local MLS state on a phone', () => {
+  const BASIS = 'c'.repeat(64);
   beforeEach(() => {
     tauri = true;
     invoke.mockReset();
@@ -124,24 +129,45 @@ describe('the PIN reset of the local MLS state on a phone', () => {
     invoke.mock.calls.some((c) => (c[1] as { sweepState?: boolean })?.sweepState === true);
 
   it('stage: ends the native session without a sweep, then sets the named account apart', async () => {
-    await stageMlsStateReset('user-b');
+    await stageMlsStateReset('user-b', BASIS);
     const calls = invoke.mock.calls;
     expect(calls.map((c) => c[0])).toEqual(['terminer_session_mls', 'stage_user_mls_reset']);
     expect(calls[0][1]).toMatchObject({ sweepState: false });
-    expect(calls[1][1]).toEqual({ userId: 'user-b' });
+    expect(calls[1][1]).toEqual({ userId: 'user-b', serverBasis: BASIS, document: 7 });
     expect(sweeps()).toBe(false);
   });
 
   it('commit: removes what was set apart, and never sweeps', async () => {
     await removeMlsState('user-b');
     expect(invoke.mock.calls.map((c) => c[0])).toEqual(['commit_user_mls_reset']);
-    expect(invoke.mock.calls[0][1]).toEqual({ userId: 'user-b' });
+    expect(invoke.mock.calls[0][1]).toEqual({ userId: 'user-b', document: 7 });
     expect(sweeps()).toBe(false);
   });
 
   it('rollback: puts the named account back', async () => {
     await rollbackMlsStateReset('user-b');
-    expect(invoke.mock.calls).toEqual([['rollback_user_mls_reset', { userId: 'user-b' }]]);
+    expect(invoke.mock.calls).toEqual([
+      ['rollback_user_mls_reset', { userId: 'user-b', document: 7 }],
+    ]);
+  });
+
+  // Round 9 of the review of #2919: a reset left unsettled by a page that is gone is adopted by this
+  // one, which learns the server basis it was staged under.
+  it('adopt: names this document and answers the basis, or null', async () => {
+    invoke.mockResolvedValueOnce(BASIS).mockResolvedValueOnce(null);
+    expect(await adoptUnsettledMlsReset('user-b')).toBe(BASIS);
+    expect(await adoptUnsettledMlsReset('user-b')).toBeNull();
+    expect(invoke).toHaveBeenCalledWith('adopt_unsettled_user_mls_reset', {
+      userId: 'user-b',
+      document: 7,
+    });
+  });
+
+  it('a native refusal arrives TYPED, with its code - a page that is gone settles nothing', async () => {
+    invoke.mockRejectedValue({ code: 'RESET_NOT_STAGED_BY_THIS_PAGE', message: 'gone' });
+    const refusal = await removeMlsState('user-b').catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(MlsResetRefusedError);
+    expect((refusal as MlsResetRefusedError).code).toBe('RESET_NOT_STAGED_BY_THIS_PAGE');
   });
 
   it('a refused stage or commit propagates - nothing moved is never reported as done', async () => {
@@ -149,13 +175,13 @@ describe('the PIN reset of the local MLS state on a phone', () => {
     invoke.mockImplementation((cmd: string) =>
       cmd === 'terminer_session_mls' ? Promise.resolve(undefined) : Promise.reject(refusal)
     );
-    await expect(stageMlsStateReset('user-b')).rejects.toBe(refusal);
+    await expect(stageMlsStateReset('user-b', BASIS)).rejects.toBe(refusal);
     await expect(removeMlsState('user-b')).rejects.toBe(refusal);
   });
 
   it('the web stages and rolls back nothing', async () => {
     tauri = false;
-    await stageMlsStateReset('user-b');
+    await stageMlsStateReset('user-b', BASIS);
     await rollbackMlsStateReset('user-b');
     expect(invoke).not.toHaveBeenCalled();
   });

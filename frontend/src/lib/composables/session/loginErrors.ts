@@ -109,6 +109,13 @@ export type LoginErrorCode =
    */
   | 'account_deleted'
   /**
+   * The OWNER REVOKED THIS DEVICE and its per-account wipe is still owed (the pending-wipe marker
+   * names this account with the reason `revoked`, round 9 of the review of #2919). The same refusal
+   * as `account_deleted` - no session may re-create what the wipe removes - but the account
+   * EXISTS, so no line may say it was deleted. Lifted by an online sign-in, which enrols a new device.
+   */
+  | 'revoked_device_wipe_owed'
+  /**
    * This device's identity had to be rotated, and the fresh state could not be recorded: ANOTHER
    * TAB of this account wrote the stored state after this login loaded it (the version guard's
    * refusal). Nothing durable was moved - not the stored id, not the server's device row - so the
@@ -261,6 +268,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'account_deleted' ||
+    code === 'revoked_device_wipe_owed' ||
     code === 'state_written_by_another_tab' ||
     isVaultRefusal(code)
   );

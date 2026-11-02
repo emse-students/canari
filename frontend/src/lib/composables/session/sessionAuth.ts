@@ -683,7 +683,8 @@ function loginFailureOfSlotRefusal(reason: unknown): LoginFailure | null {
  */
 export async function stageDeviceResetImpl(
   ctx: SessionContext,
-  userIdToReset: string
+  userIdToReset: string,
+  serverBasis: string
 ): Promise<void> {
   // A SIGNED-OUT SESSION'S FINAL CHECKPOINT LANDS BEFORE THE STAGE, not after it: the reset runs from
   // the PIN gate of the next sign-in, and a write still in flight from the sign-out (48 s measured on
@@ -691,13 +692,22 @@ export async function stageDeviceResetImpl(
   // state. Settles at once when nothing is retiring.
   await ctx.whenMlsRetired();
   const { stageMlsStateReset } = await import('$lib/utils/hex');
-  await stageMlsStateReset(userIdToReset);
+  await stageMlsStateReset(userIdToReset, serverBasis);
 }
 
 /** Undoes {@link stageDeviceResetImpl} when the server did NOT reset the PIN. */
 export async function rollbackDeviceResetImpl(userIdToReset: string): Promise<void> {
   const { rollbackMlsStateReset } = await import('$lib/utils/hex');
   await rollbackMlsStateReset(userIdToReset);
+}
+
+/**
+ * Adopts a "forgot PIN" reset a page that is gone left unsettled (`adoptUnsettledMlsReset`, round 9
+ * of the review of #2919): its server basis, or `null` when there is none.
+ */
+export async function adoptUnsettledDeviceResetImpl(userId: string): Promise<string | null> {
+  const { adoptUnsettledMlsReset } = await import('$lib/utils/hex');
+  return adoptUnsettledMlsReset(userId);
 }
 
 /**
@@ -1384,19 +1394,23 @@ export async function loginImpl(
     // line: the vault and keystore unlocks of a saved user, the PIN gate, a reloaded follower tab.
     // Lifted only by an online sign-in of that subject, which the server allows once the erasure
     // completed (`forgetDeletedAccountOnSignIn`).
-    if (isDeletedAccountHere(ctx.getUserId()) || isDeletedAccountHere(userId.trim())) {
-      // THE SAME REFUSAL FOR A REVOKED DEVICE whose wipe is still owed, told as what it is (round 8 of
-      // the review of #2919): the account exists, this device was removed from it.
-      const revoked = wipeReasonOf(ctx.getUserId() || userId.trim()) === 'revoked';
+    // THE ID THE GUARD MATCHED is the one whose reason is read (round 9 of the review of #2919): the
+    // session's id and the typed one may differ, and reading the reason of the other one named a
+    // revoked device "deleted", or the reverse.
+    const wipedHere = [ctx.getUserId(), userId.trim()].find((id) => isDeletedAccountHere(id));
+    if (wipedHere !== undefined) {
+      // THE SAME REFUSAL FOR A REVOKED DEVICE whose wipe is still owed, told as what it is - by its
+      // own code, so no reader of the code says "deleted" either: the account exists, this device
+      // was removed from it.
+      const revoked = wipeReasonOf(wipedHere) === 'revoked';
       cb.log(
         revoked
-          ? `[LOGIN] this device was revoked for ${ctx.getUserId().slice(0, 8)} and its wipe is still owed - refused, an online sign-in is required`
-          : `[LOGIN] ${ctx.getUserId().slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
+          ? `[LOGIN] this device was revoked for ${wipedHere.slice(0, 8)} and its wipe is still owed - refused, an online sign-in is required`
+          : `[LOGIN] ${wipedHere.slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
       );
-      throw new LoginFailure(
-        'account_deleted',
-        revoked ? m.auth_device_revoked_here() : m.auth_account_deleted_here()
-      );
+      throw revoked
+        ? new LoginFailure('revoked_device_wipe_owed', m.auth_device_revoked_here())
+        : new LoginFailure('account_deleted', m.auth_account_deleted_here());
     }
     const mlsService = ctx.ensureMls();
     loginClient = mlsService;

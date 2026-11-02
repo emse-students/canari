@@ -40,6 +40,7 @@ import {
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
   rollbackDeviceResetImpl,
+  adoptUnsettledDeviceResetImpl,
   stageDeviceResetImpl,
   wipeDeletedAccountImpl,
   releaseDeletedAccountImpl,
@@ -539,7 +540,10 @@ export function useChatSession() {
     processDeviceInvitationsLocally: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       processDeviceInvitationsLocally(ctx, cb),
     /** Step one of the "forgot PIN" reset: sets the account's MLS state apart, before the server is asked. */
-    stageDeviceReset: (userIdToReset: string) => stageDeviceResetImpl(ctx, userIdToReset),
+    stageDeviceReset: (userIdToReset: string, serverBasis: string) =>
+      stageDeviceResetImpl(ctx, userIdToReset, serverBasis),
+    /** Adopts a reset a page that is gone left unsettled, to settle it from the server's answer. */
+    adoptUnsettledDeviceReset: (userId: string) => adoptUnsettledDeviceResetImpl(userId),
     /** Undoes the stage when the server did not reset the PIN. */
     rollbackDeviceReset: (userIdToReset: string) => rollbackDeviceResetImpl(userIdToReset),
     /** Step two of the "forgot PIN" reset, once the server reset the PIN: removes what was set apart. */
