@@ -21,7 +21,7 @@ assessment found one, it says "to audit" and the details went to the controller 
 | Data subjects | (a) members who opted in; (b) members who did not; (c) **people with no account, photographed at events** | - |
 | How a member opts in | uploads a selfie in `/parametres`; if exactly one face is found, their account is linked to that Immich person; the selfie is then deleted by the browser | MiGallery `src/routes/parametres/+page.svelte` |
 | Where | the school's infrastructure (the Immich host), administered with the DSI; offsite copy of the databases on another school VM | [register](register-of-processing.md#7-cross-cutting-hosting-backups-logs) |
-| Retention | photographs: indefinite (stated by the terms); embeddings: until the Immich person is deleted | MiGallery `/cgu` |
+| Retention | photographs: indefinite (stated by the terms); embeddings: Immich's were deleted on 2026-11-01 (lot A8), MiGallery's own live in `data/faces.db` while the photograph exists | MiGallery `/cgu` |
 
 **What face detection does that consent does not cover.** Immich detects and clusters faces on
 EVERY photograph it ingests, before and regardless of any opt-in. The opt-in only LINKS a cluster
@@ -54,7 +54,7 @@ to an account. So biometric templates exist for members who never opted in and f
 | Risk | Source | Likelihood | Severity | Level |
 | --- | --- | --- | --- | --- |
 | R1 - biometric templates of non-members processed with no basis and no information | Immich clusters every face | certain (by design) | high (Art. 9 data, no control for the person) | **HIGH** |
-| R2 - templates survive withdrawal | MiGallery's own templates are erased (sealed references and their ledger, matches, consent, link, crops); in Immich only the linked person's name and birth date are cleared, and the Immich person, its faces and embeddings, the per-photograph face store and the backups remain | certain (by design) | high | **HIGH** (the Immich part) |
+| R2 - templates survive withdrawal | MiGallery's own templates are erased (sealed references and their ledger, matches, consent, link, crops); Immich's persons, faces and embeddings were deleted on 2026-11-01 (lot A8); what remains is the per-photograph face store (`data/faces.db`, tied to no member) and backup residue until 2026-11-15 (host dumps), 2026-11-09 (their offsite copies) and 2026-12-01 (an encrypted copy) | certain (by design) | high | **HIGH** until the residue is gone |
 | R3 - a member's photo set or face data seen by members it was not shared with | access control on person and face data **to audit** | to assess | high | **to assess** |
 | R4 - a selfie kept after the link | its deletion is done by the browser only; a closed tab leaves it | possible | medium | medium |
 | R5 - identification of a person across the whole archive (tracking attendance) | any clustering view | possible for anyone with Immich admin access | high | medium |
@@ -89,10 +89,13 @@ Ordered by the risk they lower. Each is a backlog line
    objection channel (`bureau@mitv.fr`).
 2. **R2** - DONE for MiGallery's own data: withdrawal, unlink, relink and account deletion erase the
    member's sealed references and their ledger, matches, consent, link and crops
-   (`face-erasure.ts:97-122`, `face-references.ts:130-146`), and clear the linked Immich person's name
-   and birth date (`face-erasure.ts:359-363`). **OPEN**: Immich's person, faces and embeddings, the
-   per-photograph face store (`data/faces.db`) and the backups are not erased; Immich's are deleted
-   when recognition leaves it (option C).
+   (`face-erasure.ts:97-122`, `face-references.ts:130-146`), and clear a legacy linked person's name
+   and birth date (`face-erasure.ts:359-363`). Immich's persons, faces and embeddings were DELETED
+   on 2026-11-01 (lot A8: recognition off, rows deleted, tables rewritten with `VACUUM FULL`).
+   **OPEN**: backup residue - Immich's nightly dumps (the last one holding the old data leaves the
+   offsite copy on 2026-11-09 and the host on 2026-11-15) then an encrypted copy deleted on
+   2026-12-01 - and the per-photograph face store (`data/faces.db`), which a member's erasure does
+   not reach.
 3. **R3** - audit who can read person and face data through MiGallery's routes and its Immich
    proxy; restrict to the person concerned and to whom they granted.
 4. **R4** - delete the selfie server-side (or never store it as an asset).
