@@ -44,6 +44,9 @@ class MainActivity : TauriActivity() {
      */
     private var liveWebView: WebView? = null
 
+    /** True while `onBackPressed` re-enters after the page declined the Back (see there). */
+    private var backProbed = false
+
     /**
      * THE HARDWARE BACK PRESS STEPS THE WEBVIEW'S HISTORY, AND WITHOUT THIS LINE NOTHING DECIDED
      * THAT - Chromium did, when it felt like it.
@@ -354,6 +357,31 @@ class MainActivity : TauriActivity() {
      */
     @Deprecated("Called by WryActivity's back callback; the dispatcher has no other hook for the root case")
     override fun onBackPressed() {
+        // THE PAGE GETS A SECOND CHANCE BEFORE THE ACTIVITY LEAVES. Wry calls this only after
+        // `canGoBack()` said no, and Chromium says no for an entry the page pushed with no user
+        // activation behind it - the discard question after a first Back on a take (Mi 9T,
+        // 2026-11-02): the second Back finished the app with a take pending. When the page holds an
+        // overlay it steps its own history (`backForNativeWhenOverlayOpen`); only a `false` answer
+        // lets the activity go. `backProbed` marks the re-entry that follows a `false`.
+        val web = liveWebView
+        if (!backProbed && web != null) {
+            web.evaluateJavascript(
+                "(function(){var f=window.__canariBackFromNative;return typeof f==='function'&&f()===true})()"
+            ) { answer ->
+                if (answer == "true") {
+                    Log.i("MainActivity", "Back taken by the page: an overlay was open")
+                } else {
+                    backProbed = true
+                    try {
+                        @Suppress("DEPRECATION")
+                        onBackPressed()
+                    } finally {
+                        backProbed = false
+                    }
+                }
+            }
+            return
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallForegroundService.running) {
             Log.i("MainActivity", "Back at the root during a call on API ${Build.VERSION.SDK_INT} - moving the task back")
             moveTaskToBack(true)

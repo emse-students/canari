@@ -111,6 +111,28 @@ export function isMobileOverlayLayout(): boolean {
 }
 
 /**
+ * THE NATIVE BACK'S SECOND CHANCE (Mi 9T, `1.6.3-alpha.2`, 2026-11-02). Android's Back is decided by
+ * the WebView's `canGoBack()` BEFORE the page hears of it, and Chromium declines it for an entry the
+ * page pushed with no user activation behind it (a history-manipulation intervention): an overlay
+ * opened from a Back's own handler - the discard question after a first Back on a take - holds such
+ * an entry, so the second Back found `canGoBack() == false` and FINISHED THE ACTIVITY, with no
+ * `popstate` and no log. `MainActivity.onBackPressed` calls this (`window.__canariBackFromNative`)
+ * before giving up: when an overlay of ours is open the page steps its own history, which has no
+ * such rule, and the Back closes the overlay like any other.
+ *
+ * @returns Whether the page took the Back (an overlay is open): false lets the activity leave.
+ */
+export function backForNativeWhenOverlayOpen(): boolean {
+  if (!isBrowser || stack.length === 0) return false;
+  Log.d(
+    'historyOverlay',
+    `native Back with ${stack.length} overlay(s) open - stepping the history`
+  );
+  history.back();
+  return true;
+}
+
+/**
  * Registers a global `popstate` listener. Call once from the root layout.
  * Returns a teardown function.
  *
@@ -141,8 +163,11 @@ export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}):
   };
 
   window.addEventListener('popstate', onPopState);
+  (window as unknown as Record<string, unknown>).__canariBackFromNative =
+    backForNativeWhenOverlayOpen;
   return () => {
     window.removeEventListener('popstate', onPopState);
+    delete (window as unknown as Record<string, unknown>).__canariBackFromNative;
     initialized = false;
     stack.length = 0;
     here = 0;

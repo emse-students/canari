@@ -542,6 +542,34 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
   });
 });
 
+describe('historyOverlayStack - the native Back with an overlay the WebView would not step back from', () => {
+  let stop: () => void = () => {};
+  afterEach(() => {
+    stop();
+    vi.unstubAllGlobals();
+  });
+
+  it('takes the Back when an overlay is open, stepping the history; leaves it otherwise', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const native = (window as unknown as Record<string, () => boolean>).__canariBackFromNative;
+    expect(typeof native).toBe('function');
+    // Nothing open: the Back is the activity's (root, or the page's own router entry).
+    expect(native()).toBe(false);
+    expect(h.index).toBe(0);
+
+    history.pushState({ sveltekit: 1 }, '');
+    const closeQuestion = vi.fn();
+    pushHistoryOverlay(closeQuestion);
+    // `canGoBack()` said no, so the activity asked the page: the overlay closes, nothing else.
+    expect(native()).toBe(true);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(closeQuestion).toHaveBeenCalledWith('back');
+    expect(h.index).toBe(1);
+    expect(native()).toBe(false);
+  });
+});
+
 describe('dropAddressFragment', () => {
   it('removes the fragment from the address and keeps the entry and its state', () => {
     window.history.replaceState({ kept: 1 }, '', '/c/join/tok?x=1#grant-bytes');
