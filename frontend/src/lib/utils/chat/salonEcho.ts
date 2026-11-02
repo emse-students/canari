@@ -24,7 +24,13 @@ export type SalonEchoChange =
    */
   | { kind: 'settled'; serverId?: string | null; serverMs?: number }
   /** The message was deleted after it landed (a refused repeat): its row goes. */
-  | { kind: 'gone' };
+  | { kind: 'gone' }
+  /**
+   * A salon ATTACHMENT finished uploading: its real envelope replaces the placeholder the echo was
+   * drawn with, BEFORE the POST, so whichever answer settles the echo leaves a row naming its blob
+   * (`salonAttachmentSend.ts`).
+   */
+  | { kind: 'content'; content: string };
 
 /**
  * The messages after `change`, or `null` when nothing changed (no flagged row under `localId`, or
@@ -40,6 +46,12 @@ export function nextEchoMessages(
   const row = messages[idx];
 
   if (change.kind === 'gone') return messages.filter((_, i) => i !== idx);
+  if (change.kind === 'content') {
+    if (row.content === change.content) return null;
+    const next = [...messages];
+    next[idx] = { ...row, content: change.content };
+    return next;
+  }
   if (change.kind === 'state') {
     if (row.status === change.status) return null;
     const next = [...messages];
@@ -121,7 +133,9 @@ export function applySalonEchoChange(
         ? change.status
         : change.kind === 'gone'
           ? 'removed: deleted after it landed'
-          : `settled as ${change.serverId?.slice(0, 8) ?? '?'}…`
+          : change.kind === 'content'
+            ? 'attachment uploaded: its envelope swapped in'
+            : `settled as ${change.serverId?.slice(0, 8) ?? '?'}…`
     }`
   );
   if (change.kind === 'settled' && change.serverId) {

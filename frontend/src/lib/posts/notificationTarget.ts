@@ -114,6 +114,8 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'booking_withdrawn':
     case 'booking_added':
     case 'booking_reminder':
+    case 'booking_changed':
+    case 'booking_removed':
       return BOOKINGS_HREF;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
@@ -159,6 +161,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'booking_withdrawn',
   'booking_added',
   'booking_reminder',
+  'booking_changed',
+  'booking_removed',
   'lydia_payments_active',
   'lydia_payments_paused',
   'lydia_cashier_added',

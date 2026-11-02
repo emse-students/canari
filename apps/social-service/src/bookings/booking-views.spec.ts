@@ -1,4 +1,5 @@
 import {
+  bookingRevision,
   bookingView,
   privateInfoFor,
   relationTo,
@@ -142,5 +143,23 @@ describe('privateInfoFor', () => {
     expect(privateInfoFor('other', false, space, resource)).toBeNull();
     expect(privateInfoFor('people', true, space, resource)).toBeNull();
     expect(privateInfoFor('manager', true, space, resource)).toBeNull();
+  });
+});
+
+describe('bookingRevision', () => {
+  const from = new Date('2026-11-02T10:00:00Z');
+  const to = new Date('2026-11-02T10:30:00Z');
+
+  it('is the same for the same range and people, whatever their order or the date form', () => {
+    expect(bookingRevision(from, to, ['b', 'c'])).toBe(
+      bookingRevision(from.toISOString(), to.toISOString(), ['c', 'b'])
+    );
+  });
+
+  it('changes with a person leaving, a person added, or the range moving', () => {
+    const base = bookingRevision(from, to, ['b', 'c']);
+    expect(bookingRevision(from, to, ['b'])).not.toBe(base);
+    expect(bookingRevision(from, to, ['b', 'c', 'd'])).not.toBe(base);
+    expect(bookingRevision(from, new Date('2026-11-02T11:00:00Z'), ['b', 'c'])).not.toBe(base);
   });
 });

@@ -36,6 +36,8 @@ import {
   bookingAddedContent,
   bookingCancelledContent,
   bookingReminderContent,
+  bookingChangedContent,
+  bookingRemovedContent,
   bookingWithdrawnContent,
   publicMediaIconId,
   MENTION_TOKEN_RE,
@@ -187,6 +189,11 @@ export class PostNotificationsService {
         return withIcon(bookingAddedContent(actorName, text), icon);
       case 'booking_reminder':
         return bookingReminderContent(text);
+      // An edit (owner, 2026-11-02): `text` is the place, as for the three above.
+      case 'booking_changed':
+        return withIcon(bookingChangedContent(actorName, text), icon);
+      case 'booking_removed':
+        return withIcon(bookingRemovedContent(actorName, text), icon);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
