@@ -834,7 +834,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     for (const pt of tokens) {
       const delivered =
         pt.platform === 'ios' && pt.voipToken
-          ? voipReady && (await this.ringIosVoip(pt, { groupId, callId, callerId }))
+          ? voipReady && (await this.ringIosVoip(pt, { groupId, callId, callerId, hasVideo }))
           : fcmReady && (await this.ringViaFcm(pt, dataFields));
       if (delivered) rang++;
     }
@@ -1075,7 +1075,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    */
   private async ringIosVoip(
     pt: PushToken,
-    ring: { groupId: string; callId: string; callerId: string }
+    ring: { groupId: string; callId: string; callerId: string; hasVideo: boolean }
   ): Promise<boolean> {
     const ringUntilMs = await this.liveRingDeadline(ring.callId);
     if (ringUntilMs === null) return false;

@@ -45,6 +45,8 @@ describe('categoryOfDataPush', () => {
     ['social_booking_withdrawn', 'bookings'],
     ['social_booking_added', 'bookings'],
     ['social_booking_reminder', 'bookings'],
+    ['social_booking_changed', 'bookings'],
+    ['social_booking_removed', 'bookings'],
   ])('files contentKey %s under %s', (contentKey, expected) => {
     expect(categoryOfDataPush({ type: 'social', contentKey })).toBe(expected);
   });

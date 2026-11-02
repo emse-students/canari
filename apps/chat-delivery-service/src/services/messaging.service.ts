@@ -6928,12 +6928,13 @@ export class MessagingService {
 
   /**
    * Returns group IDs the caller may read. Orphans are purged once per batch;
-   * non-members are omitted (batch) or rejected (single-group).
+   * non-members are omitted (batch) or rejected (single-group). A platform global admin reads only
+   * the groups it is a member of, like anyone (owner, 2026-11-02: no platform-admin bypass on
+   * conversation data).
    */
   private async authorizeHistoryGroups(
     groupIds: string[],
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     rejectForbidden: boolean
   ): Promise<Set<string>> {
     if (groupIds.length === 0) return new Set();
@@ -6945,10 +6946,6 @@ export class MessagingService {
     // not evidence of anything, unlike a queued frame (see fetchMessages).
     const { deliverable: deliverableIds } = await this.purgeOrphanGroups(groupIds);
     const deliverable = groupIds.filter((id) => deliverableIds.has(id));
-
-    if (headerGlobalAdmin === 'true') {
-      return new Set(deliverable);
-    }
 
     const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!authUserId) {
@@ -6990,13 +6987,12 @@ export class MessagingService {
   /**
    * Returns the Redis stream history for a group, with optional cursor-based
    * pagination via an afterStreamId parameter.
-   * Enforces group membership for non-admin callers.
+   * Enforces group membership for every caller, a global admin included.
    */
   async getHistory(
     groupIdRaw: string,
     afterRaw: string | undefined,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     limitRaw?: number,
     untilRaw?: string,
     headerDeviceId?: string
@@ -7007,12 +7003,7 @@ export class MessagingService {
     const until = this.sanitizeStreamId(untilRaw);
     const limit = this.resolveHistoryLimit(after, limitRaw);
 
-    const authorized = await this.authorizeHistoryGroups(
-      [groupId],
-      headerUserId,
-      headerGlobalAdmin,
-      true
-    );
+    const authorized = await this.authorizeHistoryGroups([groupId], headerUserId, true);
     if (!authorized.has(groupId)) {
       // NOT A WARNING, AND NOT "ORPHANED" EITHER, which is what this used to say. Two different
       // things land here and only one of them is a defect: a group with no row (already purged and
@@ -7027,11 +7018,7 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownWithheldWindows(
-        headerUserId,
-        groupId,
-        headerGlobalAdmin === 'true'
-      );
+      const windows = await this.ownWithheldWindows(headerUserId, groupId);
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -7073,20 +7060,15 @@ export class MessagingService {
    * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
    * read only when no interval is open, so a consistent member pays nothing extra.
    *
-   * **A GLOBAL ADMIN IS NAMED BY ITS HEADER, NEVER INFERRED FROM A MISSING INTERVAL** (review of
-   * #2800). An admin holding no interval reads a group it is not in, and this filter has never
-   * narrowed that read. Anyone else reached here through the roster (`authorizeHistoryGroups`), so a
-   * caller holding NO interval at all is a member the enrolment failed to record - repaired like the
-   * one with no open interval, above. Should the repair open nothing (the roster row went
-   * meanwhile), the read FAILS CLOSED: one window over everything, said at ERROR - an absent record
-   * never reads as "withhold nothing".
-   *
-   * @param globalAdmin the caller's `x-global-admin` header said `true`.
+   * **EVERY CALLER REACHED HERE THROUGH THE ROSTER** (`authorizeHistoryGroups`, which since
+   * 2026-11-02 exempts no global admin), so a caller holding NO interval at all is a member the
+   * enrolment failed to record - repaired like the one with no open interval, above. Should the
+   * repair open nothing (the roster row went meanwhile), the read FAILS CLOSED: one window over
+   * everything, said at ERROR - an absent record never reads as "withhold nothing".
    */
   private async ownWithheldWindows(
     headerUserId: string | undefined,
-    groupId: string,
-    globalAdmin: boolean
+    groupId: string
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
@@ -7096,10 +7078,9 @@ export class MessagingService {
         select: { groupId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
     let intervals = await read();
-    // An admin's read of a group it never joined has nothing to repair; every other caller is on the
-    // roster, and a member outside every open interval - none at all included - is a record to repair.
-    const unrecorded = intervals.length === 0 && !globalAdmin;
-    if ((intervals.length > 0 || unrecorded) && !intervals.some((r) => r.leftAt === null)) {
+    // Every caller is on the roster, so a member outside every open interval - none at all included -
+    // is a record to repair.
+    if (!intervals.some((r) => r.leftAt === null)) {
       // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
       const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
       if (opened.length > 0) {
@@ -7112,7 +7093,6 @@ export class MessagingService {
       intervals = await read();
     }
     if (intervals.length === 0) {
-      if (globalAdmin) return [];
       this.logger.error(
         `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} holds no membership interval and none could be opened - the stream is withheld whole rather than served unfiltered`
       );
@@ -7152,7 +7132,6 @@ export class MessagingService {
   async getHistoryBatch(
     items: HistoryBatchRequestItem[],
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     headerDeviceId?: string
   ): Promise<HistoryBatchResponse> {
     const requester = this.historyRequester(headerUserId, headerDeviceId);
@@ -7176,12 +7155,7 @@ export class MessagingService {
     });
 
     const groupIds = [...new Set(normalized.map((i) => i.groupId))];
-    const authorized = await this.authorizeHistoryGroups(
-      groupIds,
-      headerUserId,
-      headerGlobalAdmin,
-      false
-    );
+    const authorized = await this.authorizeHistoryGroups(groupIds, headerUserId, false);
 
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
@@ -7196,11 +7170,7 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownWithheldWindows(
-            headerUserId,
-            groupId,
-            headerGlobalAdmin === 'true'
-          );
+          const windows = await this.ownWithheldWindows(headerUserId, groupId);
           const page = await this.readHistoryStreamPage(
             groupId,
             after,
@@ -7239,7 +7209,6 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     limit = 500,
     after?: string,
     caps?: string
@@ -7252,12 +7221,7 @@ export class MessagingService {
     const readsAddressed = declaresAddressedHistory(caps);
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot fetch messages for another user'
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot fetch messages for another user');
 
     const safeLimit = Math.min(Math.max(limit, 1), 1000);
 
@@ -7418,8 +7382,7 @@ export class MessagingService {
    */
   async acknowledgeMessages(
     body: AckMessagesBody,
-    headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined
+    headerUserId: string | undefined
   ): Promise<{ status: string; count: number }> {
     const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
@@ -7427,7 +7390,6 @@ export class MessagingService {
     const safeMessageIds = sanitizeStringIdList(body.messageIds);
     assertCallerOwnsUserId(
       headerUserId,
-      headerGlobalAdmin,
       safeUserId,
       'Cannot acknowledge messages for another user'
     );
