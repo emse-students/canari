@@ -105,6 +105,13 @@ session start). Then Paramètres > À propos > "Enregistrer le journal", save it
 the `.txt` file. The lines to read are `[NSE_OUTCOME] {...}` and the summary
 `[NSE_OUTCOME] N notification(s) handled by the extension since the last read: ...`.
 
+**The wake-up push waits on this entry** ([push-payloads-carry-nothing](push-payloads-carry-nothing-for-google-and-apple.md)):
+with a wake push the extension is the ONLY source of content on iOS, so **iOS does not declare the
+wake (`PUSH_WAKE_DECLARED.ios = false`) until this entry is closed** - the owner's order of
+2026-11-02, under which `push_mode = wake` may go on for Android alone and every iPhone keeps the
+full push. Once iOS declares it, a wake run logs the stage `wake-fetch` before `push-context` and
+`kind=wake` until its frame is fetched, so its kills and expiries are told apart from this entry's.
+
 Closed when a release carrying this change shows content on the bench and the user's phone, or
 the outcome log names a cause that then gets its own fix.
 

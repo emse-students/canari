@@ -2316,6 +2316,21 @@ overwrite the pending record INCLUDING its resolver, so the first promise never 
 - Shows notifications: MessagingStyle for messages, CallStyle for calls
 - Quick actions: Reply (text input) and Mark as Read (broadcast to `CanariNotificationActionReceiver`)
 
+**A content-free wake-up push (`type: wake`, 2026-11-02) is fetched, then dispatched as the full
+push.** With `platform_config.push_mode = wake` and a registration that declared `wake: true`
+(`PUSH_WAKE_DECLARED[platform]` - Android only until the iOS notification P1 closes), an MLS push
+carries only `type`, `queuedMessageId`, `silent` and, for a mentions-only conversation,
+`notifLevel`. Each native receiver fetches `GET /api/mls/push/wake` with the PushSecret and runs the
+answer through its ONE existing path: Android `onWakePush` fetches OFF the MLS lane and
+`WakeOrder` hands the lane every push, wake or full, in ARRIVAL order (a full push cannot overtake an earlier wake still fetching; every wake ticket is settled at most 20 s after it ARRIVED, so nothing waits longer than that behind it) -> `dispatchPush` (`WakeAnswer.classify`
+decides frame / gone / failed), the iOS extension `handleWake` -> `dispatch` (the fetched map merged
+into `userInfo`, stage `wake-fetch`, the run re-kinded to the fetched type, causes `wake-<stage>`
+letter-only), the iOS app
+`CanariHandleWakeBackgroundFrame` -> `CanariHandleBackgroundFrame` for a silent frame. A failed fetch
+is a `[PUSH_WAKE]` ERROR and a notification that says the message could not be loaded - never the
+generic text. Design, failure table and the P1 interlock:
+[push-payloads-carry-nothing](../backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+
 MessagingStyle takes two `Person`s and **both** need an icon. The sender's comes from `fetchAvatar(senderId)`; ours comes from `fetchAvatar(loadUserId())` - Android attributes the inline reply to the self `Person` while the reply is in flight, so an iconless self is a blank face on the only message in that thread the user actually wrote. `MlsContextLoader.loadUserId` reads just the `userId` field of `push_context.json`, deliberately not `loadPushContext`, whose expensive half is a Keystore round trip this caller has no use for. iOS shows a single attachment image rather than a thread, so it has no self `Person` and nothing to fix there.
 
 #### One builder, two triggers
