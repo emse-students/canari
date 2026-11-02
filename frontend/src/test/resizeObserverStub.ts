@@ -8,9 +8,13 @@ import { afterEach, beforeEach, vi } from 'vitest';
  */
 const live = new Set<{ callback: (entries: unknown[]) => void }>();
 
-/** Delivers a resize callback to every observer that is still observing something. */
+/**
+ * Delivers a resize callback to every observer that is still observing something. The copy is
+ * taken first on purpose: a callback may observe or unobserve while being delivered, and a live
+ * Set loop would then visit an observer added mid-delivery.
+ */
 export function fireResize(): void {
-  for (const o of [...live]) o.callback([]);
+  for (const o of Array.from(live)) o.callback([]);
 }
 
 /** Installs the stub before each test and removes it after. */
