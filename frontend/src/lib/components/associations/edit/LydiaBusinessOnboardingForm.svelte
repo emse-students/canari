@@ -252,26 +252,30 @@
   </h2>
 
   {#snippet adminAndDisconnect(canValidate: boolean)}
-    <div class="flex flex-wrap items-center gap-2">
-      {#if canValidate}
-        <button
-          type="button"
-          onclick={() => void handleValidate()}
-          disabled={validating}
-          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-        >
-          {validating ? m.asso_lydia_validate_loading() : m.asso_lydia_validate_button()}
-        </button>
-      {/if}
-      <button
-        type="button"
-        onclick={() => void handleDisconnect()}
-        disabled={disconnecting}
-        class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-      >
-        {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
-      </button>
-    </div>
+    {#if canValidate || view?.adminCanDisconnect}
+      <div class="flex flex-wrap items-center gap-2">
+        {#if canValidate}
+          <button
+            type="button"
+            onclick={() => void handleValidate()}
+            disabled={validating}
+            class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+          >
+            {validating ? m.asso_lydia_validate_loading() : m.asso_lydia_validate_button()}
+          </button>
+        {/if}
+        {#if view?.adminCanDisconnect}
+          <button
+            type="button"
+            onclick={() => void handleDisconnect()}
+            disabled={disconnecting}
+            class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+          >
+            {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
+          </button>
+        {/if}
+      </div>
+    {/if}
   {/snippet}
 
   {#snippet adminClear()}

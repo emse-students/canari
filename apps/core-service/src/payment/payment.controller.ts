@@ -765,16 +765,18 @@ export class PaymentController {
   }
 
   /**
-   * Unlinks an association's Lydia Business from Canari (MANAGE_PAYOUT_ACCOUNT).
+   * Unlinks an association's Lydia Business from Canari (global admin only, owner decision of
+   * 2026-11-02: the club's own `MANAGE_PAYOUT_ACCOUNT` holders can no longer unlink it).
    * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
    */
   @Post('disconnect-lydia-account/:associationId')
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @HttpCode(200)
-  async disconnectLydiaAccount(@Param('associationId') associationId: string, @Req() req: Request) {
+  async disconnectLydiaAccount(@Param('associationId') associationId: string) {
     if (!UUID_RE.test(associationId)) {
       throw new BadRequestException('Invalid associationId');
     }
-    await this.assertCanManageAssociation(req, associationId);
+    this.logger.log(`Lydia Business unlinked by a global admin for association ${associationId}`);
 
     try {
       await axios.post(
