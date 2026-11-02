@@ -57,6 +57,9 @@ describe('startPushService - rotation de token FCM', () => {
     expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).platform).toBe(
       'android'
     );
+    // This build's native code understands a wake-up push, and every registration says so: the
+    // server writes `push_token.wakeCapable` from it, false when absent.
+    expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).wake).toBe(true);
 
     // Re-call (foreground return) without token change -> no re-POST.
     await startPushService('https://api', 'jwt', 'dev-1');

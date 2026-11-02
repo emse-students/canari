@@ -117,8 +117,16 @@ class NotificationService: UNNotificationServiceExtension {
     let userInfo = request.content.userInfo
     let type = Self.string(userInfo["type"]) ?? "message"
     NSLog("[CanariNSE] didReceive type=\(type)")
+    dispatch(type: type, userInfo: userInfo, content: content)
+  }
 
+  /// Everything a push's payload can ask of this extension, whether it arrived in the push itself or
+  /// was fetched for a content-free wake-up push (`handleWake`). The map is the same in both cases -
+  /// the server builds both from one description (`describeQueuedFrame`).
+  private func dispatch(type: String, userInfo: [AnyHashable: Any], content: UNMutableNotificationContent) {
     switch type {
+    case "wake":
+      handleWake(userInfo: userInfo, content: content)
     case "channel":
       handleChannelMessage(userInfo: userInfo, content: content)
     case "social" where Self.string(userInfo["reaction"]) == "true":
@@ -127,7 +135,7 @@ class NotificationService: UNNotificationServiceExtension {
       // chat-delivery-service. Its server-composed body is a French fallback for exactly those
       // clients; here it is replaced by one in the phone's own language.
       applyReactionContent(userInfo: userInfo, content: content)
-      trace.outcome = "server-content"
+      trace?.outcome = "server-content"
       finish()
     case "call_ring":
       // The GENERIC ring alert of an iPhone with no VoIP token (calls.service `ringViaFcm`, no native
@@ -135,7 +143,7 @@ class NotificationService: UNNotificationServiceExtension {
       // branch would overwrite the server's "Appel entrant" with the encrypted-message fallback and
       // add message buttons. The server's title and body are KEPT; only the filing is set here.
       applyGenericCallRing(userInfo: userInfo, content: content)
-      trace.outcome = "server-content"
+      trace?.outcome = "server-content"
       finish()
     case "social", "form_reminder":
       // Not encrypted, and since 2026-08-19 not composed by the server either: the payload carries
@@ -149,9 +157,9 @@ class NotificationService: UNNotificationServiceExtension {
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
       applyServerContent(userInfo: userInfo, content: content)
-      trace.mark("attach")
+      trace?.mark("attach")
       attachSocialIcon(userInfo: userInfo, content: content)
-      trace.outcome = "server-content"
+      trace?.outcome = "server-content"
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
@@ -863,6 +871,111 @@ class NotificationService: UNNotificationServiceExtension {
           wrote: wrote, of: bytes.count, errno: writeErrno, notCutBackErrno: truncateErrno)
       }
       return .appended
+    }
+  }
+
+  // MARK: - Content-free wake-up push ------------------------------------------
+
+  /// What one wake fetch became - the twin of Android's `WakeAnswer.Outcome`.
+  private enum WakeFetch {
+    /// The data map the full push would have carried.
+    case frame([String: String])
+    /// The queued row was drained or acknowledged since the push left.
+    case gone
+    /// No frame; the stage that failed, for the log.
+    case failed(String)
+  }
+
+  /// A CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`, owner 2026-11-02;
+  /// docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md): Apple carried only
+  /// `type`, `queuedMessageId` and `silent`, and a generic `Canari` / `Nouveau message`. The frame is
+  /// fetched with the device's PushSecret, merged into the notification's `userInfo` (so the tap and
+  /// every later reader see the full push), then dispatched through the same switch.
+  ///
+  /// A FAILED FETCH IS NEVER LEFT AS THE GENERIC TEXT: the body says the message could not be loaded,
+  /// the line is an ERROR, and the run's outcome is `fallback` with its own cause. A `gone` answer
+  /// says the app already has the message, and is filed passive.
+  private func handleWake(userInfo: [AnyHashable: Any], content: UNMutableNotificationContent) {
+    let queuedMessageId = Self.string(userInfo["queuedMessageId"]) ?? ""
+    let silent = Self.string(userInfo["silent"]) == "true"
+    trace?.mark("wake-fetch")
+    guard let ctx = loadPushContext() else {
+      NSLog("[CanariNSE] [PUSH_WAKE] ERROR push_context absent - the message cannot be fetched")
+      noteCause("wake-no-context")
+      trace?.outcome = "fallback"
+      applyWakeUnavailable(content: content, locale: nil)
+      finish()
+      return
+    }
+    guard !queuedMessageId.isEmpty else {
+      NSLog("[CanariNSE] [PUSH_WAKE] ERROR a wake push without queuedMessageId (server defect)")
+      noteCause("wake-no-id")
+      trace?.outcome = "fallback"
+      applyWakeUnavailable(content: content, locale: ctx.locale)
+      finish()
+      return
+    }
+    switch fetchWakeFrame(queuedMessageId: queuedMessageId, silent: silent, ctx: ctx) {
+    case .frame(let fields):
+      let type = fields["type"] ?? "message"
+      NSLog("[CanariNSE] [PUSH_WAKE] fetched type=\(type) - dispatched as the full push")
+      var merged = userInfo
+      for (key, value) in fields { merged[key] = value }
+      content.userInfo = merged
+      dispatch(type: type, userInfo: merged, content: content)
+    case .gone:
+      NSLog("[CanariNSE] [PUSH_WAKE] gone - drained or acknowledged since the push, filed passive")
+      content.body = Self.localized("notif.wake.gone", locale: ctx.locale)
+      content.sound = nil
+      content.interruptionLevel = .passive
+      trace?.outcome = "server-content"
+      finish()
+    case .failed(let stage):
+      NSLog("[CanariNSE] [PUSH_WAKE] ERROR fetch failed stage=\(stage) - drawn as not loaded")
+      noteCause("wake-fetch-failed")
+      trace?.outcome = "fallback"
+      applyWakeUnavailable(content: content, locale: ctx.locale)
+      finish()
+    }
+  }
+
+  /// The body a wake-up gets when its message could not be fetched: it says so, never the generic
+  /// "Nouveau message" that would read as a message with nothing in it.
+  private func applyWakeUnavailable(content: UNMutableNotificationContent, locale: String?) {
+    content.body = Self.localized("notif.wake.unavailable", locale: locale)
+  }
+
+  /// `GET /api/mls/push/wake` for one queued row, with the device's own ids and PushSecret - the
+  /// auth `fetch-proto` uses. One request, bounded by `syncRequest`'s own timeout; no retry.
+  private func fetchWakeFrame(queuedMessageId: String, silent: Bool, ctx: PushContext) -> WakeFetch {
+    guard let secret = loadPushSecret() else { return .failed("no-push-secret") }
+    let q = Self.encode(queuedMessageId)
+    let u = Self.encode(ctx.userId)
+    let d = Self.encode(ctx.deviceId)
+    let urlStr =
+      "\(ctx.baseUrl)/api/mls/push/wake?messageId=\(q)&userId=\(u)&deviceId=\(d)&silent=\(silent ? "true" : "false")"
+    guard let (data, status) = syncRequest(method: "GET", urlStr: urlStr, secret: secret, body: nil) else {
+      return .failed("transport")
+    }
+    guard status == 200 else { return .failed("http-\(status)") }
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return .failed("unreadable-body")
+    }
+    switch (json["status"] as? String) ?? "" {
+    case "gone":
+      return .gone
+    case "frame":
+      guard let raw = json["fields"] as? [String: Any] else { return .failed("frame-without-fields") }
+      var fields: [String: String] = [:]
+      for (key, value) in raw {
+        if let text = value as? String { fields[key] = text }
+      }
+      guard let type = fields["type"], !type.isEmpty else { return .failed("frame-without-type") }
+      // A frame that is itself a wake would loop the dispatcher back into a fetch.
+      guard type != "wake" else { return .failed("frame-is-a-wake") }
+      return .frame(fields)
+    default:
+      return .failed("unknown-status")
     }
   }
 
