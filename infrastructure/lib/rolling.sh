@@ -13,7 +13,7 @@
 #
 #   overlap    the new container starts BESIDE the old one (`--scale` to one more, `--no-recreate`).
 #              Once it is HEALTHY, the nginx in front of the service (its ROTATION, a label) is given
-#              a list that sends the service's requests to the new replica's address alone, and
+#              a list that sends the service's requests to the new replica's name alone, and
 #              reloaded; the old replica is told to stop
 #              only once the pairing check says no old nginx worker is still about to choose a replica
 #              and nothing is left queued on it (rotation_take_out, wait_unqueued). THEN it gets
@@ -135,9 +135,9 @@ wait_healthy() {
 # TWO FORMS, AND THE ESTATE RESTS IN THE FIRST. Between deploys every target is the service's DNS
 # NAME (`core-service:3012`) - the very list the frontend image bakes for an estate with no such
 # deploy, so `rotation_seed` can write it before anything starts. Only while ONE service is being
-# replaced is its target the new replica's ADDRESS (`192.0.2.9:3012`, read by `docker inspect` on a
-# network the proxy shares with it), so the old one is out before it stops; once the old one is gone
-# the target goes back to the DNS name. Every other target is carried over byte for byte - a sibling
+# replaced is its target the new replica's CONTAINER NAME (`canari-core-service-2:3012`, which
+# Docker's DNS answers with that one container), so the old one is out before it stops; once the
+# old one is gone the target goes back to the DNS name. Every other target is carried over byte for byte - a sibling
 # is never re-read, so a sibling that is `starting` or `unhealthy` stays exactly as reachable as it
 # was. The resting form is also what makes a ROLLBACK work: an older release's rolling.sh never
 # rewrites these lists, and a target naming a replica that rollback removes would answer 502; a
@@ -151,9 +151,10 @@ wait_healthy() {
 # renamed it back, so after each of those reloads the new worker refused what it took on the spot -
 # `no live upstreams`: an ECONNRESET at the edge, a 502 at the frontend (252 resets in 300 renaming
 # edge reloads, measured). A variable target has no peer list to start empty: a DNS name is resolved
-# for the REQUEST, which waits for the answer, and an address needs no answer at all - 0 failures in
-# 257 914 POSTs across 300 reloads alternating the two. And a variable target caches no upstream
-# connection, so the pairing check below needs no `keepalive 0` to stay sound.
+# for the REQUEST, which waits for the answer - the service's name at rest as a container's during a
+# take-out (deploy-rolling.test.sh case 2b reloads both proxies hundreds of times between the two
+# under load, every POST asserted 200). And a variable target caches no upstream connection, so the
+# pairing check below needs no `keepalive 0` to stay sound.
 
 # The routes of the estate, "<service> <proxy> <port>" per line, from the plan (rotation_routes_set).
 ROTATION_ROUTES=""
@@ -202,13 +203,13 @@ rotation_var() {
   printf 'target_%s' "${1//-/_}"
 }
 
-# rotation_block <service> <port> [<address>] - the one line that sets <service>'s target: the address
-# given, or, with none, the service's DNS name (the resting form). The same text, byte for byte, as the
+# rotation_block <service> <port> [<host>] - the one line that sets <service>'s target: the host given
+# (a replica's container name), or, with none, the service's DNS name (the resting form). The same text, byte for byte, as the
 # list baked in Dockerfile.frontend (deploy-replace.test.sh compares them). The same line serves an
 # `http {}` and a `stream {}` context alike: `map` exists in both, with the same syntax.
 rotation_block() {
-  local service="$1" port="$2" address="${3:-}"
-  printf 'map "" $%s { default %s:%s; }\n' "$(rotation_var "$service")" "${address:-$service}" "$port"
+  local service="$1" port="$2" host="${3:-}"
+  printf 'map "" $%s { default %s:%s; }\n' "$(rotation_var "$service")" "${host:-$service}" "$port"
 }
 
 # rotation_existing_block <file> <service> - the line for <service> as the file holds it, or nothing.
@@ -621,11 +622,11 @@ rotation_apply() {
 # rotation_seed - reads the plan on stdin and writes every proxy's list in the resting form. Called
 # BEFORE ANY `up`: the frontend and the edge include their list unconditionally and refuse to start
 # without it - a fresh host, a lost directory. A list that already exists is normalised to the
-# resting form too (a deploy killed mid-replacement leaves an address in it).
+# resting form too (a deploy killed mid-replacement leaves a container's name in it).
 #
 # EVERY RUNNING PROXY IS RELOADED ON IT, CHANGED OR NOT (2026-11-01 review). "At rest" is a fact about
 # what nginx RUNS, and the file is only what it was last told: a restore whose reload failed leaves the
-# file at rest and nginx on an address, and a seed that reloaded only on a changed file would
+# file at rest and nginx on a container's name, and a seed that reloaded only on a changed file would
 # never correct it - then a rollback, whose older library never touches these lists, retires that
 # replica and the proxy answers 502 (on the edge, the whole site). One graceful reload per proxy per
 # deploy, verified like every other (rotation_apply reads the render id back through `nginx -T`).
@@ -666,55 +667,30 @@ rotation_restore_in_flight() {
   return 1
 }
 
-# rotation_address <proxy> <container> - the address of <container> on a network a container of
-# <proxy> is attached to (the first such network by name: Docker lists them sorted), which is the
-# address that proxy connects to. Prints nothing, and succeeds, when <proxy> has no container at all:
-# nothing then chooses a replica through it. Fails when they share no network - a target the proxy
-# could not reach.
-rotation_address() {
-  local proxy="$1" cid="$2" pid nets="" net address
-  for pid in $($DOCKER_CLI ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
-    --filter "label=com.docker.compose.service=$proxy" --filter "label=com.docker.compose.oneoff=False"); do
-    # shellcheck disable=SC2016 # a Go template, read by docker
-    nets="$nets $($DOCKER_CLI inspect -f '{{range $n, $e := .NetworkSettings.Networks}}{{$n}} {{end}}' "$pid")" || return 1
-  done
-  [ -n "$nets" ] || return 0
-  # shellcheck disable=SC2016 # a Go template, read by docker
-  while read -r net address; do
-    case " $nets " in *" $net "*) ;; *) continue ;; esac
-    [ -n "$address" ] || continue
-    printf '%s\n' "$address"
-    return 0
-  done < <($DOCKER_CLI inspect -f '{{range $n, $e := .NetworkSettings.Networks}}{{$n}} {{$e.IPAddress}}{{"\n"}}{{end}}' "$cid")
-  printf '::error::%s: %s has no address on a network %s is attached to (%s) - %s could not reach it\n' \
-    "$proxy" "${cid:0:12}" "$proxy" "${nets# }" "$proxy" >&2
-  return 1
-}
-
-# rotation_take_out <service> <container> - the target of <service> becomes the address of the given
+# rotation_take_out <service> <container> - the target of <service> becomes the NAME of the given
 # replica (running and healthy: the health check applies to the service being replaced, and to
-# nothing else), and the proxy is reloaded on it, the pairing check holding. A service with no route,
-# or whose proxy has no container, has nothing to do.
+# nothing else), and the proxy is reloaded on it, the pairing check holding. A NAME and not an
+# address (2026-11-02 review): it is resolved for the request exactly as the resting service name is,
+# so it follows the replica through a restart, and once the container is gone it answers NXDOMAIN
+# instead of landing on whatever container Docker hands that address next - chat-gateway and
+# frontend-ssr both listen on :3000, and the frontend sends `X-Internal-Token` to both. Docker's DNS
+# answers a container's name on every network it is attached to, which is every network the proxy
+# can reach it on. A service with no route has nothing to do.
 rotation_take_out() {
-  local service="$1" cid="$2" route proxy port state address
+  local service="$1" cid="$2" route proxy port state
   route="$(rotation_route "$service")"
   [ -n "$route" ] || return 0
   proxy="${route%% *}"
   port="${route#* }"
-  state="$($DOCKER_CLI inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null)" || state=gone
+  state="$($DOCKER_CLI inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Name}}' "$cid" 2>/dev/null)" || state=gone
   case "$state" in
-  'running healthy' | 'running none') ;;
+  'running healthy '* | 'running none '*) ;;
   *)
-    printf '::error::%s: the replica meant to stay (%s) is %s - taking the others out would leave %s nothing to choose\n' "$service" "${cid:0:12}" "$state" "$proxy" >&2
+    printf '::error::%s: the replica meant to stay (%s) is %s - taking the others out would leave %s nothing to choose\n' "$service" "${cid:0:12}" "${state% *}" "$proxy" >&2
     return 1
     ;;
   esac
-  address="$(rotation_address "$proxy" "$cid")" || return 1
-  if [ -z "$address" ]; then
-    printf '  %s: %s has no container - nothing chooses a replica through it, its list stays at rest\n' "$service" "$proxy"
-    return 0
-  fi
-  rotation_write "$proxy" "$service" "$(rotation_block "$service" "$port" "$address")" || return 1
+  rotation_write "$proxy" "$service" "$(rotation_block "$service" "$port" "${state##* /}")" || return 1
   rotation_apply "$proxy" retiring
 }
 
@@ -722,7 +698,7 @@ rotation_take_out() {
 # every replica that runs), the proxy reloaded on it when that changed it - or ALWAYS, with `force`.
 # The retry after a failure needs `force` (2026-11-01 third review): a restore whose reload failed has
 # already written the file at rest, so the retry finds it unchanged, and without `force` it would reload
-# nothing, clear the marker and report success while nginx still names the address.
+# nothing, clear the marker and report success while nginx still names the container.
 rotation_restore() {
   local service="$1" force="${2:-}" route proxy
   route="$(rotation_route "$service")"

@@ -426,9 +426,9 @@ in `depends_on` order):
    `canari.deploy.rotation: <proxy>:<port>` - sends the service's requests to a TARGET,
    `proxy_pass http://$target_<service>`, set by one line of the list `rolling.sh` writes into
    `infrastructure/edge/targets/<proxy>.conf`: `map "" $target_core_service { default
-   core-service:3012; }`. The service's line is rewritten to the NEW replica's address
-   (`192.0.2.9:3012`, read by `docker inspect` on a network the proxy shares with it,
-   `rotation_take_out`); every other line is carried over byte for byte. In each running replica of
+   core-service:3012; }`. The service's line is rewritten to the NEW replica's CONTAINER NAME
+   (`canari-core-service-2:3012`, `rotation_take_out`), which Docker's DNS answers with that one
+   container; every other line is carried over byte for byte. In each running replica of
    the proxy (no new container), the deploy asks `nginx -T` what it would load, reloads it, and waits
    for the pairing check below.
 4. **Wait until nothing is queued on the old replica**: two consecutive reads of its own
@@ -445,7 +445,7 @@ in `depends_on` order):
 
 **The lists have two forms, and the estate rests in the first.** Between deploys every target is its
 service's DNS name - byte for byte the list the frontend image bakes for an estate with no such deploy
-(`deploy-replace.test.sh` compares them). Only the ONE service being replaced is set to an address,
+(`deploy-replace.test.sh` compares them). Only the ONE service being replaced is set to a container's name,
 for the minute its replacement takes. Three things follow:
 
 - **A sibling is never re-read.** The first version re-rendered every service behind a proxy from
@@ -471,7 +471,7 @@ for the minute its replacement takes. Three things follow:
     configuration"); the seed only moves the moment earlier, after the same `nginx -T` validation, so
     a configuration nginx refuses stops the deploy before a migration instead of after. Reloading
     only the frontend at the seed was considered and rejected: the edge's list names a FRONTEND
-    replica, so an edge left on an address is the whole-site `502` a rollback would cause.
+    replica, so an edge left on a container's name is the whole-site `502` a rollback would cause.
 - **A rollback across the replica lists works** ([below](#a-rollback-across-the-replica-lists)).
 
 **Before a reload, the proxy is asked what it would load.** `nginx -T` in the proxy's replica must
@@ -601,10 +601,15 @@ so after each of those reloads the new worker refused what it took before its re
 live upstreams`: a closed connection at the edge, a `502` at the frontend). Measured in isolation
 (production's edge image, its own `stream` block, `connection: close` POSTs at concurrency 12): 252
 resets in 103 895 POSTs across 300 renaming edge reloads, 0 across 300 that kept the name, 0 across 300
-of a static `server`. A variable target has no peer list to start empty: at rest it is a DNS name the
-REQUEST waits on the resolver for, during a take-out an address nothing resolves - 0 failures in
-257 914 POSTs across 300 edge reloads alternating the two. Rejected on the way, each for a reason that
-still holds:
+of a static `server`. A variable target has no peer list to start empty: it is a DNS name the
+REQUEST waits on the resolver for - the service's at rest, the new replica's container name during a
+take-out (0 failures in 257 914 POSTs across 300 edge reloads alternating a name and an address, the
+first form built). The take-out names the container and not its address since the review of
+2026-11-02: an address goes stale under a deploy killed before its trap ran or a replica restarted in
+place, and a stale address is either a connect timeout or, once Docker hands it to another container,
+a misroute - chat-gateway and frontend-ssr both listen on `:3000`, and the frontend sends
+`X-Internal-Token` to both. A name follows a restart, and answers NXDOMAIN once its container is gone.
+Rejected on the way, each for a reason that still holds:
 
 - a `server` WITHOUT `resolve` for the container during a take-out: resolved when the file is loaded,
   so the take-out has no window, but the restore still renames back to a `resolve` server;
@@ -618,10 +623,22 @@ still holds:
 
 **The test that closes it** is `deploy-rolling.test.sh`'s case 2b: each proxy reloaded 150 times
 between its take-out list and its resting one (rendered by the library itself), under 12 concurrent
-POSTers, every POST asserted `200`. Run on the `upstream` lists (2026-11-02), it failed: 7
-`transport:ECONNRESET` in 23 068 POSTs across its 300 reloads. On the targets: 0 failures in 33 496
-POSTs across 300. Case 2 alone crosses four such reloads, which is why the window showed once in 58
-runs.
+POSTers, every POST asserted `200`. The frontend's reloads are a real old -> new switch: a second API
+replica runs beside the first, so the resting list reaches both and the take-out names the new one
+alone, and the case ends as a release does - the old replica retired by the library, the list at rest.
+Run on the `upstream` lists (2026-11-02), it failed: 7 `transport:ECONNRESET` in 23 068 POSTs across
+its 300 reloads. On the targets with an address for the take-out: 0 failures in 33 496 POSTs across
+300. On the targets with a container name and the API switch: 0 failures in 37 018 POSTs across
+300. Case 2 alone crosses four such reloads, which is why the window showed once in 58 runs.
+
+**The load cases run the fixture frontend, not the real image** - a gap, said. The real
+`Dockerfile.frontend` needs every service it routes to; the fixture (`rolling-fixture/frontend.conf`)
+carries what decides a reload's behaviour: the `auth_request` every API location makes before choosing
+its target, a variable target read from the mounted list, the same `resolver`, `resolver_timeout`,
+`proxy_connect_timeout` and `proxy_next_upstream` lines, which `deploy-replace.test.sh` holds equal in
+both. The real image is exercised statically under each list form: `nginx -t` and `nginx -T` with a
+take-out and a resting list mounted (`deploy-rolling.test.sh` case 0), its `auth_request` subrequests
+read as core-service's port, and every routed location parsed (`auth-request-coverage.test.mjs`).
 
 **On a Windows workstation, a `transport:ConnectionRefused` with no nginx line is the host's port,
 not a proxy.** A second local run on the targets failed case 2b on ONE `ConnectionRefused` in 22 134
@@ -634,18 +651,25 @@ as a refusal; Linux, where CI runs, drops the SYN and the client retransmits. Th
 strict - a listener an nginx reload closed would fail the same way, and on Linux nothing else does -
 so on Windows a lone `ConnectionRefused` with no proxy line is re-run, and anything else is read.
 
-**What a variable target costs, said.** A request at rest waits for a DNS answer once per
-`valid=2s` per worker (Docker's resolver answers in well under a millisecond), and a resolver that
-does not answer holds the request up to `resolver_timeout` (30 s) where a `resolve` server served the
-last address it knew - the behaviour every frontend had before 2026-11-01. A replica that restarts in
-place under a new address DURING its take-out is not followed (an address is not re-resolved) for the
-minute its replacement takes; at rest the DNS name follows it. And the URI, Host, keep-alive and
+**What a variable target costs, said.** A request waits for a DNS answer once per `valid=2s` per
+worker (Docker's resolver answers in well under a millisecond). A resolver that does not answer FAILS
+the request after `resolver_timeout 2s`, set beside both resolvers (`deploy-replace.test.sh` holds it):
+nginx's default is 30 s, which would have held every new connection to the site that long. That is a
+regression against both earlier designs, said: the edge before 2026-11-01 failed such a connection
+after the same 2 s, but 1.6.2's `upstream` lists did not fail it at all - a `resolve` server keeps
+serving the last addresses it knew while its resolver is silent. Nothing in this estate has shown a
+silent Docker resolver; the daily `resolver` job of `scheduled.yml` (`resolver-report.sh`) counts the
+edge's and the frontend's `could not be resolved` lines and goes red on any that no design explains -
+a timeout or server failure, an overlap service or a take-out's container name not found - so the
+day it happens is read rather than inferred. An exclusive service's own gap (media-service and
+call-service recreated in place) is printed with its count. And the URI, Host, keep-alive and
 WebSocket behaviour of every location is unchanged: each `proxy_pass` was already a variable
 (`set $upstream_x <service>; proxy_pass http://$upstream_x...;`, the value naming the `upstream` group),
 so nginx already passed the URI the variable form passes, every proxied location already sets
 `Host $host` and the WebSocket upgrade itself, and no list caches a connection. The only header that
 moves is the default `Host` of the two internal `auth_request` locations, which set none: it was
-`core-service`, it is now `core-service:3012` (an address during a take-out), and no service reads it.
+`core-service`, it is now `core-service:3012` (a container's name during a take-out), and no service
+reads it.
 
 **Every service declares how it may be replaced**, as the label `canari.deploy.replace`, and
 `infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a
@@ -746,6 +770,16 @@ refusal. `deploy-rolling.test.sh` runs that library (frozen as `rolling-fixture/
 with 1.6.2's edge configuration and fixture frontend beside it) against the real frontend image's
 `nginx -T`, and then rolls a live fixture estate back with it and forward again.
 
+**Two costs of that rollback, said.** It REFUSES while `targets/frontend.conf` still names a
+replica - a take-out left behind by a deploy killed before its trap ran: that line is not
+`<service>:<port>`, so 1.6.2's library cannot call the frontend one from before its lists, and stops
+(`::error`, nothing replaced). The way out is not by hand: re-run the CURRENT release's deploy, whose
+`rotation_seed` puts every list back at rest and reloads every proxy, then roll back; or, failing that,
+write the file at rest (`rotation_seed`, sourcing this library) before re-running 1.6.2's. And it
+costs ONE site-wide reset window of a few milliseconds: 1.6.2's `edge/nginx.conf` is an `upstream`
+list, and the reload onto it starts the edge's worker with a `resolve` server it has never resolved -
+the very window this section closes, crossed once, at that reload.
+
 **Re-running an older release's deploy runs THAT release's `rolling.sh`**, and a release from before
 2026-11-01 never rewrites the lists. Had the lists rested naming containers, that rollback would
 remove the containers they name - the frontend's list pointing at a gateway that no longer exists,
@@ -757,14 +791,14 @@ frontend's list mount and the older `edge/nginx.conf` reads no list, so after th
 reads them; the untracked files stay, and the next deploy carrying the lists re-seeds them.
 
 The rule is an invariant about what nginx RUNS, not about a file: **no deploy ends with a proxy
-running a list that names a replica's address** - finished, failed (step 6), or interrupted. Three mechanisms
+running a list that names a replica** - finished, failed (step 6), or interrupted. Three mechanisms
 hold it, none of them a human procedure (2026-11-01 second review):
 
 - **A failure between take-out and restore** restores the service in flight
   (`rotation_restore_in_flight`), whose reload is verified like any other. That restore ALWAYS
   reloads (`rotation_restore <service> force`, 2026-11-01 third review). A failed restore has already
   written the file at rest, so a retry that reloaded only on a changed file would reload nothing and
-  report success while nginx still named the address.
+  report success while nginx still named the container.
 - **A deploy that ends there anyway** - `set -e`, a final restore whose reload failed, a cancelled
   job, a dropped session - runs `deploy-environment.sh`'s EXIT trap, which does the same and says so
   at `::error`. `HUP`, `INT` and `TERM` are turned into exits so that trap runs for them too, and both
@@ -776,7 +810,7 @@ hold it, none of them a human procedure (2026-11-01 second review):
   started straight after such a `SIGKILL` or double failure, before any newer deploy. Both are logged
   at `::error` when they happen, naming the consequence.
 
-`deploy-rolling.test.sh` puts the frontend on an address with the file at rest and asserts
+`deploy-rolling.test.sh` puts the frontend on a container's name with the file at rest and asserts
 the next seed reloads it (with the old conditional reload, it did not), then rolls the fixture back with
 the library main shipped before the lists (frozen as `rolling-fixture/rolling-pre-rotation.sh`) and
 asserts the estate answers on the older version with no edge reload, and `deploy-replace.test.sh`

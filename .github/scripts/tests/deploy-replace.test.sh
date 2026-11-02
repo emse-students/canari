@@ -253,10 +253,10 @@ line_of() {
 }
 # shellcheck disable=SC2016 # nginx text, unexpanded on purpose
 if [ "$(line_of chat-gateway 3000)" = 'map "" $target_chat_gateway { default chat-gateway:3000; }' ] &&
-  [ "$(line_of chat-gateway 3000 192.0.2.9)" = 'map "" $target_chat_gateway { default 192.0.2.9:3000; }' ]; then
-  ok "a target is one map line: the DNS name at rest, the address during a take-out"
+  [ "$(line_of chat-gateway 3000 canari-chat-gateway-2)" = 'map "" $target_chat_gateway { default canari-chat-gateway-2:3000; }' ]; then
+  ok "a target is one map line: the DNS name at rest, the container's name during a take-out"
 else
-  fail "rotation_block renders '$(line_of chat-gateway 3000)' / '$(line_of chat-gateway 3000 192.0.2.9)'"
+  fail "rotation_block renders '$(line_of chat-gateway 3000)' / '$(line_of chat-gateway 3000 canari-chat-gateway-2)'"
 fi
 
 # THE RESTING FORM IS THE LIST THE FRONTEND IMAGE BAKES: between deploys a list names each service by
@@ -291,6 +291,19 @@ if [ -n "$ttl" ] && [ "$frozen_ttl" = "$ttl " ] && [ "$others" = "$ttl " ] &&
 else
   fail "the resolver lifetimes disagree: rolling.sh '$ttl', the older libraries '$frozen_ttl', the configurations '$others'"
 fi
+
+# THE RESOLVER'S BOUND (2026-11-02 review): every target at rest is looked up for its request, so a
+# resolver that does not answer holds that request for `resolver_timeout` - 30 s by default. Each
+# configuration that resolves a target must bound it, once per resolver.
+for conf in "$FRONTEND_NGINX" "$EDGE_NGINX" "$FIXTURE_NGINX"; do
+  resolvers="$(grep -c 'resolver 127.0.0.11 valid=' "$conf")"
+  bounds="$(grep -cE '^ *resolver_timeout 2s;' "$conf")"
+  if [ "$resolvers" -ge 1 ] && [ "$bounds" = "$resolvers" ]; then
+    ok "$(basename "$conf"): each of its $resolvers resolver(s) is bounded by 'resolver_timeout 2s'"
+  else
+    fail "$(basename "$conf"): $resolvers resolver(s) but $bounds 'resolver_timeout 2s' - a silent DNS would hold every request for 30 s"
+  fi
+done
 
 for directive in 'proxy_connect_timeout 2s;' 'proxy_next_upstream error timeout;'; do
   if grep -qF "    $directive" "$FRONTEND_NGINX" && grep -qF "    $directive" "$FIXTURE_NGINX"; then
@@ -375,32 +388,23 @@ while read -r verdict message; do
 done < <(
   ROT="$(mktemp -d)"
   trap 'rm -rf "$ROT"' EXIT
-  # The estate the stub describes: api has an old and a new replica, both healthy; its sibling `sib`
-  # has one replica that is UNHEALTHY. The proxy `front` has a container (fe-1, on network `net`) that
-  # does not RUN: `ps -a` lists it, `ps` does not, so nothing is reloaded.
+  # The estate the stub describes: api has an old and a new replica, both healthy, and one that has
+  # exited; its sibling `sib` has one replica that is UNHEALTHY. `inspect` answers status, health and
+  # container name, as rotation_take_out asks. The proxy `front` runs no container, so nothing is
+  # reloaded.
   fake_docker() {
     case "$1" in
     inspect)
-      case "$3" in
-      *'.NetworkSettings.Networks'*'IPAddress'*)
-        case "${*: -1}" in
-        api-new) printf 'bridge 198.51.100.5\nnet 192.0.2.2\n' ;;
-        api-elsewhere) printf 'other 203.0.113.2\n' ;;
-        *) return 1 ;;
-        esac
-        ;;
-      *'.NetworkSettings.Networks'*) [ "${*: -1}" = fe-1 ] && echo 'net ' ;;
-      *)
-        case "${*: -1}" in
-        api-old | api-new | api-elsewhere) echo 'running healthy' ;;
-        api-sick) echo 'running unhealthy' ;;
-        sib-1) echo 'running unhealthy' ;;
-        *) return 1 ;;
-        esac
-        ;;
+      case "${*: -1}" in
+      api-old) echo 'running healthy /p-api-1' ;;
+      api-new) echo 'running healthy /p-api-2' ;;
+      api-sick) echo 'running unhealthy /p-api-3' ;;
+      api-exited) echo 'exited none /p-api-4' ;;
+      sib-1) echo 'running unhealthy /p-sib-1' ;;
+      *) return 1 ;;
       esac
       ;;
-    ps) [ "$2" = -aq ] && case "$*" in *service=front\ *) echo fe-1 ;; esac ;;
+    ps) ;;
     *) return 1 ;;
     esac
   }
@@ -410,7 +414,7 @@ done < <(
   # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
   . "$ROLLING"
   verdict() { if eval "$2"; then echo "ok $1"; else echo "fail $1"; fi; }
-  # The target a list sets for a service: `api:3000`, or `192.0.2.2:3000`.
+  # The target a list sets for a service: `api:3000`, or a replica's `p-api-2:3000`.
   block_of() { rotation_existing_block "$ROT/front.conf" "$1" | sed -n 's/^map "" \$[a-z_]* { default \(.*\); }$/\1/p'; }
   PLAN='api overlap no front:3000
 sib overlap no front:3001
@@ -421,20 +425,20 @@ edge pinned yes -'
   verdict "rotation_seed writes every list, each service by its DNS name" \
     '[ "$(block_of api)" = api:3000 ] && [ "$(block_of sib)" = sib:3001 ] && grep -qxF "map \"\" \$target_front { default front:80; }" "$ROT/edge.conf"'
 
-  # The sibling as a deploy killed mid-replacement leaves it: set to an address.
-  rotation_write front sib "$(rotation_block sib 3001 192.0.2.7)"
+  # The sibling as a deploy killed mid-replacement leaves it: set to one replica's name.
+  rotation_write front sib "$(rotation_block sib 3001 p-sib-1)"
   rotation_take_out api api-new >/dev/null
-  verdict "taking a replica out sets its service to the new one's address, on the network the proxy shares" \
-    '[ "$(block_of api)" = 192.0.2.2:3000 ]'
+  verdict "taking a replica out sets its service to the new one's CONTAINER NAME, never an address" \
+    '[ "$(block_of api)" = p-api-2:3000 ]'
   verdict "a sibling that is unhealthy is carried over as it was, never re-read and dropped" \
-    '[ "$(block_of sib)" = 192.0.2.7:3001 ]'
+    '[ "$(block_of sib)" = p-sib-1:3001 ]'
   verdict "the service being replaced is refused when the replica meant to stay is not healthy" \
     '! rotation_take_out api api-sick 2>/dev/null'
-  verdict "a replica on no network the proxy shares is refused, the list untouched" \
-    '! rotation_take_out api api-elsewhere 2>/dev/null && [ "$(block_of api)" = 192.0.2.2:3000 ]'
+  verdict "a replica that has exited, or is gone, is refused, the list untouched" \
+    '! rotation_take_out api api-exited 2>/dev/null && ! rotation_take_out api api-gone 2>/dev/null && [ "$(block_of api)" = p-api-2:3000 ]'
   rotation_restore api >/dev/null
   verdict "rotation_restore puts the service back on its DNS name, the sibling untouched" \
-    '[ "$(block_of api)" = api:3000 ] && [ "$(block_of sib)" = 192.0.2.7:3001 ]'
+    '[ "$(block_of api)" = api:3000 ] && [ "$(block_of sib)" = p-sib-1:3001 ]'
   rotation_restore api >/dev/null
   verdict "a restore that changes nothing reports no change (so nothing is reloaded)" '[ "$ROTATION_CHANGED" = no ]'
   rotation_seed <<<"$PLAN" >/dev/null

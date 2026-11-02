@@ -174,7 +174,7 @@ running_versions() {
 answered_by() {
   curl -fsS -X POST "$URL" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p'
 }
-# lists_at_rest - every target of every list is its own service's DNS name, and no address.
+# lists_at_rest - every target of every list is its own service's DNS name, and no replica's name.
 lists_at_rest() {
   local f
   # shellcheck disable=SC2031 # this file's own value; the older library's lived in its subshell
@@ -236,21 +236,21 @@ done < <(
   else
     echo ok "the real frontend declares no upstream block, so it caches no upstream connection"
   fi
-  # A list mid-replacement: core-service at an address, the rest at rest.
-  rotation_write frontend core-service "$(rotation_block core-service 3012 192.0.2.9)" || {
-    echo fail "rotation_write sets core-service to an address"
+  # A list mid-replacement: core-service at one replica's container name, the rest at rest.
+  rotation_write frontend core-service "$(rotation_block core-service 3012 canari-core-service-2)" || {
+    echo fail "rotation_write sets core-service to a container's name"
     exit 1
   }
   # shellcheck disable=SC2031 # set by the rotation_write just above, in this same subshell
   token="$ROTATION_TOKEN"
-  rotation_write edge frontend "$(rotation_block frontend 80 192.0.2.10)" || {
-    echo fail "rotation_write sets the frontend to an address"
+  rotation_write edge frontend "$(rotation_block frontend 80 canari-frontend-2)" || {
+    echo fail "rotation_write sets the frontend to a container's name"
     exit 1
   }
   if nopath docker run --rm -v "$rot:/etc/nginx/targets:ro" rolltest/frontend-real nginx -t -q >&2; then
-    echo ok "the real frontend accepts a list naming an address"
+    echo ok "the real frontend accepts a list naming a container"
   else
-    echo fail "the real frontend accepts a list naming an address"
+    echo fail "the real frontend accepts a list naming a container"
   fi
   dump="$(nopath docker run --rm -v "$rot:/etc/nginx/targets:ro" rolltest/frontend-real nginx -T -q 2>&1)"
   if printf '%s\n' "$dump" | grep -qE '^# configuration file /etc/nginx/targets/frontend\.conf:$' &&
@@ -266,9 +266,9 @@ done < <(
     echo fail "the real frontend's auth_request subrequest ports read as '$ports', not '3012 '"
   fi
   if nopath docker run --rm -v "$(host_path "$TMP/real/edge"):/etc/nginx/edge:ro" "$edge_image" nginx -t -q -c /etc/nginx/edge/nginx.conf >&2; then
-    echo ok "the real edge configuration accepts a list naming an address, on production's image $edge_image"
+    echo ok "the real edge configuration accepts a list naming a container, on production's image $edge_image"
   else
-    echo fail "the real edge configuration accepts a list naming an address, on $edge_image"
+    echo fail "the real edge configuration accepts a list naming a container, on $edge_image"
   fi
   # And a fresh host with no list at all: the reason rotation_seed runs before any `up`.
   rm -f "$ROTATION_DIR"/*.conf
@@ -385,7 +385,7 @@ if [ "$(running_versions)" = "rolltest/api:v3 " ]; then
 else
   fail "left running after the release: $(running_versions)"
 fi
-if lists_at_rest; then ok "every list is back at rest"; else fail "a list still names an address after the release"; fi
+if lists_at_rest; then ok "every list is back at rest"; else fail "a list still names a replica after the release"; fi
 if [ "$(containers_of edge)" = "$edge_before" ]; then
   ok "the edge is the same container it was before the release"
 else
@@ -399,21 +399,33 @@ fi
 # peer until its DNS query returned: what it took meanwhile was refused (`no live upstreams`). Case 2
 # crosses four such reloads, which is why it failed once in 58 runs; this crosses hundreds, so a
 # window that small fails it every time (measured on the `upstream` lists: see the wiki).
-# The two lists of each proxy are rendered by the library itself (the take-out naming the one replica
-# running), then swapped in and reloaded, the edge's and the frontend's in turn. rotation_reload returns
-# once a worker started after the reload exists, so every reload counted here took effect.
+# The two lists of each proxy are rendered by the library itself, then swapped in and reloaded, the
+# edge's and the frontend's in turn. rotation_reload returns once a worker started after the reload
+# exists, so every reload counted here took effect.
+# THE API IS A REAL OLD -> NEW SWITCH (2026-11-02 review): a second API replica runs beside the first,
+# so the frontend's resting list (the DNS name) reaches both and its take-out list names the new one
+# alone - each frontend reload takes the old replica out of rotation or puts it back, as a release
+# does, under load. The case ends the way a release does, by the library: the new one alone, the old
+# one retired, the list at rest. The edge's take-out names the one frontend running.
 STORM_CYCLES="${ROLLTEST_STORM_CYCLES:-75}"
 printf '\ndeploy-rolling: each proxy reloaded %s times between its take-out list and its resting one, under load\n' \
   "$((STORM_CYCLES * 2))"
 rotation_routes_set <<<"$(plan)"
 storm=ready
-api_cid="$(containers_of api)"
+api_old="$(containers_of api)"
+dc up -d --no-deps --no-recreate --scale api=2 api >"$TMP/storm.log" 2>&1 || storm=unscaled
+api_cid=""
+for cid in $(containers_of api); do [ "$cid" = "$api_old" ] || api_cid="$cid"; done
+if [ -z "$api_cid" ] || ! wait_healthy "$api_cid" api >>"$TMP/storm.log" 2>&1; then storm=unscaled; fi
 fe_cid="$(containers_of frontend)"
 edge_cid="$(containers_of edge)"
-{ rotation_take_out api "$api_cid" && cp "$(rotation_file frontend)" "$TMP/frontend.out" &&
-  rotation_restore api force && cp "$(rotation_file frontend)" "$TMP/frontend.rest" &&
-  rotation_take_out frontend "$fe_cid" && cp "$(rotation_file edge)" "$TMP/edge.out" &&
-  rotation_restore frontend force && cp "$(rotation_file edge)" "$TMP/edge.rest"; } >"$TMP/storm.log" 2>&1 || storm=unrendered
+if [ "$storm" = ready ] &&
+  ! { rotation_take_out api "$api_cid" && cp "$(rotation_file frontend)" "$TMP/frontend.out" &&
+    rotation_restore api force && cp "$(rotation_file frontend)" "$TMP/frontend.rest" &&
+    rotation_take_out frontend "$fe_cid" && cp "$(rotation_file edge)" "$TMP/edge.out" &&
+    rotation_restore frontend force && cp "$(rotation_file edge)" "$TMP/edge.rest"; } >>"$TMP/storm.log" 2>&1; then
+  storm=unrendered
+fi
 for proxy in frontend edge; do
   # The render id aside, the two lists must differ, or this would reload one list onto itself.
   cmp -s <(grep -v '^# render ' "$TMP/$proxy.out") <(grep -v '^# render ' "$TMP/$proxy.rest") && storm=unrendered
@@ -451,7 +463,15 @@ if [ -s "$TMP/storm.json" ]; then
     dc logs --no-color --timestamps edge frontend 2>&1 | grep -E '\[(warn|error|crit|alert|emerg)\]' | tail -n 10 | sed 's/^/    /'
   fi
 fi
-if lists_at_rest; then ok "every list is back at rest after the reloads"; else fail "a list still names an address after the reloads"; fi
+# The release's own end: the new API replica alone, the old one drained and removed, the list at rest.
+if { rotation_take_out api "$api_cid" && retire api "$api_old" && rotation_restore api; } >>"$TMP/storm.log" 2>&1 &&
+  [ "$(containers_of api)" = "$api_cid" ]; then
+  ok "the old API replica is retired by the library, the new one alone serving"
+else
+  fail "the old API replica could not be retired after the reloads"
+  cat "$TMP/storm.log" >&2
+fi
+if lists_at_rest; then ok "every list is back at rest after the reloads"; else fail "a list still names a replica after the reloads"; fi
 
 # ── 3. A request held in its auth_request ────────────────────────────────────
 printf '\ndeploy-rolling: v3 -> v4 with a POST still in its auth_request\n'
@@ -519,11 +539,11 @@ fi
 
 # ── 3b. A list at rest on disk that the proxy does not run ──────────────────
 # What a restore whose reload failed leaves (2026-11-01 review): the file names the API by DNS, the
-# frontend still runs a list naming its address. The next deploy's seed must reload anyway - the
+# frontend still runs a list naming its container. The next deploy's seed must reload anyway - the
 # rollback below would otherwise retire that replica under a frontend still choosing it.
-printf '\ndeploy-rolling: a list at rest on disk, while the frontend still runs an address\n'
-api_address="$(rotation_address frontend "$(containers_of api)")"
-rotation_write frontend api "$(rotation_block api 3000 "$api_address")" &&
+printf '\ndeploy-rolling: a list at rest on disk, while the frontend still runs a container name\n'
+api_name="$(docker inspect -f '{{.Name}}' "$(containers_of api)")"
+rotation_write frontend api "$(rotation_block api 3000 "${api_name#/}")" &&
   rotation_apply frontend plain >/dev/null &&
   rotation_write frontend "" ""
 # The seed's own report: rotation_reload says `reloaded` only once it has seen a worker started after
@@ -576,7 +596,7 @@ fi
 printf '\ndeploy-rolling: v5b -> v5, ROLLED BACK by the pre-lists library with a pre-lists frontend\n'
 build v5 frontend-pre-rotation.conf
 export TAG=v5
-if lists_at_rest; then ok "the lists a rollback finds name each service by DNS"; else fail "the lists a rollback finds name an address"; fi
+if lists_at_rest; then ok "the lists a rollback finds name each service by DNS"; else fail "the lists a rollback finds name a replica"; fi
 # A subshell: the frozen library defines the same functions, and must not replace this one's.
 if (
   # shellcheck source-path=SCRIPTDIR source=rolling-fixture/rolling-pre-rotation.sh

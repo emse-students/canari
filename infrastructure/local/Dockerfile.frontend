@@ -76,8 +76,8 @@ RUN printf 'default_type application/json;\nadd_header Access-Control-Allow-Orig
 # service, read by every `proxy_pass http://$target_<service>` below (2026-11-02,
 # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). On a deployed estate this
 # directory is a READ-ONLY MOUNT of the list `infrastructure/lib/rolling.sh` writes: while a service is
-# replaced, its target is the new replica's address, so the old one is out - by a reload the pairing
-# check holds - before it is stopped. A replica told to stop while still chosen resets the
+# replaced, its target is the new replica's container name, so the old one is out - by a reload the
+# pairing check holds - before it is stopped. A replica told to stop while still chosen resets the
 # connections queued on it, a 502 on a POST nginx may not replay. The file below is the list's
 # RESTING FORM, byte for byte what the deploy writes between replacements (and what a rollback relies
 # on), and what an estate WITHOUT that deploy reads (a workstation, the e2e stack): each service by its
@@ -310,15 +310,17 @@ server {\n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
     #\n\
-    # A RELEASE REPLACES A SERVICE WITHOUT A GAP, AND THESE THREE LINES ARE PART OF IT (2026-10-17,\n\
+    # A RELEASE REPLACES A SERVICE WITHOUT A GAP, AND THESE FOUR LINES ARE PART OF IT (2026-10-17,\n\
     # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). The services a release\n\
     # overlaps are reached through the targets included above, which the deploy changes by a reload\n\
     # and proves before it stops a replica. The resolver answers a target at rest (a DNS name, looked\n\
     # up for the request, which waits for it) and the services still addressed by name (media, calls,\n\
-    # adminer). A connect REFUSED is handed to the next replica with no byte sent, POSTs included;\n\
-    # `proxy_connect_timeout 2s` bounds a connect that is not answered at all, where the default would\n\
+    # adminer); `resolver_timeout 2s` bounds a DNS that does not answer, which every routed request\n\
+    # now waits on, where the default would hold it for 30 s. A connect REFUSED is handed to the next\n\
+    # replica with no byte sent, POSTs included; `proxy_connect_timeout 2s` bounds a connect that is not answered at all, where the default would\n\
     # hold a member for 60 s. A connect on this bridge takes well under a millisecond.\n\
     resolver 127.0.0.11 valid=2s ipv6=off;\n\
+    resolver_timeout 2s;\n\
     proxy_connect_timeout 2s;\n\
     proxy_next_upstream error timeout;\n\
     # EVERY VISITOR ARRIVES FROM THE DOCKER GATEWAY, SO $remote_addr NAMED NOBODY.\n\
