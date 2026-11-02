@@ -19,7 +19,8 @@
   import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
-  import { isAppInForeground, onAppScreenChange } from '$lib/utils/appForeground';
+  import { onAppScreenChange } from '$lib/utils/appForeground';
+  import { createAppForegroundState } from '$lib/utils/appForegroundState.svelte';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
   import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
@@ -301,6 +302,13 @@
   let forwardingMessage = $state<ChatMessage | null>(null);
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
+  /**
+   * The Android foreground, as state the receipt effect FOLLOWS: read as the bare global it stopped
+   * the effect while the app was in the background and nothing ran it again on the way back
+   * (`appForegroundState.svelte.ts`).
+   */
+  const appForeground = createAppForegroundState();
+  onDestroy(() => appForeground.destroy());
 
   /**
    * The frame the log panel's scroll is already scheduled for, or `null`.
@@ -722,10 +730,12 @@
     // are both permanently true in a backgrounded Tauri WebView (measured on device 2026-09-05:
     // a backgrounded app reports `visible` / `hasFocus: true`, byte for byte its foreground
     // answer), so on Android these two said "the user is reading this" about a phone in a pocket -
-    // and the sender was told their message had been read. `isAppInForeground` reads the fact the
+    // and the sender was told their message had been read. `appForeground` reads the fact the
     // Android activity states for itself, and is `true` everywhere that has a working visibility
-    // API, so the two terms above keep deciding web and desktop exactly as before.
-    if (!isWindowFocused || !isTabVisible || !isAppInForeground()) return;
+    // API, so the two terms above keep deciding web and desktop exactly as before. It is STATE, so
+    // the app coming back to the foreground on an open conversation runs this effect again and marks
+    // what landed while it was away - read as a bare global, nothing re-ran it (owner, 2026-11-02).
+    if (!isWindowFocused || !isTabVisible || !appForeground.current) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
@@ -768,7 +778,7 @@
         const next = withOwnReadAdvanced(fresh, meNorm, target, clock);
         if (next === fresh) return;
         convs.conversations.set(currentContact, next);
-        publishConversationRead(currentContact, next.lastMessageAt ?? 0);
+        publishConversationRead(currentContact, next.lastMessageAt ?? 0, { at: target, clock });
         void convs.saveConversation(currentContact, convCtx());
       }, 0);
     });

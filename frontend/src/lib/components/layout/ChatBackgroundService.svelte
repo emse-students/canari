@@ -105,6 +105,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { applyTabReadEvent } from '$lib/utils/chat/tabReadRelay';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
@@ -1592,18 +1593,29 @@
 
     // A READ IS THE OTHER FACT A FOLLOWER MAY KNOW THAT A LEADER DOES NOT, and the leader must
     // apply it too: reading happens in whichever tab is open on the conversation, either role.
-    // Applied only up to the watermark the reading tab saw, so a message that arrived in the gap
-    // between the read and this broadcast keeps its unread state instead of being swallowed.
+    // A reading carries its mark, so a message that arrived in the gap between the read and this
+    // broadcast keeps its unread state instead of being swallowed (`tabReadRelay.ts`).
     if (event.type === 'conversation_read') {
-      const target = globalConvs.conversations.get(event.conversationId);
-      if (!target) return;
-      if ((target.lastMessageAt ?? 0) <= event.readAt) {
-        globalConvs.conversations.set(event.conversationId, { ...target, unreadCount: 0 });
-      }
+      applyTabReadEvent(
+        globalConvs.conversations,
+        event,
+        globalSession.userId || currentUserId() || '',
+        (key) => isReadingConversationNow(key, globalConvs.selectedContact)
+      );
       return;
     }
 
     if (globalSession.isTabLeader) return;
+    // The read state and the salon counts the LEADER received: a follower has no socket of its own.
+    if (event.type === 'read_state' || event.type === 'unread_counts') {
+      applyTabReadEvent(
+        globalConvs.conversations,
+        event,
+        globalSession.userId || currentUserId() || '',
+        (key) => isReadingConversationNow(key, globalConvs.selectedContact)
+      );
+      return;
+    }
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;
     // The leader counted this arrival against ITS selection. A follower tab that has the

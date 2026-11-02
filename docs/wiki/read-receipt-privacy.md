@@ -78,6 +78,8 @@ writer and every door in the code, the server suites, and production COUNTS (no 
 - **The other direction, under-marking:** the receipt effect does not track `isAppInForeground()`
   (a plain global), so on Android a message that arrived while the app was in the background is not
   marked on resume until something else changes the conversation - read in the code, not measured.
+  **Fixed 2026-11-02**, door 1 unchanged: the effect now follows the foreground as state, so the
+  resume itself runs it ([chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
 
 ## The fix (2026-10-14)
 

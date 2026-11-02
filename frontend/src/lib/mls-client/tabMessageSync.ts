@@ -1,4 +1,5 @@
-import type { ChatMessage } from '$lib/types';
+import type { ChatMessage, ReadWatermarks } from '$lib/types';
+import type { ReadClock } from '$lib/utils/chat/readState';
 import type { UnsentReason } from '$lib/db/types';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
@@ -61,6 +62,35 @@ export type TabMessageEvent =
       type: 'conversation_read';
       conversationId: string;
       readAt: number;
+      /**
+       * The mark the reading tab took, on its clock. Present when a READING moved it (the receipt
+       * effect), absent when the event is a SELECTION, which zeroes the badge and moves no mark. A
+       * receiver advances its own watermark with it, so the thread it draws (the unread divider, the
+       * scroll button) agrees with the badge on its list instead of only the badge falling.
+       */
+      mark?: { at: number; clock: ReadClock };
+    }
+  /**
+   * The read state of a conversation, as the LEADER holds it after a received event moved it: a
+   * peer's receipt, this account's read on another device (`read_watermark`, `channel.read`), or the
+   * read state a history bundle restated. Leader-gated like `message_added`: only the leader has a
+   * socket, so without this a follower tab never learned either fact and kept its badge, and drew no
+   * "Vu", until it was reloaded. Both maps whole - one entry per participant - merged by `max`.
+   */
+  | {
+      type: 'read_state';
+      conversationId: string;
+      readWatermarks?: ReadWatermarks;
+      serverReadWatermarks?: ReadWatermarks;
+    }
+  /**
+   * Salon counts the LEADER just took from the server (`unread-counts`: a socket that came back, a
+   * community cleared on another device), the keys that moved and nothing else. The follower's copy
+   * of the count is otherwise only ever the leader's at the last arrival.
+   */
+  | {
+      type: 'unread_counts';
+      counts: Record<string, number>;
     };
 
 const MESSAGE_EVENT_TYPES = new Set<string>([
@@ -68,6 +98,8 @@ const MESSAGE_EVENT_TYPES = new Set<string>([
   'messages_batch',
   'own_message_composed',
   'conversation_read',
+  'read_state',
+  'unread_counts',
 ]);
 
 /**
@@ -139,12 +171,39 @@ export function publishComposedMessage(event: TabMessageEvent & { type: 'own_mes
  * `lastMessageAt` at the moment it was cleared, so a receiver can tell a read that is still
  * current from one a newer message has already overtaken.
  */
-export function publishConversationRead(conversationId: string, readAt: number): void {
+export function publishConversationRead(
+  conversationId: string,
+  readAt: number,
+  mark?: { at: number; clock: ReadClock }
+): void {
   ensureChannel()?.postMessage({
     type: 'conversation_read',
     conversationId,
     readAt,
+    ...(mark ? { mark } : {}),
   } satisfies TabMessageEvent);
+}
+
+/**
+ * From the leader tab: the read state of `conversationId` after a RECEIVED event moved it (see
+ * `read_state`). Leader-gated, a no-op in a follower: a follower receives no such event.
+ */
+export function publishReadState(
+  conversationId: string,
+  convo: { readWatermarks?: ReadWatermarks; serverReadWatermarks?: ReadWatermarks }
+): void {
+  publishTabMessageUpdate({
+    type: 'read_state',
+    conversationId,
+    ...(convo.readWatermarks ? { readWatermarks: convo.readWatermarks } : {}),
+    ...(convo.serverReadWatermarks ? { serverReadWatermarks: convo.serverReadWatermarks } : {}),
+  });
+}
+
+/** From the leader tab: the salon counts a server answer just moved (see `unread_counts`). */
+export function publishUnreadCounts(counts: Record<string, number>): void {
+  if (Object.keys(counts).length === 0) return;
+  publishTabMessageUpdate({ type: 'unread_counts', counts });
 }
 
 /** Subscribes follower tabs to leader-originated message updates. */

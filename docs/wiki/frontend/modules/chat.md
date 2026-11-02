@@ -1180,6 +1180,7 @@ needs `findMessage` to succeed, so it repairs only a row the receiver already sh
 | `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
 | `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
 | `conversation_read` | **either role** | reading happens in whichever tab is showing the conversation - see below |
+| `read_state`, `unread_counts` | the **leader** only | read marks and salon counts it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
 
 The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
 cannot speak for what the leader has read, and has nothing to say about it either, since an own
@@ -4258,6 +4259,64 @@ reading a leader's arrival for the conversation it has open counts it 0, the liv
 **Not changed, owed a reading:** OS notification banners on the other devices are cleared by the
 push-side receipt (`markChannelRead` for salons, the native `read_watermark` for DMs); nothing here
 touches them. The stuck count was reproduced as failing tests, not on two live devices.
+
+### Read state between devices - the census (2026-11-02)
+
+**Reported by the owner:** a conversation read on one device still showed as unread on another,
+possibly until that page reloaded, and receipts did not always seem to reach the other devices.
+Every path "read" travels by was mapped and each was given a test in
+`utils/chat/readSync.devices.test.ts`: three conversation stores driven through the REAL handlers
+(`handleSystemEvent`, `handleChannelEvent`, the tab channel), `A` and `B` two devices of one
+account, `P` the other party, `B2` a second tab of `B`'s browser. No clock is read; the server's
+time of a frame is the `queuedCreatedAt` the test hands in. Vitest, not the rig: the local estate
+was not up, and every one of these paths is decided in the client.
+
+| Path | Platform | Before | Why |
+| --- | --- | --- | --- |
+| DM/group read on A -> B, live (`read_watermark`, `withOwnReadAdvanced`) | all | works | the frame reaches every leaf, own devices included; the count follows the mark |
+| same, B offline then catching up (pending pull, frames in order) | all | works | a message newer than the read stays counted |
+| A's read -> P's "Vu" (`withReadMark`, `readersOf`) | all | works | |
+| salon read on A -> B, live (`channel.read`, audience includes the reader) | all | works | count falls whether or not B holds the rows |
+| salon, B reconnects (`unread-counts`) | all | works, **except the salon B has selected** | see below |
+| shade "Marquer comme lu" -> the phone's own badge (`read_watermarks.ndjson`) | Android | works | merged at login AND at resume |
+| **Android resumed on an open conversation** | Android | **FAILED** | the receipt effect read `isAppInForeground()`, a plain global; it returned while the app was in the background and nothing ran it again on the way back. What landed in the background stayed unread on the phone, and the mark never left, so on every other device too, until something else changed the conversation (a send, a new message, a reload) |
+| iOS resumed on an open conversation | iOS | works | WKWebView fires `visibilitychange`, which the effect follows |
+| web tab hidden, then shown / window refocused | web | works | `isTabVisible` / `isWindowFocused` are state |
+| **any read (own other device, or the peer's receipt) -> a FOLLOWER tab** | web, desktop | **FAILED** | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded |
+| **salon counts re-read by the leader (reconnect, a community cleared elsewhere) -> a follower tab** | web, desktop | **FAILED** | same: only the leader asks, and it relayed nothing |
+| **a read in one tab -> the other tab's thread** (`conversation_read`) | web, desktop | **FAILED (half)** | the badge fell, the watermark did not, so the list said read and the open thread's divider and scroll button still said unread |
+| **salon left selected but not read (another page, hidden tab, app in background), read on another device while this one was offline** | all | **FAILED** | `reconcileSalonUnread` skips the selected salon because the receipt effect owns its count - but it owns it only while the salon is READ. "Selected is not a screen" ([below](#a-selection-is-not-a-screen-2026-10-10)): the server's 0 was thrown away and the badge stayed until the reader came back to the salon |
+
+**The list badge and the open thread** read two things: `unreadCount` (list, nav dot, title,
+favicon) and the reader's own watermark (the thread's divider and scroll-button count). Every path
+above moves both together through `withOwnReadAdvanced` / `withRelayedReadState`; the half-failure
+was the one that moved only the first.
+
+**What changed.** Each missing event, named and added - no polling, no reload on focus:
+
+- `appForegroundState.svelte.ts`: the Android foreground as STATE, following the
+  `canari:foreground` event the activity already dispatches; the receipt effect reads it, so the
+  transition itself re-runs the effect. Same guard, same door: nothing is marked that is not on
+  screen ([read-receipt-privacy](../../read-receipt-privacy.md), door 1, unchanged).
+- `read_state` on the tab channel (leader-gated): the leader publishes a conversation's two mark
+  maps whenever a RECEIVED event moved them (`read_watermark`, `channel.read`, a bundle's restated
+  marks); a follower merges them by `max` and its own count follows (`withRelayedReadState`).
+- `unread_counts` on the tab channel (leader-gated): the salon counts a server answer moved;
+  a follower applies them except to the salon it is reading.
+- `conversation_read` carries the reading tab's `mark`; the receiver advances its own watermark with
+  it. A selection still carries none and only zeroes the badge, as before.
+- `conversationBeingRead` (`arrivalRuntime.ts`): both callers of the server count hand it the salon
+  being READ, never the bare selection.
+
+All three tab events carry one entry per participant or per moved salon, never per message, so the
+cost does not grow with a conversation's length or the list's.
+
+**Not changed, recorded.** On iOS `arrivalContextNow` asks `isAppInForeground()` alone, which is
+always `true` there, so a frame the JS processes in the seconds before suspension counts as read on
+arrival; the receipt itself is not sent (the effect waits for `visibilitychange`). Not measured, not
+part of this report. An iOS read is delivered when the app is next opened if the process is
+suspended inside the 2 s window: `onAppScreenChange` hands the mark to the outbox, which iOS may not
+let run - durable (`recordDmReadMark`), so late, never lost.
 
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 

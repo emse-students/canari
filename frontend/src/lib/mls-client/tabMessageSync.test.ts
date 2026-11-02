@@ -11,7 +11,9 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import {
   publishComposedMessage,
   publishConversationRead,
+  publishReadState,
   publishTabMessageUpdate,
+  publishUnreadCounts,
   subscribeTabMessageUpdates,
   type TabMessageEvent,
 } from './tabMessageSync';
@@ -150,5 +152,47 @@ describe('tabMessageSync - who may speak, and about what', () => {
     for (const fn of listeners) fn({ data: composed } as MessageEvent);
 
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('tabMessageSync - the read state a leader received', () => {
+  it('is relayed by the leader only, both maps whole', () => {
+    const convo = { readWatermarks: { peer: 10 }, serverReadWatermarks: { me: 20 } };
+    publishReadState('g1', convo);
+    publishUnreadCounts({ channel_s1: 2 });
+    expect(posted).toEqual([]);
+
+    isLeader = true;
+    publishReadState('g1', convo);
+    publishUnreadCounts({ channel_s1: 2 });
+    publishUnreadCounts({});
+    expect(posted).toEqual([
+      { type: 'read_state', conversationId: 'g1', ...convo },
+      { type: 'unread_counts', counts: { channel_s1: 2 } },
+    ]);
+  });
+
+  it('reaches the conversation handler', () => {
+    const handler = vi.fn();
+    subscribeTabMessageUpdates(handler);
+    const event = { type: 'read_state', conversationId: 'g1', readWatermarks: { peer: 10 } };
+
+    for (const fn of listeners) fn({ data: event } as MessageEvent);
+
+    expect(handler).toHaveBeenCalledWith(event);
+  });
+
+  it("a reading carries the reading tab's mark, a selection none", () => {
+    publishConversationRead('g1', 100, { at: 90, clock: 'server' });
+    publishConversationRead('g1', 100);
+    expect(posted).toEqual([
+      {
+        type: 'conversation_read',
+        conversationId: 'g1',
+        readAt: 100,
+        mark: { at: 90, clock: 'server' },
+      },
+      { type: 'conversation_read', conversationId: 'g1', readAt: 100 },
+    ]);
   });
 });

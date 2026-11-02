@@ -337,6 +337,48 @@ export function withOwnReadAdvanced<
 }
 
 /**
+ * `convo` with a whole read state merged in - every participant's two marks, `max` each - and the
+ * unread count following THIS user's own point exactly as {@link withOwnReadAdvanced} makes it: it
+ * only falls, to what is still unread among the messages held.
+ *
+ * What a follower tab applies when its leader relays the read state it received (`read_state`,
+ * tabMessageSync.ts): the leader is the only tab with a socket, so a peer's receipt or this account's
+ * read on another device reached the follower never, and its badge stayed until a reload.
+ *
+ * @returns `convo` itself when nothing moves.
+ */
+export function withRelayedReadState<
+  C extends {
+    messages: Array<
+      Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>
+    >;
+    readWatermarks?: ReadWatermarks;
+    serverReadWatermarks?: ReadWatermarks;
+    unreadCount?: number;
+  },
+>(
+  convo: C,
+  userId: string,
+  stamped: ReadWatermarks | undefined,
+  server: ReadWatermarks | undefined
+): C {
+  const nextStamped = mergeReadWatermarks(convo.readWatermarks, parseReadWatermarks(stamped));
+  const nextServer = mergeReadWatermarks(convo.serverReadWatermarks, parseReadWatermarks(server));
+  if (!nextStamped && !nextServer) return convo;
+  const next = {
+    ...convo,
+    ...(nextStamped ? { readWatermarks: nextStamped } : {}),
+    ...(nextServer ? { serverReadWatermarks: nextServer } : {}),
+  };
+  const point = readPointFor(next, userId);
+  const held = convo.unreadCount ?? 0;
+  return {
+    ...next,
+    unreadCount: Math.min(held, countUnreadForUser(convo.messages, point.stamped, point.server)),
+  };
+}
+
+/**
  * Which map a mark belongs to: `server` is compared against the server's time of a row, `stamped`
  * against the row's own `timestamp`. See the top of this file.
  */
