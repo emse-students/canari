@@ -3554,6 +3554,16 @@ move at all. No row, however it arrived, can lift the mark past what the server 
 written before the upgrade (`canari.dmReadMarks.*`) is now the STAMPED ledger and goes out as `{ at }`
 alone; the server ledger is `canari.dmServerReadMarks.*` (`salonReadMarkQueue.ts`).
 
+**A live frame had no `createdAt` until 2026-11-03, and every live DM read mark was refused for it.**
+chat-delivery publishes `createdAt` on `chat:messages`, but the gateway rebuilt the WebSocket frame
+from a field list that left it out (`live_mls_frame`, `apps/chat-gateway/src/subscribers.rs`), so only
+a PULLED frame carried a server time. From `v1.6.0` (#2824, marks on the server's clock) every
+`read_watermark` received LIVE logged `[READ] REFUSED ... the frame carries no server time to bound
+it`: a DM read while both devices were online never showed on the sender (one check for good), nor on
+the reader's own other devices. Measured on dev with `1.6.3-alpha.7/8`: iPhone 12 -> Mi 9T and web ->
+Mi 9T, and the reader's own iPhone mark refused on its web device ([device-verification](../../device-verification.md)).
+The gateway now forwards it when the payload has one, and never invents one; its test is in the same file.
+
 **What a late message does now**: it sorts where it arrived, counts as unread and notifies - unless a
 STAMPED mark newer than its `sentAt` covers it, which only an older client, the iOS shade's "mark as
 read" (still `sentAt`-keyed, see below) or a mark from before the change can produce.
