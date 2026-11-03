@@ -84,6 +84,20 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
   AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT | AssociationPermissionFlag.POST_AS_ASSO;
 
 /**
+ * FLAGS NOBODY HOLDS ON AN ENTITY OF A GIVEN KIND, the platform administrator included - the client
+ * mirror of the backend `TYPE_EXCLUDED_FLAGS` (`association-member.entity.ts`), which carries the
+ * reasoning (owner, 2026-11-02): a LIST keeps its shop and collects through a payment delegation,
+ * so it never holds a payout account of its own; an INSTITUTION collects nothing. Asserted equal to
+ * the server's values by `permissions.test.ts`.
+ */
+export const TYPE_EXCLUDED_FLAGS: Readonly<Record<Association['type'], number>> = {
+  association: 0,
+  list: AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+  institution:
+    AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+};
+
+/**
  * Flags that only mean anything inside a BDE association - the server enforces `a.isBDE = true`
  * in every query that honours them, so granting one elsewhere is inert. Exported so the members
  * editor hides them from non-BDE associations without re-listing them by hand.
@@ -110,8 +124,15 @@ export const BDE_ONLY_FLAGS: ReadonlySet<AssociationPermissionFlag> = new Set([
  */
 export function mayActOnAssociation(
   flag: AssociationPermissionFlag,
-  ctx: { isGlobalAdmin: boolean; isSuperAdmin: boolean; memberPermissions?: number }
+  ctx: {
+    isGlobalAdmin: boolean;
+    isSuperAdmin: boolean;
+    memberPermissions?: number;
+    /** The entity's kind: a flag its kind excludes (`TYPE_EXCLUDED_FLAGS`) is held by nobody. */
+    assoType?: Association['type'];
+  }
 ): boolean {
+  if (ctx.assoType && (TYPE_EXCLUDED_FLAGS[ctx.assoType] & flag) !== 0) return false;
   if (ctx.isGlobalAdmin) return true;
   if (ctx.isSuperAdmin && (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0) return true;
   return hasPermissionFlag(ctx.memberPermissions ?? 0, flag);
@@ -194,6 +215,13 @@ export interface Association {
    * `getAssociationPayoutAccount`.
    */
   lydiaOnboardingComplete: boolean;
+  /**
+   * Whether its payments can be taken NOW, through its own Lydia Business or the one of the
+   * association it delegates to (APPROVED) - served by the member reads (`withPaymentsReady`). The
+   * ONE field a "can this entity take a payment" check reads (`canTakePayments`); never the row's
+   * own `lydiaOnboardingComplete`, which a delegating entity does not have.
+   */
+  paymentsReady?: boolean;
   /** True if this is the BDE association (unlocks BDE-only permission flags). */
   isBDE: boolean;
   /** Maximum vault storage in bytes (default 500 MiB). */
@@ -2635,9 +2663,9 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
 }
 
 /**
- * True when the association's Lydia account is ready. `null` is a provider not yet known, and
- * `disabled` is payments switched off platform-wide: neither is ever ready. The historic
- * `stripeOnboardingComplete` flag is no longer even on the type: the server stopped mapping it.
+ * True when the association's OWN Lydia account is ready - what may RECEIVE a delegation. `null`
+ * is a provider not yet known, and `disabled` is payments switched off platform-wide: neither is
+ * ever ready. Whether an entity can TAKE a payment is `canTakePayments`, which honours delegation.
  */
 export function isPaymentAccountReady(
   asso: Pick<Association, 'lydiaOnboardingComplete'>,
@@ -2647,14 +2675,32 @@ export function isPaymentAccountReady(
 }
 
 /**
- * True when an association may be selected as recipient for paid forms.
- * Requires onboarding complete at the ACTIVE provider (not merely a linked account id).
+ * A row returned by a write (`PATCH :id`) does not carry the derived `paymentsReady`; an edit of the
+ * profile does not change it, so the previous resolution is kept rather than dropped to "not ready".
  */
+export function keepPaymentsReady(updated: Association, previous: Association | null): Association {
+  return { ...updated, paymentsReady: updated.paymentsReady ?? previous?.paymentsReady };
+}
+
+/**
+ * True when an entity can take a payment NOW - its own Lydia Business, or the one of the
+ * association it delegates to (APPROVED): the server's resolved `paymentsReady`, under the active
+ * provider (G4, owner 2026-11-02). A delegating association or list used to be told "payments not
+ * configured" here while the server accepted, because this read the row's OWN onboarding flag.
+ */
+export function canTakePayments(
+  asso: Pick<Association, 'paymentsReady'>,
+  provider: PaymentProviderId | null
+): boolean {
+  return provider === 'lydia' && asso.paymentsReady === true;
+}
+
+/** True when an association may be selected as recipient for paid forms (`canTakePayments`). */
 export function canAssociationReceiveFormPayments(
   asso: Association,
   provider: PaymentProviderId | null
 ): boolean {
-  return isPaymentAccountReady(asso, provider);
+  return canTakePayments(asso, provider);
 }
 
 /** An association's Lydia Business as its MANAGE_PAYOUT_ACCOUNT holders see it. */

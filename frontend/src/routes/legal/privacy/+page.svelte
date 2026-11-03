@@ -223,8 +223,10 @@
           responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
           et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
           une personne, et il figure tel quel dans le relevé que les responsables du compte de
-          paiement de l'association peuvent télécharger. Un remboursement total retire ce que le
-          paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
+          paiement de l'association peuvent télécharger. Quand une association accepte de recevoir
+          les paiements d'une autre entité (une liste, par exemple), Canari garde l'identifiant du
+          responsable qui a accepté, à quel titre et la date. Un remboursement total retire ce que
+          le paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
           Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
           Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
           l'association qui l'a créé.

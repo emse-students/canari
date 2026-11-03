@@ -28,6 +28,23 @@ The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
 pointing an association's payouts at a bank account and speaking in its name are not
 administration. The platform administrator keeps both.
 
+**Above all three tiers sits the KIND** (owner, 2026-11-02). `TYPE_EXCLUDED_FLAGS`, beside
+`SUPER_ADMIN_EXCLUDED_FLAGS` on the entity, names the flags an entity of a kind can never grant:
+`list` -> `MANAGE_PAYOUT_ACCOUNT` (a list keeps the shop, but collects only through a payment
+delegation and holds no Lydia account), `institution` -> `MANAGE_PRODUCTS | MANAGE_PAYOUT_ACCOUNT`
+(it sells nothing), `association` -> none. `mayAct` reads it FIRST and refuses such a flag to
+everyone, the platform administrator included (a debug line names the kind); `mayActOnAny` drops
+those entities from the batch; `writablePermissions` strips the bits on write; the client
+`mayActOnAssociation` takes an `assoType` and reads the mirror. `GET :id/manage-permission` returns the
+typed code (`LIST_NO_OWN_LYDIA_ACCOUNT`, `ASSOCIATION_KIND_DOES_NOT_SELL`), which core-service
+forwards in its 403, so a list's Lydia Business creation is refused up front.
+
+**`mayAct(..., { withoutGoverningBde: true })` skips the middle tier.** One rule uses it: accepting,
+rejecting or revoking a payment delegation for the receiver (`receiverActorRole`), which the owner
+reserved to the receiver's OWN `MANAGE_PRODUCTS` holders and the platform admin - a BDE governing the
+receiver does not act for it
+([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
+
 The client mirrors it with `mayActOnAssociation(flag, { isGlobalAdmin, isSuperAdmin,
 memberPermissions })` in `frontend/src/lib/associations/api.ts`, reading the same exclusion set, so
 a hidden control and a refused request cannot disagree. `isSuperAdmin` there is THIS association's
@@ -124,8 +141,8 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association through `POST /associations` (unscoped: there is none yet; never the platform admin's `POST /associations/admin`, [below](#creating-an-entity-two-routes-two-tiers)), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing and deleting any post (`assertMayManage` and the `canManage` field). **Pinning stops being moderation once WP-PIN ships (owner, 2026-11-03)**: it becomes a per-space promotion right ([section 11](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)); until then `pinPost`/`unpinPost` and `canPin` still ride `MODERATE` |
-| `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
-| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
+| `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id`. Never held on an institution (`TYPE_EXCLUDED_FLAGS`); ACCEPTING a delegation reads it on the receiver without the BDE tier, while requesting, re-pointing or cancelling a list's own delegation keeps the BDE tier (intended, owner 2026-11-03). A list with no holder (32 of 44 on production, 2026-11-03, empty lists per the owner) gets it from its governing BDE super-admin or the platform admin, never a backfill - its own managers cannot grant a flag they lack ([grant ceiling](#the-grant-ceiling-who-may-write-which-bits-2026-11-02), [payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)) |
+| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL. Never held on a list or an institution (`TYPE_EXCLUDED_FLAGS`) |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
 | `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module (the bookings chantier, WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
 | `EDIT_PROFILE` | 12 | 2 | the public profile: its fields of `PATCH :id` (below) and the two logo routes (`POST`/`DELETE :id/logo`, both slots). In the admin preset, offered to every kind (a list and an institution have a profile; `writablePermissions` keeps it), inherited by a BDE super-admin, and backfilled to every `MANAGE_MEMBERS` holder by migration 124 |

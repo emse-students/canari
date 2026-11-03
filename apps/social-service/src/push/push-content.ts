@@ -51,6 +51,9 @@ export type PushContentKey =
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
   | 'lydia_refund_issued'
+  | 'delegation_revoked'
+  | 'delegation_receiver_not_ready'
+  | 'delegation_resumed'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
@@ -422,6 +425,43 @@ export function lydiaPaymentsPausedContent(associationName: string): PushContent
     legacyTitle: 'Paiements Lydia suspendus',
     legacyBody: `Les paiements Lydia de ${associationName} sont suspendus : Lydia a refusé une demande de paiement.`,
   };
+}
+
+/**
+ * An entity collecting through a payment delegation (a list) stopped collecting or collects again,
+ * told to its shop managers (owner review of #2967). The entity's name is the only datum; the
+ * reason is the key, so each is its own sentence.
+ */
+export function delegationNoticeContent(
+  notice: 'revoked' | 'receiver-not-ready' | 'resumed',
+  associationName: string
+): PushContent {
+  switch (notice) {
+    case 'revoked':
+      return {
+        key: 'delegation_revoked',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements en pause',
+        legacyBody: `L'association qui recevait les paiements de ${associationName} a mis fin à la délégation : ses paiements sont en pause.`,
+      };
+    case 'receiver-not-ready':
+      return {
+        key: 'delegation_receiver_not_ready',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements en pause',
+        legacyBody: `L'association qui reçoit les paiements de ${associationName} ne peut plus les encaisser : ses paiements sont en pause.`,
+      };
+    case 'resumed':
+      return {
+        key: 'delegation_resumed',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements rétablis',
+        legacyBody: `Les paiements de ${associationName} reprennent.`,
+      };
+  }
 }
 
 /**

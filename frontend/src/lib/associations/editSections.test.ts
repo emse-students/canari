@@ -11,6 +11,7 @@ import {
   EDIT_SECTIONS,
   EDIT_SECTIONS_BY_KIND,
   LIST_EDIT_SECTIONS,
+  mayEnterEditArea,
   adminPresetFor,
   entityBase,
   firstAdminPresetFor,
@@ -171,12 +172,18 @@ describe('which sections a reader may open', () => {
     expect(editRights({ ...none, isSuperAdmin: true }, 'list').delete).toBe(true);
   });
 
-  it('gives a list its eight selling-free sections, in hub order, and refuses it the shop ones', () => {
+  // Owner, 2026-11-02 (G3): a list keeps the shop, its cotisation, its purchases, and collects
+  // through a delegation - its money sections are back, with no Lydia account of its own.
+  it('gives a list its sections in hub order, its money ones included, and never an audience', () => {
     const admin = editRights({ ...none, isGlobalAdmin: true }, 'list');
     expect(visibleEditSections(admin, LIST_EDIT_SECTIONS)).toEqual([
       'profile',
       'members',
+      'payments',
       'documents',
+      'achats',
+      'cotisations',
+      'delegation',
       'formulaires',
       'reservations',
       'partnerships',
@@ -185,17 +192,38 @@ describe('which sections a reader may open', () => {
     ]);
     const plain = editRights(none, 'list');
     expect(visibleEditSections(plain, LIST_EDIT_SECTIONS)).toEqual(['profile']);
-    for (const s of ['payments', 'achats', 'cotisations', 'delegation', 'audience'] as const) {
-      expect(LIST_EDIT_SECTIONS).not.toContain(s);
-    }
+    expect(LIST_EDIT_SECTIONS).not.toContain('audience');
   });
 
-  it('gives an institution the same plus its audience, and still nothing to sell', () => {
+  it("opens a list's money sections on its shop right, and never holds its bank account", () => {
+    const shop = editRights(withFlags(AssociationPermissionFlag.MANAGE_PRODUCTS), 'list');
+    expect(visibleEditSections(shop, LIST_EDIT_SECTIONS)).toEqual([
+      'profile',
+      'payments',
+      'achats',
+      'cotisations',
+      'delegation',
+    ]);
+    // Nobody holds a list's payout account - its own member, a BDE star, the platform admin.
+    const payout = withFlags(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT);
+    expect(editRights(payout, 'list').payoutAccount).toBe(false);
+    expect(editRights({ ...none, isGlobalAdmin: true }, 'list').payoutAccount).toBe(false);
+    expect(editRights({ ...none, isGlobalAdmin: true }, 'association').payoutAccount).toBe(true);
+  });
+
+  it('gives an institution its selling-free sections plus its audience, and nothing to sell', () => {
     expect(EDIT_SECTIONS_BY_KIND.institution).toEqual([
-      ...EDIT_SECTIONS_BY_KIND.list.slice(0, -1),
+      'profile',
+      'members',
+      'documents',
+      'formulaires',
+      'reservations',
+      'partnerships',
+      'republications',
       'audience',
       'danger',
     ]);
+    expect(editRights({ ...none, isGlobalAdmin: true }, 'institution').products).toBe(false);
     for (const s of ['payments', 'achats', 'cotisations', 'delegation'] as const) {
       expect(kindHasSection('institution', s)).toBe(false);
     }
@@ -210,6 +238,16 @@ describe('which sections a reader may open', () => {
     expect(
       visibleEditSections(list(AssociationPermissionFlag.MANAGE_FORMS), LIST_EDIT_SECTIONS)
     ).toContain('formulaires');
+  });
+
+  // F2: a BDE governing a list (its super-admin) enters the area without being a member - it may
+  // delete its lists (owner, 2026-11-02); a member with no right and a stranger may not.
+  it('admits a global admin, the BDE governing the entity and its own officers, nobody else', () => {
+    const base = { isGlobalAdmin: false, isSuperAdmin: false, isMemberAdmin: false };
+    expect(mayEnterEditArea(base)).toBe(false);
+    expect(mayEnterEditArea({ ...base, isSuperAdmin: true })).toBe(true);
+    expect(mayEnterEditArea({ ...base, isGlobalAdmin: true })).toBe(true);
+    expect(mayEnterEditArea({ ...base, isMemberAdmin: true })).toBe(true);
   });
 
   it('gives a global admin every section', () => {
@@ -287,7 +325,7 @@ describe('the permissions a kind offers are derived from its sections', () => {
       .filter((v): v is AssociationPermissionFlag => typeof v === 'number')
       .filter((f) => kindOffersFlag(kind, f));
 
-  it('offers a list exactly the eight rights its sections need', () => {
+  it('offers a list the shop and never the bank account (G2)', () => {
     expect(offered('list').sort()).toEqual(
       [
         F.EDIT_PROFILE,
@@ -296,14 +334,15 @@ describe('the permissions a kind offers are derived from its sections', () => {
         F.MANAGE_MEMBERS,
         F.MANAGE_DOCUMENTS,
         F.MANAGE_FORMS,
+        F.MANAGE_PRODUCTS,
         F.MANAGE_PARTNERSHIPS,
         F.MANAGE_BOOKINGS,
       ].sort()
     );
   });
 
-  it('offers an institution the same set, and never a shop or bank right', () => {
-    expect(permissionMaskFor('institution')).toBe(permissionMaskFor('list'));
+  it('offers an institution the same set minus the shop, and never a bank right', () => {
+    expect(permissionMaskFor('institution')).toBe(permissionMaskFor('list') & ~F.MANAGE_PRODUCTS);
     expect(kindOffersFlag('institution', F.MANAGE_PRODUCTS)).toBe(false);
     expect(kindOffersFlag('institution', F.MANAGE_PAYOUT_ACCOUNT)).toBe(false);
   });
@@ -314,8 +353,11 @@ describe('the permissions a kind offers are derived from its sections', () => {
     expect(kindOffersFlag('association', F.MANAGE_PARTNERSHIPS)).toBe(true);
   });
 
-  it('never presets a hidden right to a new list admin, but keeps the full preset elsewhere', () => {
-    expect(adminPresetFor('list') & (F.MANAGE_PRODUCTS | F.MANAGE_PAYOUT_ACCOUNT)).toBe(0);
+  it('presets a new list admin with the shop and never the bank account (7455)', () => {
+    expect(adminPresetFor('list') & F.MANAGE_PAYOUT_ACCOUNT).toBe(0);
+    expect(adminPresetFor('list') & F.MANAGE_PRODUCTS).toBe(F.MANAGE_PRODUCTS);
+    expect(adminPresetFor('list')).toBe(7455);
+    expect(adminPresetFor('institution') & (F.MANAGE_PRODUCTS | F.MANAGE_PAYOUT_ACCOUNT)).toBe(0);
     expect(adminPresetFor('list') & F.MANAGE_PARTNERSHIPS).toBe(F.MANAGE_PARTNERSHIPS);
     expect(adminPresetFor('association')).toBe(ASSOCIATION_ADMIN_PRESET);
   });
