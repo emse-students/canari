@@ -408,6 +408,8 @@ services:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Signs the viewer-bound avatar token (docs/wiki/sessions.md, "The avatar token").
+      AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-}
       # NO /adminer/ ROUTE HERE: dev is publicly resolvable, holds testers' own rows and has no adminer
       # service (see the note where it would sit). Stated rather than left unset, so a missing line
       # is never what keeps the door shut.

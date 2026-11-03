@@ -126,7 +126,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/search?q=...` | JWT | Search users by id/displayName for autocomplete |
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
 | GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
-| GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
+| GET | `/api/users/:id/avatar` | avatar token (`?t=`) or internal secret ([sessions](../sessions.md#the-avatar-token)) | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
 | POST | `/api/users` | global admin | Create user manually; an id that has a row, or whose erasure is running, is a `409` |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
 | PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
@@ -215,6 +215,16 @@ Pinned by `avatar-presence.spec.ts` (core), `avatarPresence.test.ts` and `userAv
 `avatar.service.ts` fetches `gallery.mitv.fr/api/users/<id>/avatar` with `x-api-key` and answers one
 of **three** outcomes. The distinction exists for one reason: **only an ANSWER may be cached.**
 
+**Who may ask is decided first** (`users/avatar-access.ts`, [sessions](../sessions.md#the-avatar-token)):
+a viewer whose `?t=` avatar token verifies against a live session, or a service proving
+`x-internal-secret`. A wrong credential is a bodyless `403` (`no-store`) before any answer about the
+id, so a refusal never says whether there is a photo. Every `[AVATAR]` line carries
+`access=internal|signed|unsigned|refused` (and the refusal's `reason`: `malformed`,
+`bad-signature`, `stale`, `session-ended`, `unconfigured`, `bad-internal-secret`); a request with no
+token at all adds `via=<nginx|direct> origin=<native|web|none>` for the rollout. The edge never
+forwards `x-internal-secret` ([nginx](../infrastructure/nginx.md)): a service proves it on the
+Docker network only.
+
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
 | `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched); `Cache-Control: public, no-cache` + ETag, `304` on a matching `If-None-Match` (2026-10-08) |
@@ -237,8 +247,10 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
   what produced three console lines per benign miss: `404`, then `ERR_BLOCKED_BY_ORB` (Chrome
   refusing a JSON body to an image destination), then `ERR_ABORTED`.
 
-The client half is `frontend/src/lib/utils/userAvatarCache.ts`, and it answers a KIND rather than a
-nullable URL: `blob` (bytes held locally), `direct` (nothing cached, let the element fetch it), or
+The client half is `frontend/src/lib/utils/userAvatarCache.ts`. **It is keyed by USER ID, never by
+URL** (2026-11-02): the URL is built at the request by the one helper `avatarUrl(userId)` and carries
+the viewer's avatar token, which rotates daily and at every sign-in, so a URL key would split one face
+- and one known absence - across tokens. It answers a KIND rather than a nullable URL: `blob` (bytes held locally), `direct` (nothing cached, let the element fetch it), or
 `none` (the server answered and there is nothing to draw). `none` is what stops the second request -
 the element used to be handed back the same URL and ask the server again for the answer just given.
 `direct` is what keeps the native clients working, where the API is a different origin and `fetch`
