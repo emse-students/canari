@@ -1989,6 +1989,63 @@ WebView itself, so the override is deleted rather than doubled). **Owed: one Mi 
 next pre-release - switch the navigation mode twice, then CDP must list ONE page and a salon text
 refused before the switch must come back to its composer.**
 
+### Wry main pipe patch
+
+**Every WebView call Rust makes on Android crosses wry's "main pipe"**: a channel the tao thread (and
+the main thread) send into, drained on the main thread by a looper callback woken by one byte on a
+pipe (`patches/wry/src/android/main_pipe.rs`). Two Play reports read on 2026-11-03 trace to it, and
+wry upstream carried both in every release up to 0.57.1, so `frontend/src-tauri/patches/wry` is a
+vendored fork of 0.57.1 with four `CANARI PATCH` hunks, pinned `wry = "=0.57.1"` (a transitive crate
+needs the pin, or a newer registry release out-resolves the path patch) and watched by
+`vendored-upstream-report.sh` like the websocket fork.
+
+**ANR `f51255a5a831e715b4fc8d976e87be11`** (3 reports, `1.1.1` and `1.2.3`, Pixel 8a and Galaxy S24
+FE, API 36). Main thread: `WryActivity.onDestroy` -> `Rust.onWebviewDestroy` -> `MainPipe::send` ->
+`crossbeam_channel` array-flavour `send` -> `std::thread::park`. The tao thread is parked in the
+same `send`, from `InnerWebView::eval`. Upstream's channel is `bounded(8)`, and its only consumer is
+the main looper - so once eight messages wait, a main-thread send parks the one thread that could
+ever empty the channel. Play files it under the FCM `RECEIVE` broadcast only because that is what
+could not be delivered while the main thread was stuck; FCM is a bystander. Upstream also
+unregistered the drain for good the first time ONE message's JNI call failed (`recv()?` then
+`is_ok()`), which fills the channel with nobody draining it. **Fixed by construction**: the channel
+is unbounded (an unbounded `send` never blocks), the pipe's write end is non-blocking (a full pipe
+already holds an unread wake byte, which owes a drain that takes the new message too, so `EAGAIN`
+loses nothing), and a failed message is logged `[WRY_MAIN_PIPE]` and the drain goes on. The looper
+callback retries a read interrupted by a signal (upstream unregistered the drain on ANY short read,
+EINTR included). The only cases left - end of file, or a read error, on a pipe whose write end is a
+static - log at error and then ABORT deliberately (`panic!` in the looper callback is SIGABRT
+through `abort_on_panic`), instead of unregistering: owner decision, 2026-11-03, so Play Vitals
+reports a crash rather than leaving a silently frozen UI. A drain handles at most the `len()` it
+read on entry, so it terminates while other threads keep sending; a message sent after that read has
+its own wake byte, or found the pipe full of unread ones, and a later callback drains it. A Java
+exception left pending is described and cleared after EVERY message, not only a failed one - several
+arms swallow a JNI error and the `Jni` closures return nothing, and an exception they leave would
+poison the next message.
+
+**Crash `e3697bc4ad55d069ebb94d3d4a528c34`** (1 report, `1.2.4`, Nothing Phone (2a), API 36).
+`abort_internal` <- `ndk::utils::abort_on_panic` <- the looper callback registered by
+`onFirstActivityCreateWry`. `OnDestroy` (not a configuration change) removes the activity's proxy;
+a message queued for that activity before the destroy then reached `get_webview`, which `unwrap`ped
+the missing entry, and the looper callback turns any panic into SIGABRT. Upstream measured the same
+abort after a back gesture and fixed it on `dev` (tauri-apps/wry#1846, `790ca0df48`, 2026-10-28) -
+in no release yet; the fork carries the same change. `None` is what every caller already handles,
+and the gone-activity case logs `[WRY_MAIN_PIPE] no WebView for activity N` ONCE per activity - the
+evidence the device row reads. The same abort had a second road: every reply to a requester was
+`unwrap`ped, and a requester waits with `recv_timeout`, so an answer arriving after it gave up
+panicked in the same callback. Replies now go through `reply`, which logs the loss.
+
+Reading a later report: Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both
+being a SIGABRT from the looper callback, so read the frames below `cb_handler` - an
+`onFirstActivityCreateWry` closure means a dead pipe (the owner-decided abort), `get_webview` or
+`handle_message` means a real regression.
+
+`.github/scripts/tests/wry-main-pipe-patch.test.mjs` fails a rebase that drops any hunk (in
+`main_pipe.rs` and in `binding.rs`'s looper callback), proves each check against the upstream code it
+replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
+reading is owed:
+[device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).
+The fork is deleted once an upstream release carries every hunk.
+
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 
 On a fresh Feed after publishing a post the swipe to the camera did nothing three times, and worked
