@@ -96,6 +96,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
 | S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
+| AV | Signed avatar URLs: the community open with COLD avatars ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md#the-cold-avatar-cost---owed-before-the-phase-1-stable)) - the [community-open budget](frontend/community-open-budget.md) rows on the Mi 9T, first open of the day after a sign-in (no warm blob, no browser-cache entry for the new URLs), against the same rows on the build before | **owed BEFORE the phase-1 stable**, on its pre-release | n/a |
 | T | The welcome tour ([guided-help](frontend/guided-help.md)): starts after the PIN on `/posts` of a fresh account, six steps light the real bottom-bar tabs and the avatar, Back closes it, it does not return after a reinstall (the account's `help_seen`), Settings replays it | owed | owed - and the native bar's band on iOS 26 (the halo is the bar's whole band, the bubble's icon names the tab) |
 
 **The `ios-release` artifact CANNOT be installed on a device, and this paragraph said to install it
