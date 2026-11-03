@@ -82,10 +82,6 @@ const PUBLIC_BY_INTENT = [
     why: 'one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking\'s people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person\'s (D10), never answers, private texts or the holder\'s or participants\' names',
   },
   {
-    route: 'GET /forms/:id/calendar-link',
-    why: 'one agenda entry for a form, read by the public association page; never the form contents',
-  },
-  {
     route: 'GET /users/:id/avatar',
     why: 'an <img> subresource on public pages; an <img> cannot carry a Bearer token',
   },

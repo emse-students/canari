@@ -45,7 +45,7 @@ const P = {
   clubSePost: '10000000-0000-4000-8000-000000000001',
   clubGaPost: '10000000-0000-4000-8000-000000000002',
   clubNonePost: '10000000-0000-4000-8000-000000000003',
-  seStudentPost: '10000000-0000-4000-8000-000000000004',
+  seStudentPost: '10000000-0000-4000-8000-0000000000a4', // hex letters: its uppercase differs
   gaStudentPost: '10000000-0000-4000-8000-000000000005',
   staffPost: '10000000-0000-4000-8000-000000000006',
 } as const;
@@ -183,9 +183,20 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       },
       logger: new Logger('bde-moderation.it'),
     }) as AssociationsService;
-    expect(await service.mayModeratePost('seMod', P.seStudentPost.toUpperCase())).toBe(true);
+    const upper = P.seStudentPost.toUpperCase();
+    // Not vacuous: the fixture carries hex letters, so the uppercase spelling is another string.
+    expect(upper).not.toBe(P.seStudentPost);
+    expect(await service.mayModeratePost('seMod', upper)).toBe(true);
     expect(await service.mayModeratePost('seMod', P.seStudentPost)).toBe(true);
-    expect(await service.mayModeratePost('gaMod', P.seStudentPost.toUpperCase())).toBe(false);
+    expect(await service.mayModeratePost('gaMod', upper)).toBe(false);
+    // `moderatedPostIds` answers in the lowercase the rows carry, the admin's whole set included -
+    // so a page's `.has(row.id)` finds a post asked for in uppercase.
+    expect((await service.moderatedPostIds('seMod', [upper])).has(P.seStudentPost)).toBe(true);
+    expect(
+      (await service.moderatedPostIds(undefined, [upper], { isGlobalAdmin: true })).has(
+        P.seStudentPost
+      )
+    ).toBe(true);
   });
 
   it('leaves an association with no rule and a person with no space to the platform admin', async () => {

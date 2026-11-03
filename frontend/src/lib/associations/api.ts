@@ -897,8 +897,9 @@ export async function listAssociationLinkCandidates(
 }
 
 /**
- * Public - calendar event pointing to this post. Feed-shaped (association identity included),
- * because the caller opens the calendar's own detail modal with it, which renders that identity.
+ * Signed in - the calendar event pointing to this post, when the reader may see the post. Feed-shaped
+ * (association identity included, and its `icsSig`), because the caller opens the calendar's own
+ * detail modal with it, which renders that identity.
  */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarFeedEvent | null;
@@ -908,7 +909,10 @@ export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   );
 }
 
-/** Public - the calendar event pointing at this form, if any. */
+/**
+ * Signed in - the calendar event pointing at this form, if any and if the reader's audience reaches
+ * it (`null` otherwise). Carries the event's `icsSig`.
+ */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
