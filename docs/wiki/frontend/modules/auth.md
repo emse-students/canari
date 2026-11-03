@@ -1005,6 +1005,10 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   6). It used to end the native session WITH A SWEEP, which removes the slot whoever it belongs to:
   B's reset, from B's PIN gate with A in the slot, deleted A's state. Now (`runPinReset`,
   `composables/session/pinReset.ts`):
+  0. **The server's salt first** (round 10): its fingerprint is the basis the stage journals. No
+     answer: nothing moves. **No PIN on the server**: there is nothing to reset there, so the local
+     state is reset alone - staged under the fingerprint of an empty salt (`noServerPinBasis`, which
+     no minted salt has) and committed at once, logged. Round 9 refused it, a dead end.
   1. **Stage**, once a signed-out session's final checkpoint has landed (`stageDeviceResetImpl`): the
      native session ends WITHOUT a sweep, then `stage_user_mls_reset` - in ONE hold of the state lock,
      so no write lands between the check and the move - parks B's slot when its record names B, sets
@@ -1012,9 +1016,18 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
      Refused only while B's own move stands unfinished or a manager is loaded: then the server is not
      asked. Round 5 refused over an unproven slot, with "clear the app's data" as the only way out -
      that dead end (`auth_pin_reset_blocked_unproven_state`) is gone.
-  2. **Ask the server.** Refused or unreachable: `rollback_user_mls_reset` puts everything back - B's
-     state into the slot when it came from there, the unproven state likewise, B off the declined
-     list - so the old PIN still opens it.
+  2. **Ask the server.** A DEFINITE refusal - a 4xx (`PinResetRefusedError`): `rollback_user_mls_reset`
+     puts everything back - B's state into the slot when it came from there, the unproven state
+     likewise, B off the declined list - so the old PIN still opens it. **Anything else is NO ANSWER,
+     never a refusal** (round 10): a transport failure or a 5xx may follow a reset the server did. It is
+     decided as a page that is gone is - the salt asked again: the same one rolls back, none or another
+     commits; a salt the server will not say either HANDS THE RESET OVER (`adopt_unsettled_user_mls_reset`
+     with `handOver`) to the settle every sign-in attempt runs.
+     **The server's commit point is the salt** (`security.controller.ts` `resetPin`, round 10): it
+     deletes the `PinVerifier` (and the revocations) FIRST, then purges each device's footprint,
+     every purge in its own `try`; a failed purge answers a 5xx, which the page reads as no answer -
+     and the salt, already gone, says the PIN was reset. Round 9 purged first, so "same salt" did not
+     prove nothing was purged.
   3. **First setup**, the moment the server has reset the PIN and before anything else can fail: the
      old PIN opens nothing any more, so the next PIN typed is a NEW one, never an unlock misread as a
      PIN rotated elsewhere.
@@ -1027,10 +1040,14 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   serves the rollback and crash recovery, and it undoes the journal's own steps (the unproven state,
   the declined entry) BEFORE removing the journal and moving B's state back, so an undo cut anywhere is
   finished by the next one.
-  **A reset is the PAGE's, stamped with its document** (rounds 8 and 9): the commit or rollback lives in
-  the WebView, so `RESETS_IN_FLIGHT` holds `(account, document)` - the document generation `page_ring`
-  moves on at every document start and web content death (`current_document`), with no lock taken in
-  `on_page_load` - and "in flight" means "staged by the CURRENT document". The stage, the commit and the
+  **A reset is the PAGE's, stamped with its document** (rounds 8 to 10): the commit or rollback lives
+  in the WebView, so `RESETS_IN_FLIGHT` holds `(account, document, Staged | Adopted)` - the document
+  generation the page MINTS with its first native call (`page_ring_document`, as `pageGatewaySocket.ts`
+  loads: it moves the generation on and returns it), also moved on at a web content death
+  (`current_document` reads it, never claims it) - and "in flight" means "held by the CURRENT
+  document". Round 9 moved it on the page-load event, which on Android can run after the new page's
+  first JavaBridge call: the page could keep a stale generation and every step of its reset be
+  refused. Owed: a reload read on the Mi 9T. The stage, the commit and the
   rollback each name their page's document (`thisDocumentGeneration`, `pageGatewaySocket.ts`) and are
   REFUSED AS A TYPE (`ResetRefusal`: `RESET_NOT_STAGED_BY_THIS_PAGE`, `RESET_NOTHING_SET_APART`) when it
   is not that page's reset, the page is gone, or nothing is set apart - never logged and answered Ok.
@@ -1044,9 +1061,15 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
     would start fresh over B's state). The next sign-in flow adopts it before any unlock
     (`settleUnsettledPinReset` in `startLoginFlow`, `adopt_unsettled_user_mls_reset`) and asks the
     server (`serverPinSaltFingerprint`: `pin-status` first, since `GET pin-salt` writes for a user with
-    no salt). No PIN, or another salt: the server reset it - COMMIT, and the gate opens in first setup.
-    The same salt: it did not - ROLL BACK. No answer: nothing is guessed, and the next attempt asks
-    again. Round 8 undid every such reset, so a reload AFTER the server's reset sent B back to an old
+    no salt). No PIN: the server reset it - COMMIT, and the gate opens at once in first setup. Another
+    salt: a new PIN was chosen since, elsewhere - COMMIT, and the gate opens at once to UNLOCK it
+    (round 10, as the live commit ends). The same salt: it did not - ROLL BACK. No answer: nothing is
+    guessed; the reset stays ADOPTED, and an adopted entry answers its basis to the next adopt, so the
+    next attempt - of this same page too - asks again (round 10). Meanwhile B's sign-in is refused as
+    its OWN type (`SelectionRefused::ResetUnsettled` -> `RESET_UNSETTLED` -> `MlsResetUnsettledError`
+    -> `LoginFailure('pin_reset_unsettled')`, "your PIN reset needs the server's answer: go online and
+    retry"), and the gate's failure handler runs the settle again (`applyPinFailure`). A settle met by
+    `RESET_NOT_STAGED_BY_THIS_PAGE` is a newer page's, read from the CODE, and left to it. Round 8 undid every such reset, so a reload AFTER the server's reset sent B back to an old
     PIN that opens nothing - the loop the reset exists to leave;
   - with no journal, the server was never asked: the next look UNDOES it - B's state parked (no journal
     says it came from the slot; B's next sign-in unparks it), nothing else was done yet.

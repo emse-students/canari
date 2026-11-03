@@ -373,6 +373,19 @@ export class SecurityController {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
 
+    // THE VERIFIER GOES FIRST, AND ITS DELETION IS THE RESET'S COMMIT POINT (round 9 of the review of
+    // #2919). The client settles a reset whose answer it lost by comparing the account's salt with
+    // the one it had before asking: the salt lives in this row, so "same salt" must prove that
+    // NOTHING was done. Purging the devices first broke that - a reset cut after the purge left the
+    // salt in place, and the client restored a state whose device footprint was already gone. The
+    // purge spans Redis and other tables, so it cannot share a transaction with this delete; it runs
+    // after it, per device, each failure accused, and the answer is a 5xx when one failed - which
+    // the client reads by the salt, now gone, as a reset that happened.
+    await Promise.all([
+      this.pinVerifierRepo.delete({ userId: safeUserId }),
+      this.revokedDeviceRepo.delete({ userId: safeUserId }),
+    ]);
+
     const devices = await this.keyPackageRepo.find({
       where: { userId: safeUserId },
       select: { deviceId: true },
@@ -380,19 +393,27 @@ export class SecurityController {
     const deviceIds = [...new Set(devices.map((d) => d.deviceId))];
 
     let devicesPurged = 0;
+    let purgeFailures = 0;
     for (const deviceId of deviceIds) {
-      await this.messagingService.purgeDeviceFootprint(safeUserId, deviceId);
-      devicesPurged++;
+      try {
+        await this.messagingService.purgeDeviceFootprint(safeUserId, deviceId);
+        devicesPurged++;
+      } catch (e) {
+        purgeFailures++;
+        this.logger.error(
+          `[PIN_RESET] user=${safeUserId} device=${deviceId}: the PIN is reset but this device's footprint was not purged: ${String(e)}`
+        );
+      }
     }
 
-    await Promise.all([
-      this.pinVerifierRepo.delete({ userId: safeUserId }),
-      this.revokedDeviceRepo.delete({ userId: safeUserId }),
-    ]);
-
     this.logger.log(
-      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} (GroupMember rows kept for re-add)`
+      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} purgeFailures=${purgeFailures} (GroupMember rows kept for re-add)`
     );
+    if (purgeFailures > 0) {
+      throw new InternalServerErrorException(
+        `the PIN is reset; ${purgeFailures} device footprint(s) could not be purged`
+      );
+    }
 
     return { ok: true, devicesPurged };
   }

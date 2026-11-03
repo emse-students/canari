@@ -1657,15 +1657,6 @@ pub fn run() {
 
             Ok(())
         })
-        // A new document holds no gateway socket: whatever the previous page said about ringing a
-        // call itself is void from here (`page_ring`). The same generation stamps every PIN reset a
-        // page stages, so a reset of a page that is gone is no longer in flight
-        // (`mls_account_state::current_document`) - no lock is taken here.
-        .on_page_load(|_webview, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Started {
-                page_ring::forget_on_page_load();
-            }
-        })
         .on_window_event(|window, event| {
             #[cfg(mobile)]
             let _ = (window, event);

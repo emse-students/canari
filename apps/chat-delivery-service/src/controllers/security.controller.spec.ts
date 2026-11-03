@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
+import { InternalServerErrorException, Logger } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { SecurityController } from './security.controller';
@@ -245,5 +246,77 @@ describe('SecurityController - checkPinVerifier', () => {
       ).rejects.toThrow('current PIN is incorrect');
       expect(pinVerifierRepo.update).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * ROUND 9 OF THE REVIEW OF #2919: the PIN reset's commit point is the deletion of the verifier, which
+ * holds the salt. A client that lost the answer compares the salt with the one it had before asking,
+ * so the salt must go BEFORE anything else is done - "same salt" then proves nothing was purged.
+ */
+describe('SecurityController - resetPin', () => {
+  let controller: SecurityController;
+  const order: string[] = [];
+  const purge = jest.fn();
+
+  beforeEach(async () => {
+    order.length = 0;
+    purge.mockReset();
+    purge.mockImplementation(async (_u: string, d: string) => {
+      order.push(`purge ${d}`);
+    });
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SecurityController],
+      providers: [
+        {
+          provide: getRepositoryToken(PinVerifier),
+          useValue: { delete: jest.fn(async () => order.push('delete verifier')) },
+        },
+        {
+          provide: getRepositoryToken(RevokedDevice),
+          useValue: { delete: jest.fn(async () => order.push('delete revocations')) },
+        },
+        {
+          provide: getRepositoryToken(KeyPackage),
+          useValue: {
+            find: jest.fn(async () => {
+              order.push('find devices');
+              return [{ deviceId: 'd1' }, { deviceId: 'd2' }, { deviceId: 'd1' }];
+            }),
+          },
+        },
+        { provide: MessagingService, useValue: { purgeDeviceFootprint: purge } },
+      ],
+    })
+      .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(HeaderAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    controller = module.get(SecurityController);
+  });
+
+  it('deletes the verifier before it purges any device', async () => {
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).resolves.toEqual({
+      ok: true,
+      devicesPurged: 2,
+    });
+    expect(order.indexOf('delete verifier')).toBeLessThan(order.indexOf('purge d1'));
+    expect(order.indexOf('delete verifier')).toBeLessThan(order.indexOf('find devices'));
+  });
+
+  it('purges every device even when one fails, and answers 5xx after the commit point', async () => {
+    purge.mockImplementation(async (_u: string, d: string) => {
+      order.push(`purge ${d}`);
+      if (d === 'd1') throw new Error('redis down');
+    });
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).rejects.toBeInstanceOf(
+      InternalServerErrorException
+    );
+    expect(order).toContain('delete verifier');
+    expect(order).toContain('purge d2');
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('device=d1'));
+    logged.mockRestore();
   });
 });

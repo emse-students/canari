@@ -16,9 +16,12 @@ type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unkno
  * leave a holder nobody withdraws, and a page at the PIN gate counted as ringing rings nothing
  * (#2785's defect again).
  *
- * ASKED WHEN THIS MODULE LOADS, in Tauri: the ask must leave while this document is surely the
- * current one. Asked lazily at the first statement, an old page's first ask could cross a reload
- * and learn the NEW document's generation, and its statements would then count in it.
+ * MINTED BY THE ASK, WHEN THIS MODULE LOADS, in Tauri (round 9 of the review of #2919): the native
+ * side moves the generation on, clears the previous document's statements and returns the new value
+ * to this page alone. It used to be moved on by the page-load event and only READ here - and on
+ * Android that event can run after the new page's first native call, leaving the page a stale
+ * generation for its whole life. Asked lazily at the first statement instead, an old page's first
+ * ask could cross a reload and take the NEW document's generation.
  *
  * A FAILED ASK IS ASKED AGAIN at the next statement (null here): this module dies with its
  * document, so any answer it gets is this document's own - keeping the failure would only silence

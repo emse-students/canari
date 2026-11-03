@@ -291,7 +291,8 @@ impl MlsError {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StateLoadRefusal {
     /// One of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`,
-    /// `KEYSTORE_KEY_UNAVAILABLE`, `SLOT_MOVE_UNFINISHED`, `SLOT_OWNER_UNRECORDED`, or `None`.
+    /// `KEYSTORE_KEY_UNAVAILABLE`, `SLOT_MOVE_UNFINISHED`, `SLOT_OWNER_UNRECORDED`, `RESET_UNSETTLED`,
+    /// or `None`.
     pub code: Option<&'static str>,
     /// The failure's own text - evidence for a reader of the logs, never a discriminator. For a
     /// coded refusal it is the variant's DETAIL, without the code its `Display` leads with: the
@@ -323,6 +324,12 @@ const SLOT_MOVE_UNFINISHED: &str = "SLOT_MOVE_UNFINISHED";
 /// the device's storage, and the next sign-in records it again.
 const SLOT_OWNER_UNRECORDED: &str = "SLOT_OWNER_UNRECORDED";
 
+/// The code of a sign-in refused because a "forgot PIN" reset of the account is staged and not settled:
+/// its state is set apart, and only the server's answer says whether the PIN was reset. NOT a verdict
+/// on any state - nothing was opened - so the frontend destroys nothing and asks the user to go online
+/// and retry; the retry settles the reset first.
+const RESET_UNSETTLED: &str = "RESET_UNSETTLED";
+
 impl StateLoadRefusal {
     /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
     /// wiped entry) - an EXPECTED outcome the caller answers with the PIN modal, read from the
@@ -350,6 +357,20 @@ impl StateLoadRefusal {
     /// True for a [`Self::slot_move_unfinished`] refusal, read from the `code` field.
     pub fn is_slot_move_unfinished(&self) -> bool {
         self.code == Some(SLOT_MOVE_UNFINISHED)
+    }
+
+    /// A sign-in refused because a PIN reset of the account waits for the server's answer
+    /// ([`RESET_UNSETTLED`]); `message` says so, for the logs.
+    pub fn reset_unsettled(message: String) -> Self {
+        Self {
+            code: Some(RESET_UNSETTLED),
+            message,
+        }
+    }
+
+    /// True for a [`Self::reset_unsettled`] refusal, read from the `code` field.
+    pub fn is_reset_unsettled(&self) -> bool {
+        self.code == Some(RESET_UNSETTLED)
     }
 
     /// A sign-in refused because the owner record of the state it opened could not be written

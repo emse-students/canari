@@ -32,6 +32,22 @@ const SLOT_MOVE_UNFINISHED = 'SLOT_MOVE_UNFINISHED';
 /** The code of a sign-in whose opened state's owner record could not be written. */
 const SLOT_OWNER_UNRECORDED = 'SLOT_OWNER_UNRECORDED';
 
+/** The code of a sign-in refused while a "forgot PIN" reset of the account waits for the server. */
+const RESET_UNSETTLED = 'RESET_UNSETTLED';
+
+/**
+ * A "forgot PIN" reset of this account is staged and not settled (`StateLoadRefusal::reset_unsettled`,
+ * round 10 of the review of #2919): its state is set apart, and only the server's answer says whether
+ * the PIN was reset. NOT a verdict on any state - nothing was opened or destroyed. The user goes
+ * online and retries; the retry settles the reset first.
+ */
+export class MlsResetUnsettledError extends Error {
+  constructor(detail: string, cause?: unknown) {
+    super(`${RESET_UNSETTLED}: ${detail}`, { cause });
+    this.name = 'MlsResetUnsettledError';
+  }
+}
+
 /**
  * The sign-in opened its state but could not record, beside it, which account it is
  * (`StateLoadRefusal::slot_owner_unrecorded`): the device's storage refused a small write. NOT a
@@ -129,6 +145,12 @@ export function mlsStateLoadErrorOf(rejection: unknown): Error {
       `[MLS] The sign-in was refused: a move of a local state between two accounts is unfinished - nothing destroyed, retried at the next sign-in: ${message.slice(0, 200)}`
     );
     return new MlsSlotMoveUnfinishedError(message, rejection);
+  }
+  if (code === RESET_UNSETTLED) {
+    console.warn(
+      `[MLS] The sign-in was refused: a PIN reset of this account waits for the server's answer - nothing destroyed, settled at the next attempt online: ${message.slice(0, 200)}`
+    );
+    return new MlsResetUnsettledError(message, rejection);
   }
   if (code === SLOT_OWNER_UNRECORDED) {
     console.error(

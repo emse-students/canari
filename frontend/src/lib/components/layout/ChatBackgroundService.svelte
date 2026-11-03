@@ -33,10 +33,12 @@
   import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import {
+    PinResetRefusedError,
     runPinReset,
     serverPinSaltFingerprint,
     settleUnsettledPinReset,
   } from '$lib/composables/session/pinReset';
+  import { MlsResetRefusedError } from '$lib/utils/hex';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -512,6 +514,14 @@
           ? '[PIN] No salt and no recovery asked - this account was deleted from this device.'
           : '[PIN] No salt and no recovery asked - this device was revoked and its wipe is still owed.'
       );
+      return;
+    }
+    if (code === 'pin_reset_unsettled') {
+      // A "forgot PIN" reset of this account waits for the server's answer: nothing was opened, so
+      // there is no salt to ask and no recovery to evaluate. The retry IS the settle, asked again
+      // now - online, it settles the reset and the gate follows its outcome (round 10 of #2919).
+      appendLog('[PIN_RESET] the sign-in waits for an unsettled reset - its settle is asked again');
+      void settleUnsettledPinResetOf(uid);
       return;
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
@@ -1690,8 +1700,12 @@
         }
         globalSession.userId = savedUser;
         // BEFORE ANY UNLOCK: a reset a page that is gone left unsettled holds this account's state
-        // set apart, and only the server's answer settles it (round 9 of the review of #2919).
-        await settleUnsettledPinResetOf(savedUser);
+        // set apart, and only the server's answer settles it (round 9 of the review of #2919). A
+        // committed one leaves nothing to unlock: the gate it opened is the whole flow (round 10).
+        if (await settleUnsettledPinResetOf(savedUser)) {
+          globalSession.isLoginInProgress = false;
+          return;
+        }
 
         // Step 1: check whether biometrics are CONFIGURED (user flag) — P1-A
         // NEVER query the keystore if the user disabled biometrics, even if a leftover key exists.
@@ -2192,12 +2206,14 @@
 
   /**
    * Settles a "forgot PIN" reset a page that is gone left unsettled, from the server's answer
-   * ({@link settleUnsettledPinReset}). A committed one leaves the account as the reset's own commit
-   * does: no state, no PIN on the server - so the gate opens in first setup. A failure is accused and
-   * leaves the reset unsettled: the account's sign-in is then refused natively, never started fresh
-   * over its state.
+   * ({@link settleUnsettledPinReset}). A committed one ends as the live reset's commit does: no local
+   * state, and the gate shown at once - in first setup only when the server holds no PIN; one chosen
+   * since (another device) is unlocked, never set up again. A failure is accused and leaves the reset
+   * unsettled: the account's sign-in is then refused natively, never started fresh over its state.
+   *
+   * @returns whether the gate was shown here - the caller's sign-in flow ends there.
    */
-  async function settleUnsettledPinResetOf(uid: string): Promise<void> {
+  async function settleUnsettledPinResetOf(uid: string): Promise<boolean> {
     try {
       const outcome = await settleUnsettledPinReset({
         adopt: () => globalSession.adoptUnsettledDeviceReset(uid),
@@ -2207,12 +2223,22 @@
         rollback: () => globalSession.rollbackDeviceReset(uid),
         log: appendLog,
       });
-      if (outcome === 'committed') {
-        globalSession.userId = uid;
-        isFirstPinSetup = true;
-      }
+      if (outcome !== 'committed' && outcome !== 'committed_pin_chosen') return false;
+      globalSession.userId = uid;
+      isFirstPinSetup = outcome === 'committed';
+      if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
+      showPinGate('PIN reset settled');
+      return true;
     } catch (e) {
-      appendLog(`[PIN_RESET] ERROR: the unsettled reset could not be settled: ${String(e)}`);
+      if (e instanceof MlsResetRefusedError && e.code === 'RESET_NOT_STAGED_BY_THIS_PAGE') {
+        // Typed, never read from the message: a newer page holds the reset and settles it itself.
+        appendLog(
+          `[PIN_RESET] the unsettled reset belongs to a newer page - this one leaves it: ${String(e)}`
+        );
+      } else {
+        appendLog(`[PIN_RESET] ERROR: the unsettled reset could not be settled: ${String(e)}`);
+      }
+      return false;
     }
   }
 
@@ -2250,14 +2276,9 @@
       await runPinReset({
         // The server's salt NOW is journalled with the stage, so a page that is gone before it
         // settled the reset is settled from the server's answer (round 9 of the review of #2919).
-        stage: async () => {
-          const basis = await serverPinSaltFingerprint(uid, {
-            baseUrl: deliveryUrl(),
-            token: await getToken(),
-          });
-          if (basis === null) throw new Error('the server holds no PIN for this account');
-          await globalSession.stageDeviceReset(uid, basis);
-        },
+        serverSaltFingerprint: async () =>
+          serverPinSaltFingerprint(uid, { baseUrl: deliveryUrl(), token: await getToken() }),
+        stage: (basis) => globalSession.stageDeviceReset(uid, basis),
         askServer: async () => {
           // The reset deletes the account's salt; one asked before it can only be stale.
           forgetPinSaltAhead('PIN reset', appendLog);
@@ -2267,9 +2288,15 @@
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ userId: uid }),
           });
-          if (!res.ok) throw new Error(`Server-side PIN reset failed (${res.status}).`);
+          // A 4xx is a definite refusal; a 5xx (and a rejected fetch) is no answer, decided by
+          // the salt (round 10 of the review of #2919: the server may have reset and then failed).
+          if (res.status >= 400 && res.status < 500) throw new PinResetRefusedError(res.status);
+          if (!res.ok) throw new Error(`Server-side PIN reset answered ${res.status}.`);
         },
         rollback: () => globalSession.rollbackDeviceReset(uid),
+        handOver: async () => {
+          await globalSession.adoptUnsettledDeviceReset(uid, true);
+        },
         enterFirstSetup: () => {
           serverReset = true;
           globalSession.userId = uid;

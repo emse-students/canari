@@ -1,10 +1,17 @@
 /**
- * The "forgot PIN" reset's ORDER, which is its whole mechanism (round 6 of the review of #2919).
+ * The "forgot PIN" reset's ORDER, which is its whole mechanism (rounds 6 to 10 of the review of #2919).
  *
+ * 0. `serverSaltFingerprint` - the server's salt NOW, the basis the stage journals. No answer: nothing
+ *    is moved and the server is not asked. No PIN on the server: there is nothing to reset there, so
+ *    the local state is reset alone - staged and committed at once, logged (round 10).
  * 1. `stage` - the account's local MLS state is SET APART, never removed, once a signed-out session's
  *    final checkpoint has landed. Refused: nothing moved, and the server is NOT asked.
- * 2. `askServer` - the server resets the PIN. Refused or unreachable: `rollback` puts the state back,
- *    so the old PIN still opens it, and the failure propagates.
+ * 2. `askServer` - the server resets the PIN. A DEFINITE REFUSAL (a 4xx, {@link PinResetRefusedError}):
+ *    `rollback` puts the state back, so the old PIN still opens it. ANYTHING ELSE - a transport failure,
+ *    a 5xx - is NO ANSWER, never read as a refusal: the server may have reset the PIN and lost its
+ *    reply. It is decided like a page that is gone, by the salt: the same salt rolls back, none or
+ *    another goes on to the commit, and a salt the server will not say either hands the reset over to
+ *    the settle every sign-in attempt runs (`handOver`), the failure propagated.
  * 3. `enterFirstSetup` - the moment the server has reset the PIN, before anything else can fail: the
  *    old PIN opens nothing any more, so the next PIN typed must be read as a NEW one, never as an
  *    unlock - which would meet no state and be misread as a PIN rotated elsewhere.
@@ -15,34 +22,100 @@
  * still - with a sign-out's final checkpoint free to land between the check and the removal.
  */
 export interface PinResetSteps {
-  stage: () => Promise<void>;
+  /** {@link serverPinSaltFingerprint} for the account; throws when the server does not answer. */
+  serverSaltFingerprint: () => Promise<string | null>;
+  stage: (serverBasis: string) => Promise<void>;
   askServer: () => Promise<void>;
   rollback: () => Promise<void>;
+  /** Hands this page's staged reset over to the settle of the next sign-in attempt. */
+  handOver: () => Promise<void>;
   enterFirstSetup: () => void;
   commit: () => Promise<void>;
   log: (msg: string) => void;
 }
 
+/**
+ * The server REFUSED the reset - a 4xx: it answered, and it did nothing. The only failure of
+ * `askServer` that may roll the stage back on its own; every other one is no answer.
+ */
+export class PinResetRefusedError extends Error {
+  constructor(readonly status: number) {
+    super(`Server-side PIN reset refused (${status}).`);
+    this.name = 'PinResetRefusedError';
+  }
+}
+
+/**
+ * The basis a reset staged with NO PIN on the server journals: the fingerprint of an empty salt, which
+ * no salt the server mints ever has. A settle of it reads "no PIN" or "another salt" - a commit, as
+ * the stage meant.
+ */
+export async function noServerPinBasis(): Promise<string> {
+  return pinSaltFingerprint('');
+}
+
+/** Rolls the stage back, a failure said and left to the next sign-in's settle. */
+async function rollBack(steps: PinResetSteps): Promise<void> {
+  try {
+    await steps.rollback();
+  } catch (r) {
+    // Not lost: the reset stays journalled, and the next sign-in settles it from the server's
+    // answer - which says the PIN was not reset, so it is put back ({@link settleUnsettledPinReset}).
+    steps.log(
+      `[PIN_RESET] ERROR: the local state could not be put back now - the next sign-in puts it back: ${String(r)}`
+    );
+  }
+}
+
 /** Runs the reset's steps in their order - see {@link PinResetSteps}. */
 export async function runPinReset(steps: PinResetSteps): Promise<void> {
+  const basis = await steps.serverSaltFingerprint();
+  if (basis === null) {
+    steps.log(
+      '[PIN_RESET] the server holds no PIN for this account - nothing to reset there, the local state is reset alone'
+    );
+    await steps.stage(await noServerPinBasis());
+    steps.enterFirstSetup();
+    await steps.commit();
+    steps.log('[PIN_RESET] MLS state wiped - choose a new PIN.');
+    return;
+  }
   steps.log('[PIN_RESET] setting the local MLS state apart');
-  await steps.stage();
+  await steps.stage(basis);
   try {
     await steps.askServer();
   } catch (e) {
-    steps.log(
-      `[PIN_RESET] the server did not reset the PIN - the local state is put back: ${String(e)}`
-    );
-    try {
-      await steps.rollback();
-    } catch (r) {
-      // Not lost: the reset stays journalled, and the next sign-in settles it from the server's
-      // answer - which says the PIN was not reset, so it is put back ({@link settleUnsettledPinReset}).
+    if (e instanceof PinResetRefusedError) {
       steps.log(
-        `[PIN_RESET] ERROR: the local state could not be put back now - the next sign-in puts it back: ${String(r)}`
+        `[PIN_RESET] the server refused the reset - the local state is put back: ${e.message}`
       );
+      await rollBack(steps);
+      throw e;
     }
-    throw e;
+    // NO ANSWER IS NOT A REFUSAL: decided by the salt, as a page that is gone is.
+    steps.log(
+      `[PIN_RESET] the server did not answer the reset - whether it reset the PIN is read from its salt: ${String(e)}`
+    );
+    let now: string | null;
+    try {
+      now = await steps.serverSaltFingerprint();
+    } catch (f) {
+      steps.log(
+        `[PIN_RESET] ERROR: the server does not say whether it reset the PIN - the reset stays unsettled, settled at the next sign-in attempt online: ${String(f)}`
+      );
+      await steps.handOver();
+      throw e;
+    }
+    if (now === basis) {
+      steps.log(
+        '[PIN_RESET] the salt is unchanged - the server did not reset the PIN, the local state is put back'
+      );
+      await rollBack(steps);
+      throw e;
+    }
+    steps.log(
+      '[PIN_RESET] the salt is gone or changed - the server reset the PIN, its answer was lost'
+    );
   }
   steps.enterFirstSetup();
   steps.log('[PIN_RESET] the server reset the PIN - the gate now asks for a new one');
@@ -114,8 +187,17 @@ export interface UnsettledPinResetSteps {
   log: (msg: string) => void;
 }
 
-/** What {@link settleUnsettledPinReset} did. */
-export type UnsettledPinResetOutcome = 'none' | 'committed' | 'rolled_back' | 'unanswered';
+/**
+ * What {@link settleUnsettledPinReset} did. A commit says what the server holds now (round 10): no
+ * PIN (`committed`) - the gate opens in first setup, as after the reset's own commit - or ANOTHER one
+ * (`committed_pin_chosen`), chosen since on another device - the gate asks for it as an unlock.
+ */
+export type UnsettledPinResetOutcome =
+  | 'none'
+  | 'committed'
+  | 'committed_pin_chosen'
+  | 'rolled_back'
+  | 'unanswered';
 
 /**
  * SETTLES A "FORGOT PIN" RESET A PAGE THAT IS GONE LEFT UNSETTLED, FROM THE SERVER'S ANSWER (round 9
@@ -126,8 +208,9 @@ export type UnsettledPinResetOutcome = 'none' | 'committed' | 'rolled_back' | 'u
  * - No PIN on the server, or a salt whose fingerprint differs from the one journalled at the stage:
  *   the server reset the PIN (and a new one may have been chosen since) - COMMIT.
  * - The same salt: the server did not reset it - ROLL BACK.
- * - No answer: nothing is guessed. The reset stays adopted, the account's sign-in stays refused
- *   natively, and the next attempt asks again.
+ * - No answer: nothing is guessed. The reset stays ADOPTED, the account's sign-in stays refused
+ *   natively (`RESET_UNSETTLED`), and the next attempt - of this page too: an adopted reset is
+ *   adopted again - asks again (round 10).
  */
 export async function settleUnsettledPinReset(
   steps: UnsettledPinResetSteps
@@ -151,7 +234,7 @@ export async function settleUnsettledPinReset(
   }
   await steps.commit();
   steps.log(
-    `[PIN_RESET] the server reset the PIN (${now === null ? 'no PIN registered' : 'another salt'}) - the reset is committed, a new PIN is chosen`
+    `[PIN_RESET] the server reset the PIN (${now === null ? 'no PIN registered' : 'another salt'}) - the reset is committed`
   );
-  return 'committed';
+  return now === null ? 'committed' : 'committed_pin_chosen';
 }

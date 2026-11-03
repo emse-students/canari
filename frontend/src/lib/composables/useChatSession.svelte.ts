@@ -543,7 +543,8 @@ export function useChatSession() {
     stageDeviceReset: (userIdToReset: string, serverBasis: string) =>
       stageDeviceResetImpl(ctx, userIdToReset, serverBasis),
     /** Adopts a reset a page that is gone left unsettled, to settle it from the server's answer. */
-    adoptUnsettledDeviceReset: (userId: string) => adoptUnsettledDeviceResetImpl(userId),
+    adoptUnsettledDeviceReset: (userId: string, handOver = false) =>
+      adoptUnsettledDeviceResetImpl(userId, handOver),
     /** Undoes the stage when the server did not reset the PIN. */
     rollbackDeviceReset: (userIdToReset: string) => rollbackDeviceResetImpl(userIdToReset),
     /** Step two of the "forgot PIN" reset, once the server reset the PIN: removes what was set apart. */

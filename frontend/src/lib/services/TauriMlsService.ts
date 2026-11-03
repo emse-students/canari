@@ -53,6 +53,7 @@ import { getLocale } from '$lib/i18n';
 import {
   MlsSlotMoveUnfinishedError,
   MlsSlotOwnerUnrecordedError,
+  MlsResetUnsettledError,
   mlsStateLoadErrorOf,
 } from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
@@ -782,7 +783,12 @@ export class TauriMlsService extends BaseMlsService {
       // AN UNFINISHED MOVE BETWEEN TWO ACCOUNTS' STATES IS NO VERDICT ON ANY STATE: nothing was opened,
       // so nothing below - a re-seal, a rotation, a reset offered by the gate - may answer it. The
       // move is retried at the next sign-in (`mls_account_state.rs`).
-      if (e instanceof MlsSlotMoveUnfinishedError || e instanceof MlsSlotOwnerUnrecordedError) {
+      // Nor is an unsettled PIN reset: the state is set apart until the server answers.
+      if (
+        e instanceof MlsSlotMoveUnfinishedError ||
+        e instanceof MlsSlotOwnerUnrecordedError ||
+        e instanceof MlsResetUnsettledError
+      ) {
         throw e;
       }
       // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):

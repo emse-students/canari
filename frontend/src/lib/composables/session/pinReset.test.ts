@@ -1,4 +1,6 @@
 import {
+  noServerPinBasis,
+  PinResetRefusedError,
   pinSaltFingerprint,
   runPinReset,
   serverPinSaltFingerprint,
@@ -7,14 +9,18 @@ import {
   type UnsettledPinResetSteps,
 } from './pinReset';
 
+const BASIS = 'a'.repeat(64);
+
 /**
- * THE "FORGOT PIN" RESET'S ORDER (round 6 of the review of #2919): the local state is set apart
- * before the server is asked, put back when the server does not reset the PIN, and the gate enters
- * first setup the moment it has - before the commit can fail.
+ * THE "FORGOT PIN" RESET'S ORDER (rounds 6 and 10 of the review of #2919): the server's salt is asked
+ * first and journalled with the stage, the local state is set apart before the server is asked, put
+ * back only on a DEFINITE refusal or an unchanged salt, and the gate enters first setup the moment
+ * the server has reset - before the commit can fail.
  */
 function steps(overrides: Partial<PinResetSteps> = {}) {
   const order: string[] = [];
   const s: PinResetSteps = {
+    serverSaltFingerprint: vi.fn(async () => BASIS),
     stage: vi.fn(async () => {
       order.push('stage');
     }),
@@ -23,6 +29,9 @@ function steps(overrides: Partial<PinResetSteps> = {}) {
     }),
     rollback: vi.fn(async () => {
       order.push('rollback');
+    }),
+    handOver: vi.fn(async () => {
+      order.push('hand over');
     }),
     enterFirstSetup: vi.fn(() => {
       order.push('first setup');
@@ -36,11 +45,33 @@ function steps(overrides: Partial<PinResetSteps> = {}) {
   return { s, order };
 }
 
+const logged = (s: { log: unknown }) =>
+  (s.log as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
+
 describe('the "forgot PIN" reset', () => {
-  it('sets the state apart, asks the server, enters first setup, then commits', async () => {
+  it('stages under the server salt, asks the server, enters first setup, then commits', async () => {
     const { s, order } = steps();
     await runPinReset(s);
     expect(order).toEqual(['stage', 'server', 'first setup', 'commit']);
+    expect(s.stage).toHaveBeenCalledWith(BASIS);
+  });
+
+  it('a salt the server will not say moves nothing and asks the server nothing', async () => {
+    const offline = new TypeError('Failed to fetch');
+    const { s, order } = steps({
+      serverSaltFingerprint: vi.fn(async () => Promise.reject(offline)),
+    });
+    await expect(runPinReset(s)).rejects.toBe(offline);
+    expect(order).toEqual([]);
+  });
+
+  it('with no PIN on the server, the local state is reset alone - staged and committed (round 10, F6)', async () => {
+    const { s, order } = steps({ serverSaltFingerprint: vi.fn(async () => null) });
+    await runPinReset(s);
+    expect(order).toEqual(['stage', 'first setup', 'commit']);
+    expect(s.stage).toHaveBeenCalledWith(await noServerPinBasis());
+    expect(s.askServer).not.toHaveBeenCalled();
+    expect(logged(s)).toContain('the server holds no PIN');
   });
 
   it('a refused stage asks the server nothing', async () => {
@@ -51,25 +82,65 @@ describe('the "forgot PIN" reset', () => {
     expect(s.askServer).not.toHaveBeenCalled();
   });
 
-  it('a server that does not reset the PIN rolls the state back - the old PIN still opens it', async () => {
-    const failure = new Error('Server-side PIN reset failed (503).');
+  it('a DEFINITE refusal (4xx) rolls the state back - the old PIN still opens it', async () => {
+    const refusal = new PinResetRefusedError(403);
     const { s, order } = steps();
-    s.askServer = vi.fn(async () => Promise.reject(failure));
-    await expect(runPinReset(s)).rejects.toBe(failure);
+    s.askServer = vi.fn(async () => Promise.reject(refusal));
+    await expect(runPinReset(s)).rejects.toBe(refusal);
     expect(order).toEqual(['stage', 'rollback']);
+    expect(s.serverSaltFingerprint).toHaveBeenCalledTimes(1);
     expect(s.enterFirstSetup).not.toHaveBeenCalled();
     expect(s.commit).not.toHaveBeenCalled();
   });
 
-  it('a rollback that fails still reports the server failure, and says so', async () => {
-    const failure = new Error('Server-side PIN reset failed (500).');
-    const { s } = steps();
+  it('NO ANSWER (a 5xx) with the salt unchanged rolls back: the server did not reset', async () => {
+    const failure = new Error('Server-side PIN reset answered 500.');
+    const { s, order } = steps();
     s.askServer = vi.fn(async () => Promise.reject(failure));
-    s.rollback = vi.fn(async () => Promise.reject(new Error('disk')));
     await expect(runPinReset(s)).rejects.toBe(failure);
-    expect((s.log as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n')).toContain(
-      'could not be put back now'
-    );
+    expect(order).toEqual(['stage', 'rollback']);
+    expect(s.serverSaltFingerprint).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['no PIN any more', null],
+    ['another salt', 'b'.repeat(64)],
+  ])(
+    'NO ANSWER (a transport failure) with %s commits: the server reset, its reply was lost',
+    async (_label, now) => {
+      const { s, order } = steps();
+      s.serverSaltFingerprint = vi
+        .fn<() => Promise<string | null>>()
+        .mockResolvedValueOnce(BASIS)
+        .mockResolvedValueOnce(now);
+      s.askServer = vi.fn(async () => Promise.reject(new TypeError('Failed to fetch')));
+      await runPinReset(s);
+      expect(order).toEqual(['stage', 'first setup', 'commit']);
+      expect(s.rollback).not.toHaveBeenCalled();
+    }
+  );
+
+  it('NO ANSWER and no salt either: the reset is handed over, never rolled back on a guess', async () => {
+    const failure = new TypeError('Failed to fetch');
+    const { s, order } = steps();
+    s.serverSaltFingerprint = vi
+      .fn<() => Promise<string | null>>()
+      .mockResolvedValueOnce(BASIS)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    s.askServer = vi.fn(async () => Promise.reject(failure));
+    await expect(runPinReset(s)).rejects.toBe(failure);
+    expect(order).toEqual(['stage', 'hand over']);
+    expect(s.rollback).not.toHaveBeenCalled();
+    expect(s.commit).not.toHaveBeenCalled();
+  });
+
+  it('a rollback that fails still reports the refusal, and says so', async () => {
+    const refusal = new PinResetRefusedError(400);
+    const { s } = steps();
+    s.askServer = vi.fn(async () => Promise.reject(refusal));
+    s.rollback = vi.fn(async () => Promise.reject(new Error('disk')));
+    await expect(runPinReset(s)).rejects.toBe(refusal);
+    expect(logged(s)).toContain('could not be put back now');
   });
 
   it('a commit that fails leaves the gate in first setup - the next PIN is never read as an unlock', async () => {
@@ -90,8 +161,6 @@ describe('the "forgot PIN" reset', () => {
  * back to an old PIN that opens nothing.
  */
 describe('an unsettled "forgot PIN" reset', () => {
-  const BASIS = 'a'.repeat(64);
-
   function settleSteps(overrides: Partial<UnsettledPinResetSteps> = {}) {
     const order: string[] = [];
     const s: UnsettledPinResetSteps = {
@@ -128,9 +197,9 @@ describe('an unsettled "forgot PIN" reset', () => {
     expect(order).toEqual(['commit']);
   });
 
-  it('is committed when the server holds another salt - a new PIN was chosen since', async () => {
+  it('is committed when the server holds another salt - a new PIN chosen since is unlocked, not set up', async () => {
     const { s, order } = settleSteps({ serverSaltFingerprint: vi.fn(async () => 'b'.repeat(64)) });
-    expect(await settleUnsettledPinReset(s)).toBe('committed');
+    expect(await settleUnsettledPinReset(s)).toBe('committed_pin_chosen');
     expect(order).toEqual(['commit']);
   });
 
@@ -141,6 +210,19 @@ describe('an unsettled "forgot PIN" reset', () => {
     expect(await settleUnsettledPinReset(s)).toBe('unanswered');
     expect(order).toEqual([]);
     expect((s.log as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n')).toContain('ERROR');
+  });
+
+  it('offline then online in the same page: the adopted reset is asked again, and settles (round 10)', async () => {
+    const { s, order } = settleSteps({
+      serverSaltFingerprint: vi
+        .fn<() => Promise<string | null>>()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(BASIS),
+    });
+    expect(await settleUnsettledPinReset(s)).toBe('unanswered');
+    expect(await settleUnsettledPinReset(s)).toBe('rolled_back');
+    expect(s.adopt).toHaveBeenCalledTimes(2);
+    expect(order).toEqual(['rollback']);
   });
 });
 

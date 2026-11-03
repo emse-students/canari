@@ -116,6 +116,12 @@ export type LoginErrorCode =
    */
   | 'revoked_device_wipe_owed'
   /**
+   * A "forgot PIN" reset of this account is staged and waits for the server's answer
+   * (`MlsResetUnsettledError`, round 10 of the review of #2919): its state is set apart, nothing was
+   * opened or destroyed. The user goes online and retries; the retry settles the reset first.
+   */
+  | 'pin_reset_unsettled'
+  /**
    * This device's identity had to be rotated, and the fresh state could not be recorded: ANOTHER
    * TAB of this account wrote the stored state after this login loaded it (the version guard's
    * refusal). Nothing durable was moved - not the stored id, not the server's device row - so the
@@ -269,6 +275,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'server_unreachable' ||
     code === 'account_deleted' ||
     code === 'revoked_device_wipe_owed' ||
+    code === 'pin_reset_unsettled' ||
     code === 'state_written_by_another_tab' ||
     isVaultRefusal(code)
   );

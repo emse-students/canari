@@ -70,6 +70,7 @@ import {
 } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import {
+  MlsResetUnsettledError,
   MlsSlotMoveUnfinishedError,
   MlsSlotOwnerUnrecordedError,
 } from '$lib/mls-client/mlsStateLoadError';
@@ -672,6 +673,9 @@ function loginFailureOfSlotRefusal(reason: unknown): LoginFailure | null {
   if (reason instanceof MlsSlotOwnerUnrecordedError) {
     return new LoginFailure('local_state_owner_unrecorded', m.auth_local_state_owner_unrecorded());
   }
+  if (reason instanceof MlsResetUnsettledError) {
+    return new LoginFailure('pin_reset_unsettled', m.auth_pin_reset_unsettled());
+  }
   return null;
 }
 
@@ -705,9 +709,12 @@ export async function rollbackDeviceResetImpl(userIdToReset: string): Promise<vo
  * Adopts a "forgot PIN" reset a page that is gone left unsettled (`adoptUnsettledMlsReset`, round 9
  * of the review of #2919): its server basis, or `null` when there is none.
  */
-export async function adoptUnsettledDeviceResetImpl(userId: string): Promise<string | null> {
+export async function adoptUnsettledDeviceResetImpl(
+  userId: string,
+  handOver = false
+): Promise<string | null> {
   const { adoptUnsettledMlsReset } = await import('$lib/utils/hex');
-  return adoptUnsettledMlsReset(userId);
+  return adoptUnsettledMlsReset(userId, { handOver });
 }
 
 /**

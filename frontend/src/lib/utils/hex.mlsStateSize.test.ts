@@ -156,9 +156,16 @@ describe('the PIN reset of the local MLS state on a phone', () => {
   it('adopt: names this document and answers the basis, or null', async () => {
     invoke.mockResolvedValueOnce(BASIS).mockResolvedValueOnce(null);
     expect(await adoptUnsettledMlsReset('user-b')).toBe(BASIS);
-    expect(await adoptUnsettledMlsReset('user-b')).toBeNull();
-    expect(invoke).toHaveBeenCalledWith('adopt_unsettled_user_mls_reset', {
+    expect(await adoptUnsettledMlsReset('user-b', { handOver: true })).toBeNull();
+    expect(invoke).toHaveBeenNthCalledWith(1, 'adopt_unsettled_user_mls_reset', {
       userId: 'user-b',
+      handOver: false,
+      document: 7,
+    });
+    // Round 10: this page's own steps hand their staged reset over when the server said nothing.
+    expect(invoke).toHaveBeenNthCalledWith(2, 'adopt_unsettled_user_mls_reset', {
+      userId: 'user-b',
+      handOver: true,
       document: 7,
     });
   });

@@ -101,6 +101,10 @@ pub(crate) enum SelectionRefused {
     /// ([`refusal_for`]): handing the slot to anyone could write into, or reset, another account's
     /// state.
     MoveUnfinished(String),
+    /// A "forgot PIN" reset of THIS account is staged and not settled (round 10 of the review of
+    /// #2919): its state is set apart, and only the server's answer settles it. Its own type, so the
+    /// gate asks the user to go online and retries the settle - never the restart a move asks for.
+    ResetUnsettled(String),
     /// Anything else: a foreground session still open, a state of unproven owner, a filesystem
     /// failure.
     Other(String),
@@ -109,7 +113,7 @@ pub(crate) enum SelectionRefused {
 impl std::fmt::Display for SelectionRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MoveUnfinished(m) | Self::Other(m) => f.write_str(m),
+            Self::MoveUnfinished(m) | Self::ResetUnsettled(m) | Self::Other(m) => f.write_str(m),
         }
     }
 }
@@ -124,6 +128,7 @@ impl From<SelectionRefused> for mls_core::StateLoadRefusal {
     fn from(refused: SelectionRefused) -> Self {
         match refused {
             SelectionRefused::MoveUnfinished(m) => Self::slot_move_unfinished(m),
+            SelectionRefused::ResetUnsettled(m) => Self::reset_unsettled(m),
             SelectionRefused::Other(m) => Self::from(m),
         }
     }
@@ -547,26 +552,36 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
 /// with NO record naming it - and a sign-in admitted over it would find a state of "unproven owner",
 /// fail its credential check, and reach the reset that deletes it.
 fn refusal_for(unfinished: &[UnfinishedMove], user_id: &str, needs_slot: bool) -> Option<String> {
+    selection_refusal_for(unfinished, user_id, needs_slot).map(|r| r.to_string())
+}
+
+/// [`refusal_for`], TYPED for a sign-in or a size query: the account's own unsettled reset is
+/// [`SelectionRefused::ResetUnsettled`], anything else [`SelectionRefused::MoveUnfinished`].
+fn selection_refusal_for(
+    unfinished: &[UnfinishedMove],
+    user_id: &str,
+    needs_slot: bool,
+) -> Option<SelectionRefused> {
     let mine = parked_dir_name(user_id);
     unfinished
         .iter()
         .find(|m| m.account == mine || (needs_slot && m.kind != MoveKind::Reset))
         .map(|m| match (m.account == mine, m.kind) {
-            (true, MoveKind::Reset) => {
+            (true, MoveKind::Reset) => SelectionRefused::ResetUnsettled(
                 "a PIN reset of this account is not settled - the server's answer settles it at the next online sign-in"
-                    .to_string()
-            }
-            (true, _) => {
+                    .to_string(),
+            ),
+            (true, _) => SelectionRefused::MoveUnfinished(
                 "this account's state was cut part-way through a move that cannot be finished"
-                    .to_string()
-            }
-            (false, MoveKind::Park) => {
-                "the slot still holds part of another account's state".to_string()
-            }
-            (false, _) => {
+                    .to_string(),
+            ),
+            (false, MoveKind::Park) => SelectionRefused::MoveUnfinished(
+                "the slot still holds part of another account's state".to_string(),
+            ),
+            (false, _) => SelectionRefused::MoveUnfinished(
                 "the slot may hold another account's state, moved in without its owner record"
-                    .to_string()
-            }
+                    .to_string(),
+            ),
         })
 }
 
@@ -618,8 +633,8 @@ fn account_state_file_held(
     user_id: &str,
 ) -> Result<Option<PathBuf>, SelectionRefused> {
     let unfinished = settle_pending_moves_held(data_dir);
-    if let Some(refusal) = refusal_for(&unfinished, user_id, false) {
-        return Err(SelectionRefused::MoveUnfinished(refusal));
+    if let Some(refusal) = selection_refusal_for(&unfinished, user_id, false) {
+        return Err(refusal);
     }
     let parked = parked_dir(data_dir, user_id);
     let slot_has_state = slot_holds_state(data_dir)?;
@@ -748,9 +763,11 @@ pub(crate) fn select_account_state(
 
 /// [`select_account_state`] under the lock it holds.
 fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, SelectionRefused> {
-    if let Some(refusal) = refusal_for(&settle_pending_moves_held(data_dir), user_id, true) {
+    if let Some(refusal) =
+        selection_refusal_for(&settle_pending_moves_held(data_dir), user_id, true)
+    {
         log::error!("[MLS_ACCOUNT] sign-in refused: {refusal}");
-        return Err(SelectionRefused::MoveUnfinished(refusal));
+        return Err(refusal);
     }
     let owner = read_mls_state_owner(data_dir)?;
     if owner.as_deref() != Some(user_id) && live_manager_in_process() {
@@ -1279,8 +1296,9 @@ fn forget_opened_if_own_state_empty_held(
 }
 
 /// THE GENERATION OF THE WEBVIEW DOCUMENT THAT IS CURRENT NOW (round 9 of the review of #2919): the
-/// one `page_ring` moves on at every document start and web content death (`on_page_load` and the
-/// termination handler, `lib.rs`), never under [`mls_bin_write_lock`]. A reset is the page's - its
+/// one `page_ring` mints when a new page CLAIMS it (`page_ring_document`, the page's first native
+/// call) and moves on at a web content death, never under [`mls_bin_write_lock`] - read here,
+/// never claimed. A reset is the page's - its
 /// commit or rollback lives there - so it is stamped with the document that staged it, and "in
 /// flight" means "staged by the CURRENT document". Round 8 cleared the registry on a page load
 /// instead: a stage still running across the navigation registered AFTER the clear and escaped it,
@@ -1296,7 +1314,7 @@ fn current_document() -> u64 {
     }
     #[cfg(not(test))]
     {
-        crate::page_ring::page_ring_document()
+        crate::page_ring::current_page_document()
     }
 }
 
@@ -1311,32 +1329,56 @@ pub(crate) fn set_document_for_test(document: u64) {
     TEST_DOCUMENT.with(|d| d.set(document));
 }
 
-/// The resets staged and not yet committed or rolled back: `(parked directory name, document that
-/// staged it)`. Only an entry of the CURRENT document is in flight ([`reset_staged_by`]); any other is
-/// a page that is gone, settled from its journal ([`settle_pending_moves_held`]). Read and written
-/// only under [`mls_bin_write_lock`].
-static RESETS_IN_FLIGHT: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
-
-/// Whether `document` staged the reset of `account` (a parked directory name) and is still the
-/// current document.
-fn reset_staged_by(account: &str, document: u64) -> bool {
-    document == current_document()
-        && RESETS_IN_FLIGHT
-            .lock()
-            .map(|r| r.iter().any(|(a, d)| a == account && *d == document))
-            // A poisoned registry cannot prove the reset is not this page's: treated as in flight,
-            // so nothing is undone under a reset that may still be running.
-            .unwrap_or(true)
+/// How a page holds a reset in [`RESETS_IN_FLIGHT`] (round 10 of the review of #2919).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResetHeld {
+    /// The page staged it and its own steps settle it: never adopted beside them.
+    Staged,
+    /// The page ADOPTED it to settle it from the server's answer - a page that is gone left it, or
+    /// this page's own steps lost the server's answer and handed it over. Adopted again, it answers
+    /// its basis again, so a settle the server did not answer is asked again once the network is back.
+    Adopted,
 }
 
-/// Records that `document` staged (or adopted) the reset of `account`, replacing any entry of a page
-/// that is gone.
-fn register_reset(account: &str, document: u64) -> Result<(), String> {
+/// The resets staged and not yet committed or rolled back: `(parked directory name, document that
+/// holds it, how)`. Only an entry of the CURRENT document is in flight ([`reset_staged_by`]); any
+/// other is a page that is gone, settled from its journal ([`settle_pending_moves_held`]). Read and
+/// written only under [`mls_bin_write_lock`].
+static RESETS_IN_FLIGHT: std::sync::Mutex<Vec<(String, u64, ResetHeld)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// How `document` holds the reset of `account` (a parked directory name), `None` when it holds none or
+/// is no longer the current document.
+fn reset_held_by(account: &str, document: u64) -> Option<ResetHeld> {
+    if document != current_document() {
+        return None;
+    }
+    match RESETS_IN_FLIGHT.lock() {
+        Ok(r) => r
+            .iter()
+            .find(|(a, d, _)| a == account && *d == document)
+            .map(|(_, _, held)| *held),
+        Err(_) => {
+            // A poisoned registry cannot prove the reset is not this page's: treated as staged here,
+            // so nothing is undone or adopted under a reset that may still be running.
+            log::error!("[MLS_ACCOUNT] the reset registry is poisoned - read as in flight");
+            Some(ResetHeld::Staged)
+        }
+    }
+}
+
+/// Whether `document` holds the reset of `account` and is still the current document.
+fn reset_staged_by(account: &str, document: u64) -> bool {
+    reset_held_by(account, document).is_some()
+}
+
+/// Records that `document` holds the reset of `account` as `held`, replacing any other entry of it.
+fn register_reset(account: &str, document: u64, held: ResetHeld) -> Result<(), String> {
     let mut in_flight = RESETS_IN_FLIGHT
         .lock()
         .map_err(|_| "the reset registry is poisoned".to_string())?;
-    in_flight.retain(|(a, _)| a != account);
-    in_flight.push((account.to_string(), document));
+    in_flight.retain(|(a, _, _)| a != account);
+    in_flight.push((account.to_string(), document, held));
     Ok(())
 }
 
@@ -1346,7 +1388,7 @@ fn forget_resets_of(account: &str) -> Result<bool, String> {
         .lock()
         .map_err(|_| "the reset registry is poisoned".to_string())?;
     let before = in_flight.len();
-    in_flight.retain(|(a, _)| a != account);
+    in_flight.retain(|(a, _, _)| a != account);
     Ok(in_flight.len() != before)
 }
 
@@ -1354,7 +1396,7 @@ fn forget_resets_of(account: &str) -> Result<bool, String> {
 fn forget_stale_resets_of(account: &str) {
     let document = current_document();
     match RESETS_IN_FLIGHT.lock() {
-        Ok(mut in_flight) => in_flight.retain(|(a, d)| a != account || *d == document),
+        Ok(mut in_flight) => in_flight.retain(|(a, d, _)| a != account || *d == document),
         Err(_) => log::error!(
             "[MLS_ACCOUNT] the reset registry is poisoned - a stale entry could not be forgotten"
         ),
@@ -1875,7 +1917,7 @@ pub(crate) fn stage_account_reset(
         "[MLS_ACCOUNT] the PIN reset is staged by document {document}: the account's state set apart, the slot's unproven state {}",
         if unproven_slot { "set aside" } else { "untouched" }
     );
-    register_reset(&account, document)?;
+    register_reset(&account, document, ResetHeld::Staged)?;
     Ok(())
 }
 
@@ -1967,12 +2009,18 @@ pub(crate) fn rollback_account_reset(
 /// server reset the PIN - it COMMITS ([`commit_account_reset`]); the same salt means it did not - it
 /// ROLLS BACK ([`rollback_account_reset`]). Round 8 undid every such reset, and after a reload that
 /// came AFTER the server's reset the account was sent back to an old PIN that opens nothing.
-/// Unanswered (offline), the reset stays adopted and the account's sign-in stays refused - asked
-/// again by the next page or the next attempt.
+/// Unanswered (offline), the reset stays ADOPTED and the account's sign-in stays refused
+/// (`RESET_UNSETTLED`) - and adopting it again answers its basis again, so the next attempt of this
+/// page, or the next page, asks the server again (round 10).
+///
+/// THIS page's own STAGED reset is not adopted beside its steps (they settle it) - unless
+/// `hand_over`: those steps lost the server's answer and could not learn it from the salt either, and
+/// hand the reset over to the settle that every sign-in attempt runs.
 pub(crate) fn adopt_unsettled_reset(
     data_dir: &Path,
     user_id: &str,
     document: u64,
+    hand_over: bool,
 ) -> Result<Option<String>, ResetRefusal> {
     if user_id.is_empty() {
         return Err("no account named".to_string().into());
@@ -1992,11 +2040,11 @@ pub(crate) fn adopt_unsettled_reset(
         log::debug!("[MLS_ACCOUNT] no unsettled PIN reset of the account");
         return Ok(None);
     }
-    if reset_staged_by(&account, document) {
+    if reset_held_by(&account, document) == Some(ResetHeld::Staged) && !hand_over {
         // THIS page's own reset, between its stage and its settle: its own steps settle it, and a
         // second settle beside them would race them.
-        log::info!(
-            "[MLS_ACCOUNT] the account's PIN reset is this page's own, still running - not adopted"
+        log::warn!(
+            "[MLS_ACCOUNT] the account's PIN reset is this page's own, still running - not adopted, its own steps settle it"
         );
         return Ok(None);
     }
@@ -2009,9 +2057,10 @@ pub(crate) fn adopt_unsettled_reset(
         undo_reset_held(data_dir, &resetting)?;
         return Ok(None);
     };
-    register_reset(&account, document)?;
+    register_reset(&account, document, ResetHeld::Adopted)?;
     log::warn!(
-        "[MLS_ACCOUNT] an unsettled PIN reset is adopted by document {document} - the server's answer settles it"
+        "[MLS_ACCOUNT] an unsettled PIN reset is adopted by document {document}{} - the server's answer settles it",
+        if hand_over { ", handed over by its own steps" } else { "" }
     );
     Ok(Some(basis))
 }
@@ -2098,8 +2147,9 @@ pub(crate) fn adopt_unsettled_user_mls_reset(
     app: tauri::AppHandle,
     user_id: String,
     document: u64,
+    hand_over: bool,
 ) -> Result<Option<String>, ResetRefusal> {
-    adopt_unsettled_reset(&app_data_dir_of(&app)?, &user_id, document)
+    adopt_unsettled_reset(&app_data_dir_of(&app)?, &user_id, document, hand_over)
 }
 
 /// `{app_data_dir}` for a reset command, its failure typed.
@@ -2873,7 +2923,9 @@ mod tests {
 
         // Its next online sign-in adopts it, and the server's salt is the one it was staged under.
         assert_eq!(
-            adopt_unsettled_reset(&dir, "user-a", 1).unwrap().as_deref(),
+            adopt_unsettled_reset(&dir, "user-a", 1, false)
+                .unwrap()
+                .as_deref(),
             Some(BASIS)
         );
         rollback_account_reset(&dir, "user-a", 1).unwrap();
@@ -3076,7 +3128,9 @@ mod tests {
         // the server's salt is the one it was staged under: undone, all of it.
         set_document_for_test(1);
         assert_eq!(
-            adopt_unsettled_reset(&dir, "user-b", 1).unwrap().as_deref(),
+            adopt_unsettled_reset(&dir, "user-b", 1, false)
+                .unwrap()
+                .as_deref(),
             Some(BASIS)
         );
         rollback_account_reset(&dir, "user-b", 1).unwrap();
@@ -3201,7 +3255,9 @@ mod tests {
         assert!(account_state_file(&dir, "user-a").is_err(), "unsettled");
         assert!(stage_account_reset(&dir, "user-a", 1, BASIS).is_err());
         assert_eq!(
-            adopt_unsettled_reset(&dir, "user-a", 1).unwrap().as_deref(),
+            adopt_unsettled_reset(&dir, "user-a", 1, false)
+                .unwrap()
+                .as_deref(),
             Some(BASIS)
         );
         commit_account_reset(&dir, "user-a", 1).unwrap();
@@ -3211,7 +3267,10 @@ mod tests {
             let _guard = mls_bin_write_lock().lock().unwrap();
             assert!(!account_known_here_held(&dir, "user-a").unwrap());
         }
-        assert_eq!(adopt_unsettled_reset(&dir, "user-a", 1).unwrap(), None);
+        assert_eq!(
+            adopt_unsettled_reset(&dir, "user-a", 1, false).unwrap(),
+            None
+        );
         stage_account_reset(&dir, "user-a", 1, BASIS).unwrap();
         commit_account_reset(&dir, "user-a", 1).unwrap();
         std::fs::remove_dir_all(&dir).ok();
@@ -3228,9 +3287,23 @@ mod tests {
         known(&dir, "user-a");
         stage_account_reset(&dir, "user-a", 0, BASIS).unwrap();
 
-        // The page reloads; the new one settles the reset (the server did not reset the PIN).
+        // The page reloads. BEFORE anyone adopts the reset (round 10, the gap): the old page's steps
+        // are refused on the document alone - the registry still names it - and the state stays
+        // set apart, so only the document check can be what refused them.
         set_document_for_test(1);
-        adopt_unsettled_reset(&dir, "user-a", 1).unwrap();
+        assert_eq!(
+            commit_account_reset(&dir, "user-a", 0).unwrap_err().code,
+            RESET_NOT_THIS_PAGE
+        );
+        assert_eq!(
+            rollback_account_reset(&dir, "user-a", 0).unwrap_err().code,
+            RESET_NOT_THIS_PAGE
+        );
+        assert_eq!(slot(&dir), None, "still set apart");
+        assert!(with_suffix(&parked_dir(&dir, "user-a"), RESETTING_SUFFIX).exists());
+
+        // The new page settles the reset (the server did not reset the PIN).
+        adopt_unsettled_reset(&dir, "user-a", 1, false).unwrap();
         rollback_account_reset(&dir, "user-a", 1).unwrap();
         assert_eq!(slot(&dir).unwrap(), b"state-a");
 
@@ -3260,7 +3333,7 @@ mod tests {
         // A commit of this page with nothing set apart is refused too, never answered Ok.
         stage_account_reset(&dir, "user-a", 1, BASIS).unwrap();
         assert_eq!(
-            adopt_unsettled_reset(&dir, "user-a", 1).unwrap(),
+            adopt_unsettled_reset(&dir, "user-a", 1, false).unwrap(),
             None,
             "this page's own running reset is never adopted beside its own steps"
         );
@@ -3273,21 +3346,101 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// ROUND 9 (item 1): THE WIRING. The reset registry reads the document generation `page_ring`
-    /// keeps, which only `lib.rs` moves on - at every document start, with no lock taken there - and
-    /// the opened markers are seeded at start-up, before the WebView exists. Removing either line from
-    /// `lib.rs` fails this test.
+    /// ROUND 10 (F2, F3): OFFLINE, THEN ONLINE, IN THE SAME PAGE. The sign-in meets the unsettled
+    /// reset as its own TYPE, both where the login measures the state and where it selects it; the
+    /// settle that got no answer leaves the reset ADOPTED, and adopting it again answers its basis
+    /// again - so the retry online asks the server, settles, and the sign-in succeeds.
     #[test]
-    fn the_page_load_and_the_start_up_seed_are_wired() {
-        let lib = include_str!("../lib.rs");
-        let page_load = lib
-            .find(".on_page_load(")
-            .map(|at| &lib[at..at + lib[at..].find("})").unwrap()])
-            .expect("on_page_load is wired");
-        assert!(page_load.contains("page_ring::forget_on_page_load();"));
+    fn an_unanswered_settle_is_asked_again_and_the_sign_in_then_succeeds() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-offline-online");
+        sign_in_and_save(&dir, "user-a", b"state-a");
+        known(&dir, "user-a");
+        stage_account_reset(&dir, "user-a", 0, BASIS).unwrap();
+        set_document_for_test(1);
+
+        // Offline: the adopt answers the basis, the server does not answer, nothing is settled.
+        assert_eq!(
+            adopt_unsettled_reset(&dir, "user-a", 1, false)
+                .unwrap()
+                .as_deref(),
+            Some(BASIS)
+        );
+        {
+            let _guard = mls_bin_write_lock().lock().unwrap();
+            assert!(matches!(
+                account_state_file_held(&dir, "user-a"),
+                Err(SelectionRefused::ResetUnsettled(_))
+            ));
+        }
+        assert!(matches!(
+            select_account_state(&dir, "user-a"),
+            Err(SelectionRefused::ResetUnsettled(_))
+        ));
         assert!(
-            !page_load.contains("mls_bin_write_lock"),
-            "no lock in on_page_load"
+            mls_core::StateLoadRefusal::from(SelectionRefused::ResetUnsettled(String::new()))
+                .is_reset_unsettled()
+        );
+
+        // Online, the same page: the retry adopts it again, the salt is the same, it rolls back.
+        assert_eq!(
+            adopt_unsettled_reset(&dir, "user-a", 1, false)
+                .unwrap()
+                .as_deref(),
+            Some(BASIS),
+            "an adopted reset answers its basis again"
+        );
+        rollback_account_reset(&dir, "user-a", 1).unwrap();
+        assert_eq!(select(&dir, "user-a").unwrap(), Selection::AlreadyInSlot);
+        assert_eq!(slot(&dir).unwrap(), b"state-a");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 10 (F2): this page's own STAGED reset is adopted only when its steps HAND IT OVER - they
+    /// lost the server's answer and could not learn it from the salt.
+    #[test]
+    fn a_staged_reset_is_adopted_only_when_its_steps_hand_it_over() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-hand-over");
+        sign_in_and_save(&dir, "user-a", b"state-a");
+        known(&dir, "user-a");
+        set_document_for_test(3);
+        stage_account_reset(&dir, "user-a", 3, BASIS).unwrap();
+        assert_eq!(
+            adopt_unsettled_reset(&dir, "user-a", 3, false).unwrap(),
+            None
+        );
+        assert_eq!(
+            adopt_unsettled_reset(&dir, "user-a", 3, true)
+                .unwrap()
+                .as_deref(),
+            Some(BASIS)
+        );
+        assert_eq!(
+            adopt_unsettled_reset(&dir, "user-a", 3, false)
+                .unwrap()
+                .as_deref(),
+            Some(BASIS),
+            "handed over, it is adopted: the next attempt asks again"
+        );
+        commit_account_reset(&dir, "user-a", 3).unwrap();
+        assert_eq!(slot(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUNDS 9 AND 10 (items 1 and F4): THE WIRING. The reset registry READS the document generation
+    /// `page_ring` keeps (never claims it); a page CLAIMS it through the command `lib.rs` registers,
+    /// and a dead web content process moves it on - never the page-load event, which can run after
+    /// the new page's first native call on Android; and the opened markers are seeded at start-up,
+    /// before the WebView exists. Removing any of these lines from `lib.rs` fails this test.
+    #[test]
+    fn the_document_claim_and_the_start_up_seed_are_wired() {
+        let lib = include_str!("../lib.rs");
+        let handler = &lib[lib.find(".invoke_handler(").expect("invoke_handler")..];
+        assert!(handler.contains("page_ring::page_ring_document,"));
+        assert!(
+            !lib.contains("page_ring::forget_on_page_load"),
+            "the page-load event moves no generation"
         );
         assert!(lib.contains("page_ring::forget_on_web_content_terminated();"));
         let setup = &lib[lib.find(".setup(move |app|").expect("setup")..];
@@ -3299,7 +3452,7 @@ mod tests {
             "seeded at the start of setup"
         );
         let this = include_str!("mls_account_state.rs");
-        assert!(this.contains("        crate::page_ring::page_ring_document()\n"));
+        assert!(this.contains("        crate::page_ring::current_page_document()\n"));
     }
 
     /// ROUND 8 (L-1): an empty or malformed counter is no refusal - the next name is taken above the
@@ -3402,7 +3555,9 @@ mod tests {
             set_document_for_test(1);
             assert!(account_state_file(dir, "user-b").is_err(), "unsettled");
             assert_eq!(
-                adopt_unsettled_reset(dir, "user-b", 1).unwrap().as_deref(),
+                adopt_unsettled_reset(dir, "user-b", 1, false)
+                    .unwrap()
+                    .as_deref(),
                 Some(BASIS)
             );
             rollback_account_reset(dir, "user-b", 1).unwrap();

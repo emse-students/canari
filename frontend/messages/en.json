@@ -12,6 +12,7 @@
   "auth_user_id_invalid": "Your sign-in identifier is not accepted by Canari. Contact the bureau.",
   "auth_account_deleted_here": "This account was deleted. Sign in online to create a new one.",
   "auth_device_revoked_here": "This device was removed from your account. Sign in online to use it again.",
+  "auth_pin_reset_unsettled": "Your PIN reset needs the server's answer to finish. Connect to the internet, then try again.",
   "auth_account_erasure_blocked": "The deletion of this account is stuck. Contact bureau@rootz-emse.fr and we will finish it.",
   "auth_privacy": "Privacy",
   "auth_terms": "Terms",

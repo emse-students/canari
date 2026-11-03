@@ -570,12 +570,19 @@ export async function rollbackMlsStateReset(userId: string): Promise<void> {
  * from the server's answer (`adopt_unsettled_user_mls_reset`, round 9 of the review of #2919): the
  * server basis it was staged under, or `null` when there is none. The caller then commits
  * ({@link removeMlsState}) or rolls back ({@link rollbackMlsStateReset}). `null` on the web, which
- * stages nothing.
+ * stages nothing. `handOver`: THIS page's own steps lost the server's answer and hand their staged
+ * reset over to the settle of the next sign-in attempt (round 10).
  */
-export async function adoptUnsettledMlsReset(userId: string): Promise<string | null> {
+export async function adoptUnsettledMlsReset(
+  userId: string,
+  { handOver = false }: { handOver?: boolean } = {}
+): Promise<string | null> {
   if (!isTauriRuntime()) return null;
   return (
-    (await invokeResetStep<string | null>('adopt_unsettled_user_mls_reset', { userId })) ?? null
+    (await invokeResetStep<string | null>('adopt_unsettled_user_mls_reset', {
+      userId,
+      handOver,
+    })) ?? null
   );
 }
 
