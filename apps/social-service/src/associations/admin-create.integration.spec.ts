@@ -16,6 +16,8 @@
  * Everything happens in a throwaway schema, dropped at the end. The `users` table is a three-column
  * stand-in, which is all the create reads of it.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource, Repository } from 'typeorm';
@@ -83,6 +85,10 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     });
     await ds.initialize();
     await ds.synchronize();
+    // The dependency journal (WP-D1) is a migration-only table: a create under a parent writes it.
+    await ds.query(
+      readFileSync(join(__dirname, '..', 'migrations', '129_dependencies_schema.sql'), 'utf8')
+    );
     await ds.query(`CREATE TABLE users (id text PRIMARY KEY, campus text, cursus text)`);
     await ds.query(
       `INSERT INTO users (id, campus) VALUES ('platform-admin', NULL), ('officer', 'gardanne'), ('bde-star', 'gardanne')`

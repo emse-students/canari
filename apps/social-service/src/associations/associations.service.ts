@@ -154,13 +154,16 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
+import { assertAudienceAllowedForType, defaultCampusRules } from '../spaces/audience-policy';
+import { normaliseRules, smallestRules } from '../spaces/spaces.service';
+import { writeDependencyJournal } from '../spaces/dependency-journal';
 import {
-  assertAudienceAllowedForType,
-  creatorDefaultRules,
-  defaultCampusRules,
-  type SpaceStanding,
-} from '../spaces/audience-policy';
-import { normaliseRules } from '../spaces/spaces.service';
+  DEPENDENCY_INSTITUTION,
+  DEPENDENCY_PARENT_CHOICE_REQUIRED,
+  DEPENDENCY_PARENT_NOT_A_BDE,
+  DEPENDENCY_PARENT_NOT_YOURS,
+  dependencyConflict,
+} from '../spaces/dependency-rules';
 import type { AudienceRuleDto } from '../spaces/dto/space.dto';
 import type { FirstAdminDto } from './dto/admin-association.dto';
 import { SEARCH_FOLD_PARAMS, foldSql } from './search-fold';
@@ -171,7 +174,7 @@ import {
   encodeCatalogueCursor,
   platformAdminOnly,
 } from './admin-catalogue';
-import { BDE_SPACE_STANDINGS_SQL } from '../spaces/bde';
+import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
 import {
   BDE_MODERATED_POST_IDS_SQL,
   BDE_MODERATED_USER_IDS_SQL,
@@ -180,6 +183,7 @@ import {
   MODERATION_OUT_OF_SCOPE,
   MODERATOR_REQUIRED,
 } from '../spaces/bde-moderation';
+import { Space } from '../spaces/space.entity';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
@@ -458,6 +462,19 @@ function lydiaBusinessKeyContext(associationId: string, vendorToken: string): st
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * The association whose NAME is printed above a list (`parentName`): its G3 label when it has one
+ * ("liste pour le BDS"), else its governing parent. Lists only - since WP-D1 an association has a
+ * governing parent too, and the tiles and the detail page (which print `parentName` whatever the
+ * type, on older builds as well) must not start printing "BDE" above every club.
+ */
+export function shownParentId(
+  a: Pick<Association, 'type' | 'parentAssociationId' | 'displayParentAssociationId'>
+): string | null {
+  if (a.type !== 'list') return null;
+  return a.displayParentAssociationId ?? a.parentAssociationId;
+}
+
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
@@ -535,9 +552,10 @@ export class AssociationsService {
    * the grid at `/admin/spaces` reads it back as a ticked campus. A creator with no campus is
    * REFUSED with the typed `AUDIENCE_CREATOR_CAMPUS_REQUIRED` (decision 5) and nothing is written -
    * the campus is never guessed. An institution keeps its own rule: no default, the creating global
-   * admin ticks its audience afterwards. A NON-admin creator (a BDE star) is further refused
-   * `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when that default campus is not one its BDE governs: it could
-   * not edit what it made (decision 7).
+   * admin ticks its audience afterwards. WITH A GOVERNING PARENT (WP-D1, reform 2.5: every
+   * non-admin creator's entity has one, `resolveCreateDependency`) the default is instead the spaces
+   * that parent governs - so a BDE star always creates an audience it may edit (decision 7), and an
+   * entity of a campus two BDEs share never starts out reaching both (closes P4).
    *
    * A PLACEMENT (the platform admin's form on `/admin/spaces`, owner 2026-11-02) replaces that
    * default with the spaces the admin chose - possibly none - and may add ONE first admin, in the
@@ -740,7 +758,21 @@ export class AssociationsService {
     return this.assoRepo.manager.transaction(async (manager) => {
       // Its base cotisation tag must never coincide with another association's tag names.
       await assertCotisationStemFree(manager, null, slug);
+      const dependency = await this.resolveCreateDependency(manager, dto, userId, isGlobalAdmin);
+      asso.parentAssociationId = dependency.parentId;
+      asso.displayParentAssociationId = dependency.labelId;
       const saved = await manager.save(asso);
+      if (dependency.parentId !== null) {
+        await writeDependencyJournal(
+          manager,
+          'entity',
+          saved.id,
+          null,
+          dependency.parentId,
+          userId,
+          'create'
+        );
+      }
       if (placement) {
         // Only a platform admin reaches a placement (refused above otherwise).
         await this.placeNewAssociation(manager, saved, placement, { userId, isGlobalAdmin });
@@ -754,21 +786,33 @@ export class AssociationsService {
         );
         return saved;
       }
+      if (dependency.parentId !== null) {
+        // The default audience derives from the parent (reform 2.5, closes P4): the spaces it
+        // governs, in the grid's smallest form - never a whole campus another BDE shares.
+        const governed = await manager.find(Space, {
+          where: { bdeAssociationId: dependency.parentId },
+        });
+        const fromParent = smallestRules(governed);
+        this.logger.log(
+          `[spaces] ${saved.id} reaches its parent's spaces: ${fromParent.map((r) => `${r.formation ?? '*'}|${r.campus ?? '*'}`).join(', ')}`
+        );
+        await manager.insert(
+          AssociationAudience,
+          fromParent.map((r) => ({
+            associationId: saved.id,
+            formation: r.formation,
+            campus: r.campus,
+          }))
+        );
+        return saved;
+      }
       const [profile] = (await manager.query(READER_PROFILE_SQL, [userId])) as {
         campus: string | null;
       }[];
-      // Thrown inside the transaction: the row saved above is rolled back with it.
-      // A non-admin creator gets an audience it may EDIT afterwards: the spaces of its campus its
-      // BDE governs, never a whole campus it shares with another BDE (owner, 2026-11-03).
-      const rules = isGlobalAdmin
-        ? defaultCampusRules(profile?.campus ?? null)
-        : creatorDefaultRules(
-            profile?.campus ?? null,
-            (await manager.query(BDE_SPACE_STANDINGS_SQL, [
-              userId,
-              AssociationPermissionFlag.MANAGE_ASSO,
-            ])) as SpaceStanding[]
-          );
+      // Only a platform admin creates with no parent (`resolveCreateDependency` gives every
+      // non-admin creator one of its BDEs). Thrown inside the transaction: the row saved above is
+      // rolled back with it.
+      const rules = defaultCampusRules(profile?.campus ?? null);
       this.logger.log(
         `[spaces] ${saved.id} reaches its creator's spaces: ${rules.map((r) => `${r.formation ?? '*'}|${r.campus}`).join(', ')}`
       );
@@ -778,6 +822,93 @@ export class AssociationsService {
       );
       return saved;
     });
+  }
+
+  /**
+   * THE PARENT A NEW ENTITY IS CREATED UNDER (reform 2.5, B1; WP-D1), and its G3 label.
+   *
+   * - an institution has none; naming one is `DEPENDENCY_INSTITUTION`;
+   * - a named parent that is NOT a BDE (a list made "for the BDS", as an older client still sends)
+   *   becomes the display-only LABEL (G3), and the governing parent falls back to the default below;
+   * - a platform admin's parent is the BDE it names, or none;
+   * - a non-admin creator's parent is the BDE it names among those where it holds MANAGE_ASSO
+   *   (`DEPENDENCY_PARENT_NOT_YOURS` otherwise), else its only such BDE; holding it in several and
+   *   naming none is `DEPENDENCY_PARENT_CHOICE_REQUIRED`.
+   * Asked inside the create transaction; migration 131's trigger judges the same row at the insert.
+   */
+  private async resolveCreateDependency(
+    manager: EntityManager,
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ parentId: string | null; labelId: string | null }> {
+    const named = dto.parentAssociationId ?? null;
+    this.logger.debug(
+      `[DEPENDENCY] create ${dto.type ?? 'association'} by ${userId.slice(0, 8)}: parent named ${named ?? 'none'}`
+    );
+    if (dto.type === 'institution') {
+      if (named !== null) {
+        this.logger.warn(`[DEPENDENCY] create refused: an institution given parent ${named}`);
+        throw dependencyConflict(DEPENDENCY_INSTITUTION, 'An institution depends on nobody');
+      }
+      return { parentId: null, labelId: null };
+    }
+    let parentId: string | null = null;
+    let labelId: string | null = null;
+    if (named !== null) {
+      const parent = await manager.findOne(Association, { where: { id: named } });
+      if (!parent) throw new NotFoundException('Parent association not found');
+      const governs = (await manager.count(Space, { where: { bdeAssociationId: named } })) > 0;
+      if (parent.type === 'association' && governs) {
+        parentId = named;
+      } else if (parent.type === 'institution') {
+        this.logger.warn(`[DEPENDENCY] create refused: institution ${named} named as parent`);
+        throw dependencyConflict(DEPENDENCY_PARENT_NOT_A_BDE, "An institution is nobody's parent");
+      } else {
+        labelId = named;
+        this.logger.log(`[DEPENDENCY] create: ${named} governs no space, kept as the label (G3)`);
+      }
+    }
+    if (isGlobalAdmin) return { parentId, labelId };
+    const mine = (
+      (await manager.query(BDES_WHERE_USER_HOLDS_SQL, [
+        userId,
+        AssociationPermissionFlag.MANAGE_ASSO,
+      ])) as { id: string }[]
+    ).map((r) => r.id);
+    if (parentId !== null) {
+      if (!mine.includes(parentId)) {
+        this.logger.warn(
+          `[DEPENDENCY] create refused: ${userId.slice(0, 8)} holds no MANAGE_ASSO in ${parentId}`
+        );
+        throw dependencyConflict(
+          DEPENDENCY_PARENT_NOT_YOURS,
+          'Choose a BDE in which you hold the association management right'
+        );
+      }
+      return { parentId, labelId };
+    }
+    if (mine.length === 0) {
+      // The create route admits a non-admin only through MANAGE_ASSO in a BDE (the same predicate),
+      // so this is a defect or a hand-made call - accused, and refused.
+      this.logger.error(
+        `[DEPENDENCY] create by ${userId.slice(0, 8)}: a non-admin creator holding MANAGE_ASSO in no BDE`
+      );
+      throw dependencyConflict(
+        DEPENDENCY_PARENT_NOT_YOURS,
+        'Only a BDE manager or a platform admin creates an association'
+      );
+    }
+    if (mine.length > 1) {
+      this.logger.warn(
+        `[DEPENDENCY] create refused: ${userId.slice(0, 8)} manages ${mine.length} BDEs and named none`
+      );
+      throw dependencyConflict(
+        DEPENDENCY_PARENT_CHOICE_REQUIRED,
+        'Choose which of your BDEs the new entity depends on'
+      );
+    }
+    return { parentId: mine[0], labelId };
   }
 
   /**
@@ -911,13 +1042,16 @@ export class AssociationsService {
       ])
     );
 
-    const parents = await this.parentNameMap(associations.map((a) => a.parentAssociationId));
+    const parents = await this.parentNameMap(associations.map(shownParentId));
 
-    return associations.map((a) => ({
-      ...a,
-      memberCount: countMap.get(a.id) ?? 0,
-      parentName: a.parentAssociationId ? (parents.get(a.parentAssociationId) ?? null) : null,
-    }));
+    return associations.map((a) => {
+      const shown = shownParentId(a);
+      return {
+        ...a,
+        memberCount: countMap.get(a.id) ?? 0,
+        parentName: shown ? (parents.get(shown) ?? null) : null,
+      };
+    });
   }
 
   /**
@@ -934,7 +1068,7 @@ export class AssociationsService {
     return new Map(rows.map((r) => [r.id, r.name]));
   }
 
-  /** Display name of a list's parent association, or null when it has none. */
+  /** Display name of the parent `shownParentId` picked, or null when there is none. */
   private async parentName(parentId: string | null): Promise<string | null> {
     if (!parentId) return null;
     const parent = await this.assoRepo.findOne({
@@ -956,7 +1090,7 @@ export class AssociationsService {
     const memberCount = await this.memberRepo.count({
       where: { associationId: id },
     });
-    return { ...asso, memberCount, parentName: await this.parentName(asso.parentAssociationId) };
+    return { ...asso, memberCount, parentName: await this.parentName(shownParentId(asso)) };
   }
 
   /** Loads one association by its URL slug and appends a memberCount. */
@@ -966,7 +1100,7 @@ export class AssociationsService {
     const memberCount = await this.memberRepo.count({
       where: { associationId: asso.id },
     });
-    return { ...asso, memberCount, parentName: await this.parentName(asso.parentAssociationId) };
+    return { ...asso, memberCount, parentName: await this.parentName(shownParentId(asso)) };
   }
 
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
@@ -1060,6 +1194,44 @@ export class AssociationsService {
    *
    * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
    */
+  /**
+   * Inside a delete's transaction: nothing may keep naming the association being deleted on the
+   * dependency axis (WP-D1, reform 2.7). Its children lose their governing parent and the spaces it
+   * governed lose their governor - each change journaled with the admin who deleted it - and a G3
+   * label naming it is cleared (display only, not journaled). The columns carry no foreign key, so
+   * without this a dangling id would survive the row.
+   */
+  private async releaseDependents(
+    manager: EntityManager,
+    id: string,
+    actorUserId: string
+  ): Promise<void> {
+    // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+    const [children] = (await manager.query(
+      `UPDATE associations SET "parentAssociationId" = NULL WHERE "parentAssociationId" = $1 RETURNING id`,
+      [id]
+    )) as [{ id: string }[], number];
+    for (const child of children) {
+      await writeDependencyJournal(manager, 'entity', child.id, id, null, actorUserId, 'admin');
+    }
+    const [spaces] = (await manager.query(
+      `UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1 RETURNING id`,
+      [id]
+    )) as [{ id: string }[], number];
+    for (const space of spaces) {
+      await writeDependencyJournal(manager, 'space', space.id, id, null, actorUserId, 'admin');
+    }
+    await manager.query(
+      `UPDATE associations SET "displayParentAssociationId" = NULL WHERE "displayParentAssociationId" = $1`,
+      [id]
+    );
+    if (children.length > 0 || spaces.length > 0) {
+      this.logger.warn(
+        `[DEPENDENCY] DELETE ${id}: ${children.length} child(ren) left without a parent, ${spaces.length} space(s) without a governor`
+      );
+    }
+  }
+
   async remove(id: string, actorUserId: string) {
     const [memberCount, eventCount, formCount] = await Promise.all([
       this.memberRepo.count({ where: { associationId: id } }),
@@ -1109,6 +1281,7 @@ export class AssociationsService {
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
+      await this.releaseDependents(manager, id, actorUserId);
       await manager.delete(Association, id);
     });
     // Released only where no surviving space cites them, the one release rule of every poster.
@@ -2591,16 +2764,20 @@ export class AssociationsService {
     return m !== null;
   }
 
-  /** Returns true if userId holds `flag` in ANY BDE association. */
+  /**
+   * Returns true if userId holds `flag` in ANY BDE association. For `MANAGE_ASSO` - management - an
+   * institution governing a space does not count: it answers for that space's agenda and people,
+   * and manages nothing (reform 2.3, `governorIsAnAssociationSql`).
+   */
   async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
-    const n = await this.memberRepo
+    const qb = this.memberRepo
       .createQueryBuilder('m')
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
       .andWhere(isBdeAssociationSql('a'))
-      .andWhere('(m.permissions & :flag) <> 0', { flag })
-      .getCount();
-    return n > 0;
+      .andWhere('(m.permissions & :flag) <> 0', { flag });
+    if (flag === AssociationPermissionFlag.MANAGE_ASSO) qb.andWhere(`a.type = 'association'`);
+    return (await qb.getCount()) > 0;
   }
 
   /**

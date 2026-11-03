@@ -92,6 +92,7 @@ function bdeFlagOverReachSql(
     : '';
   const notInstitution = management
     ? `
+      AND ${governorIsAnAssociationSql('bde_member."associationId"')}
       AND bde_target.type <> 'institution'
       AND (bde_member."associationId" = bde_target.id OR NOT EXISTS (SELECT 1 FROM spaces bde_of_target
         WHERE bde_of_target."bdeAssociationId" = bde_target.id))`
@@ -101,6 +102,20 @@ function bdeFlagOverReachSql(
     JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}${target}
     WHERE TRUE${notInstitution}
       AND ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
+}
+
+/**
+ * The governor `governor` (a SQL expression naming an association id) is of type `association`.
+ *
+ * A space's governor may be an INSTITUTION since WP-D1 (owner D3, reform 2.3: a formation with no BDE
+ * placed under the School). That governor answers for the space's AGENDA and its students' personal
+ * content - the per-space standing below, unchanged - but it is "still not a BDE for D2": it never
+ * becomes a parent and MANAGES nothing. So every MANAGEMENT reading of a space's governor (the
+ * super-admin tier over an association, a BDE star's audience powers, a creator's default audience,
+ * the MANAGE_ASSO door of the routes naming no association) adds this, and only those.
+ */
+export function governorIsAnAssociationSql(governor: string): string {
+  return `EXISTS (SELECT 1 FROM associations gov_kind WHERE gov_kind.id = ${governor} AND gov_kind.type = 'association')`;
 }
 
 /**
@@ -125,11 +140,13 @@ export function bdeStandingInSpaceSql(
  * `formation`, `campus`, `governed`. The borders of a BDE star's audience powers PER SPACE
  * (`audience-policy.ts` `ruleInsideGovernedSpaces`), and of a creator's default audience
  * (`creatorDefaultRules`). A campus-level bound let a star write over a space another BDE of the
- * same campus governs.
+ * same campus governs. Read only with MANAGE_ASSO, so a space an INSTITUTION governs is never
+ * "governed" here (`governorIsAnAssociationSql`).
  */
 export const BDE_SPACE_STANDINGS_SQL = `SELECT bde_space.formation, bde_space.campus,
     EXISTS (SELECT 1 FROM association_members bde_star
-      WHERE ${bdeStandingInSpaceSql('bde_star', 'bde_space', '$1', '$2')}) AS "governed"
+      WHERE ${bdeStandingInSpaceSql('bde_star', 'bde_space', '$1', '$2')}
+        AND ${governorIsAnAssociationSql('bde_star."associationId"')}) AS "governed"
   FROM spaces bde_space ORDER BY bde_space.campus, bde_space.formation`;
 
 /** Does user `$1` hold flag `$3` in a BDE governing association `$2`? Answers `holds`. */
@@ -171,3 +188,13 @@ export const TARGETS_AN_UNGOVERNED_SPACE_SQL = `SELECT (
  */
 export const PLATFORM_ADMINS_SQL = `SELECT plat_admin.id AS "userId" FROM users plat_admin
   WHERE plat_admin.admin = true ORDER BY plat_admin.id`;
+
+/**
+ * The BDEs - associations governing at least one space - in which user `$1` holds flag `$2`. Answers
+ * `id`. With MANAGE_ASSO: the parents a non-admin creator may give a new entity (reform 2.5, B1).
+ */
+export const BDES_WHERE_USER_HOLDS_SQL = `SELECT holder_bde.id FROM associations holder_bde
+  JOIN association_members holder_m ON holder_m."associationId" = holder_bde.id
+  WHERE holder_m."userId" = $1 AND (holder_m.permissions & $2) <> 0
+    AND holder_bde.type = 'association' AND ${isBdeAssociationSql('holder_bde')}
+  ORDER BY holder_bde.id`;

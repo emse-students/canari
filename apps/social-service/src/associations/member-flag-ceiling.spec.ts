@@ -634,6 +634,7 @@ describe('the last member manager is typed on every path, and a leaver never byp
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     );
     expect(await settle(controller.removeMember(ASSO, 'pres', 'pres', undefined))).toBe(

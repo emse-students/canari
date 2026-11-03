@@ -20,7 +20,12 @@ function makeService(posters: { id: string }[] = [], stillCited: string[] = []) 
     delete: jest.fn(() => Promise.resolve({ affected: 1 })),
     query: jest.fn((sql: string, params: unknown[]) =>
       Promise.resolve(
-        sql.includes('LIMIT 1') && stillCited.includes(params[0] as string) ? [1] : []
+        // An UPDATE ... RETURNING answers [rows, count] through TypeORM (the dependents release).
+        sql.startsWith('UPDATE')
+          ? [[], 0]
+          : sql.includes('LIMIT 1') && stillCited.includes(params[0] as string)
+            ? [1]
+            : []
       )
     ),
   };

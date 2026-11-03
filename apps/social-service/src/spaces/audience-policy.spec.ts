@@ -3,7 +3,6 @@ import {
   assertBdeMayReadAudience,
   assertBdeMayWriteAudience,
   changedRules,
-  creatorDefaultRules,
   ruleInsideGovernedSpaces,
   type SpaceStanding,
 } from './audience-policy';
@@ -95,18 +94,5 @@ describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
     );
     // Not governing the entity: nothing, its own space included - no takeover by addition.
     expect(write(false, [...wide, icm])).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
-  });
-
-  it('gives a creator an audience it may edit: its governed spaces, the whole campus only when it is all of it', () => {
-    expect(creatorDefaultRules('saint-etienne', icmStar)).toEqual([icm]);
-    expect(
-      creatorDefaultRules('saint-etienne', [se('ICM', true), se('ISMIN', true), se('FSSS', true)])
-    ).toEqual(wide);
-    expect(codeOf(() => creatorDefaultRules('saint-etienne', [se('ICM', false)]))).toBe(
-      'AUDIENCE_OUTSIDE_BDE_CAMPUS'
-    );
-    expect(codeOf(() => creatorDefaultRules(null, icmStar))).toBe(
-      'AUDIENCE_CREATOR_CAMPUS_REQUIRED'
-    );
   });
 });

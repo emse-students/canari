@@ -1,7 +1,7 @@
 # Spaces, audiences and dependencies - a reform proposal (2026-11-02)
 
-**Status: PROPOSAL, revised after each of the owner's five rounds of answers the same day (section
-0). Nothing is built.** Written for the owner to decide. It extends
+**Status: DECIDED (section 0), and being built work package by work package: WP-D1 is BUILT, its
+migrations held for the owner (2.8).** Written for the owner to decide. It extends
 [profiles-and-access](profiles-and-access.md) (D16-D41, the audiences chantier, WP-C read grants,
 WP-F5/F6) and does not restate it. Every `file:line` is from `main` at the time of writing
 (`apps/social-service/src/` unless said otherwise).
@@ -315,6 +315,140 @@ The trigger of 2.2 would refuse an existing list whose display parent is not a B
 says how many, and **the migration that adds the trigger must not run while that count is above zero**
 (those rows are corrected through the validated parents list of G1; the BDS and BDA links move to the display-only label of G3).
 
+### 2.8 WP-D1 as built (2026-11-03) - built, its three migrations held for the owner
+
+**Built**, in its own pull requests (server and migrations; then the Dependencies panel). ADDITIVE:
+nothing reads the governing parent for governance until WP-D2.
+
+- **Migration 129** (held): `associations."displayParentAssociationId"`, the G3 display-only label,
+  and `dependency_journal` (`subject_kind`, `subject_id`, `from_id`, `to_id`, `actor`, `source`,
+  `at`; the actor is anonymised by the account erasure).
+- **Migration 130** (held): the parents list below, applied by SLUG, all or nothing - every slug must
+  exist once, each row's type must be the validated one and its current parent the validated "from"
+  (or already `bde`, a re-run), `bde` must govern a space; otherwise it RAISES naming the slug and
+  writes nothing. On an estate with NONE of the slugs (the dev seed, a scratch database) it writes
+  nothing and says so in a NOTICE. Each changed parent is journaled (`source = 'migration-130'`) and
+  reported by NOTICE; a re-run writes nothing. It also renames the FSSS BDE (G2) and makes MINITEL
+  the governor of the five gardanne spaces (G4) - a gardanne space governed by anybody else stops it.
+- **Migration 131** (held): ONE SQL judgement, `canari_dependency_refusal(child, type, parent)`, and
+  two triggers (`associations` on insert or an update of the parent or the type; `spaces` on an
+  update of the governor). Each refusal is SQLSTATE 23514 with its code in the CONSTRAINT field
+  (`DEPENDENCY_INSTITUTION`, `DEPENDENCY_CHILD_IS_A_BDE`, `DEPENDENCY_PARENT_NOT_A_BDE`), read by the
+  service through `dependencyRefusalOf`, never from a message. Retyping a parent that has children is
+  refused too. Both triggers take one transaction-scoped advisory lock, so a parent write and a
+  governor designation cannot each pass on a snapshot missing the other (an integration test parks
+  the second on the lock and watches it refused).
+- **The 2.7 count, encoded.** It is the second query above: the rows whose parent is not an
+  association governing a space. Migration 131 runs the SAME judgement over every existing row
+  BEFORE it creates a trigger, and RAISES with the count when it is above zero - so the triggers are
+  "refused while the count is above zero" mechanically, and 130, ordered first, is what brings it to
+  zero (the 26 lists under the BDS or the BDA, whose link becomes the label).
+- **Service** (`spaces/dependency-rules.ts`, `SpacesService`): `PUT associations/spaces/dependencies/:id`
+  and `GET associations/spaces/dependencies` (platform admin), every refusal a typed 409; a platform
+  admin's `PATCH :id` with a parent goes through the same `setParent`, journaled; `setBde` takes an
+  association or an institution (`SPACE_GOVERNOR_TYPE` for a list), refuses a parented one, journals,
+  and no longer writes an audience rule; `setAudiences` no longer adds a governor's spaces back (2.5,
+  closes P2). An institution governing a space answers for its agenda and its students' personal
+  content, and MANAGES nothing (`governorIsAnAssociationSql` in the management predicate, the
+  standings and the MANAGE_ASSO door). A deleted association releases its children, its spaces and
+  the labels naming it, journaled. Creation (2.5, closes P4): the parent is the creating BDE (picked
+  among several, `DEPENDENCY_PARENT_CHOICE_REQUIRED`; held to the creator's own,
+  `DEPENDENCY_PARENT_NOT_YOURS`), a named body governing nothing becomes the label (G3, which keeps
+  an older client's "for the BDS" list working), and the default audience is the parent's spaces.
+- `parentName` (the line above a list) prints the label, else the governing parent, for LISTS only -
+  an association gains a parent too and must not start showing "BDE" above every club.
+
+#### The parents list, validated by the owner on 2026-11-03, as is
+
+Proposed by Claude, resolved against production by exact name (each name matched exactly one row),
+validated by the owner on his tracking page as is (G1); he may correct a row later in production,
+from the Dependencies panel. 74 rows: 44 lists, 30 associations, every governing parent the main BDE
+(`bde`, which governs four saint-etienne spaces). 26 lists now under the BDS (14) or the BDA (12)
+keep that link as the G3 label only. Migration 130 carries the same rows; its integration spec reads
+them from the file.
+
+| Name | Slug | Type | Current parent | New governing parent | G3 label |
+| --- | --- | --- | --- | --- | --- |
+| Califor'mines State University | califormines-state-university | list | bds | bde | bds |
+| Co'Mines'Auté de l'Anneau | cominessariat | list | bds | bde | bds |
+| Exc'Art'libur | excartlibur | list | bda | bde | bda |
+| Faucon Mines'llenium | faucon-minesllenium | list | bds | bde | bds |
+| Gaulw'arts | gaulwarts | list | bda | bde | bda |
+| Hogw'Arts | hogwarts | list | bda | bde | bda |
+| Les Tortues Mines'Ja | les-tortues-minesja | list | bds | bde | bds |
+| Loup G'ART'ou | martiacartey | list | bda | bde | bda |
+| Mines et une nuit | les-trois-minesquetaires | list | bds | bde | bds |
+| Mines in Black | minesinblack | list | bds | bde | bds |
+| Mines'Ger Games | minesger-games | list | bds | bde | bds |
+| Mines'Tendo | mines-itaires | list | bds | bde | bds |
+| Mines'Tervilles | minestervilles | list | bds | bde | bds |
+| Mines'Victus | minesvictus | list | bds | bde | bds |
+| Miy'Art'zaki | cartglass | list | bda | bde | bda |
+| Moulins'Art | moulinsart | list | bda | bde | bda |
+| Ph'art'aon | fort-boyart | list | bda | bde | bda |
+| Pix'art | pixart | list | bda | bde | bda |
+| RagMines'rök | ragminesrk-liste | list | bds | bde | bds |
+| Ragn'art'ök | mammamiart | list | bda | bde | bda |
+| Shao'Mines | shaomines | list | bds | bde | bds |
+| T'Art'garyen | magicartpe | list | bda | bde | bda |
+| Wond'Art'Land | wondartland | list | bda | bde | bda |
+| Yakuz'Art | jurassic-partk | list | bda | bde | bda |
+| Zooto'Mines | rockminesbalboa | list | bds | bde | bds |
+| É'mines'sion | brainstormines | list | bds | bde | bds |
+| AME | ame | association | - | bde | - |
+| BDA - Bureau des Arts | bda | association | - | bde | - |
+| BDI - Bureau des Internationaux | bdi | association | - | bde | - |
+| BDS - Bureau des Sports | bds | association | - | bde | - |
+| BT - Bureau Technique | bt-bureau-technique | association | - | bde | - |
+| CoMines Out | comines-out | association | - | bde | - |
+| DopaMines | dopamines | association | - | bde | - |
+| EMSE Finance | emse-finance | association | - | bde | - |
+| Fablab | fablab | association | - | bde | - |
+| Forum Perspectives | forum | association | - | bde | - |
+| Gala Illumines | gala-illumines | association | - | bde | - |
+| GourMines | gourmines | association | - | bde | - |
+| Humani'Mines | humani-mines | association | - | bde | - |
+| L'Associflard | associflard | association | - | bde | - |
+| Le Cercle | cercle | association | - | bde | - |
+| Les Rootz | les-rootz | association | - | bde | - |
+| MINO | mino | association | - | bde | - |
+| MTM | mtm | association | - | bde | - |
+| MiTV | mitv | association | - | bde | - |
+| Mines Space | mines-space | association | - | bde | - |
+| Mines'ergies | mines-ergies | association | - | bde | - |
+| Mines'ramax | mines-ramax | association | - | bde | - |
+| Mines, Études et Projets | mep | association | - | bde | - |
+| Oenolo'mines | oenolo-mines | association | - | bde | - |
+| Pac-Mines | pac-mines | association | - | bde | - |
+| Pist'on Fire | pist-on-fire | association | - | bde | - |
+| Respire | respire | association | - | bde | - |
+| STO'Mines | sto-mines | association | - | bde | - |
+| WANA | wana | association | - | bde | - |
+| WoMines | womines | association | - | bde | - |
+| Back m'in'es time | apocamines | list | bde | bde | - |
+| CriMines'L | criminesl | list | bde | bde | - |
+| FAT Liste | fat-liste | list | - | bde | - |
+| Ho'Mines'Wood | homineswood | list | bde | bde | - |
+| Illu'Mines'ati | illuminesati | list | bde | bde | - |
+| Mines'Ception | minesception | list | bde | bde | - |
+| Mines'Exploré | minesexplor | list | bde | bde | - |
+| Mines'West | mineswest | list | bde | bde | - |
+| Mines'neyland | minesvswild | list | bde | bde | - |
+| Mines'sion Impossible | minession-impossible | list | bde | bde | - |
+| Mines'tagnard | minestagnard | list | bde | bde | - |
+| Mines'temporel | minestemporel | list | bde | bde | - |
+| Mines'thologie | aminesrica | list | bde | bde | - |
+| Mines'ti Verse | minesti-verse | list | bde | bde | - |
+| Mines'versal Studios | minesversal-studios | list | bde | bde | - |
+| Psychédé'Mines | minesxico | list | bde | bde | - |
+| T'Art'iflette | tartiflette | list | - | bde | - |
+| The Greatest Show'Mines | minesterpol | list | bde | bde | - |
+
+Not rows of the list, and applied by the same migration: the second saint-etienne BDE (slug
+`bde-bureau-des-eleves`, FSSS only) is renamed "BDE FSSS - Bureau des Élèves" (G2; the main `bde`
+keeps its name), and MINITEL (`minitel`, governing one gardanne space on 2026-11-03) governs all five
+(G4).
+
 ## 3. Per-item audience, for institutions only (C1)
 
 **An institution's post or event may NARROW the institution's audience, never widen it.**
@@ -502,7 +636,7 @@ merge on their own.
 | --- | --- | --- | --- |
 | **WP-R0** | The institution half is **#2949** (E5, at the predicate level). What remains: the moderator's EDIT removed (G3, P7) | one capability | none |
 | **WP-R1** | Audience bounds per SPACE. **Built in #2949** with `BDE_SPACE_STANDINGS_SQL` and `ruleInsideGovernedSpaces` ("Lire tout, modifier dans ses espaces", owner 2026-11-03); there is no `GOVERNED_SPACES_SQL`. **The residual, in full:** governance is still read from REACH (`bdeFlagOverReachSql`), so a whole-campus rule on a campus two BDEs share (saint-etienne) makes BOTH BDEs uncapped super-admins of that association TODAY - only another BDE and an institution are excluded. And a whole-campus rule a star wrote while it governed every opened space of its campus makes ANOTHER BDE super-admin of that entity as soon as the platform admin opens a new space there and gives it that BDE: the bound is judged at the write, the reach at every request. WP-D2's governance by parent is what closes both | server checks; closes P3 | none |
-| **WP-D1** | `parentAssociationId` generalised to associations; a separate display-only label column for the BDS or BDA link (G3); the parents list validated by the owner (G1); the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
+| **WP-D1** - **built (2.8)**; migrations 129-131 held for the owner | `parentAssociationId` generalised to associations; a separate display-only label column for the BDS or BDA link (G3); the parents list validated by the owner (G1); the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
 | **WP-D1b** | An admin interface to manage the existing campuses and each campus's formations (G5): list, create, rename and retire a campus or a formation, including a formation attached to two campuses. A space is a formation x campus, so what a cross-campus formation means for its spaces (one space per campus, a BDE per space as today) MUST be designed before it is built; reversible choices are taken and written down here, an irreversible one goes to the owner. Built inside WP-D1 as its own step, AFTER the parents list is applied | WP-D1's parents list comes first; the interface edits `spaces` and the formation and campus lists only | needs the spaces model: owner's yes if a schema change |
 | **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes (G8: a BDE reads every audience on its campus and writes only inside its governed spaces; a wider rule is the admin's); deletion of an association or list by its parent BDE (E3) | ships when the owner says the parents are set; closes P1, P5, P9 | none |
 | **WP-R4** | `MODERATE` scoped (2.4); no BDE moderates an institution's content, only the platform admin (G9) | needs WP-D2; closes P6 | none |
@@ -757,7 +891,7 @@ Concerns for whoever builds it:
 
 | # | Finding | Where | Proposed |
 | --- | --- | --- | --- |
-| F1 | A list officer rewrites the list's governing parent from the profile form | `EditProfileTab.svelte:128`, DTO `:176` | platform admin only, with the dependency journal (WP-D1); a typed refusal until then |
+| F1 | A list officer rewrites the list's governing parent from the profile form | `EditProfileTab.svelte:128`, DTO `:176` | platform admin only (#2964), and **journaled since WP-D1**: a platform admin's `PATCH :id` parent goes through `SpacesService.setParent` (2.8) |
 | F2 | **A BDE super-admin who is not a member cannot open a list's management area**, so E3 (the BDE deletes its lists) has no UI | `routes/lists/[slug]/edit/[[section]]/+page.svelte:158` and `:195` omit `isSuperAdminUser`, which the association page includes; the BDE reach is fetched without `await` (`:172`), so the decision races it | read the tier exactly as the association page does (awaited); better, one loader for both pages |
 | F3 | `MANAGE_PAYOUT_ACCOUNT` is offered wherever `payments` is - after the decision it means nothing on a list | `SECTION_FLAGS.payments` (`editSections.ts:170-173`) | through the kind map (G2, G3) |
 | F4 | A list's audience is writable on the server, drawable nowhere | `spaces/spaces.service.ts:224-235` vs `editSections.ts:141-143` | the Audience panel of `/admin/spaces` (#2951) or a list `audience` section; the comment corrected either way |
