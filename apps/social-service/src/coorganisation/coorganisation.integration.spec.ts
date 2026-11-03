@@ -936,12 +936,13 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     });
 
     /**
-     * Resolves once a statement of THIS suite's pool (never the polling connection) is WAITING on a
-     * lock whose text matches `like`. No sleep: the loop ends on that observable condition, and it
+     * Resolves once ANY statement of THIS suite's pool (matched by its `application_name`, never by
+     * its text, and never the polling connection) is WAITING on a lock. No sleep: the loop ends on
+     * that observable condition, and it
      * FAILS, explicitly, when `settled` (the concurrent request) completes first - that would mean
      * it never waited, which is the very thing under test.
      */
-    async function lockWaiter(like: string, settled: Promise<unknown>): Promise<void> {
+    async function lockWaiter(settled: Promise<unknown>): Promise<void> {
       const done = settled.then(
         () => 'settled' as const,
         () => 'settled' as const
@@ -950,8 +951,8 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         const waiting = (await q(
           `SELECT 1 FROM pg_stat_activity
             WHERE datname = current_database() AND application_name = $1
-              AND pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE $2`,
-          [schema, like]
+              AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
+          [schema]
         )) as unknown[];
         if (waiting.length > 0) return;
         const next = await Promise.race([
@@ -977,7 +978,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       const check = jest.spyOn(coorg, 'check').mockImplementation(async (request, manager) => {
         await realCheck(request, manager);
         hold.validating = associations.validateCalendarEvent(A1, I, 'validator');
-        await lockWaiter('%FOR NO KEY UPDATE%', hold.validating);
+        await lockWaiter(hold.validating);
       });
       try {
         await associations.updateCalendarEvent(
@@ -1024,6 +1025,10 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await deleter.connect();
       try {
         await deleter.query('BEGIN');
+        // A BOUND FOR THE FAILURE PATH ONLY: if a lock-order regression made the edit hold something
+        // the delete needs, the delete fails here with SQLSTATE 55P03 instead of hanging the suite.
+        // In the correct order nothing waits on the deleter and the bound is never reached.
+        await deleter.query("SET LOCAL lock_timeout = '10s'");
         await deleter.query('SELECT 1 FROM associations WHERE id = $1 FOR UPDATE', [O9]);
         const editing = associations
           .updateCalendarEvent(
@@ -1037,7 +1042,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
             (err: unknown) => err
           );
         // The edit waits on the ASSOCIATION, holding nothing: the delete then goes on to the events.
-        await lockWaiter('%FOR KEY SHARE%', editing);
+        await lockWaiter(editing);
         await deleter.query('DELETE FROM association_calendar_events WHERE "associationId" = $1', [
           O9,
         ]);
@@ -1119,6 +1124,70 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await proposalRows(Y)).toEqual(proposalsBefore);
       // Nobody was told about a proposal that was never committed.
       expect(told.length).toBe(toldBefore);
+    });
+  });
+
+  describe('event creation is ONE transaction (the partner proposals included)', () => {
+    const TITLE = 'Created atomically';
+    const eventsTitled = async () =>
+      (await q(`SELECT id FROM association_calendar_events WHERE title = $1`, [TITLE])) as {
+        id: string;
+      }[];
+    const coorganiseRows = async () =>
+      (await q(`SELECT 1 FROM proposals WHERE kind = 'coorganise'`)) as unknown[];
+
+    it('a failing k-th proposal leaves NO event, no proposal, no detach and no notice; the retry creates it once', async () => {
+      const forms = ds.getRepository(Form);
+      const form = await forms.save(
+        forms.create({ title: 'Creation form', associationId: A1, ownerId: 'org' } as Partial<Form>)
+      );
+      const LINKED = E(40);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "linkedFormId")
+           VALUES ($1, $2, 'Linked before creation', '2026-09-02T18:00:00Z', 'org', 'pending', $3)`,
+        [LINKED, A1, form.id]
+      );
+      const dto = {
+        title: TITLE,
+        startsAt: '2026-09-03T18:00:00.000Z',
+        linkedFormId: form.id,
+        coOwnerIds: [A3, A4],
+      };
+      const proposalsBefore = (await coorganiseRows()).length;
+      const toldBefore = told.length;
+
+      const real = proposals.proposeWithin.bind(proposals);
+      let calls = 0;
+      const spy = jest
+        .spyOn(proposals, 'proposeWithin')
+        .mockImplementation(async (...args: Parameters<typeof proposals.proposeWithin>) => {
+          calls += 1;
+          if (calls === 2) throw new Error('boom at the second proposal');
+          return real(...args);
+        });
+      try {
+        await expect(associations.createCalendarEvent(A1, dto, 'org')).rejects.toThrow(
+          'boom at the second proposal'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+      expect(calls).toBe(2);
+      expect(await eventsTitled()).toEqual([]);
+      expect((await coorganiseRows()).length).toBe(proposalsBefore);
+      const link = (await q(
+        `SELECT "linkedFormId" FROM association_calendar_events WHERE id = $1`,
+        [LINKED]
+      )) as { linkedFormId: string | null }[];
+      expect(link[0].linkedFormId).toBe(form.id);
+      expect(told.length).toBe(toldBefore);
+
+      // The caller's retry: exactly one event, both proposals, the partners told once committed.
+      await associations.createCalendarEvent(A1, dto, 'org');
+      const created = await eventsTitled();
+      expect(created).toHaveLength(1);
+      expect((await coorganiseRows()).length).toBe(proposalsBefore + 2);
+      expect(told.filter((t) => t.type === 'coorganise_proposed')).toHaveLength(2);
     });
   });
 });

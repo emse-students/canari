@@ -1661,20 +1661,33 @@ export class AssociationsService {
    * through them (never a second pool connection, which would starve the pool of ten under a few
    * concurrent edits and hide a lock cycle from Postgres, durable-rules).
    */
+  /**
+   * `FOR KEY SHARE` on the associations an event write names, in id order - the FIRST statement of
+   * every event write transaction (the global lock order). `eventOfOrganiser` adds the organiser of
+   * an existing event, read from its row; a creation names its organiser in `associationIds`.
+   */
+  private async keyShareAssociations(
+    manager: EntityManager,
+    associationIds: readonly string[],
+    eventOfOrganiser?: string
+  ): Promise<void> {
+    const named = associationIds.filter((id) => UUID_RE.test(id));
+    await manager.query(
+      `SELECT a.id FROM associations a
+        WHERE a.id = ANY($1::uuid[])
+           OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
+        ORDER BY a.id FOR KEY SHARE OF a`,
+      [named, eventOfOrganiser ?? null]
+    );
+  }
+
   async withEventLock<T>(
     eventId: string,
     work: (repo: Repository<AssociationCalendarEvent>, manager: EntityManager) => Promise<T>,
     associationIds: readonly string[] = []
   ): Promise<T> {
-    const named = associationIds.filter((id) => UUID_RE.test(id));
     return this.calendarRepo.manager.transaction(async (manager) => {
-      await manager.query(
-        `SELECT a.id FROM associations a
-          WHERE a.id = ANY($1::uuid[])
-             OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
-          ORDER BY a.id FOR KEY SHARE OF a`,
-        [named, eventId]
-      );
+      await this.keyShareAssociations(manager, associationIds, eventId);
       await manager.query(
         'SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE',
         [eventId]
@@ -1895,9 +1908,12 @@ export class AssociationsService {
     }
   }
 
-  private async detachLinksBeforeCreate(formId?: string | null) {
+  private async detachLinksBeforeCreate(
+    formId?: string | null,
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
+  ) {
     if (formId) {
-      await this.calendarRepo.update({ linkedFormId: formId }, { linkedFormId: null });
+      await repo.update({ linkedFormId: formId }, { linkedFormId: null });
     }
   }
 
@@ -2823,41 +2839,55 @@ ${rejectionReason}`
     );
 
     const linkedFormId = dto.linkedFormId ?? null;
-    if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
-    await this.detachLinksBeforeCreate(linkedFormId);
-
-    const row = this.calendarRepo.create({
-      associationId: targetId,
-      title: dto.title.trim(),
-      description: dto.description?.trim() ? dto.description.trim() : null,
-      startsAt,
-      endsAt,
-      createdBy: userId,
-      kind,
-      linkedFormId,
-      // The three validation columns are written in ONE place, and this is not it. Spelling
-      // `null` here rather than leaving them to the entity default is deliberate: a default is
-      // what happens when nobody said, and this row says.
-      status: AssociationCalendarEventStatus.Pending,
-      validatedAt: null,
-      validatedBy: null,
-    });
-    const saved = await this.calendarRepo.save(row);
     // D39: every co-organiser named here is ASKED, so a new event has no co-owner row yet - its
     // reach and its rights stay the organiser's until one accepts. The creator writes as the
     // organiser (the guard, or the BDE / global admin tier for a deposit).
     const askedCount = new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size;
-    if (askedCount > 0) {
-      await this.coOrganiserPort().sync({
-        eventId: saved.id,
-        organiserId: targetId,
-        desiredIds: dto.coOwnerIds ?? [],
-        actorId: userId,
-        isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
-        organiserSide: true,
-        viaAssociationId: associationId,
+    // ONE TRANSACTION, ONE CONNECTION: the form-link detach, the event insert and the partners'
+    // proposals commit together or not at all. The event used to be saved BEFORE the sync, so a
+    // failing k-th proposal left an event with no proposals behind a 500, and the caller's retry
+    // created it twice. The announcements run after the commit.
+    const { saved, afterCommit } = await this.calendarRepo.manager.transaction(async (manager) => {
+      await this.keyShareAssociations(manager, [targetId, ...(dto.coOwnerIds ?? [])]);
+      if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId, manager);
+      const repo = manager.getRepository(AssociationCalendarEvent);
+      await this.detachLinksBeforeCreate(linkedFormId, repo);
+
+      const row = repo.create({
+        associationId: targetId,
+        title: dto.title.trim(),
+        description: dto.description?.trim() ? dto.description.trim() : null,
+        startsAt,
+        endsAt,
+        createdBy: userId,
+        kind,
+        linkedFormId,
+        // The three validation columns are written in ONE place, and this is not it. Spelling
+        // `null` here rather than leaving them to the entity default is deliberate: a default is
+        // what happens when nobody said, and this row says.
+        status: AssociationCalendarEventStatus.Pending,
+        validatedAt: null,
+        validatedBy: null,
       });
-    }
+      const saved = await repo.save(row);
+      const afterCommit: CoOrganiserAfterCommit =
+        askedCount > 0
+          ? await this.coOrganiserPort().sync(
+              {
+                eventId: saved.id,
+                organiserId: targetId,
+                desiredIds: dto.coOwnerIds ?? [],
+                actorId: userId,
+                isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
+                organiserSide: true,
+                viaAssociationId: associationId,
+              },
+              manager
+            )
+          : () => Promise.resolve();
+      return { saved, afterCommit };
+    });
+    await afterCommit();
     const coOwners: AssociationCalendarEventCoOwner[] = [];
     this.logger.debug(
       `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, co-organisers asked=${askedCount})`
