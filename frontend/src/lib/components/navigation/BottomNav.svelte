@@ -5,6 +5,7 @@
   import { m } from '$lib/paraglide/messages';
   import { page } from '$app/state';
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
@@ -64,6 +65,7 @@
       <a
         href={place.href}
         use:preloadRouteOnView={place.href}
+        use:guideAnchor={`nav.${place.id}`}
         class="group relative flex min-w-0 flex-1 items-center justify-center transition-all duration-200 active:scale-95
  {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
       >
