@@ -1042,7 +1042,9 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
      only once its step succeeded. Removed in place, a cut `remove_dir_all` could take `reset.journal`
      before `mls.bin`, and the next look undid the half-removed reset as one "the server was never
      asked" - the old-PIN state unparked under a PIN the server had reset (`STATE_KEY_MISMATCH`). A
-     `.committed` is removed by whatever finds it, never undone, never counted as a state.
+     `.committed` is removed by whatever finds it, never undone, never counted as a state - and only
+     of the EXACT shape `<64 lowercase hex>.committed` (`is_committed_tombstone`, round 12, an
+     allowlist): anything else ending the same way is logged and left untouched.
   3. **First setup**, the moment the server has reset the PIN and before anything else can fail: the
      old PIN opens nothing any more, so the next PIN typed is a NEW one, never an unlock misread as a
      PIN rotated elsewhere.

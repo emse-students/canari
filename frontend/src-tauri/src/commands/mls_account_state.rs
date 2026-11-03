@@ -185,6 +185,19 @@ fn parked_dir_name(user_id: &str) -> String {
         .collect()
 }
 
+/// Whether `name` is exactly a committed reset's tombstone: `<64 lowercase hex>.committed`, the shape
+/// [`parked_dir_name`] gives an account and [`COMMITTED_SUFFIX`] a commit (round 12 of the review of
+/// #2919). The ALLOWLIST of what the settle deletes unasked - never a suffix match, which would
+/// delete anything else that happens to end the same way.
+fn is_committed_tombstone(name: &str) -> bool {
+    name.strip_suffix(COMMITTED_SUFFIX).is_some_and(|hash| {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
 /// `{data_dir}/mls_accounts/<hash>` for `user_id`.
 fn parked_dir(data_dir: &Path, user_id: &str) -> PathBuf {
     data_dir
@@ -469,8 +482,12 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
             parking.push((account.to_string(), entry.path()));
         } else if let Some(account) = name.strip_suffix(RESETTING_SUFFIX) {
             resetting.push((account.to_string(), entry.path()));
-        } else if name.ends_with(COMMITTED_SUFFIX) {
+        } else if is_committed_tombstone(&name) {
             committed.push(entry.path());
+        } else if name.ends_with(COMMITTED_SUFFIX) {
+            log::warn!(
+                "[MLS_ACCOUNT] an entry of {PARKED_STATES_DIR} ends like a committed reset but is not one - left untouched"
+            );
         }
     }
     // A COMMITTED reset whose removal was cut: its commit point (the rename) was passed, so it is
@@ -2163,7 +2180,7 @@ pub(crate) fn other_accounts_state_present(data_dir: &Path, user_id: &str) -> Re
             .iter()
             .any(|f| name == *f || name == format!("{f}.tmp"))
             // A committed reset's state, being deleted: nobody's state any more (round 11).
-            || name.ends_with(COMMITTED_SUFFIX);
+            || is_committed_tombstone(&name);
         let own = name == mine
             || [PARKING_SUFFIX, UNPARKING_SUFFIX, RESETTING_SUFFIX]
                 .iter()
@@ -3450,6 +3467,38 @@ mod tests {
         assert!(!resetting.exists());
         assert!(!parked_dir(&dir, "user-a").exists(), "nothing was unparked");
         assert_eq!(slot(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 12: the settle deletes a tombstone only of the EXACT shape `<account hash>.committed` -
+    /// anything else ending the same way is left untouched, its content intact.
+    #[test]
+    fn only_an_account_hash_tombstone_is_deleted() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-tombstone-allowlist");
+        let root = dir.join(PARKED_STATES_DIR);
+        let real = root.join(format!("{}{COMMITTED_SUFFIX}", parked_dir_name("user-a")));
+        // One hex digit short: not an account's hash (no case variant - the host may fold case).
+        let short = root.join(format!(
+            "{}{COMMITTED_SUFFIX}",
+            &parked_dir_name("user-a")[1..]
+        ));
+        let foo = root.join(format!("foo{COMMITTED_SUFFIX}"));
+        for d in [&real, &short, &foo] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("mls.bin"), b"kept?").unwrap();
+        }
+        assert!(is_committed_tombstone(
+            &real.file_name().unwrap().to_string_lossy()
+        ));
+        assert!(!is_committed_tombstone(&format!(
+            "{}{COMMITTED_SUFFIX}",
+            parked_dir_name("user-a").to_uppercase()
+        )));
+        assert_eq!(account_state_file(&dir, "user-b").unwrap(), None);
+        assert!(!real.exists(), "the account's tombstone is removed");
+        assert_eq!(std::fs::read(foo.join("mls.bin")).unwrap(), b"kept?");
+        assert_eq!(std::fs::read(short.join("mls.bin")).unwrap(), b"kept?");
         std::fs::remove_dir_all(&dir).ok();
     }
 
