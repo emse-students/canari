@@ -75,7 +75,8 @@ const controlCharsIn = (text) =>
 const tracked = execFileSync(
   'git',
   ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-  { cwd: repoRoot, encoding: 'utf8' },
+  // The whole tree's listing: past Node's 1 MiB default as the repository grows (see executable-bit).
+  { cwd: repoRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
 )
   .split('\0')
   .filter(Boolean);
