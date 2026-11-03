@@ -53,7 +53,7 @@
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-fs": "^2.7.1",
     "@tauri-apps/plugin-http": "^2.8.3",
-    "@tauri-apps/plugin-notification": "^2.7.0",
+    "@tauri-apps/plugin-notification": "^2.8.0",
     "@tauri-apps/plugin-opener": "^2.7.2",
     "@tauri-apps/plugin-os": "^2.4.0",
     "@tauri-apps/plugin-sql": "^2.6.0",
@@ -63,7 +63,7 @@
     "highlight.js": "^11.12.0",
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
-    "mediabunny": "^1.63.0",
+    "mediabunny": "^1.65.0",
     "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
     "simple-rnnoise-wasm": "1.1.0",
@@ -107,7 +107,6 @@
     "postcss": "^8.5.10"
   },
   "patchedDependencies": {
-    "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
-    "mediabunny@1.63.0": "patches/mediabunny@1.63.0.patch"
+    "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch"
   }
 }

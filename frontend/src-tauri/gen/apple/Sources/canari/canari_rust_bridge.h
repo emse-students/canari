@@ -131,6 +131,11 @@ bool canari_ios_page_holds_mls(void);
 char *canari_native_seal_quick_reply_line(const char *cache_key_b64, const char *line);
 /* outcome: 0 sent, 1 failed, 2 pending, 3 returned, 4 lost (`QuickReplyOutcome` in push.rs). */
 void canari_ios_set_quick_reply_ack_listener(void (*listener)(const char *reply_id, int32_t outcome));
+/* The page's leave flush (`commands::background_flush`): `begin` holds a background task for the
+   page's last work before suspension and answers its id (0 when iOS refused one); `end` ends it with
+   the page's outcome. */
+void canari_ios_set_background_flush_listeners(uint64_t (*begin)(const char *reason),
+                                                void (*end)(uint64_t hold, const char *outcome));
 
 /* Whether the page is ringing THIS call itself (its CallService is `incoming` on it, Rust
    `page_ring`). The handover ends an unanswered CallKit ring only on this: a page holding the

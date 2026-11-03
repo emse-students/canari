@@ -413,6 +413,8 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Signs the viewer-bound avatar token (docs/wiki/sessions.md, "The avatar token").
+      AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-}
       # The /adminer/ route (database admin UI, global admins only). PRODUCTION ONLY: the dev compose
       # does not set it, so core-service issues no session there and the route does not exist.
       # It also needs INTERNAL_SHARED_SECRET (32+ characters) and refuses to open without it.

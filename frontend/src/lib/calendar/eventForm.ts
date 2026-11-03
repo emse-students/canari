@@ -4,6 +4,7 @@ import { Log } from '$lib/utils/Log';
 import type {
   AssociationCalendarEventKind,
   CalendarEventCoOrganiserState,
+  EventWriteSide,
   CreateAssociationCalendarEventPayload,
   UpdateAssociationCalendarEventPayload,
 } from '$lib/associations/api';
@@ -40,39 +41,65 @@ export interface EventFormValues {
   coOwnerStates: CalendarEventCoOrganiserState[];
   /** `''` on a surface that does not choose an association. */
   targetAssociationId: string;
+  /**
+   * The side the viewer writes this event from, AS THE SERVER SAID IT (E2). A new event is the
+   * writer's own (`organiser`); an existing one is `unknown` until the answer arrives and STAYS
+   * unknown if it never does - the date and the partner list are drawn and sent for `organiser`
+   * only, so a lost answer narrows the form instead of offering what the write would refuse.
+   */
+  writeSide: EventWriteSide | 'unknown';
 }
 
-/** The co-organiser half of the form, which arrives after the rest (D39). */
+/** The half of the form that arrives after the rest: the co-organisers (D39) and the side (E2). */
 export type CoOrganiserFields = Pick<
   EventFormValues,
-  'coOwnerIds' | 'coOwnerStates' | 'coOwnersLoad'
+  'coOwnerIds' | 'coOwnerStates' | 'coOwnersLoad' | 'writeSide'
 >;
 
 /**
  * Reads an existing event's co-organiser states through `load` (`listEventCoOrganisers`, a
- * parameter so this stays testable without a network) and returns the fields to merge into the
- * form. A failure is `failed`, which keeps the list UNSENT - never a list guessed from the payload.
- * Both event surfaces call this, so they cannot disagree on what a failure means.
+ * parameter so this stays testable without a network) and the side the viewer writes it from
+ * through `loadSide` (`getEventWriteSide`), and returns the fields to merge into the form. EITHER
+ * failing is `failed` with the side left `unknown`, which keeps the list UNSENT and the date
+ * hidden - never a list guessed from the payload, never a right guessed from the ids. Both event
+ * surfaces call this, so they cannot disagree on what a failure means.
  */
 export async function loadCoOrganiserFields(
   values: EventFormValues,
-  load: () => Promise<CalendarEventCoOrganiserState[]>
+  load: () => Promise<CalendarEventCoOrganiserState[]>,
+  loadSide: () => Promise<{ side: EventWriteSide }>
 ): Promise<CoOrganiserFields> {
   try {
-    const seeded = withCoOrganiserStates(values, await load());
+    const [states, { side }] = await Promise.all([load(), loadSide()]);
+    const seeded = withCoOrganiserStates(values, states);
     return {
       coOwnerIds: seeded.coOwnerIds,
       coOwnerStates: seeded.coOwnerStates,
       coOwnersLoad: seeded.coOwnersLoad,
+      writeSide: side,
     };
   } catch (e: unknown) {
-    Log.d('eventForm', `co-organiser states failed to load: ${String(e)}`);
+    Log.d('eventForm', `co-organiser states or write side failed to load: ${String(e)}`);
     return {
       coOwnerIds: values.coOwnerIds,
       coOwnerStates: values.coOwnerStates,
       coOwnersLoad: 'failed',
+      writeSide: 'unknown',
     };
   }
+}
+
+/**
+ * What a PARTNER's withdrawal sends: the co-organisers the form holds, minus the viewer's own
+ * association. The server lets a partner write exactly this and nothing else about the list (E2).
+ */
+export function withdrawalCoOwnerIds(
+  states: CalendarEventCoOrganiserState[],
+  ownAssociationId: string
+): string[] {
+  return states
+    .filter((s) => s.status !== 'refused' && s.associationId !== ownAssociationId)
+    .map((s) => s.associationId);
 }
 
 /**
@@ -160,12 +187,20 @@ export function toUpdatePayload(
   return {
     title: values.title.trim(),
     description: values.description.trim() || undefined,
-    startsAt: new Date(values.start).toISOString(),
-    endsAt: instant(values.end),
+    // E2: the date and the partner list are the ORGANISER's. For a partner (or while the side is
+    // unknown) they are not merely hidden but UNSENT, so the save is text-only and cannot be refused.
+    ...(values.writeSide === 'organiser'
+      ? { startsAt: new Date(values.start).toISOString(), endsAt: instant(values.end) }
+      : {}),
     // Omitted unless the states were read: see `coOwnersLoad`.
-    ...(values.coOwnersLoad === 'ready' ? { coOwnerIds: values.coOwnerIds } : {}),
+    ...(values.writeSide === 'organiser' && values.coOwnersLoad === 'ready'
+      ? { coOwnerIds: values.coOwnerIds }
+      : {}),
     ...(caps.canSetKind ? { kind: values.kind } : {}),
-    ...(caps.canLinkForm ? { linkedFormId: values.linkedFormId.trim() || null } : {}),
+    // The form link is the organiser's too (D39, E2): a partner's save carries text only.
+    ...(caps.canLinkForm && values.writeSide === 'organiser'
+      ? { linkedFormId: values.linkedFormId.trim() || null }
+      : {}),
   };
 }
 
@@ -198,6 +233,7 @@ export function blankEventFormValues(onDay?: Date | null): EventFormValues {
     coOwnersLoad: 'ready',
     coOwnerStates: [],
     targetAssociationId: '',
+    writeSide: 'organiser',
   };
 }
 
@@ -220,6 +256,7 @@ export function eventFormValuesFrom(ev: SeedableEvent): EventFormValues {
     coOwnersLoad: 'loading',
     coOwnerStates: [],
     targetAssociationId: ev.associationId,
+    writeSide: 'unknown',
   };
 }
 

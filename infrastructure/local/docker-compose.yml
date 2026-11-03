@@ -294,6 +294,8 @@ services:
       ALLOW_INSECURE_COOKIES: "true"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
+      # Signs the viewer-bound avatar token (docs/wiki/sessions.md, "The avatar token"); 32+ chars.
+      AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-dev-avatar-token-secret-change-me-0123456789}
       # No /adminer/ route on a laptop stack: the database is one `docker exec` away.
       ADMINER_ENABLED: "false"
       DB_HOST: postgres
