@@ -339,6 +339,34 @@ Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
 
+## WMP. The wry main pipe after an activity destroy - owed on Android
+
+**Proves** the vendored wry fork ([mobile](frontend/mobile.md#wry-main-pipe-patch)) on a device:
+a message for a destroyed activity no longer aborts the process (Play crash `e3697bc4...`), and the
+main thread no longer parks in `onWebviewDestroy` (Play ANR `f51255a5...`). Compiling it proved
+nothing about either. Mi 9T, a build carrying the fork, logcat open
+(`adb logcat -s RustStdoutStderr:* AndroidRuntime:* DEBUG:* ActivityManager:*`).
+
+1. `adb shell settings put global always_finish_activities 1` ("Don't keep activities": leaving the
+   app now destroys its activity while the process lives, `isChangingConfigurations` false - the
+   path that removes the activity's proxy).
+2. Open the app, sign in, open a conversation, press Home. **Expect** `onDestroy` in logcat and the
+   process still alive (`adb shell pidof fr.emse.canari`).
+3. From a second device, send three messages to that conversation, and wait one minute. **Expect** no
+   `Fatal signal 6 (SIGABRT)` and no tombstone for `fr.emse.canari`; the process still alive. The
+   trigger is any Rust-side WebView call after the destroy - the chat socket lives in Rust
+   (`tauri-plugin-websocket`) and keeps emitting. Run the same steps once on `v1.6.2` (no fork): if
+   IT does not abort either, the trigger was not reached and this row proves nothing - say so.
+4. Reopen the app from the launcher. **Expect** the conversation to load normally, no
+   `ANR in fr.emse.canari` (`adb shell dumpsys activity anr` empty for the app), and no
+   `[WRY_MAIN_PIPE] ... failed` line - one is a JNI call that threw, with its Java stack just above.
+5. Repeat 2-4 five times, then `adb shell settings put global always_finish_activities 0`.
+
+**And in the field**: once a release carrying the fork has served a fortnight, run
+`bun tools/play-vitals/vitals.mjs`; neither issue may show a report at or above that release's
+versionCode. Then add both to `tools/play-vitals/known-issues.json` (the merge commit, and that
+versionCode as `fixedInVersionCode`), so any later report reads as a REGRESSION.
+
 ## The VoIP ring announces a video call as video - owed
 
 **Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).

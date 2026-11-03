@@ -601,6 +601,7 @@ dependencies = [
  "tauri-plugin-system-components",
  "tauri-plugin-websocket",
  "tokio",
+ "wry",
 ]
 
 [[package]]
@@ -7972,11 +7973,9 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wry"
-version = "0.57.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a819957a01b3119af85e638a38d242af76dbc87d130dca67bfd0441072e21ff0"
+version = "0.57.1"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "block2",
  "cookie",
  "crossbeam-channel",
@@ -7990,6 +7989,7 @@ dependencies = [
  "javascriptcore-rs",
  "jni",
  "libc",
+ "log",
  "ndk",
  "objc2",
  "objc2-app-kit",
@@ -7997,7 +7997,6 @@ dependencies = [
  "objc2-foundation",
  "objc2-ui-kit",
  "objc2-web-kit",
- "once_cell",
  "percent-encoding",
  "raw-window-handle",
  "sha2 0.10.9",
