@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { PIN_SPACES_FOR_VIEWER_SQL } from './space-pins';
 import { Repository } from 'typeorm';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
@@ -41,7 +42,22 @@ describe('the post a publisher gets back carries the rights they actually hold',
     const postRepo = {
       create: jest.fn((data: Partial<Post>) => ({ ...data })),
       save: jest.fn((post: Partial<Post>) => Promise.resolve({ id: 'p1', ...post })),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      // WP-PIN: a platform admin governs every space, and the new post is visible in one of them.
+      manager: {
+        query: jest.fn((sql: string, params: unknown[] = []) =>
+          Promise.resolve(
+            sql === PIN_SPACES_FOR_VIEWER_SQL && params[2] === true
+              ? (params[0] as string[]).map((postId) => ({
+                  postId,
+                  spaceId: 'space-1',
+                  formation: 'ICM',
+                  campus: 'saint-etienne',
+                  rank: null,
+                }))
+              : []
+          )
+        ),
+      },
     };
 
     const associations = {

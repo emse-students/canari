@@ -513,6 +513,48 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
+ * Post row `post` reaches THE READERS OF space row `space`, as a space - what a pin in that space
+ * may promote (WP-PIN, owner 2026-11-03: "any post visible to the readers of those spaces").
+ *
+ * It is `postVisibleToUserSql` with everything PERSONAL taken out, since a space is not a person:
+ * - an association post: one of the association's rules reaches the space (a membership is one
+ *   person's door, never a space's);
+ * - a personal post: its author belongs to the space (`isReaderSpaceSql`, so a review account's post
+ *   reaches no real space);
+ * - either: an association that REPUBLISHED it has a rule reaching the space (D38, D38b).
+ * Never a follow, a member repost or a read grant: each opens a post to chosen people, not to a
+ * space. `space-pins.integration.spec.ts` holds it to `postVisibleToUserSql` for a reader whose
+ * only door is that one space.
+ */
+export function postReachesSpaceSql(post: string, space: string): string {
+  const republished = `EXISTS (SELECT 1 FROM post_republications sp_rep
+        JOIN association_audiences sp_rep_rule ON sp_rep_rule."associationId" = sp_rep."associationId"
+        WHERE sp_rep."postId" = ${post}.id AND ${ruleReachesSpaceSql('sp_rep_rule', space)})`;
+  return `((${post}."associationId" IS NULL AND (
+      EXISTS (SELECT 1 FROM users sp_author
+        WHERE sp_author.id = ${post}."authorId" AND ${isReaderSpaceSql(space, 'sp_author')})
+      OR ${republished}))
+    OR (${post}."associationId" IS NOT NULL AND (
+      EXISTS (SELECT 1 FROM association_audiences sp_rule
+        WHERE sp_rule."associationId" = ${post}."associationId" AND ${ruleReachesSpaceSql('sp_rule', space)})
+      OR ${republished})))`;
+}
+
+/**
+ * Space row `space` is one of user row `user`'s PIN spaces (WP-PIN, coordinator 2026-11-03): one of
+ * their own spaces (`isReaderSpaceSql`), or a space inside a cell of one of their READ GRANTS (a NULL
+ * formation is the whole campus). So a staff account with no space and a campus-wide grant is shown
+ * the pins of every space of that campus, and a grant on another campus shows nothing here. A review
+ * account has no space and no grant counts for it (`review-cohort.ts`).
+ */
+export function isPinSpaceOfUserSql(space: string, user: string): string {
+  return `(${isReaderSpaceSql(space, user)}
+    OR (NOT ${inReviewCohortSql(`${user}.id`)} AND EXISTS (SELECT 1 FROM read_grants ps_grant
+      WHERE ps_grant.user_id = ${user}.id AND ps_grant.campus = ${space}.campus
+        AND (ps_grant.formation IS NULL OR ps_grant.formation = ${space}.formation))))`;
+}
+
+/**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM
  * `:name`). An absent viewer (NULL) matches no `users` row, so it sees nothing.
  */

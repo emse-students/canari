@@ -8,6 +8,7 @@
  * what the media service did not confirm gone, because the worker will never come back for a row
  * that no longer exists.
  */
+import { pinnedForViewerSql } from './space-pins';
 import {
   BadRequestException,
   NotFoundException,
@@ -195,7 +196,7 @@ describe('reads exclude a reel past its month', () => {
       // The Associations feed places a carried post at its latest republication (viewer at $3).
       const at = feed === 'associations' ? republishedFeedAtSql('$3') : 'posts."publishedAt"';
       expect(sql).toContain(`ORDER BY ${at} DESC, posts.id DESC`);
-      expect(sql).not.toContain('posts.pinned DESC');
+      expect(sql).not.toContain('post_space_pins');
     }
   });
 
@@ -204,7 +205,10 @@ describe('reads exclude a reel past its month', () => {
       const { service, queries } = makeService({});
       await service.listPosts({ limit: 10, offset: 0, feed: 'all', kind, viewerUserId: 'alice' });
       const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
-      expect(sql).toContain(`ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`);
+      // Pinned FOR THIS READER (WP-PIN): the viewer is the feed's last placeholder ($3 here).
+      expect(sql).toContain(
+        `ORDER BY ${pinnedForViewerSql('posts', '$3')} DESC, posts."publishedAt" DESC, posts.id DESC`
+      );
     }
   });
 
@@ -244,7 +248,7 @@ describe('reads exclude a reel past its month', () => {
     const { service, queries } = makeService({});
     await service.searchPosts('trip', 10, 0, { viewerUserId: 'alice' });
     expect(queries.find((q) => /ILIKE/.test(q.sql))?.sql).toContain(
-      `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`
+      `ORDER BY ${pinnedForViewerSql('posts', '$4')} DESC, posts."publishedAt" DESC, posts.id DESC`
     );
     await service.findPostLinkedToCalendarEvent('ev-1', 'alice', false);
     expect(queries.find((q) => /"linkedCalendarEventId" = \$1/.test(q.sql))?.sql).toContain(

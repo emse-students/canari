@@ -252,7 +252,9 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     await service.searchPosts('test', 20, 0, { viewerUserId: 'admin-1', isAdmin: true });
 
-    expect(feedSql(calls)).not.toMatch(/hiddenByModeration/);
+    // The FEED's filter on hidden posts is absent; the pin rank in the ORDER BY reads the column of
+    // the PINNED post (`rk_post`) - a pin is never shown for a hidden post (WP-PIN).
+    expect(feedSql(calls)).not.toMatch(/posts\."hiddenByModeration"/);
   });
 
   describe('a single post read by id', () => {

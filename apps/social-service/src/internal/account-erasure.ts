@@ -133,6 +133,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'content_reports.reviewedBy': { action: 'anonymise' },
   'content_reports.reportedUserId': { action: 'anonymise' },
   'read_grants.granted_by': { action: 'anonymise' },
+  // WP-PIN (migration 127): a pin is the space's promotion, not the pinner's - it stays, unsigned.
+  'post_space_pins.pinned_by': { action: 'anonymise' },
   'read_grant_journal.user_id': { action: 'anonymise' },
   'read_grant_journal.actor': { action: 'anonymise' },
   'association_calendar_events.createdBy': { action: 'anonymise' },
@@ -594,6 +596,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `UPDATE content_reports SET "reportedUserId" = $2 WHERE "reportedUserId" = $1`,
   },
   { label: 'read_grants_by', sql: `UPDATE read_grants SET granted_by = $2 WHERE granted_by = $1` },
+  {
+    label: 'space_pins_by',
+    sql: `UPDATE post_space_pins SET pinned_by = $2 WHERE pinned_by = $1`,
+  },
   {
     label: 'read_grant_journal',
     sql: `UPDATE read_grant_journal SET user_id = $2 WHERE user_id = $1`,

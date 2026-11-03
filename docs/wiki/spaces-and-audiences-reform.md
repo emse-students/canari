@@ -791,10 +791,43 @@ F4, question 3 is F5, question 4 is F6 (section 0).
 
 ## 11. WP-PIN - a pin is a promotion per space, not a global flag (decided 2026-11-03)
 
-**Today.** `posts.pinned` is one global boolean, set by `PATCH /api/posts/:postId/pin|unpin` behind
-`assertContentModerator` (platform admin, or any BDE member holding `MODERATE`); feeds sort
-`posts.pinned DESC`. So any BDE pins any post to the top for every reader on every campus. Production
-holds exactly one pinned post (measured 2026-11-03).
+**BUILT (2026-11-03, branch `feat/space-pins`)** - as designed below; what was built, where:
+
+- **One SQL module**, `apps/social-service/src/posts/space-pins.ts`: who pins (`bdePinsInSpaceSql` =
+  `bdeStandingInSpaceSql` at `MODERATE`, the platform admin decided by the caller), what is pinnable
+  (`postPinnableInSpaceSql` = `postReachesSpaceSql` in `spaces/reader-spaces.ts` + the feed's own
+  lifecycle terms: published, not hidden by moderation, not a dead reel), THE rank (`rankedPinsSql`),
+  the reader's pins (`pinnedForViewerSql`, over `isPinSpaceOfUserSql` = own spaces + read-grant
+  cells). `holdsBdeFlagOverSql` is deliberately NOT used: it answers "governs this ASSOCIATION" and
+  excludes institutions and other BDEs, which pinning must not (decision 1, G9).
+- **`postReachesSpaceSql`** ("visible to the readers of a space") is `postVisibleToUserSql` minus the
+  personal doors (membership, follows, member reposts, read grants): an association's rules, a
+  personal post's author's spaces, a republisher's rules. `space-pins.integration.spec.ts` holds the
+  two equal for a probe reader per space on every post.
+- **Writes**: `SpacePinsService` (`space-pins.service.ts`) behind `SpacePinsController`:
+  `PATCH /api/posts/:postId/pin|unpin` with `{ spaceId }`, and the governor's list
+  `GET /api/posts/space-pins/:spaceId` (`shown` / `pending`). Refusals are typed bodies:
+  `space_pin_limit`, `space_required`, `post_not_in_space` (409), `space_pin_forbidden` (403),
+  `space_not_found` (404). The answer's `pinned` is the post's state IN THAT SPACE (what an older
+  client toggles on). A body-less UNPIN follows the body-less pin's rule: the one space where the post
+  is pinned and governed, else `space_required` (the lead's reading of "same for unpin").
+- **Reads**: every post the server serves carries `pinned` (per reader), `canPin` and `pinSpaces`
+  (`{ spaceId, formation, campus, state }`, the menu's entries) - two queries per page in
+  `PostsService.pinContext`. The feeds and the search sort by `pinnedForViewerSql`; the post-list
+  cache key already carries the viewer, so no entry is shared across readers.
+- **Client**: `PostActionsMenu` draws one entry per served space ("Épingler" alone with one;
+  "Épingler pour ISMIN, Saint-Étienne" with several; "(en attente)" on a pending pin); a
+  `space_pin_limit` refusal reads `post_pin_limit_reached`. The governor's list endpoint has no
+  screen of its own yet: the pending state reaches the governor on the post's own menu.
+- **Migrations**: 127 (`post_space_pins`, additive) and 128 (the move of the global pin, HELD for
+  the owner's hand-merge). `posts.pinned` is read by nothing (`select: false` on the entity, kept
+  mapped so a synchronize stack does not drop it before 128 reads it); its drop is recorded in
+  [legacy-compatibility](legacy-compatibility.md).
+
+**Before WP-PIN.** `posts.pinned` was one global boolean, set by `PATCH /api/posts/:postId/pin|unpin`
+behind `assertContentModerator` (platform admin, or any BDE member holding `MODERATE`); feeds sorted
+`posts.pinned DESC`. So any BDE pinned any post to the top for every reader on every campus.
+Production held exactly one pinned post (measured 2026-11-03).
 
 **Owner decisions (2026-11-03)** - *"ce serait bien que le BDE puisse epingler (= mettre en avant)
 n'importe quel post sur l'espace dont il est responsable"*:

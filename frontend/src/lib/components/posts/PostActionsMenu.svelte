@@ -25,6 +25,8 @@
   import { slide } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { toggleMyRepost } from '$lib/posts/sharePost';
+  import type { PinSpace } from '$lib/posts/api';
+  import { campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
 
   /**
    * Props for the PostActionsMenu component.
@@ -58,8 +60,11 @@
    * reader moderates the feed.
    */
   interface Props {
-    /** Whether the post is currently pinned. */
-    pinned: boolean;
+    /**
+     * WP-PIN: the spaces where this reader may pin the post, each with the pin's state there - one
+     * entry per space, served by the server. With exactly one, the entry reads "Épingler" alone.
+     */
+    pinSpaces: PinSpace[];
     /**
      * May delete: the post's publisher (its author, or an officer of the association it speaks
      * for), a moderator of this post (a BDE MODERATE of its spaces), or a platform admin.
@@ -71,17 +76,20 @@
      * to every moderator.
      */
     canEdit: boolean;
-    /** May pin or unpin: a moderator of this post (a BDE MODERATE of its spaces) or a platform admin. */
+    /**
+     * May pin or unpin (WP-PIN): the reader governs a space where the post is visible - the platform
+     * admin, or `MODERATE` in that space's BDE. A promotion per space, not moderation.
+     */
     canPin: boolean;
     /** May report: any logged-in reader who is not the post's own publisher. */
     canReport: boolean;
-    /** May clear the anonymous flag on this post: same tier as `canPin`, only ever true when the
-     *  post actually is anonymous - the server never sets it otherwise. */
+    /** May clear the anonymous flag on this post: a moderator of it or a platform admin, only ever
+     *  true when the post actually is anonymous - the server never sets it otherwise. */
     canUnmaskAnonymous: boolean;
     /** Whether any user is logged in (gates the whole menu). */
     isLoggedIn: boolean;
-    /** Called when the reader picks pin/unpin. */
-    onTogglePin: () => void;
+    /** Called with the space the reader pins the post in, or unpins it from. */
+    onTogglePin: (space: PinSpace) => void;
     /** Called when a manager picks "Edit post". */
     onStartEdit: () => void;
     /** Called when a manager picks "Delete post". */
@@ -135,7 +143,7 @@
   }
 
   let {
-    pinned,
+    pinSpaces,
     canManage,
     canEdit,
     canPin,
@@ -194,6 +202,14 @@
     () => open && isMobileOverlayLayout(),
     () => (open = false)
   );
+
+  /** A space's name in the pin entries: its formation and campus, localized. */
+  function spaceName(space: PinSpace): string {
+    return m.post_pin_space_name({
+      formation: formationLabel(space.formation),
+      campus: campusLabel(space.campus),
+    });
+  }
 
   /** Runs a menu entry and closes the menu, which every entry does. */
   function pick(action: () => void) {
@@ -384,20 +400,32 @@
         {/if}
 
         {#if canPin}
-          <button
-            type="button"
-            role="menuitem"
-            onclick={() => pick(onTogglePin)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
-          >
-            {#if pinned}
-              <PinOff size={16} strokeWidth={2.5} />
-              {m.post_unpin_action_label()}
-            {:else}
-              <Pin size={16} strokeWidth={2.5} />
-              {m.post_pin_action_label()}
-            {/if}
-          </button>
+          <!-- WP-PIN: one entry per space the reader governs and the post is seen in; with one,
+               it pins there directly. A "pending" pin is kept but not shown (3 already are). -->
+          {#each pinSpaces as space (space.spaceId)}
+            <button
+              type="button"
+              role="menuitem"
+              data-post-pin-space={space.spaceId}
+              onclick={() => pick(() => onTogglePin(space))}
+              class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+            >
+              {#if space.state !== null}
+                <PinOff size={16} strokeWidth={2.5} />
+                {pinSpaces.length === 1
+                  ? m.post_unpin_action_label()
+                  : m.post_unpin_in_space({ space: spaceName(space) })}
+                {#if space.state === 'pending'}
+                  <span class="text-text-muted text-xs">({m.post_pin_pending()})</span>
+                {/if}
+              {:else}
+                <Pin size={16} strokeWidth={2.5} />
+                {pinSpaces.length === 1
+                  ? m.post_pin_action_label()
+                  : m.post_pin_in_space({ space: spaceName(space) })}
+              {/if}
+            </button>
+          {/each}
         {/if}
 
         {#if canUnmaskAnonymous}

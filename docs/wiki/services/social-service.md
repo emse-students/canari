@@ -154,8 +154,9 @@ The numbers and what they imply are in
 | DELETE | `/api/posts/:postId` | Delete post (author or admin) |
 | POST | `/api/posts/:postId/reactions` | Add/toggle emoji reaction |
 | POST | `/api/posts/:postId/comments` | Add comment |
-| PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
-| PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
+| PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }` (WP-PIN, `SpacePinsService`): the platform admin, or `MODERATE` in that space's BDE; at most 3 shown per space ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
+| PATCH | `/api/posts/:postId/unpin` | Unpin the post from ONE space, body `{ spaceId }` |
+| GET | `/api/posts/space-pins/:spaceId` | The governor's pins of a space, `shown` then `pending` ("en attente") |
 | POST | `/api/posts/:postId/republication-requests` | Ask the AUTHOR of a personal post to let an association carry it (D38b; `POST_AS_ASSO` held, typed `REPOST_PERSONAL_*` refusals, [profiles-and-access](../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | GET | `/api/posts/me/republication-requests` | The caller's inbox of requests to answer (D38b); answered through `POST /api/associations/proposals/:id/accept` or `/refuse` (409 `PROPOSAL_SENDER_GONE` when the asker no longer speaks for the association) |
 | GET | `/api/posts/me/republication-requests/count` | `{ pending }`, the count alone, for `/notifications` (D38b); like the inbox, it leaves out a request whose asker no longer speaks for the association |

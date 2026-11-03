@@ -65,6 +65,8 @@ import {
 } from '../spaces/reader-spaces';
 import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-moderation';
 import { sameSideOfReviewCohort } from '../review-cohort';
+import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
+import { SpacePinsService } from './space-pins.service';
 import {
   PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
   REPUBLISHING_ASSOCIATION_TYPES,
@@ -123,6 +125,13 @@ interface PostViewerContext {
   personalRequests: Map<string, StandingPersonalRequest[]>;
   /** WP-F6: what the page's cards say and offer about member reposts (`memberRepostContext`). */
   memberReposts: MemberRepostContext;
+  /**
+   * WP-PIN: ids, among the batch, of the posts SHOWN pinned in one of the reader's pin spaces (their
+   * own and their read grants' cells, `pinnedForViewerSql`) - the served `pinned`.
+   */
+  pinnedIds: Set<string>;
+  /** WP-PIN: per post, the spaces where the reader may pin it, with the pin's state there. */
+  pinSpaces: Map<string, PinSpace[]>;
 }
 
 /** A request one of the reader's associations made for a personal post and that still stands (D38b). */
@@ -155,11 +164,18 @@ interface PostCapabilities {
    * l'integrite du post"), so it can be false where `canManage` is true.
    */
   canEdit: boolean;
-  /** The pin. Moderation of the feed's shape, not of one post's content. */
+  /**
+   * The pin (WP-PIN): a PROMOTION per space, not moderation - true when `pinSpaces` is not empty, i.e.
+   * the reader governs (platform admin, or `MODERATE` in its BDE) a space where the post is visible.
+   */
   canPin: boolean;
+  /** WP-PIN: the spaces the pin menu lists, each `shown`, `pending` ("en attente") or not pinned. */
+  pinSpaces: PinSpace[];
+  /** WP-PIN: shown pinned in one of the READER's spaces (their own, or a read grant's cell). */
+  pinned: boolean;
   /** The flag. Withheld only from the post's own publisher - reporting yourself means nothing. */
   canReport: boolean;
-  /** Clears an anonymous post's flag, revealing its author. Same tier as `canPin`. */
+  /** Clears an anonymous post's flag, revealing its author. The moderation tier (`viewerModerates`). */
   canUnmaskAnonymous: boolean;
   /**
    * "Republier" (D38): an association post, and the reader may publish as at least one OTHER
@@ -232,6 +248,16 @@ export class PostsService {
   ) {}
 
   private commentIdentityService?: CommentIdentityService;
+  private spacePinsService?: SpacePinsService;
+
+  /**
+   * The per-space pins (WP-PIN), for the page context only - the writes go through the controller's
+   * injected instance. Built from what this service holds, like `commentIdentity`, so the specs that
+   * construct this service by hand are not all re-wired; the service is stateless.
+   */
+  private get spacePins(): SpacePinsService {
+    return (this.spacePinsService ??= new SpacePinsService(this.postRepo, this.redis));
+  }
 
   /**
    * Who a comment speaks as and what each reader sees of it. Built from the two dependencies this
@@ -295,17 +321,22 @@ export class PostsService {
    * A list page's order. THE CANAREELS LIST (`kind=reel`) IS NEWEST FIRST AND NOTHING ELSE (lead's
    * decision, 2026-10-19): a pin is a feed concept, and a pinned reel or photo post heading the
    * full-screen list would greet every reader with the same page. Every other list keeps its pinned
-   * posts first. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
+   * posts first - pinned FOR THIS READER, in one of their spaces (WP-PIN, `pinnedForViewerSql`):
+   * `viewer` is the SQL placeholder holding their id, NULL for nobody. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
    * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
    *
    * `at` is the instant a row is placed at: its `publishedAt`, except in the Associations feed,
    * and "Suivis", where a carried post sits at its latest counted republication
    * (`republishedFeedAtSql`).
    */
-  private listOrderSql(kind: PostKind | undefined, at = 'posts."publishedAt"'): string {
+  private listOrderSql(
+    kind: PostKind | undefined,
+    viewer: string,
+    at = 'posts."publishedAt"'
+  ): string {
     return kind === 'reel'
       ? `ORDER BY ${at} DESC, posts.id DESC`
-      : `ORDER BY posts.pinned DESC, ${at} DESC, posts.id DESC`;
+      : `ORDER BY ${pinnedForViewerSql('posts', viewer)} DESC, ${at} DESC, posts.id DESC`;
   }
 
   /**
@@ -344,6 +375,8 @@ export class PostsService {
     requestablePersonalIds: new Set(),
     personalRequests: new Map(),
     memberReposts: EMPTY_MEMBER_REPOST_CONTEXT,
+    pinnedIds: new Set(),
+    pinSpaces: new Map(),
   };
 
   /**
@@ -376,6 +409,7 @@ export class PostsService {
         .filter((id): id is string => !!id);
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
+        ...(await this.pinContext(postIds, viewerId, true)),
         viewerId,
         isGlobalAdmin: true,
         moderatedIds: new Set(),
@@ -396,7 +430,7 @@ export class PostsService {
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, moderatedIds, memberships, grantFree, memberReposts] =
+    const [managedAssociationIds, moderatedIds, memberships, grantFree, memberReposts, pins] =
       await Promise.all([
         this.associationsService.mayActOnAny(
           viewerId,
@@ -407,9 +441,11 @@ export class PostsService {
         this.republishAsOf(viewerId),
         this.grantFreeVisibleIds(postIds, viewerId),
         memberRepostContext(this.postRepo.manager, postIds, viewerId),
+        this.pinContext(postIds, viewerId, false),
       ]);
     return {
       memberReposts,
+      ...pins,
       viewerId,
       isGlobalAdmin: false,
       moderatedIds,
@@ -419,6 +455,29 @@ export class PostsService {
       firstHandIds: grantFree.firstHandIds,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
+  }
+
+  /**
+   * WP-PIN, for a page: which posts are pinned for this reader, and where the reader may pin each.
+   * Two queries for the page, read with the same rank the feed sorts by (`space-pins.ts`).
+   */
+  private async pinContext(
+    postIds: string[],
+    viewerId: string,
+    isGlobalAdmin: boolean
+  ): Promise<Pick<PostViewerContext, 'pinnedIds' | 'pinSpaces'>> {
+    if (postIds.length === 0) return { pinnedIds: new Set(), pinSpaces: new Map() };
+    const [pinnedRows, pinSpaces] = await Promise.all([
+      this.postRepo.manager.query(PINNED_FOR_VIEWER_IDS_SQL, [
+        postIds,
+        viewerId,
+      ]) as Promise<unknown>,
+      this.spacePins.pinSpacesFor(postIds, { userId: viewerId, isGlobalAdmin }),
+    ]);
+    const pinnedIds = new Set(
+      Array.isArray(pinnedRows) ? (pinnedRows as { id: string }[]).map((r) => r.id) : []
+    );
+    return { pinnedIds, pinSpaces };
   }
 
   /**
@@ -626,10 +685,13 @@ export class PostsService {
   ): PostCapabilities {
     const isPublisher = this.viewerIsPublisher(post, viewer);
     const isModeratorTier = this.viewerModerates(post, viewer);
+    const pinSpaces = (post.id && viewer.pinSpaces.get(post.id)) || [];
     return {
       canManage: isModeratorTier || isPublisher,
       canEdit: isPublisher,
-      canPin: isModeratorTier,
+      canPin: pinSpaces.length > 0,
+      pinSpaces,
+      pinned: !!post.id && viewer.pinnedIds.has(post.id),
       canReport: !!viewer.viewerId && !isPublisher,
       canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
       canRepublish: this.viewerMayRepublish(post, viewer),
@@ -1136,7 +1198,7 @@ export class PostsService {
          ${reviewCohortAuthorFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC
+       ORDER BY ${pinnedForViewerSql('posts', `$${viewerParam}`)} DESC, posts."publishedAt" DESC, posts.id DESC
        LIMIT $1 OFFSET $2`,
       params
     );
@@ -1240,7 +1302,7 @@ export class PostsService {
          posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."publishedAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
-         posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
+         posts.images, posts.polls, posts.forms, posts.reactions, posts."scheduledAt",
          posts.kind, posts."durationMs", posts."expiresAt",
          ${commentCount} AS "commentCount",
          (
@@ -1415,7 +1477,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${associationsVisibleAt(3 + tail.length)}
-       ${this.listOrderSql(kind, republishedFeedAtSql(`$${3 + tail.length}`))}
+       ${this.listOrderSql(kind, `$${3 + tail.length}`, republishedFeedAtSql(`$${3 + tail.length}`))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1433,7 +1495,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${spaceVisibleAt(3 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, `$${3 + tail.length}`)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1467,7 +1529,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind, republishedFeedAtSql(`$${5 + tail.length}`, '$3', FOLLOWED_REPOST_AT))}
+       ${this.listOrderSql(kind, `$${5 + tail.length}`, republishedFeedAtSql(`$${5 + tail.length}`, '$3', FOLLOWED_REPOST_AT))}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -1490,7 +1552,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${spaceVisibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind)}
+       ${this.listOrderSql(kind, `$${5 + tail.length}`)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam, ...tail, viewerParam]
       );
@@ -2065,15 +2127,5 @@ export class PostsService {
       warningWindowDays: REEL_EXPIRY_WARNING_DAYS,
       reels,
     };
-  }
-
-  /** Pins or unpins a post (global admin only). Pinned posts always sort first in feeds. */
-  async setPinned(postId: string, pinned: boolean) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    post.pinned = pinned;
-    await this.postRepo.save(post);
-    await this.invalidateListCache();
-    return { ok: true, pinned };
   }
 }
