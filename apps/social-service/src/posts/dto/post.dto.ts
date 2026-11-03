@@ -24,6 +24,7 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 import { COMMENT_MAX_LENGTH, COMMENT_PAGE_MAX, type CommentOrder } from '../comment-page';
+import { LIST_POST_FEEDS, type ListPostsFeed } from '../list-feed';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -347,10 +348,10 @@ export class ListPostsQueryDto {
   @Min(0)
   offset?: number;
 
-  /** Default `all` when omitted. */
+  /** Default `all` when omitted; `reels` is the CanaReels viewer's list, not a tab (`list-feed.ts`). */
   @IsOptional()
-  @IsIn(['all', 'followed', 'custom', 'associations'])
-  feed?: 'all' | 'followed' | 'custom' | 'associations';
+  @IsIn([...LIST_POST_FEEDS])
+  feed?: ListPostsFeed;
 
   /**
    * Restricts the page to one kind. ABSENT MEANS BOTH - the feed shows reels where it shows posts

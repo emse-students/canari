@@ -5,6 +5,7 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Logger,
   Headers,
   Param,
   ParseUUIDPipe,
@@ -19,6 +20,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import { assertCreateKindShape } from './reel-rules';
 import { reelLimits } from './reel.constants';
+import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
@@ -39,6 +41,8 @@ import {
 /** Manages post resources including reactions, comments, polls, and notifications. */
 @Controller('posts')
 export class PostsController {
+  private readonly logger = new Logger(PostsController.name);
+
   constructor(
     private readonly service: PostsService,
     private readonly interactions: PostInteractionsService,
@@ -158,7 +162,14 @@ export class PostsController {
     @Headers('x-user-id') xUserId?: string,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    const feed = query.feed ?? 'all';
+    // LEGACY SHIM (docs/wiki/legacy-compatibility.md): `kind=reel` on `all` IS the CanaReels viewer
+    // (`list-feed.ts`). At `log` level: its count is what the removal is read on.
+    const { feed, legacyViewerShape } = resolveListFeed(query.feed, query.kind);
+    if (legacyViewerShape) {
+      this.logger.log(
+        '[LEGACY] list: kind=reel on feed=all read as feed=reels (an installed client)'
+      );
+    }
     if (feed === 'followed' && !xUserId) {
       throw new UnauthorizedException('Authentication required for followed feed');
     }

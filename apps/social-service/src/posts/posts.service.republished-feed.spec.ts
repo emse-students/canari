@@ -151,5 +151,19 @@ describe('PostsService feeds of what associations republish', () => {
     expect(sql).toContain(
       `ORDER BY ${pinnedForViewerSql('posts', '$3')} DESC, posts."publishedAt" DESC, posts.id DESC`
     );
+    // A feed of SPACES (decision 5): neither follower door.
+    expect(sql).toContain(postVisibleToViewerSql('posts', '$3', { followers: false }));
+  });
+
+  it('the CanaReels viewer ("reels") asks the WHOLE predicate, reels only, newest first then id', async () => {
+    const { service, feed } = makeService();
+    // `kind` is not sent: the feed names its kind itself.
+    await service.listPosts({ limit: 10, offset: 0, feed: 'reels', viewerUserId: 'v1' });
+
+    const { sql } = feed();
+    expect(sql).toContain(`AND ${postVisibleToViewerSql('posts', '$3')}`);
+    expect(sql).not.toContain(postVisibleToViewerSql('posts', '$3', { followers: false }));
+    expect(sql).toContain(`AND posts.kind = 'reel'`);
+    expect(sql).toContain('ORDER BY posts."publishedAt" DESC, posts.id DESC');
   });
 });
