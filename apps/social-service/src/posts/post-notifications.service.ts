@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
@@ -50,6 +50,31 @@ import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import { postVisibleToViewerSql, sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
+
+/** The bell's page when the caller names none: what the bell dropdown asks. */
+export const BELL_PAGE_DEFAULT = 30;
+/** The largest bell page served: what `/notifications` asks, and what `bellPageQuery`'s plan is sized for. */
+export const BELL_PAGE_MAX = 50;
+/** The typed code of a `limit` that is not a whole number. */
+export const BELL_LIMIT_INVALID = 'NOTIFICATIONS_LIMIT_INVALID';
+
+/**
+ * The bell page size from the raw `?limit=` (review of #2965): absent is
+ * {@link BELL_PAGE_DEFAULT}, a whole number is held to 1..{@link BELL_PAGE_MAX}, and anything else
+ * - text, a fraction, an exponent - is a 400 typed {@link BELL_LIMIT_INVALID}. It used to be
+ * `Number(limit)` passed straight through, so `?limit=100000` read a reader's whole history and
+ * `?limit=abc` reached TypeORM as NaN.
+ */
+export function bellPageLimit(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return BELL_PAGE_DEFAULT;
+  if (!/^-?\d{1,9}$/.test(raw)) {
+    throw new BadRequestException({
+      code: BELL_LIMIT_INVALID,
+      message: 'limit must be a whole number',
+    });
+  }
+  return Math.min(BELL_PAGE_MAX, Math.max(1, Number(raw)));
+}
 
 /**
  * The notification type of a member repost reaching a reader for the first time (WP-F6). Declared

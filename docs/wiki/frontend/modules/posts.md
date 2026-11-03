@@ -430,7 +430,11 @@ event_validated 311. `bellPageQuery` keeps the predicate and the `LIMIT` in one 
 ordered by `createdAt DESC`, and migration 126 adds ("recipientId", "createdAt" DESC), so the plan
 walks the reader's rows newest first and stops once the page is full: the check runs on about one
 page. `bell-page.integration.spec.ts` asserts that plan with `EXPLAIN ANALYZE` (the index, no sort,
-at most a page read) on a reader seeded with 600 rows among 6,000.
+at most a page read) on a reader seeded with 600 rows among 6,000. The page is bounded too:
+`?limit=` is `bellPageLimit` - 30 by default, held to 1..50, a typed 400
+`NOTIFICATIONS_LIMIT_INVALID` for anything not a whole number. The entity declares the index under
+the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
+does not compare order).
 
 ## The search stops where the feed stops (2026-10-04)
 
