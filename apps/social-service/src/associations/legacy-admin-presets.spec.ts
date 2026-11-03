@@ -27,13 +27,13 @@ describe('legacy admin presets (shim until 2027-05-03)', () => {
   });
 
   it('adds EDIT_PROFILE to an exact old preset, and logs the legacy match', () => {
-    const debug = jest.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const log = jest.spyOn(logger, 'log').mockImplementation(() => undefined);
     for (const mask of LEGACY_ADMIN_PRESETS) {
       expect(withLegacyEditProfile(logger, mask, ALL_PERMISSION_FLAGS, 'addMember')).toBe(
         mask | F.EDIT_PROFILE
       );
     }
-    expect(debug).toHaveBeenCalledWith(expect.stringContaining('[LEGACY] addMember'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('[LEGACY] addMember'));
   });
 
   // The member-flag ceiling (#2949): the shim never grants a bit its granter does not hold.

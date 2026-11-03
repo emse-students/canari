@@ -884,8 +884,11 @@ and the current form sends it only to that reader. Every store build up to `1.6.
 form, which sends `parentAssociationId: editParentId || null` on EVERY list profile save. Without the
 shim each such save by a profile editor would be a `403` and an ERROR line for a field it did not
 touch. A platform-admin field whose value equals the stored one (`''`, `null` and absent count as
-equal) is dropped before the rights are asked; a CHANGED value is still refused. Measured by its debug
-line, `[LEGACY] update ...: unchanged parentAssociationId dropped (old client resend)`.
+equal) is dropped before the rights are asked; a CHANGED value is still refused. Measured by its line
+at `log` level (production emits it; `debug` it does not), one per dropped resend and naming only the
+association id: `[LEGACY] update ...: unchanged parentAssociationId dropped (old client resend)`. The
+removal reads its count in the social-service log of both estates; silence over the weeks before the
+date is the evidence.
 **Cost while it stands:** one extra read of the association row on a body naming a platform-admin
 field, from a non-admin.
 **Removal** (the date, or earlier once `minClientVersion` is a build that stopped resending it): delete
@@ -904,8 +907,10 @@ grant by hand; otherwise the mask is left as sent.
 profile. A member ADD whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is
 derived from today's constants with bit 12 removed, narrowed per kind as the old `adminPresetFor` did
 (3871 and 3359 for an association, 3103 for a list or an institution - pinned by
-`legacy-admin-presets.spec.ts`). Measured by its debug line, `[LEGACY] addMember: mask N is a
-pre-EDIT_PROFILE admin preset`.
+`legacy-admin-presets.spec.ts`). Measured by its line at `log` level (production emits it), one per
+matching add and carrying only the mask: `[LEGACY] addMember: mask N is a pre-EDIT_PROFILE admin
+preset` - followed by `EDIT_PROFILE added` or, under a ceiling without the bit, `left as sent`. The
+removal reads both counts in the social-service log of both estates.
 **Why add only, never update (2026-11-03):** a current app unticking *Modifier le profil* on a full
 admin posts exactly an old preset through the update, and that untick must hold.
 **What it does not cover:** an old app re-applying its "Administrateur" preset to an EXISTING member

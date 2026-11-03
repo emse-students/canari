@@ -43,12 +43,12 @@ export function withLegacyEditProfile(
 ): number {
   if (!LEGACY_ADMIN_PRESETS.has(permissions)) return permissions;
   if ((ceiling & AssociationPermissionFlag.EDIT_PROFILE) === 0) {
-    logger.debug(
+    logger.log(
       `[LEGACY] ${where}: mask ${permissions} is a pre-EDIT_PROFILE admin preset, but the granter does not hold EDIT_PROFILE - left as sent`
     );
     return permissions;
   }
-  logger.debug(
+  logger.log(
     `[LEGACY] ${where}: mask ${permissions} is a pre-EDIT_PROFILE admin preset - EDIT_PROFILE added (shim until ${LEGACY_EDIT_PROFILE_REMOVAL_DATE})`
   );
   return permissions | AssociationPermissionFlag.EDIT_PROFILE;

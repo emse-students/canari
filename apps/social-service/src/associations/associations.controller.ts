@@ -798,7 +798,7 @@ export class AssociationsController {
       const unchanged = dropUnchangedPlatformFields(patch, stored);
       patch = unchanged.patch;
       if (unchanged.dropped.length > 0) {
-        this.logger.debug(
+        this.logger.log(
           `[LEGACY] update ${sanitizeLog(id)}: unchanged ${unchanged.dropped.join(',')} dropped (old client resend)`
         );
       }
