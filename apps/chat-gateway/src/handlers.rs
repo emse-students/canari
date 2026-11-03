@@ -264,8 +264,14 @@ pub async fn ws_handler(
 
             // What the code behind this socket declared (history-answer-addressing, rule 6).
             let declared = crate::addressing::SessionCaps::from_query(params.caps.as_deref());
+            // What the build behind it says it is: counted, never attached to an identity
+            // (crate::census).
+            let client = crate::census::ClientKind::from_query(
+                params.platform.as_deref(),
+                params.app_version.as_deref(),
+            );
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, state, claims.sub, device_id, declared)
+                handle_socket(socket, state, claims.sub, device_id, declared, client)
             })
         }
         Err(TokenRejection::NotAnAccessToken(kind)) => {
@@ -301,13 +307,16 @@ async fn handle_socket(
     user_id: String,
     device_id: String,
     declared: crate::addressing::SessionCaps,
+    client: crate::census::ClientKind,
 ) {
     tracing::info!(
-        "New WebSocket connection: User={}, Device={}, addressed_history={}, join_ask={}",
+        "New WebSocket connection: User={}, Device={}, addressed_history={}, join_ask={}, platform={}, version={}",
         user_id,
         device_id,
         declared.addressed_history,
-        declared.join_ask
+        declared.join_ask,
+        client.platform,
+        client.version
     );
 
     let (mut ws_sender, mut receiver) = socket.split();
@@ -394,6 +403,7 @@ async fn handle_socket(
                     PRESENCE_TTL_SECS
                 );
             }
+            note_client(&mut con, &conn_key, &client).await;
 
             // ── Drain pending welcome_request signals ─────────────────
             // When no peer was online for a welcome_request, the delivery service
@@ -510,6 +520,7 @@ async fn handle_socket(
         let field_recv = field.clone();
         let pong_flag_recv = awaiting_pong.clone();
         let tx_for_dispatch = tx.clone();
+        let client_recv = client.clone();
 
         tokio::spawn(async move {
             // Take ownership of the shared connection (or None in degraded mode).
@@ -527,6 +538,7 @@ async fn handle_socket(
                             &conn_key_recv,
                             &field_recv,
                             declared,
+                            &client_recv,
                         )
                         .await;
                         continue;
@@ -541,6 +553,7 @@ async fn handle_socket(
                             &conn_key_recv,
                             &field_recv,
                             declared,
+                            &client_recv,
                         )
                         .await;
 
@@ -658,6 +671,20 @@ async fn handle_socket(
 
 // ── Presence refresh helper ───────────────────────────────────────────────
 
+/// Record what this device declared, beside its presence and with the same TTL, for the anonymous
+/// census ([`crate::census`]). A failure costs the census one device's label (it counts as
+/// `unknown`) and nothing else, so it is logged and never propagated.
+async fn note_client(
+    con: &mut redis::aio::MultiplexedConnection,
+    conn_key: &str,
+    client: &crate::census::ClientKind,
+) {
+    if let Err(e) = crate::census::note_client(con, conn_key, client, PRESENCE_TTL_SECS).await {
+        // No conn_key: it holds a user id, and the census names nobody.
+        tracing::warn!("[census] could not record a device's declaration: {}", e);
+    }
+}
+
 /// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to [`PRESENCE_TTL_SECS`], with this
 /// session's field in the device's sessions hash ([`crate::addressing::write_session`]).
 ///
@@ -671,13 +698,17 @@ async fn refresh_presence(
     conn_key: &str,
     field: &str,
     declared: crate::addressing::SessionCaps,
+    client: &crate::census::ClientKind,
 ) {
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {
         match crate::addressing::write_session(con, conn_key, field, declared, PRESENCE_TTL_SECS)
             .await
         {
-            Ok(true) => return,
+            Ok(true) => {
+                note_client(con, conn_key, client).await;
+                return;
+            }
             Ok(false) => {
                 // The session was retired while this refresh was in flight: nothing was written,
                 // which is the point (crate::addressing, the left hash).
@@ -721,6 +752,7 @@ async fn refresh_presence(
                     "[presence] Reconnected to Redis and refreshed TTL for {}",
                     conn_key
                 );
+                note_client(&mut new_con, conn_key, client).await;
                 *con_opt = Some(new_con);
             }
         }
