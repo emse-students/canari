@@ -15,8 +15,12 @@ import {
   createResumeReadGate,
   noteOpenNavigated,
   noteOpenRoutedNowhere,
+  notePageTapsRoutable,
   PAGE_NOTIFICATION_OPENING,
 } from './resumeOpening.svelte';
+
+const goto = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('$app/navigation', () => ({ goto }));
 
 /**
  * A RESUME FROM A NOTIFICATION FOR Y DOES NOT READ X, THE CONVERSATION LEFT OPEN (owner, 2026-11-02).
@@ -176,6 +180,22 @@ describe('a resume that opens a chat link for Y, with X left open (keys are not 
     expect(r.marked).toEqual([X.key, X.key]);
   });
 
+  it("another conversation's landing replacing Y's keeps X held", () => {
+    const r = open(X.key);
+    announce(false);
+    announce(true, link(Y.group));
+    notifNav.navigate(Y.group);
+    flushSync();
+    notifNav.navigate('grp-zoe');
+    flushSync();
+    messageLands();
+    expect(r.marked).toEqual([X.key]);
+    // ...and released once no landing is pending.
+    notifNav.clear();
+    flushSync();
+    expect(r.marked).toEqual([X.key, X.key]);
+  });
+
   it('a landing that is abandoned releases X, which is what is on screen', () => {
     const r = open(X.key);
     announce(false);
@@ -286,6 +306,40 @@ describe('the REAL router and tap drain report a link that routes nowhere', () =
     expect(r.marked).toEqual([X.key, X.key]);
   });
 
+  it('processAppLinks on a CLAIMED link whose navigation fails releases X', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    goto.mockRejectedValueOnce(new Error('navigation aborted'));
+    const claimed = 'https://canari.emse.fr/posts/abc';
+    try {
+      const r = open(X.key);
+      announce(false);
+      announce(true, claimed);
+      expect(r.marked).toEqual([X.key]);
+      processAppLinks([claimed]);
+      await vi.waitFor(() => {
+        flushSync();
+        expect(r.marked).toEqual([X.key, X.key]);
+      });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('processAppLinks on a checkout return to no known page releases X', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unknown = `${MOBILE_APP_PROTOCOL}//payment/elsewhere`;
+    try {
+      const r = open(X.key);
+      announce(false);
+      announce(true, unknown);
+      processAppLinks([unknown]);
+      flushSync();
+      expect(r.marked).toEqual([X.key, X.key]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('processAppLinks on a link that is not ours releases X', () => {
     const r = open(X.key);
     announce(false);
@@ -358,6 +412,9 @@ describe('a tap on a notification the PAGE raised (the plugin, iOS), with X left
       posted,
       (t) => notifNav.navigate(t)
     );
+  // The listener these taps come through is registered (`armPageTapListener` resolved); the page
+  // that never registered one is `resumeOpening.pageTapListener.svelte.test.ts`.
+  beforeEach(() => notePageTapsRoutable());
 
   it('its landing published after the edge: X is not marked, Y is', () => {
     const r = open(X.key);

@@ -89,10 +89,13 @@ let opening = $state<ResumeOpening | null>(null);
 let nowhereSeq = $state(0);
 let navigatedSeq = $state(0);
 /**
- * Set when this session can never route a page notification's tap (no listener could be armed).
- * Reactive: a registration refused AFTER a `landing` hold began releases that hold.
+ * Set once THIS page's notification-tap listener is registered (its `onAction` registration
+ * resolved). Positive on purpose: a page that never armed one - no notification posted since a load,
+ * a plugin without `onAction`, a registration refused - holds no `landing`, since no landing and no
+ * "nowhere" can come from a handler that does not exist. A WebView reload resets it with the module,
+ * so a tap on a notification posted before the reload is not waited for.
  */
-let pageTapsUnroutable = $state<string | null>(null);
+let pageTapsRoutable = $state(false);
 /** The outcome counters when the app last LEFT the screen: what is counted after is the resume's. */
 let atLeave = { landing: notifNav.landing, nowhere: 0, navigated: 0 };
 
@@ -144,14 +147,19 @@ export function noteResumeOpening(
   let kind: ResumeOpening['kind'];
   let target: string | null = null;
   if (link === PAGE_NOTIFICATION_OPENING) {
-    // No listener to name the landing: a hold would wait for nothing.
-    if (pageTapsUnroutable)
-      return nothing(`page notification taps cannot be routed: ${pageTapsUnroutable}`);
     if (landedSinceLeave) {
       // The page's tap handler published its landing before the edge: that landing names it.
       if (nav.pending === null) return nothing('its landing already ended');
       kind = 'chat';
       target = nav.pending;
+    } else if (!pageTapsRoutable) {
+      // No listener to name the landing: a hold would wait for nothing. The tap itself is LOST - it
+      // opens the app on whatever it showed - and that is said per resume, where it happens.
+      console.warn(
+        '[RESUME-OPEN] page notification tap lost: no tap listener is armed in this page ' +
+          '(none posted since the load, or its registration failed) - nothing held'
+      );
+      return;
     } else {
       kind = 'landing';
     }
@@ -198,16 +206,18 @@ export function resumeOpeningHolds(key: string, nav: LandingState = notifNav): b
     case 'page':
       return navigatedSeq === o.navigatedAtOpen;
     case 'landing':
-      // No listener exists to publish the landing (its registration was refused): nothing will come.
-      if (pageTapsUnroutable) return false;
+      if (!pageTapsRoutable) return false;
       // Not published yet: held until the page's tap handler publishes it (or says "nowhere").
       if (nav.landing === o.landingAtOpen) return true;
       return nav.pending !== null && o.resolve(nav.pending) !== key;
     case 'chat':
       if (o.target !== null && o.resolve(o.target) === key) return false;
       if (nav.pending === o.target) return true;
-      // Not pending: not yet published (hold), or published and since ended (release).
-      return nav.landing === o.landingAtOpen;
+      // Not yet published: held.
+      if (nav.landing === o.landingAtOpen) return true;
+      // Published since: held while ANOTHER conversation's landing is pending (the same rule as a
+      // `landing` hold), released once none is - the target's ended, or one for the held key came.
+      return nav.pending !== null && o.resolve(nav.pending) !== key;
   }
 }
 
@@ -238,15 +248,12 @@ export function noteOpenRoutedNowhere(why: string): void {
 }
 
 /**
- * This session's page-notification taps can never be routed (the plugin has no `onAction`, or its
- * registration failed): a resume opening one holds nothing, since no landing and no "nowhere" would
- * ever come from a handler that does not exist.
+ * This page's notification-tap listener is REGISTERED (its `onAction` registration resolved): from
+ * now on a resume opening a page notification may wait for the landing that listener publishes.
  */
-export function notePageTapsUnroutable(why: string): void {
-  pageTapsUnroutable = why;
-  Log.d(
-    `[RESUME-OPEN] page notification taps cannot be routed (${why}) - a resume opening one holds nothing`
-  );
+export function notePageTapsRoutable(): void {
+  pageTapsRoutable = true;
+  Log.d('[RESUME-OPEN] the page notification tap listener is registered');
 }
 
 /**

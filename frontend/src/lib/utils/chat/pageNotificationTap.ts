@@ -1,4 +1,41 @@
-import { noteOpenRoutedNowhere } from './resumeOpening.svelte';
+import { noteOpenRoutedNowhere, notePageTapsRoutable } from './resumeOpening.svelte';
+
+/** The plugin's `onAction`, as this module calls it. */
+export type RegisterPageTap = (
+  cb: (action: { notification?: { id?: number } | null }) => void
+) => unknown;
+
+/**
+ * Registers the page's notification-tap listener and says so to the resume's hold ONLY once the
+ * registration has RESOLVED (`notePageTapsRoutable`). Every other outcome - no `onAction`, a throw, a
+ * rejection - is warned and leaves the hold unarmed, so a resume opening a page notification marks
+ * what is on screen rather than wait for a listener that does not exist.
+ */
+export function armPageTapListener(
+  register: RegisterPageTap | undefined,
+  onTap: (action: { notification?: { id?: number } | null }) => void
+): void {
+  if (typeof register !== 'function') {
+    console.warn(
+      '[NOTIF] This plugin build exposes no onAction, so a tap cannot be observed at all. Taps ' +
+        'open the app on whatever it was last showing.'
+    );
+    return;
+  }
+  let registered: unknown;
+  try {
+    registered = register(onTap);
+  } catch (e) {
+    // A plugin version whose `onAction` rejects the shape above: calling it again would throw again.
+    console.warn(`[NOTIF] The notification-tap listener could not be registered: ${String(e)}`);
+    return;
+  }
+  Promise.resolve(registered).then(
+    () => notePageTapsRoutable(),
+    (e: unknown) =>
+      console.warn(`[NOTIF] The notification-tap listener could not be registered: ${String(e)}`)
+  );
+}
 
 /** What a tap on a notification the page raised itself came to. */
 export type PageNotificationTapOutcome = 'landed' | 'no-identity' | 'not-ours';
