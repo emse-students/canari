@@ -1,5 +1,5 @@
 import { Throttle } from '@nestjs/throttler';
-import { kindMaySell } from './selling-kinds';
+import { mayCollect } from './collection-policy';
 import {
   BadRequestException,
   Body,
@@ -216,11 +216,13 @@ export class AssociationsController {
   ) {
     const query = parseDirectoryQuery({ type, scope, campus, formation });
     return (
-      await this.service.list(query.type, {
-        viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
-        campus: query.campus,
-        formation: query.formation,
-      })
+      await this.service
+        .list(query.type, {
+          viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
+          campus: query.campus,
+          formation: query.formation,
+        })
+        .then((rows) => this.service.withPaymentsReady(rows))
     ).map((row) => toAssociationView(row));
   }
 
@@ -228,14 +230,17 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get('slug/:slug')
   async findBySlug(@Param('slug') slug: string) {
-    return toAssociationView(await this.service.findBySlug(slug));
+    const [row] = await this.service.withPaymentsReady([await this.service.findBySlug(slug)]);
+    return toAssociationView(row);
   }
 
   /** Returns all associations the calling user is a member of, with the caller's own permissions. */
   @UseGuards(NginxAuthGuard)
   @Get('me/list')
   async myAssociations(@Headers('x-user-id') userId: string) {
-    return (await this.service.listByUser(userId)).map((row) => toAssociationView(row));
+    return (await this.service.withPaymentsReady(await this.service.listByUser(userId))).map(
+      (row) => toAssociationView(row)
+    );
   }
 
   /**
@@ -578,7 +583,12 @@ export class AssociationsController {
     const ok = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
     });
-    return { ok };
+    if (ok) return { ok };
+    // A list or an institution holds no Lydia account of its own (G5): refused with a typed code
+    // BEFORE core-service calls Lydia's `business/create`, never after the link fails.
+    const code = await this.service.payoutAccountRefusal(id);
+    if (code) this.logger.warn(`[PERM] payout account refused on ${sanitizeLog(id)}: ${code}`);
+    return code ? { ok, code } : { ok };
   }
 
   /**
@@ -707,7 +717,8 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(@Param('id') id: string) {
-    return toAssociationView(await this.service.findById(id));
+    const [row] = await this.service.withPaymentsReady([await this.service.findById(id)]);
+    return toAssociationView(row);
   }
 
   // ── Authenticated ─────────────────────────────────────────────────────────
@@ -888,9 +899,10 @@ export class AssociationsController {
     const touchesCotisation = asked.flags.has(AssociationPermissionFlag.MANAGE_PRODUCTS);
 
     const updated = await this.service.update(id, patch);
-    // A cotisation already enabled on a list or an institution (stored before the rule) stays as it
-    // is: its product is not (re)provisioned, so the save above is never followed by a refusal.
-    if (touchesCotisation && updated.cotisationEnabled && kindMaySell(updated.type)) {
+    // A cotisation stored enabled on an entity that may not collect NOW (an institution, a list
+    // whose delegation was revoked) stays as it is: its product is not (re)provisioned, so the save
+    // above is never followed by a refusal.
+    if (touchesCotisation && updated.cotisationEnabled && mayCollect(updated)) {
       await this.productsService.provisionCotisationProduct(updated);
     }
     return toAssociationView(updated);
@@ -1909,15 +1921,16 @@ export class AssociationsController {
 
   /**
    * Parent accounting access: lists a delegated child's completed purchases (boutique + paid
-   * forms). `:id` is the parent; the guard proves parent-admin, then the service verifies the
-   * approved link. Requires MANAGE_PRODUCTS.
+   * forms). `:id` is the parent; the guard proves parent-admin, then `childAccountingScope` reads
+   * what it may see: everything while approved, the payments its Business took once the delegation
+   * ended. Requires MANAGE_PRODUCTS.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Get(':id/payment-delegation/children/:childId/purchases')
   async listChildPurchases(@Param('id') id: string, @Param('childId') childId: string) {
-    await this.service.assertIsApprovedParentOf(id, childId);
-    return this.productsService.listAssociationPurchases(childId);
+    const { onlyRecordIds } = await this.service.childAccountingScope(id, childId);
+    return this.productsService.listAssociationPurchases(childId, onlyRecordIds);
   }
 
   /** Parent accounting access: XLSX export of a delegated child's purchases. `:id` is the parent. Requires MANAGE_PRODUCTS. */
@@ -1929,35 +1942,57 @@ export class AssociationsController {
     @Param('childId') childId: string,
     @Res() res: Response
   ) {
-    await this.service.assertIsApprovedParentOf(id, childId);
-    const { buffer, title } = await this.productsService.exportAssociationPurchases(childId);
+    const { onlyRecordIds } = await this.service.childAccountingScope(id, childId);
+    const { buffer, title } = await this.productsService.exportAssociationPurchases(
+      childId,
+      onlyRecordIds
+    );
     this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
   /**
-   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS.
+   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS,
+   * and the service narrows it: only the receiver's OWN shop managers or the platform administrator
+   * accept, never a BDE governing it, and the acceptance is recorded (owner, 2026-11-02).
    *
    * The child can now take payments through the parent's account, so the products it had to leave
-   * off sale for want of one go on sale - see `releaseWithheldProducts`. Composed here rather than
-   * inside `approvePaymentDelegation` for the same reason `provisionCotisationProduct` is: the
-   * products service already depends on the associations service, and the reverse edge would be a
-   * cycle.
+   * off sale for want of one go back on sale IN THE SAME TRANSACTION as the approval
+   * (`approvePaymentDelegation`, owner review of #2967): a commit never leaves one withheld.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/approve')
-  async approvePaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    const result = await this.service.approvePaymentDelegation(id, childId);
-    await this.productsService.releaseWithheldProducts(childId);
-    return result;
+  async approvePaymentDelegation(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.approvePaymentDelegation(id, childId, {
+      userId,
+      isGlobalAdmin: ga === 'true',
+    });
   }
 
-  /** Rejects a pending request or revokes an approved child's delegation. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  /**
+   * Rejects a pending request or revokes an approved child's delegation. `:id` is the parent.
+   * Requires MANAGE_PRODUCTS, and the service narrows it as for acceptance: the receiver's OWN shop
+   * managers or the platform administrator, never a BDE governing it
+   * (`DELEGATION_REVOKE_RECEIVER_ONLY`).
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/reject')
-  rejectPaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    return this.service.rejectPaymentDelegation(id, childId);
+  rejectPaymentDelegation(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.rejectPaymentDelegation(id, childId, {
+      userId,
+      isGlobalAdmin: ga === 'true',
+    });
   }
 
   // ── Internal (called by core-service) ───────────────────────────────────────

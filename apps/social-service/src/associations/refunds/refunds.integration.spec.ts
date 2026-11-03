@@ -130,7 +130,9 @@ maybe('Lydia refunds against PostgreSQL', () => {
   async function boutiquePayment(
     type: 'membership' | 'balance_topup' | 'other',
     amount = 1000,
-    associationId = ASSO
+    associationId = ASSO,
+    /** The Business that TOOK the payment: ASSO's by default. */
+    vendorToken = VENDOR
   ) {
     const buyer = randomUUID().replace(/-/g, '').repeat(2);
     const product = await ds.getRepository(AssociationProduct).save(
@@ -161,7 +163,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         userId: buyer,
         associationId,
         paymentAssociationId: ASSO,
-        vendorToken: VENDOR,
+        vendorToken,
         amountCents: amount,
         currency: 'eur',
         productName: product.name,
@@ -186,7 +188,13 @@ maybe('Lydia refunds against PostgreSQL', () => {
   }
 
   /** A paid form answer and its record; `grantsCotisation` adds the tier the answer granted. */
-  async function formPayment(grantsCotisation: boolean, amount = 800) {
+  async function formPayment(
+    grantsCotisation: boolean,
+    amount = 800,
+    associationId = ASSO,
+    /** The Business the answer's request was issued to: ASSO's by default. */
+    vendorToken = VENDOR
+  ) {
     const buyer = randomUUID().replace(/-/g, '').repeat(2);
     const formId = randomUUID();
     await ds.query(`INSERT INTO forms (id, "grantsCotisation") VALUES ($1, $2)`, [
@@ -204,7 +212,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     await ds.query(
       `UPDATE submissions SET "lydiaOrderRef" = $2, "lydiaVendorToken" = $3 WHERE id = $1`,
-      [submission.id, `form:${submission.id}:0a1b2c3d`, VENDOR]
+      [submission.id, `form:${submission.id}:0a1b2c3d`, vendorToken]
     );
     const record = await ds.getRepository(PurchaseRecord).save(
       ds.getRepository(PurchaseRecord).create({
@@ -215,7 +223,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         amountCents: amount,
         paymentMethod: 'online',
         status: 'paid',
-        associationId: ASSO,
+        associationId,
         productName: 'Gala',
       })
     );
@@ -660,24 +668,21 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
-  it("refunds only its own payments or an approved delegate's, and the refund sits on the payer's association statement", async () => {
+  it("refunds its own payments and the ones its Business TOOK, and the refund sits on the payer's association statement", async () => {
     const child = randomUUID();
-    await ds.query(`INSERT INTO associations (id, name) VALUES ($1, 'Club')`, [child]);
-    const { record } = await boutiquePayment('other', 700, child);
-    await expect(service.refund(ASSO, record.id, MANAGER, total())).rejects.toMatchObject({
-      status: 404,
-    });
     await ds.query(
-      `UPDATE associations SET "paymentParentAssociationId" = $2, "paymentDelegationStatus" = 'pending' WHERE id = $1`,
+      `INSERT INTO associations (id, name, "lydiaAccountId", "paymentParentAssociationId", "paymentDelegationStatus")
+       VALUES ($1, 'Club', 'vendor-of-club', $2, 'approved')`,
       [child, ASSO]
     );
-    await expect(service.refund(ASSO, record.id, MANAGER, total())).rejects.toMatchObject({
+    // Taken by the club's OWN Business: not this association's money, approved delegation or not.
+    const { record: theirs } = await boutiquePayment('other', 700, child, 'vendor-of-club');
+    await expect(service.refund(ASSO, theirs.id, MANAGER, total())).rejects.toMatchObject({
       status: 404,
     });
     expect(post).not.toHaveBeenCalled();
-    await ds.query(`UPDATE associations SET "paymentDelegationStatus" = 'approved' WHERE id = $1`, [
-      child,
-    ]);
+    // Taken by THIS association's Business: refunded from here.
+    const { record } = await boutiquePayment('other', 700, child);
     await expect(service.refund(ASSO, record.id, MANAGER, partial(200))).resolves.toMatchObject({
       state: 'refunded',
     });
@@ -687,10 +692,57 @@ maybe('Lydia refunds against PostgreSQL', () => {
       -parent.lines.filter((l) => l.operation !== 'payment').reduce((s, l) => s + l.amountCents, 0)
     );
     const own = await service.statement(child);
-    expect(own).toMatchObject({ receivedCents: 700, refundedCents: 200 });
+    expect(own).toMatchObject({ receivedCents: 1400, refundedCents: 200 });
     expect(own.lines.find((l) => l.operation === 'refund-partial')).toMatchObject({
       item: 'Product other',
       amountCents: -200,
+    });
+  });
+
+  // G8 + owner review of #2967 (2026-11-03): a LIST collects only through its receiver, and the
+  // refund follows the account that TOOK the payment, not the delegation's current state - after a
+  // revoke the former receiver still refunds what it received, and a NEW receiver may not.
+  it("refunds a LIST's payment from the receiver that took it, even after a revoke; never from a new receiver", async () => {
+    const list = randomUUID();
+    const newReceiver = randomUUID();
+    // This file's `associations` is the minimal table the refund reads; the kind is added here so
+    // the payer is really a list (the refund path itself never reads the kind).
+    await ds.query(
+      `ALTER TABLE associations ADD COLUMN IF NOT EXISTS type varchar(20) NOT NULL DEFAULT 'association'`
+    );
+    await ds.query(
+      `INSERT INTO associations (id, name, type, "paymentParentAssociationId", "paymentDelegationStatus")
+       VALUES ($1, 'Liste', 'list', $2, 'approved')`,
+      [list, ASSO]
+    );
+    await ds.query(
+      `INSERT INTO associations (id, name, "lydiaAccountId") VALUES ($1, 'Autre', 'vendor-new')`,
+      [newReceiver]
+    );
+    // Approved: paid through ASSO's Business.
+    const { record } = await boutiquePayment('other', 900, list);
+    // Revoked, then delegated to the new receiver and approved.
+    await ds.query(
+      `UPDATE associations SET "paymentParentAssociationId" = $2, "paymentDelegationStatus" = 'approved' WHERE id = $1`,
+      [list, newReceiver]
+    );
+    await expect(service.refund(newReceiver, record.id, MANAGER, total())).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(post).not.toHaveBeenCalled();
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(300))).resolves.toMatchObject({
+      state: 'refunded',
+    });
+    expect(await service.statement(list)).toMatchObject({ receivedCents: 900, refundedCents: 300 });
+
+    // A FORM answer of the list, its request issued on ASSO before the move (its callback recorded
+    // it: `form-order-ref.integration.spec.ts`): the same rule, read from `lydiaVendorToken`.
+    const { record: answer } = await formPayment(false, 700, list, VENDOR);
+    await expect(service.refund(newReceiver, answer.id, MANAGER, total())).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(service.refund(ASSO, answer.id, MANAGER, total())).resolves.toMatchObject({
+      state: 'refunded',
     });
   });
 

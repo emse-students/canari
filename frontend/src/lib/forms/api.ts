@@ -98,6 +98,12 @@ export interface CreateFormPayload {
   isPublic?: boolean;
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
+  /**
+   * True when the form charges and its organiser cannot collect right now - a list whose delegation
+   * was revoked, or whose receiver lost its Lydia (owner, 2026-11-02). DERIVED by the server on every
+   * read, never stored: it resumes by itself on a new accepted delegation.
+   */
+  paymentsPaused?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
   /**
@@ -616,6 +622,7 @@ export type PublicForm = Pick<
   | 'basePrice'
   | 'currency'
   | 'allowCashPayment'
+  | 'paymentsPaused'
 > & {
   closedAt?: string | null;
   formFull: boolean;
