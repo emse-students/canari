@@ -4419,7 +4419,8 @@ only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutati
   documents no such ordering (re-review F3). It is an ordering argument, never a delay, and it is
   read on hardware by check LA steps 5 and 8: the shell logs `didBecomeActive: awaiting the
   notification-center round trip` and `round trip answered: publishing the foreground edge`, and the
-  tap's line must fall between them; a failure blocks the stable. A `didBecomeActive` with no resume pending (Control Centre, a Face ID sheet) publishes
+  ONE rule read there is that the tap's line comes BEFORE `round trip answered` (whatever its `state`
+  or `resumePending`, and before or after `awaiting`); a failure blocks the stable. A `didBecomeActive` with no resume pending (Control Centre, a Face ID sheet) publishes
   nothing and drops a link a cold launch left; a tap on an app active with no resume pending (a
   banner over the open app) is not a resume (step 10). This is the same contract as Android's `MainActivity.pushForeground`, asserted for
   both shells by `utils/appForeground.contract.test.ts`. The ACTIVE pair was deliberately not chosen: Control

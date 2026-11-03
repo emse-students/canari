@@ -1380,16 +1380,15 @@ and `[CanariIOS]` (shell) lines.
 4. **The badge after a resume.** Leave the iPhone on another conversation, read the first one on the web tab,
    come back. The iPhone's badge for it is 0 without a reload.
 5. **A notification for Y does not read X.** Open conversation X, press Home, and have the peer
-   send a message in X and then one in Y. Tap Y's notification. Expect, in the device console,
-   `[CanariIOS] notification tap during a resume (state=1, resumePending=1)` BEFORE `foreground=true
-   published to the page (opens a link=1)`; then the app shows Y. On the web tab of the same account
-   X keeps its badge and the peer shows no "Vu" in X; Y falls to 0. `resumePending=0`, or the
-   publish line before the tap line, means UIKit's order differs from the one the fix relies on.
-   The ordering itself is read from three lines: `didBecomeActive: awaiting the notification-center
-   round trip`, the tap line (before it or after it - either is the argument's case), then `round
-   trip answered: publishing the foreground edge (opening: yes)`. A tap line AFTER `round trip answered` refutes the argument the shell rests
-   on (the notification center's connection is not ordered) - LIKELY, never proven, until this is
-   read; step 8 reads the same three lines for the page's own notification.
+   send a message in X and then one in Y. Tap Y's notification. Expect, in the device console, the
+   app to show Y; on the web tab of the same account X keeps its badge and the peer shows no "Vu" in
+   X; Y falls to 0. **THE ONE ORDERING RULE: the tap line (`[CanariIOS] notification tap during a
+   resume (...)`) comes BEFORE `round trip answered: publishing the foreground edge (opening: yes)`.**
+   Its `state` and `resumePending` values may be anything the shell accepted (a tap delivered after
+   `didBecomeActive` logs `state=0`), and it may come before or after `didBecomeActive: awaiting the
+   notification-center round trip`. A tap line AFTER `round trip answered`, or `opening: no` on that
+   line, refutes the ordering argument the shell rests on - LIKELY, never proven, until this is read;
+   step 8 applies the same rule to the page's own notification.
 6. **A plain resume still reads X.** Repeat step 5, but open the app from its icon: X is marked
    read (the web tab drops X's badge, "Vu" in X on the peer).
 7. **The same on the Mi 9T** (the Android half, #2937): steps 5 and 6 with the app on X, tapping Y's
@@ -1398,9 +1397,9 @@ and `[CanariIOS]` (shell) lines.
 8. **A notification the page raised itself (iPhone).** Open X and press Home FIRST; THEN, within the
    few seconds before iOS suspends the page, have the peer send a message in Y - the page, still
    running but off screen, raises its own notification for it (the push for the same message is then
-   suppressed). Tap it. Expect `notification tap during a resume` then `notification tap on a page
-   notification - handed to the plugin`, then `foreground=true published to the page (opens a
-   link=1)`; Y opens, X keeps its badge.
+   suppressed). Tap it. Expect `notification tap during a resume` and `notification tap on a page
+   notification - handed to the plugin` BEFORE `round trip answered: publishing the foreground edge
+   (opening: yes)` (step 5's one rule, any `state` or `resumePending`); Y opens, X keeps its badge.
 9. **A tap on X's OWN notification, X a DM.** Open DM X, press Home, have the peer send a message in
    X, tap its notification: X is marked read AT ONCE (the web tab drops X's badge, "Vu" on the peer)
    - the hold must recognise its own conversation although the link names a group id and the
