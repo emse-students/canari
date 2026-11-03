@@ -179,6 +179,15 @@ quiet. The same predicate SUSPENDS a help on screen (a call rings, a sheet opens
 history entry released, and it comes back on the same step when the app is quiet again. A suspension
 is never an end.
 
+## At most one help per visit (lead, 2026-11-03, reversible)
+
+Without a cap, the welcome tour ends on `/posts`, the app turns quiet and `hint-create-post` starts at
+once: two helps back to back on a first visit (and after a Settings replay). `GuideEngine#pick` now
+offers nothing once a help has SHOWN a step in this visit - a visit being the engine's lifetime, one
+app open or reload (in-memory flag, no timer, no stored state; a sign-out resets it, the next account's visit is its own). A help
+declined as not-rendered shows nothing and does not count, so another may run. A replay from Settings
+is exempt from the cap and sets it: it is the visit's help. Pinned in `guideEngine.test.ts`.
+
 ## Seen, ended, replayed
 
 **Who sees the welcome tour (owner, 2026-11-02): every account that has never seen it, ONCE - new and
@@ -195,6 +204,25 @@ it points at is drawn). A replay ignores the seen set and still waits for the qu
 **An unseen help starts only once the server has answered** (`seenHelps.ready`): starting on the
 local copy alone would replay on a new device a tour the account finished on another one. A device
 that cannot reach the server shows no new help; the next opening asks again.
+
+## The first-time hints, batch 1 - create
+
+Built 2026-11-03, `kind: 'hint'` each, once per account, listed after the welcome tour (so a hint
+never precedes it on `/posts`). **A help never runs over a modal** (the quiet state), and the post
+composer and the event form ARE modals - so those two hints point at the control that OPENS them, and
+say what a first-timer would miss (publishing as an association, scheduling, validation) in the body.
+The form builder is a page, so its hint points inside it.
+
+| Id | Route | Anchor(s) | Steps (fr) |
+| --- | --- | --- | --- |
+| `hint-create-post` | `/posts` | `posts.compose`: the phone header's "+" (`MobileHeader`) and the desktop "Publier" button (both marked, the drawn one wins) | "Publier un message" - texte, photos, sondage ou formulaire, en son nom ou celui d'une association, envoi programmable |
+| `hint-create-event` | `/calendar` | `calendar.deposit`: the "Deposer un evenement" button, drawn only for an account that may post on an association (else the step is left out, not-rendered) | "Déposer un événement" - association, date, lieu; visible dans l'agenda une fois validé |
+| `hint-create-form` | `/forms/create` | `forms.create.general`, `.questions`, `.settings`: wrappers of the page's three blocks | "Le formulaire" (titre, association, choix définitif), "Les questions", "Réglages avancés" |
+
+Pinned by `guides/createHints.test.ts` (kind, route, registered, every step kept on phone and desktop,
+left out when not drawn, and the anchors really marked in the page sources). Owed: the three read on a
+phone and a desktop with a signed-in account; the next batches (chats and CanaReels, associations and
+spaces, booking a room) follow.
 
 ## Back, focus, motion
 
