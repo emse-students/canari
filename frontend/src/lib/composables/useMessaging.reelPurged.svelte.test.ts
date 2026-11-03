@@ -35,7 +35,7 @@ function fakeStorage(rows: StoredMessage[]) {
   const byId = new Map(rows.map((r) => [r.id, r]));
   return {
     rows: byId,
-    updateMessage: vi.fn(async (id: string, patch: StoredMessagePatch) => {
+    updateMessage: vi.fn(async (_c: string, id: string, patch: StoredMessagePatch) => {
       const row = byId.get(id);
       if (row) byId.set(id, mergeStoredMessage(row, patch));
     }),

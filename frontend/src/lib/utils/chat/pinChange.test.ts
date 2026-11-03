@@ -693,7 +693,12 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
       const rows = await read(store);
       if (store === 'messages') {
         live.push(
-          s.gated.updateMessage('m1', { content: message('m1', 'edited').content }, OLD),
+          s.gated.updateMessage(
+            message('m1').conversationId,
+            'm1',
+            { content: message('m1', 'edited').content },
+            OLD
+          ),
           s.gated.saveMessage(message('m3'), OLD),
           s.gated.saveGraineSession(session('s3'), OLD),
           s.gated.saveOutboxEntry(queued('o2'), OLD)

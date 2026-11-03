@@ -1,6 +1,9 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { envelopeBodyText } from '$lib/envelope';
 
+/** A stored body is an envelope; a plain-text row is a push preview (`isPushPreview`). */
+const ORIGINAL = '{"kind":"text","text":"original"}';
+
 /**
  * Only a message's author may edit or delete it, and the rule is enforced HERE - on receipt - because
  * the control that offers the action runs on the sender's device, which is the attacker's side of the
@@ -13,7 +16,7 @@ function makeCtx(senderNorm: string, owner = 'peer') {
   conversations.set('g1', {
     id: 'g1',
     unreadCount: 0,
-    messages: [{ id: 'm1', senderId: owner, content: 'original', readBy: [] }],
+    messages: [{ id: 'm1', senderId: owner, content: ORIGINAL, readBy: [] }],
   });
   const storage = { saveMessage: vi.fn().mockResolvedValue(undefined) };
   return {
@@ -54,7 +57,7 @@ describe('handleSystemEvent - delete_message ownership', () => {
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
 
     expect(msgOf(ctx).isDeleted).toBeUndefined();
-    expect(msgOf(ctx).content).toBe('original');
+    expect(msgOf(ctx).content).toBe(ORIGINAL);
     expect(ctx.storage.saveMessage).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Refused a delete'));
   });
@@ -106,7 +109,7 @@ describe('handleSystemEvent - edit_message ownership', () => {
       ctx as any
     );
 
-    expect(msgOf(ctx).content).toBe('original');
+    expect(msgOf(ctx).content).toBe(ORIGINAL);
     expect(msgOf(ctx).isEdited).toBeUndefined();
     expect(ctx.storage.saveMessage).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Refused an edit'));

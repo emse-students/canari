@@ -250,7 +250,7 @@ export async function patchCallRecordServerTime(
   });
   ctx.conversations.set(groupId, { ...convo, messages });
   await ctx.storage
-    ?.updateMessage(messageId, { serverTimestamp }, ctx.deviceKey())
+    ?.updateMessage(groupId, messageId, { serverTimestamp }, ctx.deviceKey())
     .catch((e: unknown) =>
       appendLog(`[CallRecord] ${callId} server time not persisted: ${String(e).slice(0, 120)}`)
     );
@@ -308,7 +308,7 @@ async function finalizeCallRow(
     // Rewriting the call-ended text is a mutation of an existing row: only the body changes, and
     // a full-row write here erased every other field the row carried.
     await ctx.storage
-      .updateMessage(messageId, { content: nextContent }, ctx.deviceKey())
+      .updateMessage(groupId, messageId, { content: nextContent }, ctx.deviceKey())
       .catch((e: unknown) =>
         appendLog(`[CallRecord] ${callId} not persisted: ${String(e).slice(0, 120)}`)
       );
