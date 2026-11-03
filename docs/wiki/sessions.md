@@ -664,6 +664,11 @@ URL, as `?t=<avatar token>`, decided owner 2026-11-02.
   reads the day too, and does not send a token older than yesterday (a session that has not
   refreshed for a day): it loads the face unsigned until the next refresh rather than earning a 403
   and initials.
+- **Its cost is a cold face once a day, from phase 1 on.** The token is a pure function of (session,
+  UTC day) - every refresh of the day answers the same one - but it differs per viewer and per day,
+  so each viewer's first load of each face each day misses the edge and the browser cache. The Mi 9T
+  community-open reading with cold avatars is owed BEFORE the phase-1 stable
+  ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md#the-cold-avatar-cost---owed-before-the-phase-1-stable)).
 - **Who is exempt: a service, by credential.** chat-delivery's notification face
   (`GET /api/mls/push/avatar/:id`) and social-service's public roster relay ask core on behalf of a
   caller they authenticated themselves, with `x-internal-secret` - the credential every

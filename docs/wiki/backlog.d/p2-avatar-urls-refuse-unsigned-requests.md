@@ -35,6 +35,22 @@ since phase 2 shows those installs initials until they update. Also:
   without asking the origin (see below), so `access=unsigned` UNDER-counts there: read it as a
   floor, never as the population.
 
+### The cold-avatar cost - owed BEFORE the phase-1 stable
+
+**This cost starts with phase 1, not phase 2.** The URL carries the viewer's token, so it is
+different for every viewer and every UTC day: each viewer's first load of each face each day misses
+the edge AND the browser's HTTP cache (a new URL has no entry to revalidate - a full `200` where the
+day before a `304` would have answered). The community-open budget is already over on every row
+([community-open-budget](../frontend/community-open-budget.md)), so **the Mi 9T reading of a
+community open with cold avatars is owed before the phase-1 stable ships**: check AV in
+[device-verification](../device-verification.md), on the pre-release.
+
+What already keeps it to once a day: the token is a pure function of (session, UTC day) - a refresh
+keeps the session id, so every refresh of the day answers the same token and the same URLs (pinned by
+`avatar-access.spec.ts`, "one URL per session per UTC day"), and `userAvatarCache.ts` keys its blobs
+by user id, so a warm face survives the token's change. What remains is the first load of each face
+per day, and per new session (a sign-in mints a new session id).
+
 ### The cold start: no token until the first refresh
 
 A client holds an avatar token only once a sign-in or a refresh has answered one; the token lives in

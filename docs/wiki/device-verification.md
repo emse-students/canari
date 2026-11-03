@@ -96,6 +96,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
 | S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
+| AV | Signed avatar URLs: the community open with COLD avatars ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md#the-cold-avatar-cost---owed-before-the-phase-1-stable)) - the [community-open budget](frontend/community-open-budget.md) rows on the Mi 9T, first open of the day after a sign-in (no warm blob, no browser-cache entry for the new URLs), against the same rows on the build before | **owed BEFORE the phase-1 stable**, on its pre-release | n/a |
 
 **The `ios-release` artifact CANNOT be installed on a device, and this paragraph said to install it
 until 2026-09-07.** The export is `method: app-store-connect` signed *Apple Distribution*

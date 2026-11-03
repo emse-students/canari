@@ -270,8 +270,11 @@ because the value is a request header. Written justification, for the USER to di
 
 **The edge never forwards the internal credential** (2026-11-03). `X-Internal-Secret` is spoken only
 between services on the Docker network, so `proxy_set_header X-Internal-Secret "";` stands at server
-level AND in every proxying location (each declares headers of its own, so none inherits the server's
-line). `auth-request-coverage.test.mjs` asserts both, reading every location whatever its modifier.
+level AND in the header set every `proxy_pass` uses. nginx inherits `proxy_set_header` from the
+ENCLOSING level (the enclosing location for a nested one, the server for a top-level one), and only
+into a level that declares none of its own, so that set is the nearest level, itself first, that
+declares any. `auth-request-coverage.test.mjs` models that inheritance, reads every location whatever
+its modifier, and carries self-tests of the nested shape.
 
 **On the two Axum crates there is no guard layer at all**, so the handler's own body is the whole of
 the enforcement: `get_presence` and `get_admin_presence` read the headers nginx set

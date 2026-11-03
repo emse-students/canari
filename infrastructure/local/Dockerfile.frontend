@@ -335,7 +335,7 @@ server {\n\
     set_real_ip_from 10.0.0.0/8;\n\
     real_ip_header X-Real-IP;\n\
     # A CLIENT MAY SEND ANY HEADER IT LIKES, AND nginx FORWARDS THE ONES NOBODY OVERRODE.\n\
-    # These five names are what the services READ to decide who is calling, so they are\n\
+    # The identity names below are what the services READ to decide who is calling, so they are\n\
     # emptied here and re-set from the auth sub-request in each guarded location. The list\n\
     # must be the app-facing spelling, not the sub-request's: `auth_request_set` reads\n\
     # `X-Logged-In` off /internal/auth/verify and forwards it as `X-User-Logged-In`, and\n\
@@ -343,14 +343,14 @@ server {\n\
     # while leaving the latter untouched. `X-Internal-Token` was not here at all.\n\
     #\n\
     # NOTHING WAS EXPLOITABLE, AND THE REASON IS NOT THIS BLOCK. nginx inherits a\n\
-    # proxy_set_header set only into a location that declares NONE of its own, and all 24\n\
-    # proxying locations declare theirs - so these lines currently reach nothing. They are\n\
+    # proxy_set_header set only into a location that declares NONE of its own, and every\n\
+    # proxying location declares its own - so these lines currently reach nothing. They are\n\
     # the net for the NEXT location somebody adds, which is exactly when a half-empty net\n\
-    # is discovered. `auth-request-coverage.test.mjs` asserts the five names are all here.\n\
+    # is discovered. `auth-request-coverage.test.mjs` asserts every identity name is here.\n\
     # THE EDGE NEVER FORWARDS THE INTERNAL CREDENTIAL EITHER (2026-11-03): X-Internal-Secret is\n\
-    # spoken only between services, on the Docker network, so it is emptied here AND in every\n\
-    # proxying location (each declares its own headers, so none inherits this line). The same\n\
-    # test asserts both.\n\
+    # spoken only between services, on the Docker network, so it is emptied here AND in the\n\
+    # header set every proxy_pass uses - its own location's, or the enclosing one's it inherits.\n\
+    # The same test asserts both, inheritance modelled.\n\
     proxy_set_header X-User-Id "";\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
