@@ -13,6 +13,39 @@ lively first visit. His decisions, binding:
   follow in batches: create (post, event, form); chats and CanaReels; associations and spaces;
   booking a room. Each one is a few lines of declaration (below).
 
+## Owner decisions of 2026-11-03
+
+Binding, on top of the ones above.
+
+1. **A first-time hint never points INSIDE a modal.** For a control that opens a modal (the post
+   composer, the event form) the hint points at the OPENING control, and its text names what a
+   first-timer would miss once the modal is open. No engine change. Batch 1 (draft PR #2982)
+   follows this.
+2. **The feed tabs' (i) button moves into guided help.** The explanation shipped in #2857
+   (`posts_tabs_info_*` strings) becomes a guided hint on the tab bar: shown once per account,
+   replayable from Settings like the others. The permanent (i) button is then removed. Scheduled
+   in batch 2 below; the existing strings are reused where they fit.
+3. **A "what's new" help after an update**, besides the full welcome tour (built, #2952): on the
+   first open after an update, 2 to 5 steps on the real interface pointing ONLY at what changed in
+   that version, once per version per account, skippable, and never shown to a brand-new account in
+   the same visit as the welcome tour. Designed AFTER the four batches. Open design points: how a
+   version's steps are declared (one declaration file per version listing its steps, or a `since`
+   field on each help), and how the per-version "seen" keys fit the existing allowlisted help-ids
+   contract (`libs/contracts/help-ids.json`: one bounded id per version, or a version marker with
+   its own allowlist rule), without letting the table grow unbounded.
+4. **Pace: one batch per pre-release**, each read on the Mi 9T and the iPhone 12 before the next
+   batch starts.
+
+### The batch plan
+
+| Batch | Content | State |
+| --- | --- | --- |
+| 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
+| 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2) | after batch 1 is read on both phones |
+| 3 | Associations and spaces | after batch 2 |
+| 4 | Booking a room | after batch 3 |
+| 5 | The "what's new" help (decision 3) | designed after batch 4 |
+
 ## The pieces
 
 | File | Role |
