@@ -404,7 +404,10 @@
   const capabilities = $derived({
     canTargetAnotherAssociation: depositableAssociations.length > 1,
     canSetKind: mayValidateFor(depositValues.targetAssociationId),
-    canLinkForm: mayLinkFormOn(depositValues.targetAssociationId),
+    // The form link is the organiser's (D39, E2): an unknown or partner side offers no picker, whose
+    // change `toUpdatePayload` would silently drop.
+    canLinkForm:
+      mayLinkFormOn(depositValues.targetAssociationId) && depositValues.writeSide === 'organiser',
   });
 
   /** Whether the viewer may list - and therefore link - the forms of `associationId`. */

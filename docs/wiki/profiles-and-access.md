@@ -1298,18 +1298,27 @@ Saint-Etienne event).
   a change and is accepted. The client never sends `linkedFormId` unless the side is `organiser`. This
   also removes an untyped 400 (the partner's own association does not own the organiser's form) that
   broke a partner's plain text edit.
-- **One transaction, one lock.** `updateCalendarEvent`, `validateCalendarEvent` and
-  `rejectCalendarEvent` run inside `withEventLock`: a transaction that starts with
-  `SELECT ... FOR NO KEY UPDATE` on the event row, so every check is made AFTER the lock, on the row
-  as the previous writer committed it, and the form-link detach and the save are in the same
-  transaction. `NO KEY UPDATE` rather than `UPDATE`: it conflicts with every writer of the row but
-  not with the `FOR KEY SHARE` that inserts into the co-owner and proposal tables take through their
-  foreign keys (the co-organisation sync runs on its own connection while the lock is held). The lock
-  order is always the event row, then associations. Notifications go out after the commit. The
-  partner-list `sync` stays outside the transaction (its proposals have their own); `check` ran
-  inside, so every refusal still precedes every write.
+- **One transaction, one lock, one connection.** `updateCalendarEvent`, `validateCalendarEvent` and
+  `rejectCalendarEvent` run inside `withEventLock` (`AssociationsService`). Its lock order is THE GLOBAL
+  ONE (`ProposalsService.lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE`
+  before it deletes events): the event's organiser and every association the edit names as a partner,
+  `FOR KEY SHARE` in id order, THEN the event row `FOR NO KEY UPDATE`. The first draft locked the event
+  first, and an edit adding a partner could hold the event while a delete of the organiser held the
+  association: a cycle Postgres could not see, because the edit's proposal insert ran on another
+  connection while the edit's own connection sat idle. `NO KEY UPDATE` rather than `UPDATE` so the
+  `FOR KEY SHARE` of foreign-key inserts into tables referencing the event is not blocked.
+- **Everything on the lock's manager.** The checks (`CoOrganiserPort.check(request, manager)`), the form
+  ownership read, the form-link detach, the partner endings, the k proposals
+  (`ProposalsService.proposeWithin`, which hands back its announcement) and the event save are ONE
+  transaction on ONE pooled connection: they commit or none does (a failing k-th proposal leaves no
+  field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
+  The announcements and the other notices run after the commit. An event CREATION calls
+  `sync(request)` without a manager and gets its own transaction.
+- **A co-organisation ACCEPTANCE is not under this lock.** It is a proposals transaction; WP-Q2's
+  acceptance, which returns a validated event to pending, must take `associations -> event row ->
+  proposal` in that order to be serialised with an edit.
 - **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
-  delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock);
+  delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock, failing explicitly if it settles first), the organiser-delete versus partner-edit ordering (a held association lock, never a hang) and the rollback of a failing k-th proposal;
   `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
 
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)

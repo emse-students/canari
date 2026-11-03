@@ -9,7 +9,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
-import type { CoOrganiserPort, CoOrganiserSyncRequest } from '../associations/co-organisers.port';
+import type {
+  CoOrganiserAfterCommit,
+  CoOrganiserPort,
+  CoOrganiserSyncRequest,
+} from '../associations/co-organisers.port';
 import { coOrganiserCapRefusal, MAX_CO_ORGANISERS } from '../associations/co-organiser-cap';
 import { partnerOrganiserOnlyRefusal, type EventWriteSide } from '../associations/event-write-side';
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
@@ -178,9 +182,32 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    * A caller writing through a CO-ORGANISER association may only remove that association itself
    * (leave); anything else is a 403 BEFORE any write.
    */
-  async sync(request: CoOrganiserSyncRequest): Promise<void> {
+  async sync(
+    request: CoOrganiserSyncRequest,
+    manager?: EntityManager
+  ): Promise<CoOrganiserAfterCommit> {
+    if (manager) return this.syncWithin(request, manager);
+    // No caller transaction (an event CREATION): the list is still ONE unit, committed or not at all.
+    let announce: CoOrganiserAfterCommit = () => Promise.resolve();
+    await this.coOwnerRepo.manager.transaction(async (own) => {
+      announce = await this.syncWithin(request, own);
+    });
+    await announce();
+    return () => Promise.resolve();
+  }
+
+  /**
+   * `sync` on the CALLER'S connection: the endings and the k proposals are written in `manager`'s
+   * transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event edit,
+   * none of the event's own writes either). The proposals are announced by the returned function,
+   * which the caller runs AFTER its commit - a rolled-back edit tells nobody.
+   */
+  private async syncWithin(
+    request: CoOrganiserSyncRequest,
+    manager: EntityManager
+  ): Promise<CoOrganiserAfterCommit> {
     const { eventId, actorId } = request;
-    const { toPropose, toEnd, refusedAgain } = await this.plan(request);
+    const { toPropose, toEnd, refusedAgain } = await this.plan(request, manager);
     // Logged HERE and not in plan(): the form save runs check() and then sync(), and the same
     // decision must not be written twice.
     this.logger.debug(
@@ -192,29 +219,29 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         `[COORG] ${eventId.slice(0, 8)}: ${refusedAgain.length} refused co-organiser(s) not asked again`
       );
     }
-    if (toEnd.length > 0) {
-      await this.coOwnerRepo.manager.transaction(async (manager) => {
-        for (const state of toEnd) {
-          await this.end(manager, eventId, state, actorId);
-        }
-      });
+    for (const state of toEnd) {
+      await this.end(manager, eventId, state, actorId);
     }
+    const announcements: AfterCommit[] = [];
     for (const toAssociationId of toPropose) {
       // The event write check already established that the actor speaks for the organiser.
-      await this.proposals.propose(
+      const { announce } = await this.proposals.proposeWithin(
+        manager,
         this.kind,
         eventId,
         toAssociationId,
-        actorId,
-        request.isGlobalAdmin,
-        { senderVouched: true }
+        actorId
       );
+      announcements.push(announce);
     }
+    return async () => {
+      for (const announce of announcements) await announce();
+    };
   }
 
   /** `CoOrganiserPort.check`: every refusal of `sync`, none of its writes. */
-  async check(request: CoOrganiserSyncRequest): Promise<void> {
-    await this.plan(request);
+  async check(request: CoOrganiserSyncRequest, manager?: EntityManager): Promise<void> {
+    await this.plan(request, manager);
   }
 
   /**
@@ -222,10 +249,11 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    * `check` and `sync`, so the pre-write check and the write cannot disagree.
    */
   private async plan(
-    request: CoOrganiserSyncRequest
+    request: CoOrganiserSyncRequest,
+    manager?: EntityManager
   ): Promise<{ toPropose: string[]; toEnd: CoOrganiserView[]; refusedAgain: string[] }> {
     const { eventId, organiserId, actorId } = request;
-    const states = await this.listStates(eventId);
+    const states = await this.listStates(eventId, manager);
     const byId = new Map(states.map((s) => [s.associationId, s]));
     const desired = new Set(request.desiredIds.filter((id) => id && id !== organiserId));
     const toPropose = [...desired].filter((id) => !byId.has(id));
@@ -300,8 +328,13 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
 
   // ── The `coorganise` proposal kind ─────────────────────────────────────────────────────────────
 
-  async resolveSender(eventId: string, toAssociationId: string): Promise<string> {
-    const ev = await this.loadEvent(eventId);
+  async resolveSender(
+    eventId: string,
+    toAssociationId: string,
+    manager?: EntityManager
+  ): Promise<string> {
+    const db = manager ?? this.coOwnerRepo.manager;
+    const ev = await this.loadEvent(eventId, manager);
     if (!ev) {
       this.logger.debug(`[COORG] ${eventId.slice(0, 8)} refused: no such event`);
       throw new NotFoundException('Event not found');
@@ -309,12 +342,11 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
     if (ev.associationId === toAssociationId) {
       throw new BadRequestException('An event is already organised by its own association');
     }
-    const target: unknown[] = await this.coOwnerRepo.manager.query(
-      `SELECT 1 FROM associations WHERE id = $1`,
-      [toAssociationId]
-    );
+    const target: unknown[] = await db.query(`SELECT 1 FROM associations WHERE id = $1`, [
+      toAssociationId,
+    ]);
     if (target.length === 0) throw new NotFoundException('Association not found');
-    const existing: unknown[] = await this.coOwnerRepo.manager.query(
+    const existing: unknown[] = await db.query(
       `SELECT 1 FROM association_calendar_event_co_owners WHERE event_id = $1 AND association_id = $2`,
       [eventId, toAssociationId]
     );

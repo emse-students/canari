@@ -157,7 +157,11 @@ import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
-import type { CoOrganiserPort, CoOrganiserSyncRequest } from './co-organisers.port';
+import type {
+  CoOrganiserAfterCommit,
+  CoOrganiserPort,
+  CoOrganiserSyncRequest,
+} from './co-organisers.port';
 import {
   eventWriteSide,
   partnerOrganiserOnlyRefusal,
@@ -419,6 +423,8 @@ export interface LydiaResponsableView {
 function lydiaBusinessKeyContext(associationId: string, vendorToken: string): string {
   return `${associationId}:${vendorToken}`;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class AssociationsService {
@@ -1586,27 +1592,46 @@ export class AssociationsService {
   }
 
   /**
-   * Runs `work` in ONE transaction that starts by locking the event row, so every read-check-write
-   * on an event (an edit, a validation, a rejection, a co-organisation acceptance that returns it to
-   * the queue) is serialised: the second one starts from what the first committed, never from the
+   * Runs `work` in ONE transaction that starts by locking the event, so every read-check-write
+   * an event goes through here (an edit with its partner list and its form link, a validation, a
+   * rejection) is serialised: the second one starts from what the first committed, never from the
    * snapshot it took before waiting. Without it an edit and a validation both load the row, both
-   * save, and the later save writes back the other's stale status columns.
+   * save, and the later save writes back the other's stale status columns. A co-organisation
+   * ACCEPTANCE is NOT serialised here: it is a proposals transaction (WP-Q2 gives it this lock).
    *
-   * `FOR NO KEY UPDATE`, not `FOR UPDATE`: it conflicts with every other writer of the row but
-   * not with the `FOR KEY SHARE` an insert of a co-owner or proposal row takes through its foreign
-   * key, which the co-organisation sync issues on its own connection while this lock is held.
-   * The order is always event row first, associations second (the proposals' own lock order).
+   * THE LOCK ORDER IS THE GLOBAL ONE - associations first, then the subject (`ProposalsService
+   * .lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE` before it
+   * deletes the events): the event's organiser and every association the edit names as a partner
+   * (`associationIds`), `FOR KEY SHARE` in id order, then the event row `FOR NO KEY UPDATE`.
+   * The reverse (event first) let an edit hold the event while its proposal insert waited on an
+   * association a delete held, the delete waiting on the event.
+   *
+   * `NO KEY UPDATE`, not `UPDATE`: it blocks every other writer of the row but not the
+   * `KEY SHARE` an insert into a table referencing the event takes through its foreign key.
+   *
+   * `work` gets the transaction's repository AND manager: EVERYTHING it reads or writes goes
+   * through them (never a second pool connection, which would starve the pool of ten under a few
+   * concurrent edits and hide a lock cycle from Postgres, durable-rules).
    */
   async withEventLock<T>(
     eventId: string,
-    work: (repo: Repository<AssociationCalendarEvent>) => Promise<T>
+    work: (repo: Repository<AssociationCalendarEvent>, manager: EntityManager) => Promise<T>,
+    associationIds: readonly string[] = []
   ): Promise<T> {
+    const named = associationIds.filter((id) => UUID_RE.test(id));
     return this.calendarRepo.manager.transaction(async (manager) => {
+      await manager.query(
+        `SELECT a.id FROM associations a
+          WHERE a.id = ANY($1::uuid[])
+             OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
+          ORDER BY a.id FOR KEY SHARE OF a`,
+        [named, eventId]
+      );
       await manager.query(
         'SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE',
         [eventId]
       );
-      return work(manager.getRepository(AssociationCalendarEvent));
+      return work(manager.getRepository(AssociationCalendarEvent), manager);
     });
   }
 
@@ -1796,8 +1821,12 @@ export class AssociationsService {
     return ev ? this.serializeCalendarEvent(ev) : null;
   }
 
-  private async assertFormBelongsToAssociation(formId: string, associationId: string) {
-    const f = await this.formRepo.findOne({
+  private async assertFormBelongsToAssociation(
+    formId: string,
+    associationId: string,
+    manager?: EntityManager
+  ) {
+    const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
       where: { id: formId },
       select: { id: true, associationId: true },
     });
@@ -2812,9 +2841,14 @@ ${rejectionReason}`
     await this.findById(associationId);
     // EVERY CHECK AND EVERY WRITE UNDER THE EVENT'S LOCK: the event is read AFTER the lock is
     // taken, so a validation or an acceptance that committed first is what this edit starts from.
-    const { saved, demoted } = await this.withEventLock(eventId, (repo) =>
-      this.applyCalendarEventUpdate(repo, associationId, eventId, dto, callerOpts)
+    const { saved, demoted, afterCommit } = await this.withEventLock(
+      eventId,
+      (repo, manager) =>
+        this.applyCalendarEventUpdate(repo, manager, associationId, eventId, dto, callerOpts),
+      dto.coOwnerIds
     );
+    // The partners' proposals are announced once they are COMMITTED, with the other notices.
+    await afterCommit();
     const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
     this.logger.debug(
@@ -2857,11 +2891,16 @@ ${rejectionReason}`
   /** The checks and writes of `updateCalendarEvent`, run by it inside the event's lock. */
   private async applyCalendarEventUpdate(
     repo: Repository<AssociationCalendarEvent>,
+    manager: EntityManager,
     associationId: string,
     eventId: string,
     dto: UpdateAssociationCalendarEventDto,
     callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
-  ): Promise<{ saved: AssociationCalendarEvent; demoted: boolean }> {
+  ): Promise<{
+    saved: AssociationCalendarEvent;
+    demoted: boolean;
+    afterCommit: CoOrganiserAfterCommit;
+  }> {
     const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     const ev = await this.findCalendarEventForAssociation(
       eventId,
@@ -2983,7 +3022,7 @@ ${rejectionReason}`
         organiserSide: canCrossAsso === true || ev.associationId === associationId,
         viaAssociationId: associationId,
       };
-      await this.coOrganiserPort().check(coOrganiserRequest);
+      await this.coOrganiserPort().check(coOrganiserRequest, manager);
     }
 
     // Only an actual CHANGE of the link is a write (and is checked against the form's owner): a
@@ -2995,7 +3034,7 @@ ${rejectionReason}`
       if (dto.linkedFormId === null || dto.linkedFormId === '') {
         ev.linkedFormId = null;
       } else {
-        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId);
+        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId, manager);
         await this.detachCalendarLinksExcept(
           {
             formId: dto.linkedFormId,
@@ -3009,9 +3048,11 @@ ${rejectionReason}`
 
     // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
     // trying to change anything but its own presence, 403) leaves the event as it was found.
-    if (coOrganiserRequest) await this.coOrganiserPort().sync(coOrganiserRequest);
+    const afterCommit: CoOrganiserAfterCommit = coOrganiserRequest
+      ? await this.coOrganiserPort().sync(coOrganiserRequest, manager)
+      : () => Promise.resolve();
     const saved = await repo.save(ev);
-    return { saved, demoted };
+    return { saved, demoted, afterCommit };
   }
 
   /** Marks a pending calendar event as validated (visible on public agenda and feeds). */

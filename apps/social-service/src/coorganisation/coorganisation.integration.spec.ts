@@ -121,7 +121,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         Submission,
       ],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      extra: { options: `-c search_path=${schema},public`, application_name: schema },
     });
     await ds.initialize();
     // The tables production's `synchronize` built - minus `proposals`, which 073 creates.
@@ -935,6 +935,35 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect((await stored(P)).title).toBe('Edited again');
     });
 
+    /**
+     * Resolves once a statement of THIS suite's pool (never the polling connection) is WAITING on a
+     * lock whose text matches `like`. No sleep: the loop ends on that observable condition, and it
+     * FAILS, explicitly, when `settled` (the concurrent request) completes first - that would mean
+     * it never waited, which is the very thing under test.
+     */
+    async function lockWaiter(like: string, settled: Promise<unknown>): Promise<void> {
+      const done = settled.then(
+        () => 'settled' as const,
+        () => 'settled' as const
+      );
+      for (;;) {
+        const waiting = (await q(
+          `SELECT 1 FROM pg_stat_activity
+            WHERE datname = current_database() AND application_name = $1
+              AND pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE $2`,
+          [schema, like]
+        )) as unknown[];
+        if (waiting.length > 0) return;
+        const next = await Promise.race([
+          done,
+          new Promise<'tick'>((resolve) => setImmediate(() => resolve('tick'))),
+        ]);
+        if (next === 'settled') {
+          throw new Error('the concurrent request completed without waiting on the lock');
+        }
+      }
+    }
+
     it('an edit and a validation of the same event are SERIALISED: the validation waits for the edit and keeps it', async () => {
       const I = E(24);
       await q(
@@ -942,23 +971,13 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
            VALUES ($1, $2, 'Before the edit', '2026-07-10T18:00:00Z', 'org', 'pending')`,
         [I, A1]
       );
-      // The hook sits BETWEEN the edit's checks and its save: it starts the concurrent validation
-      // and returns only once the database reports that statement WAITING on a lock. No sleep:
-      // the loop ends on that observable condition, which is the proof the two cannot interleave.
-      let validating: Promise<unknown> | null = null;
+      // The hook sits BETWEEN the edit's checks and its save and starts the concurrent validation.
+      const hold: { validating?: Promise<unknown> } = {};
       const realCheck = coorg.check.bind(coorg);
-      const check = jest.spyOn(coorg, 'check').mockImplementation(async (request) => {
-        await realCheck(request);
-        validating = associations.validateCalendarEvent(A1, I, 'validator');
-        for (;;) {
-          const waiting = (await q(
-            `SELECT 1 FROM pg_stat_activity
-              WHERE datname = current_database() AND wait_event_type = 'Lock'
-                AND query LIKE '%association_calendar_events%FOR NO KEY UPDATE%'`
-          )) as unknown[];
-          if (waiting.length > 0) return;
-          await new Promise<void>((resolve) => setImmediate(resolve));
-        }
+      const check = jest.spyOn(coorg, 'check').mockImplementation(async (request, manager) => {
+        await realCheck(request, manager);
+        hold.validating = associations.validateCalendarEvent(A1, I, 'validator');
+        await lockWaiter('%FOR NO KEY UPDATE%', hold.validating);
       });
       try {
         await associations.updateCalendarEvent(
@@ -967,10 +986,12 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
           { title: 'After the edit', coOwnerIds: [] },
           { callerUserId: 'org' }
         );
-        await validating;
       } finally {
         check.mockRestore();
+        // On EVERY path: a validation left running would write into the next test's world.
+        await hold.validating?.catch(() => undefined);
       }
+      await hold.validating;
       const [row] = (await q(
         `SELECT title, status, "validatedBy" FROM association_calendar_events WHERE id = $1`,
         [I]
@@ -982,5 +1003,122 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         validatedBy: 'validator',
       });
     }, 30_000);
+
+    it('an edit naming a partner and the DELETE of its organiser cannot hang each other: associations come first', async () => {
+      const O9 = '00000000-0000-4000-8000-0000000a0009';
+      const X = E(25);
+      await q(
+        `INSERT INTO associations (id, name, slug, "createdBy") VALUES ($1, 'Doomed', 'doomed', 'it')`,
+        [O9]
+      );
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Doomed event', '2026-07-12T18:00:00Z', 'org', 'pending')`,
+        [X, O9]
+      );
+      // The delete (AssociationsService.remove): the association FOR UPDATE first, its events after.
+      const deleter = new Client({
+        connectionString: URL,
+        options: `-c search_path=${schema},public`,
+      });
+      await deleter.connect();
+      try {
+        await deleter.query('BEGIN');
+        await deleter.query('SELECT 1 FROM associations WHERE id = $1 FOR UPDATE', [O9]);
+        const editing = associations
+          .updateCalendarEvent(
+            O9,
+            X,
+            { title: 'Late edit', coOwnerIds: [A3] },
+            { callerUserId: 'u' }
+          )
+          .then(
+            () => 'edited' as const,
+            (err: unknown) => err
+          );
+        // The edit waits on the ASSOCIATION, holding nothing: the delete then goes on to the events.
+        await lockWaiter('%FOR KEY SHARE%', editing);
+        await deleter.query('DELETE FROM association_calendar_events WHERE "associationId" = $1', [
+          O9,
+        ]);
+        await deleter.query('DELETE FROM associations WHERE id = $1', [O9]);
+        await deleter.query('COMMIT');
+        // Both complete, the edit typed: it never hangs behind a delete that waits on its event.
+        expect(await editing).toBeInstanceOf(NotFoundException);
+      } finally {
+        await deleter.query('ROLLBACK').catch(() => undefined);
+        await deleter.end();
+      }
+    }, 30_000);
+
+    it('a failing k-th proposal rolls the WHOLE edit back: fields, form detach, ended partner, earlier proposals', async () => {
+      const Y = E(26);
+      const Z = E(27);
+      for (const [id, title] of [
+        [Y, 'Before'],
+        [Z, 'Linked elsewhere'],
+      ]) {
+        await q(
+          `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+             VALUES ($1, $2, $3, '2026-07-14T18:00:00Z', 'org', 'pending')`,
+          [id, A1, title]
+        );
+      }
+      const forms = ds.getRepository(Form);
+      const form = await forms.save(
+        forms.create({ title: 'Rollback form', associationId: A1, ownerId: 'org' } as Partial<Form>)
+      );
+      await q(`UPDATE association_calendar_events SET "linkedFormId" = $2 WHERE id = $1`, [
+        Z,
+        form.id,
+      ]);
+      // Y has an ACCEPTED partner (A3), which the edit below would end.
+      await update(A1, Y, [A3], 'org');
+      const pending = (await proposals.listPending(A3, 'coPub', false)).incoming.find(
+        (x) => x.subjectId === Y
+      );
+      await proposals.accept(pending!.id, 'coPub', false);
+      const proposalsBefore = await proposalRows(Y);
+      const toldBefore = told.length;
+      const linkOf = async (id: string) =>
+        (
+          (await q(`SELECT "linkedFormId" FROM association_calendar_events WHERE id = $1`, [
+            id,
+          ])) as {
+            linkedFormId: string | null;
+          }[]
+        )[0].linkedFormId;
+
+      const real = proposals.proposeWithin.bind(proposals);
+      let calls = 0;
+      const spy = jest
+        .spyOn(proposals, 'proposeWithin')
+        .mockImplementation(async (...args: Parameters<typeof proposals.proposeWithin>) => {
+          calls += 1;
+          if (calls === 2) throw new Error('boom at the second proposal');
+          return real(...args);
+        });
+      try {
+        // Ends A3, proposes A2 (stored, inside the transaction), then A4 fails.
+        await expect(
+          associations.updateCalendarEvent(
+            A1,
+            Y,
+            { title: 'Changed', linkedFormId: form.id, coOwnerIds: [A2, A4] },
+            { callerUserId: 'org' }
+          )
+        ).rejects.toThrow('boom at the second proposal');
+      } finally {
+        spy.mockRestore();
+      }
+      expect(calls).toBe(2);
+      expect((await stored(Y)).title).toBe('Before');
+      expect(await linkOf(Z)).toBe(form.id);
+      expect(await linkOf(Y)).toBeNull();
+      expect(await coOwnersOf(Y)).toEqual([A3]);
+      expect(await proposalRows(Y)).toEqual(proposalsBefore);
+      // Nobody was told about a proposal that was never committed.
+      expect(told.length).toBe(toldBefore);
+    });
   });
 });
