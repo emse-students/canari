@@ -90,11 +90,12 @@ tree() {
 
 crate_json() { printf '{"crate":{"name":"tauri-plugin-websocket","max_version":"%s","max_stable_version":"%s"}}' "$1" "$2"; }
 
-# run <root> <status> <body> [curl-exit] - sets CODE and OUT.
+# run <root> <status> <body> [curl-exit] - sets CODE and OUT. The fixture trees carry ONE fork, so
+# the allowlist is narrowed to it unless the caller sets WATCH (empty = the script's own allowlist).
 run() {
   : >"$FAKE_LOG"
   OUT="$(REPO_ROOT="$1" CURL="$WORK/curl" FAKE_STATUS="$2" FAKE_BODY="$3" FAKE_EXIT="${4:-0}" \
-    bash "$REPORT" 2>&1)"
+    VENDORED_WATCHED="${WATCH-tauri-plugin-websocket}" bash "$REPORT" 2>&1)"
   CODE=$?
 }
 
@@ -146,7 +147,7 @@ JUNK='<html>503 Service Unavailable</html>'
 GOOD="$(crate_json 2.5.0 2.5.0)"
 : >"$FAKE_LOG"
 OUT="$(REPO_ROOT="$OK_TREE" CURL="$WORK/curl" FAKE_STATUS=200 FAKE_BODY="$GOOD" FAKE_PRE="$JUNK" \
-  bash "$REPORT" 2>&1)"
+  VENDORED_WATCHED=tauri-plugin-websocket bash "$REPORT" 2>&1)"
 CODE=$?
 expect 'a 503 retried into a 200 is read as the 200 alone: a pass' 0 'ok:'
 
@@ -195,10 +196,23 @@ case "$(cat "$FAKE_LOG")" in
   *) fail "the request was not what crates.io needs: $(cat "$FAKE_LOG")" ;;
 esac
 
-REAL_VER="$(awk '/^\[/{p=($0=="[package]");next} p&&/^version/{gsub(/^version *= *"|".*$/,"");print;exit}' \
-  "$REAL_ROOT/frontend/src-tauri/patches/tauri-plugin-websocket/Cargo.toml")"
-run "$REAL_ROOT" 200 "$(crate_json "$REAL_VER" "$REAL_VER")"
-expect "THIS repository's pin names its fork ($REAL_VER), so the watch reads the real tree" 0 'ok:'
+for crate in tauri-plugin-websocket wry; do
+  REAL_VER="$(awk '/^\[/{p=($0=="[package]");next} p&&/^version/{gsub(/^version *= *"|".*$/,"");print;exit}' \
+    "$REAL_ROOT/frontend/src-tauri/patches/$crate/Cargo.toml")"
+  WATCH="$crate" run "$REAL_ROOT" 200 "$(crate_json "$REAL_VER" "$REAL_VER")"
+  expect "THIS repository's $crate pin names its fork ($REAL_VER), so the watch reads the real tree" 0 "ok: $crate"
+done
+
+# The script's OWN allowlist against the real tree: every fork on it is asked about. One body cannot
+# match two versions, so only WHO was asked is asserted here; the verdicts are asserted above.
+WATCH='' run "$REAL_ROOT" 200 "$(crate_json 0.0.1 0.0.1)"
+for crate in tauri-plugin-websocket wry; do
+  if grep -q "/$crate\$" "$FAKE_LOG"; then
+    pass "the script's own allowlist watches $crate"
+  else
+    fail "the script's own allowlist does not ask crates.io about $crate: $(cat "$FAKE_LOG")"
+  fi
+done
 
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then

@@ -398,13 +398,16 @@ describe('AssociationsService scoped event governance', () => {
     });
     const notify = (
       service as unknown as {
-        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<void>;
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<string[]>;
       }
     ).notifyEventValidatorsOfProposal.bind(service);
-    await notify('school', 'author', 'Forum');
+    const told = await notify('school', 'author', 'Forum');
     expect(notifications.createNotifications).toHaveBeenCalledWith(
       expect.objectContaining({ recipientIds: ['se1', 'admin1'], type: 'event_proposed' })
     );
+    // The ids returned are the caller's dedupe set (`announceEventReopened`): the admins are in it,
+    // so an admin who is also a party of a reopened event is told once, not twice.
+    expect(told).toEqual(['se1', 'admin1']);
   });
 
   it('warns only when nobody at all could be told', async () => {
@@ -421,32 +424,8 @@ describe('AssociationsService scoped event governance', () => {
     warn.mockRestore();
   });
 
-  it('catches a failed notification and logs it at ERROR with the association, never unhandled', async () => {
-    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const { service, notifications } = makeGovernanceService({ ungoverned: false, admins: [] });
-    notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
-    const unhandled = jest.fn();
-    process.on('unhandledRejection', unhandled);
-    try {
-      (
-        service as unknown as {
-          tellEventValidatorsOfProposal: (a: string, actor: string, t: string) => void;
-        }
-      ).tellEventValidatorsOfProposal('asso-x', 'author', 'Soiree');
-      // Let the fire-and-forget chain settle.
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('asso-x'));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
-      expect(unhandled).not.toHaveBeenCalled();
-    } finally {
-      process.off('unhandledRejection', unhandled);
-      error.mockRestore();
-    }
-  });
-
-  it("never rejects the proposers' notice either: a failure is logged at ERROR with the association", async () => {
-    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  it("never rejects the proposers' notice: a failure is logged at WARN with the association and its stack", async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const { service } = makeGovernanceService({ ungoverned: false, admins: [] });
     Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
       find: jest.fn(() => Promise.reject(new Error('db down'))),
@@ -463,10 +442,12 @@ describe('AssociationsService scoped event governance', () => {
         }
       ).notifyAssocAdminsOfEventAction.bind(service);
       await expect(notify('asso-y', 'author', 'Soiree', 'validated')).resolves.toBeUndefined();
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('asso-y'));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('asso-y'),
+        expect.stringContaining('db down')
+      );
     } finally {
-      error.mockRestore();
+      warn.mockRestore();
     }
   });
 });

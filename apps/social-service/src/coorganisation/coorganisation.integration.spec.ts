@@ -30,7 +30,10 @@ import { AssociationCalendarEvent } from '../associations/entities/association-c
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
 import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
-import type { PostNotificationsService } from '../posts/post-notifications.service';
+import {
+  NotificationPushFailedError,
+  type PostNotificationsService,
+} from '../posts/post-notifications.service';
 import { Proposal } from '../proposals/proposal.entity';
 import { ProposalsService } from '../proposals/proposals.service';
 import { type ErasureDb, eraseSocialRows } from '../internal/account-erasure';
@@ -69,9 +72,45 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
   let associations: AssociationsService;
   let proposals: ProposalsService;
   let coorg: CoorganisationService;
-  const told: { type: string; postId: string; recipientIds: string[]; text?: string }[] = [];
+  const told: {
+    type: string;
+    postId: string;
+    recipientIds: string[];
+    text?: string;
+    meta?: Record<string, unknown>;
+  }[] = [];
 
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+
+  /**
+   * Resolves once ANY statement of THIS suite's pool (matched by its `application_name`, never by
+   * its text, and never the polling connection) is WAITING on a lock. No sleep: the loop ends on
+   * that observable condition, and it
+   * FAILS, explicitly, when `settled` (the concurrent request) completes first - that would mean
+   * it never waited, which is the very thing under test.
+   */
+  async function lockWaiter(settled: Promise<unknown>): Promise<void> {
+    const done = settled.then(
+      () => 'settled' as const,
+      () => 'settled' as const
+    );
+    for (;;) {
+      const waiting = (await q(
+        `SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database() AND application_name = $1
+            AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
+        [schema]
+      )) as unknown[];
+      if (waiting.length > 0) return;
+      const next = await Promise.race([
+        done,
+        new Promise<'tick'>((resolve) => setImmediate(() => resolve('tick'))),
+      ]);
+      if (next === 'settled') {
+        throw new Error('the concurrent request completed without waiting on the lock');
+      }
+    }
+  }
 
   /** The agenda a signed-in reader is served, as event ids. */
   async function agendaOf(userId: string): Promise<string[]> {
@@ -212,6 +251,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         actorId: string;
         recipientIds: string[];
         text?: string;
+        meta?: Record<string, unknown>;
       }) => {
         const recipientIds = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
         told.push({ ...data, recipientIds: recipientIds.sort() });
@@ -329,6 +369,17 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await proposals.accept(pending.id, 'coPub', false);
       expect(await coOwnersOf(E(1))).toEqual([A3]);
       expect(await associations.findCalendarEventForAssociation(E(1), A3, false)).not.toBeNull();
+      // WP-Q2: the acceptance returned the VALIDATED event to the queue (it is off every agenda
+      // until re-validated); the reach below is the union once a validator has said yes again.
+      expect(
+        (await q(`SELECT status FROM association_calendar_events WHERE id = $1`, [E(1)]))[0]
+      ).toEqual({
+        status: 'pending',
+      });
+      await q(
+        `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+        [E(1)]
+      );
       expect(await agendaOf('gaReader')).toEqual([E(1)]);
       // The organiser's audience keeps it: the union, not a move.
       expect(await agendaOf('seReader')).toContain(E(1));
@@ -499,9 +550,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         await nextWaiterOn([holder, decider], [decider]);
         // The delete waits holding NOTHING: locking the association last, it had already deleted
         // the event (and, through 074's trigger, reached for the proposal) - the half of the cycle
-        // the decision closed by waiting on the association.
+        // the decision closed by waiting on the association. The decision itself now holds the event
+        // row (`FOR NO KEY UPDATE`, associations -> event -> proposal), so the probe is a KEY SHARE,
+        // which that lock allows and a delete's lock on the event would refuse.
         eventFree = await q(
-          `SELECT 1 FROM association_calendar_events WHERE id = $1 FOR UPDATE NOWAIT`,
+          `SELECT 1 FROM association_calendar_events WHERE id = $1 FOR KEY SHARE NOWAIT`,
           [E(10)]
         ).then(
           () => true,
@@ -665,6 +718,15 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
           (x) => x.subjectId === id
         );
         await proposals.accept(pending!.id, 'coPub', false);
+        // WP-Q2: the acceptance of a validated event returns it to pending. These cases are about the
+        // partner's rights over a VALIDATED event (a title edit must not reopen it), so a validator's
+        // decision is put back here, by SQL, after the acceptance.
+        if (status === 'validated') {
+          await q(
+            `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+            [id]
+          );
+        }
       }
     });
 
@@ -935,35 +997,6 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect((await stored(P)).title).toBe('Edited again');
     });
 
-    /**
-     * Resolves once a statement of THIS suite's pool (never the polling connection) is WAITING on a
-     * lock whose text matches `like`. No sleep: the loop ends on that observable condition, and it
-     * FAILS, explicitly, when `settled` (the concurrent request) completes first - that would mean
-     * it never waited, which is the very thing under test.
-     */
-    async function lockWaiter(like: string, settled: Promise<unknown>): Promise<void> {
-      const done = settled.then(
-        () => 'settled' as const,
-        () => 'settled' as const
-      );
-      for (;;) {
-        const waiting = (await q(
-          `SELECT 1 FROM pg_stat_activity
-            WHERE datname = current_database() AND application_name = $1
-              AND pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE $2`,
-          [schema, like]
-        )) as unknown[];
-        if (waiting.length > 0) return;
-        const next = await Promise.race([
-          done,
-          new Promise<'tick'>((resolve) => setImmediate(() => resolve('tick'))),
-        ]);
-        if (next === 'settled') {
-          throw new Error('the concurrent request completed without waiting on the lock');
-        }
-      }
-    }
-
     it('an edit and a validation of the same event are SERIALISED: the validation waits for the edit and keeps it', async () => {
       const I = E(24);
       await q(
@@ -977,7 +1010,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       const check = jest.spyOn(coorg, 'check').mockImplementation(async (request, manager) => {
         await realCheck(request, manager);
         hold.validating = associations.validateCalendarEvent(A1, I, 'validator');
-        await lockWaiter('%FOR NO KEY UPDATE%', hold.validating);
+        await lockWaiter(hold.validating);
       });
       try {
         await associations.updateCalendarEvent(
@@ -1024,6 +1057,10 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await deleter.connect();
       try {
         await deleter.query('BEGIN');
+        // A BOUND FOR THE FAILURE PATH ONLY: if a lock-order regression made the edit hold something
+        // the delete needs, the delete fails here with SQLSTATE 55P03 instead of hanging the suite.
+        // In the correct order nothing waits on the deleter and the bound is never reached.
+        await deleter.query("SET LOCAL lock_timeout = '10s'");
         await deleter.query('SELECT 1 FROM associations WHERE id = $1 FOR UPDATE', [O9]);
         const editing = associations
           .updateCalendarEvent(
@@ -1037,7 +1074,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
             (err: unknown) => err
           );
         // The edit waits on the ASSOCIATION, holding nothing: the delete then goes on to the events.
-        await lockWaiter('%FOR KEY SHARE%', editing);
+        await lockWaiter(editing);
         await deleter.query('DELETE FROM association_calendar_events WHERE "associationId" = $1', [
           O9,
         ]);
@@ -1119,6 +1156,513 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await proposalRows(Y)).toEqual(proposalsBefore);
       // Nobody was told about a proposal that was never committed.
       expect(told.length).toBe(toldBefore);
+    });
+  });
+
+  describe('an acceptance on a validated event returns it to pending (WP-Q2, P13 interim, F7)', () => {
+    const V = E(30); // validated: the acceptance reopens it
+    const PEND = E(31); // already pending: nothing to reopen, nothing to announce
+    const REJ = E(32); // rejected: stays rejected
+    const MOVED = E(33); // validated, partner accepted, then the DATE moves
+
+    const stamp = async (id: string) =>
+      (
+        (await q(
+          `SELECT status, "validatedAt", "validatedBy" FROM association_calendar_events WHERE id = $1`,
+          [id]
+        )) as { status: string; validatedAt: Date | null; validatedBy: string | null }[]
+      )[0];
+
+    /** What the ORGANISER and the PARTNERS were told, as "type, recipients, title". */
+    const reopenNotices = () =>
+      told
+        .filter(
+          (t) =>
+            (t.type === 'event_pending_coorganiser' || t.type === 'event_pending') &&
+            t.meta?.audience !== 'validators'
+        )
+        .map((t) => [t.type, t.recipientIds, t.text] as const);
+
+    /** The validators' notice of an ACCEPTANCE (the acceptor is not shown as a proposer). */
+    const validatorNotices = () => told.filter((t) => t.meta?.audience === 'validators');
+
+    async function ask(id: string): Promise<string> {
+      await update(A1, id, [A3], 'org');
+      const pending = (await proposals.listPending(A3, 'coPub', false)).incoming.find(
+        (x) => x.subjectId === id
+      );
+      return pending!.id;
+    }
+
+    beforeAll(async () => {
+      for (const [id, status] of [
+        [V, 'validated'],
+        [PEND, 'pending'],
+        [REJ, 'rejected'],
+        [MOVED, 'pending'],
+      ]) {
+        await q(
+          `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+             VALUES ($1, $2, $3, '2026-08-01T18:00:00Z', 'org', $4)`,
+          [id, A1, `Reopen ${id.slice(-2)}`, status]
+        );
+        if (status === 'validated') {
+          await q(
+            `UPDATE association_calendar_events SET "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+            [id]
+          );
+        }
+      }
+    });
+
+    it('accepting on a VALIDATED event: pending, stamps cleared, the partner row in one go, and everyone concerned told ONCE', async () => {
+      const proposalId = await ask(V);
+      expect((await stamp(V)).status).toBe('validated');
+      told.length = 0;
+      await proposals.accept(proposalId, 'coPub', false);
+      expect(await coOwnersOf(V)).toEqual([A3]);
+      expect(await stamp(V)).toEqual({ status: 'pending', validatedAt: null, validatedBy: null });
+      // The organiser and the partners WITH THE REASON; the acceptor (coPub) is dropped, the
+      // organiser's proposer and the partner's other editor stay.
+      expect(reopenNotices()).toEqual([
+        ['event_pending_coorganiser', ['coEd', 'org'], 'Reopen 30'],
+      ]);
+      // The validators are told it is an ACCEPTANCE awaiting a new validation, never a proposal
+      // (the acceptor would be shown as proposing).
+      expect(told.filter((t) => t.type === 'event_proposed')).toEqual([]);
+      expect(validatorNotices()).toHaveLength(1);
+      expect(validatorNotices()[0]).toMatchObject({
+        type: 'event_pending_coorganiser',
+        postId: A1,
+        text: 'Reopen 30',
+        meta: { reason: 'coorganiser_joined', audience: 'validators' },
+        // The push deep link reads this action: 'proposed' is the validation queue.
+        pushData: { action: 'proposed' },
+      });
+      // The proposal is decided once: there is nothing left to accept, so nothing can fire twice.
+      const [again] = (await proposals.listPending(A3, 'coPub', false)).incoming.filter(
+        (x) => x.subjectId === V
+      );
+      expect(again).toBeUndefined();
+      await expect(proposals.accept(proposalId, 'coPub', false)).rejects.toBeDefined();
+      expect(reopenNotices()).toHaveLength(1);
+    });
+
+    it('an event already PENDING is not touched and announces nothing', async () => {
+      const proposalId = await ask(PEND);
+      told.length = 0;
+      await proposals.accept(proposalId, 'coPub', false);
+      expect(await coOwnersOf(PEND)).toEqual([A3]);
+      expect((await stamp(PEND)).status).toBe('pending');
+      expect(told.filter((t) => t.type.startsWith('event_'))).toEqual([]);
+    });
+
+    it('a REJECTED event stays rejected', async () => {
+      const proposalId = await ask(REJ);
+      told.length = 0;
+      await proposals.accept(proposalId, 'coPub', false);
+      expect((await stamp(REJ)).status).toBe('rejected');
+      expect(told.filter((t) => t.type.startsWith('event_'))).toEqual([]);
+    });
+
+    it('the date-move path announces by the same rule: partners told with its reason, validators as for a proposal', async () => {
+      const proposalId = await ask(MOVED);
+      await proposals.accept(proposalId, 'coPub', false);
+      await q(
+        `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+        [MOVED]
+      );
+      told.length = 0;
+      const spy = jest.spyOn(associations, 'announceEventReopened');
+      await associations.updateCalendarEvent(
+        A1,
+        MOVED,
+        { startsAt: '2026-08-02T18:00:00.000Z' },
+        { callerUserId: 'org' }
+      );
+      // The announcement is fire-and-forget (void): await the very promise it returned.
+      await Promise.all(spy.mock.results.map((r) => r.value));
+      expect(reopenNotices()).toEqual([['event_pending', ['coEd', 'coPub'], 'Reopen 33']]);
+      expect(told.filter((t) => t.type === 'event_proposed')).toHaveLength(1);
+      expect((await stamp(MOVED)).status).toBe('pending');
+    });
+
+    it("somebody who is a validator AND a party gets ONE notice, the validator's", async () => {
+      const DUP = E(34);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen dup', '2026-08-03T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [DUP, A1]
+      );
+      // 'org' (the organiser's editor) also validates: VALIDATE_EVENTS in the BDE of the space A1 reaches.
+      await q(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ICM' AND campus = 'saint-etienne'`,
+        [A4]
+      );
+      await q(
+        `INSERT INTO association_members ("associationId", "userId", role, permissions) VALUES ($1, 'org', 'admin', $2)`,
+        [A4, AssociationPermissionFlag.VALIDATE_EVENTS]
+      );
+      try {
+        const proposalId = await ask(DUP);
+        told.length = 0;
+        await proposals.accept(proposalId, 'coPub', false);
+        expect(validatorNotices().map((t) => t.recipientIds)).toEqual([['org']]);
+        // The parties' notice no longer lists 'org': only the partner's other editor remains.
+        expect(reopenNotices()).toEqual([['event_pending_coorganiser', ['coEd'], 'Reopen dup']]);
+      } finally {
+        await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'org'`, [
+          A4,
+        ]);
+        await q(`UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1`, [A4]);
+      }
+    });
+
+    it("a validator who is also a party is NOT told twice when only the validators' PUSH fails", async () => {
+      const PUSHF = E(41);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen push', '2026-08-07T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [PUSHF, A1]
+      );
+      await q(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ICM' AND campus = 'saint-etienne'`,
+        [A4]
+      );
+      await q(
+        `INSERT INTO association_members ("associationId", "userId", role, permissions) VALUES ($1, 'org', 'admin', $2)`,
+        [A4, AssociationPermissionFlag.VALIDATE_EVENTS]
+      );
+      const internals = associations as unknown as { notifications: PostNotificationsService };
+      const real = internals.notifications.createNotifications.bind(internals.notifications);
+      // The rows are saved (recorded) and only the push fails: the typed error carries who has the row.
+      const failing = jest
+        .spyOn(internals.notifications, 'createNotifications')
+        .mockImplementation(async (data) => {
+          const saved = await real(data);
+          // Only the validators' notice of an acceptance fails; every other notice goes through.
+          if (data.type !== 'event_pending_coorganiser' || data.meta?.audience !== 'validators') {
+            return saved;
+          }
+          throw new NotificationPushFailedError(
+            [...new Set(data.recipientIds)].filter((id) => id !== data.actorId),
+            new Error('mute lookup down')
+          );
+        });
+      const internalsLog = associations as unknown as {
+        logger: { warn: (...a: unknown[]) => void };
+      };
+      const warn = jest.spyOn(internalsLog.logger, 'warn').mockImplementation(() => undefined);
+      try {
+        const proposalId = await ask(PUSHF);
+        told.length = 0;
+        await expect(proposals.accept(proposalId, 'coPub', false)).resolves.toMatchObject({
+          status: 'accepted',
+        });
+        expect(validatorNotices().map((t) => t.recipientIds)).toEqual([['org']]);
+        expect(reopenNotices()).toEqual([['event_pending_coorganiser', ['coEd'], 'Reopen push']]);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('their push failed'),
+          expect.stringContaining('mute lookup down')
+        );
+      } finally {
+        failing.mockRestore();
+        warn.mockRestore();
+        await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'org'`, [
+          A4,
+        ]);
+        await q(`UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1`, [A4]);
+      }
+    });
+
+    it('an event re-validated between the commit and the notice is NOT announced as waiting', async () => {
+      const RE = E(35);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Reopen again', '2026-08-04T18:00:00Z', 'org', 'pending')`,
+        [RE, A1]
+      );
+      told.length = 0;
+      // The state the announcement finds: a validator said yes again already.
+      await q(
+        `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+        [RE]
+      );
+      await associations.announceEventReopened(
+        { id: RE, associationId: A1, title: 'Reopen again' },
+        'coorganiser_joined',
+        'coPub'
+      );
+      expect(told).toEqual([]);
+    });
+
+    it('an announcement NEVER rejects: a failing status re-read is logged at WARN and nothing is sent', async () => {
+      const repo = ds.getRepository(AssociationCalendarEvent);
+      const read = jest.spyOn(repo, 'findOne').mockRejectedValueOnce(new Error('db gone'));
+      const internals = associations as unknown as { logger: { warn: (...a: unknown[]) => void } };
+      const warn = jest.spyOn(internals.logger, 'warn').mockImplementation(() => undefined);
+      told.length = 0;
+      try {
+        await expect(
+          associations.announceEventReopened(
+            { id: E(35), associationId: A1, title: 'x' },
+            'date_moved',
+            'coPub'
+          )
+        ).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('could not be re-read'),
+          expect.stringContaining('db gone')
+        );
+      } finally {
+        read.mockRestore();
+        warn.mockRestore();
+      }
+      expect(told).toEqual([]);
+    });
+
+    it('a failing notification is LOGGED and the committed acceptance stays', async () => {
+      const FAIL = E(36);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen fail', '2026-08-05T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [FAIL, A1]
+      );
+      const proposalId = await ask(FAIL);
+      const internals = associations as unknown as {
+        notifyEventReopenedParties: (...a: unknown[]) => Promise<void>;
+        logger: { warn: (...a: unknown[]) => void };
+      };
+      const broken = jest
+        .spyOn(internals, 'notifyEventReopenedParties')
+        .mockRejectedValueOnce(new Error('push provider down'));
+      const warn = jest.spyOn(internals.logger, 'warn').mockImplementation(() => undefined);
+      try {
+        await expect(proposals.accept(proposalId, 'coPub', false)).resolves.toMatchObject({
+          status: 'accepted',
+        });
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('the parties were not told'),
+          expect.stringContaining('push provider down')
+        );
+      } finally {
+        broken.mockRestore();
+        warn.mockRestore();
+      }
+      expect(await coOwnersOf(FAIL)).toEqual([A3]);
+      expect((await stamp(FAIL)).status).toBe('pending');
+    });
+
+    it('two acceptances at once: ONE demotion and ONE announcement', async () => {
+      const TWO = E(37);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen two', '2026-08-06T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [TWO, A1]
+      );
+      await update(A1, TWO, [A3, A4], 'org');
+      const idOf = async (via: string) =>
+        (await proposals.listPending(via, 'coPub', false)).incoming.find(
+          (x) => x.subjectId === TWO
+        )!.id;
+      const [forA3, forA4] = [await idOf(A3), await idOf(A4)];
+      told.length = 0;
+      await Promise.all([
+        proposals.accept(forA3, 'coPub', false),
+        proposals.accept(forA4, 'coPub', false),
+      ]);
+      expect(await coOwnersOf(TWO)).toEqual([A3, A4].sort());
+      expect(await stamp(TWO)).toEqual({ status: 'pending', validatedAt: null, validatedBy: null });
+      // The second acceptance finds the event already pending (the event row is locked in turn).
+      expect(reopenNotices()).toHaveLength(1);
+      expect(validatorNotices()).toHaveLength(1);
+    }, 30_000);
+
+    it('an acceptance interleaved with an organiser edit ends PENDING, with the validation stamps cleared', async () => {
+      const RACE = E(38);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen race', '2026-08-07T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [RACE, A1]
+      );
+      const proposalId = await ask(RACE);
+      // The hook sits between the edit's checks and its save: it starts the acceptance, which must
+      // WAIT on the event row (associations, then the event, then the proposal) until the edit commits.
+      const hold: { accepting?: Promise<unknown> } = {};
+      const realCheck = coorg.check.bind(coorg);
+      const check = jest.spyOn(coorg, 'check').mockImplementation(async (request, manager) => {
+        await realCheck(request, manager);
+        hold.accepting = proposals.accept(proposalId, 'coPub', false);
+        await lockWaiter(hold.accepting);
+      });
+      try {
+        await associations.updateCalendarEvent(
+          A1,
+          RACE,
+          { title: 'Edited by the organiser', coOwnerIds: [A3] },
+          { callerUserId: 'org' }
+        );
+      } finally {
+        check.mockRestore();
+        await hold.accepting?.catch(() => undefined);
+      }
+      await hold.accepting;
+      const [row] = (await q(`SELECT title FROM association_calendar_events WHERE id = $1`, [
+        RACE,
+      ])) as {
+        title: string;
+      }[];
+      // Both writes survive: the edit's title and the acceptance's return to the queue - the edit
+      // never wrote its (stale) validated status back over the acceptance.
+      expect(row.title).toBe('Edited by the organiser');
+      expect(await stamp(RACE)).toEqual({
+        status: 'pending',
+        validatedAt: null,
+        validatedBy: null,
+      });
+      expect(await coOwnersOf(RACE)).toEqual([A3]);
+    }, 30_000);
+
+    it('the OPPOSITE order: an acceptance commits first, and the edit that waited re-reads the pending row', async () => {
+      const OPP = E(39);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen opposite', '2026-08-08T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [OPP, A1]
+      );
+      const proposalId = await ask(OPP);
+      // The hook sits INSIDE the acceptance's transaction, after the demotion and before its commit:
+      // it starts an edit, which must WAIT for the event lock and then start from the pending row.
+      const hold: { editing?: Promise<unknown> } = {};
+      const realApply = coorg.apply.bind(coorg);
+      const apply = jest
+        .spyOn(coorg, 'apply')
+        .mockImplementation(async (manager, proposal, actor) => {
+          const after = await realApply(manager, proposal, actor);
+          hold.editing = associations.updateCalendarEvent(
+            A1,
+            OPP,
+            { title: 'Edited after the acceptance', coOwnerIds: [A3] },
+            { callerUserId: 'org' }
+          );
+          await lockWaiter(hold.editing);
+          return after;
+        });
+      try {
+        await proposals.accept(proposalId, 'coPub', false);
+      } finally {
+        apply.mockRestore();
+        await hold.editing?.catch(() => undefined);
+      }
+      await hold.editing;
+      const [row] = (await q(`SELECT title FROM association_calendar_events WHERE id = $1`, [
+        OPP,
+      ])) as {
+        title: string;
+      }[];
+      // The edit saw the demoted row: it neither wrote 'validated' back nor lost its own title.
+      expect(row.title).toBe('Edited after the acceptance');
+      expect(await stamp(OPP)).toEqual({ status: 'pending', validatedAt: null, validatedBy: null });
+      expect(await coOwnersOf(OPP)).toEqual([A3]);
+    }, 30_000);
+  });
+
+  describe('event creation is ONE transaction (the partner proposals included)', () => {
+    const TITLE = 'Created atomically';
+    const eventsTitled = async () =>
+      (await q(`SELECT id FROM association_calendar_events WHERE title = $1`, [TITLE])) as {
+        id: string;
+      }[];
+    const coorganiseRows = async () =>
+      (await q(`SELECT 1 FROM proposals WHERE kind = 'coorganise'`)) as unknown[];
+
+    it('a failing k-th proposal leaves NO event, no proposal, no detach and no notice; the retry creates it once', async () => {
+      const forms = ds.getRepository(Form);
+      const form = await forms.save(
+        forms.create({ title: 'Creation form', associationId: A1, ownerId: 'org' } as Partial<Form>)
+      );
+      const LINKED = E(40);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "linkedFormId")
+           VALUES ($1, $2, 'Linked before creation', '2026-09-02T18:00:00Z', 'org', 'pending', $3)`,
+        [LINKED, A1, form.id]
+      );
+      const dto = {
+        title: TITLE,
+        startsAt: '2026-09-03T18:00:00.000Z',
+        linkedFormId: form.id,
+        coOwnerIds: [A3, A4],
+      };
+      const proposalsBefore = (await coorganiseRows()).length;
+      const toldBefore = told.length;
+
+      const real = proposals.proposeWithin.bind(proposals);
+      let calls = 0;
+      const spy = jest
+        .spyOn(proposals, 'proposeWithin')
+        .mockImplementation(async (...args: Parameters<typeof proposals.proposeWithin>) => {
+          calls += 1;
+          if (calls === 2) throw new Error('boom at the second proposal');
+          return real(...args);
+        });
+      try {
+        await expect(associations.createCalendarEvent(A1, dto, 'org')).rejects.toThrow(
+          'boom at the second proposal'
+        );
+      } finally {
+        spy.mockRestore();
+      }
+      expect(calls).toBe(2);
+      expect(await eventsTitled()).toEqual([]);
+      expect((await coorganiseRows()).length).toBe(proposalsBefore);
+      const link = (await q(
+        `SELECT "linkedFormId" FROM association_calendar_events WHERE id = $1`,
+        [LINKED]
+      )) as { linkedFormId: string | null }[];
+      expect(link[0].linkedFormId).toBe(form.id);
+      expect(told.length).toBe(toldBefore);
+
+      // The caller's retry: exactly one event, both proposals, the partners told once committed.
+      // The creation tells the validators fire-and-forget (void): AWAIT the very promise it started,
+      // so the notice cannot outlive this test and reach a closed pool.
+      const notice = jest.spyOn(
+        associations as unknown as { notifyEventValidatorsOfProposal: () => Promise<string[]> },
+        'notifyEventValidatorsOfProposal'
+      );
+      try {
+        await associations.createCalendarEvent(A1, dto, 'org');
+        await Promise.all(notice.mock.results.map((r) => r.value));
+      } finally {
+        notice.mockRestore();
+      }
+      const created = await eventsTitled();
+      expect(created).toHaveLength(1);
+      expect((await coorganiseRows()).length).toBe(proposalsBefore + 2);
+      expect(told.filter((t) => t.type === 'coorganise_proposed')).toHaveLength(2);
+    });
+
+    it('the validators notice NEVER rejects: a failing read is logged at WARN with its stack and nobody is told', async () => {
+      const members = ds.getRepository(AssociationMember);
+      const read = jest
+        .spyOn(members, 'query')
+        .mockRejectedValueOnce(new Error('connection terminated'));
+      const internals = associations as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, b: string, c: string) => Promise<string[]>;
+        logger: { warn: (...a: unknown[]) => void };
+      };
+      const warn = jest.spyOn(internals.logger, 'warn').mockImplementation(() => undefined);
+      try {
+        await expect(internals.notifyEventValidatorsOfProposal(A1, 'org', 'x')).resolves.toEqual(
+          []
+        );
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('were not told'),
+          expect.stringContaining('connection terminated')
+        );
+      } finally {
+        read.mockRestore();
+        warn.mockRestore();
+      }
     });
   });
 });

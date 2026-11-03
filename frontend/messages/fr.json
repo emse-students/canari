@@ -3251,6 +3251,8 @@
   "notif_event_updated_text": "a modifié votre événement",
   "notif_event_deleted_text": "a supprimé votre événement",
   "notif_event_pending_text": "a changé les dates de votre événement, qui attend une nouvelle validation :",
+  "notif_event_pending_coorganiser_text": "a accepté de co-organiser votre événement, qui attend une nouvelle validation :",
+  "notif_event_pending_coorganiser_validators_text": "a accepté de co-organiser un événement, à valider de nouveau :",
   "notif_lydia_payments_active_text": "Les paiements Lydia de {name} sont actifs",
   "notif_lydia_payments_paused_text": "Les paiements Lydia de {name} sont suspendus : Lydia a refusé une demande de paiement",
   "notif_lydia_cashier_added_text": "Vous êtes désormais caissier de {name} sur Lydia Pro",

@@ -1346,14 +1346,68 @@ Saint-Etienne event).
   (`ProposalsService.proposeWithin`, which hands back its announcement) and the event save are ONE
   transaction on ONE pooled connection: they commit or none does (a failing k-th proposal leaves no
   field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
-  The announcements and the other notices run after the commit. An event CREATION calls
-  `sync(request)` without a manager and gets its own transaction.
-- **A co-organisation ACCEPTANCE is not under this lock.** It is a proposals transaction; WP-Q2's
-  acceptance, which returns a validated event to pending, must take `associations -> event row ->
-  proposal` in that order to be serialised with an edit.
+  The announcements and the other notices run after the commit. An event CREATION is the same
+  unit (`createCalendarEvent`): associations `KEY SHARE` first, then the form ownership read, the
+  detach, the event insert and `sync(request, manager)` in ONE transaction, so a failing k-th proposal
+  leaves no event behind (it used to leave an event with no proposals and a 500, which the retry
+  duplicated). The manager-less `sync(request)` branch was deleted: creation was its only caller, and it now passes its manager.
+  The delete-versus-edit integration case bounds its deleter with `lock_timeout` (failure path only: a
+  lock-order regression fails with SQLSTATE 55P03 instead of hanging the suite) and its waiter matches
+  any lock wait under the suite's `application_name`, not statement text.
+- **A co-organisation ACCEPTANCE takes the same lock** (WP-Q2): `CoorganisationService.lockSubject`
+  locks the event row in `lockInOrder`, so it runs `associations -> event row -> proposal` and is serialised
+  with an edit, a validation and a rejection.
 - **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
   delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock, failing explicitly if it settles first), the organiser-delete versus partner-edit ordering (a held association lock, never a hang) and the rollback of a failing k-th proposal;
   `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
+
+#### WP-Q2: an acceptance on a validated event reopens it (2026-11-03)
+
+P13 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): an acceptance adds the partner's
+audience to a validated event with nobody validating the new part. Interim rule, before WP-E:
+
+- **The demotion.** `CoorganisationService.apply` - inside the acceptance's own transaction, so the
+  partner row and the demotion commit together or not at all - sets a VALIDATED event back to
+  `pending` (`status`, `validatedAt` and `validatedBy` cleared) and logs it (`[COORG] ... back to
+  pending`). It fires once: the `WHERE status = 'validated'` guard leaves a pending or rejected event
+  alone (nothing announced), and an acceptance that inserted no row (conflict) does nothing.
+- **The announcement (F7), after commit**, through ONE method every return to the queue now shares,
+  `AssociationsService.announceEventReopened(event, reason, actorId)` (reason typed in
+  `associations/event-reopen.ts`: `date_moved` | `coorganiser_joined`):
+  - the validators concerned (`notifyEventValidatorsOfProposal`): as for a proposal on a date move; for
+    an ACCEPTANCE they get the same type as the parties (`event_pending_coorganiser`) with
+    `meta.audience = 'validators'`, so the bell reads "a accepté de co-organiser un événement, à valider
+    de nouveau" and never shows the acceptor as proposing. They are told FIRST, and the parties' list
+    excludes them: somebody who is both gets ONE notice, the actionable one;
+  - the organiser's and every accepted partner's `PROPOSE_EVENT` holders, WITH THE REASON
+    (`notifyEventReopenedParties`): the notification type is the reason (`event_pending` for a moved
+    date, new `event_pending_coorganiser` for a joined partner), `meta.reason` repeats it. The actor
+    is never told their own act. The row says "a accepté de co-organiser votre événement, qui attend une
+    nouvelle validation". The announcement RE-READS `status = 'pending'` first and logs and skips when
+    a validator said yes in the meantime;
+- **The date-move path** (`updateCalendarEvent`, the only other place an event returns to pending
+  today) calls the same method. It used to tell the validators and the organiser's proposers only;
+  the partners are now told too, and `notifyAssocAdminsOfEventAction` lost its `'pending'` action.
+- **Lock order.** The acceptance is serialised with an event edit, a validation and a rejection:
+  `CoorganisationService.lockSubject` takes the event row `FOR NO KEY UPDATE` in `lockInOrder`, so every
+  decision is associations (`KEY SHARE`) -> event row -> proposal, the order of `withEventLock`. The
+  demotion is an explicit `UPDATE` of the three status columns; an edit that waited for the lock
+  reads the demoted row, so no stale `validated` is ever written back.
+- **Native tables.** `event_pending_coorganiser` is a seventh social content key: strings in the
+  Android `values` / `values-en`, the iOS app and NSE `Localizable.strings` (fr, en), the Android
+  service, the NSE and `canari_push.mm`, and `push-category.ts` (`events`). Compiled by nobody here:
+  native verification is owed ([device-verification](device-verification.md)).
+- **Superseded by WP-E.** The whole-event demotion is deliberately blunt. WP-E (events per slice,
+  section 4 of the proposal) replaces it with a per-slice reopening: an acceptance re-opens only the
+  new governors' slices, and the typed reason stays as the cause carried from the write.
+- **Proof.** `coorganisation.integration.spec.ts`: a validated event goes pending with stamps cleared
+  and the row in; the organiser and partners are told once with the reason and the validators once;
+  a second acceptance cannot fire again; a pending and a rejected event are untouched and silent; the
+  date-move path announces by the same rule; one person who is validator and party gets one notice; a
+  re-validated event is not announced; a failing notification is logged and the commit stays; two
+  acceptances at once give one demotion and one announcement; an acceptance interleaved with an
+  organiser edit ends pending with the stamps cleared. Existing reach assertions now re-validate the event
+  after the acceptance, since it leaves the agenda until a validator says yes again.
 
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)
 

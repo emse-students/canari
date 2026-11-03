@@ -341,6 +341,47 @@ Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
 
+## WMP. The wry main pipe after an activity destroy - owed on Android
+
+**Proves** the vendored wry fork ([mobile](frontend/mobile.md#wry-main-pipe-patch)) on a device: a
+message for a destroyed activity no longer aborts the process (Play crash `e3697bc4...`).
+Compiling it proved nothing about that. Mi 9T, a build carrying the fork, logcat filtered to the
+three lines that decide it: `adb logcat | grep -E "WRY_MAIN_PIPE|SIGABRT|ANR in"`.
+
+**The ANR (`f51255a5...`) is NOT what this row proves.** It is fixed by construction - an unbounded
+channel's `send` cannot block, and the wake write is non-blocking - and no bench sequence fills an
+eight-slot channel on demand, so a quiet bench would prove nothing about it. Its proof is the field
+reading below.
+
+1. `adb shell settings put global always_finish_activities 1` ("Don't keep activities": leaving the
+   app now destroys its activity while the process lives, `isChangingConfigurations` false - the
+   path that removes the activity's proxy).
+2. Open the app, sign in, open a conversation, press Home. **Expect** the process still alive
+   (`adb shell pidof fr.emse.canari`).
+3. From a second device, send three messages to that conversation, and wait one minute. **Expect**
+   `[WRY_MAIN_PIPE] no WebView for activity N: it was destroyed, so its queued messages are dropped`,
+   exactly ONCE for that activity id. **That line is the proof the trigger was reached** - a message
+   did arrive for a destroyed activity, which on `v1.6.2` was the abort. Without it the row proves
+   nothing and says so; the chat socket lives in Rust (`tauri-plugin-websocket`) and is the expected
+   sender. **And expect** no `SIGABRT` line and the process still alive.
+4. Reopen the app from the launcher. **Expect** the conversation to load normally, no `ANR in
+   fr.emse.canari`, and no other `[WRY_MAIN_PIPE]` line - `failed`, `left a Java exception
+   pending`, `stopped waiting` each name a defect, with the Java stack just above for an
+   exception; so do `the wake pipe reached end of file` and `the wake pipe read failed`, each followed
+   by a SIGABRT (the deliberate abort of a dead wake pipe, owner decision 2026-11-03).
+5. Repeat 2-4 five times (each destroyed activity logs its own one line), then
+   `adb shell settings put global always_finish_activities 0`.
+
+**And in the field - the ANR's only proof, and the crash's second**: once a release carrying the fork
+has served a fortnight, run `bun tools/play-vitals/vitals.mjs`; neither `f51255a5...` nor
+`e3697bc4...` may show a report at or above that release's versionCode. Then add both to
+`tools/play-vitals/known-issues.json` (the merge commit, and that versionCode as
+`fixedInVersionCode`), so any later report reads as a REGRESSION.
+
+Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both being a SIGABRT from the
+looper callback, so read the frames below `cb_handler`: an `onFirstActivityCreateWry` closure means
+a dead pipe (the owner-decided abort); `get_webview` or `handle_message` means a real regression.
+
 ## The VoIP ring announces a video call as video - owed
 
 **Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).

@@ -181,28 +181,13 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    *   `withdrawn` so the pair may be asked again later.
    * A caller writing through a CO-ORGANISER association may only remove that association itself
    * (leave); anything else is a 403 BEFORE any write.
+   *
+   * It runs on the CALLER'S connection (`manager`): the endings and the k proposals are written in
+   * that transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event
+   * edit or creation, none of the event's own writes either). The proposals are announced by the
+   * returned function, which the caller runs AFTER its commit - a rolled-back write tells nobody.
    */
   async sync(
-    request: CoOrganiserSyncRequest,
-    manager?: EntityManager
-  ): Promise<CoOrganiserAfterCommit> {
-    if (manager) return this.syncWithin(request, manager);
-    // No caller transaction (an event CREATION): the list is still ONE unit, committed or not at all.
-    let announce: CoOrganiserAfterCommit = () => Promise.resolve();
-    await this.coOwnerRepo.manager.transaction(async (own) => {
-      announce = await this.syncWithin(request, own);
-    });
-    await announce();
-    return () => Promise.resolve();
-  }
-
-  /**
-   * `sync` on the CALLER'S connection: the endings and the k proposals are written in `manager`'s
-   * transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event edit,
-   * none of the event's own writes either). The proposals are announced by the returned function,
-   * which the caller runs AFTER its commit - a rolled-back edit tells nobody.
-   */
-  private async syncWithin(
     request: CoOrganiserSyncRequest,
     manager: EntityManager
   ): Promise<CoOrganiserAfterCommit> {
@@ -356,6 +341,19 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
     return ev.associationId;
   }
 
+  /**
+   * The event row, `FOR NO KEY UPDATE`, taken by every decision on a `coorganise` proposal AFTER its
+   * associations and BEFORE the proposal itself: the order of an event edit (`withEventLock`), so an
+   * acceptance - which may return a validated event to pending - is serialised with an edit, a
+   * validation and a rejection of the same event instead of racing their status columns.
+   */
+  async lockSubject(manager: EntityManager, eventId: string): Promise<void> {
+    await manager.query(
+      `SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE`,
+      [eventId]
+    );
+  }
+
   async apply(
     manager: EntityManager,
     proposal: AssociationProposal,
@@ -367,15 +365,35 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
       // deletion; the acceptance rolls back with the transaction.
       throw new NotFoundException('Event not found');
     }
-    await manager.query(
+    const inserted: unknown[] = await manager.query(
       `INSERT INTO association_calendar_event_co_owners (id, event_id, association_id)
-         VALUES (gen_random_uuid(), $1, $2) ON CONFLICT (event_id, association_id) DO NOTHING`,
+         VALUES (gen_random_uuid(), $1, $2) ON CONFLICT (event_id, association_id) DO NOTHING
+         RETURNING id`,
       [ev.id, proposal.toAssociationId]
     );
     this.logger.log(
       `[COORG] ${proposal.toAssociationId.slice(0, 8)} now co-organises ${ev.id.slice(0, 8)} (accepted by ${actorId.slice(0, 8)})`
     );
-    return () => Promise.resolve();
+    if (inserted.length === 0) return () => Promise.resolve();
+    // WP-Q2 (P13 interim): the acceptance WIDENS the event's audience (the union), and nobody
+    // validated the new part - so a VALIDATED event returns to the queue, in THIS transaction: the
+    // partner row and the demotion commit together or not at all. The guard on `status` makes it
+    // fire once (a pending or rejected event is not touched, and neither announces anything).
+    // WP-E later replaces this whole-event demotion with a per-slice reopening.
+    // An UPDATE ... RETURNING answers `[rows, affectedCount]` on this driver, an INSERT the rows.
+    const [demoted]: [unknown[], number] = await manager.query(
+      `UPDATE association_calendar_events
+          SET status = 'pending', "validatedAt" = NULL, "validatedBy" = NULL
+        WHERE id = $1 AND status = 'validated'
+        RETURNING id`,
+      [ev.id]
+    );
+    if (demoted.length === 0) return () => Promise.resolve();
+    this.logger.log(
+      `[COORG] ${ev.id.slice(0, 8)} was validated: back to pending, a partner (${proposal.toAssociationId.slice(0, 8)}) joined it`
+    );
+    // AFTER COMMIT, through the one announcement every return to the queue shares.
+    return () => this.associations.announceEventReopened(ev, 'coorganiser_joined', actorId);
   }
 
   async announce(proposal: AssociationProposal, acceptorIds: string[]): Promise<void> {
