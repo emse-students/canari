@@ -83,7 +83,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(39);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(42);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -93,10 +93,22 @@ describe('notificationHref', () => {
         type === 'coorganise_proposed' ||
         type === 'lydia_payments_active' ||
         type === 'lydia_payments_paused' ||
+        type.startsWith('delegation_') ||
         liveModeration.includes(type);
       expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
   });
+
+  // Owner review of #2967: a delegate (a list) paused or resumed opens its DELEGATION section,
+  // where it picks a receiver - reached by slug like the Lydia notices.
+  it.each(['delegation_revoked', 'delegation_receiver_not_ready', 'delegation_resumed'])(
+    '%s opens the entity delegation section',
+    async (type) => {
+      await expect(
+        resolveNotificationHref({ type, postId: 'list-1' }, async () => 'liste-2027')
+      ).resolves.toBe('/associations/liste-2027/edit/delegation');
+    }
+  );
 
   it.each([
     'booking_cancelled',

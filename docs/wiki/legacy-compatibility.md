@@ -347,6 +347,16 @@ tables (Android, the iOS app and its notification extension), the client row, `K
 host): no deep-link host exists for an association's edit section. The type names are shared through
 `libs/contracts/lydia-refusal-codes.json`.
 
+**Shipped UNSWITCHED, accepted on review (2026-11-03): `delegation_revoked`,
+`delegation_receiver_not_ready`, `delegation_resumed`**, the notices telling a list's `MANAGE_PRODUCTS`
+holders that its payment delegation paused or resumed its collection (owner review of #2967: "pause +
+notify", so they are not behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`). The floor rule's step 1 is met
+(`1.2.9`); steps 2-4 are done in the same pull request (the push opens the `notifications` host, the
+three native tables, the `forms` push category, the row opening the list's delegation section). A
+client older than the release carrying them draws the neutral unknown-type row and the push's French
+legacy sentence - the same degraded display accepted for the bookings' four
+([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
+
 **Built and waiting on its floor (2026-10-31): `lydia_cashier_added`**, the bell row telling a member
 they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It ships behind
 `LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);
@@ -931,7 +941,9 @@ grant by hand; otherwise the mask is left as sent.
 profile. A member ADD whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is
 derived from today's constants with bit 12 removed, narrowed per kind as the old `adminPresetFor` did
 (3871 and 3359 for an association, 3103 for a list or an institution - pinned by
-`legacy-admin-presets.spec.ts`). Measured by its line at `log` level (production emits it), one per
+`legacy-admin-presets.spec.ts`). That narrowing is FROZEN in the shim (`oldClientPreset`), never read
+from today's `writablePermissions`, which since #2967 leaves a list its shop: the shim matches what the
+old builds posted, not what a list may hold now. Measured by its line at `log` level (production emits it), one per
 matching add and carrying only the mask: `[LEGACY] addMember: mask N is a pre-EDIT_PROFILE admin
 preset` - followed by `EDIT_PROFILE added` or, under a ceiling without the bit, `left as sent`. The
 removal reads both counts in the social-service log of both estates.

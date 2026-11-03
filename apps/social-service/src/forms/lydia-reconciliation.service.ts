@@ -2,13 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Submission } from './entities/submission.entity';
-import { Form } from './entities/form.entity';
 import { FormsService } from './forms.service';
 import type { RequestState } from './seat-hold';
 import { readVerifiedRequestState, type VerifiedRequestRead } from './verified-request-state';
+import { requestAccountOf } from './request-account';
 import { ProductCheckout } from '../associations/entities/product-checkout.entity';
 import { ProductsService } from '../associations/products.service';
-import { AssociationsService } from '../associations/associations.service';
 import { CHECKOUT_EXPIRY_MARGIN_MS, productCheckoutLookup } from '../associations/product-checkout';
 import {
   classifyCoreCallFailure,
@@ -201,11 +200,9 @@ export class LydiaReconciliationService {
 
   constructor(
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
-    @InjectRepository(Form) private readonly formRepo: Repository<Form>,
     @InjectRepository(ProductCheckout) private readonly checkoutRepo: Repository<ProductCheckout>,
     private readonly formsService: FormsService,
-    private readonly productsService: ProductsService,
-    private readonly associationsService: AssociationsService
+    private readonly productsService: ProductsService
   ) {}
 
   /**
@@ -386,17 +383,12 @@ export class LydiaReconciliationService {
   async reconcileSubmission(row: Submission): Promise<ReconcileOutcome> {
     const sessionId = row.stripeSessionId as string;
     const what = `submission ${row.id} (request ${sessionId})`;
-    const form = await this.formRepo.findOne({
-      where: { id: row.formId },
-      select: { id: true, associationId: true },
-    });
-    // The payee whatever provider is active: a payment in flight is still read after payments
-    // are switched off - the same account a verified callback is checked against.
-    const payee = form?.associationId
-      ? await this.associationsService.getLydiaPayeeAccountId(form.associationId)
-      : null;
+    // The Business the request was ISSUED to, whatever provider is active and whatever the form's
+    // payee is now (a list's delegation revoked or moved meanwhile, owner review of #2967) - the
+    // same account a verified callback is checked against.
+    const payee = await requestAccountOf(this.submissionRepo, row.id, '[RECONCILE]');
     if (!payee) {
-      this.logger.warn(`[RECONCILE] ${what}: its form pays into no Lydia account - not read`);
+      this.logger.warn(`[RECONCILE] ${what}: no issuing Business recorded - not read`);
       return 'skipped-unverified';
     }
     if (!(row.totalPaid > 0)) {

@@ -803,6 +803,22 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.lydia_refund_issued.body"), arg];
     return;
   }
+  // A delegate (a list) paused or resumed by its receiver: `arg` is the delegate's name only.
+  if ([key isEqualToString:@"delegation_revoked"]) {
+    *title = CanariLocalized(@"notif.delegation_revoked.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.delegation_revoked.body"), arg];
+    return;
+  }
+  if ([key isEqualToString:@"delegation_receiver_not_ready"]) {
+    *title = CanariLocalized(@"notif.delegation_receiver_not_ready.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.delegation_receiver_not_ready.body"), arg];
+    return;
+  }
+  if ([key isEqualToString:@"delegation_resumed"]) {
+    *title = CanariLocalized(@"notif.delegation_resumed.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.delegation_resumed.body"), arg];
+    return;
+  }
   // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
   if ([key isEqualToString:@"event_proposed"]) {
     *title = CanariLocalized(@"notif.event.proposed.title");

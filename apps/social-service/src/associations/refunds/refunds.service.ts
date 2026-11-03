@@ -22,7 +22,6 @@ import {
   RECEIVED_PURCHASE_STATUSES,
 } from '../../users/entities/purchase-record.entity';
 import { AssociationsService } from '../associations.service';
-import { approvedDelegateIds } from '../payment-delegation.util';
 import { productOrderRef } from '../product-checkout';
 import { LydiaRefund, type RefundKind } from './lydia-refund.entity';
 import { LydiaRefundNotifier } from './lydia-refund-notifier.service';
@@ -335,7 +334,7 @@ export class RefundsService implements OnApplicationBootstrap {
 
   /**
    * The claim of `refund`, inside its transaction: locks the payment's record, checks it is the
-   * association's own payment or an approved delegate's (its Business is the one refunded), answers
+   * association's own payment or one its Business TOOK (a delegate's, even after a revoke), answers
    * this key's own row as a replay, refuses while another refund is not settled, decides
    * refundability and the sum cap, and writes the `pending` row.
    */
@@ -355,15 +354,18 @@ export class RefundsService implements OnApplicationBootstrap {
       this.logger.warn(`[LYDIA-REFUND] refused: payment ${purchaseRecordId} not found`);
       throw new NotFoundException('Payment not found');
     }
-    // EXPLICIT OWNERSHIP, not only a matching Business: the payment is this association's, or one of
-    // an association whose payments this one's Business serves by an APPROVED delegation.
-    if (
-      record.associationId !== associationId &&
-      !(await approvedDelegateIds(manager, associationId)).includes(record.associationId)
-    ) {
+    // EXPLICIT OWNERSHIP: the payment is this association's own, or its Business TOOK it - a
+    // delegate's payment received through this association's account. Ownership follows the account
+    // that took the money, never the delegation's CURRENT state: after a revoke the former receiver
+    // still holds the money and still refunds it, and a new receiver, which never took it, may not
+    // (owner review of #2967, 2026-11-03).
+    const target = await this.targetOf(manager, record);
+    const business = await this.businessOf(manager, associationId);
+    const tookIt = target.ok && business !== null && target.vendorToken === business;
+    if (record.associationId !== associationId && !tookIt) {
       this.logger.warn(
-        `[LYDIA-REFUND] refused: payment ${purchaseRecordId} is neither ${associationId}'s nor an ` +
-          'approved delegate of it'
+        `[LYDIA-REFUND] refused: payment ${purchaseRecordId} is neither ${associationId}'s nor ` +
+          'taken by its Business'
       );
       throw new NotFoundException('Payment not found');
     }
@@ -384,8 +386,6 @@ export class RefundsService implements OnApplicationBootstrap {
         message: 'Another refund of this payment is not settled',
       });
     }
-    const target = await this.targetOf(manager, record);
-    const business = await this.businessOf(manager, associationId);
     const refusal = refusalOf(target, business);
     if (refusal || !target.ok) {
       this.logger.warn(

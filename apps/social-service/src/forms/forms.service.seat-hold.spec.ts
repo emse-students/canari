@@ -57,6 +57,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     organiserNotifiedAt?: Date | null;
     guestReceiptHash?: string | null;
     guestVisitorKey?: string | null;
+    /** The Business the row's request was issued to (written with the request ids). */
+    lydiaVendorToken?: string | null;
     answers?: Record<string, unknown>;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
@@ -77,7 +79,11 @@ describe('FormsService - the seat a pending payment holds', () => {
     grantsCotisation?: boolean;
   }) {
     let now = T0;
-    const rows: Row[] = opts.rows.map((row) => ({ ...row }));
+    // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
+    const rows: Row[] = opts.rows.map((row) => ({
+      lydiaVendorToken: row.stripeSessionId || row.paymentRequestId ? 'vendor' : null,
+      ...row,
+    }));
     let nextId = 0;
     const form = {
       id: 'f1',
@@ -301,10 +307,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     // committed: those tests are about what the transaction wrote, not about the checkout.
     const associationsService: any = {
       assertPaymentsReady: jest.fn(async () => undefined),
+      collectsNow: jest.fn(async () => true),
       getPaymentAccountId: jest.fn(async () => 'vendor'),
-      // The account the form's money is paid into, whatever provider is active: what a verified
-      // callback's Business must be (`isCallbackPayee`).
-      getLydiaPayeeAccountId: jest.fn(async () => 'vendor'),
       // Nobody manages this form through the association: only its submitter may read its answer.
       mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),

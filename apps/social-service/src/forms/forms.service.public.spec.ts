@@ -31,7 +31,9 @@ describe('FormsService - public forms', () => {
     ...over,
   });
 
-  function makeService(opts: { form?: Record<string, unknown> | null } = {}) {
+  function makeService(
+    opts: { form?: Record<string, unknown> | null; collectsNow?: boolean } = {}
+  ) {
     const saved: Record<string, unknown>[] = [];
     const manager: any = {
       query: jest.fn(() => Promise.resolve([{ formId: 'f1' }])),
@@ -59,7 +61,10 @@ describe('FormsService - public forms', () => {
       submissionRepo,
       {} as any,
       { get: jest.fn() } as any,
-      { isMember: jest.fn(() => Promise.resolve(true)) } as any,
+      {
+        isMember: jest.fn(() => Promise.resolve(true)),
+        collectsNow: jest.fn(() => Promise.resolve(opts.collectsNow ?? true)),
+      } as any,
       {} as any,
       {} as any,
       pricingFacts,
@@ -115,11 +120,45 @@ describe('FormsService - public forms', () => {
           'imageUrl',
           'items',
           'opensAt',
+          'paymentsPaused',
           'pricing',
           'title',
         ].sort()
       );
       expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
+    });
+
+    // Owner, 2026-11-02: a paid form of an entity that cannot collect now (a list whose delegation
+    // was revoked) is served PAUSED; a free form never is, whatever its association.
+    it('serves a paid form paused while its association cannot collect, and a free one never', async () => {
+      const paid = makeService({ form: baseForm({ basePrice: 1200 }), collectsNow: false });
+      expect((await paid.service.getPublic('f1')).paymentsPaused).toBe(true);
+      const live = makeService({ form: baseForm({ basePrice: 1200 }), collectsNow: true });
+      expect((await live.service.getPublic('f1')).paymentsPaused).toBe(false);
+      const free = makeService({ form: baseForm({ basePrice: 0 }), collectsNow: false });
+      expect((await free.service.getPublic('f1')).paymentsPaused).toBe(false);
+    });
+
+    // Owner review of #2967: the pause reads the ONE charge predicate (`chargesMoney`), which counts
+    // a choice option's supplement - a form priced by a supplement alone pauses too.
+    it('pauses a form priced only by a choice supplement, and never by a text question', async () => {
+      const choice = {
+        id: 'q1',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [{ id: 'o1', label: 'Grand', priceModifier: 500 }],
+      };
+      const supplement = makeService({
+        form: baseForm({ basePrice: 0, items: [choice] }),
+        collectsNow: false,
+      });
+      expect((await supplement.service.getPublic('f1')).paymentsPaused).toBe(true);
+      const text = makeService({
+        form: baseForm({ basePrice: 0, items: [{ ...choice, type: 'short_text' }] }),
+        collectsNow: false,
+      });
+      expect((await text.service.getPublic('f1')).paymentsPaused).toBe(false);
     });
 
     it("serves a grid on answers as the guest's whole slice", async () => {

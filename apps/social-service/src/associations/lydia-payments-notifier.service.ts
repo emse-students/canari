@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { PushService } from '../push/push.service';
-import { lydiaPaymentsActiveContent, lydiaPaymentsPausedContent } from '../push/push-content';
+import {
+  delegationNoticeContent,
+  lydiaPaymentsActiveContent,
+  lydiaPaymentsPausedContent,
+} from '../push/push-content';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 
@@ -28,6 +32,30 @@ export const LYDIA_PAYMENTS_ACTIVE_TYPE = 'lydia_payments_active';
 
 /** The bell row's type for "payments were paused"; equals `libs/contracts/lydia-refusal-codes.json`. */
 export const LYDIA_PAYMENTS_PAUSED_TYPE = 'lydia_payments_paused';
+
+/**
+ * THE DELEGATION NOTICES (owner review of #2967, 2026-11-03): an entity that collects THROUGH a
+ * payment delegation (a list, always) is told when it stops collecting and when it collects again.
+ * Their OWN types, NOT behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`: the owner decided "pause and
+ * notify", so they are written from the start. A client older than the release carrying them draws
+ * the neutral unknown-type row (legacy-compatibility.md, "a NEW notification type"); the push
+ * carries its French `legacy*` text for a native build without the key.
+ */
+export const DELEGATION_REVOKED_TYPE = 'delegation_revoked';
+/** The receiver no longer collects (its Lydia not ready, or unlinked): the delegate is paused. */
+export const DELEGATION_RECEIVER_NOT_READY_TYPE = 'delegation_receiver_not_ready';
+/** The delegate collects again: a new acceptance, or its receiver ready again. */
+export const DELEGATION_RESUMED_TYPE = 'delegation_resumed';
+
+/** Why a delegate's managers are told: the three facts, each its own sentence. */
+export type DelegationNotice = 'revoked' | 'receiver-not-ready' | 'resumed';
+
+/** The bell row's type of each notice. */
+export const DELEGATION_NOTICE_TYPES: Readonly<Record<DelegationNotice, string>> = {
+  revoked: DELEGATION_REVOKED_TYPE,
+  'receiver-not-ready': DELEGATION_RECEIVER_NOT_READY_TYPE,
+  resumed: DELEGATION_RESUMED_TYPE,
+};
 
 /** Who the row names as its actor: nobody acted on the association, Lydia answered. */
 const SYSTEM_ACTOR_ID = 'system';
@@ -99,6 +127,50 @@ export class LydiaPaymentsNotifier {
     ).then((failures) => {
       for (const { item, error } of failures) {
         this.logger.warn(`[LYDIA-NOTIFY] push failed for ${item.slice(0, 8)}: ${String(error)}`);
+      }
+    });
+    return written;
+  }
+
+  /**
+   * Tells the shop managers of `association` - an entity that collects through a payment
+   * delegation - that it stopped collecting (`revoked`, `receiver-not-ready`) or collects again
+   * (`resumed`). NOT switched off (see {@link DELEGATION_REVOKED_TYPE}). `postId` is the entity's
+   * id, which the client resolves to its delegation section; the push opens the notifications list.
+   * The caller tells only when products were actually withheld or released. THROWS when the insert
+   * throws; a push failure is logged per recipient and never thrown.
+   */
+  async tellDelegation(
+    association: { id: string; name: string },
+    notice: DelegationNotice,
+    recipients: readonly string[]
+  ): Promise<number> {
+    const short = association.id.slice(0, 8);
+    if (recipients.length === 0) {
+      this.logger.warn(`[DELEGATION-NOTIFY] ${short}: ${notice}, but no shop manager to tell`);
+      return 0;
+    }
+    const written = await this.notifications.createNotifications({
+      recipientIds: [...recipients],
+      type: DELEGATION_NOTICE_TYPES[notice],
+      postId: association.id,
+      actorId: SYSTEM_ACTOR_ID,
+      actorName: SYSTEM_ACTOR_NAME,
+      text: association.name,
+      skipPush: true,
+    });
+    this.logger.log(`[DELEGATION-NOTIFY] ${short}: ${notice} told to ${written} manager(s)`);
+    const content = delegationNoticeContent(notice, association.name);
+    void forEachBounded(recipients, PUSH_FAN_OUT_LIMIT, (recipientId) =>
+      this.push.notifyContent(recipientId, content, {
+        type: 'social',
+        target: NOTIFICATIONS_TARGET,
+      })
+    ).then((failures) => {
+      for (const { item, error } of failures) {
+        this.logger.warn(
+          `[DELEGATION-NOTIFY] push failed for ${item.slice(0, 8)}: ${String(error)}`
+        );
       }
     });
     return written;
