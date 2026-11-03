@@ -379,6 +379,11 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationColor: string | null;
   /** Logo URL of the association (same-origin `/api/media/public/:id` path), or null. */
   associationLogoUrl: string | null;
+  /**
+   * The server's signature of THIS event's `.ics` link (validated events only, 2026-11-02): the
+   * link is refused without it. Absent means no "add to my calendar" link.
+   */
+  icsSig?: string;
 }
 
 export interface AssociationLinkCandidates {
@@ -964,8 +969,9 @@ export async function listAssociationLinkCandidates(
 }
 
 /**
- * Public - calendar event pointing to this post. Feed-shaped (association identity included),
- * because the caller opens the calendar's own detail modal with it, which renders that identity.
+ * Signed in - the calendar event pointing to this post, when the reader may see the post. Feed-shaped
+ * (association identity included, and its `icsSig`), because the caller opens the calendar's own
+ * detail modal with it, which renders that identity.
  */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarFeedEvent | null;
@@ -975,7 +981,10 @@ export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   );
 }
 
-/** Public - the calendar event pointing at this form, if any. */
+/**
+ * Signed in - the calendar event pointing at this form, if any and if the reader's audience reaches
+ * it (`null` otherwise). Carries the event's `icsSig`.
+ */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
@@ -3351,17 +3360,24 @@ export async function deletePartnershipIcon(
 /**
  * Absolute `.ics` URL of ONE validated event, for a phone to open in the system browser.
  *
- * Narrow window around the event's own start (the feed filters by overlap) plus `eventId`.
- * Returns an empty string for an unreadable start.
+ * Narrow window around the event's own start (the feed filters by overlap) plus `eventId` and the
+ * event's own signature, `icsSig`, served with it (2026-11-02): the server refuses the link
+ * unsigned. Returns an empty string - no link at all - for an unreadable start or a missing
+ * signature, never an unsigned link that would only be refused.
  */
-export function eventIcsAbsoluteUrl(eventId: string, startsAt: string | Date): string {
+export function eventIcsAbsoluteUrl(
+  eventId: string,
+  startsAt: string | Date,
+  icsSig: string | undefined
+): string {
   const start = new Date(startsAt);
-  if (Number.isNaN(start.getTime())) return '';
+  if (Number.isNaN(start.getTime()) || !icsSig?.trim()) return '';
   const DAY_MS = 24 * 60 * 60 * 1000;
   return aggregatedCalendarFeedIcsAbsoluteUrl({
     from: new Date(start.getTime() - DAY_MS).toISOString(),
     to: new Date(start.getTime() + DAY_MS).toISOString(),
     eventId,
+    sig: icsSig,
   });
 }
 

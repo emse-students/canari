@@ -18,7 +18,7 @@ import { Post } from './entities/post.entity';
  *   even from admins, so the answer there would name them.
  * - `associationId` - the comment belongs to the association, not to its writer: `userId` is
  *   withheld the same way, the association card is served, and EVERY holder of `POST_AS_ASSO`
- *   (or a platform admin) may edit or delete it.
+ *   may edit or delete it; a platform admin may delete it, never edit it (owner, 2026-11-02).
  *
  * Withholding `userId` breaks the client's `userId === currentUserId` control checks, so the
  * server serves `canEdit` and `canDelete` PER READER and the client derives nothing from `userId`.
@@ -29,13 +29,22 @@ import { Post } from './entities/post.entity';
 export interface CommentViewer {
   viewerId?: string;
   isGlobalAdmin: boolean;
+  /**
+   * The reader moderates the POST these comments sit under (a BDE `MODERATE` holder whose governed
+   * spaces hold it, owner 2026-11-02): a comment is judged where it is shown.
+   */
   isModerator: boolean;
-  /** Associations in which the reader holds `POST_AS_ASSO` (a platform admin: all of them). */
+  /**
+   * Associations in which the reader REALLY holds `POST_AS_ASSO` - for a platform admin too, their
+   * own memberships and not the admin tier: holding it is what makes them the comment's author.
+   */
   managedAssociationIds: ReadonlySet<string>;
 }
 
 /** The facts about the post a comment sits under. */
 export interface CommentPostFacts {
+  /** Its id: what the moderator scope of its comments is asked of. */
+  id?: string;
   authorId?: string | null;
   associationId?: string | null;
 }
@@ -70,15 +79,15 @@ export function commentRights(
   c: StoredComment,
   v: CommentViewer
 ): { canEdit: boolean; canDelete: boolean } {
-  const own = !!v.viewerId && c.userId === v.viewerId;
-  if (c.associationId) {
-    const mayAct = v.isGlobalAdmin || v.managedAssociationIds.has(c.associationId);
-    return { canEdit: mayAct, canDelete: mayAct };
-  }
-  if (c.anonymous === true) {
-    return { canEdit: own, canDelete: own || v.isGlobalAdmin || v.isModerator };
-  }
-  return { canEdit: own, canDelete: own || v.isGlobalAdmin };
+  // A comment's integrity, as a post's (owner, 2026-11-02): only its author changes its text. The
+  // association is the author of its comment, so its POST_AS_ASSO holders edit it.
+  const author = c.associationId
+    ? v.managedAssociationIds.has(c.associationId)
+    : !!v.viewerId && c.userId === v.viewerId;
+  // MODERATE deletes within its scope (owner, 2026-11-02): a platform admin or a moderator of THIS
+  // post deletes any comment under it - plain, anonymous or an association's - and never rewrites
+  // one. The same answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree.
+  return { canEdit: author, canDelete: author || v.isGlobalAdmin || v.isModerator };
 }
 
 /** Whether this reader may see the real account behind a masked comment. */
@@ -138,25 +147,26 @@ export class CommentIdentityService {
     return this.associations.listFlagHolders(associationId, AssociationPermissionFlag.POST_AS_ASSO);
   }
 
-  /** The reader's standing over these comments; `isModerator` is taken when the caller knows it. */
+  /**
+   * The reader's standing over these comments, all under post `who.postId`; `isModerator` is taken
+   * when the caller knows it, and otherwise asked of THAT post (`mayModeratePost`) - never "does the
+   * reader moderate somewhere", which is the door and not the reach.
+   */
   async viewerFor(
     comments: StoredComment[],
-    who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean }
+    who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean; postId?: string }
   ): Promise<CommentViewer> {
     const isGlobalAdmin = who.isGlobalAdmin === true;
     const assocIds = comments.map((c) => c.associationId).filter((id): id is string => !!id);
     const [isModerator, managedAssociationIds] = await Promise.all([
+      // A platform admin moderates everywhere: nothing to ask of the post.
       who.isModerator !== undefined
         ? Promise.resolve(who.isModerator)
-        : who.viewerId
-          ? this.associations.isContentModerator(who.viewerId, { isGlobalAdmin })
+        : !isGlobalAdmin && who.viewerId && who.postId
+          ? this.associations.mayModeratePost(who.viewerId, who.postId, { isGlobalAdmin })
           : Promise.resolve(isGlobalAdmin),
-      this.associations.mayActOnAny(
-        who.viewerId,
-        assocIds,
-        AssociationPermissionFlag.POST_AS_ASSO,
-        { isGlobalAdmin }
-      ),
+      // No admin tier: the pencil is the author's alone (owner, 2026-11-02).
+      this.associations.mayActOnAny(who.viewerId, assocIds, AssociationPermissionFlag.POST_AS_ASSO),
     ]);
     return { viewerId: who.viewerId, isGlobalAdmin, isModerator, managedAssociationIds };
   }
@@ -181,7 +191,10 @@ export class CommentIdentityService {
   ): Promise<Record<string, unknown>[]> {
     const list = comments ?? [];
     if (list.length === 0) return [];
-    const [viewer, cards] = await Promise.all([this.viewerFor(list, who), this.cardsFor(list)]);
+    const [viewer, cards] = await Promise.all([
+      this.viewerFor(list, { ...who, postId: post.id }),
+      this.cardsFor(list),
+    ]);
     return list.map((c) => serveComment(c, viewer, post, cards));
   }
 
@@ -191,16 +204,33 @@ export class CommentIdentityService {
    * needs and the post's own shaping will withhold), so this runs BEFORE that shaping.
    */
   async serveRows(
-    rows: Array<{ comments?: unknown; authorId?: string | null; associationId?: string | null }>,
-    who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean }
+    rows: Array<{
+      id?: string;
+      comments?: unknown;
+      authorId?: string | null;
+      associationId?: string | null;
+    }>,
+    who: { viewerId?: string; isGlobalAdmin?: boolean; moderatedPostIds: ReadonlySet<string> }
   ): Promise<void> {
     const all = rows.flatMap((r) =>
       Array.isArray(r.comments) ? (r.comments as StoredComment[]) : []
     );
     if (all.length === 0) return;
-    const [viewer, cards] = await Promise.all([this.viewerFor(all, who), this.cardsFor(all)]);
+    // The standing is read once for the page; the moderator half is per ROW, each post's own scope.
+    const [base, cards] = await Promise.all([
+      this.viewerFor(all, {
+        viewerId: who.viewerId,
+        isGlobalAdmin: who.isGlobalAdmin,
+        isModerator: false,
+      }),
+      this.cardsFor(all),
+    ]);
     for (const row of rows) {
       if (!Array.isArray(row.comments)) continue;
+      const viewer: CommentViewer = {
+        ...base,
+        isModerator: !!row.id && who.moderatedPostIds.has(row.id),
+      };
       row.comments = (row.comments as StoredComment[]).map((c) =>
         serveComment(c, viewer, row, cards)
       );

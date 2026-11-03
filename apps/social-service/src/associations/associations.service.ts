@@ -191,6 +191,14 @@ import {
   platformAdminOnly,
 } from './admin-catalogue';
 import { BDE_SPACE_STANDINGS_SQL } from '../spaces/bde';
+import {
+  BDE_MODERATED_POST_IDS_SQL,
+  BDE_MODERATED_USER_IDS_SQL,
+  BDE_MODERATES_LIVE_SQL,
+  BDE_MODERATES_REPORT_SQL,
+  MODERATION_OUT_OF_SCOPE,
+  MODERATOR_REQUIRED,
+} from '../spaces/bde-moderation';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
@@ -2117,11 +2125,25 @@ export class AssociationsService {
     return { ...base, associationSlug: asso?.slug ?? '' };
   }
 
-  async findCalendarEventByLinkedForm(formId: string) {
-    const ev = await this.calendarRepo.findOne({
-      where: { linkedFormId: formId, status: AssociationCalendarEventStatus.Validated },
-    });
-    return ev ? this.serializeCalendarEvent(ev) : null;
+  /**
+   * The validated event a form links to, AS THE SIGNED-IN READER MAY SEE IT: the event is kept only
+   * when `eventVisibleToViewerSql` admits it (its organiser or an accepted co-organiser reaches one
+   * of the reader's spaces, or the reader is a member), exactly as the reader's agenda decides; a
+   * global admin reads it whole. An event outside the reader's audience answers `null`, the same
+   * answer as no link at all. The route is guarded, so a reader always has an id.
+   */
+  async findCalendarEventByLinkedForm(formId: string, viewer: CalendarViewer) {
+    const qb = this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e."linkedFormId" = :formId', { formId })
+      .andWhere('e.status = :validated', { validated: AssociationCalendarEventStatus.Validated });
+    if (!viewer.isGlobalAdmin) this.restrictToViewerSpaces(qb, viewer);
+    const ev = await qb.getOne();
+    if (!ev) {
+      this.logger.debug(`[AGENDA] form ${formId.slice(0, 8)} links no event this reader sees`);
+      return null;
+    }
+    return this.serializeCalendarEvent(ev);
   }
 
   private async assertFormBelongsToAssociation(
@@ -2171,6 +2193,7 @@ export class AssociationsService {
     opts?: { includePending?: boolean; includeRejected?: boolean; viewer?: CalendarViewer }
   ) {
     await this.findById(associationId);
+    if (this.isAnonymousAgendaRead(associationId, opts?.viewer)) return [];
     const promoCutoff = await promoCutoffFor(
       this.calendarRepo.manager,
       opts?.viewer?.userId,
@@ -2245,7 +2268,8 @@ export class AssociationsService {
    * spaces, or the reader is a member (D21) - `eventVisibleToViewerSql`, the one predicate for an
    * event. An anonymous read (the public agenda and its `.ics`, D30) passes no viewer and is left
    * whole, exactly as the promo cutoff leaves it: like that cutoff, this is relevance and not
-   * confidentiality.
+   * confidentiality. ONE association's agenda read anonymously answers nothing at all
+   * (`isAnonymousAgendaRead`, 2026-11-02): that feed's selection is signed, this route is not.
    */
   private restrictToViewerSpaces(
     qb: SelectQueryBuilder<AssociationCalendarEvent>,
@@ -2257,6 +2281,22 @@ export class AssociationsService {
     qb.andWhere(eventVisibleToViewerSql('e', ':agendaViewerId'), {
       agendaViewerId: viewerId,
     });
+  }
+
+  /**
+   * WITHOUT A SESSION, ONE ASSOCIATION'S AGENDA IS EMPTY (owner, 2026-11-02): only what the student
+   * portal publishes is public, and it publishes no event - whatever the association's audience,
+   * an institution addressing everyone included. The answer is an EMPTY list, never a 401: the
+   * public association page draws "no event", as it does for every other gated block. A signed
+   * agenda link (`/calendar/feed` with a signed selection) is the one anonymous way in.
+   */
+  private isAnonymousAgendaRead(
+    associationId: string,
+    viewer: CalendarViewer | undefined
+  ): boolean {
+    if (viewer?.userId?.trim() || viewer?.isGlobalAdmin) return false;
+    this.logger.debug(`[AGENDA] anonymous read of ${associationId.slice(0, 8)}: answers nothing`);
+    return true;
   }
 
   /**
@@ -2601,19 +2641,142 @@ export class AssociationsService {
   }
 
   /**
-   * May `userId` moderate CONTENT anywhere on the platform - a platform administrator, or a BDE
-   * member holding `MODERATE`?
+   * Does `userId` moderate SOMEWHERE - a platform administrator, or a member holding `MODERATE` in
+   * the BDE of at least one space?
    *
-   * Not association-scoped, so `mayAct` cannot express it: the question is "does the BDE curate the
-   * whole feed", the same shape as `isUserBdeAdmin` for the calendar. It is here rather than inside
-   * one controller because two surfaces ask it - the moderation endpoints, and the edit / delete /
-   * pin controls on a post - and the second was previously written as `isGlobalAdmin` alone, which
-   * is how a BDE holding `MODERATE` ended up unable to touch a post it was entitled to moderate.
+   * THE DOOR, NOT THE REACH (owner, 2026-11-02): since `MODERATE` is scoped (`spaces/bde-moderation.ts`)
+   * this answers only who may open the moderation surfaces at all - the queue, the lists - and
+   * classifies a refusal (out of scope vs not a moderator). Acting on ONE target asks the scoped
+   * predicate of its kind: `mayModeratePost`, `mayModerateLive`, `mayModerateUser`.
    */
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
     if (!userId) return false;
     return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MODERATE);
+  }
+
+  /**
+   * Of `postIds`, those `userId` may moderate (hide, delete, pin, unmask, read the anonymous author):
+   * every one for a platform admin; for a BDE `MODERATE` holder, those in the spaces it governs
+   * (`BDE_MODERATED_POST_IDS_SQL`, owner 2026-11-02). ONE query for a page. Never EDIT: rewriting
+   * another person's words is no moderator's power (`PostsService.assertMayManage`).
+   */
+  async moderatedPostIds(
+    userId: string | undefined,
+    postIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    // Postgres answers a uuid in lowercase, so the asked ids are lowercased once: an id spelled in
+    // uppercase by a client is the same post, and must not miss its own `.has()`.
+    const unique = [...new Set(postIds.map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_POST_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    this.logger.debug(
+      `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} posts=${unique.length} moderated=${rows.length}`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** `moderatedPostIds` asked of one post, whatever the case its id is spelled in. */
+  async mayModeratePost(
+    userId: string | undefined,
+    postId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    const id = postId.toLowerCase();
+    return (await this.moderatedPostIds(userId, [id], opts)).has(id);
+  }
+
+  /**
+   * May `userId` moderate live `liveId` (cut it, hide a line of its chat)? A platform admin always;
+   * a BDE `MODERATE` holder when the live is in its governed spaces - read from the live, or from its
+   * cut once the row is purged (`BDE_MODERATES_LIVE_SQL`).
+   */
+  async mayModerateLive(
+    userId: string | undefined,
+    liveId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(BDE_MODERATES_LIVE_SQL, [
+      userId,
+      liveId,
+    ]);
+    const moderates = rows[0]?.moderates === true;
+    this.logger.debug(
+      `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} live=${sanitizeLog(liveId.slice(0, 8))} -> ${moderates}`
+    );
+    return moderates;
+  }
+
+  /**
+   * May `userId` act on report `reportId` (review it)? A platform admin always; a BDE `MODERATE`
+   * holder when the report is about something in its governed spaces (`reportInBdeScopeSql`).
+   */
+  async mayModerateReport(
+    userId: string | undefined,
+    reportId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(BDE_MODERATES_REPORT_SQL, [
+      userId,
+      reportId,
+    ]);
+    return rows[0]?.moderates === true;
+  }
+
+  /**
+   * Of `userIds`, the people `userId` may moderate as people (mute, withdraw a broadcast right): all
+   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces.
+   */
+  async moderatedUserIds(
+    userId: string | undefined,
+    userIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_USER_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** `moderatedUserIds` asked of one person. */
+  async mayModerateUser(
+    userId: string | undefined,
+    targetUserId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    return (await this.moderatedUserIds(userId, [targetUserId], opts)).has(targetUserId);
+  }
+
+  /**
+   * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATION_OUT_OF_SCOPE`
+   * when the caller moderates SOMEWHERE but not this target, 403 `MODERATOR_REQUIRED` when they
+   * moderate nowhere. Logged with the target's kind, never its content.
+   */
+  async refuseModeration(userId: string | undefined, target: string): Promise<never> {
+    const somewhere = !!userId && (await this.isContentModerator(userId));
+    const code = somewhere ? MODERATION_OUT_OF_SCOPE : MODERATOR_REQUIRED;
+    this.logger.log(
+      `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${sanitizeLog(target)} code=${code}`
+    );
+    throw new ForbiddenException({
+      code,
+      message: somewhere
+        ? 'Outside the spaces your BDE governs'
+        : 'BDE MODERATE permission or global admin required',
+    });
   }
 
   /**

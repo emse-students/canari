@@ -132,6 +132,14 @@ describe('which sections a reader may open', () => {
     ).toBe(true);
   });
 
+  it('keeps deleting an institution to the global admin (owner, 2026-11-02)', () => {
+    expect(editRights({ ...none, isSuperAdmin: true }, 'institution').delete).toBe(false);
+    expect(editRights({ ...none, isGlobalAdmin: true }, 'institution').delete).toBe(true);
+    // The BDE star keeps the associations and lists it governs.
+    expect(editRights({ ...none, isSuperAdmin: true }, 'association').delete).toBe(true);
+    expect(editRights({ ...none, isSuperAdmin: true }, 'list').delete).toBe(true);
+  });
+
   // Owner, 2026-11-02 (G3): a list keeps the shop, its cotisation, its purchases, and collects
   // through a delegation - its money sections are back, with no Lydia account of its own.
   it('gives a list its sections in hub order, its money ones included, and never an audience', () => {

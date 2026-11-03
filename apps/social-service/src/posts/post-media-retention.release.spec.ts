@@ -38,6 +38,8 @@ describe('PostsService.deletePost', () => {
       {} as FollowsService,
       {
         isContentModerator: () => Promise.resolve(false),
+        moderatedPostIds: () => Promise.resolve(new Set<string>()),
+        mayModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release } as unknown as PostMediaRetentionService
@@ -158,7 +160,9 @@ describe('PostInteractionsService.deleteComment', () => {
       { id: 'c1', userId: 'somebody-else', media: { mediaId: COMMENT_MEDIA } },
     ]);
 
-    await expect(service.deleteComment('post-1', 'c1', AUTHOR)).rejects.toThrow('Not your comment');
+    await expect(service.deleteComment('post-1', 'c1', AUTHOR)).rejects.toMatchObject({
+      response: { code: 'COMMENT_DELETE_FORBIDDEN' },
+    });
     expect(release).not.toHaveBeenCalled();
   });
 });

@@ -102,6 +102,9 @@ describe('PostsController.votePoll', () => {
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn((id: string) => Promise.resolve(id === MODERATOR)),
+      moderatedPostIds: jest.fn((id: string, ids: string[]) =>
+        Promise.resolve(new Set(id === MODERATOR ? ids : []))
+      ),
     };
     const postRepo = {
       manager: { query },

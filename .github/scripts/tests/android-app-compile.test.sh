@@ -66,7 +66,7 @@ expect() { # <name> <wanted exit: 0|nonzero> <text the output must carry>
 
 echo "the happy path:"
 make_project
-expect "all three tasks ran" 0 "OK :app:checkArm64DebugAarMetadata"
+expect "all four tasks ran" 0 "OK :app:checkArm64DebugAarMetadata"
 if cmp -s "$real_stub" "$work/android/app/google-services.json"; then
   echo "  ok   the stub was copied where the Google Services plugin reads it"
 else
@@ -74,7 +74,7 @@ else
 fi
 
 echo "a task that did not execute is refused:"
-for t in :app:checkArm64DebugAarMetadata :app:processArm64DebugMainManifest :app:compileArm64DebugKotlin; do
+for t in :app:checkArm64DebugAarMetadata :app:processArm64DebugMainManifest :app:compileArm64DebugKotlin :app:mergeArm64DebugResources; do
   make_project "$t" ""
   expect "$t absent from the output" nonzero "$t did not execute"
   make_project "$t" "UP-TO-DATE"

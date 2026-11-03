@@ -3,6 +3,7 @@
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
+  import { refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -230,7 +231,15 @@
        * follows it behind the page rather than in front of it.
        */
       const [linked, submission] = await Promise.all([
-        getCalendarEventLinkedToForm(f.id).catch(() => ({ linkedEvent: null })),
+        // A decoration, so a failure draws no banner - but it is SAID, with its status: a refusal
+        // (the reader is outside the event's audience is `null`, not this) or a transport failure.
+        getCalendarEventLinkedToForm(f.id).catch((err: unknown) => {
+          console.warn(
+            `[FormView] linked event read failed status=${refusalStatus(err) ?? 'transport'}`,
+            err
+          );
+          return { linkedEvent: null };
+        }),
         checkSubmission(f.id),
       ]);
       linkedAgendaEvent = linked.linkedEvent;
@@ -239,7 +248,11 @@
           .then((asso) => {
             agendaAssociationSlug = asso.slug;
           })
-          .catch(() => {
+          .catch((err: unknown) => {
+            console.warn(
+              `[FormView] linked event's association read failed status=${refusalStatus(err) ?? 'transport'}`,
+              err
+            );
             agendaAssociationSlug = '';
           });
       }
@@ -569,6 +582,7 @@
     <!-- ── Linked agenda event ── -->
     {#if linkedAgendaEvent}
       <a
+        data-form-linked-event
         href={resolve(
           agendaAssociationSlug
             ? `associations/${encodeURIComponent(agendaAssociationSlug)}`

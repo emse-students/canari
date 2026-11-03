@@ -507,3 +507,24 @@ describe('Mention tokens in a native banner', () => {
     }
   });
 });
+
+describe('Android strings.xml escaping', () => {
+  // aapt2 reads a `<string>` body as a quoted-string grammar, not as plain XML text: a bare `'` or
+  // `"` and a backslash-u without four hex digits fail `:app:mergeUniversalReleaseResources` ("Failed to
+  // flatten XML"), which no JVM or Kotlin test and no debug compile reaches (v1.6.3-alpha.3, #2945).
+  const files = [STRINGS_FR, STRINGS_EN];
+  const bare = /(^|[^\\])['"]/;
+  const badUnicode = /\\u(?![0-9a-fA-F]{4})/;
+
+  for (const file of files) {
+    it(`${file.replaceAll(String.fromCharCode(92), '/').split('/res/')[1]} is escaped the way aapt2 reads it`, () => {
+      for (const [name, body] of parseStrings(file)) {
+        expect(bare.test(body), `${name}: unescaped ' or " in ${JSON.stringify(body)}`).toBe(false);
+        expect(
+          badUnicode.test(body),
+          `${name}: malformed unicode escape in ${JSON.stringify(body)}`
+        ).toBe(false);
+      }
+    });
+  }
+});
