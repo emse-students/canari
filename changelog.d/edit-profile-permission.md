@@ -1,3 +1,0 @@
-### Changed - editing an association's profile is its own right, "Modifier le profil"
-
-The profile and the logos asked "Gérer les membres", so letting someone fix a description meant letting them hand out every right. They ask the new `EDIT_PROFILE` now, every `PATCH /associations/:id` field asks its own right (a list's parent and the quota are the platform admin's), and migration 124 (held for the owner) gives the new right to everyone who held "Gérer les membres" ([association-permissions](docs/wiki/association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02)).

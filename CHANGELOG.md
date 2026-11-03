@@ -14,6 +14,319 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-03
+
+### Fixed - accepting a co-organisation on a validated event sends it back to validation
+
+An acceptance widens the event's audience with nothing validated behind the new part, so the event returns to pending in the acceptance's own transaction. The acceptance takes the event lock (associations, event, proposal), so it cannot race an edit. The validators are told it is an acceptance, the organiser and the partners are told why (one notice per person, the validator's first), as they now are when a date moves ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)).
+
+### Added - `/admin/spaces` reaches every association, list and institution, and creates one
+
+Each row links to the entity's public page and its management page. The list is searched, filtered by type and paged by keyset on the server. A platform-admin-only form creates an entity with its spaces and an optional first admin, with no member by default ([admin](docs/wiki/frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)).
+
+### Changed - `/admin/status` counts who is connected instead of listing them
+
+The list of connected people and devices is gone: the page now shows totals, a 24-hour anonymous chart of connected devices by platform, and the app versions live right now. The gateway counts from its shared presence keys (no replica counts twice) and keeps one sample a minute for 24 hours ([census](docs/wiki/services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)).
+
+### Fixed - Android's Back no longer leaves the app while a dialog opened by a Back is up
+
+After a first Back on a filmed take, the "Abandonner cette capture ?" question could not be closed by a second Back: Chromium refused to step back from its history entry and the app finished. The activity now asks the page first, and the Back closes the question ([device-verification](docs/wiki/device-verification.md#the-camera-tab-and-android-back---read-on-the-mi-9t-163-alpha2-2026-11-02)).
+
+### Changed - The Android compile gate on a pull request now merges the resources
+
+`compile-android-app` ran three debug tasks and none of them reads `strings.xml`, so a bare apostrophe (#2945) passed it and failed the Play build. It now also executes `:app:mergeArm64DebugResources`, where aapt2 flattens the strings ([cicd](docs/wiki/cicd.md#native-and-identity-provider-manifests-2026-10-23)).
+
+### Fixed - The Android release build no longer fails on a French apostrophe in `strings.xml`
+
+The booking-removed notification strings (#2945) carried bare apostrophes, which aapt2 refuses at `:app:mergeUniversalReleaseResources`, so the `1.6.3-alpha.3` Play build failed. They are escaped, and `nativeStrings.test.ts` now rejects an unescaped quote or a malformed unicode escape in every Android `strings.xml`.
+
+### Security - without an account, Canari shows no more than the public showcase
+
+A profile's memberships and roles, the shop, the category list, a form's agenda entry and the listing of recent posts now need a session; a public roster member and a carte card gain a photo URL reached through the roster row; the page head no longer describes a profile or the agenda, and the sitemap lists no post. The single shared post's link preview stays ([anonymous-surface](docs/wiki/anonymous-surface.md)).
+
+### Security - a BDE is managed by nobody but itself, and a BDE star edits an audience only inside its spaces
+
+One BDE's whole-campus audience no longer makes the other BDE of its campus its super-admin; a BDE star reads every audience of its campus but adds or removes rules only inside its own spaces, a wider rule staying the platform admin's; an event proposal is told to the platform admins when a targeted space has no BDE; any member leaves an association from its page with a "Quitter" button, except its last member manager, a guard now serialised so two managers leaving at once can no longer leave none ([association-permissions](docs/wiki/association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+
+### Fixed - a booking's "Avec" lists the other people, not the viewer
+
+An invited member read their own name on "Vos reservations ici" and on the Reservations cards. The server now sends the people of a booking other than the viewer (the booker included) and the cards show them as overlapping faces with their names ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Added - "Modifier la réservation": a coming booking's time and other people can be edited
+
+`PATCH /bookings/:id` replaces the range (same day, same room) and the companions in one transaction under the booking's locks, or refuses with a typed `BOOKING_EDIT_*` code and leaves the booking exactly as it was - an edit built on a view the booking has since left behind included (`stale`); the people added, removed or moved are notified and every reminder follows the new time ([bookings](docs/wiki/bookings-chantier.md#editing-a-booking-owner-2026-11-02)).
+
+### Added - "Creer en tant que" on the first step of the space-creation wizard
+
+A new booking space's owner is now chosen in the wizard itself ("Moi" or an association, list or institution the member manages), on every entry point; it opens on the page's owner and the audience tiers follow the choice ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Fixed - a booking that ends at midnight reads 00:00, not 24:00
+
+The booking sheet, its "Jusqu'a" stepper, the free slots of the day grid, and the organiser's week painter and time pickers wrote "24:00". They now write "00:00" (the picker's end-of-day choice reads "00:00 (fin de journee)" so it is not mistaken for a start); display only, the stored end of a day is unchanged ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Added - the SFU places a real call in CI: two browsers, coturn, encrypted audio
+
+`call-service` is proven by an end-to-end call on every change that touches it (owner decision D3): its binary, a throwaway coturn and two headless Chromes running the app's own E2E transform, passing only on frames decrypted under the other browser's key over a relay pair ([call-service](docs/wiki/services/call-service.md#the-end-to-end-call-in-ci)). Group calls' mesh-to-SFU switch and the choice of relay are decided (D1, D2, D4) ([backlog](docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
+
+### Fixed - the CanaReels viewer shows a followed member's reels across campuses
+
+The viewer read the "Mon espace" feed, filtered by spaces, so a reel seen only as an accepted follower or through a member repost never reached it. It now has its own server list, `feed=reels`, the union of the three tabs; installed apps get it through a server shim ([reels](docs/wiki/frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16), [legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03)).
+
+### Security - a platform admin no longer bypasses membership on conversation data
+
+In chat-delivery, a global admin is now refused another person's groups, rosters, roster changes,
+invitations, history, queued messages, devices and PIN like anyone else; only the storage
+aggregates still read the admin header, an asserted allowlist ([chat-delivery](docs/wiki/services/chat-delivery.md#no-platform-admin-bypass-on-conversation-data-owner-2026-11-02)).
+
+### Fixed - the chat reel viewer shows the sender's avatar, not "UI"
+
+The viewer opened from a reel message drew a placeholder avatar with the initials "UI" beside the right name, because the post-shaped entity it is given carried no author id. It now carries the message's sender ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
+
+### Changed - CanaReels in conversations are filmed on dev builds only
+
+`CHAT_REEL_WRITER_ENABLED` is on in a build made for `dev.canari-emse.fr` (the dev web estate and the pre-release store builds) and off in every production build ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#the-writer-switch-for-dev-only-owner-2026-11-02)).
+
+### Fixed - A device is no longer handed the acceptance time of a commit made before it was admitted
+
+The commit-time floor was read from an arrival record that could predate the admission (a group's enrolment, a re-added device's first row), so it answered one commit, or the stretch a device was out for, from before it. The commit gate now records the admitting commit on the seat (migration 044, every existing seat backfilled to what the server can prove) and the floor is read from it alone ([chat](docs/wiki/frontend/modules/chat.md#a-visible-notice-is-dated-by-its-frame-never-by-when-this-device-learnt-of-it)).
+
+### Fixed - the post composer's action chips wrap instead of being clipped
+
+The chip row (Photo/video, Live, Poll, Form, File, Schedule) was a scroller with no scrollbar, so on desktop the last chip was cut at the panel edge and unreachable; it now wraps onto a second line at any width. Create and edit share the one bar.
+
+### Fixed - a message deleted while a device was away stayed on that device
+
+A deletion, an edit or a reaction whose message was stored but not on screen now reaches the stored row; one whose message has not arrived yet is kept in a local store of its own and applied, by the message's author only, when the message arrives - including across a restart and through the archive replay ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#mutations-that-arrive-before-their-message)).
+
+Every rewrite of a stored message is now a compare-and-set on a row revision, so a deletion stored while the archive replay or a bundle merge was rewriting the row is never overwritten; a lookup by message id is scoped to its conversation; and the waiting mutations are bounded per sender, tagged rather than named at rest, and moved with the device key on a PIN change ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#every-rewrite-of-a-stored-message-is-a-compare-and-set-review-of-2936-p1)). The revision is compared together with the row's iv, so a row deleted and stored again is never taken for the one read; the archive replay settles the mutations of its own buffered messages in memory instead of the bounded store; and the waiting mutations are collected with the old messages ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#every-rewrite-of-a-stored-message-is-a-compare-and-set-review-of-2936-p1)). A push preview is never written over a deleted message, and an edit that reaches a message shown only as its notification preview waits for the message's body instead of being lost under it.
+
+### Fixed - a deploy no longer stops on "had no worker to read" when a proxy reload meets a retiring worker
+
+`rolling.sh` read the workers' uid after listing them, from a worker an earlier reload could already have retired, so a reload under load failed the deploy (seen as a CI flake, `deploy-rolling.test.sh`, zero lost requests). Each worker is now read once, whole, and a vanished one is not listed ([cicd](docs/wiki/cicd.md)).
+
+### Changed - editing an association's profile is its own right, "Modifier le profil"
+
+The profile and the logos asked "Gérer les membres", so letting someone fix a description meant letting them hand out every right. They ask the new `EDIT_PROFILE` now, every `PATCH /associations/:id` field asks its own right (a list's parent and the quota are the platform admin's), and migration 124 (held for the owner) gives the new right to everyone who held "Gérer les membres" ([association-permissions](docs/wiki/association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02)).
+
+### Fixed - creating an event with co-organisers is atomic
+
+The event was saved before its partners' proposals, so a failing proposal left an event with no proposals behind a 500, and the retry created it twice. Creation is now one transaction, announced after the commit ([profiles-and-access](docs/wiki/profiles-and-access.md#e2-partner-rights-on-a-co-organised-event-wp-q1-2026-11-03)).
+
+### Changed - the Feed tab opens lighter: ASCII text skips emoji segmentation, the first "Voir plus" read waits for the layout observer
+
+Plain-ASCII post text no longer goes through `Intl.Segmenter`, and the first overflow read of a clamped caption comes from the ResizeObserver instead of a forced layout per card ([community-open-budget](docs/wiki/frontend/community-open-budget.md#the-tab-taps-boot-work-named-feed-cards-not-boot-2026-11-02)).
+
+### Fixed - a DM read while both devices are online shows as read again
+
+The gateway dropped the server time of every live frame, so since `v1.6.0` each live read mark was refused and the sender kept one check ([chat](docs/wiki/frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+
+### Fixed - the GIF picker of a comment box opens above the comments sheet, not under it
+
+The picker sat on `--z-sheet` while a post's comments sheet (`CommentsDrawer` on a phone, `Modal` on a larger screen) sits on `--z-modal`, so it opened dimmed behind the sheet. A page-level drawer and a `Modal` now mark their subtree like a viewer, and what they open takes `--z-viewer-dialog` ([viewerLayer](frontend/src/lib/utils/viewerLayer.ts)).
+
+### Added - first-time hints for publishing a post, depositing an event and building a form
+
+Three one-time hints, once per account: the feed's publish control, the agenda's "Deposer un evenement" button and the three blocks of the form builder ([guided-help](docs/wiki/frontend/guided-help.md#the-first-time-hints-batch-1---create)).
+
+### Added - a short guided tour at first launch, on the real interface
+
+Six steps (five on a wide screen) light the feed, the chats, the camera, the agenda and the profile where they really are, can be skipped at any time and replayed from Settings; once seen on one device, the tour is not shown on another. The engine behind it serves the first-time hints to come ([guided-help](docs/wiki/frontend/guided-help.md)).
+
+### Security - no BDE manages an institution; its events stay on the agenda of the BDE they target
+
+A BDE whose space an institution's audience reaches no longer administers, archives or edits the members of it; only the institution's own members and the platform admin manage it, while the BDE of the spaces an institution's event targets still validates it ([association-permissions](docs/wiki/association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+
+### Fixed - an iPhone no longer counts as reading while it leaves, and a read made just before leaving reaches the other devices at once
+
+The iOS shell now tells the page when the app goes to the background and comes back, as Android does, and the last read before leaving is sent under a background task instead of waiting for the next open ([chat](docs/wiki/frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
+
+### Fixed - the lint warning on the test ResizeObserver stub
+
+`fireResize` now copies the observer set with `Array.from`, which passes `no-useless-spread` and keeps the same snapshot semantics ([test-harness](docs/wiki/testing-methodology.md)).
+
+### Changed - a list keeps its shop and collects through an accepted payment delegation
+
+A list keeps the shop, its cotisation and paid forms but holds no Lydia account: it collects only through a delegation that the receiver's own shop managers (or the platform admin) accept, recorded in migration 125; a revoke or the receiver's Lydia loss pauses it and tells its managers, a refund stays with the account that took the payment, and a BDE governing a list now reaches its edit page ([payments](docs/wiki/frontend/modules/payments.md#pause-and-resume-when-the-receiver-stops-collecting-owner-2026-11-02)).
+
+### Changed - only the platform admin may unlink an association's Lydia Business
+
+"Retirer Lydia" and its route are now reserved to the global admin; a club's payout managers no longer see or can call it ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Fixed - a media-service spec no longer deletes another spec's staged upload
+
+`media.service.chat-holds.spec.ts` ran the real orphan purge under a mocked future clock, wiping the shared `chunks_temp` of specs in parallel workers (a flaky `Upload session not found or expired` in the chat-reel spec); the purge is now stubbed there ([testing-methodology](docs/wiki/testing-methodology.md)).
+
+### Changed - mediabunny 1.65.0: upstream's Firefox avcC fix replaces our patch
+
+mediabunny 1.65.0 strips the doubled SPS/PPS byte of Firefox's encoder itself, so `patches/mediabunny@1.63.0.patch` is deleted and its behavioural test now runs under a Firefox user agent; one Chrome reading is owed ([video-preparation](docs/wiki/frontend/video-preparation.md)).
+
+### Security - a member manager grants, revokes and removes only within the rights it holds itself
+
+A granter could grant association flags it did not hold; an ordinary member is now capped at its own flags (removing a member included), an institution's members are the platform admin's alone (one rule and one code for every member write, the admin create's first admin included), a BDE writes audiences only within the spaces it governs, and a BDE super-admin's writes of the rights it does not inherit are audited ([association-permissions](docs/wiki/association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+
+### Security - member reposts hardened
+
+Reposts are rate-limited and announced once per reader, the repost answer carries no count, a refusal no longer distinguishes a block, a repost's reach stays out of the Associations feed, and a repost drops only its audience's cached feeds ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)).
+
+### Changed - posts of lists and members-only associations are not reposted by members
+
+A member can no longer repost the post of a list or of an association read by its members only; posts of other associations stay repostable, and the consent of personal posts is unchanged ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)).
+
+### Fixed - a reader reached by a repost before an announcement is told once
+
+An association post reposted before it was announced is now told once to each reader the repost reached, whatever is reposted afterwards ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)).
+
+### Added - the author sees who reposted their post and removes one repost; "Republié par vous"
+
+On their own post, the author opens "Republié par N personnes" from the menu and can "Retirer" one repost; nobody across a block or the review cohort is listed, and the removed reposter is not told. A reader who reposted a post reads "vous" first on its "Republié par" line ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)).
+
+### Fixed - menu icons keep their size, and the post menu offers the personal repost
+
+In the post's "..." menu a long label ("Republier au nom d'une association") wrapped and shrank its icon; the menu rows of the post, community rail and glass menus now never shrink their icons. The post menu also carries "Republier pour mes abonnés" / "Annuler ma republication", the same action as the share sheet ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)).
+
+### Changed - the MiGallery face rows describe the stored-template design
+
+Register row G3 and the MiGallery DPIA now state what option C - deployed in MiGallery `v2.18.0`,
+seeded and cut over on 2026-11-01 - stores, where, for whom and for how long, with every changed
+assessment left to the owner ([dpia-migallery-faces](docs/wiki/compliance/dpia-migallery-faces.md)).
+
+### Fixed - Two accounts on one phone each keep their own encrypted messages
+
+The local MLS state was one file per install, so the second account to sign in could not open it and only a reinstall cleared it. Each account's state is now its own file: the signed-in account's sits where every engine reads it, the others are parked aside and moved back - never rewritten - when their account signs in, ownership proven by the record the file already carries ([auth](docs/wiki/frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)).
+
+### Fixed - a dialog keeps its rounded bottom corners
+
+The new-post window drew square bottom corners because its action bar painted over the rounded panel; the panel now clips its content to its own corners ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - a BDE moderates its own spaces, only the author edits a post, an institution is the admin's to delete, no event is published to an anonymous reader
+
+`MODERATE` is scoped to the spaces the BDE governs; nobody, the platform admin included, edits another person's post or comment; deleting an institution needs the global admin; no event is served without a session except through a signed link, and a single event's `.ics` link is signed ([D23 amended](docs/wiki/profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02), [D40 closed](docs/wiki/profiles-and-access.md#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)).
+
+### Changed - every `@nestjs` package is at 12.3.2 in all four services, and four CodeQL alerts are fixed
+
+The five conflicting Dependabot bumps are replaced by one aligned change; the CodeQL findings (a promise compared by identity, a regex that always matches, a useless test write) are rewritten rather than dismissed. See [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them).
+
+### Fixed - the container image scan, red on two libexpat advisories in the nginx images
+
+`CVE-2026-117610` and `CVE-2026-118370` (libexpat 2.9.0-r0, fixed in Alpine's 2.10.0-r0) were reported in `nginx:1.31.8-alpine` and `nginx:stable-alpine`; no nginx build carries the fix yet, so both are allowlisted by purl and retire with the pins ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Changed - a co-organiser edits an event's text and poster and may withdraw; the date, the partners and the delete are the organiser's
+
+Until now an accepted partner could change the date and delete another campus's event. It is now refused with one typed 403, `CALENDAR_PARTNER_ORGANISER_ONLY`, and the event form hides the date and the partner list from a partner and offers "withdraw" instead ([profiles-and-access](docs/wiki/profiles-and-access.md#e2-partner-rights-on-a-co-organised-event-wp-q1-2026-11-03)).
+
+A partner no longer owns the form link either, an edit, a validation and a rejection of one event are now serialised by one row lock, and withdrawing asks for confirmation ([profiles-and-access](docs/wiki/profiles-and-access.md#e2-partner-rights-on-a-co-organised-event-wp-q1-2026-11-03)).
+
+### Changed - a post with several documents shows compact rows, and a post holds at most ten attachments
+
+From two documents on, a post lists them as rows (icon, name, size, download) with no preview, and
+the file is fetched only when tapped; one document keeps its preview. Past ten attachments the
+composer stops adding and says how many were left out, and the server refuses with
+`POST_ATTACHMENTS_TOO_MANY` (no post held more than ten when measured). An edit sending a null `media` now falls through to `images`. See [posts](docs/wiki/frontend/modules/posts.md).
+
+### Fixed - a write or a notification on a post follows the read's predicate
+
+Reactions, comments, comment likes, mentions and reports on a post now ask the same gate as reading it by id (audience, block, moderation hide, schedule), and a post's mentions are told once, by its publication sweep only ([posts](docs/wiki/frontend/modules/posts.md#a-write-or-a-notification-follows-the-reads-predicate-2026-11-02)). During the rolling-deploy overlap only, a mention may be told twice or not at all, once: the old replica tells it inline while the new one sweeps.
+
+### Added - "Envoyer a..." on the camera tab: a take can go to several conversations at once (off until the chat writer switch turns on)
+
+After a video on the CanaReels camera, the review offers a sheet - "Publier sur CanaReels" first, then DMs and groups, with search and a server-capped multi-select - that queues ONE take with one send per conversation, and hands the publish step's upload to the chats when both are ticked. Inert while `CHAT_REEL_WRITER_ENABLED` is off ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#19-what-the-send-to-sheet-rc-12-built-2026-11-02)).
+
+### Fixed - read state now reaches every device and tab without a reload
+
+An Android app resumed on an open conversation marks it read again - but not when the resume is a notification tap for another conversation -, a follower browser tab receives the read state and salon counts its leader received, a read in one tab moves the other tab's watermark with its badge, and a salon left selected but unread takes the server's count on reconnect ([chat](docs/wiki/frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
+
+### Added - a conversation reel whose file is gone reads "CanaReel supprimé" (RC-6)
+
+The reel viewer's `410` is recorded on the message's local row, so the tile draws "CanaReel supprimé" (before the sender's expiry hint) or "expiré" (after) across reloads, and the cached copy is dropped ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#18-what-the-tile-and-viewer-package-rc-6-built-2026-11-02)).
+
+### Changed - the GDPR register now covers MiGallery's face reference ledger
+
+A new row (G3a) records what the ledger holds, when it is written and every path that deletes it, and flags the missing automatic expiry as open ([register](docs/wiki/compliance/register-of-processing.md)).
+
+### Changed - lists and institutions may ask to carry a personal post, and a list's post may be reposted
+
+A list or an institution may now ask a student to republish their personal post, as an association could. An institution's request shows the author its potential audience before they answer, and an acceptance is refused if that audience changed meanwhile. An archived entity no longer carries anything, a post seen only through a carrier cannot be reposted further, and a bell row about a post disappears once its reader can no longer see the post. Members may repost a list's post like an association's ([profiles-and-access](docs/wiki/profiles-and-access.md#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)).
+
+### Fixed - a deploy's reload no longer leaves a proxy with no replica: the replica lists are variable targets
+
+Every take-out and restore renamed a `resolve` server in an `upstream` list, and nginx started the reloaded worker with no peer until its DNS query returned, refusing what it took meanwhile (`no live upstreams`, the self-test's lone reset). Each proxy now reads `$target_<service>`: the DNS name at rest and the new replica's container name during a take-out, each resolved for the request within `resolver_timeout 2s`; a daily `resolver` job counts the proxies' DNS failures. See [cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+
+### Fixed - a file sent in a community salon no longer disappears until the server has it
+
+A salon attachment is drawn in the thread at the tap and its row shows the real upload progress, with a cancel and a Retry; it used to be uploaded with no row at all, so a heavy file vanished for the whole upload ([chat](docs/wiki/frontend/modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02)).
+
+### Changed - Opening a salon mounts only the rows its pane is missing, then widens in small steps
+
+A thread of one-line rows mounted 60 hidden rows before its first paint (one ~260 ms task on a Mi 9T) for the 40 px of overflow a scroll needs. The fill pass now asks for the rows the first frame measured it lacks, the widen after the reveal runs 10 groups per task, and the bubbles share one pointer query ([community-open-budget](docs/wiki/frontend/community-open-budget.md#the-salon-mount-named-60-rows-mounted-before-the-reveal-not-20-2026-11-02)).
+
+### Security - avatar URLs carry a viewer-bound token, phase 1
+
+Core mints an avatar token beside every access token, bound to the session; every client avatar URL
+is built by one helper that carries it, and core refuses a wrong one with a bodyless 403. A request
+with no token is still answered and logged `access=unsigned` until phase 2 refuses it; the edge
+never forwards the internal credential, and the access log drops the avatar query
+([sessions](docs/wiki/sessions.md#the-avatar-token)).
+
+### Fixed - the social-service suite no longer prints `[CONFIG] FRONTEND_URL is unset`
+
+The refusal test of `frontendBaseUrl()` provoked the accusing error log three times; it now captures and asserts it instead of printing it. Test-only, production unchanged.
+
+### Fixed - A disposed upload no longer shows `stalled`, and the reel-resume tests stop failing under load
+
+A disposed or withdrawn transfer stuck behind a dead socket kept its stall-hint timer and wrote `stalled` into the next view of the same id, and its late progress events recreated a cleared view: both stop at the abort. `outbox.reelResume` also waited on events inside `vi.waitFor`'s 1 s default and read the take record once, a write before it says `sent` ([test-suite-reform](docs/wiki/test-suite-reform.md#8-intermittent-local-failures-under-load-read-2026-10-30)).
+
+### Fixed - The reel-resume "parked as failed" case no longer hangs on a backoff timer that was not armed yet
+
+The case advanced the faked backoff timer in a loop of at most 50 looks, but the upload view reads `waiting` a queue read before the outbox arms that timer, so under load the loop could end first and the third attempt never started (`expected 2 to be greater than or equal to 3`). It now waits for a timer to exist, then advances exactly one ([test-suite-reform](docs/wiki/test-suite-reform.md#8-intermittent-local-failures-under-load-read-2026-10-30)).
+
+### Added - two more tutorials: sending a reel in a chat, and the video call
+
+Shot on the Mi 9T with fictitious data, one PDF each ([tutoriels](docs/user-guide/tutoriels/README.md)).
+
+### Added - a French user guide of 25 illustrated tutorials, one PDF each
+
+Every Canari feature a member meets (events, posts, forms, chats, communities, bookings, shop, security, camera and CanaReels, lives, audio calls, voice messages, directory...) has a step-by-step tutorial shot on dev with fictitious data, plus the generic capture helper `tools/tutorial-shots/flow.mjs` ([tutoriels](docs/user-guide/tutoriels/README.md)).
+
+### Fixed - the iPhone's native ring announces a video call as video
+
+The VoIP push now carries the call's media kind and CallKit announces it, so answering a video call joins with the camera ([calls](docs/wiki/frontend/modules/calls.md)). Older iPhone builds ignore the new value and ring as audio, as before.
+
+### Added - the content-free wake-up push, client side
+
+Android, the iOS extension and the iOS app fetch a wake-up push's frame from `GET /api/mls/push/wake` and run it through their existing dispatch; a failed fetch says the message could not be loaded. Android registrations now declare `wake: true`, iOS ones `false` until the iOS notification P1 is closed; nothing changes until the server switch moves ([design](docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)).
+
+### Fixed - the wake-up push's ordering on Android cannot strand a push or count a Welcome late
+
+A wake ticket whose deadline cannot be scheduled is settled at once, a timeout is one log line, the bound is counted in awake time on one clock, and a release batch counts every Welcome before the lane runs any of its tasks ([design](docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)).
+
+### Added - the content-free wake-up push, server side, behind a switch that is off
+
+`platform_config.push_mode` (`full` by default, editable at `/admin/platform`) and a per-device `wakeCapable` flag decide whether an MLS push carries only a wake-up and an opaque id; the device fetches the rest from `GET /api/mls/push/wake` ([design](docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)).
+
+### Added - the Dependencies panel, a parent picked at creation, and a BDE that sees who depends on it
+
+`/admin/spaces` shows each BDE with the entities depending on it and every mismatch, and changes a parent or a list's label in place; an institution may take a space's governor star. Creating an entity asks which BDE when its creator manages several, and a BDE's edit hub lists its dependents and offers a BDE officer preset ([reform 2.8](docs/wiki/spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner)).
+
+### Added - the dependency axis: a governing parent BDE, a journal, and the database's own two-level rule
+
+Associations and lists get a governing parent BDE (the owner's validated list, applied by a held migration), a BDS or BDA link becomes a display-only label, every change is journaled, and triggers refuse what would break the two levels. Designating a space's governor no longer writes an audience, and an institution may govern a space ([reform 2.8](docs/wiki/spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner)).
+
+### Changed - the register and the privacy policy re-read against follow requests and member reposts (WP-F7)
+
+Register C5 and the `/legal/privacy` paragraphs were checked against the code, after member reposts reached production (`v1.6.1`, #2859) and were hardened (#2917, #2920, which already amended both in step), and found exact; the backlog, the D37-D41 table and the queue now say so ([backlog](docs/wiki/backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)).
+
+### Changed - a pin is a promotion per space (WP-PIN)
+
+A BDE pins a post only for the readers of the spaces it governs (the platform admin in any space), at most 3 shown per space, institution and personal posts included; the global `posts.pinned` flag is read by nothing, and migration 128 (held for the owner) moves the one global pin ([spaces-and-audiences-reform](docs/wiki/spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)).
+
+### Fixed - Android: a frozen app when its window closed, and a crash on a message for a closed window
+
+Two Play reports traced to wry's Android main pipe: the main thread could block forever sending into a full channel only it drains (ANR), and a message reaching an already-destroyed window aborted the process. wry is now a vendored fork with both fixed ([mobile](docs/wiki/frontend/mobile.md#wry-main-pipe-patch)).
+
+### Added - a PLATFORM verdict in the Play vitals watch
+
+A crash with no Canari frame (the first: an AAudio use-after-free inside Android) is recorded as PLATFORM with its evidence, and re-opens as NEW the moment that evidence breaks ([play-vitals](tools/play-vitals/README.md#platform-issues)).
+
 ## [1.6.2] - 2026-11-02
 
 ### Changed - the camera opens on the lens last used, and the conversation's "+" offers one camera entry

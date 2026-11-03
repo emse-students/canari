@@ -1,3 +1,0 @@
-### Fixed - the CanaReels viewer shows a followed member's reels across campuses
-
-The viewer read the "Mon espace" feed, filtered by spaces, so a reel seen only as an accepted follower or through a member repost never reached it. It now has its own server list, `feed=reels`, the union of the three tabs; installed apps get it through a server shim ([reels](docs/wiki/frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16), [legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03)).
