@@ -1267,6 +1267,68 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
 
+#### E2: partner rights on a co-organised event (WP-Q1, 2026-11-03)
+
+Owner decision E2 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): **a partner edits
+the text and the poster and may withdraw; only the organiser changes the date, the audience or the
+partner list, and only the organiser deletes.** Before it, "edit, poster, delete" of D39 as built
+above meant every right, the date and the delete included (P14: a Gardanne partner could delete a
+Saint-Etienne event).
+
+- **The side.** `assertMayWriteEvent` now returns `{ isGlobalAdmin, isBde, side }`. `side` comes from
+  `eventWriteSide` (`associations/event-write-side.ts`, the one rule): the organiser when the write
+  is routed through the event's own association, a `partner` when it is routed through an accepted
+  co-organiser. The organiser is read from the event ROW, never the URL.
+- **The refusals**, one typed 403 `CALENDAR_PARTNER_ORGANISER_ONLY` (`partnerOrganiserOnlyRefusal`),
+  thrown before any write of the event:
+  - `updateCalendarEvent`: a partner whose `startsAt` or `endsAt` actually MOVED (a resubmitted,
+    unchanged date is not a change - both modals send every field);
+  - `CoorganisationService.sync`: a partner-side list that adds anyone or removes anyone but itself
+    (it was a bare 403 with a message; now typed);
+  - `deleteCalendarEvent`'s member branch.
+- **No partial write.** Every partner-side refusal (and the cap) is checked BEFORE the first write of `updateCalendarEvent`: `CoOrganiserPort.check` runs the read-only plan of `sync` ahead of the form-link detach, so a refused request changes nothing (integration case: form link plus an illegal partner-list change).
+- **Allowed for a partner**: title, description, the poster routes (they ask `assertMayWriteEvent`,
+  which a partner passes), and WITHDRAWAL (`coOwnerIds` without itself, unchanged).
+- **Audience.** An event has no audience of its own today (it is the union of the organiser's and the
+  accepted partners', D39), so no write field exists to refuse. When WP-I gives institutions an item
+  audience, that write must call the same `eventWriteSide` and refuse a partner.
+- **Not changed**: a platform admin and a governing validator (`isBde`) are the organiser side through
+  every route, as before - E2 narrows the partner, nobody above. Verified in the integration spec.
+- **The form.** `GET /api/associations/:id/events/:eventId/write-side` answers `{ side }` from that
+  same rule; the form reads it with the co-organiser states (a failure of either is `failed`, the side
+  stays `unknown`). The date and the partner list are drawn and SENT for `organiser` only; a partner
+  sees a note and a "withdraw" button instead. The delete buttons of an association's own calendar
+  section are shown only for events it organises (the server stays the authority).
+- **The form link is the organiser's too** (decision, review of 2026-11-03; reversible, it is one
+  condition in `updateCalendarEvent` and one in `toUpdatePayload`). A partner does NOT own the link: a
+  CHANGE of `linkedFormId` from the partner side (detach, or another form) is the same typed 403
+  (`partnerOrganiserOnlyRefusal('linkedForm')`), before any write; resending the value it loaded is not
+  a change and is accepted. The client never sends `linkedFormId` unless the side is `organiser`. This
+  also removes an untyped 400 (the partner's own association does not own the organiser's form) that
+  broke a partner's plain text edit.
+- **One transaction, one lock, one connection.** `updateCalendarEvent`, `validateCalendarEvent` and
+  `rejectCalendarEvent` run inside `withEventLock` (`AssociationsService`). Its lock order is THE GLOBAL
+  ONE (`ProposalsService.lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE`
+  before it deletes events): the event's organiser and every association the edit names as a partner,
+  `FOR KEY SHARE` in id order, THEN the event row `FOR NO KEY UPDATE`. The first draft locked the event
+  first, and an edit adding a partner could hold the event while a delete of the organiser held the
+  association: a cycle Postgres could not see, because the edit's proposal insert ran on another
+  connection while the edit's own connection sat idle. `NO KEY UPDATE` rather than `UPDATE` so the
+  `FOR KEY SHARE` of foreign-key inserts into tables referencing the event is not blocked.
+- **Everything on the lock's manager.** The checks (`CoOrganiserPort.check(request, manager)`), the form
+  ownership read, the form-link detach, the partner endings, the k proposals
+  (`ProposalsService.proposeWithin`, which hands back its announcement) and the event save are ONE
+  transaction on ONE pooled connection: they commit or none does (a failing k-th proposal leaves no
+  field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
+  The announcements and the other notices run after the commit. An event CREATION calls
+  `sync(request)` without a manager and gets its own transaction.
+- **A co-organisation ACCEPTANCE is not under this lock.** It is a proposals transaction; WP-Q2's
+  acceptance, which returns a validated event to pending, must take `associations -> event row ->
+  proposal` in that order to be serialised with an edit.
+- **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
+  delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock, failing explicitly if it settles first), the organiser-delete versus partner-edit ordering (a held association lock, never a hang) and the rollback of a failing k-th proposal;
+  `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
+
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)
 
 `GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`
