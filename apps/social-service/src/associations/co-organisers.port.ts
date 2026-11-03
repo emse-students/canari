@@ -33,4 +33,10 @@ export interface CoOrganiserPort {
    * its audience go with its row). A refused one stays refused and is not proposed again.
    */
   sync(request: CoOrganiserSyncRequest): Promise<void>;
+  /**
+   * Every refusal `sync` can give (the cap, a partner changing more than its own presence), with NO
+   * write. The event write calls it BEFORE its first write, so a refused request leaves nothing
+   * behind - `sync` itself runs its writes last and re-checks, the same plan.
+   */
+  check(request: CoOrganiserSyncRequest): Promise<void>;
 }

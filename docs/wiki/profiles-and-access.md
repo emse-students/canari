@@ -1278,6 +1278,7 @@ Saint-Etienne event).
   - `CoorganisationService.sync`: a partner-side list that adds anyone or removes anyone but itself
     (it was a bare 403 with a message; now typed);
   - `deleteCalendarEvent`'s member branch.
+- **No partial write.** Every partner-side refusal (and the cap) is checked BEFORE the first write of `updateCalendarEvent`: `CoOrganiserPort.check` runs the read-only plan of `sync` ahead of the form-link detach, so a refused request changes nothing (integration case: form link plus an illegal partner-list change).
 - **Allowed for a partner**: title, description, the poster routes (they ask `assertMayWriteEvent`,
   which a partner passes), and WITHDRAWAL (`coOwnerIds` without itself, unchanged).
 - **Audience.** An event has no audience of its own today (it is the union of the organiser's and the

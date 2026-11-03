@@ -179,6 +179,40 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    * (leave); anything else is a 403 BEFORE any write.
    */
   async sync(request: CoOrganiserSyncRequest): Promise<void> {
+    const { eventId, actorId } = request;
+    const { toPropose, toEnd } = await this.plan(request);
+    if (toEnd.length > 0) {
+      await this.coOwnerRepo.manager.transaction(async (manager) => {
+        for (const state of toEnd) {
+          await this.end(manager, eventId, state, actorId);
+        }
+      });
+    }
+    for (const toAssociationId of toPropose) {
+      // The event write check already established that the actor speaks for the organiser.
+      await this.proposals.propose(
+        this.kind,
+        eventId,
+        toAssociationId,
+        actorId,
+        request.isGlobalAdmin,
+        { senderVouched: true }
+      );
+    }
+  }
+
+  /** `CoOrganiserPort.check`: every refusal of `sync`, none of its writes. */
+  async check(request: CoOrganiserSyncRequest): Promise<void> {
+    await this.plan(request);
+  }
+
+  /**
+   * What `sync` would do, and every refusal it would give - READ-ONLY. One implementation for
+   * `check` and `sync`, so the pre-write check and the write cannot disagree.
+   */
+  private async plan(
+    request: CoOrganiserSyncRequest
+  ): Promise<{ toPropose: string[]; toEnd: CoOrganiserView[] }> {
     const { eventId, organiserId, actorId } = request;
     const states = await this.listStates(eventId);
     const byId = new Map(states.map((s) => [s.associationId, s]));
@@ -217,24 +251,7 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         throw partnerOrganiserOnlyRefusal('coOwnerIds');
       }
     }
-    if (toEnd.length > 0) {
-      await this.coOwnerRepo.manager.transaction(async (manager) => {
-        for (const state of toEnd) {
-          await this.end(manager, eventId, state, actorId);
-        }
-      });
-    }
-    for (const toAssociationId of toPropose) {
-      // The event write check already established that the actor speaks for the organiser.
-      await this.proposals.propose(
-        this.kind,
-        eventId,
-        toAssociationId,
-        actorId,
-        request.isGlobalAdmin,
-        { senderVouched: true }
-      );
-    }
+    return { toPropose, toEnd };
   }
 
   /** Withdraws a pending co-organiser, or ends an accepted one, inside `manager`'s transaction. */

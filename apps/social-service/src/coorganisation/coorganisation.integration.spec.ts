@@ -724,6 +724,50 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(told).toEqual([]);
     });
 
+    it('a refused partner-list change leaves NO partial write: the form link and the other event keep their state', async () => {
+      const OTHER = E(23);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Linked elsewhere', '2026-07-05T18:00:00Z', 'org', 'validated')`,
+        [OTHER, A3]
+      );
+      const form = await ds
+        .getRepository(Form)
+        .save(
+          ds
+            .getRepository(Form)
+            .create({ title: 'Form', associationId: A3, ownerId: 'coEd' } as Partial<Form>)
+        );
+      await q(`UPDATE association_calendar_events SET "linkedFormId" = $2 WHERE id = $1`, [
+        OTHER,
+        form.id,
+      ]);
+      const link = async (id: string) =>
+        (
+          (await q(`SELECT "linkedFormId" FROM association_calendar_events WHERE id = $1`, [
+            id,
+          ])) as {
+            linkedFormId: string | null;
+          }[]
+        )[0].linkedFormId;
+      const proposalsBefore = await proposalRows(P);
+
+      // A form link (which detaches the link of every OTHER event on that form) together with a
+      // partner-list change a partner may not make: the refusal must come before the detach.
+      await expect(
+        associations.updateCalendarEvent(
+          A3,
+          P,
+          { linkedFormId: form.id, coOwnerIds: [A3, A4] },
+          { callerUserId: 'coEd' }
+        )
+      ).rejects.toMatchObject(PARTNER_ONLY);
+
+      expect(await link(OTHER)).toBe(form.id);
+      expect(await link(P)).toBeNull();
+      expect(await proposalRows(P)).toEqual(proposalsBefore);
+    });
+
     it('REFUSAL 4: a partner deleting the event gets the typed 403, and the event stays', async () => {
       await expect(
         associations.deleteCalendarEvent(A3, P, { callerUserId: 'coEd' })

@@ -157,7 +157,7 @@ import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
-import type { CoOrganiserPort } from './co-organisers.port';
+import type { CoOrganiserPort, CoOrganiserSyncRequest } from './co-organisers.port';
 import {
   eventWriteSide,
   partnerOrganiserOnlyRefusal,
@@ -2871,6 +2871,26 @@ ${rejectionReason}`
       ev.validatedBy = null;
     }
 
+    // EVERY REFUSAL BEFORE ANY WRITE: the partner-list check (a partner changing more than its own
+    // presence, the cap) is read-only and runs here, ahead of the form link's detach below, so a
+    // refused request leaves the event, its form links and its partners exactly as found.
+    let coOrganiserRequest: CoOrganiserSyncRequest | null = null;
+    if (dto.coOwnerIds !== undefined) {
+      if (!callerOpts?.callerUserId) {
+        throw new ForbiddenException('A co-organiser change needs a caller');
+      }
+      coOrganiserRequest = {
+        eventId: ev.id,
+        organiserId: ev.associationId,
+        desiredIds: dto.coOwnerIds,
+        actorId: callerOpts.callerUserId,
+        isGlobalAdmin: callerOpts.isGlobalAdmin === true,
+        organiserSide: canCrossAsso === true || ev.associationId === associationId,
+        viaAssociationId: associationId,
+      };
+      await this.coOrganiserPort().check(coOrganiserRequest);
+    }
+
     if (dto.linkedFormId !== undefined) {
       if (dto.linkedFormId === null || dto.linkedFormId === '') {
         ev.linkedFormId = null;
@@ -2886,20 +2906,7 @@ ${rejectionReason}`
 
     // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
     // trying to change anything but its own presence, 403) leaves the event as it was found.
-    if (dto.coOwnerIds !== undefined) {
-      if (!callerOpts?.callerUserId) {
-        throw new ForbiddenException('A co-organiser change needs a caller');
-      }
-      await this.coOrganiserPort().sync({
-        eventId: ev.id,
-        organiserId: ev.associationId,
-        desiredIds: dto.coOwnerIds,
-        actorId: callerOpts.callerUserId,
-        isGlobalAdmin: callerOpts.isGlobalAdmin === true,
-        organiserSide: canCrossAsso === true || ev.associationId === associationId,
-        viaAssociationId: associationId,
-      });
-    }
+    if (coOrganiserRequest) await this.coOrganiserPort().sync(coOrganiserRequest);
     const saved = await this.calendarRepo.save(ev);
     const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
     this.logger.debug(
