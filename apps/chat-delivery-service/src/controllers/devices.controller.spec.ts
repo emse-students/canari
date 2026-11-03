@@ -107,11 +107,9 @@ describe('DevicesController.registerDevice - revoked device', () => {
       reason: 'retired',
     });
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toBeInstanceOf(ForbiddenException);
     // The client branches on this code, never on the message.
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
       response: { code: 'DEVICE_REVOKED', reason: 'retired' },
     });
     expect(keyPackageRepo.save).not.toHaveBeenCalled();
@@ -120,7 +118,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
   it('lets an ordinary device through', async () => {
     revokedDeviceRepo.findOne.mockResolvedValue(null);
 
-    await controller.registerDevice(BODY, 'u1', undefined);
+    await controller.registerDevice(BODY, 'u1');
 
     expect(keyPackageRepo.save).toHaveBeenCalled();
   });
@@ -140,7 +138,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
         ) ?? null
     );
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
       status: 409,
       response: { error: 'device_id_taken' },
     });
@@ -152,7 +150,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
     expect(keyPackageRepo.save).not.toHaveBeenCalled();
 
     // The owner itself re-registers the same id as before.
-    await controller.registerDevice({ ...BODY, userId: 'u2' }, 'u2', undefined);
+    await controller.registerDevice({ ...BODY, userId: 'u2' }, 'u2');
     expect(recordKeys).toHaveBeenCalledWith('u2', 'd1', ['a2V5'], 'register-device');
   });
 
@@ -160,7 +158,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     recordKeys.mockRejectedValue(new Error('db down'));
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toThrow('db down');
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toThrow('db down');
 
     expect(recordKeys).toHaveBeenCalledWith('u1', 'd1', ['a2V5'], 'register-device');
     expect(keyPackageRepo.save).not.toHaveBeenCalled();
@@ -180,10 +178,8 @@ describe('DevicesController.registerDevice - revoked device', () => {
       .spyOn((controller as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
       .mockImplementation(() => undefined);
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
       response: { code: 'DEVICE_LIMIT_REACHED', max: MAX_DEVICES_PER_USER },
     });
     expect(keyPackageRepo.save).not.toHaveBeenCalled();

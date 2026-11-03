@@ -9,7 +9,6 @@ import {
   BDE_ONLY_FLAGS,
   SUPER_ADMIN_EXCLUDED_FLAGS,
   ALL_PERMISSION_FLAGS,
-  INSTITUTION_MEMBERS_ADMIN_ONLY,
   MEMBER_FLAGS_BEYOND_GRANTER,
   grantableFlags,
   findBdeAssociationWithFlag,
@@ -228,9 +227,6 @@ describe('grantableFlags - the client mirror of the server grant ceiling', () =>
     );
     expect(server).toContain(
       `export const MEMBER_FLAGS_BEYOND_GRANTER = '${MEMBER_FLAGS_BEYOND_GRANTER}'`
-    );
-    expect(server).toContain(
-      `export const INSTITUTION_MEMBERS_ADMIN_ONLY = '${INSTITUTION_MEMBERS_ADMIN_ONLY}'`
     );
     expect(server).toMatch(
       /if \(standing\.isGlobalAdmin \|\| standing\.isSuperAdminOf\) return ALL_PERMISSION_FLAGS;/

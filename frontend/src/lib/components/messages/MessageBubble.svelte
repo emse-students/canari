@@ -20,6 +20,7 @@
     retryUpload,
     unsentReasonOf,
     uploadViewOf,
+    uploadCancelOf,
     type UnsentReason,
     type UploadView,
   } from '$lib/utils/chat/uploadProgress.svelte';
@@ -1032,7 +1033,8 @@
                 {upload}
                 uploadFailed={uploadFailed || retiredForGroup}
                 {uploadFailedLabel}
-                onCancelUpload={onDelete ? () => onDelete(messageId) : undefined}
+                onCancelUpload={uploadCancelOf(messageId) ??
+                  (onDelete ? () => onDelete(messageId) : undefined)}
                 onRetryUpload={() => retryUpload(messageId)}
               />
 
@@ -1057,7 +1059,7 @@
               {readBy}
               onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
               {onDiscard}
-              {onRestore}
+              onRestore={mediaRef ? undefined : onRestore}
             />
           </div>
 

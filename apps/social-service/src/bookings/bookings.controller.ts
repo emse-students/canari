@@ -18,8 +18,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { contentDisposition } from '../common/content-disposition';
 import { FORM_FILE_MAX_BYTES, type UploadedFormFile } from '../forms/form-files.service';
 import { parseBookingExportLabels } from './booking-export';
@@ -28,6 +30,7 @@ import {
   CancelBookingDto,
   CreateBlockDto,
   CreateBookingDto,
+  EditBookingDto,
   ReminderDto,
   ZONED_INSTANT,
 } from './dto/booking.dto';
@@ -37,6 +40,16 @@ export const actorOf = (userId: string, globalAdmin: string | undefined): Actor 
   userId: userId.trim().toLowerCase(),
   isGlobalAdmin: globalAdmin === 'true',
 });
+
+/**
+ * How many edits one account may send to ONE booking in a minute (`UserResourceThrottlerGuard`,
+ * keyed on the account AND `:bookingId`). Each one may notify every person it adds, removes or
+ * moves, so a loop - a stuck tab, a script - must not be able to drive it; an organiser editing a
+ * column of bookings in a row is not throttled by their own earlier edits. A flood spread over
+ * many bookings reaches a person only through bookings the actor holds or manages, and D21's block
+ * stops it at the next edit (review of #2945).
+ */
+export const BOOKING_EDITS_PER_MINUTE = 10;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -168,6 +181,23 @@ export class BookingsController {
     @Headers('x-global-admin') ga?: string
   ) {
     return this.service.cancel(bookingId, actorOf(userId, ga), Date.now(), dto?.message);
+  }
+
+  /**
+   * Edits a coming booking (owner, 2026-11-02): its range on the same day, and its other people.
+   * Who may is who may cancel. Refusals are typed (`BOOKING_EDIT_*`, `reason` the rule); the
+   * original booking stays whole until the one transaction that replaces it commits.
+   */
+  @Patch(':bookingId')
+  @UseGuards(UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: BOOKING_EDITS_PER_MINUTE, ttl: 60_000 } })
+  edit(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: EditBookingDto,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.edit(bookingId, dto, actorOf(userId, ga), Date.now());
   }
 
   /** Sets the caller's own reminder delay on a booking they are one of the people of (Q-R1). */

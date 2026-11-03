@@ -6,8 +6,8 @@ import {
   AssociationPermissionFlag,
   SUPER_ADMIN_EXCLUDED_FLAGS,
 } from './entities/association-member.entity';
+import { ADMIN_ASSOCIATION_ERROR } from './admin-catalogue';
 import {
-  INSTITUTION_MEMBERS_ADMIN_ONLY,
   MEMBER_FLAGS_BEYOND_GRANTER,
   flagNames,
   flagsBeyondCeiling,
@@ -110,12 +110,15 @@ function makeService(rows: Row[]) {
       );
       return Promise.resolve([{ holds }]);
     }),
-    // The last-admin guard counts the managers; two keeps it out of these cases.
+    // The last-admin guard counts the managers; two keeps it out of these cases. An add reads the
+    // roster's last sort order before `insertMembership` judges the granter.
     createQueryBuilder: jest.fn(() => {
       const qb = {
+        select: () => qb,
         where: () => qb,
         andWhere: () => qb,
         getCount: () => Promise.resolve(2),
+        getRawOne: () => Promise.resolve({ max: 0 }),
       };
       return qb;
     }),
@@ -210,9 +213,11 @@ describe('AssociationsService - the grant ceiling on a member write', () => {
     const { service } = makeService([superAdmin]);
     const created = jest.fn((row: unknown) => row);
     Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
-      manager: { query: jest.fn(() => Promise.resolve([])) },
-      create: created,
-      save: jest.fn((row: unknown) => Promise.resolve(row)),
+      manager: {
+        query: jest.fn(() => Promise.resolve([])),
+        create: (_entity: unknown, row: unknown) => created(row),
+        save: jest.fn((row: unknown) => Promise.resolve(row)),
+      },
     });
     // The add's own plumbing (cohort, sort order, feed sweep) is not this spec's subject.
     jest
@@ -354,12 +359,12 @@ describe("AssociationsService - an institution's members are the platform admin'
           granter
         )
       )
-    ).toBe(INSTITUTION_MEMBERS_ADMIN_ONLY);
+    ).toBe(ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY);
     expect(
       await settle(service.updateMemberRole(SCHOOL, 'target', 'Directeur', undefined, { granter }))
-    ).toBe(INSTITUTION_MEMBERS_ADMIN_ONLY);
+    ).toBe(ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY);
     expect(await settle(service.removeMember(SCHOOL, 'target', { granter }))).toBe(
-      INSTITUTION_MEMBERS_ADMIN_ONLY
+      ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY
     );
     expect(update).not.toHaveBeenCalled();
   });
@@ -369,6 +374,29 @@ describe("AssociationsService - an institution's members are the platform admin'
     expect(
       await settle(
         service.updateMemberRole(SCHOOL, 'target', undefined, POST_AS_ASSO | PROPOSE_EVENT, {
+          granter: PLATFORM,
+        })
+      )
+    ).toBe('written');
+  });
+
+  it('refuses even the platform administrator handing MANAGE_MEMBERS, and lets it take one back', async () => {
+    const { service, update } = makeService([
+      ...rows(),
+      { userId: 'old-manager', associationId: SCHOOL, permissions: MANAGE_MEMBERS | POST_AS_ASSO },
+    ]);
+    expect(
+      await settle(
+        service.updateMemberRole(SCHOOL, 'target', undefined, MANAGE_MEMBERS, {
+          granter: PLATFORM,
+        })
+      )
+    ).toBe(ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY);
+    expect(update).not.toHaveBeenCalled();
+    // An older row holding it: an edit that KEEPS it is no grant, and revoking it is free.
+    expect(
+      await settle(
+        service.updateMemberRole(SCHOOL, 'old-manager', undefined, POST_AS_ASSO, {
           granter: PLATFORM,
         })
       )

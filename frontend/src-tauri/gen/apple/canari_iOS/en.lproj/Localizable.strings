@@ -61,6 +61,10 @@
 "notif.social.booking_withdrawn.body" = "Your booking still stands";
 "notif.social.booking_added.title" = "%@ added you to a booking";
 "notif.social.booking_added.body" = "Find it in Bookings";
+"notif.social.booking_changed.title" = "%@ changed your booking";
+"notif.social.booking_changed.body" = "Find the new time in Bookings";
+"notif.social.booking_removed.title" = "%@ removed you from a booking";
+"notif.social.booking_removed.body" = "You are no longer part of it";
 "notif.social.booking_reminder.title" = "Booking reminder";
 "notif.social.booking_reminder.body" = "Your booking starts soon";
 "notif.form.opening_soon.title" = "Form opening soon";

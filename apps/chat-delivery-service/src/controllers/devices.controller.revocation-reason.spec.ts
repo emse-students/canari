@@ -103,7 +103,7 @@ describe('DevicesController - the cause of a ban', () => {
   describe('register-device', () => {
     it('answers DEVICE_REVOKED_BY_OWNER for an id its owner revoked', async () => {
       revoked = active('owner');
-      await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+      await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
         status: 403,
         response: { code: 'DEVICE_REVOKED_BY_OWNER', reason: 'owner' },
       });
@@ -111,7 +111,7 @@ describe('DevicesController - the cause of a ban', () => {
 
     it('answers DEVICE_REVOKED with reason retired for an id its own install retired', async () => {
       revoked = active('retired');
-      await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+      await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
         status: 403,
         response: { code: 'DEVICE_REVOKED', reason: 'retired' },
       });
@@ -119,7 +119,7 @@ describe('DevicesController - the cause of a ban', () => {
 
     it('reads a ban written before the cause was recorded as the owner', async () => {
       revoked = active(null);
-      await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+      await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
         response: { code: 'DEVICE_REVOKED_BY_OWNER' },
       });
     });
@@ -133,7 +133,7 @@ describe('DevicesController - the cause of a ban', () => {
         deviceId: 'd1',
         keyPackages: [{ keyPackage: 'a2V5', notAfter: null }],
       };
-      await expect(controller.registerDevicePrekeys(body, 'u1', undefined)).rejects.toMatchObject({
+      await expect(controller.registerDevicePrekeys(body, 'u1')).rejects.toMatchObject({
         status: 403,
         response: { code: 'DEVICE_REVOKED_BY_OWNER' },
       });
@@ -143,7 +143,7 @@ describe('DevicesController - the cause of a ban', () => {
 
   describe('DELETE device', () => {
     const del = (reason: string | undefined, sid: string | undefined = CALLER_SID) =>
-      controller.deleteDevice('u1', 'd2', reason, 'u1', undefined, sid);
+      controller.deleteDevice('u1', 'd2', reason, 'u1', sid);
     const askedCause = () => (query.mock.calls[0][1] as unknown[])[4];
 
     it('asks for the owner when no reason is given - every older caller is the panel', async () => {
@@ -164,7 +164,7 @@ describe('DevicesController - the cause of a ban', () => {
     });
 
     it('ends them with no exception when the caller names no session', async () => {
-      await controller.deleteDevice('u1', 'd2', undefined, 'u1', undefined, undefined);
+      await controller.deleteDevice('u1', 'd2', undefined, 'u1', undefined);
       expect(endSessions).toHaveBeenCalledWith('u1', 'd2', null);
     });
 

@@ -20,6 +20,7 @@ import {
   takeBackSalonSend,
   resumeUnsentSalonSends,
   forgetSalonSendsOfEndedSession,
+  deliverSalonAttachment,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -28,6 +29,13 @@ import {
   setMessagePinned,
 } from '$lib/utils/chat/messaging';
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import {
+  forgetSalonAttachments,
+  SalonEchoNotDrawnError,
+  startSalonAttachment,
+  type SalonAttachmentDeps,
+} from '$lib/utils/chat/salonAttachmentSend';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { UnsentSalonText } from '$lib/utils/chat/salonUnsent';
 import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
@@ -68,11 +76,7 @@ import {
 import { flushNameMirror } from '$lib/utils/users/nameMirror';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
-import {
-  readSalonSendGate,
-  SalonNotLoadableError,
-  whenSalonSendable,
-} from '$lib/utils/graine/salonSendGate';
+import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
@@ -127,7 +131,6 @@ import {
   type ControlAct,
   type ControlRefusal,
 } from '$lib/utils/chat/controlRefusals.svelte';
-import { ChannelService } from '$lib/services/ChannelService';
 import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
@@ -298,6 +301,8 @@ export function useMessaging() {
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
     forgetSalonSendsOfEndedSession();
+    // And its salon attachments still uploading: aborted, their rows withdrawn, nothing sent.
+    forgetSalonAttachments();
     // The refused control actions shown are the leaving account's; its persisted list stays its own.
     forgetControlRefusals();
     // So are the new-device alerts on screen; its unseen ones stay persisted for its next session.
@@ -356,7 +361,6 @@ export function useMessaging() {
   const videoPreparation = new VideoPreparationState();
   /** The video preparations queued behind each other - see `prepareChatVideo`. */
   let videoPreparationChain: Promise<unknown> = Promise.resolve();
-  let isUploadingMedia = $state(false);
 
   /** Depth of nested MLS queue catch-up sessions (overlay stays until zero). */
   let messageCatchupDepth = 0;
@@ -793,6 +797,69 @@ export function useMessaging() {
         addMessageToChat(sid, content, contactName, ctx, options),
       patchSalonEcho: (key, id, change) =>
         void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * What a salon attachment's upload needs from this composable (`salonAttachmentSend.ts`): the
+   * gate, the token-bearing upload, the echo writers and the banner of the conversation the send was
+   * made in. One place, built at the tap.
+   */
+  function salonAttachmentDeps(
+    ctx: MessagingContext,
+    conversationKey: string,
+    convo: Conversation,
+    messageId: string,
+    dimensions: { width?: number; height?: number }
+  ): SalonAttachmentDeps {
+    const channelId = conversationKey.replace(/^channel_/, '');
+    return {
+      gate: async () => {
+        const reading = readSalonSendGate(channelId);
+        if (reading.kind !== 'wait') return reading;
+        ctx.log(
+          `[MEDIA] ${messageId.slice(0, 8)}… HELD: salon ${channelId.slice(0, 8)}… is not loaded on this device yet`
+        );
+        return whenSalonSendable(channelId);
+      },
+      upload: async (file, transport) => {
+        // `ctx.authToken` is a COPY taken at sign-in, often expired: `getToken` knows the real
+        // expiry and renews it, as the DM outbox does.
+        const authToken = await getToken();
+        ctx.setAuthToken(authToken);
+        return mediaService.encryptAndUpload(file, authToken, dimensions, 'ephemeral', transport);
+      },
+      showContent: (content) =>
+        void applySalonEchoChange(
+          ctx.conversations,
+          conversationKey,
+          messageId,
+          { kind: 'content', content },
+          ctx.log
+        ),
+      deliver: (payload) =>
+        deliverSalonAttachment(messageId, conversationKey, payload, makeSendDeps(ctx, convo)),
+      withdraw: () => {
+        const current = ctx.conversations.get(conversationKey);
+        if (!current) return;
+        ctx.conversations.set(conversationKey, {
+          ...current,
+          messages: current.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
+        });
+      },
+      refused: (sentence) => {
+        // A held upload may be refused long after the tap: the banner is the conversation's own.
+        if (ctx.selectedNow() === conversationKey) ctx.setSendError(sentence);
+        else
+          ctx.log(`[MEDIA] ${messageId.slice(0, 8)}… refusal not shown: the conversation changed`);
+      },
+      isOffline: () => connectivity.isOffline,
+      describe: (failure) =>
+        failure.kind === 'gate'
+          ? salonGateRefusalMessage(failure.reason)
+          : (describeApiRefusal(failure.status, m.chat_media_action_send()) ??
+            m.chat_media_send_error_generic()),
       log: ctx.log,
     };
   }
@@ -1626,7 +1693,6 @@ export function useMessaging() {
     const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
     replyByConversation.delete(sentFrom);
     ctx.setSendError('');
-    const channelSvc = isChannel ? new ChannelService() : null;
 
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
       mime.startsWith('image/')
@@ -1654,79 +1720,74 @@ export function useMessaging() {
           const messageId = crypto.randomUUID();
           const sentAt = tappedAt + index;
 
-          if (isChannel && channelSvc) {
-            // Channels are server-authoritative + always available: encrypt + upload + send inline.
-            isUploadingMedia = true;
-            // THE SALON MUST BE LOADED BEFORE ANYTHING IS UPLOADED OR SEALED, and one that is not
-            // yet is WAITED FOR, as a text is (`salonSendGate.ts`): the upload indicator stays up
-            // meanwhile, and a refusal re-stages the file below. Before the upload, so a salon that
-            // never loads leaves no orphan blob behind.
-            const gateReading = readSalonSendGate(sentFrom);
-            if (gateReading.kind === 'wait') {
-              ctx.log(
-                `[MEDIA] ${messageId.slice(0, 8)}... HELD: salon ${sentFrom.slice(0, 16)} is not loaded on this device yet`
-              );
-            }
-            const gate =
-              gateReading.kind === 'wait' ? await whenSalonSendable(sentFrom) : gateReading;
-            if (gate.kind === 'refused') throw new SalonNotLoadableError(gate.reason);
-            // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
-            // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
-            // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
-            // the real expiry and renews it, exactly as the DM outbox path already does.
-            const authToken = await getToken();
-            ctx.setAuthToken(authToken);
-            const mediaRef = await mediaService.encryptAndUpload(
-              entry.file,
-              authToken,
-              { width: entry.width, height: entry.height },
-              'ephemeral'
-            );
-            const protoBytes = encodeAppMessage({
-              ...mkMedia({
-                kind: mediaKindFromEnvelope(mediaRef.type),
-                mediaId: mediaRef.mediaId,
-                key: fromHex(mediaRef.key),
-                iv: fromHex(mediaRef.iv),
-                mimeType: mediaRef.mimeType,
-                size: mediaRef.size,
-                fileName: mediaRef.fileName ?? '',
-                caption: captionForFile,
-                voiceNote: entry.voiceNote ?? false,
-                ...(mediaRef.width && mediaRef.height
-                  ? { width: mediaRef.width, height: mediaRef.height }
-                  : {}),
-                ...mediaPlaceholderProtoField(entry.placeholder),
-                ...mediaEncodingProtoField(mediaRef.encoding),
-              }),
+          // WHAT THE FILE IS, said once for both paths: the queue entry's description and the
+          // placeholder envelope the row is drawn with until its upload names the blob.
+          const type = mediaTypeFromMime(entry.file.type);
+          const described: Omit<NonNullable<OutboxEntry['media']>, 'fileBytes'> = {
+            kind: mediaKindFromEnvelope(type),
+            mimeType: entry.file.type,
+            size: entry.file.size,
+            fileName: entry.file.name,
+            width: entry.width,
+            height: entry.height,
+            ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
+            caption: captionForFile,
+            ...(entry.voiceNote ? { voiceNote: true } : {}),
+          };
+          const placeholder = serializeEnvelope(
+            mkMediaEnvelope(
+              {
+                type,
+                mediaId: '',
+                key: '',
+                iv: '',
+                mimeType: entry.file.type,
+                size: entry.file.size,
+                fileName: entry.file.name,
+                width: entry.width,
+                height: entry.height,
+                ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
+                ...(entry.voiceNote ? { voiceNote: true } : {}),
+              },
+              captionForFile
+            )
+          );
+
+          if (isChannel) {
+            // A SALON ATTACHMENT IS DRAWN AT THE TAP, AND ITS ROW CARRIES ITS UPLOAD (2026-11-02).
+            // It used to be uploaded INLINE with no row at all: the file left the composer and the
+            // message appeared only when the server's frame came back - for a heavy file, a long
+            // silence the member read as a lost message. The echo is drawn now (memory only, like a
+            // salon text's), and `salonAttachmentSend.ts` waits for the salon's gate, uploads with
+            // real progress into the row's upload view, then hands the message to the salon send.
+            await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
               messageId,
-              sentAt,
+              status: 'pending',
+              timestamp: new SvelteDate(sentAt),
+              skipDbSave: true,
+              salonEcho: true,
             });
-            // The salon the send was MADE in: the selection may have moved during the wait above.
-            const actualChannelId = sentFrom.replace('channel_', '');
-            await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
+            // The salon left the map since the tap (`addMessageToChat` buffers instead of drawing):
+            // no row means no upload, and the catch gives the file back to the staging.
+            if (!ctx.conversations.get(sentFrom)?.messages.some((row) => row.id === messageId)) {
+              throw new SalonEchoNotDrawnError(messageId);
+            }
+            startSalonAttachment({
+              // The account that TAPPED: a sign-out during the echo write above starts nothing.
+              generation: tapGeneration,
+              messageId,
+              conversationKey: sentFrom,
+              sentAt,
+              file: entry.file,
+              media: described,
+              deps: salonAttachmentDeps(ctx, sentFrom, convo, messageId, {
+                width: entry.width,
+                height: entry.height,
+              }),
+            });
           } else {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
             // (the optimistic message shows a skeleton + pending clock until then).
-            const type = mediaTypeFromMime(entry.file.type);
-            const placeholder = serializeEnvelope(
-              mkMediaEnvelope(
-                {
-                  type,
-                  mediaId: '',
-                  key: '',
-                  iv: '',
-                  mimeType: entry.file.type,
-                  size: entry.file.size,
-                  fileName: entry.file.name,
-                  width: entry.width,
-                  height: entry.height,
-                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
-                  ...(entry.voiceNote ? { voiceNote: true } : {}),
-                },
-                captionForFile
-              )
-            );
             // READ BEFORE THE PLACEHOLDER IS WRITTEN: a read that throws (revoked file, no memory)
             // after it left a `mediaId: ''` row with no outbox entry - an orphan the bubble could only
             // draw as a spinner for ever. The catch below re-stages the file when this throws.
@@ -1740,18 +1801,7 @@ export function useMessaging() {
                 conversationId: convo.id,
                 sentAt,
                 kind: 'media',
-                media: {
-                  kind: mediaKindFromEnvelope(type),
-                  mimeType: entry.file.type,
-                  size: entry.file.size,
-                  fileName: entry.file.name,
-                  width: entry.width,
-                  height: entry.height,
-                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
-                  caption: captionForFile,
-                  ...(entry.voiceNote ? { voiceNote: true } : {}),
-                  fileBytes,
-                },
+                media: { ...described, fileBytes },
                 status: 'pending',
                 attempts: 0,
                 createdAt: sentAt,
@@ -1880,35 +1930,29 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
-        // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
-        // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
-        // sends inline, and both of those now throw a typed refusal. So the status is READ rather
-        // than assumed: `refusalStatus` answers null for the queue's own failures, which is
-        // correct - nothing refused anything - and the generic line stands. The 413 the upload
-        // route answers for an oversized file is the one a member can act on, and it is the
-        // reason this catch gained a status instead of a second sentence.
+        // ONLY WHAT HAPPENS BEFORE A ROW EXISTS LANDS HERE: the file read, the pair write, the
+        // queue's refusal, an echo that could not be drawn. A salon upload no longer does - its row
+        // carries its failure, with its Retry (`salonAttachmentSend.ts`). The status is READ rather
+        // than assumed: `refusalStatus` answers null for the queue's own failures, and the generic
+        // line stands.
         const status = refusalStatus(error);
         const mediaRefusal =
-          error instanceof SalonNotLoadableError
-            ? salonGateRefusalMessage(error.reason)
-            : (describeApiRefusal(status, m.chat_media_action_send()) ??
-              (isEnqueueQuotaFailure(error)
-                ? m.chat_media_send_error_storage_full()
-                : m.chat_media_send_error_generic()));
+          describeApiRefusal(status, m.chat_media_action_send()) ??
+          (isEnqueueQuotaFailure(error)
+            ? m.chat_media_send_error_storage_full()
+            : m.chat_media_send_error_generic());
         const unsent = fileEntries.length - sentMediaMessageCount;
         // The staging is per conversation, but the refusal is said on the banner of the conversation
-        // ON SCREEN, and a held salon upload may be refused long after the click: an unsent file goes
-        // back only where the member still is, so the banner and the file are seen together.
-        const salonSessionEnded =
-          error instanceof SalonNotLoadableError && error.reason === 'session-ended';
-        if (salonSessionEnded || signOutGeneration() !== tapGeneration) {
+        // ON SCREEN: an unsent file goes back only where the member still is, so the banner and the
+        // file are seen together.
+        if (signOutGeneration() !== tapGeneration) {
           // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
           // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
           // composer, and the caption below would be held for the next session's gate and sealed
           // by whoever signs in. No banner either - it would be the next account's.
           sessionEndedDuringSend = true;
           ctx.log(
-            `[MEDIA] ${unsent} file(s) dropped, not re-staged: ${salonSessionEnded ? 'the session ended while the salon was loading' : 'signed out since the tap'} (${String(error)})`
+            `[MEDIA] ${unsent} file(s) dropped, not re-staged: signed out since the tap (${String(error)})`
           );
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
@@ -1926,8 +1970,6 @@ export function useMessaging() {
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) DROPPED, not re-staged: the conversation changed since the send: ${String(error)}`
           );
         }
-      } finally {
-        isUploadingMedia = false;
       }
     }
 
@@ -3015,10 +3057,6 @@ export function useMessaging() {
     /** Forgets every staged file and armed reply of the account that signed out. */
     forgetAccount,
     videoPreparation,
-    /** True while a media file is being encrypted and uploaded. */
-    get isUploadingMedia() {
-      return isUploadingMedia;
-    },
     /** True while the MLS queue is draining after reconnect (catch-up in progress). */
     get isCatchupOverlayVisible() {
       return isCatchupOverlayVisible;

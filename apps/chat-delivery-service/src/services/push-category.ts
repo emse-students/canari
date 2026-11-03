@@ -95,6 +95,8 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   social_booking_withdrawn: 'bookings',
   social_booking_added: 'bookings',
   social_booking_reminder: 'bookings',
+  social_booking_changed: 'bookings',
+  social_booking_removed: 'bookings',
 };
 
 /**

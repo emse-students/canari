@@ -1,4 +1,5 @@
-import { ForbiddenException, type Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, type Logger } from '@nestjs/common';
+import { ADMIN_ASSOCIATION_ERROR } from './admin-catalogue';
 import {
   ALL_PERMISSION_FLAGS,
   AssociationPermissionFlag,
@@ -37,9 +38,6 @@ import {
 
 /** The typed code of a write that changes a flag outside the granter's ceiling. */
 export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
-
-/** The typed code of a member write on an institution by anyone but the platform administrator. */
-export const INSTITUTION_MEMBERS_ADMIN_ONLY = 'INSTITUTION_MEMBERS_ADMIN_ONLY';
 
 /** Who is writing a member row - the identity the gateway vouched for. */
 export interface MemberGranter {
@@ -121,23 +119,43 @@ export function logSuperAdminExcludedGrant(
 }
 
 /**
- * Refuses (403, typed) a member write on an institution unless the writer is the platform
- * administrator (D20: an institution's members are added nominatively by an admin - being personnel
- * proves nothing, and its members speak as the School).
+ * THE ONE INSTITUTION RULE OF A MEMBER WRITE (D20, owner 2026-11-02): AN INSTITUTION'S MEMBERS ARE
+ * THE PLATFORM ADMINISTRATOR'S ALONE - being personnel proves nothing, and its members speak as the
+ * School. Two consequences, one code (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`, the
+ * code the admin create form already reads):
+ * - anyone but the platform administrator writing an institution's member is a 403;
+ * - a write that ADDS `MANAGE_MEMBERS` to an institution's member is a 400, the platform admin's
+ *   included: the right would name a member manager the first branch refuses anyway. Refused, never
+ *   silently narrowed - a mask the server rewrote is a member who believes they hold a right they
+ *   do not. Revoking it (an older row) stays allowed.
+ * Called from every member write (`insertMembership`, `updateMemberRole`, `removeMember`), so the
+ * admin create's first admin and the roster editor obey the same rule.
  */
 export function assertInstitutionMemberWrite(
   logger: Logger,
   kind: string | null,
   granter: MemberGranter,
-  associationId: string,
-  what: string
+  before: number,
+  after: number,
+  ctx: { associationId: string; what: string }
 ): void {
-  if (kind !== 'institution' || granter.isGlobalAdmin) return;
+  if (kind !== 'institution') return;
+  if (!granter.isGlobalAdmin) {
+    logger.warn(
+      `[MEMBER-CEILING] ${ctx.what} refused: institution ${ctx.associationId} members are the platform admin's`
+    );
+    throw new ForbiddenException({
+      code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY,
+      message: "Only the platform administrator manages an institution's members.",
+    });
+  }
+  const added = after & ~before & AssociationPermissionFlag.MANAGE_MEMBERS;
+  if (added === 0) return;
   logger.warn(
-    `[MEMBER-CEILING] ${what} refused: institution ${associationId} members are the platform admin's`
+    `[MEMBER-CEILING] ${ctx.what} refused: institution ${ctx.associationId} member asked MANAGE_MEMBERS`
   );
-  throw new ForbiddenException({
-    code: INSTITUTION_MEMBERS_ADMIN_ONLY,
-    message: "Only a platform administrator edits an institution's members",
+  throw new BadRequestException({
+    code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY,
+    message: "Only the platform administrator manages an institution's members.",
   });
 }

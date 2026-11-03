@@ -154,8 +154,9 @@ application computed from the same profile, so no application keeps a hard-coded
   association and list, to publish in its own name and propose events. Its members are added
   NOMINATIVELY by an admin: declaring "personnel ME" proves nothing (D8) and only informs the
   directory. Since 2026-11-02 the server holds "an admin" to the PLATFORM administrator: adding,
-  editing or removing an institution's member is a 403 `INSTITUTION_MEMBERS_ADMIN_ONLY` for anyone
-  else, its own members and a BDE super-admin included
+  editing or removing an institution's member is a 403
+  `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY` for anyone else, its own members and a BDE
+  super-admin included, and handing one of its members `MANAGE_MEMBERS` is a 400 of the same code
   ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
   **An institution has no governing BDE, ever** (owner, 2026-11-02: "une institution n'a personne au
   dessus"): its audience reaching a BDE's space confers nothing - no super-admin tier (archive,
@@ -823,7 +824,7 @@ the grid. The creator is the caller, who need not become a member.
 | `scope` | Lists | Read by |
 | --- | --- | --- |
 | `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
-| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
 pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one

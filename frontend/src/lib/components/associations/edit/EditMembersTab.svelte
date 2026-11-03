@@ -5,14 +5,14 @@
     removeMember,
     updateMemberRole,
     reorderMembers,
-    INSTITUTION_MEMBERS_ADMIN_ONLY,
+    ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY,
     MEMBER_FLAGS_BEYOND_GRANTER,
     PUBLISHER_PRESET,
     SocialApiError,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { adminPresetFor } from '$lib/associations/editSections';
+  import { adminPresetFor, memberGrantable } from '$lib/associations/editSections';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { Download, GripVertical, UserPlus } from '@lucide/svelte';
@@ -61,11 +61,13 @@
    * its own row.
    */
   const permissionOptions = $derived.by<PickerOption[]>(() => {
+    // A new member holds nothing yet: an institution's is never handed MANAGE_MEMBERS.
+    const forNew = memberGrantable(asso.type, grantable, 0);
     const options: PickerOption[] = [{ value: '0', label: m.asso_members_role_member() }];
-    if ((PUBLISHER_PRESET & ~grantable) === 0) {
+    if ((PUBLISHER_PRESET & ~forNew) === 0) {
       options.push({ value: String(PUBLISHER_PRESET), label: m.asso_members_role_publisher() });
     }
-    const admin = adminPresetFor(asso.type) & grantable;
+    const admin = adminPresetFor(asso.type) & forNew;
     if (admin !== 0 && admin !== PUBLISHER_PRESET) {
       options.push({ value: String(admin), label: m.asso_members_role_admin() });
     }
@@ -78,7 +80,7 @@
   function memberWriteError(err: unknown, fallback: string): string {
     const code = err instanceof SocialApiError ? err.code : null;
     if (code === MEMBER_FLAGS_BEYOND_GRANTER) return m.asso_member_flags_beyond_granter_error();
-    if (code === INSTITUTION_MEMBERS_ADMIN_ONLY) {
+    if (code === ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY) {
       return m.asso_institution_members_admin_only_error();
     }
     console.error('[ASSO] member write failed', err);
@@ -255,7 +257,7 @@
             manage={true}
             isBDE={asso.isBDE}
             kind={asso.type}
-            {grantable}
+            grantable={memberGrantable(asso.type, grantable, member.permissions ?? 0)}
             onRoleChange={handleChangeRole}
             onRemove={handleRemoveMember}
           />

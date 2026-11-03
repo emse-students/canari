@@ -54,7 +54,7 @@ export interface EditRights {
   members: boolean;
   /**
    * Writing the roster (the `members` section): `members`, except on an institution, whose members
-   * are the platform admin's alone (D20, `INSTITUTION_MEMBERS_ADMIN_ONLY` on the server).
+   * are the platform admin's alone (D20, `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`).
    */
   memberRoster: boolean;
   documents: boolean;
@@ -74,7 +74,7 @@ export interface EditRights {
  * Every right the management sections read, from one context. `assoType` matters for an
  * institution, which has NO governing BDE (owner, 2026-11-02 - the server's `holdsBdeFlagOverSql`
  * never grants the tier over one): the super-admin tier is dropped whatever the context says, and
- * its roster and audience are the platform admin's alone (`INSTITUTION_MEMBERS_ADMIN_ONLY`,
+ * its roster and audience are the platform admin's alone (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
  * `AUDIENCE_INSTITUTION_ADMIN_ONLY`). Its own members keep their flags.
  */
 export function editRights(
@@ -208,6 +208,32 @@ export function adminPresetFor(kind: Association['type']): number {
   return ASSOCIATION_ADMIN_PRESET & permissionMaskFor(kind);
 }
 
+/**
+ * The rights the admin create form hands a FIRST ADMIN: the kind's admin preset, except that an
+ * institution's members are managed by the platform admin only (owner, 2026-11-02) - so an
+ * institution's first admin never holds `MANAGE_MEMBERS`. The server refuses that bit on an
+ * institution (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`).
+ */
+export function firstAdminPresetFor(kind: Association['type']): number {
+  const preset = adminPresetFor(kind);
+  return kind === 'institution' ? preset & ~AssociationPermissionFlag.MANAGE_MEMBERS : preset;
+}
+
+/**
+ * The flags the viewer may set on ONE member of `kind`, from what it may grant (`grantableFlags`)
+ * and what the member already `held`. An institution's member is never HANDED `MANAGE_MEMBERS` -
+ * the server's one institution rule, the same that shapes `firstAdminPresetFor` - but an older row
+ * holding it can still have it taken back.
+ */
+export function memberGrantable(
+  kind: Association['type'],
+  grantable: number,
+  held: number
+): number {
+  if (kind !== 'institution') return grantable;
+  return grantable & ~(AssociationPermissionFlag.MANAGE_MEMBERS & ~held);
+}
+
 /** Whether `kind` has `section` at all, whatever the reader's rights. */
 export function kindHasSection(kind: Association['type'], section: EditSection): boolean {
   return EDIT_SECTIONS_BY_KIND[kind].includes(section);
@@ -223,6 +249,11 @@ export function kindOffersFlag(
 
 /** Where a management area lives: associations and institutions under `/associations`, lists under `/lists`. */
 export type EditBase = '/associations' | '/lists';
+
+/** The base an entity's public and management pages live under, from its kind. */
+export function entityBase(kind: Association['type']): EditBase {
+  return kind === 'list' ? '/lists' : '/associations';
+}
 
 /** The sections the hub lists, in order; `among` narrows the keys for a kind with fewer. */
 export function visibleEditSections(

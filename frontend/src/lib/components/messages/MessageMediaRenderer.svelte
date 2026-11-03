@@ -178,6 +178,7 @@
           messageId: messageId || mediaRef.mediaId,
           media: mediaRef,
           caption: textContent,
+          senderId: senderId ?? '',
           senderName: reelSenderName,
           sentAt: sentAt ?? new Date(),
         })

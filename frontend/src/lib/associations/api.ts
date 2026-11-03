@@ -117,8 +117,6 @@ export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
 
 /** The refusal of a member write that changes a flag the writer does not hold itself. */
 export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
-/** The refusal of a member write on an institution by anyone but the platform administrator. */
-export const INSTITUTION_MEMBERS_ADMIN_ONLY = 'INSTITUTION_MEMBERS_ADMIN_ONLY';
 
 /**
  * The flags the viewer may grant OR revoke on a member of one association - the client mirror of
@@ -3295,11 +3293,6 @@ export interface SpaceRow {
   /** How many associations' audience rules reach this space. */
 }
 
-/** One audience rule of one association. */
-export interface AssociationRuleRow extends AudienceRule {
-  associationId: string;
-}
-
 /** One audience rule; `null` means "any" (every formation, or every campus). */
 export interface AudienceRule {
   formation: Formation | null;
@@ -3309,11 +3302,6 @@ export interface AudienceRule {
 /** Lists every formation x campus space with its BDE. Global admins only. */
 export function listSpaces(): Promise<SpaceRow[]> {
   return request<SpaceRow[]>('/api/associations/spaces');
-}
-
-/** The audience rules of EVERY association, in one call: the admin grid draws itself from them. */
-export function listAllAudiences(): Promise<AssociationRuleRow[]> {
-  return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
 }
 
 /**
@@ -3353,4 +3341,82 @@ export async function setAssociationAudiences(
   );
   invalidateAssociationDirectory();
   return saved;
+}
+
+// ── The platform admin's catalogue and create form (`/admin/spaces`, owner 2026-11-02) ──────────
+
+/** One entity of the admin catalogue: every field of the directory, plus its audience rules. */
+export interface AdminCatalogueRow extends Association {
+  audiences: AudienceRule[];
+}
+
+/** One keyset page; `next` is the opaque cursor of the following page, `null` on the last. */
+export interface AdminCataloguePage {
+  rows: AdminCatalogueRow[];
+  next: string | null;
+}
+
+/**
+ * The `code` of a create whose first admin names no account (social-service
+ * `ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN`). Read from `SocialApiError.code`.
+ */
+export const ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN = 'ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN';
+
+/**
+ * The ONE refusal of the institution rule (owner, 2026-11-02): an institution's members are the
+ * platform admin's alone, so a member write on one by anyone else (403) and a write handing one of
+ * its members `MANAGE_MEMBERS` (400, the create form's first admin included) carry this `code`.
+ */
+export const ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY =
+  'ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY';
+
+/**
+ * One page of one kind of the platform admin's catalogue - every entity, member or not, never the
+ * reader's directory. Platform admin only; the server pages by `(name, id)`.
+ */
+export function listAdminCatalogue(
+  type: Association['type'],
+  opts: { q?: string; after?: string | null; limit?: number } = {}
+): Promise<AdminCataloguePage> {
+  const params = new URLSearchParams({ type });
+  if (opts.q?.trim()) params.set('q', opts.q.trim());
+  if (opts.after) params.set('after', opts.after);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  return request<AdminCataloguePage>(`/api/associations/admin/catalogue?${params}`);
+}
+
+/**
+ * The slug the server would derive for `name` NOW - the same candidates and the same collision
+ * checks as the create, read from the server so the preview never re-implements them. `null`
+ * when no candidate is free. A preview: the create stays the authority.
+ */
+export async function previewAdminSlug(name: string): Promise<string | null> {
+  const params = new URLSearchParams({ name });
+  return (await request<{ slug: string | null }>(`/api/associations/admin/slug-preview?${params}`))
+    .slug;
+}
+
+/** The admin create form: exactly a name, a kind, its spaces and an optional first admin. */
+export interface AdminCreateAssociationPayload {
+  name: string;
+  type: Association['type'];
+  /** The spaces it reaches; empty reaches nobody. */
+  audiences: AudienceRule[];
+  /**
+   * Absent: the entity starts with no member at all. No role: a title is written by a person on
+   * the members tab, never a label this code would store as data.
+   */
+  firstAdmin?: { userId: string; permissions: number };
+}
+
+/** Creates an entity placed in its spaces, through the server's one creation path. */
+export async function adminCreateAssociation(
+  payload: AdminCreateAssociationPayload
+): Promise<Association> {
+  const created = await request<Association>('/api/associations/admin', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateAssociationDirectory();
+  return created;
 }

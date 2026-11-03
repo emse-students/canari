@@ -12,6 +12,8 @@ import {
   EDIT_SECTIONS_BY_KIND,
   LIST_EDIT_SECTIONS,
   adminPresetFor,
+  entityBase,
+  firstAdminPresetFor,
   kindHasSection,
   kindOffersFlag,
   permissionMaskFor,
@@ -19,6 +21,7 @@ import {
   editSectionHref,
   editTrail,
   mayOpenEditSection,
+  memberGrantable,
   parseEditSection,
   visibleEditSections,
 } from './editSections';
@@ -274,5 +277,30 @@ describe('the permissions a kind offers are derived from its sections', () => {
     expect(adminPresetFor('list') & (F.MANAGE_PRODUCTS | F.MANAGE_PAYOUT_ACCOUNT)).toBe(0);
     expect(adminPresetFor('list') & F.MANAGE_PARTNERSHIPS).toBe(F.MANAGE_PARTNERSHIPS);
     expect(adminPresetFor('association')).toBe(ASSOCIATION_ADMIN_PRESET);
+  });
+
+  it("an institution's first admin never manages its members; other kinds get the full preset", () => {
+    expect(firstAdminPresetFor('institution') & F.MANAGE_MEMBERS).toBe(0);
+    expect(firstAdminPresetFor('institution')).toBe(
+      adminPresetFor('institution') & ~F.MANAGE_MEMBERS
+    );
+    expect(firstAdminPresetFor('association')).toBe(adminPresetFor('association'));
+    expect(firstAdminPresetFor('list')).toBe(adminPresetFor('list'));
+  });
+
+  it("the roster editor never hands an institution's member MANAGE_MEMBERS, but can take it back", () => {
+    const all = 0xfff;
+    expect(memberGrantable('institution', all, 0) & F.MANAGE_MEMBERS).toBe(0);
+    expect(memberGrantable('institution', all, F.MANAGE_MEMBERS) & F.MANAGE_MEMBERS).toBe(
+      F.MANAGE_MEMBERS
+    );
+    expect(memberGrantable('association', all, 0)).toBe(all);
+    expect(memberGrantable('list', F.POST_AS_ASSO, 0)).toBe(F.POST_AS_ASSO);
+  });
+
+  it('puts a list under /lists and every other kind under /associations', () => {
+    expect(entityBase('list')).toBe('/lists');
+    expect(entityBase('association')).toBe('/associations');
+    expect(entityBase('institution')).toBe('/associations');
   });
 });
