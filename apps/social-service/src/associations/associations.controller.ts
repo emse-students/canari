@@ -257,23 +257,29 @@ export class AssociationsController {
   }
 
   /**
-   * Public - current association memberships for a user profile. Empty across the review cohort's
-   * boundary, and for a review account read with no session (`profileOpenAcrossCohort`).
+   * Current association memberships for a user profile. Empty across the review cohort's boundary
+   * (`profileOpenAcrossCohort`).
+   *
+   * SIGNED-IN ONLY SINCE 2026-11-02: a person's profile is not something the public showcase
+   * (portail-etu.emse.fr) shows, and nothing Canari serves without an account may go further than
+   * it does ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
    */
+  @UseGuards(NginxAuthGuard)
   @Get('users/:userId/memberships')
   async listUserMemberships(
     @Param('userId') userId: string,
-    @Headers('x-user-id') viewerId?: string
+    @Headers('x-user-id') viewerId: string
   ) {
     if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listMemberships(userId);
   }
 
-  /** Public - past/honorary association roles for a user profile, gated like the memberships. */
+  /** Past/honorary association roles for a user profile, gated like the memberships. */
+  @UseGuards(NginxAuthGuard)
   @Get('users/:userId/role-history')
   async listUserRoleHistory(
     @Param('userId') userId: string,
-    @Headers('x-user-id') viewerId?: string
+    @Headers('x-user-id') viewerId: string
   ) {
     if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listRoleHistory(userId);
@@ -1366,14 +1372,15 @@ export class AssociationsController {
   }
 
   /**
-   * Returns active products for this association (shown on the public association page).
+   * Returns active products for this association (its shop section).
    *
-   * `x-user-id` is optional - nginx sets it only for a signed-in caller, and this page is public.
-   * It is passed through so a gridded product quotes the price THIS person pays rather than the
-   * "everyone else" cell; a guest legitimately resolves to that cell.
+   * `x-user-id` is passed through so a gridded product quotes the price THIS person pays rather
+   * than the "everyone else" cell. Signed-in only since 2026-11-02: the public showcase shows no
+   * shop ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
    */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/products')
-  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId?: string) {
+  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId: string) {
     return this.productsService.listByAssoc(id, userId);
   }
 
