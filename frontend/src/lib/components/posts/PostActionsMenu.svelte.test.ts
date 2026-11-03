@@ -62,7 +62,7 @@ function mountMenu(props: Partial<Parameters<typeof PostActionsMenu>[1]> = {}) {
   const instance = mount(PostActionsMenu, {
     target: card,
     props: {
-      pinned: false,
+      pinSpaces: [],
       canManage: false,
       canEdit: false,
       canPin: false,
@@ -231,4 +231,52 @@ it('never lets a menu row icon shrink when its label wraps', () => {
   const rows = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
   expect(rows.length).toBeGreaterThan(1);
   for (const row of rows) expect(row.className).toContain('[&>svg]:shrink-0');
+});
+
+/**
+ * WP-PIN: a pin is a promotion PER SPACE. The menu draws one entry per space the server served in
+ * `pinSpaces`; with exactly one it reads as the plain "Epingler", and a pin kept but not shown (a
+ * 4th, "en attente") says so, so its governor can unpin it or leave it.
+ */
+const ICM_SE = {
+  spaceId: 'space-icm',
+  formation: 'ICM',
+  campus: 'saint-etienne',
+  state: null,
+} as const;
+const ISMIN_SE = {
+  spaceId: 'space-ismin',
+  formation: 'ISMIN',
+  campus: 'saint-etienne',
+  state: 'pending',
+} as const;
+
+it('pins directly with one governed space, and names each space when there are several', () => {
+  expect(menuLabels({ canPin: true, pinSpaces: [ICM_SE] }).map((t) => t.trim())).toContain(
+    'Épingler'
+  );
+  while (mounted.length) mounted.pop()!();
+  document.body.innerHTML = '';
+  const labels = menuLabels({ canPin: true, pinSpaces: [ICM_SE, ISMIN_SE] });
+  expect(labels.some((t) => t.includes('Épingler pour ICM'))).toBe(true);
+  expect(labels.some((t) => t.includes('Désépingler pour ISMIN') && t.includes('en attente'))).toBe(
+    true
+  );
+});
+
+it('hands the picked space to onTogglePin', () => {
+  const onTogglePin = vi.fn();
+  mountMenu({ canPin: true, pinSpaces: [ICM_SE, ISMIN_SE], onTogglePin })
+    .querySelector('button')!
+    .click();
+  flushSync();
+  const row = document.body.querySelector('[data-post-pin-space="space-ismin"]') as HTMLElement;
+  row.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  flushSync();
+  expect(onTogglePin).toHaveBeenCalledWith(ISMIN_SE);
+});
+
+it('offers no pin entry when the server granted none', () => {
+  const labels = menuLabels({ canPin: false, pinSpaces: [ICM_SE] });
+  expect(labels.some((t) => t.includes('pingler'))).toBe(false);
 });

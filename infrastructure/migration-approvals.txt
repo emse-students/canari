@@ -26,3 +26,9 @@ apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql 76
 # nobody. Approved in principle by the owner on 2026-11-02; this line is written by the author for the
 # file's final SQL, and the owner's merge of the pull request by hand is the approval.
 apps/social-service/src/migrations/124_edit_profile.sql d1fc5f6dc5055e9ff03565a109badab7c8d48d75a421a2c0751c7a91ded36843
+
+# 128: the one global pin moved into per-space pins (WP-PIN, #2984) - every governed space where the
+# post is visible and that has room, a NOTICE for every pin it does not carry. The owner authorised the
+# lead on 2026-11-03 to merge #2984 with this migration once fixed, verified and green; this line is
+# written by the author for the file's FINAL SQL, and any edit to the file holds it again.
+apps/social-service/src/migrations/128_move_global_pin_to_spaces.sql 888e4370644b21ebd3cad0b97262efbd99b7c519cb5a83cf1acb6cdc25e83bbd
