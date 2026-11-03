@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+import { assertWithinPostAttachmentCap } from './post-attachment-cap';
 import {
   memberRepostContext,
   EMPTY_MEMBER_REPOST_CONTEXT,
@@ -23,11 +24,7 @@ import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
-import {
-  PostNotificationsService,
-  ANONYMOUS_NOTIFICATION_ACTOR_ID,
-  ANONYMOUS_NOTIFICATION_ACTOR_NAME,
-} from './post-notifications.service';
+import { PostNotificationsService } from './post-notifications.service';
 import {
   PostMediaRetentionService,
   commentMediaIds,
@@ -48,9 +45,9 @@ import { publicationTime } from './publication-time';
 import { invalidatePostListCache, postListCacheKey } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
+import { readPostOpenVerdict } from './post-openable';
 import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
-import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
   inAssociationsFeedSql,
@@ -194,6 +191,11 @@ interface PostCapabilities {
    * override and what applies); absent on every other card.
    */
   repostConsent?: RepostConsent;
+  /**
+   * WP-F6: beside `repostConsent`, on the reader's OWN personal post only, how many people its
+   * author is shown as having reposted it ("Republie par N personnes", the list behind it).
+   */
+  repostCount?: number;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -620,7 +622,10 @@ export class PostsService {
   private memberRepostFields(
     postId: string | undefined,
     viewer: PostViewerContext
-  ): Pick<PostCapabilities, 'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent'> {
+  ): Pick<
+    PostCapabilities,
+    'canRepost' | 'repostedByMe' | 'repostedBy' | 'repostConsent' | 'repostCount'
+  > {
     const ctx = viewer.memberReposts;
     if (!viewer.viewerId || !postId) {
       return { canRepost: false, repostedByMe: false, repostedBy: [] };
@@ -630,7 +635,9 @@ export class PostsService {
       canRepost: ctx.repostable.has(postId),
       repostedByMe: ctx.mine.has(postId),
       repostedBy: ctx.reposters.get(postId) ?? [],
-      ...(consent ? { repostConsent: consent } : {}),
+      ...(consent
+        ? { repostConsent: consent, repostCount: ctx.reposterCount.get(postId) ?? 0 }
+        : {}),
     };
   }
 
@@ -927,28 +934,34 @@ export class PostsService {
   }
 
   /**
-   * Refuses with 404 a post `viewerId` may not see (WP6b decision 3) - `postVisibleToViewerSql`,
-   * asked of one row. 404 and not 403: for that reader the post does not exist, and saying
-   * "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing. A global
-   * admin may open any post BY ITS ID (a report or moderation link) but is not shown it by browsing.
+   * Refuses a post `viewerId` may not open, by its id - THE SAME GATE AS `getById`
+   * (`assertOpenable`, which is `readPostOpenVerdict`), so a reaction, a comment, a comment like or
+   * the comment page is refused on every post the read refuses: outside the audience, a block
+   * either way with the author, scheduled later, an expired reel (all 404), and hidden by moderation
+   * (403, as the read). 404 and not 403 for "not visible": for that reader the post does not exist,
+   * and saying "forbidden" would confirm the id. An absent viewer, or an absent post, sees nothing.
    *
    * THE INTENT IS EXPLICIT because a nominative read grant (WP7) opens a post to READ, REACT and
    * COMMENT only: `'READ_OR_REACT'` counts the grant, `'VOTE'` does not (a vote was never granted,
    * user 2026-10-07: read + react/comment). A caller must say which one it is.
+   *
+   * @param opts.allowHidden a platform admin doing platform work (as `getById`'s flag). A write
+   *   route never passes it: a hidden post takes no reaction, comment or like, an admin's included.
+   * @returns the post and the reader's blocks, which the caller would otherwise read a second time.
    */
   async assertVisible(
     postId: string,
     viewerId: string | undefined,
-    intent: PostAccessIntent
-  ): Promise<void> {
-    const rows: { visible: boolean }[] = await this.postRepo.manager.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: intent === 'READ_OR_REACT' })} AS visible FROM posts WHERE posts.id = $1`,
-      [postId, viewerId ?? null]
-    );
-    if (rows[0]?.visible !== true) {
-      this.logger.debug(`[VISIBILITY] post ${postId} withheld from ${viewerId?.slice(0, 8)}`);
+    intent: PostAccessIntent,
+    opts: { allowHidden?: boolean } = {}
+  ): Promise<{ post: Post; blockedIds: string[] }> {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) {
+      this.logger.debug(`${intent} ${postId} withheld: no such post`);
       throw new NotFoundException('Post not found');
     }
+    const blockedIds = await this.assertOpenable(post, { ...opts, viewerId }, intent);
+    return { post, blockedIds };
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
@@ -981,6 +994,8 @@ export class PostsService {
       data.media = data.images;
     }
     delete data.images;
+    // The cap on a post's attachments (typed 400); a reel carries its one video and never reaches it.
+    assertWithinPostAttachmentCap(Array.isArray(data.media) ? data.media.length : 0);
 
     // THE KIND IS DECIDED HERE AND NOWHERE ELSE. The controller has already refused a malformed
     // reel (`assertCreateKindShape`); this stamps the three columns that stand or fall together and
@@ -1008,32 +1023,14 @@ export class PostsService {
     }
     await this.invalidateListCache();
 
-    // Fire-and-forget mention notifications
-    if (mentionedIds.length > 0 && entity.id) {
-      void (async () => {
-        try {
-          // A mention notification never went through `mustHideAnonymousAuthor` at all - it is
-          // written once, at creation, onto a row nothing re-shapes per reader (see the constants'
-          // own docblock). An anonymous post that mentions someone stays anonymous to them too.
-          const actorId = data.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : authorId;
-          const actorName = data.anonymous
-            ? ANONYMOUS_NOTIFICATION_ACTOR_NAME
-            : await this.notifications.resolveActorName(authorId);
-          for (const recipientId of mentionedIds) {
-            // createNotification also sends the FCM push (type 'social').
-            await this.notifications.createNotification({
-              recipientId,
-              type: 'mention',
-              postId: entity.id,
-              actorId,
-              text: previewOf(markdown),
-              actorName,
-            });
-          }
-        } catch {
-          /* non-fatal */
-        }
-      })();
+    // The mentions are STORED here and told by `PostAnnounceScheduler` alone, under its one-shot
+    // `feedNotifiedAt` claim, when the post is first published - at once (within a sweep) for a post
+    // published now, at its date for a scheduled one. One teller, so no edit can tell them twice or
+    // lose them (`notifyPostMentions`).
+    if (mentionedIds.length > 0) {
+      this.logger.debug(
+        `[MENTION] post ${entity.id.slice(0, 8)}: ${mentionedIds.length} mention(s) left to its announcement`
+      );
     }
 
     // The response goes back to the publisher, so it is stamped for them - an association post is
@@ -1682,11 +1679,12 @@ export class PostsService {
   }
 
   /**
-   * EVERY REFUSAL A READER MEETS ON ONE POST, BY ID - the ONE gate `getById` and the vote route
-   * (`assertMayVote`) go through, so a vote is refused on every post the read would refuse.
-   * Returns the reader's blocks, which the serving that follows needs anyway.
+   * EVERY REFUSAL A READER MEETS ON ONE POST, BY ID - `readPostOpenVerdict`, the ONE predicate
+   * `getById`, the vote route (`assertMayVote`) and every write route (`assertVisible`) go through,
+   * so nothing is written to a post the read would refuse. Returns the reader's blocks, which the
+   * serving that follows needs anyway.
    *
-   * @param intent `'VOTE'` asks the grant-free audience (`assertVisible`), as a vote requires.
+   * @param intent `'VOTE'` asks the grant-free audience, as a vote requires.
    * @throws NotFoundException for an expired reel, a post outside the reader's audience, a post
    *   scheduled later (not the reader's), or one whose author and reader are blocked either way.
    * @throws ForbiddenException for a post hidden by moderation.
@@ -1696,54 +1694,14 @@ export class PostsService {
     opts: { allowHidden?: boolean; viewerId?: string },
     intent: PostAccessIntent
   ): Promise<string[]> {
-    // A reel past its month is gone for everyone, a moderator and the author included: the worker
-    // has only not reached it yet, and what it will delete is not worth opening.
-    if (isExpiredReel(post)) {
-      this.logger.debug(`${intent} ${post.id} withheld: reel expired at ${String(post.expiresAt)}`);
-      throw new NotFoundException('Post not found');
-    }
-    // A POST THIS READER MAY NOT SEE (WP6b) IS ONE THAT DOES NOT EXIST for them: 404, and BEFORE the
-    // moderation check, whose 403 would otherwise confirm the id to someone outside its audience.
-    await this.assertVisible(post.id, opts.viewerId, intent);
-    if (post.hiddenByModeration && !opts.allowHidden) {
-      throw new ForbiddenException('Post not available');
-    }
-    // Every listPosts query carries `scheduledAt IS NULL OR scheduledAt <= NOW()`; this read did
-    // not, so a post queued for a future date was already served by id - and a link preview or an
-    // unfurled share would have published it before its own publication date. Its author and a
-    // global admin still reach it, so scheduling a post does not hide it from the person who wrote
-    // it. Answers "not found" rather than "forbidden" to everyone else: the existence of an
-    // unpublished post is itself the thing to hide.
-    const publishesLater = !!post.scheduledAt && post.scheduledAt.getTime() > Date.now();
-    const viewerOwnsIt = !!opts.viewerId && post.authorId === opts.viewerId;
-    if (publishesLater && !viewerOwnsIt && !opts.allowHidden) {
-      this.logger.debug(
-        `${intent} ${post.id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`
-      );
-      throw new NotFoundException('Post not found');
-    }
-    // A BLOCK REACHES THIS READ TOO, or the feed filter would be a curtain with a link around it:
-    // this is what "load all comments" and every notification link call. 404 rather than 403, and
-    // rather than a message naming a block - the blocked party learns their posts stopped reaching
-    // one reader, which is what a symmetric block means, but never that this particular read was
-    // refused on purpose. The exemptions are `blockedAuthorSql`'s, for the reason given there,
-    // plus `allowHidden`: that flag already means "a platform admin, doing platform work", and it
-    // is the same one that lets them open a moderation-hidden post the feed refuses them. Their
-    // FEED still honours their own block - hiding a reported post from the moderator who has to
-    // read it is the trap this avoids, and it is the same split `hiddenByModeration` already makes.
-    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, opts.viewerId);
-    if (
-      !post.associationId &&
-      !post.anonymous &&
-      blockedIds.includes(post.authorId) &&
-      !opts.allowHidden
-    ) {
-      this.logger.debug(
-        `${intent} ${post.id} withheld: a block stands between the reader and its author`
-      );
-      throw new NotFoundException('Post not found');
-    }
-    return blockedIds;
+    const verdict = await readPostOpenVerdict(this.postRepo.manager, post, opts, intent);
+    if (verdict.refusal === null) return verdict.blockedIds;
+    this.logger.debug(
+      `[VISIBILITY] ${intent} ${post.id} withheld from ${opts.viewerId?.slice(0, 8)}: ${verdict.why}`
+    );
+    // The 403 only ever follows a passed audience term, so it confirms nothing to an outsider.
+    if (verdict.refusal === 'hidden') throw new ForbiddenException('Post not available');
+    throw new NotFoundException('Post not found');
   }
 
   /**
@@ -1751,9 +1709,7 @@ export class PostsService {
    * Never `allowHidden`: a moderation-hidden post takes no votes, a platform admin's included.
    */
   async assertMayVote(postId: string, viewerId: string): Promise<void> {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    await this.assertOpenable(post, { viewerId }, 'VOTE');
+    await this.assertVisible(postId, viewerId, 'VOTE');
   }
 
   /**
@@ -1820,10 +1776,11 @@ export class PostsService {
     viewerId: string | undefined,
     opts: { cursor?: number; limit?: number; order?: CommentOrder; isGlobalAdmin?: boolean }
   ) {
-    await this.assertVisible(postId, viewerId, 'READ_OR_REACT');
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
-    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerId);
+    // `getById`'s gate, `allowHidden` included: a platform admin reads a hidden post's comments as
+    // they read the post itself.
+    const { post, blockedIds } = await this.assertVisible(postId, viewerId, 'READ_OR_REACT', {
+      allowHidden: opts.isGlobalAdmin === true,
+    });
     const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
     const isGlobalAdmin = opts.isGlobalAdmin === true;
     page.comments = (await this.commentIdentity.serve(page.comments, post, {
@@ -1866,10 +1823,12 @@ export class PostsService {
     }
     post.markdown = data.markdown;
 
-    if (data.media !== undefined) {
-      post.media = data.media;
-    } else if (data.images !== undefined) {
-      post.media = data.images;
+    // `media` wins over the legacy `images`; a null `media` now falls through to `images` (it used to
+    // write null) and, with neither, leaves the stored attachments alone.
+    const nextMedia = data.media ?? data.images;
+    if (nextMedia !== undefined) {
+      assertWithinPostAttachmentCap(nextMedia.length);
+      post.media = nextMedia;
     }
 
     if (data.polls !== undefined) {
@@ -1899,6 +1858,8 @@ export class PostsService {
       }
     }
 
+    // Stored only: the announce sweep tells them, once, when it first publishes the post - so an
+    // edit of the schedule, or of the text, never tells anyone (`notifyPostMentions`).
     const mentionedIds = post.markdown
       ? this.notifications
           .resolveMentionedUserIds(post.markdown)

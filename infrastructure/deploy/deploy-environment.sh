@@ -229,10 +229,12 @@ fi
 # rotation_seed writes every list in its resting form (each service by its DNS name) first.
 #
 # Where rolling.sh writes the lists: inside edge/, which the edge already mounts, and mounted
-# read-only into the frontend as /etc/nginx/rotation (both compose files). Not tracked by git, so
-# `git reset --hard` leaves the lists the running proxies were reloaded on.
+# read-only into the frontend as /etc/nginx/targets (both compose files). Not tracked by git, so
+# `git reset --hard` leaves the lists the running proxies were reloaded on. edge/rotation/ holds the
+# `upstream` lists of 1.6.2, which this library never touches: a frontend of that release still reads
+# them on the first deploy carrying the targets, and its library rewrites them on a rollback.
 # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
-ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"
+ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/targets"
 # shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
 . "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
 # WHATEVER ENDS THIS SCRIPT puts a list a replacement had taken out back at rest, and says so: a

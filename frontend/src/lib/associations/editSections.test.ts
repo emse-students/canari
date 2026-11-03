@@ -12,6 +12,8 @@ import {
   EDIT_SECTIONS_BY_KIND,
   LIST_EDIT_SECTIONS,
   adminPresetFor,
+  entityBase,
+  firstAdminPresetFor,
   kindHasSection,
   kindOffersFlag,
   permissionMaskFor,
@@ -250,5 +252,20 @@ describe('the permissions a kind offers are derived from its sections', () => {
     expect(adminPresetFor('list') & (F.MANAGE_PRODUCTS | F.MANAGE_PAYOUT_ACCOUNT)).toBe(0);
     expect(adminPresetFor('list') & F.MANAGE_PARTNERSHIPS).toBe(F.MANAGE_PARTNERSHIPS);
     expect(adminPresetFor('association')).toBe(ASSOCIATION_ADMIN_PRESET);
+  });
+
+  it("an institution's first admin never manages its members; other kinds get the full preset", () => {
+    expect(firstAdminPresetFor('institution') & F.MANAGE_MEMBERS).toBe(0);
+    expect(firstAdminPresetFor('institution')).toBe(
+      adminPresetFor('institution') & ~F.MANAGE_MEMBERS
+    );
+    expect(firstAdminPresetFor('association')).toBe(adminPresetFor('association'));
+    expect(firstAdminPresetFor('list')).toBe(adminPresetFor('list'));
+  });
+
+  it('puts a list under /lists and every other kind under /associations', () => {
+    expect(entityBase('list')).toBe('/lists');
+    expect(entityBase('association')).toBe('/associations');
+    expect(entityBase('institution')).toBe('/associations');
   });
 });

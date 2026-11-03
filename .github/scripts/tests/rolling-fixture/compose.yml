@@ -1,5 +1,5 @@
-# A four-service estate for deploy-rolling.test.sh, wired as production is: the EDGE (the real
-# infrastructure/edge/nginx.conf, production's image) holds the host port, a FRONTEND nginx asks an
+# A four-service estate for deploy-rolling.test.sh, wired as production is: the EDGE (a copy of the
+# real infrastructure/edge/nginx.conf, production's image) holds the host port, a FRONTEND nginx asks an
 # AUTH service about each API request (as production's asks core-service) and then proxies it to an
 # API, and the frontend and the API are images "this repository builds" (prefix `rolltest/`)
 # declared overlap, each with the rotation that takes its old replica out of the nginx in front
@@ -48,8 +48,12 @@ services:
       canari.deploy.replace: overlap
       canari.deploy.rotation: edge:80
     image: rolltest/frontend:${TAG:?TAG is required}
-    # The replica lists rolling.sh writes, mounted as production mounts them.
+    # The target lists rolling.sh writes, mounted as production mounts them - and the `upstream` lists
+    # of 1.6.2 beside them, which a frontend of that release reads: one file runs both eras here,
+    # where production's compose of each release mounts its own (a container keeps the mounts it was
+    # created with, so a 1.6.2 frontend keeps its own across the deploy that replaces it).
     volumes:
+      - ${EDGE_DIR:?EDGE_DIR is required}/targets:/etc/nginx/targets:ro
       - ${EDGE_DIR:?EDGE_DIR is required}/rotation:/etc/nginx/rotation:ro
     expose:
       - "80"

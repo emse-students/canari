@@ -36,15 +36,20 @@ import {
   bookingAddedContent,
   bookingCancelledContent,
   bookingReminderContent,
+  bookingChangedContent,
+  bookingRemovedContent,
   bookingWithdrawnContent,
   publicMediaIconId,
   MENTION_TOKEN_RE,
+  previewOf,
   type PushContent,
   type PushIcon,
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import { postVisibleToViewerSql, sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
+import { isBlockedBetween } from '../common/user-blocks';
+import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 
 /**
  * The notification type of a member repost reaching a reader for the first time (WP-F6). Declared
@@ -187,6 +192,11 @@ export class PostNotificationsService {
         return withIcon(bookingAddedContent(actorName, text), icon);
       case 'booking_reminder':
         return bookingReminderContent(text);
+      // An edit (owner, 2026-11-02): `text` is the place, as for the three above.
+      case 'booking_changed':
+        return withIcon(bookingChangedContent(actorName, text), icon);
+      case 'booking_removed':
+        return withIcon(bookingRemovedContent(actorName, text), icon);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
@@ -213,6 +223,91 @@ export class PostNotificationsService {
       ids.add(match[1].toLowerCase());
     }
     return [...ids].slice(0, 20);
+  }
+
+  /**
+   * WHO OF `candidates` A MENTION ON `post` MAY REACH: those who may OPEN the post - the read's own
+   * gate (`readPostOpenVerdict`: the audience, a block with a personal post's author, hidden,
+   * scheduled later, an expired reel) - and with no block either way with `mentionerId`, whoever
+   * wrote the mentioning text (the post's author, or a comment's writer; anonymous or not, since
+   * dropping a mention tells its target nothing). A mention notifies, and pushes the text to, its
+   * target: one the read refuses would be handed what the post's own route would 404.
+   *
+   * Asked per candidate (at most 20, `resolveMentionedUserIds`), at notification time and never at
+   * the write - a post's mentions are asked at its first publication (`notifyPostMentions`). A
+   * comment's are asked when it is written, so a comment on a post not yet published (only its
+   * author may write one) tells nobody, then or later: dropped, not deferred.
+   * The dropped ones are counted at debug, never named: who was mentioned is the writer's text.
+   */
+  async mentionRecipientsOf(
+    post: OpenablePost,
+    mentionerId: string,
+    candidates: string[]
+  ): Promise<string[]> {
+    const manager = this.postRepo.manager;
+    const kept: string[] = [];
+    for (const candidate of candidates) {
+      const verdict = await readPostOpenVerdict(
+        manager,
+        post,
+        { viewerId: candidate },
+        'READ_OR_REACT'
+      );
+      if (verdict.refusal === null && !(await isBlockedBetween(manager, mentionerId, candidate))) {
+        kept.push(candidate);
+      }
+    }
+    if (kept.length < candidates.length) {
+      this.logger.debug(
+        `[MENTION] post ${post.id.slice(0, 8)}: ${candidates.length - kept.length} of ${candidates.length} mention(s) dropped by the read's gate`
+      );
+    }
+    return kept;
+  }
+
+  /**
+   * Notifies the people a post mentions (`post.mentions`, stored at the write and already narrowed
+   * to the author's side of the review cohort), through `mentionRecipientsOf`. Called by ONE
+   * caller, `PostAnnounceScheduler`, under its one-shot `feedNotifiedAt` claim when it first
+   * publishes the post - within a sweep for a post published at once, at its date for a scheduled
+   * one. One teller is what makes "told once" a fact rather than a reconciliation.
+   *
+   * An anonymous post stays anonymous to the people it mentions: the row carries no author.
+   * Each recipient is isolated: one failed row does not silence the others.
+   *
+   * @returns how many were notified.
+   */
+  async notifyPostMentions(post: Post): Promise<number> {
+    const candidates = (post.mentions ?? []).filter((id) => id && id !== post.authorId);
+    if (candidates.length === 0) return 0;
+    const recipients = await this.mentionRecipientsOf(post, post.authorId, candidates);
+    if (recipients.length === 0) return 0;
+    const actorId = post.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : post.authorId;
+    const actorName = post.anonymous
+      ? ANONYMOUS_NOTIFICATION_ACTOR_NAME
+      : await this.resolveActorName(post.authorId);
+    let sent = 0;
+    for (const recipientId of recipients) {
+      try {
+        // createNotification also sends the push (type 'social').
+        await this.createNotification({
+          recipientId,
+          type: 'mention',
+          postId: post.id,
+          actorId,
+          text: previewOf(post.markdown ?? ''),
+          actorName,
+        });
+        sent++;
+      } catch (e) {
+        this.logger.warn(
+          `[MENTION] post ${post.id.slice(0, 8)}: notification to ${recipientId.slice(0, 8)} failed`,
+          e
+        );
+      }
+    }
+    this.logger.debug(`[MENTION] post ${post.id.slice(0, 8)}: ${sent} mention(s) notified`);
+    return sent;
   }
 
   /**

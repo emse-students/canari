@@ -6,6 +6,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   GatewayTimeoutException,
   Logger,
   ServiceUnavailableException,
@@ -425,6 +426,20 @@ describe('PaymentController - every money route is guarded', () => {
 
   it('completeLydiaAccount is for a global admin, behind NginxAuthGuard', () => {
     expect(guardsOn('completeLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
+
+  it('disconnectLydiaAccount is for a global admin only, behind NginxAuthGuard', () => {
+    expect(guardsOn('disconnectLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
+
+  it('the guard on disconnectLydiaAccount answers 403 to a manager who is not a global admin', () => {
+    const contextFor = (headers: Record<string, string>) =>
+      ({ switchToHttp: () => ({ getRequest: () => ({ headers }) }) }) as never;
+    const guard = new GlobalAdminGuard();
+    expect(() => guard.canActivate(contextFor({ 'x-user-id': 'manager' }))).toThrow(
+      ForbiddenException
+    );
+    expect(guard.canActivate(contextFor({ 'x-global-admin': 'true' }))).toBe(true);
   });
 });
 

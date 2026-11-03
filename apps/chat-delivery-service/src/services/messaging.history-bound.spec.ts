@@ -35,10 +35,11 @@ describe('MessagingService history - the walk is bounded by the head', () => {
     del: jest.Mock;
   };
   /** Held so a case can say which groups exist - the orphan purge answers first when they do not. */
-  let groupRepo: ReturnType<typeof emptyRepo> & { find: jest.Mock };
+  let groupRepo: ReturnType<typeof emptyRepo> & { find: jest.Mock; manager: { find: jest.Mock } };
 
   const GROUP = 'group-1';
-  const ADMIN = 'true';
+  /** History is a member's read: the caller holds an admitted seat in every group it asks for. */
+  const MEMBER = 'member-1';
 
   /**
    * One stream entry. No `sender_id`: display-name enrichment is out of scope here and returns
@@ -66,13 +67,28 @@ describe('MessagingService history - the walk is bounded by the head', () => {
       ...emptyRepo(),
       // The group must exist, or the orphan purge answers before anything reads the stream.
       find: jest.fn().mockResolvedValue([{ id: GROUP }]),
+      // The member's interval, open since the epoch: nothing withheld, which is not the subject here.
+      manager: {
+        find: jest
+          .fn()
+          .mockResolvedValue([{ groupId: GROUP, joinedAt: new Date(0), leftAt: null }]),
+      },
+    };
+    // `IN (...)` honoured, as Postgres would: one admitted seat per group asked about.
+    const seats = {
+      ...emptyRepo(),
+      find: jest
+        .fn()
+        .mockImplementation(async (opts: { where: { groupId: { value: string[] } } }) =>
+          opts.where.groupId.value.map((groupId) => ({ groupId, awaitingAdmission: false }))
+        ),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
+        { provide: getRepositoryToken(GroupMember), useValue: seats },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
@@ -93,14 +109,14 @@ describe('MessagingService history - the walk is bounded by the head', () => {
   it('reports the stream head so the caller can pin the rest of its walk', async () => {
     redis.xrevrange.mockResolvedValue([entry('99-0')]);
 
-    const { head } = await service.getHistory(GROUP, undefined, undefined, ADMIN);
+    const { head } = await service.getHistory(GROUP, undefined, MEMBER);
 
     expect(head).toBe('99-0');
     expect(rangeCall()[2]).toBe('+');
   });
 
   it('honours the bound as the XRANGE end, so rows above it are never read', async () => {
-    await service.getHistory(GROUP, '3-0', undefined, ADMIN, undefined, '42-0');
+    await service.getHistory(GROUP, '3-0', MEMBER, undefined, '42-0');
 
     // Exclusive lower bound, INCLUSIVE upper bound - the head row is part of the walk.
     expect(rangeCall()[1]).toBe('(3-0');
@@ -108,13 +124,13 @@ describe('MessagingService history - the walk is bounded by the head', () => {
   });
 
   it('reads the head only when the caller has none, so a walk pays for it once', async () => {
-    await service.getHistory(GROUP, '3-0', undefined, ADMIN, undefined, '42-0');
+    await service.getHistory(GROUP, '3-0', MEMBER, undefined, '42-0');
 
     expect(redis.xrevrange).not.toHaveBeenCalled();
   });
 
   it('echoes the bound back, so a paging caller never has to remember it twice', async () => {
-    const { head } = await service.getHistory(GROUP, '3-0', undefined, ADMIN, undefined, '42-0');
+    const { head } = await service.getHistory(GROUP, '3-0', MEMBER, undefined, '42-0');
 
     expect(head).toBe('42-0');
   });
@@ -122,7 +138,7 @@ describe('MessagingService history - the walk is bounded by the head', () => {
   it('has no head to report on an empty stream, and that is not an error', async () => {
     redis.xrevrange.mockResolvedValue([]);
 
-    const { rows, head } = await service.getHistory(GROUP, undefined, undefined, ADMIN);
+    const { rows, head } = await service.getHistory(GROUP, undefined, MEMBER);
 
     expect(head).toBeUndefined();
     expect(rows).toEqual([]);
@@ -134,13 +150,13 @@ describe('MessagingService history - the walk is bounded by the head', () => {
    * through would make Redis reject a request the caller cannot act on.
    */
   it('drops a malformed bound rather than failing the read', async () => {
-    await service.getHistory(GROUP, undefined, undefined, ADMIN, undefined, 'not-a-stream-id');
+    await service.getHistory(GROUP, undefined, MEMBER, undefined, 'not-a-stream-id');
 
     expect(rangeCall()[2]).toBe('+');
   });
 
   it('drops a malformed cursor the same way', async () => {
-    await service.getHistory(GROUP, '"; FLUSHALL --', undefined, ADMIN);
+    await service.getHistory(GROUP, '"; FLUSHALL --', MEMBER);
 
     expect(rangeCall()[1]).toBe('-');
   });
@@ -148,11 +164,7 @@ describe('MessagingService history - the walk is bounded by the head', () => {
   it('gives the batch caller one head per group, keyed like the histories', async () => {
     redis.xrevrange.mockResolvedValue([entry('7-0')]);
 
-    const { histories, heads } = await service.getHistoryBatch(
-      [{ groupId: GROUP }],
-      undefined,
-      ADMIN
-    );
+    const { histories, heads } = await service.getHistoryBatch([{ groupId: GROUP }], MEMBER);
 
     expect(histories[GROUP]).toEqual([]);
     expect(heads[GROUP]).toBe('7-0');
@@ -171,7 +183,7 @@ describe('MessagingService history - the walk is bounded by the head', () => {
     const groups = Array.from({ length: 50 }, (_, i) => ({ groupId: `g${i}` }));
     groupRepo.find.mockResolvedValue(groups.map((g) => ({ id: g.groupId })));
 
-    const { histories } = await service.getHistoryBatch(groups, undefined, ADMIN);
+    const { histories } = await service.getHistoryBatch(groups, MEMBER);
 
     expect(Object.keys(histories)).toHaveLength(50);
   });
@@ -179,7 +191,7 @@ describe('MessagingService history - the walk is bounded by the head', () => {
   it('refuses one more than that, and says how many it takes', async () => {
     const groups = Array.from({ length: 51 }, (_, i) => ({ groupId: `g${i}` }));
 
-    await expect(service.getHistoryBatch(groups, undefined, ADMIN)).rejects.toThrow(
+    await expect(service.getHistoryBatch(groups, MEMBER)).rejects.toThrow(
       'At most 50 groups per batch'
     );
   });

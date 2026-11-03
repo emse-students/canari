@@ -685,6 +685,61 @@ export const MAX_CONCURRENT_SENDS = 3;
 export const UPLOAD_STALL_HINT_MS = 10_000;
 
 /**
+ * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
+ * swap into the optimistic placeholder message. Shared by the DM/group queue and the salon
+ * attachment send (`salonAttachmentSend.ts`), so an attachment is encoded ONE way whichever path
+ * carries it.
+ */
+export function buildMediaMessage(
+  entry: Pick<OutboxEntry, 'id' | 'sentAt'>,
+  media: NonNullable<OutboxEntry['media']>,
+  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+): { proto: Uint8Array; content: string } {
+  // What the sender declared (a reel message's intent, length and expiry hint): empty for an
+  // ordinary attachment, which therefore encodes exactly as before.
+  const declaration = {
+    ...(media.intent ? { intent: media.intent } : {}),
+    ...(media.durationMs ? { durationMs: media.durationMs } : {}),
+    ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
+  };
+  const fullRef: MediaRef = {
+    type: mediaKindToType(media.kind),
+    mediaId: ref.mediaId,
+    key: ref.key,
+    iv: ref.iv,
+    mimeType: media.mimeType,
+    size: media.size,
+    fileName: media.fileName,
+    width: media.width,
+    height: media.height,
+    ...(media.placeholder ? { placeholder: media.placeholder } : {}),
+    ...(media.voiceNote ? { voiceNote: true } : {}),
+    ...(ref.encoding ? { encoding: ref.encoding } : {}),
+    ...declaration,
+  };
+  const proto = encodeAppMessage({
+    ...mkMedia({
+      kind: media.kind,
+      mediaId: ref.mediaId,
+      key: fromHex(ref.key),
+      iv: fromHex(ref.iv),
+      mimeType: media.mimeType,
+      size: media.size,
+      fileName: media.fileName ?? '',
+      voiceNote: media.voiceNote ?? false,
+      caption: media.caption,
+      ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+      ...mediaPlaceholderProtoField(media.placeholder),
+      ...mediaEncodingProtoField(ref.encoding),
+      ...mediaReelProtoFields(declaration),
+    }),
+    messageId: entry.id,
+    sentAt: entry.sentAt,
+  });
+  return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+}
+
+/**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
  * send time (so epoch changes are transparent), is idempotent on the stable messageId (a re-send
  * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
@@ -1847,59 +1902,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       `[OUTBOX] ${id}… take prepared: ${raw.fileBytes.length} -> ${prepared.bytes.length} bytes (${prepared.mimeType}), stored in its place`
     );
     return next;
-  }
-
-  /**
-   * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
-   * swap into the optimistic placeholder message.
-   */
-  function buildMediaMessage(
-    entry: OutboxEntry,
-    media: NonNullable<OutboxEntry['media']>,
-    ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
-  ): { proto: Uint8Array; content: string } {
-    // What the sender declared (a reel message's intent, length and expiry hint): empty for an
-    // ordinary attachment, which therefore encodes exactly as before.
-    const declaration = {
-      ...(media.intent ? { intent: media.intent } : {}),
-      ...(media.durationMs ? { durationMs: media.durationMs } : {}),
-      ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
-    };
-    const fullRef: MediaRef = {
-      type: mediaKindToType(media.kind),
-      mediaId: ref.mediaId,
-      key: ref.key,
-      iv: ref.iv,
-      mimeType: media.mimeType,
-      size: media.size,
-      fileName: media.fileName,
-      width: media.width,
-      height: media.height,
-      ...(media.placeholder ? { placeholder: media.placeholder } : {}),
-      ...(media.voiceNote ? { voiceNote: true } : {}),
-      ...(ref.encoding ? { encoding: ref.encoding } : {}),
-      ...declaration,
-    };
-    const proto = encodeAppMessage({
-      ...mkMedia({
-        kind: media.kind,
-        mediaId: ref.mediaId,
-        key: fromHex(ref.key),
-        iv: fromHex(ref.iv),
-        mimeType: media.mimeType,
-        size: media.size,
-        fileName: media.fileName ?? '',
-        voiceNote: media.voiceNote ?? false,
-        caption: media.caption,
-        ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-        ...mediaPlaceholderProtoField(media.placeholder),
-        ...mediaEncodingProtoField(ref.encoding),
-        ...mediaReelProtoFields(declaration),
-      }),
-      messageId: entry.id,
-      sentAt: entry.sentAt,
-    });
-    return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
   }
 
   /**

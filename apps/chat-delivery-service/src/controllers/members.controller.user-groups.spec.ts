@@ -116,7 +116,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     ]);
     groupRepo.find.mockResolvedValue([ORDINARY, DISTRIBUTION]);
 
-    const got = await controller.getUserGroups('u1', 'u1', undefined);
+    const got = await controller.getUserGroups('u1', 'u1');
 
     expect(got.map((g) => g.groupId)).toEqual(['g-ordinary']);
   });
@@ -128,7 +128,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     ]);
     groupRepo.find.mockResolvedValue([ORDINARY, SALON_DISTRIBUTION]);
 
-    const got = await controller.getUserGroups('u1', 'u1', undefined);
+    const got = await controller.getUserGroups('u1', 'u1');
 
     expect(got.map((g) => g.groupId)).toEqual(['g-ordinary']);
     // And it is REPORTED, for the same reason the community one is: a membership row on a group
@@ -141,7 +141,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-distribution', userId: 'u1' }]);
     groupRepo.find.mockResolvedValue([DISTRIBUTION]);
 
-    await controller.getUserGroups('u1', 'u1', undefined);
+    await controller.getUserGroups('u1', 'u1');
 
     // The exclusion working is not the same as nothing being wrong: the group is joined by
     // external commit and holds no membership rows, so one existing is the only warning there is.
@@ -156,7 +156,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     ]);
     groupRepo.find.mockResolvedValue([older, ORDINARY]);
 
-    const got = await controller.getUserGroups('u1', 'u1', undefined);
+    const got = await controller.getUserGroups('u1', 'u1');
 
     expect(got.map((g) => g.groupId)).toEqual(['g-ordinary', 'g-older']);
     expect(warn).not.toHaveBeenCalled();
@@ -166,7 +166,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
     groupRepo.find.mockResolvedValue([{ ...ORDINARY, deletedAt: new Date() }]);
 
-    expect(await controller.getUserGroups('u1', 'u1', undefined)).toEqual([]);
+    expect(await controller.getUserGroups('u1', 'u1')).toEqual([]);
     // A deletion is ordinary and expected; only the distribution case warns.
     expect(warn).not.toHaveBeenCalled();
   });
@@ -196,7 +196,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupRepo.find.mockResolvedValue([ORDINARY]);
     groupInfoRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', baseEpoch: 6 }]);
 
-    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+    const [row] = await controller.getUserGroups('u1', 'u1');
 
     expect(row).toMatchObject({ groupId: 'g-ordinary', activeEpoch: 7, baseEpoch: 6 });
   });
@@ -208,7 +208,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupRepo.find.mockResolvedValue([ORDINARY]);
     groupInfoRepo.find.mockResolvedValue([]);
 
-    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+    const [row] = await controller.getUserGroups('u1', 'u1');
 
     expect(row.baseEpoch).toBeNull();
   });
@@ -222,7 +222,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupRepo.find.mockResolvedValue([ORDINARY, other]);
     groupInfoRepo.find.mockResolvedValue([{ groupId: 'g-other', baseEpoch: 3 }]);
 
-    const got = await controller.getUserGroups('u1', 'u1', undefined);
+    const got = await controller.getUserGroups('u1', 'u1');
 
     expect(got.map((g) => [g.groupId, g.activeEpoch, g.baseEpoch])).toEqual([
       ['g-ordinary', 7, null],
@@ -241,7 +241,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
     groupRepo.find.mockResolvedValue([ORDINARY]);
 
-    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+    const [row] = await controller.getUserGroups('u1', 'u1');
 
     expect(row.createdAt).toEqual(new Date(1_000));
   });
@@ -253,7 +253,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
     groupRepo.find.mockResolvedValue([{ ...ORDINARY, createdAt: null }]);
 
-    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+    const [row] = await controller.getUserGroups('u1', 'u1');
 
     expect(row.createdAt).toBeNull();
   });
@@ -267,7 +267,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     ]);
     groupRepo.find.mockResolvedValue([ORDINARY, DISTRIBUTION]);
 
-    await controller.getUserGroups('u1', 'u1', undefined);
+    await controller.getUserGroups('u1', 'u1');
 
     const where = groupInfoRepo.find.mock.calls[0][0].where;
     expect(where.groupId._value ?? where.groupId.value).toEqual(['g-ordinary']);
@@ -302,7 +302,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     });
 
     it('is null on every row, and reads nothing, when the caller names no device', async () => {
-      const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+      const [row] = await controller.getUserGroups('u1', 'u1');
 
       expect(row.deviceMembership).toBeNull();
       expect(deviceGroupRepo.find).not.toHaveBeenCalled();
@@ -313,7 +313,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       queuedRepo.find.mockResolvedValue([]);
       redis.mget.mockResolvedValue([null]);
 
-      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+      const [row] = await controller.getUserGroups('u1', 'u1', 'dev-1');
 
       expect(row.deviceMembership).toEqual({
         status: 'pending',
@@ -332,7 +332,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       queuedRepo.find.mockResolvedValue([]);
       redis.mget.mockResolvedValue([null]);
 
-      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+      const [row] = await controller.getUserGroups('u1', 'u1', 'dev-1');
 
       expect(row.deviceMembership).toMatchObject({ status: 'pending', awaitingAdmission: true });
     });
@@ -342,7 +342,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       queuedRepo.find.mockResolvedValue([{ groupId: 'g-ordinary' }]);
       redis.mget.mockResolvedValue(['u2:dev-9']);
 
-      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+      const [row] = await controller.getUserGroups('u1', 'u1', 'dev-1');
 
       expect(row.deviceMembership).toEqual({
         status: 'pending',
@@ -356,7 +356,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     it('asks nothing about Welcomes or locks for an active seat', async () => {
       holds(seat('active'));
 
-      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+      const [row] = await controller.getUserGroups('u1', 'u1', 'dev-1');
 
       expect(row.deviceMembership).toMatchObject({ status: 'active', welcomeQueued: false });
       expect(queuedRepo.find).not.toHaveBeenCalled();
@@ -366,7 +366,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     it('is null for a group the device holds no row for', async () => {
       holds();
 
-      const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+      const [row] = await controller.getUserGroups('u1', 'u1', 'dev-1');
 
       expect(row.deviceMembership).toBeNull();
       expect(row.awaitingAdmission).toBe(false);
@@ -393,7 +393,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         queuedRepo.find.mockResolvedValue([]);
         redis.mget.mockResolvedValue([null]);
 
-        const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+        const [row] = await controller.getUserGroups('u1', 'u1', 'dev-1');
 
         expect(row.awaitingAdmission).toBe(true);
         expect(noRowLines()).toHaveLength(0);
@@ -404,13 +404,13 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         queuedRepo.find.mockResolvedValue([]);
         redis.mget.mockResolvedValue([null]);
 
-        const [row] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+        const [row] = await controller.getUserGroups('u1', 'u1', 'dev-2');
 
         expect(row.deviceMembership).toBeNull();
         expect(row.awaitingAdmission).toBe(true);
         expect(noRowLines()).toEqual([[expect.stringContaining('user=u1 awaitingNoDeviceRow=1')]]);
         for (let i = 2; i <= 10; i++) {
-          await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+          await controller.getUserGroups('u1', 'u1', 'dev-2');
         }
         expect(noRowLines()).toHaveLength(2);
         expect(noRowLines()[1][0]).toContain('repeat=10');
@@ -419,7 +419,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       it('is said with no device header too', async () => {
         holds();
 
-        const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+        const [row] = await controller.getUserGroups('u1', 'u1');
 
         expect(row.awaitingAdmission).toBe(true);
       });
@@ -427,18 +427,18 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
       it('is never said while ANY device of the person is active there - the gate predicate', async () => {
         holds({ ...seat('active'), deviceId: 'dev-1' });
 
-        const [other] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+        const [other] = await controller.getUserGroups('u1', 'u1', 'dev-2');
         expect(other.awaitingAdmission).toBe(false);
         expect(noRowLines()).toHaveLength(0);
 
-        const [self] = await controller.getUserGroups('u1', 'u1', undefined, 'dev-1');
+        const [self] = await controller.getUserGroups('u1', 'u1', 'dev-1');
         expect(self.awaitingAdmission).toBe(false);
       });
 
       it('reads the active devices of the awaiting groups only', async () => {
         holds();
 
-        await controller.getUserGroups('u1', 'u1', undefined, 'dev-2');
+        await controller.getUserGroups('u1', 'u1', 'dev-2');
 
         expect(deviceGroupRepo.find).toHaveBeenCalledWith(
           expect.objectContaining({

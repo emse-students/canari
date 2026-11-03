@@ -1708,7 +1708,6 @@
           onRemovePendingFile={(index) =>
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
-          isUploading={messaging.isUploadingMedia}
           onStartAudioCall={callsAvailable(serverCallsMode()) && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(false);

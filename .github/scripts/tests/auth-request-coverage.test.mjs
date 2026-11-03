@@ -209,10 +209,13 @@ function authRequestLocations() {
     }
     if (!current) continue;
     if (/auth_request\s+\/internal\/auth\/verify/.test(line)) current.authRequest = true;
-    // `<service>:<port>` for a service reached by DNS, `<service>` alone for one chosen from its
-    // replica list (an `upstream <service>` block, docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+    // `set $upstream_x <service>:<port>` for a service reached by DNS alone, `proxy_pass
+    // http://$target_<service>` for one a release replaces with overlap (its target, set by the list
+    // the deploy writes, `-` spelled `_`: docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
     const up = line.match(/^\s*set\s+\$upstream_\w+\s+([a-z0-9-]+)(?::\d+)?;/);
     if (up) current.upstream = up[1];
+    const target = line.match(/^\s*proxy_pass\s+http:\/\/\$target_(\w+)/);
+    if (target) current.upstream = target[1].replaceAll('_', '-');
     // `rewrite ^/api/call(.*) /ws$1 break;` - what the upstream is asked for is NOT the location
     // path. Reading the path alone reported call-service as serving nothing under `/api/call`.
     const rw = line.match(/^\s*rewrite\s+\^(\S+?)\(\.\*\)\s+(\/\S*?)\$1\s+break;/);
@@ -309,6 +312,11 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
+  // `get_admin_presence` and `get_admin_presence_history` ask that claim through ONE helper,
+  // `presence.rs::is_global_admin`, which holds the literal above (2026-11-02). The handlers name
+  // the helper, not the header, and a helper that stopped reading the header would be a handler
+  // credited by a name - so the helper's own body is asserted below to still read it.
+  'is_global_admin',
   // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
   // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
   // also refuses a refresh token.
@@ -461,6 +469,47 @@ function rustFnBody(crateDir, name) {
   return null;
 }
 
+/**
+ * Whether a handler body names one of {@link RUST_AUTH}, matched as a WHOLE identifier (`caller_id`
+ * must not be credited by `not_caller_id_at_all`). The header literal is a string, matched as text.
+ *
+ * A handler credited by the NAME of the global-admin helper is credited only while that helper's own
+ * body still reads the header: a helper that stopped asking would otherwise keep every caller's
+ * handler "authorized" by a name. `helperBody(name)` answers a function's body or `null`.
+ */
+function isRustAuthorized(body, helperBody) {
+  const named = (text, id) => new RegExp(`(?<![A-Za-z0-9_])${id}(?![A-Za-z0-9_])`).test(text);
+  return RUST_AUTH.some((idiom) => {
+    if (idiom === 'x-global-admin') return body.includes(idiom);
+    if (!named(body, idiom)) return false;
+    if (idiom !== 'is_global_admin') return true;
+    const helper = helperBody('is_global_admin');
+    return helper !== null && helper.includes('x-global-admin');
+  });
+}
+
+// THE GATE'S OWN NEGATIVE TESTS: a helper that stops reading the header must FAIL the check, and a
+// near-miss identifier must not be credited. Run on every invocation, so a gate that was loosened
+// fails here before it can wave a handler through.
+{
+  const asks = () => '{ headers.get("x-global-admin").is_some() }';
+  const silent = () => '{ true }';
+  const handler = '{ if !is_global_admin(&headers) { return forbidden(); } }';
+  const checks = [
+    ['a handler asking through a helper that reads the header', isRustAuthorized(handler, asks), true],
+    ['a handler asking through a helper that stopped reading it', isRustAuthorized(handler, silent), false],
+    ['a handler naming a helper that does not exist', isRustAuthorized(handler, () => null), false],
+    ['a near-miss identifier', isRustAuthorized('{ my_is_global_admin_x(&h) }', asks), false],
+    ['the header read inline', isRustAuthorized('{ h.get("x-global-admin") }', () => null), true],
+  ];
+  for (const [what, got, want] of checks) {
+    if (got !== want) {
+      console.error(`FAIL: this gate's own self-test - ${what}: expected ${want}, got ${got}`);
+      process.exit(1);
+    }
+  }
+}
+
 // ── The assertions ───────────────────────────────────────────────────────────────────────────────
 
 const failures = [];
@@ -567,7 +616,7 @@ for (const loc of locations) {
       );
       continue;
     }
-    if (RUST_AUTH.some((idiom) => body.includes(idiom))) {
+    if (isRustAuthorized(body, (name) => rustFnBody(dir, name))) {
       rustAuthorized++;
       continue;
     }

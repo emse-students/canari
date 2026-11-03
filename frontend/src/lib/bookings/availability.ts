@@ -1,3 +1,5 @@
+import { m } from '$lib/paraglide/messages';
+
 /**
  * THE AVAILABILITY EDITOR'S MODEL, AND ITS TRANSLATION TO THE STORED LINES (WP-B4).
  *
@@ -175,6 +177,26 @@ export function timeChoices(step: number, asEnd: boolean, current: string): stri
     out.sort((a, b) => minutesOf(a) - minutesOf(b));
   }
   return out;
+}
+
+/** A stored wall time as the reader reads it: the stored end of a day, `24:00`, reads `00:00`. */
+export function displayTime(time: string): string {
+  return time === '24:00' ? '00:00' : time;
+}
+
+/**
+ * `timeChoices` as picker options: the VALUE stays the stored time, the LABEL is what the reader
+ * says. The end-of-day choice is told apart from a start at midnight ("00:00 (fin de journée)").
+ */
+export function timeOptions(
+  step: number,
+  asEnd: boolean,
+  current: string
+): { value: string; label: string }[] {
+  return timeChoices(step, asEnd, current).map((t) => ({
+    value: t,
+    label: t === '24:00' ? m.bookings_time_end_of_day() : t,
+  }));
 }
 
 /** Why a closure cannot be saved, or null. */

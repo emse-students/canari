@@ -60,13 +60,15 @@ export function reelTombstoneOf(
  * feed's (`ReelViewer`), so the message is given the one shape it reads: the video with its key,
  * the sender's name, the day it was sent and the caption.
  *
- * No `authorId` is set, and nothing in the viewer asks the server about this id: it is the
- * message's id, the key of the slide and the file name of a save.
+ * `authorId` is the message's sender: the slide draws `Avatar` and the profile link from it, and an
+ * empty one rendered the "UI" fallback initials (alpha.2 bench). Nothing in the viewer asks the
+ * server about the post `id`: it is the message's id, the key of the slide and the file name of a save.
  */
 export function reelMessageAsPost(input: {
   messageId: string;
   media: MediaRef;
   caption: string;
+  senderId: string;
   senderName: string;
   sentAt: Date;
 }): PostEntity {
@@ -80,6 +82,7 @@ export function reelMessageAsPost(input: {
     media: [input.media],
     images: [],
     polls: [],
+    authorId: input.senderId,
     authorDisplayName: input.senderName,
     createdAt: iso,
     publishedAt: iso,

@@ -3,6 +3,7 @@ import {
   JOIN_ASK_CAPABILITY,
   gatewaySocketUrl,
 } from './frameDelivery';
+import { getClientAppVersion } from '$lib/utils/appVersion';
 import webMlsService from '$lib/services/WebMlsService.ts?raw';
 import tauriMlsService from '$lib/services/TauriMlsService.ts?raw';
 
@@ -25,6 +26,15 @@ describe('the gateway socket URL', () => {
       ]);
       expect(query.get('token')).toBe(token ?? null);
     }
+  });
+
+  it('declares its platform and version for the anonymous census, and nothing that names a person', () => {
+    const query = new URL(gatewaySocketUrl('wss://example.test', 'd1').url).searchParams;
+
+    // A browser test run: no native shell, so `web`; the version is the one the gate compares.
+    expect(query.get('platform')).toBe('web');
+    expect(query.get('app_version')).toBe(getClientAppVersion());
+    expect([...query.keys()].sort()).toEqual(['app_version', 'caps', 'device_id', 'platform']);
   });
 
   it('never writes the token into the line it logs', () => {
