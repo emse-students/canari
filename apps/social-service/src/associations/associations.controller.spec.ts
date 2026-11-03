@@ -506,7 +506,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'user-42', undefined);
 
     expect(service.isAssociationSuperAdminOf).toHaveBeenCalledWith('user-42', 'asso1');
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42', false);
   });
 
   it('refuses MANAGE_ASSO in the BDE of a space the association does not reach', async () => {
@@ -524,7 +524,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin', true);
   });
 
   // Owner, 2026-11-02: an institution is the global admin's to delete, as it is theirs to create.
@@ -545,7 +545,7 @@ describe('AssociationsController delete tier', () => {
 
     await controller.remove('asso1', 'user-42', undefined);
 
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42', false);
   });
 
   it('lets a global admin delete an institution', async () => {
@@ -554,7 +554,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.findById).not.toHaveBeenCalled();
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin', true);
   });
 });
 

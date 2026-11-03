@@ -321,8 +321,9 @@ says how many, and **the migration that adds the trigger must not run while that
 nothing reads the governing parent for governance until WP-D2.
 
 - **Migration 129** (held): `associations."displayParentAssociationId"`, the G3 display-only label,
-  and `dependency_journal` (`subject_kind`, `subject_id`, `from_id`, `to_id`, `actor`, `source`,
-  `at`; the actor is anonymised by the account erasure).
+  and `dependency_journal` (`subject_kind` - `entity` for a governing parent, `space` for a governor,
+  `label` for a list's G3 label - `subject_id`, `from_id`, `to_id`, `actor`, `source`, `at`; the
+  actor is anonymised by the account erasure).
 - **Migration 130** (held): the parents list below, applied by SLUG, all or nothing - every slug must
   exist once, each row's type must be the validated one and its current parent the validated "from"
   (or already `bde`, a re-run), `bde` must govern a space; otherwise it RAISES naming the slug and
@@ -338,11 +339,20 @@ nothing reads the governing parent for governance until WP-D2.
   refused too. Both triggers take one transaction-scoped advisory lock, so a parent write and a
   governor designation cannot each pass on a snapshot missing the other (an integration test parks
   the second on the lock and watches it refused).
-- **The 2.7 count, encoded.** It is the second query above: the rows whose parent is not an
-  association governing a space. Migration 131 runs the SAME judgement over every existing row
-  BEFORE it creates a trigger, and RAISES with the count when it is above zero - so the triggers are
-  "refused while the count is above zero" mechanically, and 130, ordered first, is what brings it to
-  zero (the 26 lists under the BDS or the BDA, whose link becomes the label).
+- **The 2.7 count, encoded - and stricter.** Migration 131 locks `associations` and `spaces` (SHARE
+  ROW EXCLUSIVE, right after BEGIN), runs the SAME judgement as its triggers over every existing row,
+  and RAISES with the count when it is above zero - so the triggers are "refused while the count is
+  above zero" mechanically, and no write slips between the count and the triggers. The guard is
+  stricter than the second 2.7 query: it also counts a dangling parent, an institution or a space
+  governor with a parent, and a child with children. **What 130 guarantees** is only that none of
+  the 74 rows it names breaks the rule; that the guard then reads zero is true of production by
+  MEASUREMENT, not by construction:
+- **Production, measured read-only on 2026-11-03** (the coordinator): 0 dangling parents; 0
+  institutions or space governors with a parent; 0 children with children; the rows whose parent
+  governs nothing are exactly the 26 BDS/BDA lists 130 moves. So after 130, 131's guard reads zero
+  on production. Gardanne: only ISMIN is governed (by MINITEL); Autre, FSSS, ICM and PDIS have no
+  governor, and no audience rule of an entity that is neither an institution nor a BDE reaches those
+  four spaces - so G4 (MINITEL governs all five) changes nobody's rights today.
 - **Service** (`spaces/dependency-rules.ts`, `SpacesService`): `PUT associations/spaces/dependencies/:id`
   and `GET associations/spaces/dependencies` (platform admin), every refusal a typed 409; a platform
   admin's `PATCH :id` with a parent goes through the same `setParent`, journaled; `setBde` takes an
@@ -350,8 +360,13 @@ nothing reads the governing parent for governance until WP-D2.
   and no longer writes an audience rule; `setAudiences` no longer adds a governor's spaces back (2.5,
   closes P2). An institution governing a space answers for its agenda and its students' personal
   content, and MANAGES nothing (`governorIsAnAssociationSql` in the management predicate, the
-  standings and the MANAGE_ASSO door). A deleted association releases its children, its spaces and
-  the labels naming it, journaled. Creation (2.5, closes P4): the parent is the creating BDE (picked
+  standings and the MANAGE_ASSO door). `setParent` returns before judging anything when neither the
+  parent nor the label changes, and judges only what changes - an older client resending the parent
+  it read, or a label-only edit, is never refused for a state it did not create. Every writer of the
+  axis (the panel, a governor, the profile form, CREATION) maps a trigger refusal to the same typed
+  409 through ONE helper, `withDependencyRefusals`. A deleted association releases its children, its
+  spaces and the labels naming it, each journaled; deleting one that governs a space or has children
+  is the platform admin's alone (A4), anyone else gets the typed 403 `DEPENDENCY_DELETE_ADMIN_ONLY`. Creation (2.5, closes P4): the parent is the creating BDE (picked
   among several, `DEPENDENCY_PARENT_CHOICE_REQUIRED`; held to the creator's own,
   `DEPENDENCY_PARENT_NOT_YOURS`), a named body governing nothing becomes the label (G3, which keeps
   an older client's "for the BDS" list working), and the default audience is the parent's spaces.
@@ -377,7 +392,9 @@ validated by the owner on his tracking page as is (G1); he may correct a row lat
 from the Dependencies panel. 74 rows: 44 lists, 30 associations, every governing parent the main BDE
 (`bde`, which governs four saint-etienne spaces). 26 lists now under the BDS (14) or the BDA (12)
 keep that link as the G3 label only. Migration 130 carries the same rows; its integration spec reads
-them from the file.
+them from the file. The second BDE's new name, **"BDE FSSS - Bureau des Élèves"** (G2, applied by
+130), is the owner's exact choice of 2026-11-03, given to the lead as the answer to a direct
+question.
 
 | Name | Slug | Type | Current parent | New governing parent | G3 label |
 | --- | --- | --- | --- | --- | --- |
@@ -937,10 +954,71 @@ F4, question 3 is F5, question 4 is F6 (section 0).
 
 ## 11. WP-PIN - a pin is a promotion per space, not a global flag (decided 2026-11-03)
 
-**Today.** `posts.pinned` is one global boolean, set by `PATCH /api/posts/:postId/pin|unpin` behind
-`assertContentModerator` (platform admin, or any BDE member holding `MODERATE`); feeds sort
-`posts.pinned DESC`. So any BDE pins any post to the top for every reader on every campus. Production
-holds exactly one pinned post (measured 2026-11-03).
+**BUILT (2026-11-03, branch `feat/space-pins`)** - as designed below; what was built, where:
+
+- **One SQL module**, `apps/social-service/src/posts/space-pins.ts`: who pins (`bdePinsInSpaceSql` =
+  `bdeStandingInSpaceSql` at `MODERATE`, the platform admin decided by the caller), what is pinnable
+  (`postPinnableInSpaceSql` = `postReachesSpaceSql` in `spaces/reader-spaces.ts` + the feed's own
+  lifecycle terms: published, not hidden by moderation, not a dead reel), THE rank (`rankedPinsSql`),
+  the reader's pins (`pinnedForViewerSql`, over `isPinSpaceOfUserSql` = own spaces + read-grant
+  cells). `holdsBdeFlagOverSql` is deliberately NOT used: it answers "governs this ASSOCIATION" and
+  excludes institutions and other BDEs, which pinning must not (decision 1, G9).
+- **`postReachesSpaceSql`** ("visible to the readers of a space") is `postVisibleToUserSql` minus the
+  personal doors (membership, follows, member reposts, read grants): an association's rules, a
+  personal post's author's spaces, a republisher's rules unless it is archived (an archived carrier reaches nobody, as in the reader's predicate since #2965). `space-pins.integration.spec.ts` holds the
+  two equal for a probe reader per space on every post.
+- **Writes**: `SpacePinsService` (`space-pins.service.ts`) behind `SpacePinsController`:
+  `PATCH /api/posts/:postId/pin|unpin` with `{ spaceId }`, and the governor's list
+  `GET /api/posts/space-pins/:spaceId` (`shown` / `pending`). Refusals are typed bodies:
+  `space_pin_limit`, `space_required`, `post_not_in_space` (409), `space_pin_forbidden` (403),
+  `space_not_found` and `post_not_found` (404). **Authorisation comes FIRST** (review F4): the
+  space's governance is checked before the space lock, before the post's existence and before its
+  reach, so a caller who does not govern the space is told the same `403` whether the post exists or
+  not - an unknown space included (only the platform admin hears `space_not_found`); a body-less
+  request from a caller who governs no space at all is `403` before the post is looked at. The answer's `pinned` is the post's state IN THAT SPACE (what an older
+  client toggles on). A body-less UNPIN follows the body-less pin's rule: the one space where the post
+  is pinned and governed, else `space_required` (the lead's reading of "same for unpin").
+- **Reads**: every post the server serves carries `pinned` (per reader), `canPin` and `pinSpaces`
+  (`{ spaceId, formation, campus, state }`, the menu's entries) - two queries per page in
+  `PostsService.pinContext`. The feeds and the search sort by `pinnedForViewerSql`; the post-list
+  cache key already carries the viewer, so no entry is shared across readers.
+- **Client**: `PostActionsMenu` draws one entry per served space ("Épingler" alone with one;
+  "Épingler pour ISMIN, Saint-Étienne" with several; "(en attente)" on a pending pin); a
+  `space_pin_limit` refusal reads `post_pin_limit_reached`. The governor's list endpoint has no
+  screen of its own yet: the pending state reaches the governor on the post's own menu.
+- **Migrations**: 127 (`post_space_pins`, additive) and 128 (the move of the global pin, HELD for
+  the owner's hand-merge). `posts.pinned` is read by nothing (`select: false` on the entity, kept
+  mapped so a synchronize stack does not drop it before 128 reads it); its drop is recorded in
+  [legacy-compatibility](legacy-compatibility.md). 128 NOTICEs every pin it does not carry: each
+  governed space where the post is visible but that had no room, and each flagged post pinned
+  nowhere (visible in no governed space, or not live at run time - hidden, scheduled, an expired
+  reel); nothing re-runs it, so the run's log is the re-pin-by-hand list.
+- **The deploy window (review F2): nil for the new code.** `infrastructure/deploy/deploy-environment.sh`
+  calls `apply_migrations` BEFORE the rolling replacement of the services (`rolling.sh`), so a new
+  container never serves without 127 and 128 applied; while they apply, the OLD containers keep
+  serving and keep reading `posts.pinned`, which 128 does not clear, so the global pin stays on top
+  until the rollover. One loss is possible, and accepted: a pin or unpin made through the old routes
+  in the minutes between 128's run and the rollover writes only `posts.pinned` and is not carried.
+  An OLD client after the rollover reads `pinned` per reader and pins body-less (the rule under
+  "Old clients" below), and so does an old web bundle still open in a tab. 128 being held, the loop
+  takes the pre-migration backup (`migration_backup`) right before it.
+- **Owner's answer to the review (2026-11-03): a BDE MAY pin, in its own space, a post by ANOTHER
+  BDE or by an institution that is visible there** - pinning is a promotion, not moderation; the
+  rule "no BDE acts on another BDE's content" (2026-11-03) covers moderation and management only.
+- **A pin kept invisible is listed NOWHERE (review F5)**: not in a reader's feed, not in the
+  governor's list, not on the post's menu in that space (the menu offers only spaces where the post
+  is pinnable). It is removable only by `PATCH .../unpin` with that `spaceId`, and when its post
+  becomes visible again it re-enters THE rank at its original `pinned_at` - which may push a SHOWN
+  pin to "en attente" (the oldest of the four waits, whichever it is).
+- **A pin filtered out for one reader still takes a shown slot (review F7).** The rank is per space,
+  not per reader: a shown pin whose post a given reader is not served - the promotion cutoff, a
+  blocked author, a grant-only reader looking at personal posts - is one of that space's 3 for
+  everyone, and that reader simply sees fewer than 3 pins on top.
+
+**Before WP-PIN.** `posts.pinned` was one global boolean, set by `PATCH /api/posts/:postId/pin|unpin`
+behind `assertContentModerator` (platform admin, or any BDE member holding `MODERATE`); feeds sorted
+`posts.pinned DESC`. So any BDE pinned any post to the top for every reader on every campus.
+Production held exactly one pinned post (measured 2026-11-03).
 
 **Owner decisions (2026-11-03)** - *"ce serait bien que le BDE puisse epingler (= mettre en avant)
 n'importe quel post sur l'espace dont il est responsable"*:
@@ -980,8 +1058,11 @@ n'importe quel post sur l'espace dont il est responsable"*:
   "en attente" pins exist. One shared SQL rank (`ROW_NUMBER() OVER
   (PARTITION BY space_id ORDER BY pinned_at DESC, post_id) <= 3`) serves the feed ordering, the
   `pinned` field and the governor list, so the three cannot disagree. Test: pin 3, hide one post,
-  pin a new one (3 visible), make the hidden post visible again: the feed shows the 3 newest, the
-  returning older pin is listed "en attente", and unpinning one of the 3 promotes it.
+  pin a new one (3 visible), make the hidden post visible again: four are visible, and the 3 with the
+  newest `pinned_at` are shown. With the FIRST-pinned post the one hidden (the built test), the
+  returning pin is the oldest and is the one listed "en attente"; had a later one been hidden, it
+  would return among the 3 and the first-pinned post would wait instead - the rule is `pinned_at`,
+  never "the returning one". Unpinning one of the 3 promotes the waiting pin.
 - **UX.** The pin routes take the space: `PATCH /api/posts/:postId/pin` with `{ spaceId }`, same for
   `unpin`. The post menu lists the governed spaces where the post is visible; with exactly one it
   pins directly. There is no "pin in every space" shortcut (it would burn a slot in each space

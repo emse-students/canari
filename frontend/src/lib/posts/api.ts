@@ -3,6 +3,7 @@ import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
+import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
 
 export type PostMediaRef = MediaRef & { caption?: string };
@@ -183,11 +184,16 @@ export interface PostEntity {
    * (the bin) is true. Absent from an older server: `canManage` decides both, as it did.
    */
   canEdit?: boolean;
-  /** The pin: a moderator of this post (a BDE `MODERATE` of its spaces) or a platform admin. */
+  /**
+   * The pin (WP-PIN): a promotion PER SPACE - true when `pinSpaces` is not empty, i.e. the reader
+   * governs a space where the post is visible (the platform admin, or `MODERATE` in its BDE).
+   */
   canPin?: boolean;
+  /** WP-PIN: the spaces the pin menu lists for this reader, each with the pin's state there. */
+  pinSpaces?: PinSpace[];
   /** The flag: any logged-in reader who is not the post's own publisher. */
   canReport?: boolean;
-  /** Clears `anonymous`, revealing the author again: same tier as `canPin`. */
+  /** Clears `anonymous`, revealing the author again: a moderator of this post or a platform admin. */
   canUnmaskAnonymous?: boolean;
   /**
    * "Republier" (D38): an association post, and the reader may publish as another association that
@@ -267,6 +273,7 @@ export interface PostEntity {
    * (`posts/commentChange.ts`, `commentCountOf`); absent from a server older than the field.
    */
   commentCount?: number | null;
+  /** WP-PIN: shown pinned in one of THIS READER's spaces (their own, or a read grant's cell). */
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;
@@ -578,12 +585,45 @@ export async function deleteComment(postId: string, commentId: string): Promise<
   return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
 }
 
-export async function pinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
-  return request(`/api/posts/${postId}/pin`, { method: 'PATCH' });
+/**
+ * A pin's state in one space (WP-PIN): `shown` (one of the 3 that space's readers see first),
+ * `pending` ("en attente": kept, not shown until a shown one is unpinned), or `null` (not pinned).
+ */
+export type PinState = 'shown' | 'pending' | null;
+
+/** One space where the reader may pin a post, as the server serves it on the card. */
+export interface PinSpace {
+  spaceId: string;
+  formation: Formation;
+  campus: Campus;
+  state: PinState;
 }
 
-export async function unpinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
-  return request(`/api/posts/${postId}/unpin`, { method: 'PATCH' });
+/** What a pin or unpin answers: the post's state IN THAT SPACE after the act. */
+export interface PinResult {
+  ok: boolean;
+  pinned: boolean;
+  spaceId: string;
+  state: PinState;
+}
+
+/**
+ * Pins the post in ONE space, for that space's readers only (WP-PIN). A refusal is typed:
+ * `space_pin_limit` (the space already shows 3), read with `refusalCode`.
+ */
+export async function pinPost(postId: string, spaceId: string): Promise<PinResult> {
+  return request(`/api/posts/${postId}/pin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ spaceId }),
+  });
+}
+
+/** Unpins the post from ONE space (WP-PIN). */
+export async function unpinPost(postId: string, spaceId: string): Promise<PinResult> {
+  return request(`/api/posts/${postId}/unpin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ spaceId }),
+  });
 }
 
 /** Clears the anonymous flag on a post, revealing its author again. Content moderators. */

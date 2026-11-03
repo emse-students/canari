@@ -27,6 +27,12 @@ apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql 76
 # file's final SQL, and the owner's merge of the pull request by hand is the approval.
 apps/social-service/src/migrations/124_edit_profile.sql d1fc5f6dc5055e9ff03565a109badab7c8d48d75a421a2c0751c7a91ded36843
 
+# 128: the one global pin moved into per-space pins (WP-PIN, #2984) - every governed space where the
+# post is visible and that has room, a NOTICE for every pin it does not carry. The owner authorised the
+# lead on 2026-11-03 to merge #2984 with this migration once fixed, verified and green; this line is
+# written by the author for the file's FINAL SQL, and any edit to the file holds it again.
+apps/social-service/src/migrations/128_move_global_pin_to_spaces.sql 888e4370644b21ebd3cad0b97262efbd99b7c519cb5a83cf1acb6cdc25e83bbd
+
 # 129-131: WP-D1 of the spaces-and-audiences reform (docs/wiki/spaces-and-audiences-reform.md 2.8).
 # 129 adds the G3 label column and the dependency journal; 130 applies the parents list the owner
 # validated on 2026-11-03 "as is" (by slug, all or nothing, journaled; the FSSS BDE renamed, MINITEL
@@ -34,6 +40,6 @@ apps/social-service/src/migrations/124_edit_profile.sql d1fc5f6dc5055e9ff03565a1
 # refuses while any row breaks them. The schema, the triggers and the list were decided to need the
 # owner's yes; these lines are written by the author for the files' final SQL, and the owner's merge
 # of the pull request by hand is the approval.
-apps/social-service/src/migrations/129_dependencies_schema.sql e80485c006936b76b16de917dc7f58f41f6df5afd95b50d877585409067735b1
-apps/social-service/src/migrations/130_dependency_parents.sql cf7146856a806441bebbcf9d4c608d77e17d83a73301c4b574deab8306fdfceb
-apps/social-service/src/migrations/131_dependency_triggers.sql 1b904940e6c595b626b2e6ea8bc192bc5734f644a9d3bc7801b0c0105479ff1b
+apps/social-service/src/migrations/129_dependencies_schema.sql 4d112c09116509833f8cb594ad08ff9800fd0019852e2309a6f35d48dde77ad3
+apps/social-service/src/migrations/130_dependency_parents.sql 8aadee6313cca95e35472ab94ba2d0745bd7649ea59b278c96815915d94ad2ab
+apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f6390073662ebe08aba12c1c41656d64bd10484160102cdf061

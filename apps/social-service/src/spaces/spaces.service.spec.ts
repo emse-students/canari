@@ -364,6 +364,32 @@ describe('SpacesService', () => {
       expect(manager.update).not.toHaveBeenCalled();
     });
 
+    // F4: an older client resending the parent it read, or a label-only edit, must not be judged on
+    // a state it did not create - a row the triggers would refuse today (here: a parent governing
+    // nothing) is left as it is, with no 409.
+    it('judges only a change: an unchanged parent is never refused, a label-only edit goes through', async () => {
+      const stale = { ...CLUB, parentAssociationId: 'bds' };
+      const bds = { id: 'bds', type: 'association' as const, parentAssociationId: null };
+      const same = withParents({ bds, club: stale }, []);
+      await expect(same.service.setParent('club', 'bds', ACTOR)).resolves.toBeUndefined();
+      expect(same.manager.update).not.toHaveBeenCalled();
+
+      const label = withParents({ bds, club: stale }, []);
+      await label.service.setParent('club', 'bds', ACTOR, 'bds');
+      expect(label.manager.update).toHaveBeenCalledWith(
+        expect.anything(),
+        { id: 'club' },
+        { displayParentAssociationId: 'bds' }
+      );
+
+      const moved = withParents({ bds, club: stale }, []);
+      expect(await codeOf(moved.service.setParent('club', null, ACTOR))).toBeNull();
+      const toNothing = withParents({ bds, club: { ...CLUB } }, []);
+      expect(await codeOf(toNothing.service.setParent('club', 'bds', ACTOR))).toBe(
+        DEPENDENCY_PARENT_NOT_A_BDE
+      );
+    });
+
     it('clears a parent, and writes nothing when nothing changes', async () => {
       const set = withParents({ club: { ...CLUB, parentAssociationId: 'bde' } }, ['bde']);
       await set.service.setParent('club', null, ACTOR);
@@ -380,7 +406,7 @@ describe('SpacesService', () => {
       expect(same.manager.query).not.toHaveBeenCalled();
     });
 
-    it('sets the G3 label without journaling it (display only), and refuses an invalid one', async () => {
+    it('sets the G3 label, journaled as a label line, and refuses an invalid one', async () => {
       const bds = { id: 'bds', type: 'association' as const, parentAssociationId: 'bde' };
       const { service, manager } = withParents(
         { bde: BDE, bds, club: { ...CLUB, parentAssociationId: 'bde' } },
@@ -392,7 +418,15 @@ describe('SpacesService', () => {
         { id: 'club' },
         { displayParentAssociationId: 'bds' }
       );
-      expect(manager.query).not.toHaveBeenCalled();
+      expect(manager.query).toHaveBeenCalledTimes(1);
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('dependency_journal'), [
+        'label',
+        'club',
+        null,
+        'bds',
+        'admin-1',
+        'admin',
+      ]);
       expect(await codeOf(service.setParent('club', 'bde', ACTOR, 'club'))).toBe(
         DEPENDENCY_LABEL_INVALID
       );

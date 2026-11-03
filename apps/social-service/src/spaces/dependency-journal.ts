@@ -3,13 +3,13 @@ import type { EntityManager } from 'typeorm';
 /**
  * Appends one `dependency_journal` line (migration 129; reform 2.7) inside the caller's transaction,
  * so a dependency change and its record commit or roll back together. `kind` is `entity` for a
- * governing parent, `space` for a space's governor; `actorId` is the user who made the change.
+ * governing parent, `space` for a space's governor, `label` for a list's G3 display label; `actorId` is the user who made the change.
  * `source` says through which door: `admin` (the Dependencies panel, a space's governor, a platform
  * admin's `PATCH :id`) or `create` (the parent set when the entity was created).
  */
 export async function writeDependencyJournal(
   manager: EntityManager,
-  kind: 'entity' | 'space',
+  kind: 'entity' | 'space' | 'label',
   subjectId: string,
   from: string | null,
   to: string | null,
