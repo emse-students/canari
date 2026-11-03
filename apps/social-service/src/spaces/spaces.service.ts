@@ -10,9 +10,10 @@ import {
   assertAudienceAllowedForType,
   assertBdeMayReadAudience,
   assertBdeMayWriteAudience,
+  ruleInsideGovernedSpaces,
   type SpaceStanding,
 } from './audience-policy';
-import { BDE_SPACE_STANDINGS_SQL } from './bde';
+import { BDE_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
 import type { AudienceRuleDto } from './dto/space.dto';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
@@ -35,6 +36,15 @@ export interface AssociationRule extends AudienceRule {
 export interface AudienceRule {
   formation: SpaceFormation | null;
   campus: SpaceCampus | null;
+}
+
+/**
+ * A rule as its reader may act on it: `editable` is false for a BDE star when the rule exceeds the
+ * spaces it governs ("Lire tout, modifier dans ses espaces", owner 2026-11-03) - the editor shows it
+ * read-only and sends it back unchanged. Always true for the platform admin.
+ */
+export interface AudienceRuleView extends AudienceRule {
+  editable: boolean;
 }
 
 /** Whether a rule reaches a space: each side matches when it is "any" or equal. */
@@ -189,20 +199,23 @@ export class SpacesService {
   }
 
   /**
-   * The audience rules of an association, for a global admin or - bounded to the campuses it
-   * governs, never an institution - a BDE star (user, 2026-10-08).
+   * The audience rules of an association, for a global admin or a BDE star of its campus, never on
+   * an institution ("Lire tout", owner 2026-11-03). Each rule says whether its reader may change it.
    */
   async getAudiencesFor(
     associationId: string,
     actor: { userId: string; isGlobalAdmin: boolean }
-  ): Promise<AudienceRule[]> {
+  ): Promise<AudienceRuleView[]> {
     const association = await this.requireAssociation(associationId);
     const current = await this.getAudiences(associationId);
-    if (!actor.isGlobalAdmin) {
-      const spaces = await this.bdeSpaceStandings(actor.userId);
-      assertBdeMayReadAudience(association.type, spaces, current);
-    }
-    return current;
+    if (actor.isGlobalAdmin) return current.map((r) => ({ ...r, editable: true }));
+    const spaces = await this.bdeSpaceStandings(actor.userId);
+    assertBdeMayReadAudience(association.type, spaces, current);
+    const view = current.map((r) => ({ ...r, editable: ruleInsideGovernedSpaces(r, spaces) }));
+    this.logger.debug(
+      `[spaces] audiences of ${associationId} read by a BDE star: ${view.filter((r) => !r.editable).length}/${view.length} rule(s) beyond its spaces`
+    );
+    return view;
   }
 
   /** The audience rules of an association. */
@@ -219,7 +232,8 @@ export class SpacesService {
    *
    * THE POLICY RUNS HERE, ON EVERY WRITE (WP-A, user 2026-10-07): an `everyone` rule is refused on
    * anything but an institution (decision 6), and a caller who is not a global admin must be a BDE
-   * star writing inside its own campus (decision 7). Visibility is computed from the CURRENT rules at
+   * star that governs the entity and adds or removes rules inside its own spaces only (decision 7,
+   * owner 2026-11-03). Visibility is computed from the CURRENT rules at
    * read time, so a change applies to past posts too and nothing is frozen on a post (decision 4).
    */
   async setAudiences(
@@ -233,7 +247,13 @@ export class SpacesService {
     if (!actor.isGlobalAdmin) {
       const spaces = await this.bdeSpaceStandings(actor.userId);
       const current = await this.getAudiences(associationId);
-      assertBdeMayWriteAudience(association.type, spaces, current, rules);
+      // Governing it already is what stops a star taking an entity over by adding its own space.
+      const [governs] = (await this.dataSource.query(HOLDS_BDE_FLAG_OVER_SQL, [
+        actor.userId,
+        associationId,
+        AssociationPermissionFlag.MANAGE_ASSO,
+      ])) as { holds: boolean }[];
+      assertBdeMayWriteAudience(association.type, spaces, governs?.holds === true, current, rules);
     }
     this.logger.log(
       `[spaces] audiences of ${associationId} by ${actor.userId.slice(0, 8)}${actor.isGlobalAdmin ? ' (admin)' : ' (BDE)'}: ${rules.length} rule(s)`

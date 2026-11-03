@@ -23,6 +23,7 @@ import {
   BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
   HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
   holdsBdeAgendaRightOverSql,
   isBdeAssociationSql,
 } from './bde';
@@ -250,6 +251,18 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     }
     const reach = await client.query(ASSOCIATIONS_UNDER_BDE_FLAG_SQL, ['seManage', MANAGE_ASSO]);
     expect(reach.rows.map((r) => r.id)).not.toContain(A.school);
+  });
+
+  it('names the associations whose proposals the platform admins are told of too', async () => {
+    const ungoverned: AssoKey[] = [];
+    for (const asso of Object.keys(A) as AssoKey[]) {
+      const { rows } = await client.query(TARGETS_AN_UNGOVERNED_SPACE_SQL, [A[asso]]);
+      if (rows[0].ungoverned === true) ungoverned.push(asso);
+    }
+    // No rule (clubNone), a space with no BDE (FSSS x saint-etienne, and the rest of gardanne for
+    // the whole-campus clubGa), or everyone (clubAll). An institution targeting only governed spaces
+    // is told to its BDEs alone.
+    expect(ungoverned.sort()).toEqual(['clubAll', 'clubFsssSe', 'clubGa', 'clubNone']);
   });
 
   it('filters a list of events by their association, as the pending queue splices it', async () => {

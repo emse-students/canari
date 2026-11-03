@@ -268,6 +268,25 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
     event is validated by a BDE governing the spaces it targets, or by the platform admin.
     `mayValidateEventsOf`, the pending queue, the proposal notification and `me/bde-reach`
     (`validateEvents`) read it.
+  - **a BDE is managed by nobody but itself** (owner, 2026-11-03: *"Un BDE n'est géré par
+    personne"*): the management predicate also excludes a target that is the BDE of any space,
+    unless the holder's membership is in that same BDE. One saint-etienne BDE's whole-campus rule
+    reaches the other's spaces, and the space rule alone made each the uncapped super-admin of the
+    other.
+  - **the audience: "Lire tout, modifier dans ses espaces"** (owner, 2026-11-03): a star reads every
+    audience of its campus, writes only an entity it governs, and adds or removes rules inside its
+    own spaces only; a wider rule already in force stays as it is (`AUDIENCE_RULE_BEYOND_BDE_SPACES`),
+    the platform admin's to change. A non-admin creator's entity starts inside its spaces
+    (`creatorDefaultRules`). [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08)
+    has the mechanism.
+  - **an institution's proposal** is told to the BDE validators of the spaces it targets AND to the
+    platform admins when a targeted space has no BDE, or it targets none
+    (`TARGETS_AN_UNGOVERNED_SPACE_SQL`); the WARN is left for the case nobody at all is told.
+  - **leaving stays free**: a member removing itself is judged by neither the institution rule nor
+    the ceiling (the route still asks `MANAGE_MEMBERS`; there is no separate leave route).
+  - **no BDE moderates an institution's content; only the platform admin does** (owner,
+    2026-11-03). Recorded, not yet enforced: `isContentModerator` is platform-wide and takes no
+    post ([backlog](backlog.d/p1-no-bde-moderates-an-institutions-content.md)).
   Proven against real SQL in `bde.integration.spec.ts` (the agenda matrix with two institutions)
   and through the real route guard in `audience-takeover.integration.spec.ts` (a BDE validates an
   institution's event targeting its space, not one targeting only another BDE's, and still cannot

@@ -36,9 +36,17 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-/** `git ls-files -s` gives mode and path for every tracked file, which is the only source here. */
+/**
+ * `git ls-files -s` gives mode and path for every tracked file, which is the only source here. Its
+ * output crossed `execFileSync`'s 1 MiB default buffer on 2026-11-03 (ENOBUFS, the whole gate red),
+ * so the buffer is sized for the listing rather than left to the default.
+ */
 function trackedFiles() {
-  const out = execFileSync('git', ['ls-files', '-s'], { cwd: repoRoot, encoding: 'utf8' });
+  const out = execFileSync('git', ['ls-files', '-s'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
   const modes = new Map();
   for (const line of out.split('\n')) {
     const match = /^(\d{6}) [0-9a-f]+ \d\t(.*)$/.exec(line);

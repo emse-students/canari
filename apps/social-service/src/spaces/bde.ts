@@ -40,10 +40,15 @@ export function isBdeAssociationSql(alias: string): string {
  * manage it. Written HERE, once, so every management caller - `mayAct`, `mayActOnAny`, the delete
  * route - inherits it.
  *
+ * A BDE IS MANAGED BY NOBODY BUT ITSELF (owner, 2026-11-03: "Un BDE n'est géré par personne"). One
+ * campus holds two BDEs, and one BDE's whole-campus rule reaches the other's spaces, so the space
+ * rule alone made each BDE the super-admin of the other - uncapped, it could seat itself there. A
+ * target that is the BDE of any space is therefore managed only through a membership in THAT BDE.
+ *
  * THE AGENDA IS NOT MANAGEMENT. "c'est le BDE qui a tous les droits sur l'agenda des formations dont
  * il est le BDE" (owner, 2026-11-03): validating, rejecting and every other agenda right follow the
  * spaces an event TARGETS, whoever organises it - an institution's event included. That is
- * `holdsBdeAgendaRightOverSql`, the same space rule without the institution exclusion.
+ * `holdsBdeAgendaRightOverSql`, the same space rule without the management exclusions.
  */
 export function holdsBdeFlagOverSql(user: string, association: string, flag: string): string {
   return bdeFlagOverReachSql(user, association, flag, true);
@@ -67,20 +72,25 @@ export function holdsBdeAgendaRightOverSql(user: string, association: string): s
   );
 }
 
-/** The space rule both predicates share; `excludeInstitution` is the only difference. */
+/**
+ * The space rule both predicates share. `management` adds the two exclusions of management - an
+ * institution, and another BDE - which the agenda does not have.
+ */
 function bdeFlagOverReachSql(
   user: string,
   association: string,
   flag: string,
-  excludeInstitution: boolean
+  management: boolean
 ): string {
-  const target = excludeInstitution
+  const target = management
     ? `
     JOIN associations bde_target ON bde_target.id = ${association}`
     : '';
-  const notInstitution = excludeInstitution
+  const notInstitution = management
     ? `
-      AND bde_target.type <> 'institution'`
+      AND bde_target.type <> 'institution'
+      AND (bde_member."associationId" = bde_target.id OR NOT EXISTS (SELECT 1 FROM spaces bde_of_target
+        WHERE bde_of_target."bdeAssociationId" = bde_target.id))`
     : '';
   return `EXISTS (SELECT 1 FROM association_members bde_member
     JOIN spaces bde_governed ON bde_governed."bdeAssociationId" = bde_member."associationId"
@@ -90,18 +100,11 @@ function bdeFlagOverReachSql(
 }
 
 /**
- * The campuses of the spaces whose BDE user `$1` holds flag `$2` in - the borders of a BDE star's
- * audience powers (decision 7 of the audiences chantier). Answers `campus`.
- */
-export const BDE_GOVERNED_CAMPUSES_SQL = `SELECT DISTINCT bde_space.campus FROM association_members bde_star
-  JOIN spaces bde_space ON bde_space."bdeAssociationId" = bde_star."associationId"
-  WHERE bde_star."userId" = $1 AND (bde_star.permissions & $2) <> 0 ORDER BY bde_space.campus`;
-
-/**
  * Every opened space, with whether a BDE in which user `$1` holds flag `$2` governs it. Answers
  * `formation`, `campus`, `governed`. The borders of a BDE star's audience powers PER SPACE
- * (`audience-policy.ts` `ruleInsideGovernedSpaces`): the campus-level `BDE_GOVERNED_CAMPUSES_SQL`
- * let a star write over a space another BDE of the same campus governs.
+ * (`audience-policy.ts` `ruleInsideGovernedSpaces`), and of a creator's default audience
+ * (`creatorDefaultRules`). A campus-level bound let a star write over a space another BDE of the
+ * same campus governs.
  */
 export const BDE_SPACE_STANDINGS_SQL = `SELECT bde_space.formation, bde_space.campus,
     EXISTS (SELECT 1 FROM association_members bde_star
@@ -126,3 +129,25 @@ export const ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL = `SELECT agenda_asso.id FR
 /** Every user holding the BDE agenda right over the events of association `$1` - who is told. */
 export const BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL = `SELECT DISTINCT agenda_holder."userId" FROM association_members agenda_holder
   WHERE ${holdsBdeAgendaRightOverSql('agenda_holder."userId"', '$1')} ORDER BY agenda_holder."userId"`;
+
+/**
+ * Does association `$1` target a space NO BDE governs - or no opened space at all? Answers
+ * `ungoverned`. For that slice of its audience the platform admin is the only validator, so a
+ * proposal of it is told to the platform admins too (`notifyEventValidatorsOfProposal`).
+ */
+export const TARGETS_AN_UNGOVERNED_SPACE_SQL = `SELECT (
+    NOT EXISTS (SELECT 1 FROM association_audiences t_rule
+      JOIN spaces t_space ON ${ruleReachesSpaceSql('t_rule', 't_space')}
+      WHERE t_rule."associationId" = $1)
+    OR EXISTS (SELECT 1 FROM association_audiences t_rule
+      JOIN spaces t_space ON ${ruleReachesSpaceSql('t_rule', 't_space')}
+      WHERE t_rule."associationId" = $1 AND t_space."bdeAssociationId" IS NULL)
+  ) AS "ungoverned"`;
+
+/**
+ * Every platform administrator. `users.admin` is core-service's column (the flag its sign-in signs
+ * into the access token); this service reads the shared `users` table as it does for names and
+ * campuses, and never writes it.
+ */
+export const PLATFORM_ADMINS_SQL = `SELECT plat_admin.id AS "userId" FROM users plat_admin
+  WHERE plat_admin.admin = true ORDER BY plat_admin.id`;

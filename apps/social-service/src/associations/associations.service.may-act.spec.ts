@@ -1,9 +1,12 @@
+import { Logger } from '@nestjs/common';
 import { AssociationsService } from './associations.service';
 import {
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
   BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
   HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
+  PLATFORM_ADMINS_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
 } from '../spaces/bde';
 import {
   AssociationPermissionFlag,
@@ -299,12 +302,22 @@ describe('AssociationsService.mayActOnAny', () => {
  * the service asks it about the right association and hands its answer through untouched.
  */
 describe('AssociationsService scoped event governance', () => {
-  function makeGovernanceService(opts: { holds?: boolean; holders?: string[] }) {
+  function makeGovernanceService(opts: {
+    holds?: boolean;
+    holders?: string[];
+    /** Whether the proposing association targets a space no BDE governs. */
+    ungoverned?: boolean;
+    admins?: string[];
+  }) {
     const query = jest.fn((sql: string) =>
       Promise.resolve(
         sql === HOLDS_BDE_AGENDA_RIGHT_OVER_SQL
           ? [{ holds: opts.holds ?? false }]
-          : (opts.holders ?? []).map((userId) => ({ userId }))
+          : sql === TARGETS_AN_UNGOVERNED_SPACE_SQL
+            ? [{ ungoverned: opts.ungoverned ?? false }]
+            : sql === PLATFORM_ADMINS_SQL
+              ? (opts.admins ?? []).map((userId) => ({ userId }))
+              : (opts.holders ?? []).map((userId) => ({ userId }))
       )
     );
     const calendarRepo = {
@@ -373,5 +386,38 @@ describe('AssociationsService scoped event governance', () => {
     expect(notifications.createNotifications).toHaveBeenCalledWith(
       expect.objectContaining({ recipientIds: ['se1', 'ga1'], type: 'event_proposed' })
     );
+    // Every targeted space has a BDE: the platform admins are not asked about.
+    expect(query).not.toHaveBeenCalledWith(PLATFORM_ADMINS_SQL);
+  });
+
+  it('tells the platform admins too when a targeted space has no BDE (an institution, say)', async () => {
+    const { service, notifications } = makeGovernanceService({
+      holders: ['se1'],
+      ungoverned: true,
+      admins: ['admin1', 'se1'],
+    });
+    const notify = (
+      service as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<void>;
+      }
+    ).notifyEventValidatorsOfProposal.bind(service);
+    await notify('school', 'author', 'Forum');
+    expect(notifications.createNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientIds: ['se1', 'admin1'], type: 'event_proposed' })
+    );
+  });
+
+  it('warns only when nobody at all could be told', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, notifications } = makeGovernanceService({ ungoverned: true, admins: [] });
+    notifications.createNotifications.mockResolvedValueOnce(0);
+    const notify = (
+      service as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<void>;
+      }
+    ).notifyEventValidatorsOfProposal.bind(service);
+    await notify('orphan', 'author', 'Soiree');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('nobody who may validate it'));
+    warn.mockRestore();
   });
 });

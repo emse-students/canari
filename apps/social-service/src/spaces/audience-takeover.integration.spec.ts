@@ -26,7 +26,12 @@ import { GlobalAdminOrAssociationRoleGuard } from '../associations/guards/global
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { flagsBeyondCeiling, grantCeiling } from '../associations/member-flag-ceiling';
 import { assertBdeMayWriteAudience, type SpaceStanding } from './audience-policy';
-import { BDE_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
+import {
+  BDE_SPACE_STANDINGS_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
+  HOLDS_BDE_FLAG_OVER_SQL,
+} from './bde';
+import { SpacesService } from './spaces.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -42,6 +47,7 @@ const A = {
   clubIsmin: '00000000-0000-4000-8000-0000000000e2', // reaches (ISMIN, saint-etienne) only
   school: '00000000-0000-4000-8000-0000000000e3', // an INSTITUTION reaching (ICM, saint-etienne)
   schoolIsmin: '00000000-0000-4000-8000-0000000000e4', // an INSTITUTION reaching (ISMIN, s-e) only
+  clubWide: '00000000-0000-4000-8000-0000000000e5', // reaches the WHOLE of saint-etienne
 } as const;
 
 /** The refusal's typed code, or null when the call passed. */
@@ -70,6 +76,24 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     ).rows as { formation: string | null; campus: string | null }[];
   const governs = async (userId: string, id: string): Promise<boolean> =>
     (await client.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, id, MANAGE_ASSO])).rows[0].holds === true;
+  /**
+   * The verdict `SpacesService.setAudiences` reaches for a BDE star, from the real SQL: its standings,
+   * whether it governs the entity, the rules in force. The typed code, or null when it may write.
+   */
+  const writeAs = async (
+    userId: string,
+    id: string,
+    submitted: { formation: string | null; campus: string | null }[]
+  ): Promise<string | null> => {
+    const [spaces, governed, current] = await Promise.all([
+      standings(userId),
+      governs(userId, id),
+      rulesOf(id),
+    ]);
+    return codeOf(() =>
+      assertBdeMayWriteAudience('association', spaces, governed, current, submitted)
+    );
+  };
 
   beforeAll(async () => {
     client = new Client({ connectionString: URL });
@@ -93,9 +117,12 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     await client.query(migration('071_spaces.sql'));
     await client.query(migration('072_drop_is_bde.sql'));
     await client.query(`DELETE FROM association_audiences`);
-    const rules: [string, string, string][] = [
+    const rules: [string, string | null, string][] = [
       [A.bdeIcm, 'ICM', 'saint-etienne'],
+      // The production shape: one BDE's WHOLE-CAMPUS rule reaches the other BDE's spaces.
+      [A.bdeIcm, null, 'saint-etienne'],
       [A.bdeIsmin, 'ISMIN', 'saint-etienne'],
+      [A.clubWide, null, 'saint-etienne'],
       [A.clubIcm, 'ICM', 'saint-etienne'],
       [A.clubIsmin, 'ISMIN', 'saint-etienne'],
       [A.school, 'ICM', 'saint-etienne'],
@@ -141,48 +168,127 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
   });
 
   it("refuses the takeover: the ICM BDE rewriting the ISMIN club's audience into its own space", async () => {
-    const spaces = await standings('icmOfficer');
-    const current = await rulesOf(A.clubIsmin);
+    // It does not govern the club, so it writes nothing there - adding its own space included.
     expect(
-      codeOf(() =>
-        assertBdeMayWriteAudience('association', spaces, current, [
-          { formation: 'ICM', campus: 'saint-etienne' },
-        ])
-      )
+      await writeAs('icmOfficer', A.clubIsmin, [
+        { formation: 'ISMIN', campus: 'saint-etienne' },
+        { formation: 'ICM', campus: 'saint-etienne' },
+      ])
     ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
   });
 
   it('refuses a whole-campus rule to a BDE that governs only part of the campus', async () => {
-    const spaces = await standings('icmOfficer');
-    const current = await rulesOf(A.clubIcm);
     expect(
-      codeOf(() =>
-        assertBdeMayWriteAudience('association', spaces, current, [
-          { formation: null, campus: 'saint-etienne' },
-        ])
-      )
-    ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+      await writeAs('icmOfficer', A.clubIcm, [{ formation: null, campus: 'saint-etienne' }])
+    ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
   });
 
   it('lets a BDE edit its own association within its spaces', async () => {
-    const spaces = await standings('icmOfficer');
-    const current = await rulesOf(A.clubIcm);
     expect(
-      codeOf(() =>
-        assertBdeMayWriteAudience('association', spaces, current, [
-          { formation: 'ICM', campus: 'saint-etienne' },
-        ])
-      )
+      await writeAs('icmOfficer', A.clubIcm, [{ formation: 'ICM', campus: 'saint-etienne' }])
     ).toBeNull();
     // ... and not push it into the other BDE's space.
     expect(
-      codeOf(() =>
-        assertBdeMayWriteAudience('association', spaces, current, [
-          { formation: 'ICM', campus: 'saint-etienne' },
-          { formation: 'ISMIN', campus: 'saint-etienne' },
-        ])
-      )
+      await writeAs('icmOfficer', A.clubIcm, [
+        { formation: 'ICM', campus: 'saint-etienne' },
+        { formation: 'ISMIN', campus: 'saint-etienne' },
+      ])
+    ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+  });
+
+  /**
+   * "Un BDE n'est géré par personne" (owner, 2026-11-03). The ICM BDE's whole-campus rule reaches
+   * the ISMIN BDE's spaces, so the space rule alone made the ISMIN officer the uncapped super-admin
+   * of the ICM BDE.
+   */
+  it('governs a BDE only from inside it, whatever spaces its audience reaches', async () => {
+    expect(await governs('isminOfficer', A.bdeIcm)).toBe(false);
+    expect(await governs('icmOfficer', A.bdeIcm)).toBe(true);
+    expect(await governs('icmOfficer', A.bdeIsmin)).toBe(false);
+    expect(await governs('isminOfficer', A.bdeIsmin)).toBe(true);
+    // No uncapped tier, so a self-grant there is beyond the ISMIN officer's (empty) ceiling.
+    const ceiling = grantCeiling({
+      isGlobalAdmin: false,
+      isSuperAdminOf: await governs('isminOfficer', A.bdeIcm),
+      ownPermissions: 0,
+    });
+    expect(flagsBeyondCeiling(ceiling, 0, MANAGE_ASSO)).toBe(MANAGE_ASSO);
+    // Nor may it touch that BDE's audience.
+    expect(
+      await writeAs('isminOfficer', A.bdeIcm, [{ formation: 'ICM', campus: 'saint-etienne' }])
     ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+    // The agenda is not management: the ICM BDE's events target the ISMIN spaces too.
+    const agenda = await client.query(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['isminOfficer', A.bdeIcm]);
+    expect(agenda.rows[0].holds).toBe(true);
+  });
+
+  describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
+    /** The real read path, its association and rule reads answered by this PostgreSQL. */
+    const spacesService = () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const associations = {
+        findOne: ({ where }: { where: { id: string } }) =>
+          client
+            .query(`SELECT id, type FROM associations WHERE id = $1`, [where.id])
+            .then((r) => r.rows[0] ?? null),
+      };
+      const audiences = {
+        find: ({ where }: { where: { associationId: string } }) =>
+          client
+            .query(
+              `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
+              [where.associationId]
+            )
+            .then((r) => r.rows),
+      };
+      const dataSource = {
+        query: (sql: string, params: unknown[]) => client.query(sql, params).then((r) => r.rows),
+      };
+      const unused = undefined as never;
+      return new SpacesService(
+        unused,
+        associations as never,
+        audiences as never,
+        dataSource as never,
+        unused
+      );
+    };
+
+    it('reads a whole-campus rule it may not change, marked read-only', async () => {
+      const rules = await spacesService().getAudiencesFor(A.clubWide, {
+        userId: 'icmOfficer',
+        isGlobalAdmin: false,
+      });
+      expect(rules).toEqual([{ formation: null, campus: 'saint-etienne', editable: false }]);
+      // ... and the ISMIN club, which it does not govern, is read all the same.
+      const other = await spacesService().getAudiencesFor(A.clubIsmin, {
+        userId: 'icmOfficer',
+        isGlobalAdmin: false,
+      });
+      expect(other).toEqual([{ formation: 'ISMIN', campus: 'saint-etienne', editable: false }]);
+    });
+
+    it('edits inside its spaces, the wider rule kept as it is', async () => {
+      expect(
+        await writeAs('icmOfficer', A.clubWide, [
+          { formation: null, campus: 'saint-etienne' },
+          { formation: 'ICM', campus: 'gardanne' },
+        ])
+      ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+      expect(
+        await writeAs('icmOfficer', A.clubWide, [
+          { formation: null, campus: 'saint-etienne' },
+          { formation: 'ICM', campus: 'saint-etienne' },
+        ])
+      ).toBeNull();
+    });
+
+    it('refuses removing or narrowing the whole-campus rule, typed', async () => {
+      expect(
+        await writeAs('icmOfficer', A.clubWide, [{ formation: 'ICM', campus: 'saint-etienne' }])
+      ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+      expect(await writeAs('icmOfficer', A.clubWide, [])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+    });
   });
 
   describe('an institution has no governing BDE (owner, 2026-11-02)', () => {

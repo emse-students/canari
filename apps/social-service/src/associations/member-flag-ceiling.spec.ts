@@ -375,6 +375,18 @@ describe("AssociationsService - an institution's members are the platform admin'
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('lets a member of it leave: leaving writes no right onto anyone', async () => {
+    const { service, remove } = makeService(rows());
+    expect(
+      await settle(
+        service.removeMember(SCHOOL, 'target', {
+          granter: { userId: 'target', isGlobalAdmin: false },
+        })
+      )
+    ).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   it('lets the platform administrator write one', async () => {
     const { service } = makeService(rows());
     expect(

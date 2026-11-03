@@ -4,6 +4,7 @@ import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
+import { HOLDS_BDE_FLAG_OVER_SQL } from './bde';
 
 const space = { formation: 'ICM', campus: 'saint-etienne' } as const;
 const ADMIN = { userId: 'admin-1', isGlobalAdmin: true };
@@ -117,15 +118,25 @@ describe('SpacesService', () => {
     };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => cb(manager)),
-      // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`.
-      query: jest.fn().mockResolvedValue(
-        SPACE_CAMPUSES.flatMap((campus) =>
-          SPACE_FORMATIONS.map((formation) => ({
-            formation,
-            campus,
-            governed: (opts.bdeCampuses ?? []).includes(campus),
-          }))
-        )
+      // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`. The
+      // management predicate (does the star govern THIS entity) answers from the same campuses: a
+      // rule of the entity on one of them reaches a governed space.
+      query: jest.fn().mockImplementation(async (sql: string) =>
+        sql === HOLDS_BDE_FLAG_OVER_SQL
+          ? [
+              {
+                holds: (opts.rules ?? []).some(
+                  (r) => r.campus != null && (opts.bdeCampuses ?? []).includes(r.campus)
+                ),
+              },
+            ]
+          : SPACE_CAMPUSES.flatMap((campus) =>
+              SPACE_FORMATIONS.map((formation) => ({
+                formation,
+                campus,
+                governed: (opts.bdeCampuses ?? []).includes(campus),
+              }))
+            )
       ),
     } as unknown as DataSource;
     const redis = { deleteByPattern: jest.fn().mockResolvedValue(3) };
@@ -333,9 +344,10 @@ describe('SpacesService', () => {
         rules: own,
         bdeCampuses: ['gardanne'],
       });
+      // Governed, but the added rule leaves its spaces: the platform admin's to widen.
       expect(
         await code(beyond.service.setAudiences('a', [{ campus: 'saint-etienne' }], STAR))
-      ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+      ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
       expect(await code(beyond.service.setAudiences('a', [{ campus: null }], STAR))).toBe(
         'AUDIENCE_EVERYONE_INSTITUTION_ONLY'
       );
@@ -374,8 +386,29 @@ describe('SpacesService', () => {
           rules: gardanne,
           bdeCampuses: ['gardanne'],
         };
-        await expect(read(o)).resolves.toEqual([{ formation: null, campus: 'gardanne' }]);
-        await expect(read({ ...o, bdeCampuses: [] }, ADMIN)).resolves.toHaveLength(1);
+        await expect(read(o)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: true },
+        ]);
+        await expect(read({ ...o, bdeCampuses: [] }, ADMIN)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: true },
+        ]);
+      });
+
+      it("marks a rule beyond the star's spaces read-only, and still returns it", async () => {
+        // A two-campus entity: the star governs gardanne only, so the saint-etienne rule is read,
+        // never editable ("Lire tout, modifier dans ses espaces", owner 2026-11-03).
+        const o: Opts = {
+          association: { id: 'a', type: 'association' },
+          rules: [
+            { associationId: 'a', formation: null, campus: 'gardanne' },
+            { associationId: 'a', formation: null, campus: 'saint-etienne' },
+          ],
+          bdeCampuses: ['gardanne'],
+        };
+        await expect(read(o)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: true },
+          { formation: null, campus: 'saint-etienne', editable: false },
+        ]);
       });
 
       it('refuses another campus, an institution and a caller who is not a star', async () => {

@@ -10,6 +10,10 @@
    * admin reads the rules in force, and so does a BDE star for an entity of its own campus (user,
    * 2026-10-08); only when the read is refused does the editor open with no preset ticked and warn
    * that saving replaces what is in force.
+   *
+   * "Lire tout, modifier dans ses espaces" (owner, 2026-11-03): a rule the server marks
+   * `editable: false` exceeds the star's spaces. It is listed read-only, left out of the preset the
+   * star edits, and sent back unchanged with what the star chose, so a save never touches it.
    */
   import { onMount } from 'svelte';
   import { resolve } from '$app/paths';
@@ -24,6 +28,7 @@
     setAssociationAudiences,
     type Association,
     type AudienceRule,
+    type AudienceRuleView,
   } from '$lib/associations/api';
   import {
     offeredPresets,
@@ -58,7 +63,11 @@
   let saving = $state(false);
   let profileCampus = $state<Campus | ''>('');
   /** `null` when the read was refused, `[]` for an entity with no rule. */
-  let currentRules = $state<AudienceRule[] | null>(null);
+  let currentRules = $state<AudienceRuleView[] | null>(null);
+  /** The rules beyond the reader's spaces: shown, never edited, sent back as they are. */
+  const lockedRules = $derived((currentRules ?? []).filter((r) => !r.editable));
+  /** The rules the reader may change, which the presets read and replace. */
+  const editableRules = $derived((currentRules ?? []).filter((r) => r.editable));
   let preset = $state<AudiencePreset | null>(null);
   let campus = $state<Campus | ''>('');
   /** The CheckboxGroup binds plain strings; they are only ever `FORMATIONS` values. */
@@ -68,9 +77,9 @@
   let cells = $state<Set<Cell>>(new Set());
 
   const presets = $derived(offeredPresets(asso.type, isGlobalAdmin));
-  const reading = $derived(currentRules ? readPreset(currentRules) : null);
+  const reading = $derived(currentRules ? readPreset(editableRules) : null);
   const customInForce = $derived(
-    currentRules !== null && currentRules.length > 0 && !reading && preset !== 'custom'
+    currentRules !== null && editableRules.length > 0 && !reading && preset !== 'custom'
   );
   const needsCampus = $derived(preset !== 'everyone' && preset !== 'custom');
   const noCampusAnywhere = $derived(!loading && !profileCampus && !campus);
@@ -113,7 +122,7 @@
       // A star on an entity outside its campus is refused: the editor then opens blank, and says so.
       Log.d('audience.rules failed', err);
     }
-    const read = currentRules ? readPreset(currentRules) : null;
+    const read = currentRules ? readPreset(currentRules.filter((r) => r.editable)) : null;
     campus = (read && read.campus) || profileCampus;
     if (read) {
       preset = read.preset;
@@ -134,10 +143,22 @@
   async function save() {
     if (!canSave || preset === null) return;
     saving = true;
-    const rules = preset === 'custom' ? toRules(cells) : presetToRules(preset, campus, formations);
-    Log.d('audience.save', { association: asso.id, preset, rules: rules.length });
+    const chosen = preset === 'custom' ? toRules(cells) : presetToRules(preset, campus, formations);
+    // The locked rules ride along unchanged: the server refuses a star's write that drops one.
+    const rules: AudienceRule[] = [
+      ...lockedRules.map(({ formation, campus: c }) => ({ formation, campus: c })),
+      ...chosen,
+    ];
+    Log.d('audience.save', {
+      association: asso.id,
+      preset,
+      rules: rules.length,
+      locked: lockedRules.length,
+    });
     try {
-      currentRules = await setAssociationAudiences(asso.id, rules);
+      await setAssociationAudiences(asso.id, rules);
+      // Read back rather than kept: which rules stay beyond the reader's spaces is the server's call.
+      currentRules = await getAssociationAudiences(asso.id);
       showToast(m.audience_saved(), 'info');
     } catch (err) {
       Log.d('audience.save failed', err);
@@ -224,6 +245,20 @@
       {#if formationsMissing}
         <p class="text-text-muted text-xs" role="status">{m.audience_formations_required()}</p>
       {/if}
+    {/if}
+
+    {#if lockedRules.length > 0}
+      <div class="text-text-muted space-y-1 text-xs" role="status" data-audience-locked>
+        <p>{m.audience_locked_rules()}</p>
+        <ul class="list-inside list-disc">
+          {#each lockedRules as rule (`${rule.formation ?? '*'}|${rule.campus ?? '*'}`)}
+            <li>
+              {rule.formation ? formationLabel(rule.formation) : m.audience_rule_whole_campus()}
+              {#if rule.campus}- {campusLabel(rule.campus)}{/if}
+            </li>
+          {/each}
+        </ul>
+      </div>
     {/if}
 
     {#if customInForce}

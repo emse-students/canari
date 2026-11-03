@@ -130,6 +130,8 @@ import {
   ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
   BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  PLATFORM_ADMINS_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
   HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
   holdsBdeAgendaRightOverSql,
@@ -148,8 +150,9 @@ import {
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import {
   assertAudienceAllowedForType,
-  assertCreatorCampusGoverned,
+  creatorDefaultRules,
   defaultCampusRules,
+  type SpaceStanding,
 } from '../spaces/audience-policy';
 import { normaliseRules } from '../spaces/spaces.service';
 import type { AudienceRuleDto } from '../spaces/dto/space.dto';
@@ -162,7 +165,7 @@ import {
   encodeCatalogueCursor,
   platformAdminOnly,
 } from './admin-catalogue';
-import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { BDE_SPACE_STANDINGS_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
@@ -724,18 +727,19 @@ export class AssociationsService {
         campus: string | null;
       }[];
       // Thrown inside the transaction: the row saved above is rolled back with it.
-      const rules = defaultCampusRules(profile?.campus ?? null);
-      if (!isGlobalAdmin) {
-        const governed = (
-          (await manager.query(BDE_GOVERNED_CAMPUSES_SQL, [
-            userId,
-            AssociationPermissionFlag.MANAGE_ASSO,
-          ])) as { campus: string }[]
-        ).map((r) => r.campus);
-        assertCreatorCampusGoverned(governed, rules);
-      }
+      // A non-admin creator gets an audience it may EDIT afterwards: the spaces of its campus its
+      // BDE governs, never a whole campus it shares with another BDE (owner, 2026-11-03).
+      const rules = isGlobalAdmin
+        ? defaultCampusRules(profile?.campus ?? null)
+        : creatorDefaultRules(
+            profile?.campus ?? null,
+            (await manager.query(BDE_SPACE_STANDINGS_SQL, [
+              userId,
+              AssociationPermissionFlag.MANAGE_ASSO,
+            ])) as SpaceStanding[]
+          );
       this.logger.log(
-        `[spaces] ${saved.id} reaches its creator's campus: ${rules[0].campus} (every formation)`
+        `[spaces] ${saved.id} reaches its creator's spaces: ${rules.map((r) => `${r.formation ?? '*'}|${r.campus}`).join(', ')}`
       );
       await manager.insert(
         AssociationAudience,
@@ -1548,11 +1552,12 @@ export class AssociationsService {
 
   /**
    * Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin
-   * is true (global admin or BDE), and an institution's member to anyone but the platform admin.
-   * HELD TO THE GRANT CEILING like a revocation: removing a member takes away every flag it holds,
-   * and a remover that could part with a member above its own rights could re-add them with 0 and
-   * strip what it may not revoke. So a target holding a flag beyond the remover's ceiling needs a
-   * super-admin or the platform admin. Leaving (removing oneself) stays free.
+   * is true (global admin or BDE), and an institution's member to anyone but the platform admin or
+   * the member itself. HELD TO THE GRANT CEILING like a revocation: removing a member takes away
+   * every flag it holds, and a remover that could part with a member above its own rights could
+   * re-add them with 0 and strip what it may not revoke. So a target holding a flag beyond the
+   * remover's ceiling needs a super-admin or the platform admin. Leaving (removing oneself) stays
+   * free, an institution included: neither the institution rule nor the ceiling judges it.
    */
   async removeMember(
     associationId: string,
@@ -1565,15 +1570,18 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    assertInstitutionMemberWrite(
-      this.logger,
-      await this.kindOf(associationId),
-      opts.granter,
-      membership.permissions,
-      0,
-      { associationId, what: 'removeMember' }
-    );
-    if (opts.granter.userId !== targetUserId) {
+    // LEAVING STAYS FREE, an institution included: the institution rule and the ceiling judge a
+    // write on SOMEONE ELSE; removing oneself writes no right onto anyone.
+    const leaving = opts.granter.userId === targetUserId;
+    if (!leaving) {
+      assertInstitutionMemberWrite(
+        this.logger,
+        await this.kindOf(associationId),
+        opts.granter,
+        membership.permissions,
+        0,
+        { associationId, what: 'removeMember' }
+      );
       await this.judgeMemberFlags(
         opts.granter,
         associationId,
@@ -2759,10 +2767,14 @@ ${rejectionReason}`
    * 2026-09-09; testing it found it absent.
    *
    * Recipients are the holders of `VALIDATE_EVENTS` in the BDE of a space the event association
-   * targets - the same predicate (`holdsBdeAgendaRightOverSql`) `mayValidateEvent` uses to decide who MAY
-   * validate it, so the people told are exactly the people who can act on it (WP6c step 2). A BDE
-   * of another space is not told: telling it would be noise about something it cannot touch. An
-   * association reaching no space has no BDE validator, and the warning below says so.
+   * targets - the same predicate (`holdsBdeAgendaRightOverSql`) `mayValidateEvent` uses to decide
+   * who MAY validate it, so the people told are exactly the people who can act on it (WP6c step 2),
+   * an institution's event included (owner, 2026-11-03). A BDE of another space is not told.
+   *
+   * AND THE PLATFORM ADMINS, when a targeted space has no BDE - or the association targets no space
+   * at all (`TARGETS_AN_UNGOVERNED_SPACE_SQL`): for that slice of the audience they are the only
+   * validators, and a proposal they are not told of waits on a page nobody opens. The warning stays
+   * for the one case where nobody at all could be told.
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
@@ -2773,9 +2785,18 @@ ${rejectionReason}`
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
       [associationId]
     );
+    const [target] = (await this.memberRepo.query(TARGETS_AN_UNGOVERNED_SPACE_SQL, [
+      associationId,
+    ])) as { ungoverned: boolean }[];
+    const admins: { userId: string }[] =
+      target?.ungoverned === true ? await this.memberRepo.query(PLATFORM_ADMINS_SQL) : [];
+    const recipientIds = [...new Set([...validators, ...admins].map((r) => r.userId))];
+    this.logger.debug(
+      `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${validators.length} BDE validator(s), ${admins.length} platform admin(s) for an ungoverned space`
+    );
 
     const written = await this.notifications.createNotifications({
-      recipientIds: validators.map((v) => v.userId),
+      recipientIds,
       type: 'event_proposed',
       postId: associationId,
       actorId,
@@ -2783,11 +2804,10 @@ ${rejectionReason}`
       pushData: { associationId, action: 'proposed' },
     });
     if (written === 0) {
-      // Not an error - a space can legitimately have no BDE yet, and an association may reach no
-      // space - but a proposal that told nobody is the exact shape of the defect this method was
-      // written for, so it says so: only a global admin can validate it now.
+      // Nobody at all could be told: no BDE governs a targeted space AND no platform admin exists,
+      // or the only one is the proposer. The exact shape of the defect this method was written for.
       this.logger.warn(
-        `[notify] event proposed for asso ${sanitizeLog(associationId)} and no VALIDATE_EVENTS holder in a BDE governing it was told`
+        `[notify] event proposed for asso ${sanitizeLog(associationId)} and nobody who may validate it was told`
       );
     }
   }

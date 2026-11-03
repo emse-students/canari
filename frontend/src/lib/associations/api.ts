@@ -3299,6 +3299,15 @@ export interface AudienceRule {
   campus: Campus | null;
 }
 
+/**
+ * A rule as the server hands it to its reader: `editable` is false for a BDE star when the rule
+ * exceeds the spaces it governs ("Lire tout, modifier dans ses espaces", owner 2026-11-03). The
+ * editor shows such a rule read-only and sends it back unchanged.
+ */
+export interface AudienceRuleView extends AudienceRule {
+  editable: boolean;
+}
+
 /** Lists every formation x campus space with its BDE. Global admins only. */
 export function listSpaces(): Promise<SpaceRow[]> {
   return request<SpaceRow[]>('/api/associations/spaces');
@@ -3308,8 +3317,8 @@ export function listSpaces(): Promise<SpaceRow[]> {
  * The audience rules of ONE association: a global admin's, or a BDE star's for an entity whose
  * rules lie within the campuses it governs (the server refuses the rest with a typed code).
  */
-export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
+export function getAssociationAudiences(associationId: string): Promise<AudienceRuleView[]> {
+  return request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`
   );
 }
