@@ -30,7 +30,10 @@ import { AssociationCalendarEvent } from '../associations/entities/association-c
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
 import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
-import type { PostNotificationsService } from '../posts/post-notifications.service';
+import {
+  NotificationPushFailedError,
+  type PostNotificationsService,
+} from '../posts/post-notifications.service';
 import { Proposal } from '../proposals/proposal.entity';
 import { ProposalsService } from '../proposals/proposals.service';
 import { type ErasureDb, eraseSocialRows } from '../internal/account-erasure';
@@ -1315,6 +1318,63 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       }
     });
 
+    it("a validator who is also a party is NOT told twice when only the validators' PUSH fails", async () => {
+      const PUSHF = E(41);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen push', '2026-08-07T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [PUSHF, A1]
+      );
+      await q(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ICM' AND campus = 'saint-etienne'`,
+        [A4]
+      );
+      await q(
+        `INSERT INTO association_members ("associationId", "userId", role, permissions) VALUES ($1, 'org', 'admin', $2)`,
+        [A4, AssociationPermissionFlag.VALIDATE_EVENTS]
+      );
+      const internals = associations as unknown as { notifications: PostNotificationsService };
+      const real = internals.notifications.createNotifications.bind(internals.notifications);
+      // The rows are saved (recorded) and only the push fails: the typed error carries who has the row.
+      const failing = jest
+        .spyOn(internals.notifications, 'createNotifications')
+        .mockImplementation(async (data) => {
+          const saved = await real(data);
+          // Only the validators' notice of an acceptance fails; every other notice goes through.
+          if (data.type !== 'event_pending_coorganiser' || data.meta?.audience !== 'validators') {
+            return saved;
+          }
+          throw new NotificationPushFailedError(
+            [...new Set(data.recipientIds)].filter((id) => id !== data.actorId),
+            new Error('mute lookup down')
+          );
+        });
+      const internalsLog = associations as unknown as {
+        logger: { warn: (...a: unknown[]) => void };
+      };
+      const warn = jest.spyOn(internalsLog.logger, 'warn').mockImplementation(() => undefined);
+      try {
+        const proposalId = await ask(PUSHF);
+        told.length = 0;
+        await expect(proposals.accept(proposalId, 'coPub', false)).resolves.toMatchObject({
+          status: 'accepted',
+        });
+        expect(validatorNotices().map((t) => t.recipientIds)).toEqual([['org']]);
+        expect(reopenNotices()).toEqual([['event_pending_coorganiser', ['coEd'], 'Reopen push']]);
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('their push failed'),
+          expect.stringContaining('mute lookup down')
+        );
+      } finally {
+        failing.mockRestore();
+        warn.mockRestore();
+        await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'org'`, [
+          A4,
+        ]);
+        await q(`UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1`, [A4]);
+      }
+    });
+
     it('an event re-validated between the commit and the notice is NOT announced as waiting', async () => {
       const RE = E(35);
       await q(
@@ -1381,7 +1441,10 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         await expect(proposals.accept(proposalId, 'coPub', false)).resolves.toMatchObject({
           status: 'accepted',
         });
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('the parties were not told'));
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('the parties were not told'),
+          expect.stringContaining('push provider down')
+        );
       } finally {
         broken.mockRestore();
         warn.mockRestore();

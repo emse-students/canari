@@ -181,12 +181,11 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    *   `withdrawn` so the pair may be asked again later.
    * A caller writing through a CO-ORGANISER association may only remove that association itself
    * (leave); anything else is a 403 BEFORE any write.
-   */
-  /**
-   * `sync` on the CALLER'S connection: the endings and the k proposals are written in `manager`'s
-   * transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event edit,
-   * none of the event's own writes either). The proposals are announced by the returned function,
-   * which the caller runs AFTER its commit - a rolled-back edit tells nobody.
+   *
+   * It runs on the CALLER'S connection (`manager`): the endings and the k proposals are written in
+   * that transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event
+   * edit or creation, none of the event's own writes either). The proposals are announced by the
+   * returned function, which the caller runs AFTER its commit - a rolled-back write tells nobody.
    */
   async sync(
     request: CoOrganiserSyncRequest,

@@ -1324,7 +1324,7 @@ Saint-Etienne event).
   unit (`createCalendarEvent`): associations `KEY SHARE` first, then the form ownership read, the
   detach, the event insert and `sync(request, manager)` in ONE transaction, so a failing k-th proposal
   leaves no event behind (it used to leave an event with no proposals and a 500, which the retry
-  duplicated). The manager-less `sync(request)` branch was deleted: nothing in production called it.
+  duplicated). The manager-less `sync(request)` branch was deleted: creation was its only caller, and it now passes its manager.
   The delete-versus-edit integration case bounds its deleter with `lock_timeout` (failure path only: a
   lock-order regression fails with SQLSTATE 55P03 instead of hanging the suite) and its waiter matches
   any lock wait under the suite's `application_name`, not statement text.

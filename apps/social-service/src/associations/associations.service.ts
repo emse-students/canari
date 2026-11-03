@@ -116,7 +116,11 @@ import {
   UpdateAssociationCalendarEventDto,
 } from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
-import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
+import {
+  NotificationPushFailedError,
+  PostNotificationsService,
+  SYSTEM_ACTOR_NAME,
+} from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import {
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
@@ -2793,10 +2797,11 @@ ${rejectionReason}`
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
     );
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
-    // gets ONE notice, the validator's - the one that is actionable. DEGRADED CASE: when the
-    // validators' notice FAILS (logged inside, the function never rejects), it returns nobody, so
-    // nobody is excluded and that person is told once as a party instead - a notice with the
-    // reason, but not the actionable one.
+    // gets ONE notice, the validator's - the one that is actionable. A push that fails AFTER the
+    // rows were saved still counts as told (typed, NotificationPushFailedError). DEGRADED CASE: when
+    // the validators' notice wrote NOTHING (logged inside, the function never rejects), it returns
+    // nobody, so nobody is excluded and that person is told once as a party instead - a notice with
+    // the reason, but not the actionable one.
     const validatorIds: string[] = await (async () => {
       // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
       // own typed notice; a date move keeps the proposal's.
@@ -2814,7 +2819,8 @@ ${rejectionReason}`
       await this.notifyEventReopenedParties(ev, reason, actorId, new Set(validatorIds));
     } catch (err) {
       this.logger.warn(
-        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told: ${err instanceof Error ? err.message : String(err)}`
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told`,
+        err instanceof Error ? err.stack : String(err)
       );
     }
   }
@@ -2907,15 +2913,28 @@ ${rejectionReason}`
       [associationId, AssociationPermissionFlag.VALIDATE_EVENTS]
     );
 
-    const written = await this.notifications.createNotifications({
-      recipientIds: validators.map((v) => v.userId),
-      type: notice?.type ?? 'event_proposed',
-      postId: associationId,
-      actorId,
-      text: eventTitle,
-      ...(notice ? { meta: notice.meta } : {}),
-      pushData: notice?.pushData ?? { associationId, action: 'proposed' },
-    });
+    let written: number;
+    try {
+      written = await this.notifications.createNotifications({
+        recipientIds: validators.map((v) => v.userId),
+        type: notice?.type ?? 'event_proposed',
+        postId: associationId,
+        actorId,
+        text: eventTitle,
+        ...(notice ? { meta: notice.meta } : {}),
+        pushData: notice?.pushData ?? { associationId, action: 'proposed' },
+      });
+    } catch (err) {
+      // The rows are saved and only the push failed: the validators HAVE their notice in the bell,
+      // so they are still returned (a validator who is also a party must not get a second row).
+      // Anything else wrote nothing and propagates, and then nobody is excluded.
+      if (!(err instanceof NotificationPushFailedError)) throw err;
+      this.logger.warn(
+        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
+        err.stack
+      );
+      written = err.recipientIds.length;
+    }
     if (written === 0) {
       // Not an error - a space can legitimately have no BDE yet, and an association may reach no
       // space - but a proposal that told nobody is the exact shape of the defect this method was
