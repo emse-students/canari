@@ -241,9 +241,17 @@ export interface Association {
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
   promo?: number | null;
-  /** Lists only: optional parent association (e.g. the owning BDE). */
+  /**
+   * The GOVERNING parent (reform 2.2, WP-D1): the BDE this entity depends on. An association or a
+   * list has at most one, a BDE and an institution none; set on `/admin/spaces` (Dependencies).
+   */
   parentAssociationId?: string | null;
-  /** Lists only: display name of the parent association, when resolved by the API. */
+  /**
+   * Lists only: the association a list is SHOWN under when it is not its governing parent (G3: a
+   * list "for the BDS" depends on the BDE). Display only - nothing governs through it.
+   */
+  displayParentAssociationId?: string | null;
+  /** Lists only: the name shown as the list's parent - the label when set, else the parent. */
   parentName?: string | null;
   /** Lists only: optional second theme name (some lists run two themes). */
   name2?: string | null;
@@ -282,7 +290,11 @@ export interface CreateAssociationPayload {
   type?: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year. */
   promo?: number;
-  /** Lists only: optional parent association. */
+  /**
+   * The BDE the new entity depends on (WP-D1): one where the creator holds `MANAGE_ASSO`, required
+   * when it holds it in several (`DEPENDENCY_PARENT_CHOICE_REQUIRED`). A named association that
+   * governs no space becomes the list's display label (G3) and the parent falls back to the default.
+   */
   parentAssociationId?: string;
   /** Lists only: optional second theme name. */
   name2?: string;
@@ -3430,9 +3442,10 @@ export function getAssociationAudiences(associationId: string): Promise<Audience
 }
 
 /**
- * Designates, or clears with `null`, the BDE of a space (D22). Drops the held directory: the
- * server makes a designated BDE reach its space (`SpacesService.setBde` adds the rule it lacks),
- * which changes who it is listed to.
+ * Designates, or clears with `null`, the governor of a space (D22): a BDE association or an
+ * institution (D3), never a list (`SPACE_GOVERNOR_TYPE`) nor an association that has a parent
+ * (`DEPENDENCY_CHILD_IS_A_BDE`). Since WP-D1 it writes NO audience rule (reform 2.5): who the
+ * governor addresses stays what its own rules say. Drops the held directory, whose BDE marks read it.
  */
 export async function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
   await request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
@@ -3458,6 +3471,62 @@ export async function setAssociationAudiences(
   );
   invalidateAssociationDirectory();
   return saved;
+}
+
+// ── The dependency axis (`/admin/spaces`, reform 2.2 and 2.7, WP-D1) ─────────────────────────────
+
+/**
+ * Why an entity's dependency does not fit its audience (reform 2.5), computed by the server
+ * (`spaces/dependency-rules.ts`). Shown, never corrected: a fix is an admin's choice.
+ */
+export type DependencyMismatch =
+  | 'parent_missing'
+  | 'parent_governs_nothing'
+  | 'reaches_outside_parent'
+  | 'parent_governs_none_of_audience';
+
+/** One entity of the Dependencies panel: its governing parent, its label and its mismatches. */
+export interface DependencyEntity {
+  id: string;
+  name: string;
+  slug: string;
+  type: 'association' | 'list' | 'institution';
+  archived: boolean;
+  parentAssociationId: string | null;
+  displayParentAssociationId: string | null;
+  /** Governs at least one space: a BDE when of type `association`. */
+  governs: boolean;
+  mismatches: DependencyMismatch[];
+}
+
+/** Every entity with its dependency (the Dependencies panel). Platform admins only. */
+export function listDependencies(): Promise<DependencyEntity[]> {
+  return request<DependencyEntity[]>('/api/associations/spaces/dependencies');
+}
+
+/**
+ * Sets the governing parent of an association or a list, and its display label when given
+ * (`undefined` keeps the stored one). Platform admins only, journaled by the server; a refusal is a
+ * typed 409 read by {@link SocialApiError.code} (`dependencyRefusal.ts`). Drops the held directory,
+ * whose parent names read it.
+ */
+export async function setDependency(
+  associationId: string,
+  parentAssociationId: string | null,
+  displayParentAssociationId?: string | null
+): Promise<void> {
+  await request<void>(
+    `/api/associations/spaces/dependencies/${encodeURIComponent(associationId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(
+        displayParentAssociationId === undefined
+          ? { parentAssociationId }
+          : { parentAssociationId, displayParentAssociationId }
+      ),
+    }
+  );
+  invalidateAssociationDirectory();
 }
 
 // ── The platform admin's catalogue and create form (`/admin/spaces`, owner 2026-11-02) ──────────

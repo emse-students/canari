@@ -17,6 +17,8 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
+  import { dependencyRefusalMessage } from '$lib/associations/dependencies';
+  import { Log } from '$lib/utils/Log';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
@@ -66,7 +68,10 @@
    */
   const showParent = $derived(isList && canEditParent);
   let editParentId = $state(initial.parentAssociationId ?? '');
-  /** Candidate parent associations (regular associations only), for the select. */
+  /**
+   * Candidate GOVERNING parents: the BDEs (WP-D1, reform 2.2 - an association governing a space).
+   * A list shown under a non-BDE (G3) is set on `/admin/spaces`, the only place labels are written.
+   */
   let parentOptions = $state<Association[]>([]);
   const parentPickerOptions = $derived<PickerOption[]>([
     { value: '', label: m.list_new_parent_none() },
@@ -81,7 +86,9 @@
     if (isList) {
       if (!untrack(() => canEditParent)) return;
       try {
-        parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
+        parentOptions = (await listAssociations('association')).filter(
+          (a) => !a.archived && a.isBDE && !a.parentAssociationId
+        );
       } catch (err) {
         console.warn('[ASSO] parent candidates unavailable for the profile picker', err);
         parentOptions = [];
@@ -141,7 +148,10 @@
           ? {
               promo: editPromo === '' ? null : Number(editPromo),
               name2: editName2.trim() || null,
-              ...(showParent ? { parentAssociationId: editParentId || null } : {}),
+              // Sent only when changed: an unchanged parent is not a dependency write to judge.
+              ...(showParent && (editParentId || null) !== (asso.parentAssociationId ?? null)
+                ? { parentAssociationId: editParentId || null }
+                : {}),
             }
           : { categoryId: editCategoryId || null }),
       });
@@ -157,7 +167,8 @@
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
-      settingsError = m.common_save_error();
+      Log.d('asso.profile.save failed', err);
+      settingsError = dependencyRefusalMessage(err) ?? m.common_save_error();
     } finally {
       saving = false;
     }

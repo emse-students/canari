@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   setAssociationAudiences: vi.fn(),
   adminCreateAssociation: vi.fn(),
   previewAdminSlug: vi.fn(),
+  listDependencies: vi.fn(),
+  setDependency: vi.fn(),
 }));
 vi.mock('$lib/associations/api', async (original) => ({
   ...(await original<typeof import('$lib/associations/api')>()),
@@ -29,6 +31,7 @@ vi.mock('$lib/utils/apiFetch', () => ({
 
 import Page from './+page.svelte';
 import { m } from '$lib/paraglide/messages';
+import { campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 afterAll(adoptTransitionAnimations());
@@ -60,6 +63,7 @@ afterEach(() => {
 
 beforeEach(() => {
   api.listSpaces.mockResolvedValue([]);
+  api.listDependencies.mockResolvedValue([]);
   api.listAdminCatalogue.mockImplementation(
     async (type: Kind, opts: { q?: string; after?: string | null }) => {
       if (opts.after === 'cur-a') {
@@ -229,4 +233,55 @@ it('"show more" inside the search pause asks with the query its cursor was read 
     q: 'Zen',
     after: 'cur-a',
   });
+});
+
+/**
+ * GOVERNING IS NOT REACHING (reform 2.5, WP-D1): an institution may govern a space (D3), a governor's
+ * reach box is a box like any other, and a designation reads back the spaces and the dependency
+ * axis - never the governor's rules, which the server no longer touches.
+ */
+const SPACE = `${formationLabel('ICM')} · ${campusLabel('saint-etienne')}`;
+
+it('lets an institution govern, and reads the axis again rather than the rules', async () => {
+  api.listSpaces.mockResolvedValue([
+    { id: 's1', formation: 'ICM', campus: 'saint-etienne', openedAt: '', bde: null },
+  ]);
+  api.setSpaceBde.mockResolvedValue(undefined);
+  const target = await render();
+  await vi.waitFor(() => expect(api.listDependencies).toHaveBeenCalledTimes(1));
+  const space = SPACE;
+  const star = (name: string) =>
+    target.querySelector<HTMLButtonElement>(
+      `button[aria-label="${m.admin_spaces_bde_aria({ association: name, space })}"]`
+    );
+  expect(star('Liste Rouge')).toBeNull();
+  expect(star('Club Photo')).not.toBeNull();
+
+  star('Ecole')!.click();
+
+  await vi.waitFor(() => expect(api.setSpaceBde).toHaveBeenCalledWith('s1', 'i1'));
+  await vi.waitFor(() => expect(api.listDependencies).toHaveBeenCalledTimes(2));
+  expect(api.getAssociationAudiences).not.toHaveBeenCalled();
+});
+
+it("toggles a governor's reach like any other box", async () => {
+  api.listSpaces.mockResolvedValue([
+    {
+      id: 's1',
+      formation: 'ICM',
+      campus: 'saint-etienne',
+      openedAt: '',
+      bde: { id: 'a1', name: 'Club Photo' },
+    },
+  ]);
+  api.setAssociationAudiences.mockResolvedValue([]);
+  const target = await render();
+  const reach = target.querySelector<HTMLButtonElement>(
+    `button[aria-label="${m.admin_spaces_reach_aria({ association: 'Club Photo', space: SPACE })}"]`
+  )!;
+
+  reach.click();
+
+  await vi.waitFor(() => expect(api.setAssociationAudiences).toHaveBeenCalledOnce());
+  expect(api.setAssociationAudiences.mock.calls[0][0]).toBe('a1');
 });

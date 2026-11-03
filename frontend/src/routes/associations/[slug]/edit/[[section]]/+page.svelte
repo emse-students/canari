@@ -17,6 +17,7 @@
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import BdeDependentsCard from '$lib/components/associations/edit/BdeDependentsCard.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -380,6 +381,9 @@
 
       {#if editSection === null}
         <SectionHub rows={hubRows} label={m.asso_edit_hub_label()} />
+        {#if asso?.type === 'association' && asso.isBDE}
+          <BdeDependentsCard {asso} isGlobalAdmin={isGlobalAdminUser} />
+        {/if}
       {/if}
 
       {#if editSection === 'profile'}
