@@ -2,6 +2,7 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
+  import { avatarUrl } from '$lib/utils/avatarUrl';
   import type { CarteStyle } from '$lib/carte/theme';
   import { directoryLine } from '$lib/carte/generator';
   import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
@@ -472,7 +473,7 @@
     >
       <span>{getInitials(person.name)}</span>
       <img
-        src={apiAssetUrl(`/api/users/${encodeURIComponent(person.userId)}/avatar`)}
+        src={avatarUrl(person.userId)}
         alt=""
         draggable="false"
         onerror={dropOnError}

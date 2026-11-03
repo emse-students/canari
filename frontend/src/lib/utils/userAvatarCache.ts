@@ -3,6 +3,7 @@ import { BlobUrlPool } from '$lib/utils/blobUrlPool';
 import { mirrorAvatarToNative } from '$lib/utils/avatarMirror';
 import { avatarPhotoPresence } from '$lib/utils/avatarPresence';
 import { registerPerReaderCache } from '$lib/utils/sharedCache';
+import { avatarUrl } from '$lib/utils/avatarUrl';
 
 /**
  * The Cache Storage bucket this module used to write, kept ONLY so it can be deleted.
@@ -49,11 +50,11 @@ const blobs = new BlobUrlPool({
 });
 // Another account must never be drawn the previous reader's warm faces.
 registerPerReaderCache(() => blobs.dropIdle());
-/** In-progress load per canonical avatar URL, so N simultaneous mounts cost ONE request. */
-const inFlightByUrl = new Map<string, Promise<AvatarDisplay>>();
+/** In-progress load per user, so N simultaneous mounts cost ONE request. */
+const inFlightByUser = new Map<string, Promise<AvatarDisplay>>();
 
 /**
- * The avatar URLs the server answered 404 for: there is no photo, and nobody is asked again.
+ * The users the server answered 404 for: there is no photo, and nobody is asked again.
  *
  * NO TIMER, BY DECISION (user, 2026-10-06; production 2026-10-04..06: 5121 of 6587 avatar requests
  * in 30 h were 404 retries). A 10-minute lifetime used to bound it, mirroring the server's own
@@ -63,10 +64,14 @@ const inFlightByUrl = new Map<string, Promise<AvatarDisplay>>();
  *
  * WHAT WOULD MAKE A HELD ABSENCE WRONG: the user adds a photo. That happens in MiGallery, outside
  * Canari, and nothing here is told; the initials stay until the next load of the app, which is the
- * accepted cost. The id changing needs no event: the URL is the key.
+ * accepted cost. The id changing needs no event: the id is the key.
+ *
+ * KEYED BY USER ID, NEVER BY URL - and so is everything else in this module. The URL carries the
+ * viewer's avatar token (`avatarUrl.ts`), which changes every UTC day and at every sign-in: keyed by
+ * URL, one known absence (or one warm blob) would split across tokens and be asked for again.
  */
-const absentUrls = new Set<string>();
-registerPerReaderCache(() => absentUrls.clear());
+const absentUsers = new Set<string>();
+registerPerReaderCache(() => absentUsers.clear());
 
 /**
  * What to draw for one avatar, and where the bytes are.
@@ -91,7 +96,12 @@ export type AvatarDisplay =
  * Refcounting is deliberately NOT done here: this promise is shared between every caller that
  * asked for the same face while it was in flight, and each of them retains the result separately.
  */
-async function loadAvatar(url: string, subjectUserId: string | undefined): Promise<AvatarDisplay> {
+async function loadAvatar(userId: string): Promise<AvatarDisplay> {
+  // BUILT AT THE REQUEST, from the ONE helper: the URL carries the avatar token held right now, so a
+  // token adopted while this face sat warm is the one the next load sends.
+  const url = avatarUrl(userId);
+  // The id, cut, in every line below - never the URL, which carries the viewer's token.
+  const who = userId.slice(0, 8);
   try {
     const fetched = await fetch(url, { credentials: 'include', mode: 'cors' });
     // A RESPONSE THAT IS NOT OK IS STILL AN ANSWER. Handing the same URL to an `<img>` would ask
@@ -101,8 +111,13 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
       // ONLY A 404 IS AN ANSWER ABOUT THE PHOTO. A 502 `unavailable` says nothing about whether there
       // is one, so remembering it would turn an outage into minutes of initials.
       if (fetched.status === 404) {
-        absentUrls.add(url);
-        Log.d('AvatarCache', `404 for ${url}: absent for the rest of the session`);
+        absentUsers.add(userId);
+        Log.d('AvatarCache', `404 for ${who}: absent for the rest of the session`);
+      } else if (fetched.status === 403) {
+        // A REFUSED TOKEN, not an answer about the photo: the server holds this session's avatar
+        // token to be wrong or its session ended. Not remembered - the next load carries whatever
+        // token the next refresh adopts - and said, because a 403 here is never expected.
+        Log.d('AvatarCache', `403 for ${who}: the avatar token was refused`);
       }
       return { kind: 'none' };
     }
@@ -110,7 +125,7 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
     if (!blob.size) return { kind: 'none' };
     // Once per LOAD, not per mount: the notification's cache wants these bytes, and a list of
     // twenty mounts of one face shares this single load.
-    if (subjectUserId) void mirrorAvatarToNative(subjectUserId, blob);
+    void mirrorAvatarToNative(userId, blob);
     return { kind: 'blob', url: URL.createObjectURL(blob) };
   } catch (e) {
     // WE NEVER GOT AN ANSWER - not the same thing as being told there is none. A cross-origin
@@ -118,13 +133,13 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
     // the app, and an `<img>` is not subject to CORS where `fetch` is, so the element can still
     // render what this function could not read. It is a different QUESTION, not a retry of this
     // one - but it is a degraded path, so it says so rather than passing silently.
-    Log.d('AvatarCache', `could not read ${url}, leaving it to the element: ${String(e)}`);
+    Log.d('AvatarCache', `could not read ${who}, leaving it to the element: ${String(e)}`);
     return { kind: 'direct', url };
   }
 }
 
 /**
- * Resolves a user avatar HTTP URL to something displayable.
+ * Resolves one user's avatar to something displayable.
  *
  * HOW LONG AN AVATAR LIVES IS NOT DECIDED HERE, AND IS NOT DECIDED TWICE. The server states it on
  * the response itself - 24 h for an image, 10 min for an absence, `no-store` for an outage - and
@@ -134,56 +149,54 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
  * {@link AVATAR_WARM_MS} after the last one leaves, so a directory listing the same person twenty
  * times costs one request and one decode, and a remount inside the window costs none.
  *
- * @param subjectUserId whose face `httpUrl` is, when the caller knows it. Given, the bytes are
- *   also handed to the Android notification's avatar cache ({@link mirrorAvatarToNative}) - the
- *   id is carried from where it is KNOWN, never parsed back out of the URL.
+ * The URL is built inside the load, from {@link avatarUrl} - the caller names the PERSON, and every
+ * key below is that id, so the avatar token the URL carries never splits one face in two. The bytes
+ * are also handed to the Android notification's avatar cache ({@link mirrorAvatarToNative}) under
+ * the same id, carried from where it is KNOWN, never parsed back out of a URL.
+ *
+ * @param userId whose face to draw; blank answers `none` without asking anybody
  */
-export async function resolveUserAvatarDisplayUrl(
-  httpUrl: string | null,
-  subjectUserId?: string
-): Promise<AvatarDisplay> {
-  if (!httpUrl?.trim()) return { kind: 'none' };
-  const url = httpUrl.trim();
+export async function resolveUserAvatarDisplay(userId: string | null): Promise<AvatarDisplay> {
+  const id = userId?.trim();
+  if (!id) return { kind: 'none' };
 
   // A FACE KNOWN TO HAVE NO PHOTO COSTS NOTHING TO REMOUNT. `none` used to be dropped with the mount
   // that received it, so every conversation switch or list redraw asked again.
-  if (absentUrls.has(url)) return { kind: 'none' };
+  if (absentUsers.has(id)) return { kind: 'none' };
 
-  const held = blobs.tryRetain(url);
+  const held = blobs.tryRetain(id);
   if (held) return { kind: 'blob', url: held };
 
   // A FACE WITH NO PHOTO IS NEVER REQUESTED. Whether it has one is asked for the whole list at once
   // (`avatarPresence.ts`); a `false` is the 404 this request would have collected, known without it.
   // `null` - nobody could say - requests the avatar as before.
-  if (subjectUserId) {
-    if ((await avatarPhotoPresence(subjectUserId)) === false) {
-      absentUrls.add(url);
-      return { kind: 'none' };
-    }
-    // Another mount of the same face may have loaded it while this one waited.
-    const loadedMeanwhile = blobs.tryRetain(url);
-    if (loadedMeanwhile) return { kind: 'blob', url: loadedMeanwhile };
+  if ((await avatarPhotoPresence(id)) === false) {
+    absentUsers.add(id);
+    return { kind: 'none' };
   }
+  // Another mount of the same face may have loaded it while this one waited.
+  const loadedMeanwhile = blobs.tryRetain(id);
+  if (loadedMeanwhile) return { kind: 'blob', url: loadedMeanwhile };
 
   // ONE REQUEST FOR N SIMULTANEOUS MOUNTS. The map above cannot dedupe them - it is only written
   // once the bytes are in - so without this every face in a freshly rendered list would ask for
   // itself once per occurrence, and the HTTP cache cannot coalesce requests already in flight.
-  let pending = inFlightByUrl.get(url);
+  let pending = inFlightByUser.get(id);
   if (!pending) {
-    pending = loadAvatar(url, subjectUserId);
-    inFlightByUrl.set(url, pending);
-    void pending.finally(() => inFlightByUrl.delete(url));
+    pending = loadAvatar(id);
+    inFlightByUser.set(id, pending);
+    void pending.finally(() => inFlightByUser.delete(id));
   }
 
   const loaded = await pending;
   if (loaded.kind !== 'blob') return loaded;
-  return { kind: 'blob', url: blobs.retain(url, loaded.url) };
+  return { kind: 'blob', url: blobs.retain(id, loaded.url) };
 }
 
-/** Decrements the ref count and revokes the blob URL when no avatar still uses it. */
-export function releaseUserAvatarDisplayUrl(httpUrl: string | null): void {
+/** Decrements the ref count of one user's blob; the pool revokes it once its warm window has passed. */
+export function releaseUserAvatarDisplay(userId: string | null): void {
   // Trimmed exactly as the resolve side keys it, or a caller's stray space leaks a blob.
-  blobs.release(httpUrl?.trim() ?? null);
+  blobs.release(userId?.trim() || null);
 }
 
 /**

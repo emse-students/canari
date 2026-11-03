@@ -639,6 +639,53 @@ attempt per entry, a sign-in builds a new controller. A 5xx still climbs the bac
 `auth.test.ts`, `tokenIdentity.svelte.test.ts`, `mlsDeliveryApi.forbidden.test.ts`,
 `outbox.test.ts`. HOW the split is produced is open: [backlog](backlog.md).
 
+## The avatar token
+
+**A user's photo (`GET /api/users/:id/avatar`) is asked for by an `<img>` or a cache `fetch`, and
+neither carries the access token** - an `<img>` cannot send a header, the refresh cookie is scoped to
+`/api/auth`, and on `tauri://localhost` there is no cookie at all. So the viewer proves itself IN THE
+URL, as `?t=<avatar token>`, decided owner 2026-11-02.
+
+- **What it is.** `<sessionId>.<mac>`, the base64url HMAC-SHA256 under `AVATAR_TOKEN_SECRET` of
+  `avatar-v1|<sessionId>|<UTC day>` (`apps/core-service/src/auth/avatar-token.ts`). Core mints it
+  beside EVERY access token - the sign-in, a restore and every refresh (`avatar_token` in the body) -
+  for the same session.
+- **What makes it valid is durable state, not the clock.** It is honoured only while the session it
+  names is LIVE (`AuthSessionsService.isLiveSession`, the same row and the same two conditions as
+  [an access token's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). Ending a
+  session deletes its row, and every avatar URL minted for it is refused at its next request.
+- **The day bucket is a cache-friendliness choice, NOT a termination proof.** It keeps one URL per
+  face per day, so the browser's HTTP cache and its ETag revalidation keep working; the current and
+  the previous day are accepted, so a URL minted at 23:59 is not refused at midnight. A token older
+  than that belongs to a client that has not refreshed for a day, whose one-hour access token is long
+  dead too: it re-mints both at once.
+- **Who is exempt: a service, by credential.** chat-delivery's notification face
+  (`GET /api/mls/push/avatar/:id`) and social-service's public roster relay ask core on behalf of a
+  caller they authenticated themselves, with `x-internal-secret` - the credential every
+  service-to-service call to core already carries ([api-surface](protocols/api-surface.md#internal-cross-service-calls)).
+  The exemption is that credential, never a network position.
+- **Every answer to a wrong credential is a bodyless `403`, `no-store`**: a malformed token, one
+  signed for another session or an older day, one of an ended session, a wrong internal secret.
+  Bodyless for the reason every non-image answer of that route is
+  ([core-service](services/core-service.md#the-avatar-proxy)). A session store that does not answer
+  is a bodyless `503`, never a verdict.
+- **The rollout has two phases and no date.** Phase 1 (this release): clients send the token, and
+  a request carrying none is counted at `warn` as `[AVATAR_UNSIGNED] via=<nginx|direct>
+  origin=<native|web|none>` - the evidence that separates an old build from a builder that bypasses
+  the helper or a service missing its secret. Phase 2 refuses it once that count says the old builds
+  are gone ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)).
+- **One client builder, and every cache keyed by the PERSON.** `avatarUrl(userId)`
+  (`frontend/src/lib/utils/avatarUrl.ts`) is the only place the URL is built; the token is in memory
+  only, adopted by `auth.ts` with the access token and dropped at a sign-out or a proven-dead session
+  (a transport failure keeps it). `userAvatarCache.ts` keys its blobs, its in-flight loads and its
+  known absences by user id and builds the URL at the request, so a token that rotates never splits
+  one face in two. `avatarUrl.test.ts` fails if a raw `/api/users/${id}/avatar` builder reappears in
+  `frontend/src`.
+- **Pinned by** `avatar-access.spec.ts` and `users.avatar-log.spec.ts` (core: current and previous
+  day, an older day, an ended session, a tampered token, another session's mac, the internal
+  exemption, the phase-1 count), `push.controller.avatar.spec.ts` (chat-delivery sends its secret),
+  `avatarUrl.test.ts` and `userAvatarCache.test.ts` (client).
+
 ## Keys
 
 - **An empty key can fail OPEN or CLOSED and you cannot guess which.** `crypto.createHmac('sha256','')`

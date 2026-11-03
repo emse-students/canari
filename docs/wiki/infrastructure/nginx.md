@@ -318,7 +318,9 @@ name.
 Four routes are reached by the browser itself rather than by application code -
 `GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image`,
 `GET /api/mls/gifs/media` - so no `Authorization` header exists to check, and on
-`tauri://localhost` no cookie either. The first two serve assets that public pages show anyway. The
+`tauri://localhost` no cookie either. The second serves assets that public pages show anyway. The
+first, a person's photo, carries the viewer's **avatar token** in `?t=`, bound to a live session
+([sessions](../sessions.md#the-avatar-token)); a service asking it presents the internal secret. The
 third served an arbitrary external URL to anybody who asked, so it carries a **ticket** instead: an
 authenticated call to `GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket,
 and the image route verifies that. The fourth, the GIF relay, verifies a second KIND minted by the

@@ -87,7 +87,7 @@ const PUBLIC_BY_INTENT = [
   },
   {
     route: 'GET /users/:id/avatar',
-    why: 'an <img> subresource on public pages; an <img> cannot carry a Bearer token',
+    why: 'an <img> subresource, which cannot carry a Bearer token: authorised instead by the viewer-bound avatar token in ?t= (checked against a live session) or the internal secret of a service (avatar-access.ts)',
   },
   {
     route: 'GET /media/public/:id',
