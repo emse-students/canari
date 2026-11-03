@@ -252,9 +252,15 @@ describe('SecurityController - resetPin', () => {
   let controller: SecurityController;
   const order: string[] = [];
   const purge = jest.fn();
+  const verifierDelete = jest.fn();
+  const revocationsDelete = jest.fn();
 
   beforeEach(async () => {
     order.length = 0;
+    verifierDelete.mockReset();
+    verifierDelete.mockImplementation(async () => order.push('delete verifier'));
+    revocationsDelete.mockReset();
+    revocationsDelete.mockImplementation(async () => order.push('delete revocations'));
     purge.mockReset();
     purge.mockImplementation(async (_u: string, d: string) => {
       order.push(`purge ${d}`);
@@ -264,11 +270,11 @@ describe('SecurityController - resetPin', () => {
       providers: [
         {
           provide: getRepositoryToken(PinVerifier),
-          useValue: { delete: jest.fn(async () => order.push('delete verifier')) },
+          useValue: { delete: verifierDelete },
         },
         {
           provide: getRepositoryToken(RevokedDevice),
-          useValue: { delete: jest.fn(async () => order.push('delete revocations')) },
+          useValue: { delete: revocationsDelete },
         },
         {
           provide: getRepositoryToken(KeyPackage),
@@ -297,6 +303,31 @@ describe('SecurityController - resetPin', () => {
     });
     expect(order.indexOf('delete verifier')).toBeLessThan(order.indexOf('purge d1'));
     expect(order.indexOf('delete verifier')).toBeLessThan(order.indexOf('find devices'));
+  });
+
+  // Round 11 (N2): the revocations are cleared only AFTER the verifier, never beside it.
+  it('a verifier delete that fails clears no revocation - a revoked device stays revoked', async () => {
+    verifierDelete.mockImplementation(async () => {
+      throw new Error('db down');
+    });
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).rejects.toThrow('db down');
+    expect(revocationsDelete).not.toHaveBeenCalled();
+    expect(purge).not.toHaveBeenCalled();
+  });
+
+  it('a revocations delete that fails after the verifier still purges, and answers 5xx', async () => {
+    revocationsDelete.mockImplementation(async () => {
+      order.push('delete revocations');
+      throw new Error('db down');
+    });
+    const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).rejects.toBeInstanceOf(
+      InternalServerErrorException
+    );
+    expect(order.slice(0, 2)).toEqual(['delete verifier', 'delete revocations']);
+    expect(order).toContain('purge d1');
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('stay revoked'));
+    logged.mockRestore();
   });
 
   it('purges every device even when one fails, and answers 5xx after the commit point', async () => {

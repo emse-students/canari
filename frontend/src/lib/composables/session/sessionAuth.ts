@@ -3306,7 +3306,11 @@ async function recoverPinSteps(
   await ctx.whenMlsRetired();
   stillWanted('reading the stored state');
   const { loadMlsState } = await import('$lib/utils/hex');
-  const state = await loadMlsState(userId);
+  // A typed refusal of the slot (an unsettled reset, an unfinished move) is its own gate, never
+  // "no local state to recover" (round 11 of the review of #2919).
+  const state = await loadMlsState(userId).catch((e: unknown) => {
+    throw loginFailureOfSlotRefusal(e) ?? e;
+  });
   if (!state) {
     throw new LocalizedError(m.auth_no_local_state_recover());
   }

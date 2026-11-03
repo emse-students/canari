@@ -1,4 +1,4 @@
-import { mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
+import { MlsResetUnsettledError, mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
@@ -490,9 +490,14 @@ export async function mlsStateSize(userId: string): Promise<number> {
     return await invoke<number>('mls_state_size', { userId });
   } catch (e) {
     // TYPED at the boundary, like `initialiser_mls`'s refusals (`{ code, message }`): an unfinished
-    // move of this account's own state is `MlsSlotMoveUnfinishedError`, which the gate answers.
-    console.error('[MLS] mls_state_size failed - the saved state is not known, not absent:', e);
-    throw mlsStateLoadErrorOf(e);
+    // move of this account's own state is `MlsSlotMoveUnfinishedError`, which the gate answers. An
+    // unsettled PIN reset is EXPECTED - it waits for the server, and the gate says so - so the typing
+    // says it at WARN with its reason (round 11), and only an untyped failure is accused here.
+    const typed = mlsStateLoadErrorOf(e);
+    if (!(typed instanceof MlsResetUnsettledError)) {
+      console.error('[MLS] mls_state_size failed - the saved state is not known, not absent:', e);
+    }
+    throw typed;
   }
 }
 
@@ -616,8 +621,10 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
       const res = await invoke<number[] | null>('load_mls_state', { userId });
       return res && Array.isArray(res) ? stateOrAbsent(Uint8Array.from(res)) : null;
     } catch (e) {
-      console.warn('[MLS] load_mls_state failed:', e);
-      return null;
+      // NOT "no state" (round 11 of the review of #2919): a refusal the native side TYPED - an
+      // unsettled PIN reset, an unfinished move - reaches its caller as that type.
+      console.warn('[MLS] load_mls_state refused - the saved state is not known, not absent:', e);
+      throw mlsStateLoadErrorOf(e);
     }
   }
 

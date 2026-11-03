@@ -1,5 +1,6 @@
 import {
   noServerPinBasis,
+  oneSettlePerAccount,
   PinResetRefusedError,
   pinSaltFingerprint,
   runPinReset,
@@ -257,5 +258,41 @@ describe("the server's PIN salt fingerprint", () => {
     await expect(
       serverPinSaltFingerprint('u1', { baseUrl: 'https://x', token: 't', fetchFn })
     ).rejects.toThrow('503');
+  });
+});
+
+/** ROUND 11 (N3): the sign-in's settle and the gate's retry never run at once for one account. */
+describe('one settle per account', () => {
+  it('a call while one runs joins it; the next after it ends starts anew', async () => {
+    const log = vi.fn();
+    const once = oneSettlePerAccount<string>(log);
+    let finish: (v: string) => void = () => {};
+    const settle = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const first = once('a', settle);
+    const second = once('a', settle);
+    expect(second).toBe(first);
+    expect(settle).toHaveBeenCalledTimes(1);
+    expect(logged({ log })).toContain('joins it');
+    finish('rolled_back');
+    expect(await second).toBe('rolled_back');
+    void once('a', settle);
+    expect(settle).toHaveBeenCalledTimes(2);
+  });
+
+  it('two accounts settle side by side, and a failed settle frees its account', async () => {
+    const once = oneSettlePerAccount<string>(vi.fn());
+    const failing = once('a', async () => Promise.reject(new Error('disk')));
+    const other = vi.fn(async () => 'none');
+    await once('b', other);
+    expect(other).toHaveBeenCalledTimes(1);
+    await expect(failing).rejects.toThrow('disk');
+    const again = vi.fn(async () => 'none');
+    await once('a', again);
+    expect(again).toHaveBeenCalledTimes(1);
   });
 });

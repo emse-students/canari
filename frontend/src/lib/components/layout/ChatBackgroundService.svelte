@@ -33,6 +33,7 @@
   import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import {
+    oneSettlePerAccount,
     PinResetRefusedError,
     runPinReset,
     serverPinSaltFingerprint,
@@ -44,6 +45,7 @@
     isRecoverableWithOldPin,
     withholdsResetForUnreadKey,
     isVaultRefusal,
+    LoginFailure,
     type LoginErrorCode,
     provesLocalStateExists,
     provesOtherAccountState,
@@ -604,6 +606,11 @@
       // dev prose and the declared line stands in its place.
       recoverError = localizedMessage(e, m.auth_pin_recovery_failed());
       appendLog(`[PIN_RECOVER] failed: ${String(e)}`);
+      // Read from the TYPE: a reset waiting for the server is settled again, as at the gate.
+      const uid = globalSession.userId || currentUserId();
+      if (e instanceof LoginFailure && e.code === 'pin_reset_unsettled' && uid) {
+        void settleUnsettledPinResetOf(uid);
+      }
     } finally {
       recoverLoading = false;
       recoverProgress = null;
@@ -2218,7 +2225,15 @@
    *
    * @returns whether the gate was shown here - the caller's sign-in flow ends there.
    */
-  async function settleUnsettledPinResetOf(uid: string): Promise<boolean> {
+  function settleUnsettledPinResetOf(uid: string): Promise<boolean> {
+    return settleOnce(uid, () => settleUnsettledPinResetNow(uid));
+  }
+
+  /** Never two settles of one account at once in this page ({@link oneSettlePerAccount}). */
+  const settleOnce = oneSettlePerAccount<boolean>(appendLog);
+
+  /** {@link settleUnsettledPinResetOf}'s body, run once at a time per account. */
+  async function settleUnsettledPinResetNow(uid: string): Promise<boolean> {
     try {
       const outcome = await settleUnsettledPinReset({
         adopt: () => globalSession.adoptUnsettledDeviceReset(uid),

@@ -1259,20 +1259,34 @@ lines.
    Android no `<B's alias>` entry), and the run holds ZERO `no keystore entry can be named` lines and
    ZERO `the revoked account's wipe did not finish` lines. A then signs in with its history, its PIN and
    its biometric unlock.
+4e. **A reset cut by a reload, then an account switch** (rounds 9 to 11 of the review of #2919). At B's
+   PIN gate take "forgot PIN", and kill the app the moment `the PIN reset is staged by document <n>`
+   appears (before `committed`); relaunch online. Expect, before any unlock, `an unsettled PIN reset is
+   adopted by document <m>` and then, from the server's answer, `the reset is committed` with the gate
+   at once in "Créer mon PIN" (or `rolled back` when the server had not been reached, and B's old PIN
+   opening B's history) - never a `.resetting` left behind, never B's old state unparked after a
+   commit. Repeat with the phone OFFLINE at the relaunch: B's sign-in shows "La réinitialisation de
+   votre PIN attend la réponse du serveur", logged `sign-in refused, as expected` at INFO; reconnect,
+   retry, and the reset settles. Then sign out, sign in as A: A's history opens, its state's sha256
+   unchanged; back to B: B's new PIN opens a fresh state. At every activation of this step note the
+   `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it M ms` line - a reset holds
+   the state lock, and a wait here is the one most likely to stall.
 5. **The greps, over the whole run, each ZERO:** `TWO STATES`, `cut part-way`, `sign-in refused`,
-   `superseded`, `not the push's account`, `a PIN reset was cut`, `no keystore entry can be named`,
+   `superseded`, `not the push's account`, `a PIN reset was cut`, `committed PIN reset's removal was cut`, `no keystore entry can be named`,
    `wipe did not finish`, `[DEL-LOCAL]`, `after its erasure`. `residue` appears ONLY on step 4c's install (`UNPROVEN owner set aside as
    unproven.residue-<n>`), never on the install of steps 1-4.
 6. **The files** (`xcrun devicectl device info files` on the app container and the App Group), on the
    install of steps 1-4, once step 4d ended with A signed in: NO 64-hex directory under
    `mls_accounts/` - A's state is in the slot again and B's went with its revoked wipe - and no
-   `.parking`, `.unparking`, `.resetting` or `.residue-<n>` entry; `mls_accounts/unproven.declined`
+   `.parking`, `.unparking`, `.resetting`, `.committed` or `.residue-<n>` entry; `mls_accounts/unproven.declined`
    absent or empty (B's entry from 4b, if its reset committed, is pruned by the wipe of B);
    `mls.owner` in the slot names A; the App Group `mls.bin` has the same sha256 as the slot's.
 7. **The mirror's cost:** between the two `didBecomeActive` mirror lines of one activation, under
    about 100 ms; and every `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it
    M ms` line of the run, both numbers noted - a wait in the hundreds of milliseconds is a main-thread
    stall behind a multi-megabyte write, and blocks the stable like step 5.
+
+`sign-in refused` is expected ONLY as step 4e's offline `sign-in refused, as expected` (INFO).
 
 **Any line of step 5, a missing content in steps 1-4, a key of B left in step 4d, or any directory or suffix in step 6 blocks the
 stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).

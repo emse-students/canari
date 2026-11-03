@@ -811,23 +811,38 @@ fn account_state_path(
 /// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `openLocalStateWithKey`,
 /// which re-seals it in the frontend. Nothing that only wants to know whether a state exists calls
 /// it - that is what [`mls_state_size`] answers.
+///
+/// A STATE THAT CANNOT BE LOCATED OR READ IS A REFUSAL, NEVER "NONE" (round 11 of the review of
+/// #2919): an unsettled PIN reset or an unfinished move arrives TYPED (`StateLoadRefusal`, as
+/// [`mls_state_size`] answers it), so recovery shows the gate that names it rather than "no local
+/// state to recover".
 #[tauri::command]
-pub(crate) fn load_mls_state(app: tauri::AppHandle, user_id: String) -> Option<Vec<u8>> {
+pub(crate) fn load_mls_state(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<Option<Vec<u8>>, mls_core::StateLoadRefusal> {
     log::debug!("[MLS] load_mls_state for the signing-in account");
-    let path = match account_state_path(&app, &user_id) {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| mls_core::StateLoadRefusal::from(format!("app_data_dir: {e}")))?;
+    let located = crate::commands::mls_account_state::account_state_file_typed(&data_dir, &user_id);
+    let path = match located {
         Ok(Some(path)) => path,
-        Ok(None) => return None,
-        Err(e) => {
-            log::error!("[MLS] load_mls_state: the account's state could not be located: {e}");
-            return None;
+        Ok(None) => return Ok(None),
+        Err(refusal) => {
+            refusal.log("load_mls_state: the account's state is not read");
+            return Err(refusal.into());
         }
     };
     match std::fs::read(&path) {
-        Ok(b) => Some(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => {
-            log::warn!("[MLS] read mls.bin: {e}");
-            None
+            log::error!("[MLS] load_mls_state: mls.bin could not be read: {e}");
+            Err(mls_core::StateLoadRefusal::from(format!(
+                "read mls.bin: {e}"
+            )))
         }
     }
 }
@@ -887,9 +902,7 @@ pub(crate) fn mls_state_size(
     let size = crate::commands::mls_account_state::account_state_size(&data_dir, &user_id);
     match &size {
         Ok(n) => log::debug!("[MLS] mls_state_size: {n} bytes"),
-        Err(e) => {
-            log::error!("[MLS] mls_state_size: the account's state could not be measured: {e}")
-        }
+        Err(refusal) => refusal.log("mls_state_size: the account's state is not measured"),
     }
     size.map_err(mls_core::StateLoadRefusal::from)
 }

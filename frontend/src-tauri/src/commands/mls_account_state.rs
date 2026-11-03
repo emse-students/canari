@@ -124,6 +124,21 @@ impl From<String> for SelectionRefused {
     }
 }
 
+impl SelectionRefused {
+    /// Says the refusal at the level it deserves (round 11 of the review of #2919): an unsettled PIN
+    /// reset is EXPECTED - the account's own reset waits for the server, and the gate asks the user to
+    /// go online - so it is said at INFO with its reason, never as an accusation; anything else is a
+    /// move that could not be finished, or a failure, and is accused.
+    pub(crate) fn log(&self, what: &str) {
+        match self {
+            Self::ResetUnsettled(reason) => {
+                log::info!("[MLS_ACCOUNT] {what}, as expected: {reason}")
+            }
+            other => log::error!("[MLS_ACCOUNT] {what}: {other}"),
+        }
+    }
+}
+
 impl From<SelectionRefused> for mls_core::StateLoadRefusal {
     fn from(refused: SelectionRefused) -> Self {
         match refused {
@@ -433,6 +448,7 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
     let mut parking = Vec::new();
     let mut unparking = Vec::new();
     let mut resetting = Vec::new();
+    let mut committed = Vec::new();
     let mut unreadable = 0usize;
     for entry in entries {
         // AN ENTRY THAT COULD NOT BE READ MAY BE A JOURNAL (round 5 of the review of #2919): skipped,
@@ -453,6 +469,18 @@ fn settle_pending_moves_held(data_dir: &Path) -> Vec<UnfinishedMove> {
             parking.push((account.to_string(), entry.path()));
         } else if let Some(account) = name.strip_suffix(RESETTING_SUFFIX) {
             resetting.push((account.to_string(), entry.path()));
+        } else if name.ends_with(COMMITTED_SUFFIX) {
+            committed.push(entry.path());
+        }
+    }
+    // A COMMITTED reset whose removal was cut: its commit point (the rename) was passed, so it is
+    // removed - never undone (round 11 of the review of #2919).
+    for tombstone in committed {
+        log::warn!(
+            "[MLS_ACCOUNT] a committed PIN reset's removal was cut by a previous process - finishing it"
+        );
+        if let Err(e) = std::fs::remove_dir_all(&tombstone) {
+            log::error!("[MLS_ACCOUNT] a committed PIN reset's state could not be removed: {e}");
         }
     }
     if parking.len() + unparking.len() > 0 {
@@ -681,6 +709,22 @@ fn account_state_file_held(
 /// one hold of [`mls_bin_write_lock`], so a switch cannot move the file between the two. A state that
 /// could not be located or examined is an `Err`, never a 0 (round 4 of the review of #2919): 0 is "no
 /// state", and a login that believed it would start fresh.
+/// [`account_state_file`], its refusal TYPED (round 11 of the review of #2919): old-PIN recovery reads
+/// the bytes through it (`load_mls_state`), and an unsettled reset or an unfinished move must reach
+/// its gate as what it is - never read as "no state here".
+pub(crate) fn account_state_file_typed(
+    data_dir: &Path,
+    user_id: &str,
+) -> Result<Option<PathBuf>, SelectionRefused> {
+    if user_id.is_empty() {
+        return Err("no account named".to_string().into());
+    }
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| SelectionRefused::Other("mls_bin write lock poisoned".to_string()))?;
+    account_state_file_held(data_dir, user_id)
+}
+
 pub(crate) fn account_state_size(data_dir: &Path, user_id: &str) -> Result<u64, SelectionRefused> {
     if user_id.is_empty() {
         return Err("no account named".to_string().into());
@@ -766,7 +810,7 @@ fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, SelectionRef
     if let Some(refusal) =
         selection_refusal_for(&settle_pending_moves_held(data_dir), user_id, true)
     {
-        log::error!("[MLS_ACCOUNT] sign-in refused: {refusal}");
+        refusal.log("sign-in refused");
         return Err(refusal);
     }
     let owner = read_mls_state_owner(data_dir)?;
@@ -1103,6 +1147,14 @@ pub(crate) fn delete_user_mls_state(
 /// ([`commit_account_reset`]), put back when it has not ([`rollback_account_reset`]). It always
 /// exists while the reset does - empty but for its journal when the account had no state here.
 const RESETTING_SUFFIX: &str = ".resetting";
+
+/// Suffix of a COMMITTED reset's set-apart state, waiting to be deleted (round 11 of the review of
+/// #2919): `<hash>.resetting` is RENAMED to `<hash>.committed` in one atomic step - the local commit
+/// point - and only then removed. A removal cut part-way can no longer leave a `.resetting` whose
+/// journal is gone, which the next look read as "the server was never asked" and UNDID: the old-PIN
+/// state unparked after the server reset the PIN. Whatever finds a `.committed` removes it - never
+/// undone, never offered, never counted as a state.
+const COMMITTED_SUFFIX: &str = ".committed";
 
 /// The journal inside `<hash>.resetting`: what the stage did beyond setting the account's state apart,
 /// so that undoing it needs NO memory of the process that staged it (round 7 of the review of #2919: a
@@ -1922,8 +1974,9 @@ pub(crate) fn stage_account_reset(
 }
 
 /// The `<hash>.resetting` of `user_id` that `document` may settle - REFUSED, as a type, when it is not
-/// that page's reset or when nothing is set apart. Takes the reset out of the registry only once both
-/// hold. Under [`mls_bin_write_lock`].
+/// that page's reset or when nothing is set apart. Leaves the registry entry in place: the caller
+/// forgets it only once its step has SUCCEEDED (round 11 of the review of #2919), so a step that
+/// fails part-way can be asked again by the same page. Under [`mls_bin_write_lock`].
 fn take_reset_of_this_page(
     data_dir: &Path,
     user_id: &str,
@@ -1946,7 +1999,6 @@ fn take_reset_of_this_page(
             "the reset's set-apart state is gone",
         ));
     }
-    forget_resets_of(&account)?;
     Ok(resetting)
 }
 
@@ -1971,12 +2023,27 @@ pub(crate) fn commit_account_reset(
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     let account = parked_dir_name(user_id);
     let resetting = take_reset_of_this_page(data_dir, user_id, document)?;
-    std::fs::remove_dir_all(&resetting)
-        .map_err(|e| format!("remove the account's set-apart state: {e}"))?;
+    // THE LOCAL COMMIT POINT IS ONE ATOMIC RENAME (round 11 of the review of #2919). Removed in
+    // place, a cut `remove_dir_all` could delete `reset.journal` before `mls.bin`, and the next look
+    // UNDID the half-removed reset as one "the server was never asked" - the old-PIN state back.
+    let tombstone = with_suffix(&parked_dir(data_dir, user_id), COMMITTED_SUFFIX);
+    if tombstone.exists() {
+        std::fs::remove_dir_all(&tombstone)
+            .map_err(|e| format!("remove an earlier committed reset's state: {e}"))?;
+    }
+    std::fs::rename(&resetting, &tombstone)
+        .map_err(|e| format!("commit the reset (rename its set-apart state): {e}"))?;
+    // Past the commit point: a removal that fails is finished by the next look, never undone.
+    if let Err(e) = std::fs::remove_dir_all(&tombstone) {
+        log::error!(
+            "[MLS_ACCOUNT] the committed reset's state could not be removed now - the next look removes it: {e}"
+        );
+    }
     let mut removed = 1usize;
     removed += remove_residues_of_held(data_dir, &account)?;
     // Its state is gone: until a state opens for it again it is no account a state has opened for.
     forget_account_opened_held(data_dir, user_id)?;
+    forget_resets_of(&account)?;
     log::info!("[MLS_ACCOUNT] the PIN reset is committed: {removed} director(y/ies) removed");
     Ok(removed)
 }
@@ -1996,6 +2063,7 @@ pub(crate) fn rollback_account_reset(
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     let resetting = take_reset_of_this_page(data_dir, user_id, document)?;
     undo_reset_held(data_dir, &resetting)?;
+    forget_resets_of(&parked_dir_name(user_id))?;
     log::warn!("[MLS_ACCOUNT] the PIN reset is rolled back: the server did not reset the PIN");
     Ok(())
 }
@@ -2093,7 +2161,9 @@ pub(crate) fn other_accounts_state_present(data_dir: &Path, user_id: &str) -> Re
         let name = entry.file_name().to_string_lossy().into_owned();
         let bookkeeping = [UNPROVEN_DECLINED_FILE, UNPROVEN_COUNTER_FILE]
             .iter()
-            .any(|f| name == *f || name == format!("{f}.tmp"));
+            .any(|f| name == *f || name == format!("{f}.tmp"))
+            // A committed reset's state, being deleted: nobody's state any more (round 11).
+            || name.ends_with(COMMITTED_SUFFIX);
         let own = name == mine
             || [PARKING_SUFFIX, UNPARKING_SUFFIX, RESETTING_SUFFIX]
                 .iter()
@@ -3342,6 +3412,63 @@ mod tests {
         assert_eq!(
             commit_account_reset(&dir, "user-a", 1).unwrap_err().code,
             RESET_NOTHING_SET_APART
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 11 (N1): A COMMIT CUT AFTER ITS COMMIT POINT IS NEVER UNDONE. The commit renames the
+    /// set-apart state to `<hash>.committed` before removing anything; a process that dies while the
+    /// removal has taken the journal but not yet `mls.bin` leaves a tombstone, which the next look
+    /// REMOVES - the old-PIN state is never unparked under a PIN the server already reset.
+    #[test]
+    fn a_commit_cut_after_its_journal_went_is_never_undone() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-cut-commit");
+        sign_in_and_save(&dir, "user-a", b"old-pin state");
+        known(&dir, "user-a");
+        stage_account_reset(&dir, "user-a", 0, BASIS).unwrap();
+        let resetting = with_suffix(&parked_dir(&dir, "user-a"), RESETTING_SUFFIX);
+        let tombstone = with_suffix(&parked_dir(&dir, "user-a"), COMMITTED_SUFFIX);
+        assert!(
+            resetting.join("mls.bin").exists(),
+            "the stage set the state apart"
+        );
+
+        // The commit, cut: past its rename, the removal took the journal and died before `mls.bin`.
+        std::fs::rename(&resetting, &tombstone).unwrap();
+        std::fs::remove_file(tombstone.join(RESET_JOURNAL_FILE)).unwrap();
+
+        assert!(
+            !other_accounts_state_present(&dir, "user-b").unwrap(),
+            "a tombstone is nobody's state"
+        );
+
+        // A new process, a new page: the next look finishes the removal and undoes nothing.
+        set_document_for_test(1);
+        assert_eq!(account_state_file(&dir, "user-a").unwrap(), None);
+        assert!(!tombstone.exists(), "the tombstone is removed");
+        assert!(!resetting.exists());
+        assert!(!parked_dir(&dir, "user-a").exists(), "nothing was unparked");
+        assert_eq!(slot(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 11 (N1): the registry entry is forgotten only once the step SUCCEEDED - a commit
+    /// refused for want of a set-apart state leaves nothing behind, and a successful one forgets.
+    #[test]
+    fn a_committed_reset_leaves_no_entry_and_no_tombstone() {
+        let _cold = cold();
+        let dir = temp_dir("pin-reset-commit-clean");
+        sign_in_and_save(&dir, "user-a", b"state-a");
+        known(&dir, "user-a");
+        set_document_for_test(2);
+        stage_account_reset(&dir, "user-a", 2, BASIS).unwrap();
+        commit_account_reset(&dir, "user-a", 2).unwrap();
+        assert!(!with_suffix(&parked_dir(&dir, "user-a"), COMMITTED_SUFFIX).exists());
+        assert!(!reset_staged_by(&parked_dir_name("user-a"), 2));
+        assert_eq!(
+            commit_account_reset(&dir, "user-a", 2).unwrap_err().code,
+            RESET_NOT_THIS_PAGE
         );
         std::fs::remove_dir_all(&dir).ok();
     }

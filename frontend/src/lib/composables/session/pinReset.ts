@@ -200,6 +200,29 @@ export type UnsettledPinResetOutcome =
   | 'unanswered';
 
 /**
+ * ONE SETTLE PER ACCOUNT AT A TIME, in one page (round 11 of the review of #2919): the sign-in flow
+ * settles before any unlock, and the gate's failure handler settles again on `pin_reset_unsettled` -
+ * two settles of one reset would race their commit and rollback. A call while one runs for the same
+ * account JOINS it (same promise, logged); the next call after it ends starts a new one, so a retry
+ * once the network is back still asks the server.
+ */
+export function oneSettlePerAccount<T>(
+  log: (msg: string) => void
+): (account: string, settle: () => Promise<T>) => Promise<T> {
+  const inFlight = new Map<string, Promise<T>>();
+  return (account, settle) => {
+    const running = inFlight.get(account);
+    if (running) {
+      log('[PIN_RESET] a settle of this account already runs - this call joins it');
+      return running;
+    }
+    const started = settle().finally(() => inFlight.delete(account));
+    inFlight.set(account, started);
+    return started;
+  };
+}
+
+/**
  * SETTLES A "FORGOT PIN" RESET A PAGE THAT IS GONE LEFT UNSETTLED, FROM THE SERVER'S ANSWER (round 9
  * of the review of #2919), at the start of every sign-in flow. Round 8 undid every such reset - and a
  * reload AFTER the server reset the PIN sent the account back to an old PIN that opens nothing, the

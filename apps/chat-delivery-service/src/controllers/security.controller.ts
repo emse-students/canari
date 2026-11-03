@@ -372,10 +372,21 @@ export class SecurityController {
     // purge spans Redis and other tables, so it cannot share a transaction with this delete; it runs
     // after it, per device, each failure accused, and the answer is a 5xx when one failed - which
     // the client reads by the salt, now gone, as a reset that happened.
-    await Promise.all([
-      this.pinVerifierRepo.delete({ userId: safeUserId }),
-      this.revokedDeviceRepo.delete({ userId: safeUserId }),
-    ]);
+    //
+    // THE REVOCATIONS ONLY AFTER IT, never beside it (round 11): deleted together, a failed verifier
+    // delete beside a committed revocations delete UN-REVOKED a stolen device while the PIN stayed.
+    // A verifier delete that fails stops here, with nothing done; a revocations delete that fails
+    // after it keeps the devices revoked - the safe side - and is accused like a failed purge.
+    await this.pinVerifierRepo.delete({ userId: safeUserId });
+    let failures = 0;
+    try {
+      await this.revokedDeviceRepo.delete({ userId: safeUserId });
+    } catch (e) {
+      failures++;
+      this.logger.error(
+        `[PIN_RESET] user=${safeUserId}: the PIN is reset but its device revocations were not cleared - those devices stay revoked: ${String(e)}`
+      );
+    }
 
     const devices = await this.keyPackageRepo.find({
       where: { userId: safeUserId },
@@ -400,9 +411,9 @@ export class SecurityController {
     this.logger.log(
       `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} purgeFailures=${purgeFailures} (GroupMember rows kept for re-add)`
     );
-    if (purgeFailures > 0) {
+    if (purgeFailures + failures > 0) {
       throw new InternalServerErrorException(
-        `the PIN is reset; ${purgeFailures} device footprint(s) could not be purged`
+        `the PIN is reset; ${purgeFailures} device footprint(s) could not be purged, revocations ${failures > 0 ? 'not cleared' : 'cleared'}`
       );
     }
 

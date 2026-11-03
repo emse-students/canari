@@ -1027,7 +1027,22 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
      deletes the `PinVerifier` (and the revocations) FIRST, then purges each device's footprint,
      every purge in its own `try`; a failed purge answers a 5xx, which the page reads as no answer -
      and the salt, already gone, says the PIN was reset. Round 9 purged first, so "same salt" did not
-     prove nothing was purged.
+     prove nothing was purged. **The revocations go only AFTER the verifier** (round 11): deleted
+     together, a failed verifier delete beside a committed revocations delete un-revoked a stolen
+     device while the PIN stayed; a revocations delete that fails after it keeps the devices revoked
+     and is accused like a failed purge.
+     **"Same salt" proves only that nothing was done YET** (round 11): a proxy that answers 504 while
+     the upstream still runs, or a request still queued, can reset the PIN AFTER the page read the
+     salt and rolled back. The page then holds its old state under a PIN the server no longer has:
+     the unlock fails as a rotated PIN, and a second "forgot PIN" - which now meets no PIN on the
+     server, so it resets the local state alone (step 0) - recovers it. Accepted: the window is one
+     request long, and the way out is the one the gate already offers.
+     **The local commit point is one atomic rename** (round 11): `commit_user_mls_reset` renames
+     `<hash>.resetting` to `<hash>.committed` before removing anything, and forgets the registry entry
+     only once its step succeeded. Removed in place, a cut `remove_dir_all` could take `reset.journal`
+     before `mls.bin`, and the next look undid the half-removed reset as one "the server was never
+     asked" - the old-PIN state unparked under a PIN the server had reset (`STATE_KEY_MISMATCH`). A
+     `.committed` is removed by whatever finds it, never undone, never counted as a state.
   3. **First setup**, the moment the server has reset the PIN and before anything else can fail: the
      old PIN opens nothing any more, so the next PIN typed is a NEW one, never an unlock misread as a
      PIN rotated elsewhere.
@@ -1069,7 +1084,12 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
     its OWN type (`SelectionRefused::ResetUnsettled` -> `RESET_UNSETTLED` -> `MlsResetUnsettledError`
     -> `LoginFailure('pin_reset_unsettled')`, "your PIN reset needs the server's answer: go online and
     retry"), and the gate's failure handler runs the settle again (`applyPinFailure`). A settle met by
-    `RESET_NOT_STAGED_BY_THIS_PAGE` is a newer page's, read from the CODE, and left to it. Round 8 undid every such reset, so a reload AFTER the server's reset sent B back to an old
+    `RESET_NOT_STAGED_BY_THIS_PAGE` is a newer page's, read from the CODE, and left to it. The page runs ONE settle per account at a time (`oneSettlePerAccount`, round 11): the sign-in's
+    settle and the gate's retry join rather than race their commit and rollback. Old-PIN recovery
+    reads the bytes through `load_mls_state`, which now refuses with the same TYPES (round 11) - an
+    unsettled reset shows its own message there too and is settled again, never "no local state to
+    recover". The expected refusal is logged at INFO with its reason (`SelectionRefused::log`), never
+    as an accusation. Round 8 undid every such reset, so a reload AFTER the server's reset sent B back to an old
     PIN that opens nothing - the loop the reset exists to leave;
   - with no journal, the server was never asked: the next look UNDOES it - B's state parked (no journal
     says it came from the slot; B's next sign-in unparks it), nothing else was done yet.

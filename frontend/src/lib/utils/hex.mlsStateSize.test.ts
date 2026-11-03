@@ -11,12 +11,14 @@ import {
   mlsStateSize,
   adoptUnsettledMlsReset,
   hasMlsState,
+  loadMlsState,
   MlsResetRefusedError,
   removeMlsState,
   rollbackMlsStateReset,
   stageMlsStateReset,
 } from './hex';
 import {
+  MlsResetUnsettledError,
   MlsSlotMoveUnfinishedError,
   MlsStateLoadUntypedError,
 } from '$lib/mls-client/mlsStateLoadError';
@@ -75,6 +77,18 @@ describe('mlsStateSize', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     invoke.mockRejectedValue({ code: 'SLOT_MOVE_UNFINISHED', message: 'a cut park' });
     await expect(mlsStateSize('user-1')).rejects.toBeInstanceOf(MlsSlotMoveUnfinishedError);
+    vi.restoreAllMocks();
+  });
+
+  // Round 11 (N4): the bytes old-PIN recovery reads are refused as the same types - an unsettled
+  // reset or an unfinished move is never read as "no local state to recover".
+  it.each([
+    ['RESET_UNSETTLED', MlsResetUnsettledError],
+    ['SLOT_MOVE_UNFINISHED', MlsSlotMoveUnfinishedError],
+  ])('loadMlsState types a %s refusal, never null', async (code, type) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    invoke.mockRejectedValue({ code, message: 'refused' });
+    await expect(loadMlsState('user-1')).rejects.toBeInstanceOf(type);
     vi.restoreAllMocks();
   });
 });
