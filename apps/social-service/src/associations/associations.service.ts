@@ -1574,9 +1574,7 @@ export class AssociationsService {
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
     const willLoseManageMembers =
       permissions !== undefined && (permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0;
-    if (hadManageMembers && willLoseManageMembers && !opts.bypassLastAdmin) {
-      await this.assertNotLastAdminDemotion(associationId);
-    }
+    const guarded = hadManageMembers && willLoseManageMembers && !opts.bypassLastAdmin;
     // ONE column update of the row judged above, never a save of it: a member write must never
     // insert a row, and a save of a stale entity re-inserts a deleted one and reverts what a
     // concurrent writer changed. CONDITIONED on the permissions the guard above judged, so 0 rows
@@ -1585,9 +1583,15 @@ export class AssociationsService {
     if (role !== undefined) changes.role = role;
     if (permissions !== undefined) changes.permissions = permissions;
     if (Object.keys(changes).length === 0) return membership;
-    const updated = await this.memberRepo.update(
-      { id: membership.id, permissions: membership.permissions },
-      changes
+    // The last-manager guard and the write it protects are ONE step under the association's lock:
+    // two managers demoting each other at once would otherwise both count two and leave none.
+    const updated = await this.underMemberLock(
+      associationId,
+      'updateMemberRole',
+      async (members) => {
+        if (guarded) await this.assertNotLastManagerLost(members, associationId, 'demotion');
+        return members.update({ id: membership.id, permissions: membership.permissions }, changes);
+      }
     );
     if (updated.affected !== 1) {
       this.logger.warn(
@@ -1652,18 +1656,20 @@ export class AssociationsService {
         'removeMember'
       );
     }
-    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag.
+    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag. A LEAVER never
+    // bypasses it, whatever it is elsewhere: the bypass is a BDE or the platform admin acting on
+    // SOMEONE ELSE's association, and the last manager walking out through `DELETE
+    // :id/members/<own id>` would otherwise leave nobody, exactly what the "Quitter" route refuses.
     const holdsManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
-    if (holdsManageMembers && !opts.bypassLastAdmin) {
-      await this.assertNotLastAdminRemoval(associationId);
-    }
+    const guarded = holdsManageMembers && (leaving || !opts.bypassLastAdmin);
 
     // CONDITIONED on the permissions judged above, as `updateMemberRole` is: a row granted more
-    // since its read is not the one the ceiling judged.
-    const deleted = await this.memberRepo.delete({
-      id: membership.id,
-      permissions: membership.permissions,
+    // since its read is not the one the ceiling judged. The guard and the delete are ONE step under
+    // the association's lock: two managers leaving at once would otherwise both count two.
+    const deleted = await this.underMemberLock(associationId, 'removeMember', async (members) => {
+      if (guarded) await this.assertNotLastManagerLost(members, associationId, 'removal');
+      return members.delete({ id: membership.id, permissions: membership.permissions });
     });
     if (deleted.affected !== 1) {
       this.logger.warn(
@@ -1732,8 +1738,11 @@ export class AssociationsService {
    * Using `permissions > 0` was insufficient: a member with only MANAGE_PAYOUT_ACCOUNT
    * counts as non-zero but cannot unblock the association.
    */
-  private async manageMembersCount(associationId: string): Promise<number> {
-    return this.memberRepo
+  private async manageMembersCount(
+    members: Repository<AssociationMember>,
+    associationId: string
+  ): Promise<number> {
+    return members
       .createQueryBuilder('m')
       .where('m.associationId = :associationId', { associationId })
       .andWhere('(m.permissions & :flag) <> 0', {
@@ -1743,28 +1752,45 @@ export class AssociationsService {
   }
 
   /**
-   * Block removing the only member with MANAGE_MEMBERS - by someone else, or by leaving. Typed
-   * (`LAST_MEMBER_MANAGER`), so the "Quitter" button says why rather than a generic error.
+   * Refuses a write that would leave the association with nobody holding MANAGE_MEMBERS - removing
+   * or demoting its last holder, by someone else or by leaving. Typed (`LAST_MEMBER_MANAGER`) on
+   * every path, so the "Quitter" button and the roster editor say why. Logged at INFO: it is an
+   * ordinary answer to an ordinary user, not a defect. MUST run inside `underMemberLock`, on the
+   * repository it hands out, or the count races the write it guards.
    */
-  private async assertNotLastAdminRemoval(associationId: string): Promise<void> {
-    const n = await this.manageMembersCount(associationId);
-    if (n <= 1) {
-      this.logger.warn(
-        `[MEMBER-CEILING] removal refused: association=${associationId} would lose its last member manager`
-      );
-      throw new BadRequestException({
-        code: LAST_MEMBER_MANAGER,
-        message: 'Impossible de retirer le dernier administrateur de cette association',
-      });
-    }
+  private async assertNotLastManagerLost(
+    members: Repository<AssociationMember>,
+    associationId: string,
+    what: 'removal' | 'demotion'
+  ): Promise<void> {
+    const n = await this.manageMembersCount(members, associationId);
+    if (n > 1) return;
+    this.logger.log(
+      `[MEMBER-CEILING] ${what} refused: association=${associationId} would lose its last member manager`
+    );
+    throw new BadRequestException({
+      code: LAST_MEMBER_MANAGER,
+      message: 'Impossible de retirer le dernier administrateur de cette association',
+    });
   }
 
-  /** Block demoting the only MANAGE_MEMBERS admin to a bitmask that loses that flag. */
-  private async assertNotLastAdminDemotion(associationId: string): Promise<void> {
-    const n = await this.manageMembersCount(associationId);
-    if (n <= 1) {
-      throw new BadRequestException('Cannot demote the last administrator of this association.');
-    }
+  /**
+   * Runs one member write in a transaction that first takes the association `FOR UPDATE` - the
+   * global lock order (`remove` takes it first too, see there) - so every guard that COUNTS the
+   * roster and the write it protects are serialised per association. Without it, the last-manager
+   * guard was a count and a delete apart: two managers leaving at once both saw two holders, and
+   * the association was left with none.
+   */
+  private async underMemberLock<T>(
+    associationId: string,
+    what: string,
+    write: (members: Repository<AssociationMember>) => Promise<T>
+  ): Promise<T> {
+    return this.memberRepo.manager.transaction(async (manager) => {
+      await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [associationId]);
+      this.logger.debug(`[MEMBER-LOCK] ${what}: association ${associationId} locked`);
+      return write(manager.getRepository(AssociationMember));
+    });
   }
 
   /** Returns all associations a user belongs to, with their role and permissions bitmask attached to each item. */
@@ -2882,6 +2908,33 @@ export class AssociationsService {
    * exactly that, and going to the repository directly is how this call site escaped it.
    */
   private async notifyAssocAdminsOfEventAction(
+    associationId: string,
+    actorId: string,
+    eventTitle: string,
+    action: 'validated' | 'updated' | 'deleted' | 'rejected' | 'pending',
+    rejectionReason?: string
+  ): Promise<void> {
+    // NEVER REJECTS: every caller fires it with `void` after the write it reports has committed, and
+    // a rejection nobody awaits is an unhandled one - which ends the process under bun. A failure is
+    // caught here and said at ERROR with the association, the contract
+    // `tellEventValidatorsOfProposal` gives the validators' notice.
+    try {
+      await this.notifyAssocAdminsOfEventActionOrThrow(
+        associationId,
+        actorId,
+        eventTitle,
+        action,
+        rejectionReason
+      );
+    } catch (err) {
+      this.logger.error(
+        `[notify] telling the proposers of asso ${sanitizeLog(associationId)} an event was ${action} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /** The body of `notifyAssocAdminsOfEventAction`, which may reject; only that wrapper calls it. */
+  private async notifyAssocAdminsOfEventActionOrThrow(
     associationId: string,
     actorId: string,
     eventTitle: string,

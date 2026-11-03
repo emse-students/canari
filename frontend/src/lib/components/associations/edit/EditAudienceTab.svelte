@@ -253,7 +253,13 @@
         <ul class="list-inside list-disc">
           {#each lockedRules as rule (`${rule.formation ?? '*'}|${rule.campus ?? '*'}`)}
             <li>
-              {rule.formation ? formationLabel(rule.formation) : m.audience_rule_whole_campus()}
+              {#if rule.formation}
+                {formationLabel(rule.formation)}
+              {:else if rule.campus}
+                {m.audience_rule_whole_campus()}
+              {:else}
+                {m.audience_rule_everyone()}
+              {/if}
               {#if rule.campus}- {campusLabel(rule.campus)}{/if}
             </li>
           {/each}

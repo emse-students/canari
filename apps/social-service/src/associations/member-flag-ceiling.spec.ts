@@ -1,4 +1,5 @@
 import { HttpException, Logger } from '@nestjs/common';
+import { AssociationsController } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { HOLDS_BDE_FLAG_OVER_SQL } from '../spaces/bde';
 import {
@@ -135,6 +136,12 @@ function makeService(rows: Row[]) {
     }),
     update,
     delete: remove,
+    // The guard and its write run under the association's lock, in a transaction whose repository
+    // is this one: the race itself is proven on PostgreSQL (`member-last-manager.integration`).
+    manager: {
+      transaction: (run: (m: unknown) => Promise<unknown>) =>
+        run({ query: () => Promise.resolve([]), getRepository: () => memberRepo }),
+    },
   };
 
   // POSITIONAL, AND FOURTEEN LONG - keep aligned with the constructor in `associations.service.ts`.
@@ -555,8 +562,11 @@ describe('AssociationsService - a passation needs no platform admin (owner, 2026
       { userId: 'pres', associationId: ASSO, permissions: PROPOSE_EVENT },
     ];
     const { service, remove } = makeService(rows);
-    Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
+    const memberRepo = (service as unknown as { memberRepo: object }).memberRepo;
+    Object.assign(memberRepo, {
       manager: {
+        transaction: (run: (m: unknown) => Promise<unknown>) =>
+          run({ query: () => Promise.resolve([]), getRepository: () => memberRepo }),
         query: jest.fn(() => Promise.resolve([])),
         create: (_entity: unknown, row: unknown) => row,
         // The added row is on the roster from here on, so the leave counts it as a manager.
@@ -593,5 +603,108 @@ describe('AssociationsService - a passation needs no platform admin (owner, 2026
       )
     ).toBe('written');
     expect(update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the last member manager is typed on every path, and a leaver never bypasses it', () => {
+  it('refuses demoting the last holder of MANAGE_MEMBERS with the same typed code', async () => {
+    const { service, update } = makeService([
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS | PROPOSE_EVENT },
+    ]);
+    expect(
+      await settle(
+        service.updateMemberRole(ASSO, 'pres', undefined, PROPOSE_EVENT, {
+          granter: { userId: 'pres', isGlobalAdmin: false },
+        })
+      )
+    ).toBe(LAST_MEMBER_MANAGER);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a BDE-validating last manager leaving through DELETE :id/members/<own id>', async () => {
+    const { service, remove } = makeService([
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS },
+    ]);
+    // The route's BDE test answers yes: the caller validates this association's events as a BDE.
+    jest.spyOn(service, 'holdsBdeFlagOver').mockResolvedValue(true);
+    const controller = new AssociationsController(
+      service,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    expect(await settle(controller.removeMember(ASSO, 'pres', 'pres', undefined))).toBe(
+      LAST_MEMBER_MANAGER
+    );
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('still lets that BDE remove SOMEONE ELSE who is the last manager', async () => {
+    const { service, remove } = makeService([
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS },
+      { ...superAdmin },
+    ]);
+    expect(
+      await settle(service.removeMember(ASSO, 'pres', { granter: SUPER, bypassLastAdmin: true }))
+    ).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the passation, with the rights that matter most (owner, 2026-11-03)', () => {
+  const PRESIDENT =
+    MANAGE_MEMBERS | POST_AS_ASSO | MANAGE_PAYOUT_ACCOUNT | MANAGE_PRODUCTS | PROPOSE_EVENT;
+
+  it('a president hands its whole mask - payout, products, speaking as the association - then leaves', async () => {
+    const rows: Row[] = [{ userId: 'old-pres', associationId: ASSO, permissions: PRESIDENT }];
+    const { service, remove } = makeService(rows);
+    const memberRepo = (service as unknown as { memberRepo: object }).memberRepo;
+    Object.assign(memberRepo, {
+      manager: {
+        transaction: (run: (m: unknown) => Promise<unknown>) =>
+          run({ query: () => Promise.resolve([]), getRepository: () => memberRepo }),
+        query: jest.fn(() => Promise.resolve([])),
+        create: (_entity: unknown, row: unknown) => row,
+        save: jest.fn((row: Row) => {
+          rows.push(row);
+          return Promise.resolve(row);
+        }),
+      },
+    });
+    expect(
+      await settle(
+        service.addMember(
+          { associationId: ASSO, userId: 'new-pres', role: 'President', permissions: PRESIDENT },
+          { userId: 'old-pres', isGlobalAdmin: false }
+        )
+      )
+    ).toBe('written');
+    expect(await settle(service.leaveAssociation(ASSO, 'old-pres'))).toBe('written');
+    expect(remove).toHaveBeenCalledWith({ id: undefined, permissions: PRESIDENT });
+  });
+
+  it('a successor already a member is promoted through the roster editor, then the old one leaves', async () => {
+    const rows: Row[] = [
+      { userId: 'old-pres', associationId: ASSO, permissions: PRESIDENT },
+      { userId: 'member', associationId: ASSO, permissions: PROPOSE_EVENT },
+    ];
+    const { service, update } = makeService(rows);
+    expect(
+      await settle(
+        service.updateMemberRole(ASSO, 'member', 'President', PRESIDENT, {
+          granter: { userId: 'old-pres', isGlobalAdmin: false },
+        })
+      )
+    ).toBe('written');
+    expect(update).toHaveBeenCalledWith(
+      { id: undefined, permissions: PROPOSE_EVENT },
+      { role: 'President', permissions: PRESIDENT }
+    );
+    // The mock does not apply the update; the roster now holds two managers, as it would.
+    rows[1].permissions = PRESIDENT;
+    expect(await settle(service.leaveAssociation(ASSO, 'old-pres'))).toBe('written');
   });
 });

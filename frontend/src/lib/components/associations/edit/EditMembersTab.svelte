@@ -6,6 +6,7 @@
     updateMemberRole,
     reorderMembers,
     ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY,
+    LEAVE_REFUSAL,
     MEMBER_FLAGS_BEYOND_GRANTER,
     PUBLISHER_PRESET,
     SocialApiError,
@@ -80,6 +81,8 @@
   function memberWriteError(err: unknown, fallback: string): string {
     const code = err instanceof SocialApiError ? err.code : null;
     if (code === MEMBER_FLAGS_BEYOND_GRANTER) return m.asso_member_flags_beyond_granter_error();
+    // Removing or demoting the last holder of "manage members", from the roster editor.
+    if (code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER) return m.asso_member_last_manager_error();
     if (code === ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY) {
       return m.asso_institution_members_admin_only_error();
     }
@@ -201,8 +204,10 @@
         asso.id,
         reordered.map((m) => m.userId)
       );
-    } catch {
-      // Non-fatal: local order already updated; backend will reflect on next load
+    } catch (err) {
+      // The order on screen is not the stored one until the next load: said, never swallowed.
+      console.error('[ASSO] member reorder failed', err);
+      memberError = m.common_save_error();
     }
   }
 

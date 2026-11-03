@@ -249,7 +249,19 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   holder. This is the existing rule (the ceiling plus the last-admin guard), not a new one; no code
   changed. `member-flag-ceiling.spec.ts` pins it: the secretary adds the new secretary with its own
   flags, then leaves through the "Quitter" route, and a member manager takes `MANAGE_MEMBERS` from a
-  president who is not its last holder.
+  president who is not its last holder; a president's whole mask (`POST_AS_ASSO`,
+  `MANAGE_PAYOUT_ACCOUNT`, `MANAGE_PRODUCTS`) handed to a newcomer or to a member promoted through
+  the roster editor; `member-last-manager.integration.spec.ts` runs the same flows on PostgreSQL.
+  **The inherent limit**: a flag can only be handed on by someone who holds it, so a flag whose LAST
+  holder has already left can be granted again only by a BDE super-admin of the association, or by
+  the platform admin when no BDE governs it. A passation therefore hands the rights over BEFORE the
+  outgoing member leaves, which is the order the owner described.
+- **The last-manager guard is serialised** (2026-11-03): the count of `MANAGE_MEMBERS` holders and
+  the delete or update it protects run in ONE transaction that first takes the association
+  `FOR UPDATE` (`underMemberLock`, the lock order `remove` uses), on the remove, leave and demote
+  paths alike. Before, two managers leaving or demoting each other at once both counted two and left
+  none; `member-last-manager.integration.spec.ts` proves exactly one succeeds. A leaver never takes
+  the BDE/platform bypass of that guard, through `members/me` or through `members/<own id>`.
 - **The super-admin tier cannot be acquired through the audience.** A BDE becomes an association's
   super-admin by governing a space its rules reach, and a BDE may write audiences - so the audience
   bound must have the same granularity as governance. It was per CAMPUS while governance is per

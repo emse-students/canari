@@ -444,4 +444,29 @@ describe('AssociationsService scoped event governance', () => {
       error.mockRestore();
     }
   });
+
+  it("never rejects the proposers' notice either: a failure is logged at ERROR with the association", async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service } = makeGovernanceService({ ungoverned: false, admins: [] });
+    Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
+      find: jest.fn(() => Promise.reject(new Error('db down'))),
+    });
+    try {
+      const notify = (
+        service as unknown as {
+          notifyAssocAdminsOfEventAction: (
+            a: string,
+            actor: string,
+            t: string,
+            action: 'validated'
+          ) => Promise<void>;
+        }
+      ).notifyAssocAdminsOfEventAction.bind(service);
+      await expect(notify('asso-y', 'author', 'Soiree', 'validated')).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('asso-y'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    } finally {
+      error.mockRestore();
+    }
+  });
 });

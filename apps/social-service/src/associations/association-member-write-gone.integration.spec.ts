@@ -57,6 +57,8 @@ maybe('an association member write against PostgreSQL', () => {
     });
     await ds.initialize();
     await ds.synchronize();
+    // A member write takes its association FOR UPDATE first (`underMemberLock`); no row is needed.
+    await ds.query(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
     members = ds.getRepository(AssociationMember);
     // Only the membership repository is read or written by the two calls under test; the feed-cache
     // sweep a removal makes is best-effort and logs its own failure against this empty Redis.
