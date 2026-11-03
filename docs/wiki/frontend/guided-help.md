@@ -146,6 +146,15 @@ quiet. The same predicate SUSPENDS a help on screen (a call rings, a sheet opens
 history entry released, and it comes back on the same step when the app is quiet again. A suspension
 is never an end.
 
+## At most one help per visit (lead, 2026-11-03, reversible)
+
+Without a cap, the welcome tour ends on `/posts`, the app turns quiet and `hint-create-post` starts at
+once: two helps back to back on a first visit (and after a Settings replay). `GuideEngine#pick` now
+offers nothing once a help has SHOWN a step in this visit - a visit being the engine's lifetime, one
+app open or reload (in-memory flag, no timer, no stored state; a sign-out resets it, the next account's visit is its own). A help
+declined as not-rendered shows nothing and does not count, so another may run. A replay from Settings
+is exempt from the cap and sets it: it is the visit's help. Pinned in `guideEngine.test.ts`.
+
 ## Seen, ended, replayed
 
 **Who sees the welcome tour (owner, 2026-11-02): every account that has never seen it, ONCE - new and
