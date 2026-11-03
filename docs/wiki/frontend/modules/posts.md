@@ -1717,6 +1717,64 @@ preview and republication cards read it; the client shows `post.publishedAt` (`P
 scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
 which is already publication time).
 
+## A write or a notification follows the read's predicate (2026-11-02)
+
+**The rule: whatever acts on a post, or tells someone about it, asks the gate the read by id asks.**
+That gate is ONE function, `readPostOpenVerdict` (`apps/social-service/src/posts/post-openable.ts`),
+and its terms are the read's, in the read's order: an expired reel; the audience
+(`postVisibleToViewerSql`); hidden by moderation (the only `403`, and only after the audience term
+passed, so it confirms nothing to an outsider); scheduled later, unless the reader wrote it; a block
+either way with the author of a personal, non-anonymous post (an association or anonymous post is
+exempt, [moderation-and-blocking](../../moderation-and-blocking.md#hiding-a-post-must-not-become-a-way-to-ask-who-wrote-it)).
+Every other refusal is a `404`, typed at the throw.
+
+Before 2026-11-02 the write paths asked the audience term alone, so they honoured less than the read:
+
+- **React, comment, like a comment, the comment page, the calendar link** go through
+  `PostsService.assertVisible`, which is now `getById`'s gate (`assertOpenable`) and not a second
+  copy of part of it. A reaction on a post its author's block hides, or a comment on a hidden post,
+  was accepted until then. The route hands the row it loaded to the write, so a reaction reads the
+  post once.
+- **`allowHidden` is the platform admin's (`x-global-admin`), on the read by id and the comment page
+  only.** A platform admin reads a hidden post and its comments, and never reacts, comments or likes
+  a comment on it: no write route passes the flag, by intent - a hidden post is held for review, not
+  for conversation. A scoped BDE moderator predicate (`mayModeratePost` or its equivalent) is being
+  built on a separate branch; **whichever of the two pull requests lands second derives
+  `allowHidden` on `getById` and `listComments` from that predicate** instead of the header alone.
+- **A mention** (a post's, or a comment's) is told only to a recipient who may open the post, and
+  with no block either way with whoever wrote the mentioning text
+  (`PostNotificationsService.mentionRecipientsOf`). It reached anyone but the review cohort - a reader
+  outside the audience, someone who blocked the author - and pushed them the text. A dropped mention
+  is counted at debug (`[MENTION] ... N of M mention(s) dropped`), never named.
+- **A post's mentions have ONE teller: `PostAnnounceScheduler`**, under its conditional
+  `feedNotifiedAt` claim (never reset), when it first publishes the post - within a sweep (a minute
+  at most) for a post published at once, at its date for a scheduled one. The write paths only STORE
+  `mentions`. A first version had two tellers (the write for an immediate post, the sweep for a
+  scheduled one), and their overlap was a defect both ways: toggling the schedule pushed the
+  mentions again each time, and un-scheduling a post after its date but before its sweep lost them
+  (review of #2947). A post hidden before its sweep is not swept until it is unhidden - its mentions
+  are told then - and never while it stays hidden. An edit of the text after the sweep tells nobody.
+  The claim (`CLAIM_POST_ANNOUNCEMENT_SQL`) carries the publication predicate itself - unstamped,
+  not hidden, `scheduledAt` null or past - and what is told is the row it locked, never the sweep's
+  earlier `find`: a post hidden or re-scheduled between the two is not claimed (re-review of #2947,
+  proven in `post-announce.integration.spec.ts`).
+- **A comment's mentions are asked when it is written**, through the same gate. On a post not yet
+  published only its author may comment, nobody else may open it, so such a comment's mentions are
+  DROPPED, not deferred - deferring them would need a second teller for comments, the overlap above.
+- **A report** on a post or a comment
+  ([moderation-and-blocking](../../moderation-and-blocking.md#a-report-follows-the-reads-predicate-2026-11-02)).
+  The client says `404 CONTENT_NOT_FOUND` as "Cette publication n'est plus disponible" and closes
+  the dialog (`ModerationApiError.isContentNotFound`, `posts/reportComment.ts`: `reportPost`,
+  `reportComment`).
+
+Proven against PostgreSQL in `post-openable.integration.spec.ts` (a reader who may open it, one
+outside the audience, a block both ways, a hidden post, a scheduled one, an anonymous one; the
+follower, member-repost and read-grant readers are the shared audience code's, proven in their own
+integration specs); the routes in `posts.controller.write-gate.spec.ts`; the wiring in
+`posts.service.visibility.spec.ts`, `post-notifications.mention-gate.spec.ts`,
+`post-announce.scheduler.spec.ts`, `posts.service.anonymous-mention.spec.ts` and
+`moderation.service.spec.ts`; the client in `reportComment.test.ts`.
+
 ## A navigation never waits on data: the post page and the root layout (WP-NAV-1, 2026-10-10)
 
 Audit in [offline-and-weak-network](../offline-and-weak-network.md) (section 13.2, on the upload PR): in this

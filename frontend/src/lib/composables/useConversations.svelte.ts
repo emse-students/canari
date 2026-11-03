@@ -105,6 +105,7 @@ import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
+import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
@@ -343,7 +344,8 @@ export function useConversations() {
     const { channelService } = await import('$lib/services/ChannelService');
     await reconcileSalonUnreadFromServer({
       conversations,
-      selectedId: selectedContact,
+      // The salon being READ, not the bare selection (`conversationBeingRead`).
+      selectedId: conversationBeingRead(selectedContact),
       userId: ctx.userId,
       fetchCounts: () => channelService.listUnreadCounts(),
       settleOwedMarks: () =>

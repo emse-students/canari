@@ -11,6 +11,8 @@
  * `docs/wiki/protocols/history-reconciliation.md`. Nothing infers one from the other any more: the
  * sender declares both, because the server sees only ciphertext and cannot classify a frame itself.
  */
+import { clientPlatform, getClientAppVersion } from '$lib/utils/appVersion';
+
 export interface FrameDelivery {
   /** Raise no notification and render no message. A presentation property, nothing else. */
   silent: boolean;
@@ -124,7 +126,13 @@ export function gatewaySocketUrl(
   deviceId: string,
   token?: string
 ): { url: string; redacted: string } {
-  const base = `${wsBase}/api/ws?device_id=${encodeURIComponent(deviceId)}&caps=${encodeURIComponent(SOCKET_CAPABILITIES)}`;
+  // `platform` and `app_version` feed the gateway's anonymous census (counts by platform and version,
+  // never attached to an identity): declared here so both openers declare the same thing.
+  const base =
+    `${wsBase}/api/ws?device_id=${encodeURIComponent(deviceId)}` +
+    `&caps=${encodeURIComponent(SOCKET_CAPABILITIES)}` +
+    `&platform=${encodeURIComponent(clientPlatform())}` +
+    `&app_version=${encodeURIComponent(getClientAppVersion())}`;
   return {
     url: token ? `${base}&token=${encodeURIComponent(token)}` : base,
     redacted: token ? `${base}&token=***` : `${base} (no token)`,

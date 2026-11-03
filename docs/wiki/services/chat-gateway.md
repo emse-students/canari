@@ -20,7 +20,8 @@ It does **not** perform encryption, store messages, or make business logic decis
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
 | POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000) the caller may see ([audience](#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
 | GET | `/api/presence?users=` | yes | LEGACY, the same answer for clients installed before the POST ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
-| GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
+| GET | `/api/admin/presence` | yes (global admin) | Counts of connected people and devices by platform and app version - never an id ([census](#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
+| GET | `/api/admin/presence/history` | yes (global admin) | The same counts, one sample a minute for the last 24 h |
 | GET | `/api/health` | no | Liveness probe |
 
 Auth is enforced by Nginx `auth_request` before the request reaches the gateway.
@@ -451,6 +452,97 @@ EDGE of a USER (a device leaving while another stays is no edge, which needs a S
 until the gateway proves it pushes (a phone build can reach the stores before production carries the
 gateway that answers it). **None of the three is built**, and the backlog entry that owns the poll
 says so ([backlog](../backlog.md#p3---the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02)).
+
+## The anonymous census and its 24-hour series (2026-11-02)
+
+**The owner's request (2026-11-02):** `/admin/status` listed every connected person and device; it
+now counts them - *"un outil de monitoring, avec une courbe des dernieres 24h (anonyme), avec la
+plateforme, la version"*. The page is `frontend/src/routes/admin/status/+page.svelte`
+(totals, a chart, the versions live now); the server side is `census.rs` and the two admin routes in
+`presence.rs`.
+
+**Aggregate, with the small cells merged.** `GET /api/admin/presence` answers `{ devices, users, groups: [{ platform,
+version, devices, users }] }`; `GET /api/admin/presence/history` answers `{ now, intervalSecs,
+windowSecs, samples: [{ t, devices, users, groups }] }`. No user id, device id, address or per-person
+field exists on either wire - `the_admin_routes_return_counts_and_never_an_id` seeds a device with
+known ids against a real Redis and fails if either body contains one, and the page's test fails if a
+stray `userId` in a response reaches the DOM. `users` is DISTINCT over the whole population (one
+person on a phone and a laptop is one user, two devices), so it is not the sum of the groups.
+
+**Small cells are merged in the HISTORY, never in the live counts (review of #2956).** A
+(platform, version) cell holding ONE person identifies them - and three devices of one user are one
+person, so the rule counts PEOPLE as well as devices: an admin could read that
+person's connections to the minute for 24 hours. So before a sample is kept, `aggregate(.., 3)`
+merges every cell of fewer than `HISTORY_MIN_CELL` (3) devices OR distinct people into `other`, BY PLATFORM FIRST (the
+version is dissolved: `(ios, 1.5.4)` of 1 device joins `(ios, other)`), then BY VERSION (a platform
+whose merged cell is still under 3 is dissolved too and joins `(other, other)`). The totals never
+move, only how finely they are split; the page says so under the chart. The live counts keep every
+cell: they are a single instant, with no history to follow a person through. **What is NOT
+suppressed, stated exactly:** cells below 3 people are merged; the `(other, other)` remainder and each
+sample's totals (`devices`, `users`) are kept as they are and may be 1 or 2 - a total of 1 shows
+that one person was connected, and nothing more, since it carries no platform and no version.
+
+**What a socket declares.** The client adds `platform=` (`web`, or the native shell's own name:
+`android`, `ios`, `macos`, `windows`, `linux`) and `app_version=` (`VITE_APP_VERSION`, the very
+string `minClientVersion` is compared against) to the `/api/ws` URL, built in the one function both
+openers share (`gatewaySocketUrl`). The gateway BOUNDS what it reads (`ClientKind::from_query`): a
+platform outside the six is `other`, a version that is not `[0-9A-Za-z.-]{1,32}` is `other` (build
+metadata after `+` is dropped), nothing declared is `unknown` (every build before this one), and a
+sample names at most 32 versions, the rarest merging into `other` - so a hostile client cannot mint
+a series or grow a sample. **`unknown` means an old client, or one that has not declared yet - including devices that a replica older than this feature held during a rolling deploy** (it writes no declaration key). nginx's access log already redacts the `/api/ws` query's token, and these
+two values name no one.
+
+**Where it is kept, and why Redis.** The declaration is a string `monitor:client:{userId}:{deviceId}`
+(`platform|version`), written beside every presence refresh with the SAME 90 s TTL, outside the
+`user:*` namespace the presence scans match, and DELETED by the same script that deletes the presence
+key (`LEAVE_SESSION`: a clean disconnect, the connection guard, the every-sender-dead path) - never
+while another session still holds the device; after an unclean end it expires with the presence key
+it sits beside. The series is ONE sorted set,
+`monitor:presence:samples`, scored by the minute a sample describes, one JSON member per minute.
+**Redis, not Postgres,** because every input is already Redis state with a 90 s life, the gateway has
+no database (adding one for 1440 rows a day would add a dependency, a migration and a backup scope to
+a service whose point is to need none), the data is disposable by nature (losing it loses a chart,
+never a fact the product needs) and a sorted set trims itself by score. Nothing is added to
+`infrastructure/MIGRATION.md`: no table, no secret, no service, no new env var.
+
+**Two gateways during a rolling deploy must not double count, so no replica counts for itself.**
+The census is derived from the SHARED `user:online:*` keys (one key per DEVICE, whatever process
+holds its sessions) joined with the declaration keys - never from a process's own socket map, which
+would count a device with a session on each replica twice. The series write is IDEMPOTENT PER
+MINUTE: every replica samples at every minute boundary and one script (`RECORD_SAMPLE`) writes the
+minute only if the sorted set has no member at that score, so the first replica wins and the others
+find it taken. There is no leader, no lock and no election; the number of replicas changes nothing
+(`two_replicas_sampling_the_same_minute_write_it_once`, `a_device_counts_once_whatever_gateway_holds_it`).
+A taken minute costs ONE `ZCOUNT`: every replica asks that first and skips the scan of the
+presence keys when another already wrote it.
+
+**Time comes from Redis, never from a replica (review of #2956).** The script reads `TIME`, trims
+against it, and REFUSES a minute more than one interval away from it - nothing is written or trimmed,
+and the replica logs at warn how many seconds ahead of or behind Redis it is. Without that, a
+replica two hours ahead would trim real history relative to a future minute, plant samples the read
+would serve, and hold minute slots the correct replicas then find taken. The read is bounded to
+Redis's now as well (`(now-86400, now]`), so even a foreign future-scored member is never served. A
+replica's own clock only decides WHEN it tries (`a_write_skewed_ahead_neither_trims_nor_appears`);
+an unreadable or skewed minute is a gap, never a wrong count.
+
+**Retention and gaps.** The same script trims `-inf .. now - 86400` (Redis's now) after every write, and gives the
+key an expiry of 25 h as a backstop - 1440 members at steady state, deleted by the write that makes
+them old, not by a timer. A minute nobody sampled (every gateway restarting, Redis unreachable) has
+NO member; the history answers only what exists, `buildBuckets` lays the window out minute by minute
+and leaves the missing ones `null`, and the chart breaks its areas there and says what a blank
+stretch means. **Nothing is interpolated.** A Redis that cannot be read answers 503, never an empty
+census: zero would be a claim.
+
+**The page polls only while it is looked at.** The 10 s (live) and 60 s (history) polls stop when
+the tab is hidden and one read happens the moment it is shown again; each request scans the presence
+keys, so a forgotten tab must not keep asking. The page keeps one failure flag per source, so a live
+read that succeeds never clears a history read that failed.
+
+**Register.** The series is counts by platform and version, with cells under 3 devices or people
+merged (above); the remainder and the totals are not suppressed, and row C18 says exactly that. The only thing tied to an account is the
+declaration key, for at most 90 s after the device's last pong and gone with the presence key on a
+clean end - the lifetime and purpose of the presence key it sits beside. The ADMIN's view shrank: it
+no longer shows a list of connected people. The privacy policy needs no change.
 
 ## CORS: the list is a fact about the clients
 
