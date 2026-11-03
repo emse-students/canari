@@ -1,17 +1,18 @@
 /**
- * THE BEHAVIOUR `patches/mediabunny@1.63.0.patch` EXISTS FOR (mediabunny issue 559).
+ * THE BEHAVIOUR MEDIABUNNY OWES US FOR FIREFOX'S ENCODER (mediabunny issue 559), UNPATCHED SINCE 1.65.0.
  *
  * Firefox's WebCodecs H.264 encoder on Windows (Media Foundation) hands back an
  * AVCDecoderConfigurationRecord whose SPS and PPS each carry their first byte twice, reserved bits
  * zeroed - while every key frame carries the correct parameter sets in-band. Muxed as is, the file
  * plays in Firefox and fails to decode in Chrome, so an Android reader cannot seek it
- * (docs/wiki/frontend/video-preparation.md). The patch rebuilds the record from the in-band SPS/PPS.
+ * (docs/wiki/frontend/video-preparation.md). Mediabunny 1.65.0 strips the doubled byte itself, but only
+ * when `navigator.userAgent` says Firefox, and it caches that answer for the life of the module - so
+ * the case imports a fresh copy under the Firefox user agent.
  *
  * No test engine has WebCodecs, so a fake `VideoEncoder` replays the bytes Firefox 158 emitted for
  * a real clip (2026-10-13), and the MP4 mediabunny writes is read back: its `avcC` must be the
- * well-formed record. Without the patch this fails on the doubled `67 67`.
+ * well-formed record. On 1.63.0 without our former patch this failed on the doubled `67 67`.
  */
-import { BufferTarget, Mp4OutputFormat, Output, VideoSample, VideoSampleSource } from 'mediabunny';
 
 /** The SPS and PPS Firefox put in-band, read from its output. */
 const SPS = [
@@ -65,8 +66,8 @@ function lengthPrefixed(...units: number[][]): Uint8Array {
 /** A key frame as Firefox writes it: access unit delimiter, SPS, PPS, then an IDR slice. */
 const KEY_FRAME = lengthPrefixed([0x09, 0x10], SPS, PPS, [0x65, 0x88, 0x84, 0x00, 0x33, 0xff]);
 
-/** A key frame as Chrome writes it: the parameter sets live in the record only, none in-band. */
-const KEY_FRAME_NO_PARAMETER_SETS = lengthPrefixed([0x65, 0x88, 0x84, 0x00, 0x33, 0xff]);
+const FIREFOX_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0";
 
 /** What the fake encoder hands back for every frame; each test sets it. */
 let emitted: { data: Uint8Array; description: Uint8Array } = {
@@ -75,13 +76,13 @@ let emitted: { data: Uint8Array; description: Uint8Array } = {
 };
 
 class FakeEncodedVideoChunk {
-  readonly type: 'key' | 'delta';
+  readonly type: "key" | "delta";
   readonly timestamp: number;
   readonly duration: number;
   readonly byteLength: number;
   private readonly data: Uint8Array;
   constructor(init: {
-    type: 'key' | 'delta';
+    type: "key" | "delta";
     timestamp: number;
     duration: number;
     data: Uint8Array;
@@ -104,11 +105,11 @@ class FakeVideoFrame {
   readonly codedHeight: number;
   readonly displayWidth: number;
   readonly displayHeight: number;
-  readonly format = 'RGBX';
+  readonly format = "RGBX";
   readonly colorSpace = {};
   constructor(
     _data: unknown,
-    init: { timestamp: number; duration?: number; codedWidth: number; codedHeight: number }
+    init: { timestamp: number; duration?: number; codedWidth: number; codedHeight: number },
   ) {
     this.timestamp = init.timestamp;
     this.duration = init.duration ?? null;
@@ -125,7 +126,7 @@ class FakeVideoEncoder {
   static async isConfigSupported(config: unknown) {
     return { supported: true, config };
   }
-  state = 'unconfigured';
+  state = "unconfigured";
   encodeQueueSize = 0;
   private config: { codec: string; width: number; height: number } | null = null;
   constructor(private readonly init: { output: (chunk: unknown, meta?: unknown) => void }) {}
@@ -133,11 +134,11 @@ class FakeVideoEncoder {
   removeEventListener() {}
   configure(config: { codec: string; width: number; height: number }) {
     this.config = config;
-    this.state = 'configured';
+    this.state = "configured";
   }
   encode(frame: FakeVideoFrame) {
     const chunk = new FakeEncodedVideoChunk({
-      type: 'key',
+      type: "key",
       timestamp: frame.timestamp,
       duration: frame.duration ?? 33_333,
       data: emitted.data,
@@ -153,7 +154,7 @@ class FakeVideoEncoder {
   }
   async flush() {}
   close() {
-    this.state = 'closed';
+    this.state = "closed";
   }
 }
 
@@ -166,9 +167,10 @@ function indexOf(haystack: Uint8Array, needle: number[]): number {
 }
 
 beforeEach(() => {
-  vi.stubGlobal('VideoEncoder', FakeVideoEncoder);
-  vi.stubGlobal('VideoFrame', FakeVideoFrame);
-  vi.stubGlobal('EncodedVideoChunk', FakeEncodedVideoChunk);
+  vi.resetModules();
+  vi.stubGlobal("VideoEncoder", FakeVideoEncoder);
+  vi.stubGlobal("VideoFrame", FakeVideoFrame);
+  vi.stubGlobal("EncodedVideoChunk", FakeEncodedVideoChunk);
 });
 
 afterEach(() => {
@@ -176,23 +178,26 @@ afterEach(() => {
 });
 
 /** Encodes two frames through the fake encoder and returns the `avcC` record the MP4 carries. */
-async function writtenAvcRecord(): Promise<number[]> {
+async function writtenAvcRecord(userAgent: string): Promise<number[]> {
+  vi.stubGlobal("navigator", { userAgent });
+  const { BufferTarget, Mp4OutputFormat, Output, VideoSample, VideoSampleSource } =
+    await import("mediabunny");
   const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: 'fragmented' }),
+    format: new Mp4OutputFormat({ fastStart: "fragmented" }),
     target: new BufferTarget(),
   });
-  const source = new VideoSampleSource({ codec: 'avc', bitrate: 1_000_000 });
+  const source = new VideoSampleSource({ codec: "avc", bitrate: 1_000_000 });
   output.addVideoTrack(source);
   await output.start();
   for (let i = 0; i < 2; i++) {
     await source.add(
       new VideoSample(new Uint8Array(16 * 16 * 4), {
-        format: 'RGBX',
+        format: "RGBX",
         codedWidth: 16,
         codedHeight: 16,
         timestamp: i / 30,
         duration: 1 / 30,
-      })
+      }),
     );
   }
   await output.finalize();
@@ -204,17 +209,12 @@ async function writtenAvcRecord(): Promise<number[]> {
   return Array.from(bytes.subarray(avcC + 4, avcC - 4 + boxSize));
 }
 
-describe('mediabunny AVC description (patch for issue 559)', () => {
-  it("writes the record rebuilt from the bitstream when the encoder's own is malformed", async () => {
+describe("mediabunny AVC description (issue 559)", () => {
+  it("writes a well-formed record when Firefox's encoder hands back a malformed one", async () => {
     emitted = { data: KEY_FRAME, description: FIREFOX_AVCC };
-    // High profile (100): the record ends on chroma_format 1, 8-bit luma and chroma, no SPS ext.
-    expect(await writtenAvcRecord()).toEqual([...WELL_FORMED_AVCC, 0xfd, 0xf8, 0xf8, 0x00]);
-  });
-
-  it("keeps the encoder's record as is when its key frames carry no parameter sets", async () => {
-    // Chrome's shape: nothing in-band to compare, so the patch must not touch the record - even a
-    // malformed one, since it has no better source to rebuild it from.
-    emitted = { data: KEY_FRAME_NO_PARAMETER_SETS, description: FIREFOX_AVCC };
-    expect(await writtenAvcRecord()).toEqual(Array.from(FIREFOX_AVCC));
+    // Mediabunny strips the doubled bytes and re-serialises the record it parsed, which had no
+    // High-profile extension (the former patch rebuilt one: `fd f8 f8 00`). Chrome reading it is a
+    // reading owed on the Windows desktop (docs/wiki/frontend/video-preparation.md).
+    expect(await writtenAvcRecord(FIREFOX_UA)).toEqual(WELL_FORMED_AVCC);
   });
 });
