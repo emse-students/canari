@@ -1,4 +1,5 @@
 import {
+  MEMBER_REPOSTABLE_ASSOCIATION_TYPES,
   NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
   memberRepostablePostSql,
   memberRepostCarriesSql,
@@ -6,18 +7,27 @@ import {
 } from './reader-spaces';
 
 /**
- * THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION IS NEVER CARRIED BY A MEMBER REPOST (owner,
- * 2026-11-02). One clause, read in the reader predicate's repost door - so the feed, the card's
- * names and Suivis agree - and spelled on the post row it is given. What it selects is proven
- * against PostgreSQL in `member-reposts.integration.spec.ts`.
+ * THE POST OF A MEMBERS-ONLY ENTITY, OR OF A TYPE NOBODY LISTED, IS NEVER CARRIED BY A MEMBER
+ * REPOST (owner, 2026-11-02; lists admitted the same day). One clause, read in the reader
+ * predicate's repost door - so the feed, the card's names and Suivis agree - and spelled on the post
+ * row it is given. What it selects is proven against PostgreSQL in
+ * `member-reposts.integration.spec.ts`.
  */
 describe('memberRepostablePostSql', () => {
+  it('lists every kind of today, a list included (owner, 2026-11-02), and nothing else', () => {
+    expect([...MEMBER_REPOSTABLE_ASSOCIATION_TYPES].sort()).toEqual([
+      'association',
+      'institution',
+      'list',
+    ]);
+  });
+
   it('admits a personal post, and an entity post only of an ALLOWED type with a rule', () => {
     const sql = memberRepostablePostSql('p');
     expect(sql).toContain('p."associationId" IS NULL OR EXISTS');
     // An allowlist: a type added later (`CHK_associations_type`) stays refused until listed.
-    expect(sql).toContain(`vis_mrep_asso.type IN ('association', 'institution')`);
-    expect(sql).not.toContain(`<> 'list'`);
+    expect(sql).toContain(`vis_mrep_asso.type IN ('association', 'list', 'institution')`);
+    expect(sql).not.toContain(`<> `);
     expect(sql).toContain('FROM association_audiences vis_mrep_arule');
     expect(sql).toContain('vis_mrep_asso.id = p."associationId"');
   });

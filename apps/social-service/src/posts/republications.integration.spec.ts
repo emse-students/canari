@@ -126,7 +126,7 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', "logoUrl" varchar, "logoMediaId" varchar,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        "isBDE" boolean NOT NULL DEFAULT false, archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
