@@ -175,7 +175,7 @@ interface PostCapabilities {
    */
   canUnrepublishAs: string[];
   /**
-   * "Republier au nom d'une association" (D38b): a personal, non-anonymous post by somebody else,
+   * "Demander a republier" (D38b): a personal, non-anonymous post by somebody else,
    * seen without a grant, no block either way with its author, and at least one association of the
    * reader's (`POST_AS_ASSO` held, of the kind that may ask) neither carrying it nor having asked.
    */
@@ -450,7 +450,8 @@ export class PostsService {
   /**
    * The associations `viewerId` could republish a post AS: membership rows holding `POST_AS_ASSO`,
    * of a type that republishes (`all`, D38), and among them those that may ASK an author (D38b:
-   * `personal` - the narrower kind allowlist, not archived). Membership alone is exact here because
+   * `personal` - its own kind allowlist, which names the same kinds since 2026-11-02, and not
+   * archived). Membership alone is exact here because
    * `POST_AS_ASSO` is in `SUPER_ADMIN_EXCLUDED_FLAGS` - no BDE tier borrows another association's
    * voice. ONE query for both.
    */

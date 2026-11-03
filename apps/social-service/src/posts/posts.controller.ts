@@ -20,7 +20,7 @@ import { PostsService } from './posts.service';
 import { assertCreateKindShape } from './reel-rules';
 import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
-import { PostNotificationsService } from './post-notifications.service';
+import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
 import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { ModerationService } from '../moderation/moderation.service';
@@ -64,7 +64,7 @@ export class PostsController {
   @UseGuards(NginxAuthGuard)
   @Get('notifications')
   getNotifications(@Headers('x-user-id') xUserId: string, @Query('limit') limit?: string) {
-    return this.notifications.getNotifications(xUserId, Number(limit ?? 30));
+    return this.notifications.getNotifications(xUserId, bellPageLimit(limit));
   }
 
   /** Marks all notifications as read for the calling user. */

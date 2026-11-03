@@ -118,6 +118,7 @@ REST: those rows need a count, then a migration.
 | `canari_admission_frozen` removed at session setup (`forgetLegacyAdmissionFreeze`, `setupMessageHandler.ts`; review of #2817) | every device that ran a dev build of #2815 has opened a session on a later build | not a version question (dev/alphas) | one device-global `localStorage` key, read by nothing | 1 function + 1 call + 1 test | remove 2027-02-01 ([mls-protocol](protocols/mls-protocol.md)) |
 | `internal/reel-purge` with NO `reason` read as the pre-RC-14 delete (`purgeReels`, `media.service.ts`; review of #2898) | BOTH estates run the social-service carrying RC-14, which always names one | not a client version question: a deploy-order WINDOW (media-service may be replaced before social-service, or rolled back past it) | none | the `undefined` arm, its warn and the controller's absent-reason branch | remove once both estates deploy RC-14: then a missing reason is a `400`. Until then the old caller gets the old delete for a file no LIVE chat hold keeps; for a file a live chat hold keeps, the post hold is RELEASED and the answer is `refused` (the old caller drops its post row on any answer, and an older reel worker counts outcomes by name, so `released` would read as NaN), since that caller cannot say moderator from post end and the release is the safe reading - each call logs `Reel purge ... with NO reason - an older social-service` ([media-service](services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
+| An institution's republication request accepted with NO `audienceFingerprint` is REFUSED, 409 `REPOST_PERSONAL_AUDIENCE_CHANGED` (`assertConsentCurrent`, `personal-republications.service.ts`; review of #2965) | `minClientVersion` >= the first stable carrying the consent screen's warning and fingerprint (#2965), raised once BOTH stores serve it | NO (unreleased) | none | nothing to remove - the refusal IS the rule, not a shim | waits for the floor. Deliberate: the warning is the consent, and an older build never drew it. Until the floor, an older build lists the institution's request, and its Accept is refused and read as "Cette proposition n'est plus en attente" while the list re-reads with the request STILL there - stuck on that device until the app updates; Refuse works ([diary](#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -392,6 +393,29 @@ French legacy sentence, the `forms` push category, the native tables (Android, t
 notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the destination (the payer's
 `/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
 contract file (`refund.notificationTypes`).
+
+### No date yet - an institution's republication request accepted by a build that never showed its audience
+
+**Site:** `PersonalRepublicationsService.assertConsentCurrent`
+(`apps/social-service/src/posts/personal-republications.service.ts`), reached from
+`POST /api/proposals/:id/accept` (`proposals.service.ts`).
+**What an older build sees.** Since #2965 an institution may ask a person to republish their post,
+and the author's inbox carries `details.institutionAudience` - who the institution reaches, its staff
+included - with a `fingerprint` the acceptance must send back. A build older than the first stable
+carrying #2965 lists the request (the inbox route is the same) but draws no warning and sends no
+fingerprint, so its Accept is refused 409 `REPOST_PERSONAL_AUDIENCE_CHANGED`. Its 409 handler knows
+only `PROPOSAL_SENDER_GONE`, so it says "Cette proposition n'est plus en attente" and re-reads the
+list - where the request is still waiting. **The request is stuck on that device until the app
+updates**; Refuse is not compared and works, and the same account accepts from an updated device or
+the web.
+**Why it is not shimmed.** Accepting without a fingerprint would be consent to an audience the author
+was never shown - the staff side among it - which is exactly what the warning exists to prevent. A
+fallback that accepts there is the defect, not its cure. No association's or list's request is
+affected: those carry no warning and compare nothing.
+**Removal condition:** none to remove. The floor (`minClientVersion` >= the first stable carrying
+#2965, raised once BOTH stores serve it) is what makes the stuck case impossible; the entry goes with
+it. Measure before: `[REPOST-P] ... accept refused: audience changed (carried none, ...)` in
+social-service logs counts the older builds that met it.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
@@ -882,6 +906,54 @@ over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---deci
 ([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts))
 and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
 `LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
+
+### 2027-05-03 - a list profile save that resends its unchanged parent (2026-11-03)
+
+**Site:** `dropUnchangedPlatformFields` in
+[`apps/social-service/src/associations/association-update-rights.ts`](../../apps/social-service/src/associations/association-update-rights.ts),
+called first in `AssociationsController.update`.
+**What it humours:** since 2026-11-02 a list's `parentAssociationId` is the platform admin's alone
+([association-permissions](association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02)),
+and the current form sends it only to that reader. Every store build up to `1.6.2` EMBEDS the old
+form, which sends `parentAssociationId: editParentId || null` on EVERY list profile save. Without the
+shim each such save by a profile editor would be a `403` and an ERROR line for a field it did not
+touch. A platform-admin field whose value equals the stored one (`''`, `null` and absent count as
+equal) is dropped before the rights are asked; a CHANGED value is still refused. Measured by its line
+at `log` level (production emits it; `debug` it does not), one per dropped resend and naming only the
+association id: `[LEGACY] update ...: unchanged parentAssociationId dropped (old client resend)`. The
+removal reads its count in the social-service log of both estates; silence over the weeks before the
+date is the evidence.
+**Cost while it stands:** one extra read of the association row on a body naming a platform-admin
+field, from a non-admin.
+**Removal** (the date, or earlier once `minClientVersion` is a build that stopped resending it): delete
+`dropUnchangedPlatformFields`, its call and its two spec cases; an old build's resend is then refused
+like any other platform-admin field.
+
+### 2027-05-03 - an admin preset without EDIT_PROFILE, posted by a build older than the flag (2026-11-03)
+
+**Site:** `withLegacyEditProfile` in
+[`apps/social-service/src/associations/legacy-admin-presets.ts`](../../apps/social-service/src/associations/legacy-admin-presets.ts),
+called by `AssociationsService.addMember` ONLY (through `legacyAddMask`), and only when the granter's
+member-flag ceiling (#2949) covers `EDIT_PROFILE` - the shim never grants what its granter could not
+grant by hand; otherwise the mask is left as sent.
+**What it humours:** a store build up to `1.6.2` offers its "Administrateur" preset without bit 12
+(`EDIT_PROFILE`, 2026-11-02), so an admin it adds would manage the roster and could not edit the
+profile. A member ADD whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is
+derived from today's constants with bit 12 removed, narrowed per kind as the old `adminPresetFor` did
+(3871 and 3359 for an association, 3103 for a list or an institution - pinned by
+`legacy-admin-presets.spec.ts`). That narrowing is FROZEN in the shim (`oldClientPreset`), never read
+from today's `writablePermissions`, which since #2967 leaves a list its shop: the shim matches what the
+old builds posted, not what a list may hold now. Measured by its line at `log` level (production emits it), one per
+matching add and carrying only the mask: `[LEGACY] addMember: mask N is a pre-EDIT_PROFILE admin
+preset` - followed by `EDIT_PROFILE added` or, under a ceiling without the bit, `left as sent`. The
+removal reads both counts in the social-service log of both estates.
+**Why add only, never update (2026-11-03):** a current app unticking *Modifier le profil* on a full
+admin posts exactly an old preset through the update, and that untick must hold.
+**What it does not cover:** an old app re-applying its "Administrateur" preset to an EXISTING member
+writes the old mask and strips bit 12. That is visible in the role editor and reversible - a current
+app re-ticks it. The spec pins that `updateMemberRole` never calls the shim.
+**Removal** (the date, or earlier once `minClientVersion` is a build carrying the flag on both stores):
+delete `legacy-admin-presets.ts`, its two calls and its spec.
 
 ### 2027-04-25 - a salon access rewrite with no `baseAccessRevision`
 

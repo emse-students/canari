@@ -11,6 +11,7 @@ import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
 import { signAgendaSelection, signEventIcs, withEventIcsSig } from './agenda-signature';
+import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { assertReviewerReachesAssociation } from './review-cohort-reach';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 
@@ -111,10 +112,17 @@ describe('AssociationsController cotisation config gating (D5)', () => {
 
   it('does not check MANAGE_PRODUCTS for updates that do not touch cotisation fields', async () => {
     const { controller, service, productsService } = makeController();
+    service.mayAct.mockResolvedValue(true);
 
     await controller.update('asso1', 'user1', undefined, { name: 'New name' });
 
-    expect(service.mayAct).not.toHaveBeenCalled();
+    expect(service.mayAct).toHaveBeenCalledTimes(1);
+    expect(service.mayAct).not.toHaveBeenCalledWith(
+      'user1',
+      'asso1',
+      AssociationPermissionFlag.MANAGE_PRODUCTS,
+      expect.anything()
+    );
     expect(service.update).toHaveBeenCalled();
     expect(productsService.provisionCotisationProduct).not.toHaveBeenCalled();
   });
@@ -189,6 +197,7 @@ describe('AssociationsController response shape', () => {
       update: jest.fn(() => Promise.resolve(row)),
       setLogoFromUpload: jest.fn(() => Promise.resolve(row)),
       clearStoredLogo: jest.fn(() => Promise.resolve(row)),
+      mayAct: jest.fn(() => Promise.resolve(true)),
       callerHasAnyBdeFlag: jest.fn(() => Promise.resolve(true)),
     };
     return new AssociationsController(

@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Headers,
@@ -8,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { AcceptProposalDto } from './accept-proposal.dto';
 import { ProposalsService } from './proposals.service';
 
 /**
@@ -31,13 +33,17 @@ export class ProposalsController {
     return this.proposals.listPending(associationId, xUserId, xGlobalAdmin === 'true');
   }
 
+  /** Accepts; a person's body carries what they were shown (`AcceptProposalDto`). */
   @HttpPost('proposals/:proposalId/accept')
   accept(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('proposalId', ParseUUIDPipe) proposalId: string
+    @Param('proposalId', ParseUUIDPipe) proposalId: string,
+    @Body() body: AcceptProposalDto = {}
   ) {
-    return this.proposals.accept(proposalId, xUserId, xGlobalAdmin === 'true');
+    return this.proposals.accept(proposalId, xUserId, xGlobalAdmin === 'true', {
+      audienceFingerprint: body?.audienceFingerprint ?? null,
+    });
   }
 
   @HttpPost('proposals/:proposalId/refuse')

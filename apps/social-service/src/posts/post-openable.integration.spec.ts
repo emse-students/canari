@@ -90,7 +90,8 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar,
         "displayName" varchar, "firstName" varchar, "lastName" varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
+        archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamp,

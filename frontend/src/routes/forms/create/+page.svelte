@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
@@ -288,39 +289,41 @@
   {/if}
 
   <!-- 1. What the form is -->
-  <FormSection title={m.form_section_general()} icon={FileText}>
-    <Input
-      label={m.form_title_label()}
-      bind:value={title}
-      placeholder={m.form_title_placeholder()}
-      required
-    />
-
-    <div>
-      <p class={CONTROL_LABEL_CLASS}>{m.form_description_label()}</p>
-      <MarkdownComposerField
-        bind:value={description}
-        placeholder={m.form_description_placeholder()}
-        minHeight="7rem"
+  <div use:guideAnchor={'forms.create.general'}>
+    <FormSection title={m.form_section_general()} icon={FileText}>
+      <Input
+        label={m.form_title_label()}
+        bind:value={title}
+        placeholder={m.form_title_placeholder()}
+        required
       />
-    </div>
 
-    {#if associations.length > 0}
-      <Select
-        id="association-select"
-        label={m.form_association_label()}
-        hint={m.form_association_hint()}
-        value={associationId}
-        options={[
-          { value: '', label: m.form_association_none() },
-          ...associations.map((a) => ({ value: a.id, label: a.name })),
-        ]}
-        onValueChange={(v) => (associationId = v)}
-      />
-    {/if}
+      <div>
+        <p class={CONTROL_LABEL_CLASS}>{m.form_description_label()}</p>
+        <MarkdownComposerField
+          bind:value={description}
+          placeholder={m.form_description_placeholder()}
+          minHeight="7rem"
+        />
+      </div>
 
-    <p class={CONTROL_HINT_CLASS}>{m.form_image_add_after_create()}</p>
-  </FormSection>
+      {#if associations.length > 0}
+        <Select
+          id="association-select"
+          label={m.form_association_label()}
+          hint={m.form_association_hint()}
+          value={associationId}
+          options={[
+            { value: '', label: m.form_association_none() },
+            ...associations.map((a) => ({ value: a.id, label: a.name })),
+          ]}
+          onValueChange={(v) => (associationId = v)}
+        />
+      {/if}
+
+      <p class={CONTROL_HINT_CLASS}>{m.form_image_add_after_create()}</p>
+    </FormSection>
+  </div>
 
   <!-- 2. Money -->
   <FormPaymentSection
@@ -340,27 +343,31 @@
   />
 
   <!-- 3. Questions -->
-  <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
+  <div use:guideAnchor={'forms.create.questions'}>
+    <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
+  </div>
 
   <!-- 4. Rarely wanted, and folded away -->
-  <FormAdvancedSettings
-    bind:maxSubmissions
-    bind:allowMultipleSubmissions
-    bind:anonymous
-    anonymousFixed={false}
-    bind:isPublic
-    profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
-    {requiresPayment}
-    bind:opensAt
-    bind:submitCondition
-    bind:settings={cotisation}
-    {tiers}
-    {formations}
-    {grantBlocker}
-    associationName={selectedAssociation?.name ?? ''}
-    hasFileQuestion={formHasFile}
-    bind:fileRetentionDays
-  />
+  <div use:guideAnchor={'forms.create.settings'}>
+    <FormAdvancedSettings
+      bind:maxSubmissions
+      bind:allowMultipleSubmissions
+      bind:anonymous
+      anonymousFixed={false}
+      bind:isPublic
+      profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
+      {requiresPayment}
+      bind:opensAt
+      bind:submitCondition
+      bind:settings={cotisation}
+      {tiers}
+      {formations}
+      {grantBlocker}
+      associationName={selectedAssociation?.name ?? ''}
+      hasFileQuestion={formHasFile}
+      bind:fileRetentionDays
+    />
+  </div>
 
   <FormSaveBar
     {titleMissing}

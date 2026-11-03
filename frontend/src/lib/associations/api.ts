@@ -35,6 +35,11 @@ export enum AssociationPermissionFlag {
   MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
   MANAGE_BOOKINGS = 1 << 11,
+  /**
+   * The public profile: name, texts, logos, colour, category, contact; a list's promo and second
+   * theme - never its parent (`updateFields.ts`), plus the logo routes.
+   */
+  EDIT_PROFILE = 1 << 12,
 }
 
 /**
@@ -49,7 +54,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_FORMS |
   AssociationPermissionFlag.MANAGE_PRODUCTS |
   AssociationPermissionFlag.MANAGE_PARTNERSHIPS |
-  AssociationPermissionFlag.MANAGE_BOOKINGS;
+  AssociationPermissionFlag.MANAGE_BOOKINGS |
+  AssociationPermissionFlag.EDIT_PROFILE;
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
@@ -301,7 +307,7 @@ export interface UpdateAssociationPayload {
   contactEmail?: string | null;
   /** Lists only: the promotion year. */
   promo?: number | null;
-  /** Lists only: optional parent association. */
+  /** Lists only: optional parent association. Platform admin only (`UPDATE_FIELD_RIGHTS`). */
   parentAssociationId?: string | null;
   /** Lists only: optional second theme name. Pass `""` to clear. */
   name2?: string | null;

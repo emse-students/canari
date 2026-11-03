@@ -135,8 +135,8 @@ describe('the constants the server also defines', () => {
   });
 
   it('mirrors the backend ALL_CORE_FLAGS value', () => {
-    expect(ALL_CORE_FLAGS).toBe(3359);
-    expect(ASSOCIATION_ADMIN_PRESET).toBe(3359 | MANAGE_PAYOUT_ACCOUNT);
+    expect(ALL_CORE_FLAGS).toBe(7455);
+    expect(ASSOCIATION_ADMIN_PRESET).toBe(7455 | MANAGE_PAYOUT_ACCOUNT);
   });
 
   it('lists exactly the three flags the server gates on a.isBDE', () => {
@@ -177,7 +177,7 @@ describe('the role editor', () => {
       'utf8'
     );
     const names = Object.keys(AssociationPermissionFlag).filter((k) => Number.isNaN(Number(k)));
-    expect(names).toContain('MANAGE_BOOKINGS');
+    expect(names).toContain('EDIT_PROFILE');
     for (const name of names) {
       expect(source, `no FLAG_LABELS row for ${name}`).toMatch(
         new RegExp(String.raw`flag:\s*AssociationPermissionFlag\.${name}\b`)

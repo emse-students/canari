@@ -113,6 +113,14 @@ export class GuideEngine {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- must NOT re-run the scheduler
   #declined = new Map<HelpId, string>();
 
+  /**
+   * AT MOST ONE HELP PER VISIT (lead, 2026-11-03): true once a help has SHOWN a step in this visit
+   * (this engine's lifetime = one app open or reload, or until sign-out). In-memory on purpose: a visit is "since the
+   * page loaded", so no clock and no stored state decide it. A decline (nothing drawn) never sets it,
+   * and a replay asked from Settings is exempt from it but sets it - it is the visit's help.
+   */
+  #shownThisVisit = false;
+
   constructor(
     private readonly guides: readonly GuideDefinition[],
     private readonly env: GuideEnvironment
@@ -180,6 +188,7 @@ export class GuideEngine {
       return asked && offered(asked) ? asked : null;
     }
     if (!this.env.seenReady()) return null;
+    if (this.#shownThisVisit) return null;
     return this.guides.find((g) => !this.env.isSeen(g.id) && offered(g)) ?? null;
   }
 
@@ -221,6 +230,7 @@ export class GuideEngine {
       const anchor = byLayout(step.anchor, run.layout);
       if (anchor === null || this.env.isAnchorRendered(anchor)) {
         this.#run = { ...run, index: i, shown: run.shown + 1 };
+        this.#shownThisVisit = true;
         Log.d('guide', `${run.guide.id}: step ${step.id} (${i + 1}/${run.steps.length})`);
         return;
       }
@@ -310,5 +320,7 @@ export class GuideEngine {
     this.#run = null;
     this.#requested = null;
     this.#declined.clear();
+    // A sign-out starts the next account's visit: it is owed its own first help.
+    this.#shownThisVisit = false;
   }
 }

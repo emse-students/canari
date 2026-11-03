@@ -401,7 +401,7 @@ refusals and the proof are on
 [profiles-and-access](../../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 On the card, three served fields:
 
-- `canRequestRepublication` draws "Republier au nom d'une association", which opens
+- `canRequestRepublication` draws "Demander à republier", which opens
   `RepublishDialog` in `request` mode (`personalRequestCandidates`).
 - `republicationRequests` draws "Demande envoyee au nom de X" under the header and "Annuler la
   demande de X" in the menu (`withdrawProposal`).
@@ -410,6 +410,31 @@ On the card, three served fields:
 A refused request is read by its typed `code` (`personalRequestRefusalMessage`), never its message.
 The author answers in `/notifications/requests`, reached from the notification, its push
 (`fr.emse.canari://republication-requests`) and a link on `/notifications` while one waits.
+
+## The bell re-checks the post (review of #2965, 2026-11-03)
+
+A bell row about a post is shown only while its recipient still SEES that post: `bellRowShownSql`
+(`post-notifications.service.ts`) re-checks `postVisibleToViewerSql` for every type in
+`POST_BOUND_NOTIFICATION_TYPES`, so a withdrawn republication, a member who left, an archived
+carrier or a hidden post takes the row out on the next read. A push already delivered to a device
+cannot be recalled. A row bound to no post is left alone.
+
+A mention is held to the read's rule when it is WRITTEN, since #2947: only who may open the post
+(`mentionRecipientsOf`, the read's gate), a post's mentions told by `PostAnnounceScheduler` alone
+under its one-shot claim, so a scheduled post tells nobody before its time.
+
+**The cost, and the query shape.** The check is a correlated subquery per row. Measured on
+production, read-only, 2026-11-03: 24,136 rows over the 90-day retention, 517 recipients, per
+recipient p50 52, p90 55, p99 99, max 149 rows; by type association_post 22,927, reaction 580,
+event_validated 311. `bellPageQuery` keeps the predicate and the `LIMIT` in one SELECT with no join,
+ordered by `createdAt DESC`, and migration 126 adds ("recipientId", "createdAt" DESC), so the plan
+walks the reader's rows newest first and stops once the page is full: the check runs on about one
+page. `bell-page.integration.spec.ts` asserts that plan with `EXPLAIN ANALYZE` (the index, no sort,
+at most a page read) on a reader seeded with 600 rows among 6,000. The page is bounded too:
+`?limit=` is `bellPageLimit` - 30 by default, held to 1..50, a typed 400
+`NOTIFICATIONS_LIMIT_INVALID` for anything not a whole number. The entity declares the index under
+the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
+does not compare order).
 
 ## The search stops where the feed stops (2026-10-04)
 

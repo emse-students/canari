@@ -167,7 +167,9 @@ not delete its lists (F2).
 `MANAGE_PAYOUT_ACCOUNT`, an institution never holds `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT` -
 whoever asks, the platform admin included. `mayAct` and `mayActOnAny` read it ABOVE every tier;
 `writablePermissions` strips those bits on `addMember` / `updateMemberRole`; the role editor
-(`permissionMaskFor`) never offers them, so a new list admin's preset is 3359.
+(`permissionMaskFor`) never offers them, so a new list admin's preset is 7455 (with `EDIT_PROFILE`,
+bit 12, since #2964: a list and an institution have a profile too, and the flag survives
+`writablePermissions` on every kind).
 
 **Whether an entity may collect is ONE predicate, `mayCollect`** (`associations/collection-policy.ts`,
 derived from the same table): an association always, a list only with an APPROVED delegation, an
@@ -300,8 +302,12 @@ total so the same data cannot render two ways, and both asserted apart in `listS
 Permissions are checked at the component level using the `X-Global-Admin` header and association-level role flags injected by Nginx. The key flags are:
 
 - `MANAGE_MEMBERS` — add/remove members, edit roles
-- `MANAGE_ASSO` — edit profile, create products, manage forms
+- `EDIT_PROFILE` — edit the profile and the logos (`editRights().profile`, read from the per-field
+  table `updateFields.ts`); archiving is `MANAGE_MEMBERS` (`editRights().archive`)
+- `MANAGE_ASSO` — BDE only: the super-admin tier over the associations its spaces reach
 - Global admin — can do everything
+
+The full table is [association-permissions](../../association-permissions.md).
 
 ## Stripe Connect
 

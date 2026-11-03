@@ -108,7 +108,7 @@
     canRequestRepublication?: boolean;
     /** The requests of the reader's associations still waiting on the author, one entry each. */
     pendingRequests?: { proposalId: string; name: string }[];
-    /** Called when the reader picks "Republier au nom d'une association". */
+    /** Called when the reader picks "Demander a republier". */
     onRequestRepublication?: () => void;
     /** Called with the request (a proposal id) the reader cancels. */
     onWithdrawRequest?: (proposalId: string) => void;

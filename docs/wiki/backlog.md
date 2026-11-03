@@ -116,11 +116,10 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 Checked with four cases: a student asks a student, a staff member asks a student (same rule, no
 exception by profile), two people sharing a space still see each other's posts in the space feed
 without following, and a member's repost (author consent given) reaches the reposter's followers
-even when they do not follow the author. **New, from the same answers:** (a) rename the "Tout" tab
-"Mon espace" for clarity; (b) an information button explaining each tab; (c) a broader tutorial
-shown on the first open after a future update, covering many features of the app. All three are
-product work for after the stable, none is designed yet; ask the user for the wording and the
-placement of (b) and the scope of (c) before building.
+even when they do not follow the author. **New, from the same answers:** (a) the "Tout" tab renamed "Mon espace" and (b) the information
+button explaining each tab are BUILT (#2857); (b) now MOVES into guided help as a hint on the tab
+bar, and (c) a broader tutorial on the first open after an update is decided as the "what's new"
+help, both in [guided-help](frontend/guided-help.md#owner-decisions-of-2026-11-03).
 
 ### The work packages, in order: one small pull request each, its starting point and its proof
 

@@ -107,11 +107,12 @@
     !!list && canTakePayments(list, activePaymentProvider.current)
   );
   /**
-   * Archiving is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS`; deleting is `DELETE :id`
+   * Archiving is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS` (`rights.archive`);
+   * deleting is `DELETE :id`
    * behind a bare global-admin guard. The tab opens on the first, the delete card carries the
    * second - see the same pair on the association edit page.
    */
-  let canArchiveList = $derived(canManageMembers);
+  let canArchiveList = $derived(rights.archive);
   /** Deleting is `DELETE :id`: a global admin, or MANAGE_ASSO in the BDE governing this list. */
   let canDeleteList = $derived(isGlobalAdminUser || isSuperAdminUser);
 
@@ -295,7 +296,8 @@
       {#if editSection === 'profile'}
         <EditProfileTab
           asso={list}
-          canEdit={canManageMembers}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
           onUpdated={(a) => (list = keepPaymentsReady(a, list))}
         />
       {/if}
