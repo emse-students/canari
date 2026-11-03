@@ -260,8 +260,22 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   the delete or update it protects run in ONE transaction that first takes the association
   `FOR UPDATE` (`underMemberLock`, the lock order `remove` uses), on the remove, leave and demote
   paths alike. Before, two managers leaving or demoting each other at once both counted two and left
-  none; `member-last-manager.integration.spec.ts` proves exactly one succeeds. A leaver never takes
-  the BDE/platform bypass of that guard, through `members/me` or through `members/<own id>`.
+  none; `member-last-manager.integration.spec.ts` proves exactly one succeeds, deterministically (a
+  third connection holds the lock until both writes are seen waiting on it; with the lock removed
+  the spec fails on every run). Neither a leaver nor a member demoting ITSELF ever takes the
+  BDE/platform bypass of that guard, through `members/me`, `members/<own id>` or a `PATCH` of its
+  own row.
+- **The account erasure meets the same lock, and is never refused by it** (2026-11-03). Its first
+  statement (`ERASURE_ASSOCIATION_LOCK_SQL`) locks every association the account touches - its
+  memberships included - in id order, `FOR NO KEY UPDATE`, before its `association_members` delete.
+  That strength conflicts with the guard's `FOR UPDATE`, so an erasure and a leave or demotion on one
+  association run one after the other, and each takes exactly one association lock before any
+  member row, so no cycle exists. It stays `NO KEY UPDATE` (not `FOR UPDATE`) so a proposal
+  decision's `KEY SHARE` is not serialised behind an erasure. The erasure does not ask the guard: an
+  account must be erasable, so erasing the LAST manager leaves the association with none - expected,
+  and recovered by a BDE super-admin of it, or by the platform admin when no BDE governs it.
+  `member-last-manager.integration.spec.ts` runs an erasure of one manager against a leave of the
+  other: the leave waits, then is refused.
 - **The super-admin tier cannot be acquired through the audience.** A BDE becomes an association's
   super-admin by governing a space its rules reach, and a BDE may write audiences - so the audience
   bound must have the same granularity as governance. It was per CAMPUS while governance is per

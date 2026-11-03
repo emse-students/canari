@@ -1574,7 +1574,12 @@ export class AssociationsService {
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
     const willLoseManageMembers =
       permissions !== undefined && (permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0;
-    const guarded = hadManageMembers && willLoseManageMembers && !opts.bypassLastAdmin;
+    // A member demoting ITSELF never takes the bypass, the same rule as a leaver in `removeMember`:
+    // the bypass is a BDE or the platform admin acting on someone else's row, and the last holder
+    // of a club it also validates as a BDE would otherwise strip its own right and leave nobody.
+    const selfDemotion = opts.granter.userId === targetUserId;
+    const guarded =
+      hadManageMembers && willLoseManageMembers && (selfDemotion || !opts.bypassLastAdmin);
     // ONE column update of the row judged above, never a save of it: a member write must never
     // insert a row, and a save of a stale entity re-inserts a deleted one and reverts what a
     // concurrent writer changed. CONDITIONED on the permissions the guard above judged, so 0 rows
