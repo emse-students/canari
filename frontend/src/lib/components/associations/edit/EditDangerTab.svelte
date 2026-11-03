@@ -4,6 +4,8 @@
   import { Building2, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
+  import { dependencyRefusalMessage } from '$lib/associations/dependencies';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     asso: Association;
@@ -67,7 +69,9 @@
       await deleteAssociation(asso.id);
       onDeleted();
     } catch (err) {
-      error = m.common_delete_error();
+      Log.d('asso.danger.delete failed', err);
+      // A BDE with dependents is the platform admin's to delete (`DEPENDENCY_DELETE_ADMIN_ONLY`).
+      error = dependencyRefusalMessage(err) ?? m.common_delete_error();
     }
   }
 </script>

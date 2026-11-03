@@ -24,6 +24,7 @@ export const DEPENDENCY_REFUSAL = {
   PARENT_CHOICE_REQUIRED: 'DEPENDENCY_PARENT_CHOICE_REQUIRED',
   PARENT_NOT_YOURS: 'DEPENDENCY_PARENT_NOT_YOURS',
   LABEL_INVALID: 'DEPENDENCY_LABEL_INVALID',
+  DELETE_ADMIN_ONLY: 'DEPENDENCY_DELETE_ADMIN_ONLY',
   SPACE_GOVERNOR_TYPE: 'SPACE_GOVERNOR_TYPE',
 } as const;
 
@@ -54,6 +55,8 @@ export function dependencyRefusalText(code: DependencyRefusalCode): string {
       return m.dependency_err_parent_not_yours();
     case DEPENDENCY_REFUSAL.LABEL_INVALID:
       return m.dependency_err_label_invalid();
+    case DEPENDENCY_REFUSAL.DELETE_ADMIN_ONLY:
+      return m.dependency_err_delete_admin_only();
     case DEPENDENCY_REFUSAL.SPACE_GOVERNOR_TYPE:
       return m.dependency_err_space_governor_type();
   }
