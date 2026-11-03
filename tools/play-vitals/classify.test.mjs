@@ -48,6 +48,13 @@ describe('the PLATFORM record of 7bea9377', () => {
     expect(appFrames(platformReport().reportText)).toEqual([]);
   });
 
+  test('an ANR native frame (`native:` prefix, with or without `pc`) is read, its header is not', () => {
+    const apk = '/data/app/~~x==/fr.emse.canari-y==/base.apk!libmines_app_lib.so';
+    const anr = `*** ***\npid: 0 >>> fr.emse.canari <<<\n  native: #00 pc 0000000000012345  ${apk}\n  native: #01 ${apk} (sym+4)\n  native: #02 pc 0x1  /system/lib64/libc.so (poll+8)`;
+    expect(appFrames(anr)).toHaveLength(2);
+    expect(appFrames('  native: #02 pc 0x1  /system/lib64/libc.so (poll+8)')).toEqual([]);
+  });
+
   test('CONTROL: the recorded report, on the baseline versionCode, keeps it PLATFORM', () => {
     expect(judgePlatform(record, evidence())).toEqual([]);
     const verdict = classify(issue(PLATFORM_ID, 100100199), known, (r) =>
@@ -121,6 +128,31 @@ describe('a PLATFORM record re-opens as NEW', () => {
   test('when a newer versionCode reports it and Play withholds the user count', () => {
     const seen = evidence({ countsByVersion: new Map([[100600399, 1]]) });
     expect(judgePlatform(record, seen).join()).toContain('unmeasurable rate is not a low one');
+  });
+
+  test('when an evidence fetch failed - unmeasured is not "still platform"', () => {
+    const seen = evidence({ unavailable: ['errorReports:search(x) HTTP 503'] });
+    expect(judgePlatform(record, seen).join()).toContain(
+      'evidence unavailable: errorReports:search(x) HTTP 503'
+    );
+    // CONTROL: no failure noted, same evidence, holds.
+    expect(judgePlatform(record, evidence({ unavailable: [] }))).toEqual([]);
+  });
+
+  test('when the issue was last seen on a newer versionCode and its user count is withheld', () => {
+    // No metric row at all (the queries may have failed): the issue's own lastAppVersion decides.
+    const seen = evidence({ lastVersionCode: 100600399 });
+    expect(judgePlatform(record, seen).join()).toContain('last seen on versionCode 100600399');
+    // CONTROL: the count is published and under the baseline rate, or the version is the baseline.
+    expect(
+      judgePlatform(
+        { ...record, baseline: { ...record.baseline, per1kUsers: 2 } },
+        evidence({ lastVersionCode: 100600399, usersByVersion: new Map([[100600399, 1000]]) })
+      )
+    ).toEqual([]);
+    expect(
+      judgePlatform(record, evidence({ lastVersionCode: record.baseline.versionCode }))
+    ).toEqual([]);
   });
 
   test('but not for reports on the baseline versionCode or older', () => {

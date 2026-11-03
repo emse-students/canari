@@ -12,20 +12,26 @@
  *   ({@link judgePlatform}). Why the kind exists: tools/play-vitals/README.md#platform-issues.
  */
 
+import { PKG } from './lib.mjs';
+
 /**
- * A backtrace frame line in a Play report: a native `#NN pc ...` frame or a Java `at ...` frame.
+ * A backtrace frame line in a Play report: a native `#NN ...` frame (an ANR prefixes it with
+ * `native: ` and may omit `pc`) or a Java `at ...` frame.
  * Header lines (`pid: 0, tid: N >>> fr.emse.canari <<<`, thread titles) are NOT frames - every
  * report names the package in its header, so reading the header would find "our" frame in all of
  * them.
  */
-const FRAME = /^\s*(#\d+\s+pc\b|at\s)/;
+const FRAME = /^\s*(?:native:\s+)?#\d+\s|^\s*at\s/;
 
 /**
  * What makes a frame OURS: the app's package (Java frames, and every native frame from the APK,
  * whose path is `/data/app/.../fr.emse.canari-.../split_config.*.apk`), or a symbol of the Rust and
  * Kotlin layers the app ships (wry, tao, tauri, the app library `mines_app_lib`).
  */
-const OUR_FRAME = /fr\.emse\.canari|\bwry\b|\btao::|\btauri|mines_app_lib/i;
+const OUR_FRAME = new RegExp(
+  `${PKG.replaceAll('.', '\\.')}|\\bwry\\b|\\btao::|\\btauri|mines_app_lib`,
+  'i'
+);
 
 /** A WebView / Chrome major named anywhere in a report: `Chrome/141.`, `WebView/141.`. */
 const WEBVIEW_MAJOR = /\b(?:Chrome|WebView)\/(\d+)\./g;
@@ -66,6 +72,9 @@ export function webViewMajors(text) {
 export function judgePlatform(record, seen) {
   const reasons = [];
 
+  // A fetch that failed is unmeasured, never "nothing found": the verdict cannot hold on it.
+  for (const note of seen.unavailable ?? []) reasons.push(`evidence unavailable: ${note}`);
+
   for (const report of seen.reports) {
     const ours = appFrames(report.reportText);
     if (ours.length > 0) {
@@ -88,6 +97,14 @@ export function judgePlatform(record, seen) {
   }
 
   const baseline = record.baseline;
+  // Independent of every metric query: the issue itself says it was last seen on a newer build.
+  const last = seen.lastVersionCode ?? 0;
+  if (last > baseline.versionCode && !(seen.usersByVersion.get(last) > 0)) {
+    reasons.push(
+      `the issue was last seen on versionCode ${last}, newer than the baseline ${baseline.versionCode}, ` +
+        'and Play withholds its user count - an unmeasurable rate is not a low one'
+    );
+  }
   for (const [versionCode, count] of seen.countsByVersion) {
     if (versionCode <= baseline.versionCode || count === 0) continue;
     const users = seen.usersByVersion.get(versionCode);

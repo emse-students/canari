@@ -70,8 +70,15 @@ async function readPlatformEvidence(issues, start, end) {
     WINDOW_DAYS - 1,
     ['versionCode']
   );
-  if (counts.note) console.error(`  ! errorCountMetricSet by issue: ${counts.note}`);
-  if (users.note) console.error(`  ! crashRateMetricSet users by version: ${users.note}`);
+  const unavailable = [];
+  if (counts.note) {
+    console.error(`  ! errorCountMetricSet by issue: ${counts.note}`);
+    unavailable.push(`errorCountMetricSet by issue: ${counts.note}`);
+  }
+  if (users.note) {
+    console.error(`  ! crashRateMetricSet users by version: ${users.note}`);
+    unavailable.push(`crashRateMetricSet users by version: ${users.note}`);
+  }
 
   const dimension = (row, name) => row.dimensions?.find((d) => d.dimension === name)?.stringValue;
   const metric = (row, name) =>
@@ -89,8 +96,15 @@ async function readPlatformEvidence(issues, start, end) {
       const code = Number(dimension(row, 'versionCode'));
       countsByVersion.set(code, (countsByVersion.get(code) ?? 0) + metric(row, 'errorReportCount'));
     }
-    const reports = await searchErrorReports(id, start, end, 100);
-    evidence.set(id, { reports, countsByVersion, usersByVersion });
+    const fetched = await searchErrorReports(id, start, end, 100);
+    const issue = issues.find((i) => i.name?.split('/').pop() === id);
+    evidence.set(id, {
+      reports: fetched.reports,
+      countsByVersion,
+      usersByVersion,
+      lastVersionCode: Number(issue?.lastAppVersion?.versionCode ?? 0),
+      unavailable: fetched.note ? [...unavailable, fetched.note] : unavailable,
+    });
   }
   return { judge: (id) => judgePlatform(known[id], evidence.get(id)) };
 }
@@ -151,7 +165,9 @@ async function main() {
       console.log('    !! seen at or above the build that fixed it - the fix did not hold');
     }
     if (wantStacks && verdict !== 'KNOWN' && verdict !== 'PLATFORM') {
-      const [report] = await searchErrorReports(id, start, end, 1);
+      const {
+        reports: [report],
+      } = await searchErrorReports(id, start, end, 1);
       if (report?.reportText) {
         console.log(
           report.reportText
