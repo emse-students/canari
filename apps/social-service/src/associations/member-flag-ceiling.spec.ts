@@ -708,3 +708,31 @@ describe('the passation, with the rights that matter most (owner, 2026-11-03)', 
     expect(await settle(service.leaveAssociation(ASSO, 'old-pres'))).toBe('written');
   });
 });
+
+/**
+ * EDIT_PROFILE (bit 12, #2964) takes part in the ceiling like every other flag: a member manager
+ * grants or revokes it only when it holds it - a MANAGE_MEMBERS holder cannot hand itself the
+ * profile.
+ */
+describe('the ceiling covers EDIT_PROFILE', () => {
+  const EDIT_PROFILE = AssociationPermissionFlag.EDIT_PROFILE;
+  const standing = (ownPermissions: number) => ({
+    isGlobalAdmin: false,
+    isSuperAdminOf: false,
+    ownPermissions,
+  });
+
+  it('refuses granting or revoking it to a manager who does not hold it', () => {
+    const ceiling = grantCeiling(standing(MANAGE_MEMBERS));
+    expect(flagsBeyondCeiling(ceiling, MANAGE_MEMBERS, MANAGE_MEMBERS | EDIT_PROFILE)).toBe(
+      EDIT_PROFILE
+    );
+    expect(flagsBeyondCeiling(ceiling, EDIT_PROFILE, 0)).toBe(EDIT_PROFILE);
+  });
+
+  it('lets a manager who holds it grant it', () => {
+    const ceiling = grantCeiling(standing(MANAGE_MEMBERS | EDIT_PROFILE));
+    expect(flagsBeyondCeiling(ceiling, 0, EDIT_PROFILE)).toBe(0);
+    expect(ALL_PERMISSION_FLAGS & EDIT_PROFILE).toBe(EDIT_PROFILE);
+  });
+});

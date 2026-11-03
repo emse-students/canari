@@ -20,3 +20,9 @@
 # is for its FINAL SQL (backfill rules 1-3 in the file), written by the author, and it awaits the owner's
 # confirmation of those rules - his merge of it by hand is that confirmation.
 apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql 7686835c26486db8913403e66f3a4fecf691917e2dea7df35f0ff9c6643c2ce7
+
+# 124: EDIT_PROFILE (bit 12) ORed into every association_members row holding MANAGE_MEMBERS (bit 2),
+# so moving `PATCH /associations/:id` and the logo routes onto the new flag takes the profile from
+# nobody. Approved in principle by the owner on 2026-11-02; this line is written by the author for the
+# file's final SQL, and the owner's merge of the pull request by hand is the approval.
+apps/social-service/src/migrations/124_edit_profile.sql d1fc5f6dc5055e9ff03565a109badab7c8d48d75a421a2c0751c7a91ded36843

@@ -34,6 +34,13 @@ export enum AssociationPermissionFlag {
   MANAGE_PARTNERSHIPS = 1 << 10,
   /** Create, edit and delete bookable spaces (rooms, slots) and manage their bookings. */
   MANAGE_BOOKINGS = 1 << 11,
+  /**
+   * Edit the association's public profile: name, description, bio, logos, colour, category,
+   * contact e-mail and, for a list, its promo and second theme (its fields of `PATCH :id` -
+   * `UPDATE_FIELD_RIGHTS` - and the logo routes). Split from `MANAGE_MEMBERS` on 2026-11-02 (owner): managing the roster is not
+   * editing the page; migration 124 gave it to every member who held `MANAGE_MEMBERS` then.
+   */
+  EDIT_PROFILE = 1 << 12,
 }
 
 /**
@@ -78,8 +85,8 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
 /**
  * Base admin flags granted to association admins.
  * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS |
- *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS | MANAGE_BOOKINGS
- * = 3359
+ *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS | MANAGE_BOOKINGS | EDIT_PROFILE
+ * = 7455
  *
  * Intentionally excludes:
  * - MANAGE_PAYOUT_ACCOUNT (1 << 9): sensitive financial flag, granted separately via
@@ -97,7 +104,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_FORMS |
   AssociationPermissionFlag.MANAGE_PRODUCTS |
   AssociationPermissionFlag.MANAGE_PARTNERSHIPS |
-  AssociationPermissionFlag.MANAGE_BOOKINGS; // = 3359
+  AssociationPermissionFlag.MANAGE_BOOKINGS |
+  AssociationPermissionFlag.EDIT_PROFILE; // = 7455
 
 /** TypeORM entity representing a user's membership in an association. */
 @Entity('association_members')

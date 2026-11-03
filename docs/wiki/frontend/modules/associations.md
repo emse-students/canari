@@ -153,8 +153,8 @@ page. `/associations/<slug>/edit` of a list forwards to the list route, so an ol
 notification lands on the same section.
 
 **The role editor derives its rights from that table** (`permissionMaskFor`): a list or institution
-is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `MANAGE_DOCUMENTS`, `MANAGE_FORMS`,
-`MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
+is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `EDIT_PROFILE`, `MANAGE_DOCUMENTS`,
+`MANAGE_FORMS`, `MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
 checkbox edits its own bit only; the server strips the shop and payout rights on write (below). The admin preset a new member receives is
 `adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
 endpoints carry no type check, so they already accepted a list; the republication allowlist
@@ -288,8 +288,12 @@ total so the same data cannot render two ways, and both asserted apart in `listS
 Permissions are checked at the component level using the `X-Global-Admin` header and association-level role flags injected by Nginx. The key flags are:
 
 - `MANAGE_MEMBERS` — add/remove members, edit roles
-- `MANAGE_ASSO` — edit profile, create products, manage forms
+- `EDIT_PROFILE` — edit the profile and the logos (`editRights().profile`, read from the per-field
+  table `updateFields.ts`); archiving is `MANAGE_MEMBERS` (`editRights().archive`)
+- `MANAGE_ASSO` — BDE only: the super-admin tier over the associations its spaces reach
 - Global admin — can do everything
+
+The full table is [association-permissions](../../association-permissions.md).
 
 ## Stripe Connect
 
