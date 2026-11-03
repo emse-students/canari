@@ -19,10 +19,13 @@
 #
 # THE RUN IS NOT THE ASSERTION. A Gradle invocation that matches no task exits 0 having built
 # nothing (the same trap `android-unit-tests.sh` documents), so this reads the output and fails
-# unless EACH of the three tasks below actually executed. They are where a dependency bump breaks:
+# unless EACH of the four tasks below actually executed. They are where a dependency bump breaks:
 #   - `checkArm64DebugAarMetadata`   an AndroidX release demanding a newer compileSdk or AGP;
 #   - `processArm64DebugMainManifest` a manifest merge conflict between the app and a library;
-#   - `compileArm64DebugKotlin`       an API a library removed.
+#   - `compileArm64DebugKotlin`       an API a library removed;
+#   - `mergeArm64DebugResources`      a `strings.xml` aapt2 refuses (a bare apostrophe: the
+#                                     1.6.3-alpha.3 Play build failed on one, #2945 had passed here
+#                                     because nothing above merges resources).
 #
 # THE REAL `google-services.json` IS NEVER OVERWRITTEN. A developer's copy of that git-ignored file
 # is not recoverable from git, so this refuses to run when one is present that is not the stub.
@@ -79,7 +82,7 @@ if [ -e "$target" ] && ! cmp -s "$stub" "$target"; then
 fi
 cp "$stub" "$target"
 
-tasks=(:app:checkArm64DebugAarMetadata :app:processArm64DebugMainManifest :app:compileArm64DebugKotlin)
+tasks=(:app:checkArm64DebugAarMetadata :app:processArm64DebugMainManifest :app:compileArm64DebugKotlin :app:mergeArm64DebugResources)
 echo "== 3. configure and run ${tasks[*]}"
 (cd "$android" && ./gradlew --no-daemon --console=plain "${tasks[@]}") 2>&1 | tee "$log"
 

@@ -1,5 +1,5 @@
-import { encryptData, decryptData } from '../encryption';
-import { readStoredTimestampMs } from '$lib/utils/dates';
+import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
+import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
 import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
@@ -24,8 +24,25 @@ import type {
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
+  StoredRowsById,
+  StoredMessageMerge,
+  PendingMutation,
+  PendingMutationLimits,
+  PendingMutationRead,
+  PendingMutationReseal,
+  PendingMutationWrite,
 } from './types';
 import { FeedPageUnreadableError } from './types';
+import {
+  joinPendingMutation,
+  pendingMessageTag,
+  pendingMutationPrimaryKey,
+  pendingMutationTags,
+  splitPendingMutation,
+  type PendingMutationRowKey,
+} from './pendingMutationCodec';
+import { casMergeMessages, type RevisedRow, type RevisedWrite } from './messageCas';
+
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -57,6 +74,8 @@ import {
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
   SCHEMA_VERSION,
+  PENDING_MUTATIONS_ORDER_INDEX_STATEMENT,
+  PENDING_MUTATIONS_TABLE_STATEMENT,
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
@@ -68,6 +87,7 @@ import {
   MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
   MESSAGE_PROVISIONAL_ORDER_FILL,
   messageOrderColumnsStatements,
+  messageRevisionStatement,
   outboxServerErrorsStatement,
 } from './sqliteMigrations';
 import {
@@ -83,6 +103,7 @@ import {
   type OrderKeyDerivation,
 } from './orderKeyDerivation';
 import {
+  MAX_BOUND_PARAMETERS,
   MESSAGE_ROWS_PER_STATEMENT,
   ORDER_AT_FILL_ROWS_PER_STATEMENT,
   SEALED_SWAP_ROWS_PER_STATEMENT,
@@ -98,6 +119,38 @@ import {
 
 function rowTimestampMs(raw: unknown): number {
   return readStoredTimestampMs(raw) ?? 0;
+}
+
+/** A `pending_mutations` row's key, in the order of its primary key. */
+function pendingRowKey(row: any): [string, string, string, string, string] {
+  return [row.conversation_id, row.message_tag, row.sender_tag, row.kind, row.slot_tag];
+}
+
+/** The `WHERE` matching one `pending_mutations` primary key at `$1`...`$5`. */
+const PENDING_KEY_WHERE =
+  'conversation_id = $1 AND message_tag = $2 AND sender_tag = $3 AND kind = $4 AND slot_tag = $5';
+
+/** A `pending_mutations` row opened under `deviceKeyB64`; `null` when it does not open. */
+async function openPendingRow(row: any, deviceKeyB64: string): Promise<PendingMutation | null> {
+  try {
+    const sealed = (await decryptData(
+      base64ToUint8(row.cipher_text),
+      base64ToUint8(row.iv),
+      deviceKeyB64
+    )) as Record<string, unknown>;
+    return joinPendingMutation(
+      {
+        conversationId: row.conversation_id,
+        kind: row.kind,
+        rank: Number(row.rank),
+        at: Number(row.at),
+      },
+      sealed
+    );
+  } catch (e) {
+    if (e instanceof PayloadUnreadableError) return null;
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +281,7 @@ export class SqliteStorage implements IStorage {
                 cipher_text     TEXT,
                 order_at        INTEGER,
                 order_pending   INTEGER,
+                rev             INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
         `);
@@ -315,6 +369,13 @@ export class SqliteStorage implements IStorage {
                 cipher_text  TEXT
             )
         `);
+
+    // Mutations whose message is not here yet (`PendingMutation`). The key and the two numbers the
+    // store decides on are clear; what the mutation says is sealed. NO foreign key to the
+    // conversation: an entry is written while the conversation row may not have reached the store
+    // yet (a group joined in the same drain), and it names a conversation only to be cleared with it.
+    await this.db.execute(PENDING_MUTATIONS_TABLE_STATEMENT);
+    await this.db.execute(PENDING_MUTATIONS_ORDER_INDEX_STATEMENT);
 
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
@@ -528,6 +589,19 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('PRAGMA user_version = 17');
     }
 
+    if (currentVersion < 18) {
+      // v17->v18: `pending_mutations`, created unconditionally above like `feed_pages`. EMPTY on
+      // every existing database: a mutation dropped before the table existed left nothing behind.
+      // And `messages.rev`, the revision every rewrite compares (`messageRevisionStatement`):
+      // additive, 0 on every existing row, no row rewritten.
+      const messageCols: any[] = await this.db.select('PRAGMA table_info(messages)');
+      const addRev = messageRevisionStatement(messageCols.map((c) => String(c.name)));
+      if (addRev) await this.db.execute(addRev);
+      //
+      // Stamped at 18, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 18');
+    }
+
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
     // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
     // them. Re-keyed provisionally through the partial index - nothing read when there are none. The
@@ -609,10 +683,13 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM conversations WHERE id = $1', [id]);
   }
 
-  /** Delete all messages for a conversation without removing its metadata row. */
+  /** Delete all messages (and the mutations awaiting them) for a conversation; the row is kept. */
   async deleteMessagesForConversation(conversationId: string): Promise<void> {
     invalidateHistoryStateKey(conversationId);
     await this.db.execute('DELETE FROM messages WHERE conversation_id = $1', [conversationId]);
+    await this.db.execute('DELETE FROM pending_mutations WHERE conversation_id = $1', [
+      conversationId,
+    ]);
   }
 
   // -- Messages ------------------------------------------------------------
@@ -626,6 +703,43 @@ export class SqliteStorage implements IStorage {
   /** Encrypt and persist a single message; delegates to saveMessages. */
   async saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void> {
     return this.saveMessages([msg], deviceKeyB64);
+  }
+
+  /** See {@link IStorage.saveMessagesIfAbsent}: `INSERT OR IGNORE`, which a held id turns into nothing. */
+  async saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>> {
+    const written = new Set<string>();
+    if (msgs.length === 0) return written;
+    const sealed = await Promise.all(
+      msgs.map(async (msg) => ({
+        msg,
+        encrypted: await encryptData(toMessagePayload(msg), deviceKeyB64),
+      }))
+    );
+    for (const batch of chunk(sealed, MESSAGE_ROWS_PER_STATEMENT)) {
+      await this.db.execute(
+        messageInsertSql(batch.length, 'ignore'),
+        batch.flatMap((item) => [
+          item.msg.id,
+          item.msg.conversationId,
+          item.msg.timestamp,
+          uint8ToBase64(item.encrypted.iv),
+          uint8ToBase64(item.encrypted.cipherText),
+          storedOrderAt(item.msg),
+          null,
+        ])
+      );
+      // WHICH ROWS ARE OURS: every seal draws a fresh iv, so a row holding the iv this call sealed
+      // is the one it wrote, and any other was there before. One read of clear columns, no decrypt.
+      const ours = new Map(batch.map((item) => [item.msg.id, uint8ToBase64(item.encrypted.iv)]));
+      const placeholders = batch.map((_, i) => `$${i + 1}`).join(', ');
+      const rows: Array<{ id: string; iv: string }> = await this.db.select(
+        `SELECT id, iv FROM messages WHERE id IN (${placeholders})`,
+        batch.map((item) => item.msg.id)
+      );
+      for (const row of rows) if (ours.get(row.id) === row.iv) written.add(row.id);
+    }
+    for (const msg of msgs) if (written.has(msg.id)) invalidateHistoryStateKey(msg.conversationId);
+    return written;
   }
 
   /**
@@ -672,19 +786,126 @@ export class SqliteStorage implements IStorage {
   }
 
   /**
-   * Merge `patch` into the stored message (read-modify-write; re-encrypts the payload).
-   * No-op if the row is absent or undecryptable.
-   *
-   * Primary-key lookup, so the cost is the same in a conversation of ten messages and one of ten
-   * thousand - which is what makes this usable on every mutation.
+   * See {@link IStorage.updateMessage}: a compare-and-set on the row's revision
+   * ({@link mergeMessages}), never a read, an await and a blind write. Primary-key lookups, so the
+   * cost is the same in a conversation of ten messages and one of ten thousand.
    */
-  async updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void> {
-    const msg = await this.getMessage(id, deviceKeyB64);
-    // A row we cannot read is a row we must not overwrite: replacing it with the patch alone
-    // would turn an undecryptable message into a truncated one. `getMessage` reports both that
-    // and an absent row as `null`, and neither is a reason to write.
-    if (!msg) return;
-    await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
+  async updateMessage(
+    conversationId: string,
+    id: string,
+    patch: StoredMessagePatch,
+    deviceKeyB64: string
+  ): Promise<void> {
+    await casMergeMessages(
+      this.revisedRows(),
+      conversationId,
+      [id],
+      (current) => mergeStoredMessage(current, patch),
+      deviceKeyB64
+    );
+  }
+
+  /** See {@link IStorage.mergeMessages}. */
+  async mergeMessages(
+    conversationId: string,
+    ids: readonly string[],
+    merge: StoredMessageMerge,
+    deviceKeyB64: string
+  ): Promise<Set<string>> {
+    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+  }
+
+  /**
+   * The two halves of the compare-and-set: rows read with their revision, and one
+   * `UPDATE ... WHERE id = ? AND rev = ?` per row - a single statement each, so nothing lands between
+   * the compare and the write, whichever pooled connection runs it.
+   */
+  private revisedRows() {
+    return {
+      read: (conversationId: string | null, ids: readonly string[], deviceKeyB64: string) =>
+        this.readRows(conversationId, ids, deviceKeyB64),
+      writeIfUnchanged: async (
+        conversationId: string | null,
+        writes: ReadonlyArray<RevisedWrite>,
+        deviceKeyB64: string
+      ): Promise<Set<string>> => {
+        const written = new Set<string>();
+        for (const { msg, rev, stamp } of writes) {
+          const sealed = await encryptData(toMessagePayload(msg), deviceKeyB64);
+          const result = await this.db.execute(
+            `UPDATE messages SET timestamp = $1, iv = $2, cipher_text = $3, order_at = $4,
+               order_pending = NULL, rev = rev + 1
+             WHERE id = $5 AND rev = $6 AND iv = $8 AND ($7 IS NULL OR conversation_id = $7)`,
+            [
+              msg.timestamp,
+              uint8ToBase64(sealed.iv),
+              uint8ToBase64(sealed.cipherText),
+              storedOrderAt(msg),
+              msg.id,
+              rev,
+              conversationId,
+              stamp,
+            ]
+          );
+          if ((result?.rowsAffected ?? 0) > 0) {
+            written.add(msg.id);
+            invalidateHistoryStateKey(msg.conversationId);
+          }
+        }
+        return written;
+      },
+    };
+  }
+
+  /**
+   * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
+   * a row of another conversation is never opened, and is said at warn.
+   */
+  private async readRows(
+    conversationId: string | null,
+    ids: readonly string[],
+    deviceKeyB64: string
+  ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
+    const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
+    const unique = [...new Set(ids)];
+    for (const batch of chunk(unique, MAX_BOUND_PARAMETERS)) {
+      const placeholders = batch.map((_, i) => `$${i + 1}`).join(', ');
+      const rows: any[] = await this.db.select(
+        `SELECT * FROM messages WHERE id IN (${placeholders})`,
+        batch
+      );
+      for (const row of rows) {
+        if (conversationId !== null && row.conversation_id !== conversationId) {
+          console.warn(
+            `[DB] ${String(row.id).slice(0, 8)} is a message of another conversation than ${conversationId.slice(0, 8)}... - read as absent there`
+          );
+          continue;
+        }
+        try {
+          const payload = (await decryptData(
+            base64ToUint8(row.cipher_text),
+            base64ToUint8(row.iv),
+            deviceKeyB64
+          )) as Record<string, unknown>;
+          out.rows.set(row.id, {
+            rev: Number(row.rev ?? 0),
+            stamp: String(row.iv),
+            msg: fromMessagePayload(
+              {
+                id: row.id,
+                conversationId: row.conversation_id,
+                timestamp: rowTimestampMs(row.timestamp),
+              },
+              payload
+            ),
+          });
+        } catch {
+          console.warn('Failed to decrypt SQLite row', row.id);
+          out.unreadable.add(row.id);
+        }
+      }
+    }
+    return out;
   }
 
   /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
@@ -710,6 +931,19 @@ export class SqliteStorage implements IStorage {
       console.warn('Failed to decrypt SQLite row', id);
       return null;
     }
+  }
+
+  /** See {@link IStorage.getMessagesByIds}: primary-key `IN` lists, scoped to the conversation. */
+  async getMessagesByIds(
+    conversationId: string,
+    ids: readonly string[],
+    deviceKeyB64: string
+  ): Promise<StoredRowsById> {
+    const read = await this.readRows(conversationId, ids, deviceKeyB64);
+    return {
+      rows: new Map([...read.rows].map(([id, row]) => [id, row.msg])),
+      unreadable: read.unreadable,
+    };
   }
 
   /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */
@@ -742,6 +976,253 @@ export class SqliteStorage implements IStorage {
       }
     }
     return results.sort(compareStoredOrder);
+  }
+
+  /** See {@link IStorage.getMessagesSince}: only the window's rows are decrypted. */
+  async getMessagesSince(
+    conversationId: string,
+    since: number,
+    deviceKeyB64: string
+  ): Promise<StoredMessage[]> {
+    // The numeric window, plus every timestamp stored as text or bytes (an Android plugin or a phone
+    // backup wrote some), dated by `storedTimeInWindow` - the rule IndexedDB applies to the same rows.
+    const rows: any[] = await this.db.select(
+      `SELECT *, typeof(timestamp) AS timestamp_type FROM messages WHERE conversation_id = $1
+         AND (timestamp >= $2 OR typeof(timestamp) IN ('text', 'blob'))`,
+      [conversationId, since]
+    );
+    const results: StoredMessage[] = [];
+    for (const row of rows) {
+      const numeric = row.timestamp_type === 'integer' || row.timestamp_type === 'real';
+      if (!numeric && storedTimeInWindow(row.timestamp, since) === null) continue;
+      try {
+        const payload = (await decryptData(
+          base64ToUint8(row.cipher_text),
+          base64ToUint8(row.iv),
+          deviceKeyB64
+        )) as Record<string, unknown>;
+        results.push(
+          fromMessagePayload(
+            {
+              id: row.id,
+              conversationId: row.conversation_id,
+              timestamp: rowTimestampMs(row.timestamp),
+            },
+            payload
+          )
+        );
+      } catch {
+        console.warn('Failed to decrypt SQLite row', row.id);
+      }
+    }
+    return results.sort(compareStoredOrder);
+  }
+
+  // -- Mutations whose message is not here yet -----------------------------
+
+  /**
+   * See {@link IStorage.putPendingMutation}. The rank is compared by the upsert itself
+   * (`ON CONFLICT ... WHERE`), so no other write can land between a read and this one. The bounds are
+   * further statements, each atomic, in the order IndexedDB walks `bySenderTierAt` then its primary
+   * key: a concurrent put can only make them evict more, never less.
+   */
+  async putPendingMutation(
+    entry: PendingMutation,
+    limits: PendingMutationLimits,
+    deviceKeyB64: string
+  ): Promise<PendingMutationWrite> {
+    const { key, sealed } = await splitPendingMutation(entry, deviceKeyB64);
+    const encrypted = await encryptData(sealed, deviceKeyB64);
+    const iv = uint8ToBase64(encrypted.iv);
+    const result = await this.db.execute(
+      `INSERT INTO pending_mutations
+         (conversation_id, message_tag, sender_tag, kind, slot_tag, tier, rank, at, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (conversation_id, message_tag, sender_tag, kind, slot_tag) DO UPDATE SET
+         tier = excluded.tier, rank = excluded.rank, at = excluded.at, iv = excluded.iv,
+         cipher_text = excluded.cipher_text
+       WHERE excluded.rank > pending_mutations.rank`,
+      [
+        ...pendingMutationPrimaryKey(key),
+        key.tier,
+        key.rank,
+        key.at,
+        iv,
+        uint8ToBase64(encrypted.cipherText),
+      ]
+    );
+    if ((result?.rowsAffected ?? 0) === 0) return { written: false, kept: false, evicted: 0 };
+    let evicted = await this.evictLowestPending(
+      key.conversationId,
+      key.senderTag,
+      `(SELECT COUNT(*) FROM pending_mutations WHERE conversation_id = $1 AND sender_tag = $2) - $3`,
+      limits.perSender
+    );
+    // The conversation bound: while over it, the sender holding the most (smallest tag on a tie)
+    // loses its lowest entry. One entry over per put in the steady state, so one round.
+    for (;;) {
+      const over: Array<{ n: number }> = await this.db.select(
+        'SELECT COUNT(*) AS n FROM pending_mutations WHERE conversation_id = $1',
+        [key.conversationId]
+      );
+      if (Number(over[0]?.n ?? 0) <= limits.perConversation) break;
+      const largest: Array<{ sender_tag: string }> = await this.db.select(
+        `SELECT sender_tag, COUNT(*) AS n FROM pending_mutations WHERE conversation_id = $1
+         GROUP BY sender_tag ORDER BY n DESC, sender_tag ASC LIMIT 1`,
+        [key.conversationId]
+      );
+      if (largest.length === 0) break;
+      const removed = await this.evictLowestPending(
+        key.conversationId,
+        largest[0].sender_tag,
+        '1',
+        0
+      );
+      if (removed === 0) break;
+      evicted += removed;
+    }
+    const still: any[] = await this.db.select(
+      `SELECT iv FROM pending_mutations WHERE ${PENDING_KEY_WHERE}`,
+      pendingMutationPrimaryKey(key)
+    );
+    return { written: true, kept: still[0]?.iv === iv, evicted };
+  }
+
+  /**
+   * Deletes one sender's lowest entries - reactions first, oldest frame first, ties by key - as
+   * many as `countSql` says (`$3` bound to `bound`). Resolves with how many went.
+   */
+  private async evictLowestPending(
+    conversationId: string,
+    senderTag: string,
+    countSql: string,
+    bound: number
+  ): Promise<number> {
+    const result = await this.db.execute(
+      `DELETE FROM pending_mutations WHERE rowid IN (
+         SELECT rowid FROM pending_mutations WHERE conversation_id = $1 AND sender_tag = $2
+         ORDER BY tier ASC, at ASC, message_tag ASC, sender_tag ASC, kind ASC, slot_tag ASC
+         LIMIT max(0, ${countSql}))`,
+      countSql.includes('$3') ? [conversationId, senderTag, bound] : [conversationId, senderTag]
+    );
+    return result?.rowsAffected ?? 0;
+  }
+
+  /**
+   * See {@link IStorage.getPendingMutations}: a primary-key prefix per message (`message_tag IN`),
+   * then the entries that did not open removed - each only while it still holds the bytes read.
+   */
+  async getPendingMutations(
+    conversationId: string,
+    messageIds: readonly string[],
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead> {
+    const out: PendingMutationRead = { entries: [], removedUnreadable: 0 };
+    const unique = [...new Set(messageIds)];
+    if (unique.length === 0) return out;
+    const tags = await Promise.all(
+      unique.map((id) => pendingMessageTag(deviceKeyB64, conversationId, id))
+    );
+    for (const batch of chunk(tags, MAX_BOUND_PARAMETERS - 1)) {
+      const placeholders = batch.map((_, i) => `$${i + 2}`).join(', ');
+      const rows: any[] = await this.db.select(
+        `SELECT * FROM pending_mutations WHERE conversation_id = $1 AND message_tag IN (${placeholders})`,
+        [conversationId, ...batch]
+      );
+      for (const row of rows) {
+        const entry = await openPendingRow(row, deviceKeyB64);
+        if (entry) {
+          out.entries.push(entry);
+          continue;
+        }
+        let opens = true;
+        try {
+          await decryptData(base64ToUint8(row.cipher_text), base64ToUint8(row.iv), deviceKeyB64);
+        } catch (e) {
+          if (!(e instanceof PayloadUnreadableError)) throw e;
+          opens = false;
+        }
+        if (opens) {
+          console.error('[DB] a pending mutation row this code never writes - not applied');
+          continue;
+        }
+        const removed = await this.db.execute(
+          `DELETE FROM pending_mutations WHERE ${PENDING_KEY_WHERE} AND cipher_text = $6`,
+          [...pendingRowKey(row), row.cipher_text]
+        );
+        out.removedUnreadable += removed?.rowsAffected ?? 0;
+      }
+    }
+    return out;
+  }
+
+  /** See {@link IStorage.deletePendingMutations}: each removed only at the rank it was read at. */
+  async deletePendingMutations(
+    entries: readonly PendingMutation[],
+    deviceKeyB64: string
+  ): Promise<void> {
+    for (const entry of entries) {
+      const tags = await pendingMutationTags(entry, deviceKeyB64);
+      await this.db.execute(
+        `DELETE FROM pending_mutations WHERE ${PENDING_KEY_WHERE} AND rank = $6`,
+        [
+          ...pendingMutationPrimaryKey({
+            conversationId: entry.conversationId,
+            kind: entry.kind,
+            ...tags,
+          }),
+          entry.rank,
+        ]
+      );
+    }
+  }
+
+  /**
+   * See {@link IStorage.resealPendingMutations}. Each entry is written under the new key FIRST, then
+   * its old row removed only while it still holds the bytes read: an interruption between the two
+   * leaves both, and the next run moves the old one again onto the same key, where the rank
+   * comparison makes the second write a no-op.
+   */
+  async resealPendingMutations(
+    oldDeviceKeyB64: string,
+    newDeviceKeyB64: string
+  ): Promise<PendingMutationReseal> {
+    const report: PendingMutationReseal = { resealed: 0, alreadyNew: 0, unreadable: 0 };
+    if (oldDeviceKeyB64 === newDeviceKeyB64) return report;
+    const rows: any[] = await this.db.select('SELECT * FROM pending_mutations');
+    for (const row of rows) {
+      const entry = await openPendingRow(row, oldDeviceKeyB64);
+      if (!entry) {
+        if (await openPendingRow(row, newDeviceKeyB64)) report.alreadyNew++;
+        else report.unreadable++;
+        continue;
+      }
+      const { key, sealed } = await splitPendingMutation(entry, newDeviceKeyB64);
+      const encrypted = await encryptData(sealed, newDeviceKeyB64);
+      await this.db.execute(
+        `INSERT INTO pending_mutations
+           (conversation_id, message_tag, sender_tag, kind, slot_tag, tier, rank, at, iv, cipher_text)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (conversation_id, message_tag, sender_tag, kind, slot_tag) DO UPDATE SET
+           tier = excluded.tier, rank = excluded.rank, at = excluded.at, iv = excluded.iv,
+           cipher_text = excluded.cipher_text
+         WHERE excluded.rank > pending_mutations.rank`,
+        [
+          ...pendingMutationPrimaryKey(key as PendingMutationRowKey),
+          key.tier,
+          key.rank,
+          key.at,
+          uint8ToBase64(encrypted.iv),
+          uint8ToBase64(encrypted.cipherText),
+        ]
+      );
+      const removed = await this.db.execute(
+        `DELETE FROM pending_mutations WHERE ${PENDING_KEY_WHERE} AND cipher_text = $6`,
+        [...pendingRowKey(row), row.cipher_text]
+      );
+      if ((removed?.rowsAffected ?? 0) > 0) report.resealed++;
+    }
+    return report;
   }
 
   /** Rows held for `conversationId`, counted on `idx_messages_conv` - nothing is decrypted. */
@@ -967,9 +1448,10 @@ export class SqliteStorage implements IStorage {
   async deleteOldMessages(maxAgeMs: number): Promise<number> {
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
-    const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [
-      Date.now() - maxAgeMs,
-    ]);
+    const cutoff = Date.now() - maxAgeMs;
+    const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [cutoff]);
+    // The mutations whose frame predates the cutoff wait for a message older still (see IStorage).
+    await this.db.execute('DELETE FROM pending_mutations WHERE at < $1', [cutoff]);
     return result?.rowsAffected ?? 0;
   }
 
@@ -1612,6 +2094,8 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM distribution_groups');
     // A copy of the feed is the account's content too; a reset leaves none of it behind.
     await this.db.execute('DELETE FROM feed_pages');
+    // A mutation waiting for a message of the account goes with the account.
+    await this.db.execute('DELETE FROM pending_mutations');
     // LAST, and only once every row above is gone: a separate database that may refuse to open
     // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
     await clearOutboxBlobsLast(this.blobs);

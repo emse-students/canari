@@ -142,3 +142,57 @@ export async function decryptData(
     throw e;
   }
 }
+
+/** The HKDF `info` the tag key is derived under: a key for tags, never the AES key itself. */
+const TAG_KEY_INFO = 'canari/device-key-tags/v1';
+
+// One derived HMAC key per device key, cached like the AES import above.
+const tagKeyCache = new Map<string, Promise<CryptoKey>>();
+
+/** The HMAC-SHA-256 key derived from `deviceKeyB64` by HKDF - separate from its AES-GCM use. */
+async function importTagKey(deviceKeyB64: string): Promise<CryptoKey> {
+  const cached = tagKeyCache.get(deviceKeyB64);
+  if (cached) return cached;
+  const promise = (async () => {
+    const keyBytes = Uint8Array.from(atob(deviceKeyB64), (c) => c.charCodeAt(0));
+    const base = await crypto.subtle.importKey('raw', keyBytes, 'HKDF', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: new Uint8Array(32),
+        info: new TextEncoder().encode(TAG_KEY_INFO),
+      },
+      base,
+      { name: 'HMAC', hash: 'SHA-256', length: 256 },
+      false,
+      ['sign']
+    );
+  })();
+  tagKeyCache.set(deviceKeyB64, promise);
+  return promise;
+}
+
+/**
+ * A keyed, deterministic tag of `value` under the device key: HMAC-SHA-256 over `label` and `value`,
+ * truncated to 128 bits, base64url. What a store keys a row on when the key itself must not be
+ * readable at rest - the same value always gives the same tag under one device key, and nothing
+ * about the value can be read from it without that key.
+ *
+ * `label` separates the fields (a message id and a sender never share a tag space).
+ */
+export async function deviceKeyTag(
+  deviceKeyB64: string,
+  label: string,
+  value: string
+): Promise<string> {
+  const key = await importTagKey(deviceKeyB64);
+  const mac = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`${label}\u0000${value}`)
+  );
+  let binary = '';
+  for (const byte of new Uint8Array(mac).subarray(0, 16)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}

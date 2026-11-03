@@ -3,14 +3,14 @@ import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
-import { AssociationsController } from './associations.controller';
+import { AssociationsController, INSTITUTION_DELETE_ADMIN_ONLY } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
-import { signAgendaSelection } from './agenda-signature';
+import { signAgendaSelection, signEventIcs, withEventIcsSig } from './agenda-signature';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { assertReviewerReachesAssociation } from './review-cohort-reach';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
@@ -452,10 +452,14 @@ describe('AssociationsController read guards', () => {
  * AND.
  */
 describe('AssociationsController delete tier', () => {
-  function makeController(governs: boolean) {
+  function makeController(
+    governs: boolean,
+    type: 'association' | 'list' | 'institution' = 'association'
+  ) {
     const service = {
       remove: jest.fn(() => Promise.resolve({ ok: true })),
       isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(governs)),
+      findById: jest.fn(() => Promise.resolve({ id: 'asso1', type })),
     };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
@@ -507,6 +511,36 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+  });
+
+  // Owner, 2026-11-02: an institution is the global admin's to delete, as it is theirs to create.
+  it('refuses a BDE that governs an INSTITUTION, with a typed 403', async () => {
+    const { controller, service } = makeController(true, 'institution');
+
+    const refusal = await controller.remove('asso1', 'user-42', undefined).catch((e: unknown) => e);
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: INSTITUTION_DELETE_ADMIN_ONLY,
+    });
+    expect(service.remove).not.toHaveBeenCalled();
+  });
+
+  it('still lets that BDE delete a list it governs', async () => {
+    const { controller, service } = makeController(true, 'list');
+
+    await controller.remove('asso1', 'user-42', undefined);
+
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+  });
+
+  it('lets a global admin delete an institution', async () => {
+    const { controller, service } = makeController(false, 'institution');
+
+    await controller.remove('asso1', 'admin', 'true');
+
+    expect(service.findById).not.toHaveBeenCalled();
     expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
   });
 });
@@ -768,7 +802,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       args.formation,
       args.sig
     );
-  const json = (args: { campus?: string; userId?: string; internal?: string; sig?: string }) =>
+  const json = (args: { campus?: string; userId?: string; sig?: string }) =>
     makeController().aggregatedCalendarFeed(
       undefined,
       undefined,
@@ -778,15 +812,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       undefined,
       args.campus,
       undefined,
-      args.sig,
-      args.internal
+      args.sig
     );
-
-  it('keeps only the named event, UNSIGNED, so a phone can add ONE evening to its calendar', async () => {
-    const body = await ics(makeController(), { eventId: 'ev2' });
-    expect(body).toContain('UID:ev2@canari');
-    expect(body).not.toContain('UID:ev1@canari');
-  });
 
   it('hands a SIGNED selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
     const controller = makeController();
@@ -811,7 +838,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
     expect(body).toContain('UID:ev2@canari');
   });
 
-  it('REFUSES the bare public feed with a typed 400 (D40), but not one event', async () => {
+  it('REFUSES the bare public feed with a typed 400 (D40)', async () => {
     await expect(ics(makeController(), {})).rejects.toMatchObject({
       response: { code: 'AGENDA_SELECTION_REQUIRED' },
     });
@@ -820,7 +847,6 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
     });
     // A signed-in reader is narrowed to their own spaces, so the JSON feed answers them.
     await expect(json({ userId: 'u1' })).resolves.toBeDefined();
-    await expect(ics(makeController(), { eventId: 'ev1' })).resolves.toContain('BEGIN:VCALENDAR');
   });
 
   describe('the signature (2026-10-06)', () => {
@@ -897,13 +923,53 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       }
     });
 
-    it('lets the server-internal caller (the SEO page) read a selection with no signature', async () => {
-      await expect(
-        json({ campus: 'gardanne', internal: 'internal-secret-for-tests' })
-      ).resolves.toBeDefined();
-      await expect(json({ campus: 'gardanne', internal: 'wrong' })).rejects.toMatchObject({
+    it('grants the internal secret nothing: no anonymous read of the feed is unsigned (2026-11-02)', async () => {
+      // `json` no longer takes the header: the route does not read it.
+      await expect(json({ campus: 'gardanne' })).rejects.toMatchObject({
         response: { code: 'AGENDA_SIGNATURE_REQUIRED' },
       });
+    });
+  });
+
+  describe("one event's signed .ics link (2026-11-02)", () => {
+    it('serves the event to a link signed for THAT event', async () => {
+      const body = await ics(makeController(), { eventId: 'ev2', sig: signEventIcs('ev2') });
+      expect(body).toContain('UID:ev2@canari');
+      expect(body).not.toContain('UID:ev1@canari');
+    });
+
+    it('refuses an unsigned or wrongly signed link with a BODYLESS 403, and reads no feed', async () => {
+      for (const sig of [undefined, signEventIcs('ev1'), sigOf('gardanne')]) {
+        const controller = makeController();
+        const status = jest.fn();
+        const body = await controller.aggregatedCalendarFeedIcs(
+          undefined,
+          undefined,
+          undefined,
+          'ev2',
+          { setHeader: jest.fn(), status } as never,
+          undefined,
+          undefined,
+          sig
+        );
+        expect(status).toHaveBeenCalledWith(403);
+        expect(body).toBe('');
+        const service = (
+          controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } }
+        ).service;
+        expect(service.listAggregatedCalendarFeed).not.toHaveBeenCalled();
+      }
+    });
+
+    it('serves the signature on each validated event, never on another', () => {
+      const served = withEventIcsSig([
+        { id: 'ev1', status: 'validated' },
+        { id: 'ev2', status: 'pending' },
+      ]);
+      expect(served[0].icsSig).toBe(signEventIcs('ev1'));
+      expect(served[1]).not.toHaveProperty('icsSig');
+      // An event's signature opens that event only, and is no selection's signature.
+      expect(signEventIcs('ev1')).not.toBe(signEventIcs('ev2'));
     });
   });
 });

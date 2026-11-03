@@ -187,6 +187,10 @@ profile tab still draws its controls on `MANAGE_MEMBERS`, so a member holding th
 `EDIT_PROFILE` meets a 403 there - possible only after a deliberate untick. **`EDIT_PROFILE` sits
 under the member-flag ceiling (#2949) like every flag**: a `MANAGE_MEMBERS` holder grants or revokes
 it only when it holds it, and the old-preset shim adds it only when the granter's ceiling covers it.
+**It reaches the association's own record and nothing written in its name**: no post or comment
+code reads it, so the author-only edit rule and the scoped `MODERATE` of #2953 are untouched; and
+its super-admin inheritance never covers an institution, which `holdsBdeFlagOverSql` gives no BDE
+(the client drops the tier there too, `editRights`).
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references

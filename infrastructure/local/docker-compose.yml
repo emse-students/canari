@@ -392,7 +392,10 @@ services:
       # production until the amount format Lydia signs is measured.
       LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-true}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
-      AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
+      # EVERY AGENDA READ SIGNS ITS EVENTS' `.ics` LINKS since 2026-11-02 (`withEventIcsSig`), so with
+      # no key the local agenda answers 503. A local-only default, like INTERNAL_SECRET's above;
+      # env-from-prod.sh regenerates a random one. Both estates still require their own, no default.
+      AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-dev-agenda-signing-key-change-me-0123456789abcdef}
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still

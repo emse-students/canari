@@ -4,8 +4,12 @@ import { Logger } from '@nestjs/common';
 import * as signature from '../lives/live-report-signature';
 import { LIVE_KEY_ENCRYPTION_SECRET_ENV, sealLiveKey } from '../lives/live-key-at-rest';
 import { ModerationService } from './moderation.service';
+import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
+
+/** The platform admin's scope: the lists unnarrowed. */
+const ADMIN_SCOPE = { userId: 'admin', isGlobalAdmin: true };
 
 /**
  * What the 2026-08-27 report reform changed, and therefore what must not regress:
@@ -21,7 +25,10 @@ describe('ModerationService - reports', () => {
     save: jest.Mock;
     count: jest.Mock;
     manager: { query: jest.Mock; transaction: jest.Mock };
+    createQueryBuilder: jest.Mock;
   };
+  /** The queue's query builder: `getMany` answers what `find` is mocked to, `where` is recorded. */
+  let reportQb: Record<string, jest.Mock>;
   let muteRepo: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock; find: jest.Mock };
 
   beforeEach(() => {
@@ -32,7 +39,11 @@ describe('ModerationService - reports', () => {
       save: jest.fn().mockImplementation((row) => Promise.resolve({ id: 'r1', ...row })),
       count: jest.fn().mockResolvedValue(1),
       manager: { query: jest.fn().mockResolvedValue([]), transaction: jest.fn() },
+      createQueryBuilder: jest.fn(() => reportQb),
     };
+    reportQb = {};
+    for (const m of ['orderBy', 'take', 'skip', 'where']) reportQb[m] = jest.fn(() => reportQb);
+    reportQb.getMany = jest.fn(() => reportRepo.find());
     // The hide and the republications it drops are one transaction, run on the same query mock.
     reportRepo.manager.transaction.mockImplementation((fn: (m: unknown) => unknown) =>
       fn(reportRepo.manager)
@@ -541,7 +552,7 @@ describe('ModerationService - reports', () => {
           .spyOn(signature, 'verifyReportedLine')
           .mockReturnValue({ content, author: 'verified', reporter: 'verified' });
 
-        const [row] = await service.listAllReports();
+        const [row] = await service.listAllReports(ADMIN_SCOPE);
 
         expect(row.contentPreview).toBe(preview);
         expect(row.liveChat?.text).toBe('hello');
@@ -553,7 +564,7 @@ describe('ModerationService - reports', () => {
     it('deletes nothing - retention is the weekly cron and not a side effect of reading', async () => {
       reportRepo.find.mockResolvedValue([]);
 
-      await service.listAllReports();
+      await service.listAllReports(ADMIN_SCOPE);
 
       const statements = reportRepo.manager.query.mock.calls.map((c) => String(c[0]));
       expect(statements.some((sql) => /DELETE/i.test(sql))).toBe(false);
@@ -565,7 +576,7 @@ describe('ModerationService - reports', () => {
       ]);
       reportRepo.manager.query.mockResolvedValue([{ id: 'bob', displayName: 'Bob Martin' }]);
 
-      const [row] = await service.listAllReports();
+      const [row] = await service.listAllReports(ADMIN_SCOPE);
 
       expect(row.contentPreview).toBe('Bob Martin');
       expect(row.postId).toBeNull();
@@ -577,9 +588,24 @@ describe('ModerationService - reports', () => {
       ]);
       reportRepo.manager.query.mockResolvedValue([{ id: 'bob', displayName: null }]);
 
-      const [row] = await service.listAllReports();
+      const [row] = await service.listAllReports(ADMIN_SCOPE);
 
       expect(row.contentPreview).toBe('bob');
+    });
+
+    // Owner, 2026-11-02: MODERATE is scoped - a BDE reads the reports of its governed spaces only.
+    it('narrows the queue to the BDE scope, in SQL, for a moderator who is not the platform admin', async () => {
+      await service.listAllReports({ userId: 'bde-mod', isGlobalAdmin: false }, 50, 0);
+
+      expect(reportQb.where).toHaveBeenCalledWith(reportInBdeScopeSql('r', ':scopeModerator'), {
+        scopeModerator: 'bde-mod',
+      });
+    });
+
+    it('leaves the queue whole for the platform admin', async () => {
+      await service.listAllReports({ userId: 'admin', isGlobalAdmin: true }, 50, 0);
+
+      expect(reportQb.where).not.toHaveBeenCalled();
     });
   });
 });

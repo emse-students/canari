@@ -3,6 +3,8 @@ import 'reflect-metadata';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+import { UnauthorizedException } from '@nestjs/common';
+
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { FormsController } from './forms.controller';
 
@@ -51,6 +53,21 @@ describe('FormsController - auth_request identifies, the guard refuses', () => {
 
   it('guards the agenda link of a form, closed to a signed-out caller on 2026-11-02', () => {
     expect(guardsOn('getFormCalendarLink')).toContain(NginxAuthGuard);
+  });
+
+  it('refuses an anonymous agenda-link request at the guard, so the handler reads nothing', () => {
+    // The guard runs before the handler: a request with no `X-User-Id` never reaches the read.
+    const previous = process.env.INTERNAL_SHARED_SECRET;
+    process.env.INTERNAL_SHARED_SECRET = 'secret-for-the-guard-test';
+    try {
+      const ctx = {
+        switchToHttp: () => ({ getRequest: () => ({ headers: {} }) }),
+      } as never;
+      expect(() => new NginxAuthGuard().canActivate(ctx)).toThrow(UnauthorizedException);
+    } finally {
+      if (previous === undefined) delete process.env.INTERNAL_SHARED_SECRET;
+      else process.env.INTERNAL_SHARED_SECRET = previous;
+    }
   });
 });
 

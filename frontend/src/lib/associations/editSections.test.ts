@@ -163,6 +163,14 @@ describe('which sections a reader may open', () => {
     ).toBe(true);
   });
 
+  it('keeps deleting an institution to the global admin (owner, 2026-11-02)', () => {
+    expect(editRights({ ...none, isSuperAdmin: true }, 'institution').delete).toBe(false);
+    expect(editRights({ ...none, isGlobalAdmin: true }, 'institution').delete).toBe(true);
+    // The BDE star keeps the associations and lists it governs.
+    expect(editRights({ ...none, isSuperAdmin: true }, 'association').delete).toBe(true);
+    expect(editRights({ ...none, isSuperAdmin: true }, 'list').delete).toBe(true);
+  });
+
   it('gives a list its eight selling-free sections, in hub order, and refuses it the shop ones', () => {
     const admin = editRights({ ...none, isGlobalAdmin: true }, 'list');
     expect(visibleEditSections(admin, LIST_EDIT_SECTIONS)).toEqual([

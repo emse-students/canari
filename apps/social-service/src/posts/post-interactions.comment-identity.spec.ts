@@ -1,5 +1,5 @@
 import type { Repository } from 'typeorm';
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostsController } from './posts.controller';
 import type { Post } from './entities/post.entity';
@@ -40,6 +40,8 @@ describe('PostInteractionsService - comment identity', () => {
     };
     const associations = {
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: jest.fn(() => Promise.resolve(false)),
       mayActOnAny: jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids))),
       listFlagHolders: jest.fn(() => Promise.resolve(holders)),
     };
@@ -136,7 +138,7 @@ describe('PostInteractionsService - comment identity', () => {
     const asso = { id: 'b', userId: 'writer', associationId: 'asso-1', text: 'x' };
     const { service } = make({ ...base(), comments: [anon, asso] });
     await expect(service.editComment('p1', 'a', 'someone', 'y')).rejects.toBeInstanceOf(
-      UnauthorizedException
+      ForbiddenException
     );
     await expect(service.editComment('p1', 'a', 'writer', 'y')).resolves.toMatchObject({
       ok: true,
@@ -152,8 +154,55 @@ describe('PostInteractionsService - comment identity', () => {
     const { service, associations } = make({ ...base(), comments: [asso] });
     associations.mayActOnAny.mockResolvedValue(new Set());
     await expect(service.editComment('p1', 'b', 'writer', 'z')).rejects.toBeInstanceOf(
-      UnauthorizedException
+      ForbiddenException
     );
+  });
+
+  describe("a comment's integrity: only its author changes its text (owner, 2026-11-02)", () => {
+    const plain = { id: 'c', userId: 'writer', text: 'x' };
+    const asso = { id: 'b', userId: 'writer', associationId: 'asso-1', text: 'x' };
+    const refusalOf = (p: Promise<unknown>) => p.then(() => null).catch((e: unknown) => e);
+
+    it('refuses a moderator of the post 403 COMMENT_EDIT_AUTHOR_ONLY, and still lets it delete', async () => {
+      const { service, post, associations } = make({ ...base(), comments: [{ ...plain }] });
+      associations.mayModeratePost.mockResolvedValue(true);
+      const refusal = await refusalOf(service.editComment('p1', 'c', 'bde-mod', 'rewritten'));
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'COMMENT_EDIT_AUTHOR_ONLY',
+      });
+      expect(post.comments[0].text).toBe('x');
+    });
+
+    it('refuses the platform admin on an ordinary and on an association comment', async () => {
+      const { service, post, associations } = make({
+        ...base(),
+        comments: [{ ...plain }, { ...asso }],
+      });
+      // The admin holds POST_AS_ASSO nowhere: the admin tier is not authorship.
+      associations.mayActOnAny.mockResolvedValue(new Set());
+      for (const id of ['c', 'b']) {
+        const refusal = await refusalOf(service.editComment('p1', id, 'admin', 'rewritten', true));
+        expect(refusal).toBeInstanceOf(ForbiddenException);
+        expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+          code: 'COMMENT_EDIT_AUTHOR_ONLY',
+        });
+      }
+      expect((post.comments as Array<{ text: string }>).map((c) => c.text)).toEqual(['x', 'x']);
+    });
+
+    it('lets the author edit, the platform admin included on their own comment', async () => {
+      const { service } = make({
+        ...base(),
+        comments: [{ ...plain }, { ...plain, id: 'own', userId: 'admin' }],
+      });
+      await expect(service.editComment('p1', 'c', 'writer', 'y')).resolves.toMatchObject({
+        ok: true,
+      });
+      await expect(service.editComment('p1', 'own', 'admin', 'y', true)).resolves.toMatchObject({
+        ok: true,
+      });
+    });
   });
 });
 

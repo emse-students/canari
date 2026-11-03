@@ -8,8 +8,9 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
  * disagree with the spaces page that designates each space's BDE; now the spaces are the only
  * truth and an association is a BDE exactly when `spaces."bdeAssociationId"` names it.
  *
- * It answers "is a BDE SOMEWHERE", which is what the platform-wide grants ask (MODERATE, D23) and
- * what the routes naming no association ask. A power exercised ON an association asks
+ * It answers "is a BDE SOMEWHERE", which is what the doors of the BDE surfaces ask (the moderation
+ * queue opens to a MODERATE holder anywhere, then narrows to its scope) and what the routes naming no
+ * association ask. A power exercised ON an association asks
  * `holdsBdeFlagOverSql` instead, which is scoped to the spaces that association reaches.
  */
 export function isBdeAssociationSql(alias: string): string {
@@ -31,7 +32,10 @@ export function isBdeAssociationSql(alias: string): string {
  * holds that), so a BDE governs its own association.
  *
  * Decided by the user (profiles-and-access, 6c): MANAGE_ASSO is read through this, and VALIDATE_EVENTS
- * through its agenda twin below; MODERATE stays global and does neither.
+ * through its agenda twin below. MODERATE is read through this too since 2026-11-02 (owner), by
+ * `bde-moderation.ts` for content in an association's name - so an institution's content is the
+ * platform admin's to moderate, as its management is - which adds the personal content and the
+ * people this predicate cannot express, on the same per-space standing (`bdeStandingInSpaceSql`).
  *
  * AN INSTITUTION HAS NO GOVERNING BDE, EVER (owner, 2026-11-02: "une institution n'a personne au
  * dessus"; 2026-11-03: "Aucun BDE n'a les droits de gestion sur une institution"). Its audience may
@@ -93,10 +97,27 @@ function bdeFlagOverReachSql(
         WHERE bde_of_target."bdeAssociationId" = bde_target.id))`
     : '';
   return `EXISTS (SELECT 1 FROM association_members bde_member
-    JOIN spaces bde_governed ON bde_governed."bdeAssociationId" = bde_member."associationId"
+    JOIN spaces bde_governed ON ${bdeStandingInSpaceSql('bde_member', 'bde_governed', user, flag)}
     JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}${target}
-    WHERE bde_member."userId" = ${user} AND (bde_member.permissions & ${flag}) <> 0${notInstitution}
+    WHERE TRUE${notInstitution}
       AND ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
+}
+
+/**
+ * THE PER-SPACE STANDING, ONE STATEMENT: membership row `member` is user `user`'s in the BDE that
+ * governs space `space`, and holds `flag` there. Every BDE power bounded by spaces reads it - the
+ * management and agenda predicates above, the standings list below, and MODERATE's reach over people
+ * (`bde-moderation.ts`) - so "governs this space" cannot mean two things. All four arguments are SQL
+ * expressions (aliases, placeholders or columns).
+ */
+export function bdeStandingInSpaceSql(
+  member: string,
+  space: string,
+  user: string,
+  flag: string
+): string {
+  return `${space}."bdeAssociationId" = ${member}."associationId"
+      AND ${member}."userId" = ${user} AND (${member}.permissions & ${flag}) <> 0`;
 }
 
 /**
@@ -108,8 +129,7 @@ function bdeFlagOverReachSql(
  */
 export const BDE_SPACE_STANDINGS_SQL = `SELECT bde_space.formation, bde_space.campus,
     EXISTS (SELECT 1 FROM association_members bde_star
-      WHERE bde_star."associationId" = bde_space."bdeAssociationId"
-        AND bde_star."userId" = $1 AND (bde_star.permissions & $2) <> 0) AS "governed"
+      WHERE ${bdeStandingInSpaceSql('bde_star', 'bde_space', '$1', '$2')}) AS "governed"
   FROM spaces bde_space ORDER BY bde_space.campus, bde_space.formation`;
 
 /** Does user `$1` hold flag `$3` in a BDE governing association `$2`? Answers `holds`. */

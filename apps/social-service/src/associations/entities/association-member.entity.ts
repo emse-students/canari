@@ -24,7 +24,7 @@ export enum AssociationPermissionFlag {
    * status, which stay global-admin-only.
    */
   MANAGE_ASSO = 1 << 6,
-  /** Delete posts, mute users and review content reports (BDE only). */
+  /** Hide, delete, pin, unmask posts, mute users, review reports: in the BDE's spaces (BDE only). */
   MODERATE = 1 << 7,
   /** Create, edit and delete boutique products. */
   MANAGE_PRODUCTS = 1 << 8,
@@ -94,7 +94,7 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
  *   manage the payout-account onboarding must be explicitly granted this flag.
  * - VALIDATE_EVENTS / MANAGE_ASSO / MODERATE: BDE-only flags with no effect in
  *   non-BDE associations (read through `spaces/bde.ts`: the BDE of a space, scoped to the
- *   associations reaching that space - MODERATE excepted, which is global).
+ *   associations reaching that space - MODERATE too since 2026-11-02, `bde-moderation.ts`).
  */
 export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.POST_AS_ASSO |

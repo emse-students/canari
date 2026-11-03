@@ -157,16 +157,39 @@ function makeStorage(seed: OutboxEntry[] = []) {
   /** The owed group exits (`pendingGroupExits`); none by default. */
   const exits: Array<{ groupId: string; kind: 'leave' | 'delete'; requestedAt: number }> = [];
   const rows = new Map<string, StoredMessage>();
+  const storageSink = vi.fn().mockResolvedValue(undefined);
   return {
     _map: map,
     _exits: exits,
     getPendingGroupExits: vi.fn(async () => [...exits]),
-    saveMessage: vi.fn().mockResolvedValue(undefined),
+    saveMessage: storageSink,
     // The stored message rows - only what a test seeds; the flusher reads them to keep their proofs.
     _messages: rows,
     getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    // A compare-and-set over the seeded rows (a seed with no conversation stands in any): the
+    // merged row lands in `saveMessage`, the one sink the assertions read; an absent row is not
+    // written, as in the real stores.
+    mergeMessages: vi.fn(
+      async (
+        conversationId: string,
+        ids: string[],
+        merge: (current: StoredMessage) => StoredMessage | null
+      ) => {
+        const written = new Set<string>();
+        for (const id of ids) {
+          const row = rows.get(id);
+          if (!row || (row.conversationId && row.conversationId !== conversationId)) continue;
+          const next = merge(row);
+          if (!next) continue;
+          rows.set(id, next);
+          written.add(id);
+          await storageSink(next, 'device-key');
+        }
+        return written;
+      }
+    ),
     // Like the real stores: a patch of a row that is absent writes nothing.
-    updateMessage: vi.fn(async (id: string, patch: Partial<StoredMessage>) => {
+    updateMessage: vi.fn(async (_c: string, id: string, patch: Partial<StoredMessage>) => {
       const row = rows.get(id);
       if (row) rows.set(id, { ...row, ...patch });
     }),
@@ -519,6 +542,28 @@ describe('outbox flusher', () => {
     );
   });
 
+  it('folds the send onto the stored row - a reaction stored since the send began is kept', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const bob = { userId: 'bob', emoji: '👍', at: 5 };
+    storage._messages.set('m1', {
+      id: 'm1',
+      conversationId: 'g1',
+      senderId: 'me',
+      content: 'x',
+      timestamp: 100,
+      reactions: [bob],
+    } as StoredMessage);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.flush();
+
+    expect(storage._messages.get('m1')).toMatchObject({
+      reactions: [bob],
+      serverTimestamp: 1_700_000_000_000,
+    });
+  });
+
   describe("keeps this device's own signature on what it sent (history-reconciliation, authorship)", () => {
     const PROOF = new Uint8Array([7, 7]);
     const ORIGINAL = { body: 'b3JpZ2luYWw=', proof: 'cHJvb2Y=', group: 'g1' };
@@ -586,7 +631,7 @@ describe('outbox flusher', () => {
       await outbox.flush();
 
       const row = storage.saveMessage.mock.calls.at(-1)[0];
-      expect(row.authorship).toBeUndefined();
+      expect(row.authorship).toBeNull();
       expect(row.deleteProof).toMatchObject({ proof: toBase64(PROOF), group: 'g1' });
     });
   });
@@ -5599,10 +5644,12 @@ describe('outbox - a file queued at the tap', () => {
       timestamp: 100,
     });
     const order: string[] = [];
-    storage.updateMessage.mockImplementation(async (id: string, patch: Partial<StoredMessage>) => {
-      order.push('row');
-      storage._messages.set(id, { ...storage._messages.get(id)!, ...patch });
-    });
+    storage.updateMessage.mockImplementation(
+      async (_c: string, id: string, patch: Partial<StoredMessage>) => {
+        order.push('row');
+        storage._messages.set(id, { ...storage._messages.get(id)!, ...patch });
+      }
+    );
     storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
       order.push('entry');
       storage._map.delete(id);
@@ -5651,6 +5698,7 @@ describe('outbox - a file queued at the tap', () => {
     await outbox.flush();
 
     expect(storage.updateMessage).toHaveBeenCalledWith(
+      'g1',
       'a1',
       { unsentReason: 'not-a-member' },
       'device-key'
