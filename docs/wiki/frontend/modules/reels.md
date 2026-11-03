@@ -840,9 +840,23 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    bottom bar, no native tab bar), at the NEWEST reel. Closing returns to the feed exactly where it
    was - the feed never left the page.
 3. **The list is every reel the member may see, newest first, whatever tab is open**
-   (`reels/allReels.ts`, `GET /api/posts?kind=reel&feed=all` - the C7 list the viewer already swiped
-   through from a reel). Decided over "the open tab's reels": an entry beside the tabs is not one of
-   them, and the Associations tab rarely carries a reel at all.
+   (`reels/allReels.ts` - the C7 list the viewer already swiped through from a reel). Decided over
+   "the open tab's reels": an entry beside the tabs is not one of them, and the Associations tab
+   rarely carries a reel at all. **It is its own server feed, `feed=reels`** (`posts/list-feed.ts`,
+   2026-11-03), NOT `feed=all`: it is the UNION of Associations, Suivis and Mon espace restricted to
+   reels, which is exactly `postVisibleToViewerSql` with no disjunct turned off, plus every filter
+   every arm applies (hidden, live reel, review cohort, blocks, schedule, promo cutoff). Ordered
+   `publishedAt DESC, id DESC` - one row per post, so a reel reached through a follow AND a repost is
+   listed once, at its publication. `reels-list.integration.spec.ts` proves the set equality on
+   PostgreSQL for a same-campus reader, an other-campus accepted follower, a pending follower, a
+   reader who blocked the author and one reached through a member repost.
+   **The defect it fixed (owner, 2026-11-03):** the viewer used to read `feed=all`, the "Mon espace"
+   arm, which is filtered by SPACES (decision 5 of the follow requests) - so someone following a
+   member on another campus never saw that member's reels here, nor a reel a followed person
+   reposted (WP-F6). **What the client sends:** installed clients (up to 1.6.x) send `kind=reel`
+   with no `feed`; the server reads that shape as `feed=reels`
+   ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03),
+   which also carries why the client keeps that shape for one more release).
 4. **The first page is read BEFORE the viewer opens**, because an empty viewer is no answer: with no
    reel yet, a small sheet says "Pas encore de CanaReels" and offers the camera (`ReelsEmptyState`,
    `CAMERA_PLACE`). That page becomes the viewer's own first page (`reelsAfterFirstPage`), not a

@@ -1863,7 +1863,12 @@ nobody else.
   anonymous form.
 - **Never a read grant**: the personal branch takes no `readGrants`, as before (WP7).
 - **Tout stays SPACES (decision 5)**: `postVisibleToUserSql` takes `followers: false`
-  (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. Everything else - the
+  (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. **Never by the
+  CanaReels viewer** (`feed=reels`, 2026-11-03): it is not a tab but the union of the three, so it
+  asks the whole predicate - it used to read `feed=all`, and an accepted follower on another campus
+  never saw the reels of the member they follow there
+  ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16),
+  point 3). Everything else - the
   Suivis arm, the Associations arm (where the FOLLOWER disjunct changes nothing: a personal post is
   there only through a republication the reader sees - but the arm DOES drop WP-F6's member-repost
   door, `memberReposts: false`, owner 2026-11-02: an association post a reader reaches only through

@@ -4,7 +4,10 @@ import { listPosts, type PostEntity } from '$lib/posts/api';
  * THE LIST THE REEL VIEWER SWIPES THROUGH (C7): every live reel the reader may see, and since
  * 2026-10-19 every post whose only content is ONE picture (user: photos in CanaReels, as on
  * Instagram), newest first, whatever tab the feed is on - the server narrows
- * (`GET /api/posts?kind=reel&singlePhotos=true`, `feed` defaulting to `all`), never the client.
+ * (`GET /api/posts?kind=reel&singlePhotos=true`), never the client. The server reads that shape as
+ * its `feed=reels` list, the union of the three tabs; the client sends `feed: 'reels'` only once
+ * both estates serve it, since an older server refuses the value
+ * (docs/wiki/legacy-compatibility.md, "`kind=reel` on `feed=all` read as the CanaReels viewer list").
  * Opened from a reel it follows that reel; opened from the CanaReels icon beside the feed's tabs it
  * starts at the newest (docs/wiki/frontend/modules/reels.md, "The CanaReels entry").
  */

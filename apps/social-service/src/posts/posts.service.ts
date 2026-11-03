@@ -57,6 +57,7 @@ import {
   MEMBER_REPOSTED_BY_FOLLOWED_SQL,
   republishedForViewerSql,
 } from './republished-feed-sql';
+import { listKind, type ListPostsParams } from './list-feed';
 import {
   postVisibleToViewerSql,
   readInFeedAudience,
@@ -1350,34 +1351,25 @@ export class PostsService {
   }
 
   /**
-   * Returns paginated posts for one of four feeds:
+   * Returns paginated posts for one of four feeds, or the CanaReels viewer's list:
    * - "associations": what associations publish or republish, a carried post at its latest
    *   republication (`republished-feed-sql.ts`)
    * - "all": every post, pinned first - filtered by SPACES: an accepted follower's reach across
-   *   spaces (WP-F5) is not in it (decision 5)
+   *   spaces (WP-F5) and a member repost (WP-F6) are not in it (decision 5)
    * - "followed": posts from associations and users the viewer follows, and what a followed
    *   association republished, placed at that republication - a followed person's post whatever
    *   their space (WP-F5)
    * - "custom": personal posts filtered by promo year and/or formation
+   * - "reels": NOT a tab - the CanaReels viewer (`list-feed.ts`): every reel the reader may see,
+   *   always `kind: 'reel'`, newest first by `publishedAt`
    *
    * Non-admin viewers with a promo year set cannot see posts published before
    * August 1st of their promo year.
    * Results are cached in Redis for 30 s. Future-scheduled posts are always excluded.
    */
-  async listPosts(params: {
-    limit: number;
-    offset: number;
-    feed: 'all' | 'followed' | 'custom' | 'associations';
-    viewerUserId?: string;
-    isAdmin?: boolean;
-    promo?: number;
-    formation?: string;
-    /** Restricts the page to one kind; absent means posts AND reels. */
-    kind?: PostKind;
-    /** With `kind: 'reel'`, the posts whose only content is ONE picture come too (`single-photo-sql.ts`). */
-    singlePhotos?: boolean;
-  }) {
-    const { feed, viewerUserId, isAdmin, promo, formation, kind } = params;
+  async listPosts(params: ListPostsParams) {
+    const { feed, viewerUserId, isAdmin, promo, formation } = params;
+    const kind = listKind(params);
     const singlePhotos = params.singlePhotos === true && kind === 'reel';
     const limit = Number(params.limit);
     const offset = Number(params.offset);
@@ -1401,6 +1393,99 @@ export class PostsService {
     } catch {
       // Redis miss or error - fall through to DB
     }
+
+    const rawPosts = await this.listPostRows(params);
+
+    for (const post of rawPosts) {
+      if (typeof post.mentions === 'string') {
+        post.mentions = post.mentions ? post.mentions.split(',').filter(Boolean) : [];
+      } else {
+        post.mentions = post.mentions ?? [];
+      }
+      post.commentCount = Number(post.commentCount) || 0;
+    }
+
+    const authorIds = [
+      ...new Set(
+        rawPosts.filter((p: any) => !p.associationId && p.authorId).map((p: any) => p.authorId)
+      ),
+    ] as string[];
+
+    let nameMap: Record<
+      string,
+      { displayName: string | null; firstName: string | null; lastName: string | null }
+    > = {};
+    if (authorIds.length > 0) {
+      const rows: {
+        id: string;
+        displayName: string | null;
+        firstName: string | null;
+        lastName: string | null;
+      }[] = await this.postRepo.manager.query(
+        `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+        [authorIds]
+      );
+      nameMap = Object.fromEntries(
+        rows.map((r) => [
+          r.id,
+          { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName },
+        ])
+      );
+    }
+
+    await this.attachRepublishers(rawPosts);
+    const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
+    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
+
+    await this.commentIdentity.serveRows(rawPosts, {
+      viewerId: viewerUserId,
+      isGlobalAdmin: viewerCtx.isGlobalAdmin,
+      moderatedPostIds: viewerCtx.moderatedIds,
+    });
+
+    const result = rawPosts.map((p: any) => {
+      let row = p;
+      if (!p.associationId && p.authorId) {
+        const authorInfo = nameMap[p.authorId] ?? {
+          displayName: null,
+          firstName: null,
+          lastName: null,
+        };
+        row = {
+          ...p,
+          authorDisplayName: authorInfo.displayName,
+          authorFirstName: authorInfo.firstName,
+          authorLastName: authorInfo.lastName,
+        };
+      }
+      if (row.linkedCalendarEventId) {
+        row = { ...row, linkedCalendarEvent: linkedEvents.get(row.linkedCalendarEventId) ?? null };
+      }
+      return this.shapeListRow(row, viewerCtx);
+    });
+
+    const safe = this.stripBigIntForJson(result);
+
+    try {
+      await this.redis.setex(cacheKey, PostsService.LIST_CACHE_TTL, JSON.stringify(safe));
+    } catch {
+      // Non-fatal
+    }
+
+    return safe;
+  }
+
+  /**
+   * The rows of one list page, undecorated: the one query of the requested arm, its filters and its
+   * order. Split from `listPosts` so the set each arm returns is compared on PostgreSQL
+   * (`reels-list.integration.spec.ts`) without the decoration's own reads.
+   */
+  private async listPostRows(params: ListPostsParams): Promise<any[]> {
+    const { feed, viewerUserId, isAdmin, promo, formation } = params;
+    const kind = listKind(params);
+    const singlePhotos = params.singlePhotos === true && kind === 'reel';
+    const limit = Number(params.limit);
+    const offset = Number(params.offset);
 
     // Promo-based date gate: a viewer cannot see posts published before the August their own
     // promo opens on. SHARED WITH THE AGENDA since 2026-09-20 - the rule, and why it is a
@@ -1482,9 +1567,19 @@ export class PostsService {
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
-    } else if (feed === 'all') {
+    } else if (feed === 'all' || feed === 'reels') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
+      // ONE query for "Mon espace" and the CanaReels viewer, differing in the predicate only: the
+      // viewer is every reel the reader may see (`list-feed.ts`), so it asks the WHOLE predicate -
+      // the follower and member-repost doors included, which the tab leaves to Suivis (decision 5).
+      // Every other clause - hidden, live reel, review cohort, blocks, schedule, promo cutoff - is
+      // the one every arm applies. A row is one post, so a reel reached through a follow AND a
+      // repost is listed once, at its `publishedAt`.
       const bp = blockedAt(promoCutoff ? 4 : 3);
+      const allVisibleAt = feed === 'reels' ? visibleAt : spaceVisibleAt;
+      this.logger.debug(
+        `list ${feed}: ${feed === 'reels' ? 'the whole visibility predicate' : 'filtered by spaces'}`
+      );
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
@@ -1495,7 +1590,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
-         ${spaceVisibleAt(3 + tail.length)}
+         ${allVisibleAt(3 + tail.length)}
        ${this.listOrderSql(kind, `$${3 + tail.length}`)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
@@ -1559,83 +1654,7 @@ export class PostsService {
       );
     }
 
-    for (const post of rawPosts) {
-      if (typeof post.mentions === 'string') {
-        post.mentions = post.mentions ? post.mentions.split(',').filter(Boolean) : [];
-      } else {
-        post.mentions = post.mentions ?? [];
-      }
-      post.commentCount = Number(post.commentCount) || 0;
-    }
-
-    const authorIds = [
-      ...new Set(
-        rawPosts.filter((p: any) => !p.associationId && p.authorId).map((p: any) => p.authorId)
-      ),
-    ] as string[];
-
-    let nameMap: Record<
-      string,
-      { displayName: string | null; firstName: string | null; lastName: string | null }
-    > = {};
-    if (authorIds.length > 0) {
-      const rows: {
-        id: string;
-        displayName: string | null;
-        firstName: string | null;
-        lastName: string | null;
-      }[] = await this.postRepo.manager.query(
-        `SELECT id, "displayName", "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-        [authorIds]
-      );
-      nameMap = Object.fromEntries(
-        rows.map((r) => [
-          r.id,
-          { displayName: r.displayName, firstName: r.firstName, lastName: r.lastName },
-        ])
-      );
-    }
-
-    await this.attachRepublishers(rawPosts);
-    const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
-    const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
-
-    await this.commentIdentity.serveRows(rawPosts, {
-      viewerId: viewerUserId,
-      isGlobalAdmin: viewerCtx.isGlobalAdmin,
-      moderatedPostIds: viewerCtx.moderatedIds,
-    });
-
-    const result = rawPosts.map((p: any) => {
-      let row = p;
-      if (!p.associationId && p.authorId) {
-        const authorInfo = nameMap[p.authorId] ?? {
-          displayName: null,
-          firstName: null,
-          lastName: null,
-        };
-        row = {
-          ...p,
-          authorDisplayName: authorInfo.displayName,
-          authorFirstName: authorInfo.firstName,
-          authorLastName: authorInfo.lastName,
-        };
-      }
-      if (row.linkedCalendarEventId) {
-        row = { ...row, linkedCalendarEvent: linkedEvents.get(row.linkedCalendarEventId) ?? null };
-      }
-      return this.shapeListRow(row, viewerCtx);
-    });
-
-    const safe = this.stripBigIntForJson(result);
-
-    try {
-      await this.redis.setex(cacheKey, PostsService.LIST_CACHE_TTL, JSON.stringify(safe));
-    } catch {
-      // Non-fatal
-    }
-
-    return safe;
+    return rawPosts;
   }
 
   /**
