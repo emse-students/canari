@@ -8,6 +8,11 @@ starting point, not as today's state. Anyone can log in to MiConnect with a Scho
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 
+> **Proposed reform (2026-11-02, partly decided):** audience and dependencies as two independent axes -
+> an association or list under at most one BDE, one governor per space - amending D20, D22, D23,
+> D33 and D39. See
+> [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
+
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
 Read with `ak shell` on the identity-provider host, read-only. Counts are a
