@@ -12,12 +12,12 @@ import { getContext, setContext } from 'svelte';
  * opener is several components down (`PostComments` -> `GifPickerModal` -> `ModalOverlay`) and none
  * of them knows, or should know, what is above it. `--z-critical` (a confirmation) already clears
  * the viewer and is left alone.
- */
-/**
- * THE SAME FACT HOLDS FOR ANY SURFACE ON `--z-modal`: a `Modal` and the page-level `CommentsDrawer`
- * mark their subtree too, because a picker or dialog they open sits on a LOWER rung (`--z-sheet`)
- * and would open under them. The name is the viewer's for history; the rule is "what a dialog
- * opens must clear it".
+ *
+ * WHAT A DIALOG OPENS MUST CLEAR IT, AND SO MUST ITS POPOVERS. The rule is not the viewer's alone: a
+ * `Modal` and the page-level `CommentsDrawer` (on `--z-modal`) mark their subtree too, because the
+ * picker or dialog they open sits on a LOWER rung (`--z-sheet`) and would open under them. A dropdown
+ * inside such a dialog (`--z-modal-popover`) would then sit under the dialog lifted to
+ * `--z-viewer-dialog`, so it takes `--z-viewer-dialog-popover` (`popoverLayerClass`).
  */
 const VIEWER_LAYER = Symbol('viewer-layer');
 
@@ -29,4 +29,13 @@ export function markViewerLayer(): void {
 /** Whether the calling component was mounted inside a full-screen viewer. Call at initialisation. */
 export function insideViewerLayer(): boolean {
   return getContext<boolean | undefined>(VIEWER_LAYER) === true;
+}
+
+/**
+ * The rung of a dropdown portalled out of a dialog: its own `--z-modal-popover`, or, when the dialog
+ * was lifted (inside a viewer, a nested `Modal` or a comments drawer), the popover rung above it.
+ * Literals, because Tailwind builds only the classes it can read.
+ */
+export function popoverLayerClass(inLayer: boolean): string {
+  return inLayer ? 'z-(--z-viewer-dialog-popover)' : 'z-(--z-modal-popover)';
 }
