@@ -172,6 +172,41 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
     expect(result.messages).toHaveLength(0);
   });
 
+  it('never writes a preview over a deleted message - the tombstone content is plain text', async () => {
+    const { storage, saveMessage } = fakeStorage({
+      ...envelopeRow(),
+      content: 'Message supprimé',
+      isDeleted: true,
+    });
+
+    const result = await consumeFcmCache(KEY, storage, SELF);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(result.messages).toHaveLength(0);
+  });
+
+  it('never writes a preview over a deleted PREVIEW either', async () => {
+    const { storage, saveMessage } = fakeStorage({ ...previewRow(), isDeleted: true });
+
+    const result = await consumeFcmCache(KEY, storage, SELF);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(result.messages).toHaveLength(0);
+  });
+
+  it('refuses a tombstone stored between the look and the write (the compare-and-set asks again)', async () => {
+    const { storage, saveMessage } = fakeStorage(previewRow());
+    // The tombstone lands between the look and the write: the merge sees it.
+    const original = storage.mergeMessages.bind(storage);
+    storage.mergeMessages = (c, ids, fn, key) =>
+      original(c, ids, (row) => fn({ ...row, isDeleted: true, content: 'deleted' }), key);
+
+    const result = await consumeFcmCache(KEY, storage, SELF);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(result.messages).toHaveLength(0);
+  });
+
   it('draws a system event as a banner only - no row, so no bubble with no subject', async () => {
     taking([
       { ...pushEntry(), content: 'a ajouté un membre au groupe', type: 'system', mediaKind: null },

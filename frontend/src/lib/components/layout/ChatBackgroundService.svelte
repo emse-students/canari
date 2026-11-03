@@ -2018,22 +2018,6 @@
         }, FCM_POLL_INTERVAL)
       : null;
 
-    // ── IndexedDB garbage collection: delete messages older than 90 days ───
-    const GC_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
-    const MESSAGE_MAX_AGE = 90 * 24 * 60 * 60 * 1000; // 90 days
-    const gcTimer = setInterval(() => {
-      if (document.hidden) return;
-      const storage = globalSession.storage;
-      if (storage) {
-        storage
-          .deleteOldMessages(MESSAGE_MAX_AGE)
-          .then((n) => {
-            if (n > 0) appendLog(`[GC] Deleted ${n} old message(s) from IndexedDB`);
-          })
-          .catch(() => {});
-      }
-    }, GC_INTERVAL);
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnlineResume);
@@ -2041,7 +2025,6 @@
       stopNativeQuickReply();
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
-      clearInterval(gcTimer);
       stopForegroundHeartbeat?.();
     };
   });

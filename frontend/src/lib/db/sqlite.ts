@@ -1442,19 +1442,6 @@ export class SqliteStorage implements IStorage {
     );
   }
 
-  // -- Garbage Collection --------------------------------------------------
-
-  /** Delete messages older than `maxAgeMs` milliseconds using a single DELETE statement; returns the number of affected rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
-    // Age-based, so it cannot name the conversations it touched: everything goes.
-    invalidateAllHistoryStateKeys();
-    const cutoff = Date.now() - maxAgeMs;
-    const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [cutoff]);
-    // The mutations whose frame predates the cutoff wait for a message older still (see IStorage).
-    await this.db.execute('DELETE FROM pending_mutations WHERE at < $1', [cutoff]);
-    return result?.rowsAffected ?? 0;
-  }
-
   // -- Outbox --------------------------------------------------------------
 
   /** Decrypt one outbox row into an entry, or null if it cannot be decrypted. */

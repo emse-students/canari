@@ -424,22 +424,6 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
     ]);
   });
 
-  it('is collected with the messages older than its frame', async () => {
-    const { storage } = await rig();
-    const now = Date.now();
-    await storage.putPendingMutation(
-      entry({ messageId: 'old', at: now - 10 * 86_400_000 }),
-      ROOMY,
-      KEY
-    );
-    await storage.putPendingMutation(entry({ messageId: 'new', at: now }), ROOMY, KEY);
-
-    await storage.deleteOldMessages(86_400_000);
-
-    const left = await storage.getPendingMutations('conv', ['old', 'new'], KEY);
-    expect(left.entries.map((e) => e.messageId)).toEqual(['new']);
-  });
-
   it('goes with its conversation', async () => {
     const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
@@ -788,4 +772,38 @@ describe.each(backends)('%s - a replay settles what it deferred', (_name, rig) =
     expect(said.filter((l) => l.includes('arrived before its message'))).toHaveLength(1);
     // Over a thousand real seals and opens, twice: a time bound on the size, never on the outcome.
   }, 120_000);
+});
+
+describe.each(backends)('%s - a replay never drops what it cannot settle', (_name, rig) => {
+  it('parks a deferred mutation whose target row this device cannot open', async () => {
+    const { storage, pendingRows } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('sealed'), OTHER_KEY);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const deps = {
+      storage,
+      deviceKey: () => KEY,
+      conversations: new Map(),
+      messageReactions: new Map(),
+      log: vi.fn(),
+    } as unknown as PendingMutationDeps;
+
+    await settleWalkedMutations(deps, 'conv', [
+      {
+        entry: {
+          conversationId: 'conv',
+          messageId: 'sealed',
+          sender: 'alice',
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+        },
+        frameAt: 5_000,
+      },
+    ]);
+
+    expect(await pendingRows()).toHaveLength(1);
+    expect((await storage.getMessage('sealed', OTHER_KEY))?.isDeleted).toBeFalsy();
+  });
 });

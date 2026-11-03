@@ -212,6 +212,45 @@ describe('a message and its mutations delivered in one drain', () => {
     expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
   });
 
+  it('an edit of a notification PREVIEW waits for the body, and the body arrives edited', async () => {
+    const d = await device();
+    const caption = {
+      id: 'm1',
+      senderId: PEER,
+      content: 'caption',
+      timestamp: new Date(2_000),
+      isOwn: false,
+      isFcmPreview: true,
+    };
+    d.conversations.set(CONVO, { ...d.conversations.get(CONVO)!, messages: [caption] });
+    await d.storage.saveMessage(
+      {
+        id: 'm1',
+        conversationId: CONVO,
+        senderId: PEER,
+        content: 'caption',
+        timestamp: 2_000,
+        isFcmPreview: true,
+      },
+      KEY
+    );
+
+    // The drain order of a device that was away: the preview is here, the edit is handled at once,
+    // and the buffered body is flushed at the drain's end.
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await editFrame(d, PEER, 'm1', 'the edited text', 5_000);
+    await bodyFrame(d, PEER, 'm1', '{"kind":"text","text":"the original text"}');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect(d.shown()[0]).toMatchObject({ id: 'm1', isEdited: true });
+    expect(d.shown()[0].content).toContain('the edited text');
+    expect(d.shown()[0].isFcmPreview).toBeFalsy();
+    const row = await d.storage.getMessage('m1', KEY);
+    expect(row).toMatchObject({ isEdited: true, editedAt: 5_000 });
+    expect(row?.content).toContain('the edited text');
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+
   it('keeps an edit across a restart - the store, not memory, holds it', async () => {
     const first = await device();
     await editFrame(first, PEER, 'm1', 'edited before arrival', 5_000);

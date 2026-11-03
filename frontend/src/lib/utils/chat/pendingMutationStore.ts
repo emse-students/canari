@@ -188,9 +188,12 @@ export async function settleWalkedMutations(
   const present = new Map<string, PendingMutation[]>();
   for (const [id, list] of byId) {
     if (found.unreadable.has(id)) {
+      // Kept, as `settlePendingFor` keeps them: the row may open again (a key change in flight), and
+      // a mutation dropped here is gone for good - its frame is consumed.
       console.warn(
-        `[PENDING] ${list.length} replayed mutation(s) of ${short(id)} target a row this device cannot open - not applied`
+        `[PENDING] ${list.length} replayed mutation(s) of ${short(id)} target a row this device cannot open - kept for it`
       );
+      park.push(...list);
     } else if (found.rows.has(id)) {
       present.set(
         id,
@@ -211,7 +214,7 @@ export async function settleWalkedMutations(
         (current) => {
           const entries = present.get(current.id);
           if (!entries) return null;
-          const next = settleAgainstPending(current, entries);
+          const next = settleAgainstPending(current, settleableNow(current, entries));
           outcomes.set(current.id, { settlement: next, author: current.senderId });
           return next.fields ? mergeStoredMessage(current, settledStoredPatch(next.fields)) : null;
         },
@@ -238,10 +241,11 @@ export async function settleWalkedMutations(
       showSettled(deps, conversationId, id, done.settlement.fields);
       settled++;
     }
-    // Waiting for a proven copy of an unproven body: those, and only those, go to the store.
-    const retained = new Set(done.settlement.retained);
+    // What the row did not take - retained for a proven copy of an unproven body, or an edit held
+    // back from a preview (`settleableNow`) - goes to the store; what it consumed or refused does not.
+    const done_ = new Set([...done.settlement.consumed, ...done.settlement.discarded]);
     list.forEach((d, k) => {
-      if (retained.has(entries[k])) park.push(d);
+      if (!done_.has(entries[k])) park.push(d);
     });
   }
   log(
@@ -360,6 +364,21 @@ export function settledChatMessage(msg: ChatMessage, fields: SettledFields): Cha
  * alone lost the mutation at rest, and a reload brought the body back. A message still absent keeps
  * its entries; a stored row this device cannot open is left alone, and so are they.
  */
+/**
+ * The entries `target` can take NOW. A push PREVIEW (`isFcmPreview`, not deleted) is not the body:
+ * an edit applied to its caption is laid under the body when the body arrives (the upgrade takes
+ * the body's content), so an edit of a preview waits - kept, never consumed - for the upgrade,
+ * which settles it against the body itself. A deletion (absorbing) and reactions (unioned by the
+ * upgrade) apply to a preview as to any row.
+ */
+export function settleableNow(
+  target: Pick<SettleTarget, 'isDeleted'> & { isFcmPreview?: boolean },
+  entries: readonly PendingMutation[]
+): PendingMutation[] {
+  if (target.isDeleted || target.isFcmPreview !== true) return [...entries];
+  return entries.filter((e) => e.kind !== 'edit');
+}
+
 export async function settlePendingFor(
   deps: PendingMutationDeps,
   conversationId: string,
@@ -391,7 +410,9 @@ export async function settlePendingFor(
     if (!atRest) {
       const onScreen = shown.get(id);
       if (!onScreen) continue;
-      const settlement = settleAgainstPending(onScreen, entries);
+      const now = settleableNow(onScreen, entries);
+      if (now.length === 0) continue;
+      const settlement = settleAgainstPending(onScreen, now);
       if (settlement.fields) showSettled(deps, conversationId, id, settlement.fields);
       log(
         `[PENDING] ${short(id)} is shown and not stored yet - ${entries.length} mutation(s) applied to the screen, kept for its write`
@@ -406,7 +427,7 @@ export async function settlePendingFor(
         conversationId,
         [id],
         (current) => {
-          const next = settleAgainstPending(current, entries);
+          const next = settleAgainstPending(current, settleableNow(current, entries));
           settlement = next;
           return next.fields ? mergeStoredMessage(current, settledStoredPatch(next.fields)) : null;
         },

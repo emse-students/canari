@@ -1704,43 +1704,6 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  // -- Garbage Collection --------------------------------------------------
-
-  /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds; returns the number of deleted rows. */
-  async deleteOldMessages(maxAgeMs: number): Promise<number> {
-    // Age-based, so it cannot name the conversations it touched: everything goes.
-    invalidateAllHistoryStateKeys();
-    const db = this.ensureDb();
-    const cutoff = Date.now() - maxAgeMs;
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['messages', PENDING_MUTATIONS], 'readwrite');
-      const store = tx.objectStore('messages');
-      // The mutations whose frame predates the cutoff wait for a message older still, which this
-      // collection would take the moment it arrived: they go with it (see IStorage).
-      const pending = tx.objectStore(PENDING_MUTATIONS).openCursor();
-      pending.onsuccess = () => {
-        const cursor = pending.result;
-        if (!cursor) return;
-        if (Number(cursor.value.at) < cutoff) cursor.delete();
-        cursor.continue();
-      };
-      const req = store.openCursor();
-      let deleted = 0;
-      req.onsuccess = () => {
-        const cursor = req.result;
-        if (cursor) {
-          if (cursor.value.timestamp < cutoff) {
-            cursor.delete();
-            deleted++;
-          }
-          cursor.continue();
-        }
-      };
-      tx.oncomplete = () => resolve(deleted);
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
   // -- Outbox --------------------------------------------------------------
 
   /** Decrypt a batch of outbox rows, skipping any that fail, sorted by `sentAt` (compose order). */
@@ -2478,7 +2441,7 @@ function guardedPut(store: IDBObjectStore, value: unknown): boolean {
   }
 }
 
-/** Said once per row: a frame of one conversation named a message of another. */
+/** Said at each read that meets it: a frame of one conversation named a message of another. */
 function warnForeignRow(id: string, conversationId: string): void {
   console.warn(
     `[DB] ${id.slice(0, 8)} is a message of another conversation than ${conversationId.slice(0, 8)}... - read as absent there`

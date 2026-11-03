@@ -227,6 +227,15 @@ const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
 let inFlight: Promise<unknown> = Promise.resolve();
 
 /**
+ * Whether a push preview may replace the stored row `row`: only another preview. A full envelope
+ * is richer than any caption, and a deletion is ABSORBING - its tombstone's content is plain text,
+ * which the envelope test alone reads as a preview, so it is refused by its flag.
+ */
+function previewMayReplace(row: StoredMessage): boolean {
+  return !row.isDeleted && !isEnvelopeContent(row.content);
+}
+
+/**
  * Reads the native FCM cache (Tauri only) and injects the messages into local storage.
  * Returns what was written - see {@link FcmCacheInjection} for why the placeholders travel too.
  * No-op on web/desktop (no native cache available).
@@ -326,7 +335,9 @@ async function consumeFcmCacheOnce(
       isFcmPreview: true,
     };
     try {
-      // A PUSH PREVIEW MAY CREATE A ROW AND MAY REPLACE ANOTHER PREVIEW - NEVER AN ENVELOPE.
+      // A PUSH PREVIEW MAY CREATE A ROW AND MAY REPLACE ANOTHER PREVIEW - NEVER AN ENVELOPE, AND
+      // NEVER A TOMBSTONE: a deleted row's content is plain text, so the envelope test alone would
+      // take it for a preview and write the deleted caption back over it (`previewMayReplace`).
       // `isEnvelopeContent` is the same predicate `shouldUpgradeMessage` uses to decide an upgrade
       // is worth making; asked here it decides the write is not. The row is left exactly as it is,
       // and it is NOT reported as injected: the in-memory merge that follows would otherwise be
@@ -340,9 +351,9 @@ async function consumeFcmCacheOnce(
         continue;
       }
       const existing = found.rows.get(entry.messageId);
-      if (existing && isEnvelopeContent(existing.content)) {
+      if (existing && !previewMayReplace(existing)) {
         appendLog(
-          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} already a full envelope, preview dropped`
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} already ${existing.isDeleted ? 'deleted' : 'a full envelope'}, preview dropped`
         );
         continue;
       }
@@ -379,8 +390,7 @@ async function consumeFcmCacheOnce(
         ? await storage.mergeMessages(
             entry.groupId,
             [msg.id],
-            (current) =>
-              isEnvelopeContent(current.content) ? null : mergeStoredMessage(current, msg),
+            (current) => (previewMayReplace(current) ? mergeStoredMessage(current, msg) : null),
             deviceKeyB64
           )
         : await storage.saveMessagesIfAbsent([msg], deviceKeyB64);
