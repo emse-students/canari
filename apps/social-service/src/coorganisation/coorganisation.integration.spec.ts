@@ -627,4 +627,161 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await q(`SELECT 1 FROM association_members WHERE "userId" = $1`, [GONE])).toEqual([]);
     }, 30_000);
   });
+
+  describe('partner rights (E2, WP-Q1): the text and the poster belong to a partner, the rest to the organiser', () => {
+    const P = E(20); // refusals, then the allowed edits
+    const W = E(21); // the partner withdraws
+    const D = E(22); // pending: the rights above the partner are unchanged
+    const PARTNER_ONLY = { response: { code: 'CALENDAR_PARTNER_ORGANISER_ONLY' } };
+
+    /** The event as stored, the columns an edit could have touched. */
+    async function stored(id: string) {
+      const [row] = (await q(
+        `SELECT title, description, "startsAt", "endsAt", status FROM association_calendar_events WHERE id = $1`,
+        [id]
+      )) as {
+        title: string;
+        description: string | null;
+        startsAt: Date;
+        endsAt: Date | null;
+        status: string;
+      }[];
+      return row;
+    }
+
+    beforeAll(async () => {
+      for (const [id, status] of [
+        [P, 'validated'],
+        [W, 'validated'],
+        [D, 'pending'],
+      ]) {
+        await q(
+          `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+             VALUES ($1, $2, $3, '2026-07-01T18:00:00Z', 'org', $4)`,
+          [id, A1, `Partner event ${id.slice(-3)}`, status]
+        );
+        await update(A1, id, [A3], 'org');
+        const pending = (await proposals.listPending(A3, 'coPub', false)).incoming.find(
+          (x) => x.subjectId === id
+        );
+        await proposals.accept(pending!.id, 'coPub', false);
+      }
+    });
+
+    it('assertMayWriteEvent names the side: the organiser, a partner, and a platform admin above both', async () => {
+      await expect(associations.assertMayWriteEvent('org', false, A1, P)).resolves.toMatchObject({
+        side: 'organiser',
+      });
+      await expect(associations.assertMayWriteEvent('coEd', false, A3, P)).resolves.toMatchObject({
+        side: 'partner',
+      });
+      // A platform admin keeps the organiser's rights through ANY route, the partner's included.
+      await expect(associations.assertMayWriteEvent('root', true, A3, P)).resolves.toMatchObject({
+        side: 'organiser',
+        isGlobalAdmin: true,
+      });
+      // The poster routes ask this same rule: a partner passes it.
+      await expect(associations.assertMayWriteEvent('nobody', false, A3, P)).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+    });
+
+    it('the write-side route answers from that rule, and 404s an unreachable event', async () => {
+      await expect(coorg.writeSideFor(A3, P, 'coEd', false)).resolves.toEqual({ side: 'partner' });
+      await expect(coorg.writeSideFor(A1, P, 'org', false)).resolves.toEqual({ side: 'organiser' });
+      await expect(coorg.writeSideFor(A3, E(2), 'coEd', false)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+    });
+
+    it('REFUSAL 1 and 2: a partner moving the start or the end gets the typed 403, nothing written', async () => {
+      const before = await stored(P);
+      await expect(
+        associations.updateCalendarEvent(
+          A3,
+          P,
+          { startsAt: '2026-07-02T18:00:00.000Z' },
+          { callerUserId: 'coEd' }
+        )
+      ).rejects.toMatchObject(PARTNER_ONLY);
+      await expect(
+        associations.updateCalendarEvent(
+          A3,
+          P,
+          { endsAt: '2026-07-01T20:00:00.000Z' },
+          { callerUserId: 'coEd' }
+        )
+      ).rejects.toMatchObject(PARTNER_ONLY);
+      expect(await stored(P)).toEqual(before);
+      expect(told).toEqual([]);
+    });
+
+    it('REFUSAL 3: a partner adding or removing another partner gets the typed 403, nothing written', async () => {
+      const proposalsBefore = await proposalRows(P);
+      await expect(update(A3, P, [A3, A4], 'coEd')).rejects.toMatchObject(PARTNER_ONLY);
+      expect(await proposalRows(P)).toEqual(proposalsBefore);
+      expect(await coOwnersOf(P)).toEqual([A3]);
+      expect(told).toEqual([]);
+    });
+
+    it('REFUSAL 4: a partner deleting the event gets the typed 403, and the event stays', async () => {
+      await expect(
+        associations.deleteCalendarEvent(A3, P, { callerUserId: 'coEd' })
+      ).rejects.toMatchObject(PARTNER_ONLY);
+      expect(await stored(P)).toBeDefined();
+    });
+
+    it('the TEXT belongs to a partner: title and description change, and a resubmitted date is no date change', async () => {
+      const before = await stored(P);
+      await associations.updateCalendarEvent(
+        A3,
+        P,
+        {
+          title: 'Retitled by the partner',
+          description: 'A new text',
+          // What both modals do: every rendered field is sent back. Unchanged is not a change.
+          startsAt: new Date(before.startsAt).toISOString(),
+        },
+        { callerUserId: 'coEd' }
+      );
+      const after = await stored(P);
+      expect(after.title).toBe('Retitled by the partner');
+      expect(after.description).toBe('A new text');
+      // And the edit did not re-open the validation: a title is not a date.
+      expect(after.status).toBe('validated');
+      expect(new Date(after.startsAt)).toEqual(new Date(before.startsAt));
+    });
+
+    it('the POSTER belongs to a partner: its routes ask assertMayWriteEvent, which a partner passes', async () => {
+      await expect(associations.assertMayWriteEvent('coEd', false, A3, P)).resolves.toMatchObject({
+        isGlobalAdmin: false,
+        isBde: false,
+      });
+    });
+
+    it('a partner may WITHDRAW: its rights and reach go, the event stays with its organiser', async () => {
+      await update(A3, W, [], 'coEd');
+      expect(await coOwnersOf(W)).toEqual([]);
+      expect(await stored(W)).toBeDefined();
+      expect(await associations.findCalendarEventForAssociation(W, A3, false)).toBeNull();
+    });
+
+    it('a platform admin and a governing validator keep their rights through the partner route', async () => {
+      await associations.updateCalendarEvent(
+        A3,
+        D,
+        { startsAt: '2026-07-03T18:00:00.000Z' },
+        { isGlobalAdmin: true }
+      );
+      await associations.updateCalendarEvent(
+        A3,
+        D,
+        { startsAt: '2026-07-04T18:00:00.000Z' },
+        { isBde: true }
+      );
+      expect(new Date((await stored(D)).startsAt).toISOString()).toBe('2026-07-04T18:00:00.000Z');
+      await associations.deleteCalendarEvent(A3, D, { isGlobalAdmin: true });
+      expect(await q(`SELECT 1 FROM association_calendar_events WHERE id = $1`, [D])).toEqual([]);
+    });
+  });
 });

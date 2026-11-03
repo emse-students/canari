@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,6 +11,7 @@ import { Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import type { CoOrganiserPort, CoOrganiserSyncRequest } from '../associations/co-organisers.port';
 import { coOrganiserCapRefusal, MAX_CO_ORGANISERS } from '../associations/co-organiser-cap';
+import { partnerOrganiserOnlyRefusal, type EventWriteSide } from '../associations/event-write-side';
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
@@ -141,6 +141,33 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
   }
 
   /**
+   * The side the caller writes event `eventId` from through `associationId` (E2): the event form
+   * hides the date and the partner list from a `partner`, and this is what it reads - the server's
+   * own answer, from the same rule the write enforces, never a guess from the ids on the client.
+   * 404 when the event is not reachable through that association, like `listStatesFor`.
+   */
+  async writeSideFor(
+    associationId: string,
+    eventId: string,
+    actorId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ side: EventWriteSide }> {
+    const tier = await this.associations.assertMayWriteEvent(
+      actorId,
+      isGlobalAdmin,
+      associationId,
+      eventId
+    );
+    const ev = await this.associations.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      tier.isGlobalAdmin || tier.isBde
+    );
+    if (!ev) throw new NotFoundException('Event not found');
+    return { side: tier.side };
+  }
+
+  /**
    * THE FORM'S LIST, TURNED INTO PROPOSALS (`CoOrganiserPort`). Computed against the current state,
    * so a form resubmitted unchanged changes nothing:
    * - a name neither accepted, pending nor refused is PROPOSED;
@@ -187,7 +214,7 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         this.logger.debug(
           `[COORG] ${actorId.slice(0, 8)} via co-organiser ${request.viaAssociationId.slice(0, 8)} may only leave`
         );
-        throw new ForbiddenException('A co-organiser may only remove itself');
+        throw partnerOrganiserOnlyRefusal('coOwnerIds');
       }
     }
     if (toEnd.length > 0) {

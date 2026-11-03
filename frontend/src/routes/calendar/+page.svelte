@@ -26,6 +26,7 @@
     ensureAssociationSuperAdmin,
     getMyBdeReach,
     listEventCoOrganisers,
+    getEventWriteSide,
   } from '$lib/associations/api';
   import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
   import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
@@ -474,8 +475,10 @@
     depositModalOpen = true;
     // D39: the co-organisers' states arrive after the form opens; the list stays unsent until they
     // do. Through the owning association - the route `submitEvent` saves through.
-    const fields = await loadCoOrganiserFields(depositValues, () =>
-      listEventCoOrganisers(ev.associationId, ev.id)
+    const fields = await loadCoOrganiserFields(
+      depositValues,
+      () => listEventCoOrganisers(ev.associationId, ev.id),
+      () => getEventWriteSide(ev.associationId, ev.id)
     );
     if (editingEventId === ev.id) depositValues = { ...depositValues, ...fields };
   }

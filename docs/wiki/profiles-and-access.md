@@ -1259,6 +1259,41 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
 
+#### E2: partner rights on a co-organised event (WP-Q1, 2026-11-03)
+
+Owner decision E2 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): **a partner edits
+the text and the poster and may withdraw; only the organiser changes the date, the audience or the
+partner list, and only the organiser deletes.** Before it, "edit, poster, delete" of D39 as built
+above meant every right, the date and the delete included (P14: a Gardanne partner could delete a
+Saint-Etienne event).
+
+- **The side.** `assertMayWriteEvent` now returns `{ isGlobalAdmin, isBde, side }`. `side` comes from
+  `eventWriteSide` (`associations/event-write-side.ts`, the one rule): the organiser when the write
+  is routed through the event's own association, a `partner` when it is routed through an accepted
+  co-organiser. The organiser is read from the event ROW, never the URL.
+- **The refusals**, one typed 403 `CALENDAR_PARTNER_ORGANISER_ONLY` (`partnerOrganiserOnlyRefusal`),
+  thrown before any write of the event:
+  - `updateCalendarEvent`: a partner whose `startsAt` or `endsAt` actually MOVED (a resubmitted,
+    unchanged date is not a change - both modals send every field);
+  - `CoorganisationService.sync`: a partner-side list that adds anyone or removes anyone but itself
+    (it was a bare 403 with a message; now typed);
+  - `deleteCalendarEvent`'s member branch.
+- **Allowed for a partner**: title, description, the poster routes (they ask `assertMayWriteEvent`,
+  which a partner passes), and WITHDRAWAL (`coOwnerIds` without itself, unchanged).
+- **Audience.** An event has no audience of its own today (it is the union of the organiser's and the
+  accepted partners', D39), so no write field exists to refuse. When WP-I gives institutions an item
+  audience, that write must call the same `eventWriteSide` and refuse a partner.
+- **Not changed**: a platform admin and a governing validator (`isBde`) are the organiser side through
+  every route, as before - E2 narrows the partner, nobody above. Verified in the integration spec.
+- **The form.** `GET /api/associations/:id/events/:eventId/write-side` answers `{ side }` from that
+  same rule; the form reads it with the co-organiser states (a failure of either is `failed`, the side
+  stays `unknown`). The date and the partner list are drawn and SENT for `organiser` only; a partner
+  sees a note and a "withdraw" button instead. The delete buttons of an association's own calendar
+  section are shown only for events it organises (the server stays the authority).
+- **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
+  delete), the allowed text and poster, the withdrawal, and the platform-admin and validator rights;
+  `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
+
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)
 
 `GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`

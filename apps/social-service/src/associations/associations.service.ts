@@ -158,6 +158,11 @@ import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
 import type { CoOrganiserPort } from './co-organisers.port';
+import {
+  eventWriteSide,
+  partnerOrganiserOnlyRefusal,
+  type EventWriteSide,
+} from './event-write-side';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -2071,14 +2076,16 @@ export class AssociationsService {
    * a global admin, VALIDATE_EVENTS in the BDE governing the EVENT's association (read from the row),
    * or PROPOSE_EVENT in `associationId` through `mayAct`. Which events that last tier reaches is
    * `findCalendarEventForAssociation`'s: the organiser's, or an ACCEPTED co-organiser's (D39).
-   * Returns the tier, which the cross-association paths need.
+   * Returns the tier, which the cross-association paths need, and the SIDE the caller writes from
+   * (`eventWriteSide`, E2): a partner's text and poster are open, its date, partner list and delete
+   * are not. A platform admin and a governing validator write from the organiser side, unchanged.
    */
   async assertMayWriteEvent(
     userId: string,
     isGlobalAdmin: boolean,
     associationId: string,
     eventId: string
-  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
+  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean; side: EventWriteSide }> {
     const isBde = isGlobalAdmin ? false : await this.mayValidateEvent(userId, eventId);
     if (!isGlobalAdmin && !isBde) {
       // Through `mayAct`, so a cross-association super-admin may act on an event in an association
@@ -2096,7 +2103,29 @@ export class AssociationsService {
         throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
       }
     }
-    return { isGlobalAdmin, isBde };
+    const side = await this.writeSideOf(eventId, associationId, isGlobalAdmin || isBde);
+    this.logger.debug(
+      `[PERM] event write allowed: ${sanitizeLog(userId.slice(0, 8))} on ${sanitizeLog(eventId.slice(0, 8))} from the ${side} side`
+    );
+    return { isGlobalAdmin, isBde, side };
+  }
+
+  /**
+   * The side of event `eventId` a write through `viaAssociationId` comes from, the organiser read
+   * from the ROW. A missing event is the organiser side: the route that loads it answers 404 itself,
+   * and a refusal here would hide that.
+   */
+  private async writeSideOf(
+    eventId: string,
+    viaAssociationId: string,
+    crossTier: boolean
+  ): Promise<EventWriteSide> {
+    if (crossTier) return 'organiser';
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId },
+      select: { id: true, associationId: true },
+    });
+    return ev ? eventWriteSide(ev.associationId, viaAssociationId, false) : 'organiser';
   }
 
   /**
@@ -2825,6 +2854,16 @@ ${rejectionReason}`
      */
     const datesMoved =
       toMillis(ev.startsAt) !== previousStartsAt || toMillis(ev.endsAt) !== previousEndsAt;
+    // E2: a partner (an accepted co-organiser writing through its own association) edits the text
+    // and the poster, never the date. Refused before ANY write below, and only when the date really
+    // moved: both modals resubmit every field they render, so an unchanged date is not a change.
+    const side = eventWriteSide(ev.associationId, associationId, canCrossAsso === true);
+    if (side === 'partner' && datesMoved) {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused a date change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('date');
+    }
     const demoted = wasValidated && datesMoved;
     if (demoted) {
       ev.status = AssociationCalendarEventStatus.Pending;
@@ -2979,6 +3018,13 @@ ${rejectionReason}`
     } else {
       const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
       if (!ev) throw new NotFoundException('Event not found');
+      // E2: only the organiser deletes; a partner withdraws instead (`coOwnerIds` without itself).
+      if (eventWriteSide(ev.associationId, associationId, false) === 'partner') {
+        this.logger.debug(
+          `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused deleting ${sanitizeLog(eventId.slice(0, 8))}`
+        );
+        throw partnerOrganiserOnlyRefusal('delete');
+      }
       await this.calendarRepo.delete({ id: eventId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`

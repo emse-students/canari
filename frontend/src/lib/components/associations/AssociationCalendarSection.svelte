@@ -13,6 +13,7 @@
     icsSubscriptionRangeISO,
     getCalendarEventLinkedToPost,
     listEventCoOrganisers,
+    getEventWriteSide,
     type AssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
@@ -42,6 +43,7 @@
     blankEventFormValues,
     eventFormValuesFrom,
     loadCoOrganiserFields,
+    withdrawalCoOwnerIds,
     toCreatePayload,
     toUpdatePayload,
     type EventFormValues,
@@ -261,8 +263,10 @@
     modalOpen = true;
     // D39: the co-organisers' states (accepted / pending / refused) arrive after the form opens; the
     // list stays unsent until they do. Through THIS association, the route the save will use.
-    const fields = await loadCoOrganiserFields(formValues, () =>
-      listEventCoOrganisers(associationId, ev.id)
+    const fields = await loadCoOrganiserFields(
+      formValues,
+      () => listEventCoOrganisers(associationId, ev.id),
+      () => getEventWriteSide(associationId, ev.id)
     );
     if (editingId === ev.id) formValues = { ...formValues, ...fields };
     await ensureLinkCandidates();
@@ -299,6 +303,20 @@
     } else {
       await createAssociationCalendarEvent(associationId, toCreatePayload(values, capabilities));
     }
+    dismissEventModal(false);
+    await agenda.reload();
+  }
+
+  /**
+   * A PARTNER's withdrawal (E2): the co-organiser list without this association, the one list change
+   * the server lets a partner make. The event stays with its organiser, so it leaves this agenda.
+   */
+  async function withdrawFromEvent() {
+    if (!editingId) return;
+    Log.d('[asso-calendar] withdrawing from event', editingId);
+    await updateAssociationCalendarEvent(associationId, editingId, {
+      coOwnerIds: withdrawalCoOwnerIds(formValues.coOwnerStates, associationId),
+    });
     dismissEventModal(false);
     await agenda.reload();
   }
@@ -473,7 +491,7 @@
       agenda.detailEvent = null;
     }}
     onEdit={handleDetailEdit}
-    onDelete={handleDetailDelete}
+    onDelete={agenda.detailEvent?.associationId === associationId ? handleDetailDelete : undefined}
   />
 
   {#if canEdit && !agenda.loading && sortedPendingEvents.length > 0}
@@ -514,14 +532,16 @@
             >
               <Pencil size={16} />
             </button>
-            <button
-              type="button"
-              onclick={() => removeEvent(ev.id)}
-              class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
-              title={m.common_delete_button()}
-            >
-              <Trash2 size={16} />
-            </button>
+            {#if ev.associationId === associationId}
+              <button
+                type="button"
+                onclick={() => removeEvent(ev.id)}
+                class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
+                title={m.common_delete_button()}
+              >
+                <Trash2 size={16} />
+              </button>
+            {/if}
           </div>
         </div>
       {/each}
@@ -554,14 +574,16 @@
             {/if}
           </div>
           <div class="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onclick={() => removeEvent(ev.id)}
-              class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
-              title={m.common_delete_button()}
-            >
-              <Trash2 size={16} />
-            </button>
+            {#if ev.associationId === associationId}
+              <button
+                type="button"
+                onclick={() => removeEvent(ev.id)}
+                class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
+                title={m.common_delete_button()}
+              >
+                <Trash2 size={16} />
+              </button>
+            {/if}
           </div>
         </div>
       {/each}
@@ -581,6 +603,7 @@
   submitLabel={m.common_save_button()}
   savingLabel={m.asso_calendar_saving_label()}
   onSubmit={submitEvent}
+  onWithdraw={formValues.writeSide === 'partner' ? withdrawFromEvent : null}
   onClose={closeModal}
 />
 
