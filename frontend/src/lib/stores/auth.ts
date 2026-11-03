@@ -54,6 +54,7 @@ import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { refusalOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
+import { setAvatarToken } from '$lib/utils/avatarUrl';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -763,6 +764,8 @@ async function handleOidcCallbackUnderway(
 export interface SignedInSession {
   access_token: string;
   refresh_token?: string;
+  /** The viewer-bound token every avatar URL carries as `?t=` (`avatarUrl.ts`). */
+  avatar_token?: string;
   /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
   id_token?: string;
   user: {
@@ -798,6 +801,8 @@ async function adoptSignedInSession(
   // identity is about somebody who is no longer here.
   clearIdentitySplit();
   _accessToken = data.access_token;
+  // The avatar token of the session just minted (`avatarUrl.ts`); absent on an estate minting none.
+  setAvatarToken(data.avatar_token);
   // The first credential of this session. On a cookie platform it arrived as a `Set-Cookie` and
   // there is nothing to do; where the cookie cannot live, this response body is the ONLY copy that
   // will ever exist, so losing it here costs the user a fresh login at the next launch.
@@ -1191,6 +1196,9 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
       const revoked = revokedDeviceOfRefusal(await readRefusalBody(res));
       _refreshCredentialProvenDead = true;
       _sessionEndedByDeviceRevocation = revoked;
+      // The session is PROVEN gone, so the server refuses its avatar token too - drop it. A transport
+      // failure above keeps it: the session may well be alive, and its token with it.
+      setAvatarToken(null);
       noteSessionAnswered(null);
       // AFTER both latches: the reaction reads the cause from them.
       notifySessionExpired();
@@ -1199,7 +1207,11 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
     throw new RefreshFailedError(res.status);
   }
 
-  const data = (await res.json()) as { access_token: string; refresh_token?: string };
+  const data = (await res.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    avatar_token?: string;
+  };
   // The body is read across an await too.
   const droppedBody = supersededBySignOut('answer');
   if (droppedBody) throw droppedBody;
@@ -1218,9 +1230,12 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
   if (identityOk) {
     _accessToken = data.access_token;
     setWsSessionCookie(data.access_token);
+    // The avatar token rides with the access token, minted for the same session (`avatarUrl.ts`).
+    setAvatarToken(data.avatar_token);
   } else {
     _accessToken = null;
     clearWsSessionCookie();
+    setAvatarToken(null);
   }
   // The credential ROTATED. Where we carry it ourselves, the new value must be on disk before this
   // function returns: the server will refuse the old one from now on, and 60 s later will read it as
@@ -1388,6 +1403,7 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // by `_signOutGeneration` above: no refresh is sent now, and none in flight applies its answer.
   clearUserLocally();
   _accessToken = null;
+  setAvatarToken(null);
   noteSessionAnswered(null);
   clearWsSessionCookie();
   clearIdentitySplit();

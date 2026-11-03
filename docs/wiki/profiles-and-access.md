@@ -1,5 +1,9 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
+> **Without an account, see [What Canari serves without an account](anonymous-surface.md)** (owner,
+> 2026-11-02): nothing a signed-out visitor reads may go further than portail-etu.emse.fr shows. A
+> profile's memberships and past roles need a session since that day.
+
 **Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 is BUILT AND
 TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 is BUILT (backend, backfill, directory), WP4 to WP9 are PLANNED**. Every answer below was given by the user on
 2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
@@ -7,6 +11,11 @@ VALIDATED the same day. Sections 1 and 3 describe production as measured BEFORE 
 starting point, not as today's state. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
+
+> **Proposed reform (2026-11-02, partly decided):** audience and dependencies as two independent axes -
+> an association or list under at most one BDE, one governor per space - amending D20, D22, D23,
+> D33 and D39. See
+> [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
 
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
@@ -191,9 +200,13 @@ built.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
   `.ics`, as today's single feed. **Amended 2026-10-06 (D40): the feed of a selection needs a link the
   server SIGNED for the reader's own spaces** ([D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
-- **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
-  cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
-  (user, 2026-10-05)**: through institutions they are a member of, nothing more.
+- **D31 - A personal post inherits its AUTHOR's spaces.** **Amended by the owner on 2026-11-02**:
+  someone with no space (a staff post only) MAY publish a personal post, and it is visible to their
+  ACCEPTED FOLLOWERS only (and to its author; a platform admin opening it by id) - the WP-F5
+  follower disjunct, no space rule reaching anyone. No code change: nothing refuses the write, and
+  the predicate already answered so. Pinned in `follower-visibility.integration.spec.ts` ("a person
+  with NO SPACE may publish a personal post"). Speaking for an institution stays MEMBERSHIP ONLY
+  (user, 2026-10-05): through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
@@ -691,8 +704,8 @@ the announce sweep's recipient counts.
 
 - ~~A post's own rules are held to the ceiling at read time~~ and ~~the share preview skips a post
   with rules of its own~~ - both went with the rules themselves (D38).
-- **A personal post by someone with no space** (staff, D31 not yet enforced at publish) is seen
-  only by its author, admins - and nobody else.
+- **A personal post by someone with no space** (staff; allowed, D31 as amended 2026-11-02) is seen
+  by its author, an admin opening it by id, and - since WP-F5 - the author's accepted followers.
 - ~~An association created after migration 071 has NO rule.~~ Superseded by D36 (below): it
   reaches its creator's spaces by default.
 - The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
@@ -806,7 +819,7 @@ the grid. The creator is the caller, who need not become a member.
 | `scope` | Lists | Read by |
 | --- | --- | --- |
 | `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
-| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
 pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one
@@ -1254,6 +1267,68 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
 
+#### E2: partner rights on a co-organised event (WP-Q1, 2026-11-03)
+
+Owner decision E2 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): **a partner edits
+the text and the poster and may withdraw; only the organiser changes the date, the audience or the
+partner list, and only the organiser deletes.** Before it, "edit, poster, delete" of D39 as built
+above meant every right, the date and the delete included (P14: a Gardanne partner could delete a
+Saint-Etienne event).
+
+- **The side.** `assertMayWriteEvent` now returns `{ isGlobalAdmin, isBde, side }`. `side` comes from
+  `eventWriteSide` (`associations/event-write-side.ts`, the one rule): the organiser when the write
+  is routed through the event's own association, a `partner` when it is routed through an accepted
+  co-organiser. The organiser is read from the event ROW, never the URL.
+- **The refusals**, one typed 403 `CALENDAR_PARTNER_ORGANISER_ONLY` (`partnerOrganiserOnlyRefusal`),
+  thrown before any write of the event:
+  - `updateCalendarEvent`: a partner whose `startsAt` or `endsAt` actually MOVED (a resubmitted,
+    unchanged date is not a change - both modals send every field);
+  - `CoorganisationService.sync`: a partner-side list that adds anyone or removes anyone but itself
+    (it was a bare 403 with a message; now typed);
+  - `deleteCalendarEvent`'s member branch.
+- **No partial write.** Every partner-side refusal (and the cap) is checked BEFORE the first write of `updateCalendarEvent`: `CoOrganiserPort.check` runs the read-only plan of `sync` ahead of the form-link detach, so a refused request changes nothing (integration case: form link plus an illegal partner-list change).
+- **Allowed for a partner**: title, description, the poster routes (they ask `assertMayWriteEvent`,
+  which a partner passes), and WITHDRAWAL (`coOwnerIds` without itself, unchanged).
+- **Audience.** An event has no audience of its own today (it is the union of the organiser's and the
+  accepted partners', D39), so no write field exists to refuse. When WP-I gives institutions an item
+  audience, that write must call the same `eventWriteSide` and refuse a partner.
+- **Not changed**: a platform admin and a governing validator (`isBde`) are the organiser side through
+  every route, as before - E2 narrows the partner, nobody above. Verified in the integration spec.
+- **The form.** `GET /api/associations/:id/events/:eventId/write-side` answers `{ side }` from that
+  same rule; the form reads it with the co-organiser states (a failure of either is `failed`, the side
+  stays `unknown`). The date and the partner list are drawn and SENT for `organiser` only; a partner
+  sees a note and a "withdraw" button instead. The delete buttons of an association's own calendar
+  section are shown only for events it organises (the server stays the authority).
+- **The form link is the organiser's too** (decision, review of 2026-11-03; reversible, it is one
+  condition in `updateCalendarEvent` and one in `toUpdatePayload`). A partner does NOT own the link: a
+  CHANGE of `linkedFormId` from the partner side (detach, or another form) is the same typed 403
+  (`partnerOrganiserOnlyRefusal('linkedForm')`), before any write; resending the value it loaded is not
+  a change and is accepted. The client never sends `linkedFormId` unless the side is `organiser`. This
+  also removes an untyped 400 (the partner's own association does not own the organiser's form) that
+  broke a partner's plain text edit.
+- **One transaction, one lock, one connection.** `updateCalendarEvent`, `validateCalendarEvent` and
+  `rejectCalendarEvent` run inside `withEventLock` (`AssociationsService`). Its lock order is THE GLOBAL
+  ONE (`ProposalsService.lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE`
+  before it deletes events): the event's organiser and every association the edit names as a partner,
+  `FOR KEY SHARE` in id order, THEN the event row `FOR NO KEY UPDATE`. The first draft locked the event
+  first, and an edit adding a partner could hold the event while a delete of the organiser held the
+  association: a cycle Postgres could not see, because the edit's proposal insert ran on another
+  connection while the edit's own connection sat idle. `NO KEY UPDATE` rather than `UPDATE` so the
+  `FOR KEY SHARE` of foreign-key inserts into tables referencing the event is not blocked.
+- **Everything on the lock's manager.** The checks (`CoOrganiserPort.check(request, manager)`), the form
+  ownership read, the form-link detach, the partner endings, the k proposals
+  (`ProposalsService.proposeWithin`, which hands back its announcement) and the event save are ONE
+  transaction on ONE pooled connection: they commit or none does (a failing k-th proposal leaves no
+  field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
+  The announcements and the other notices run after the commit. An event CREATION calls
+  `sync(request)` without a manager and gets its own transaction.
+- **A co-organisation ACCEPTANCE is not under this lock.** It is a proposals transaction; WP-Q2's
+  acceptance, which returns a validated event to pending, must take `associations -> event row ->
+  proposal` in that order to be serialised with an edit.
+- **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
+  delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock, failing explicitly if it settles first), the organiser-delete versus partner-edit ordering (a held association lock, never a hang) and the rollback of a failing k-th proposal;
+  `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
+
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)
 
 `GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`
@@ -1365,8 +1440,8 @@ An institution is an `associations` row of that type, so it reuses every mechani
   admin's own spaces are rarely the School's). D33's one mechanism is kept: the type decides the default, nothing else
   differs. `associations.service.create-default-audience.spec.ts` carries the control (an institution created by someone
   with spaces writes no rule).
-- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
-  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.
+- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes AS AN INSTITUTION through the institutions they
+  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to. (Amended 2026-11-02: they may also publish a personal post, seen by their accepted followers only - see D31.)
 
 ### Audiences policy as built (WP-A, 2026-10-08)
 
@@ -1451,8 +1526,11 @@ nobody else.
 - **Never a read grant**: the personal branch takes no `readGrants`, as before (WP7).
 - **Tout stays SPACES (decision 5)**: `postVisibleToUserSql` takes `followers: false`
   (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. Everything else - the
-  Suivis arm, the Associations arm (where it changes nothing: a personal post is there only through
-  a republication the reader sees), the search, a post by id, its comments, reactions and votes,
+  Suivis arm, the Associations arm (where the FOLLOWER disjunct changes nothing: a personal post is
+  there only through a republication the reader sees - but the arm DOES drop WP-F6's member-repost
+  door, `memberReposts: false`, owner 2026-11-02: an association post a reader reaches only through
+  a followed person's repost is in Suivis and never in Associations, as the privacy policy says;
+  proven against PostgreSQL in `member-reposts.integration.spec.ts`), the search, a post by id, its comments, reactions and votes,
   the D38b request menu, the announcement (`announceRecipientsSql`) and the newly-reached rules -
   counts the follower.
 - **Monotone in republications, unchanged**: the disjunct reads no republication, so
@@ -1759,8 +1837,8 @@ review account. A READ across the boundary returns nothing, as for anything outs
 | --- | --- | --- |
 | Search and the people directory | a review account finds the cohort only; nobody but a global admin finds a review account | `applyReviewCohortVisibility`, core `users.service.ts` |
 | A profile (`GET /users/:id`, `POST /users/batch`) | refused across the boundary, both ways (a batch reads an id across it as unknown); a global admin opens every profile, a review account opens no admin's | `assertMayOpenProfile` / `profilesOpenTo`, core `users.service.ts` |
-| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles read with no session are empty for a review account | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
-| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - the member's name in the head, nothing more | core `users.controller.ts`, `internal-users.controller.ts` |
+| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles need a session since 2026-11-02 ([anonymous-surface](anonymous-surface.md)) | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
+| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - since 2026-11-02 the generic head, never the member's name ([anonymous-surface](anonymous-surface.md)) | core `users.controller.ts`, `internal-users.controller.ts` |
 | Spaces | a review account has NO real space | `isReaderSpaceSql`, its pure twin `readerSpaces`, `spaces/reader-spaces.ts` |
 | Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
 | The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |

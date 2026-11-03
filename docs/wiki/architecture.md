@@ -30,7 +30,7 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token cookie |
 | `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis) |
-| `/api/admin/presence` | `chat-gateway:3000` | yes | Admin presence view |
+| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: anonymous counts by platform and version |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API (messages, groups, sync, push); Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe only |
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blobs (Garage) |

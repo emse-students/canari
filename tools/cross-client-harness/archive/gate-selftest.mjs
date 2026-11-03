@@ -61,7 +61,8 @@ function gatedScripts() {
  * path escaping the repository is then reported for the right reason rather than by accident.
  */
 const tracked = new Set(
-  execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
+  // The whole tree: past Node's 1 MiB default buffer as the repository grows.
+  execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)

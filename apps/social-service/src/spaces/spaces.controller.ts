@@ -30,7 +30,11 @@ export class SpacesController {
     return this.service.list();
   }
 
-  /** The audience rules of every association, for the admin grid. */
+  /**
+   * The audience rules of every association, for the admin grid of OLDER builds: the current one
+   * reads each page's rules with `GET associations/admin/catalogue`. A shim, retired with the floor
+   * (docs/wiki/legacy-compatibility.md).
+   */
   @Get('audiences')
   listAudiences() {
     return this.service.listAudiences();

@@ -19,7 +19,8 @@ It does **not** perform encryption, store messages, or make business logic decis
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
 | POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000) the caller may see: themself, and whoever shares a live conversation or a community with them ([audience](../../docs/wiki/services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](../../docs/wiki/services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
 | GET | `/api/presence?users=` | yes | LEGACY, the same answer for clients installed before the POST, counted once an hour ([legacy-compatibility](../../docs/wiki/legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
-| GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
+| GET | `/api/admin/presence` | yes (global admin) | Counts of connected people and devices by platform and app version - no id ([census](../../docs/wiki/services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
+| GET | `/api/admin/presence/history` | yes (global admin) | The same counts, one sample a minute for the last 24 h |
 | GET | `/api/health` | no | Liveness probe |
 
 Auth is enforced by Nginx `auth_request` before the request reaches the gateway.

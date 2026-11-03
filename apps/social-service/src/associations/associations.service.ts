@@ -40,7 +40,11 @@ import {
   assertRosterStaysOnOneSide,
 } from './review-cohort-reach';
 import { isInReviewCohort } from '../review-cohort';
-import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
+import {
+  assertCotisationStemFree,
+  isCotisationStemCollision,
+  stemCollidesElsewhere,
+} from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
@@ -132,16 +136,52 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
+import {
+  assertAudienceAllowedForType,
+  assertCreatorCampusGoverned,
+  defaultCampusRules,
+} from '../spaces/audience-policy';
+import { normaliseRules } from '../spaces/spaces.service';
+import type { AudienceRuleDto } from '../spaces/dto/space.dto';
+import type { FirstAdminDto } from './dto/admin-association.dto';
+import { SEARCH_FOLD_PARAMS, foldSql } from './search-fold';
+import {
+  ADMIN_ASSOCIATION_ERROR,
+  ADMIN_CATALOGUE_DEFAULT_LIMIT,
+  assertFirstAdminAllowedForType,
+  decodeCatalogueCursor,
+  encodeCatalogueCursor,
+  platformAdminOnly,
+} from './admin-catalogue';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
-import type { CoOrganiserPort } from './co-organisers.port';
+import type {
+  CoOrganiserAfterCommit,
+  CoOrganiserPort,
+  CoOrganiserSyncRequest,
+} from './co-organisers.port';
+import {
+  eventWriteSide,
+  partnerOrganiserOnlyRefusal,
+  type EventWriteSide,
+} from './event-write-side';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
+import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Where a new entity is put by the platform admin's create form (`POST associations/admin`): the
+ * spaces it reaches - EXPLICIT, possibly none, replacing the creator-campus default - and an
+ * optional first admin. Absent, `create` keeps its default placement.
+ */
+export interface AssociationPlacement {
+  audiences: AudienceRuleDto[];
+  firstAdmin?: FirstAdminDto;
+}
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 /**
@@ -385,6 +425,8 @@ function lydiaBusinessKeyContext(associationId: string, vendorToken: string): st
   return `${associationId}:${vendorToken}`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
@@ -465,8 +507,29 @@ export class AssociationsService {
    * admin ticks its audience afterwards. A NON-admin creator (a BDE star) is further refused
    * `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when that default campus is not one its BDE governs: it could
    * not edit what it made (decision 7).
+   *
+   * A PLACEMENT (the platform admin's form on `/admin/spaces`, owner 2026-11-02) replaces that
+   * default with the spaces the admin chose - possibly none - and may add ONE first admin, in the
+   * same transaction as the row. Without a first admin the entity has no member at all: the
+   * creating admin never becomes one. Only a platform admin may pass one.
    */
-  async create(dto: CreateAssociationDto, userId: string, isGlobalAdmin: boolean) {
+  async create(
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
+  ) {
+    if (placement && !isGlobalAdmin) {
+      this.logger.warn(`[create] placement refused: ${userId.slice(0, 8)} is not a platform admin`);
+      throw platformAdminOnly();
+    }
+    if (placement) {
+      // Refused before any write: an association or a list addresses a campus, never everyone.
+      assertAudienceAllowedForType(dto.type ?? 'association', normaliseRules(placement.audiences));
+      if (placement.firstAdmin) {
+        assertFirstAdminAllowedForType(dto.type ?? 'association', placement.firstAdmin.permissions);
+      }
+    }
     const explicitSlug = dto.slug?.trim() ? dto.slug : null;
     if (explicitSlug !== null && !SLUG_PATTERN.test(explicitSlug)) {
       throw new BadRequestException(
@@ -488,7 +551,14 @@ export class AssociationsService {
         throw new BadRequestException('An association with this slug already exists');
       }
       try {
-        return await this.insertAssociation(dto, explicitSlug, logoUrl, userId, isGlobalAdmin);
+        return await this.insertAssociation(
+          dto,
+          explicitSlug,
+          logoUrl,
+          userId,
+          isGlobalAdmin,
+          placement
+        );
       } catch (err) {
         if (!(await isSlugUniqueViolation(err, this.catalogQuery))) throw err;
         this.logger.warn(`[slug] explicit slug ${explicitSlug} was taken between check and insert`);
@@ -501,7 +571,14 @@ export class AssociationsService {
     // `-2` and `-3` instead of a check-then-insert that both pass.
     for (const candidate of slugCandidates(dto.name)) {
       try {
-        const saved = await this.insertAssociation(dto, candidate, logoUrl, userId, isGlobalAdmin);
+        const saved = await this.insertAssociation(
+          dto,
+          candidate,
+          logoUrl,
+          userId,
+          isGlobalAdmin,
+          placement
+        );
         this.logger.log(`[slug] derived ${candidate} from the name`);
         return saved;
       } catch (err) {
@@ -525,6 +602,91 @@ export class AssociationsService {
   }
 
   /**
+   * The slug a create of `name` would take NOW: the first of the SAME `slugCandidates` that is
+   * neither taken nor a cotisation-stem collision (`assertCotisationStemFree`, the check the create
+   * transaction runs). A PREVIEW for the admin form - the create stays the authority, and a
+   * concurrent create may still move it one suffix on. `null` when every candidate is taken.
+   */
+  async previewDerivedSlug(name: string): Promise<string | null> {
+    // ONE read of every stem (a slug is its own base stem, so a taken slug collides too), then the
+    // same predicate the create's `assertCotisationStemFree` applies - asked, never learned by
+    // catching its refusal, so a preview typed letter by letter logs no collision it did not make.
+    const collides = await stemCollidesElsewhere(this.assoRepo.manager, null);
+    const slug = slugCandidates(name).find((candidate) => !collides(candidate)) ?? null;
+    if (slug === null) this.logger.debug(`[slug] preview: no free candidate`);
+    return slug;
+  }
+
+  /**
+   * One page of the platform admin's catalogue (`/admin/spaces`): every entity of one kind, member
+   * or not, ordered by `(name, id)` and paged by KEYSET so a page costs the same at any depth and
+   * a row created meanwhile never shifts the next one. `q` keeps the names or slugs containing it,
+   * ignoring case and accents (`foldSql`; `strpos`, so `%` and `_` are plain characters). Each row carries its
+   * member count and its audience rules, so the grid needs no second whole-table read.
+   */
+  async adminCatalogue(query: {
+    type: 'association' | 'list' | 'institution';
+    q?: string;
+    after?: string;
+    limit?: number;
+  }) {
+    const limit = query.limit ?? ADMIN_CATALOGUE_DEFAULT_LIMIT;
+    const qb = this.assoRepo
+      .createQueryBuilder('a')
+      .where('a.type = :catalogueType', { catalogueType: query.type })
+      .orderBy('a.name', 'ASC')
+      .addOrderBy('a.id', 'ASC')
+      .take(limit + 1);
+    const search = query.q?.trim();
+    if (search) {
+      // Accent- and case-insensitive on both sides: "ecole" finds "Ecole" written with its accent.
+      const needle = foldSql(':catalogueQ');
+      qb.andWhere(
+        `(strpos(${foldSql('a.name')}, ${needle}) > 0 OR strpos(${foldSql('a.slug')}, ${needle}) > 0)`,
+        { catalogueQ: search, ...SEARCH_FOLD_PARAMS }
+      );
+    }
+    if (query.after) {
+      const position = decodeCatalogueCursor(query.after);
+      qb.andWhere('(a.name, a.id) > (:afterName, :afterId::uuid)', {
+        afterName: position.name,
+        afterId: position.id,
+      });
+    }
+    const fetched = await qb.getMany();
+    const rows = fetched.slice(0, limit);
+    const next =
+      fetched.length > limit
+        ? encodeCatalogueCursor({ name: rows[rows.length - 1].name, id: rows[rows.length - 1].id })
+        : null;
+    const ids = rows.map((a) => a.id);
+    const [counts, rules] = ids.length
+      ? await Promise.all([
+          this.assoRepo.query(
+            `SELECT "associationId", COUNT(*)::int AS n FROM association_members
+              WHERE "associationId" = ANY($1::uuid[]) GROUP BY "associationId"`,
+            [ids]
+          ) as Promise<{ associationId: string; n: number }[]>,
+          this.assoRepo.manager.find(AssociationAudience, { where: { associationId: In(ids) } }),
+        ])
+      : [[], []];
+    const countOf = new Map(counts.map((c) => [c.associationId, c.n]));
+    this.logger.debug(
+      `[ADMIN_CATALOGUE] ${query.type} q=${search ? 'yes' : 'no'} after=${query.after ? 'yes' : 'no'}: ${rows.length} row(s), more=${next !== null}`
+    );
+    return {
+      rows: rows.map((a) => ({
+        ...a,
+        memberCount: countOf.get(a.id) ?? 0,
+        audiences: rules
+          .filter((r) => r.associationId === a.id)
+          .map((r) => ({ formation: r.formation, campus: r.campus })),
+      })),
+      next,
+    };
+  }
+
+  /**
    * Reads the catalog OUTSIDE the create transaction a violation has just aborted - what tells a
    * slug collision from any other unique violation (`isSlugUniqueViolation`).
    */
@@ -537,7 +699,8 @@ export class AssociationsService {
     slug: string,
     logoUrl: string | null,
     userId: string,
-    isGlobalAdmin: boolean
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
   ) {
     const asso = this.assoRepo.create({
       ...dto,
@@ -550,6 +713,10 @@ export class AssociationsService {
       // Its base cotisation tag must never coincide with another association's tag names.
       await assertCotisationStemFree(manager, null, slug);
       const saved = await manager.save(asso);
+      if (placement) {
+        await this.placeNewAssociation(manager, saved, placement);
+        return saved;
+      }
       if (dto.type === 'institution') {
         // The type decides the default (D33's one mechanism): an institution addresses nobody until
         // an admin ticks the /admin/spaces grid - a global admin's own spaces are rarely the School's.
@@ -581,6 +748,67 @@ export class AssociationsService {
       );
       return saved;
     });
+  }
+
+  /**
+   * Writes a placement inside the create transaction: the chosen rules (none is allowed - it then
+   * reaches nobody), then the first admin when one was picked. A first admin naming no account is a
+   * typed 400 and rolls the row back with it, so a half-placed entity never exists.
+   */
+  private async placeNewAssociation(
+    manager: EntityManager,
+    saved: Association,
+    placement: AssociationPlacement
+  ): Promise<void> {
+    const rules = normaliseRules(placement.audiences);
+    if (rules.length > 0) {
+      await manager.insert(
+        AssociationAudience,
+        rules.map((r) => ({ associationId: saved.id, formation: r.formation, campus: r.campus }))
+      );
+    }
+    this.logger.log(`[spaces] ${saved.id} placed by a platform admin: ${rules.length} rule(s)`);
+    const firstAdmin = placement.firstAdmin;
+    if (!firstAdmin) {
+      this.logger.log(`[create] ${saved.id} has no member: none was asked for`);
+      return;
+    }
+    const known = (await manager.query(`SELECT 1 FROM users WHERE id::text = $1 LIMIT 1`, [
+      firstAdmin.userId,
+    ])) as unknown[];
+    if (known.length === 0) {
+      this.logger.warn(`[create] first admin ${firstAdmin.userId.slice(0, 8)} names no account`);
+      throw new BadRequestException({
+        code: ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN,
+        message: 'The first admin picked names no account.',
+      });
+    }
+    await this.insertMembership(manager, saved, firstAdmin, 0);
+    this.logger.log(`[create] ${saved.id} first admin ${firstAdmin.userId.slice(0, 8)}`);
+  }
+
+  /**
+   * Inserts ONE membership row: the ONE place a member is written, whether by `addMember` or by a
+   * placement's first admin. The bitmask is narrowed to what the kind may hold, and the roster never
+   * crosses the review cohort's boundary.
+   */
+  private async insertMembership(
+    manager: EntityManager,
+    association: Pick<Association, 'id' | 'type'>,
+    member: { userId: string; permissions: number; role?: string },
+    sortOrder: number
+  ): Promise<AssociationMember> {
+    await assertRosterStaysOnOneSide(manager, association.id, member.userId);
+    return manager.save(
+      manager.create(AssociationMember, {
+        associationId: association.id,
+        userId: member.userId,
+        // No role given: the column's default, never a label this code types.
+        ...(member.role === undefined ? {} : { role: member.role }),
+        permissions: writablePermissions(association.type, member.permissions),
+        sortOrder,
+      })
+    );
   }
 
   /**
@@ -1139,11 +1367,16 @@ export class AssociationsService {
 
   /**
    * Public members list for the read-only showcase (portail-etu vitrine).
-   * Never exposes the raw permission bitmask - only a coarse `isAdmin` flag -
-   * and joins the users mirror for display name and promo. Ordered like the
-   * public members grid (sortOrder, then createdAt).
+   *
+   * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
+   * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
+   * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
+   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
+   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * Ordered like the public members grid (sortOrder, then createdAt). See
+   * docs/wiki/anonymous-surface.md.
    */
-  async listMembersPublic(associationId: string) {
+  async listMembersPublic(associationId: string): Promise<PublicMember[]> {
     const rows = await this.memberRepo
       .createQueryBuilder('m')
       .select(['m.id', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
@@ -1172,21 +1405,60 @@ export class AssociationsService {
         lastName: r.lastName || null,
         promo: r.promo ?? null,
         createdAt: r.m_createdAt,
+        avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
+  }
+
+  /**
+   * The account behind one row of a PUBLIC roster, for the showcase's photo
+   * (`GET /api/public/members/:memberId/avatar`), or `null` when the id names no row or names a
+   * review account (which has no public face, review-cohort.ts). A malformed id is a miss, never a
+   * 500: the id comes from the URL.
+   */
+  async publicMemberUserId(memberId: string): Promise<string | null> {
+    if (!isUUID(memberId)) return null;
+    const row = await this.memberRepo.findOne({
+      where: { id: memberId },
+      select: { userId: true },
+    });
+    if (!row || isInReviewCohort(row.userId)) {
+      this.logger.debug(`[PUBLIC_AVATAR] no public roster row ${memberId.slice(0, 8)}`);
+      return null;
+    }
+    return row.userId;
+  }
+
+  /**
+   * The photo URL of each card of the published carte, keyed `assoId:userId`, for the cards that
+   * are still on that association's roster - the same address the public roster hands out, so the
+   * showcase reaches a carte face and a roster face the same way. A card whose person left the
+   * association gets none: they are no longer on a public roster.
+   */
+  async publicAvatarUrlsFor(
+    pairs: { associationId: string; userId: string }[]
+  ): Promise<Map<string, string>> {
+    const wanted = pairs.filter((p) => isUUID(p.associationId) && p.userId);
+    if (wanted.length === 0) return new Map();
+    const rows = await this.memberRepo.find({
+      where: wanted.map((p) => ({ associationId: p.associationId, userId: p.userId })),
+      select: { id: true, associationId: true, userId: true },
+    });
+    return new Map(
+      rows
+        .filter((r) => !isInReviewCohort(r.userId))
+        .map((r) => [`${r.associationId}:${r.userId}`, publicMemberAvatarUrl(r.id)])
+    );
   }
 
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
   async addMember(dto: AddMemberDto & { associationId: string }) {
-    const { associationId, userId, role } = dto;
+    const { associationId, userId } = dto;
     const target = await this.findById(associationId);
-    const permissions = writablePermissions(target.type, dto.permissions);
 
     const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
       throw new BadRequestException('User is already a member');
     }
-    // Never across the review cohort's boundary (review-cohort-reach.ts).
-    await assertRosterStaysOnOneSide(this.memberRepo.manager, associationId, userId);
 
     // Append new members at the END of the ordered list (not the top): take the current
     // max sortOrder + 1. `listMembers` orders by sortOrder ASC, so without this a new
@@ -1198,14 +1470,7 @@ export class AssociationsService {
       .getRawOne<{ max: number | null }>();
     const sortOrder = (maxRow?.max ?? -1) + 1;
 
-    const membership = this.memberRepo.create({
-      associationId,
-      userId,
-      role,
-      permissions,
-      sortOrder,
-    });
-    const saved = await this.memberRepo.save(membership);
+    const saved = await this.insertMembership(this.memberRepo.manager, target, dto, sortOrder);
     // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
     // every cached feed page of that reader depends on.
     await this.invalidatePostListCaches();
@@ -1375,6 +1640,50 @@ export class AssociationsService {
   }
 
   /**
+   * Runs `work` in ONE transaction that starts by locking the event, so every read-check-write
+   * an event goes through here (an edit with its partner list and its form link, a validation, a
+   * rejection) is serialised: the second one starts from what the first committed, never from the
+   * snapshot it took before waiting. Without it an edit and a validation both load the row, both
+   * save, and the later save writes back the other's stale status columns. A co-organisation
+   * ACCEPTANCE is NOT serialised here: it is a proposals transaction (WP-Q2 gives it this lock).
+   *
+   * THE LOCK ORDER IS THE GLOBAL ONE - associations first, then the subject (`ProposalsService
+   * .lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE` before it
+   * deletes the events): the event's organiser and every association the edit names as a partner
+   * (`associationIds`), `FOR KEY SHARE` in id order, then the event row `FOR NO KEY UPDATE`.
+   * The reverse (event first) let an edit hold the event while its proposal insert waited on an
+   * association a delete held, the delete waiting on the event.
+   *
+   * `NO KEY UPDATE`, not `UPDATE`: it blocks every other writer of the row but not the
+   * `KEY SHARE` an insert into a table referencing the event takes through its foreign key.
+   *
+   * `work` gets the transaction's repository AND manager: EVERYTHING it reads or writes goes
+   * through them (never a second pool connection, which would starve the pool of ten under a few
+   * concurrent edits and hide a lock cycle from Postgres, durable-rules).
+   */
+  async withEventLock<T>(
+    eventId: string,
+    work: (repo: Repository<AssociationCalendarEvent>, manager: EntityManager) => Promise<T>,
+    associationIds: readonly string[] = []
+  ): Promise<T> {
+    const named = associationIds.filter((id) => UUID_RE.test(id));
+    return this.calendarRepo.manager.transaction(async (manager) => {
+      await manager.query(
+        `SELECT a.id FROM associations a
+          WHERE a.id = ANY($1::uuid[])
+             OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
+          ORDER BY a.id FOR KEY SHARE OF a`,
+        [named, eventId]
+      );
+      await manager.query(
+        'SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE',
+        [eventId]
+      );
+      return work(manager.getRepository(AssociationCalendarEvent), manager);
+    });
+  }
+
+  /**
    * Returns the event if the caller's association is the primary owner OR an ACCEPTED co-organiser
    * (D39: a co-owner row exists only once its `coorganise` proposal was accepted, so a pending one
    * reaches nothing here). Pass `canCrossAsso = true` for BDE / global-admin callers.
@@ -1382,12 +1691,13 @@ export class AssociationsService {
   async findCalendarEventForAssociation(
     eventId: string,
     associationId: string,
-    canCrossAsso: boolean
+    canCrossAsso: boolean,
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
   ): Promise<AssociationCalendarEvent | null> {
     if (canCrossAsso) {
-      return this.calendarRepo.findOne({ where: { id: eventId } });
+      return repo.findOne({ where: { id: eventId } });
     }
-    return this.calendarRepo
+    return repo
       .createQueryBuilder('e')
       .where('e.id = :eventId', { eventId })
       .andWhere(
@@ -1559,8 +1869,12 @@ export class AssociationsService {
     return ev ? this.serializeCalendarEvent(ev) : null;
   }
 
-  private async assertFormBelongsToAssociation(formId: string, associationId: string) {
-    const f = await this.formRepo.findOne({
+  private async assertFormBelongsToAssociation(
+    formId: string,
+    associationId: string,
+    manager?: EntityManager
+  ) {
+    const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
       where: { id: formId },
       select: { id: true, associationId: true },
     });
@@ -1571,13 +1885,13 @@ export class AssociationsService {
   }
 
   /** Ensures at most one calendar row references a given form. */
-  private async detachCalendarLinksExcept(opts: { formId?: string | null; exceptEventId: string }) {
+  private async detachCalendarLinksExcept(
+    opts: { formId?: string | null; exceptEventId: string },
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
+  ) {
     const { formId, exceptEventId } = opts;
     if (formId) {
-      await this.calendarRepo.update(
-        { linkedFormId: formId, id: Not(exceptEventId) },
-        { linkedFormId: null }
-      );
+      await repo.update({ linkedFormId: formId, id: Not(exceptEventId) }, { linkedFormId: null });
     }
   }
 
@@ -1865,14 +2179,16 @@ export class AssociationsService {
    * a global admin, VALIDATE_EVENTS in the BDE governing the EVENT's association (read from the row),
    * or PROPOSE_EVENT in `associationId` through `mayAct`. Which events that last tier reaches is
    * `findCalendarEventForAssociation`'s: the organiser's, or an ACCEPTED co-organiser's (D39).
-   * Returns the tier, which the cross-association paths need.
+   * Returns the tier, which the cross-association paths need, and the SIDE the caller writes from
+   * (`eventWriteSide`, E2): a partner's text and poster are open, its date, partner list and delete
+   * are not. A platform admin and a governing validator write from the organiser side, unchanged.
    */
   async assertMayWriteEvent(
     userId: string,
     isGlobalAdmin: boolean,
     associationId: string,
     eventId: string
-  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
+  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean; side: EventWriteSide }> {
     const isBde = isGlobalAdmin ? false : await this.mayValidateEvent(userId, eventId);
     if (!isGlobalAdmin && !isBde) {
       // Through `mayAct`, so a cross-association super-admin may act on an event in an association
@@ -1890,7 +2206,29 @@ export class AssociationsService {
         throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
       }
     }
-    return { isGlobalAdmin, isBde };
+    const side = await this.writeSideOf(eventId, associationId, isGlobalAdmin || isBde);
+    this.logger.debug(
+      `[PERM] event write allowed: ${sanitizeLog(userId.slice(0, 8))} on ${sanitizeLog(eventId.slice(0, 8))} from the ${side} side`
+    );
+    return { isGlobalAdmin, isBde, side };
+  }
+
+  /**
+   * The side of event `eventId` a write through `viaAssociationId` comes from, the organiser read
+   * from the ROW. A missing event is the organiser side: the route that loads it answers 404 itself,
+   * and a refusal here would hide that.
+   */
+  private async writeSideOf(
+    eventId: string,
+    viaAssociationId: string,
+    crossTier: boolean
+  ): Promise<EventWriteSide> {
+    if (crossTier) return 'organiser';
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId },
+      select: { id: true, associationId: true },
+    });
+    return ev ? eventWriteSide(ev.associationId, viaAssociationId, false) : 'organiser';
   }
 
   /**
@@ -2548,9 +2886,76 @@ ${rejectionReason}`
     dto: UpdateAssociationCalendarEventDto,
     callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
   ) {
-    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, canCrossAsso);
+    // EVERY CHECK AND EVERY WRITE UNDER THE EVENT'S LOCK: the event is read AFTER the lock is
+    // taken, so a validation or an acceptance that committed first is what this edit starts from.
+    const { saved, demoted, afterCommit } = await this.withEventLock(
+      eventId,
+      (repo, manager) =>
+        this.applyCalendarEventUpdate(repo, manager, associationId, eventId, dto, callerOpts),
+      dto.coOwnerIds
+    );
+    // The partners' proposals are announced once they are COMMITTED, with the other notices.
+    await afterCommit();
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
+    this.logger.debug(
+      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
+    );
+    // Notifications run AFTER the commit: a notice for a write that rolled back would be a lie.
+    if (demoted) {
+      this.logger.debug(
+        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
+      );
+      // The same route a fresh proposal takes, because that is what this now is. Without it the
+      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
+      // than the defect it replaces, the event having at least been VISIBLE before.
+      void this.notifyEventValidatorsOfProposal(
+        saved.associationId,
+        callerOpts?.callerUserId ?? saved.createdBy,
+        saved.title
+      );
+      // And the association's own proposers, because the one who moved the dates is rarely the
+      // only person counting on the event being on the agenda.
+      void this.notifyAssocAdminsOfEventAction(
+        saved.associationId,
+        callerOpts?.callerUserId ?? saved.createdBy,
+        saved.title,
+        'pending'
+      );
+    }
+    // Notify asso admins when BDE modifies an event from another asso
+    if (canCrossAsso && saved.associationId !== associationId && callerOpts?.callerUserId) {
+      void this.notifyAssocAdminsOfEventAction(
+        saved.associationId,
+        callerOpts.callerUserId,
+        saved.title,
+        'updated'
+      );
+    }
+    return this.serializeCalendarEvent(saved, coOwners);
+  }
+
+  /** The checks and writes of `updateCalendarEvent`, run by it inside the event's lock. */
+  private async applyCalendarEventUpdate(
+    repo: Repository<AssociationCalendarEvent>,
+    manager: EntityManager,
+    associationId: string,
+    eventId: string,
+    dto: UpdateAssociationCalendarEventDto,
+    callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
+  ): Promise<{
+    saved: AssociationCalendarEvent;
+    demoted: boolean;
+    afterCommit: CoOrganiserAfterCommit;
+  }> {
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const ev = await this.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      canCrossAsso === true,
+      repo
+    );
     if (!ev) throw new NotFoundException('Event not found');
 
     // Before any mutation: a refusal must leave the entity as it was found.
@@ -2619,6 +3024,28 @@ ${rejectionReason}`
      */
     const datesMoved =
       toMillis(ev.startsAt) !== previousStartsAt || toMillis(ev.endsAt) !== previousEndsAt;
+    // E2: a partner (an accepted co-organiser writing through its own association) edits the text
+    // and the poster, never the date. Refused before ANY write below, and only when the date really
+    // moved: both modals resubmit every field they render, so an unchanged date is not a change.
+    const side = eventWriteSide(ev.associationId, associationId, canCrossAsso === true);
+    if (side === 'partner' && datesMoved) {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused a date change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('date');
+    }
+    // The form link is the organiser's too (decided with E2, D39): a CHANGE from the partner side
+    // is refused; resending the value it already has is not a change.
+    if (
+      side === 'partner' &&
+      dto.linkedFormId !== undefined &&
+      (dto.linkedFormId || null) !== (ev.linkedFormId ?? null)
+    ) {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused a form link change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('linkedForm');
+    }
     const demoted = wasValidated && datesMoved;
     if (demoted) {
       ev.status = AssociationCalendarEventStatus.Pending;
@@ -2626,26 +3053,15 @@ ${rejectionReason}`
       ev.validatedBy = null;
     }
 
-    if (dto.linkedFormId !== undefined) {
-      if (dto.linkedFormId === null || dto.linkedFormId === '') {
-        ev.linkedFormId = null;
-      } else {
-        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId);
-        await this.detachCalendarLinksExcept({
-          formId: dto.linkedFormId,
-          exceptEventId: ev.id,
-        });
-        ev.linkedFormId = dto.linkedFormId;
-      }
-    }
-
-    // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
-    // trying to change anything but its own presence, 403) leaves the event as it was found.
+    // EVERY REFUSAL BEFORE ANY WRITE: the partner-list check (a partner changing more than its own
+    // presence, the cap) is read-only and runs here, ahead of the form link's detach below, so a
+    // refused request leaves the event, its form links and its partners exactly as found.
+    let coOrganiserRequest: CoOrganiserSyncRequest | null = null;
     if (dto.coOwnerIds !== undefined) {
       if (!callerOpts?.callerUserId) {
         throw new ForbiddenException('A co-organiser change needs a caller');
       }
-      await this.coOrganiserPort().sync({
+      coOrganiserRequest = {
         eventId: ev.id,
         organiserId: ev.associationId,
         desiredIds: dto.coOwnerIds,
@@ -2653,61 +3069,60 @@ ${rejectionReason}`
         isGlobalAdmin: callerOpts.isGlobalAdmin === true,
         organiserSide: canCrossAsso === true || ev.associationId === associationId,
         viaAssociationId: associationId,
-      });
+      };
+      await this.coOrganiserPort().check(coOrganiserRequest, manager);
     }
-    const saved = await this.calendarRepo.save(ev);
-    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
-    this.logger.debug(
-      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
-    );
-    if (demoted) {
-      this.logger.debug(
-        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
-      );
-      // The same route a fresh proposal takes, because that is what this now is. Without it the
-      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
-      // than the defect it replaces, the event having at least been VISIBLE before.
-      void this.notifyEventValidatorsOfProposal(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title
-      );
-      // And the association's own proposers, because the one who moved the dates is rarely the
-      // only person counting on the event being on the agenda.
-      void this.notifyAssocAdminsOfEventAction(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title,
-        'pending'
-      );
+
+    // Only an actual CHANGE of the link is a write (and is checked against the form's owner): a
+    // modal resending the value it loaded changes nothing, whichever side it writes from.
+    if (
+      dto.linkedFormId !== undefined &&
+      (dto.linkedFormId || null) !== (ev.linkedFormId ?? null)
+    ) {
+      if (dto.linkedFormId === null || dto.linkedFormId === '') {
+        ev.linkedFormId = null;
+      } else {
+        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId, manager);
+        await this.detachCalendarLinksExcept(
+          {
+            formId: dto.linkedFormId,
+            exceptEventId: ev.id,
+          },
+          repo
+        );
+        ev.linkedFormId = dto.linkedFormId;
+      }
     }
-    // Notify asso admins when BDE modifies an event from another asso
-    if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
-      void this.notifyAssocAdminsOfEventAction(
-        ev.associationId,
-        callerOpts.callerUserId,
-        saved.title,
-        'updated'
-      );
-    }
-    return this.serializeCalendarEvent(saved, coOwners);
+
+    // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
+    // trying to change anything but its own presence, 403) leaves the event as it was found.
+    const afterCommit: CoOrganiserAfterCommit = coOrganiserRequest
+      ? await this.coOrganiserPort().sync(coOrganiserRequest, manager)
+      : () => Promise.resolve();
+    const saved = await repo.save(ev);
+    return { saved, demoted, afterCommit };
   }
 
   /** Marks a pending calendar event as validated (visible on public agenda and feeds). */
   async validateCalendarEvent(associationId: string, eventId: string, userId: string) {
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
-    if (!ev) throw new NotFoundException('Event not found');
-    if (ev.status === AssociationCalendarEventStatus.Validated) {
-      return this.serializeCalendarEvent(ev);
-    }
-    ev.status = AssociationCalendarEventStatus.Validated;
-    ev.validatedAt = new Date();
-    ev.validatedBy = userId;
-    const saved = await this.calendarRepo.save(ev);
+    // Under the event's lock, so a validation never overwrites an edit or an acceptance it did not see.
+    const outcome = await this.withEventLock(eventId, async (repo) => {
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
+      if (!ev) throw new NotFoundException('Event not found');
+      if (ev.status === AssociationCalendarEventStatus.Validated) {
+        return { ev, changed: false };
+      }
+      ev.status = AssociationCalendarEventStatus.Validated;
+      ev.validatedAt = new Date();
+      ev.validatedBy = userId;
+      return { ev: await repo.save(ev), changed: true };
+    });
+    if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
+    const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
     // Notify asso admins that their event has been validated
-    void this.notifyAssocAdminsOfEventAction(ev.associationId, userId, ev.title, 'validated');
+    void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
   }
 
@@ -2719,21 +3134,25 @@ ${rejectionReason}`
     reason?: string
   ) {
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
-    if (!ev) throw new NotFoundException('Event not found');
-    if (ev.status === AssociationCalendarEventStatus.Rejected) {
-      return this.serializeCalendarEvent(ev);
-    }
-    ev.status = AssociationCalendarEventStatus.Rejected;
-    ev.rejectedAt = new Date();
-    ev.rejectedBy = userId;
-    ev.rejectionReason = reason ?? null;
-    const saved = await this.calendarRepo.save(ev);
+    const outcome = await this.withEventLock(eventId, async (repo) => {
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
+      if (!ev) throw new NotFoundException('Event not found');
+      if (ev.status === AssociationCalendarEventStatus.Rejected) {
+        return { ev, changed: false };
+      }
+      ev.status = AssociationCalendarEventStatus.Rejected;
+      ev.rejectedAt = new Date();
+      ev.rejectedBy = userId;
+      ev.rejectionReason = reason ?? null;
+      return { ev: await repo.save(ev), changed: true };
+    });
+    if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
+    const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
     void this.notifyAssocAdminsOfEventAction(
-      ev.associationId,
+      saved.associationId,
       userId,
-      ev.title,
+      saved.title,
       'rejected',
       reason
     );
@@ -2773,6 +3192,13 @@ ${rejectionReason}`
     } else {
       const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
       if (!ev) throw new NotFoundException('Event not found');
+      // E2: only the organiser deletes; a partner withdraws instead (`coOwnerIds` without itself).
+      if (eventWriteSide(ev.associationId, associationId, false) === 'partner') {
+        this.logger.debug(
+          `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused deleting ${sanitizeLog(eventId.slice(0, 8))}`
+        );
+        throw partnerOrganiserOnlyRefusal('delete');
+      }
       await this.calendarRepo.delete({ id: eventId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`

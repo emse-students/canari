@@ -65,6 +65,33 @@ Proof: `spaces/bde.integration.spec.ts` runs the predicate against PostgreSQL wi
 space, a space with no BDE, and none) and asserts who validates, who is told, each user's reach and
 the list filter; a control with the space test removed fails 10 of its 13 cases.
 
+### Creating an entity: two routes, two tiers
+
+A BDE holding `MANAGE_ASSO` still creates through `POST /associations` (unscoped: there is no
+association yet). That route keeps its own rules. The entity reaches the creator's campus by default,
+the BDE must govern that campus (`AUDIENCE_OUTSIDE_BDE_CAMPUS`), and an institution is a global admin's
+alone.
+
+**The admin create form on `/admin/spaces` (`POST /associations/admin`, owner 2026-11-02) is
+PLATFORM-ADMIN ONLY.** It is the one route that places an entity in spaces the creator does not hold
+and hands it a first admin, both cross-space acts that D24 keeps with global admins. An institution's
+first admin never holds `MANAGE_MEMBERS`: an institution's members are managed by the platform admin
+only (owner, 2026-11-02; `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`).
+`GlobalAdminGuard` reads `X-Global-Admin` alone, so no BDE flag opens it. The service refuses a
+placement from anyone else as well (`ADMIN_ASSOCIATION_PLATFORM_ADMIN_ONLY`), because a guard on the
+route is not a check in the function.
+
+Both routes call the same `AssociationsService.create`. An entity created there may have **no member
+at all**, which was already the case for every `POST /associations` create (the creator is never
+added). The zero-member audit of 2026-11-02 found nothing that breaks:
+- the last-admin guards run only when a member holding `MANAGE_MEMBERS` is changed;
+- every flag-holder notification with nobody to tell is a no-op;
+- the platform admin passes `mayAct` on every management tab.
+
+The one stop is Lydia onboarding: its Responsable and its cashiers must be members
+(`LYDIA_RESPONSABLE_NOT_A_MEMBER`, `LYDIA_CASHIER_NOT_A_MEMBER`), so that step waits for a first member.
+[admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)
+
 ### Why it exists
 
 The same question had **four** different answers before this audit, and they disagreed:
@@ -93,8 +120,8 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
-| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association (unscoped: there is none yet), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
-| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
+| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association through `POST /associations` (unscoped: there is none yet; never the platform admin's `POST /associations/admin`, [below](#creating-an-entity-two-routes-two-tiers)), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
+| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing and deleting any post (`assertMayManage` and the `canManage` field). **Pinning stops being moderation once WP-PIN ships (owner, 2026-11-03)**: it becomes a per-space promotion right ([section 11](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)); until then `pinPost`/`unpinPost` and `canPin` still ride `MODERATE` |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
 | `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
@@ -157,7 +184,7 @@ is what made the report button appear on a post the reader had published and the
 | Tier | How it is known | Edit / delete | Pin | Report |
 | --- | --- | --- | --- | --- |
 | Platform administrator | `X-Global-Admin: true` | yes | yes | yes |
-| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | yes | yes |
+| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | today yes, globally; WP-PIN: only in the spaces its BDE governs, institution posts included (G9 does not remove it) | yes |
 | The post's publisher | its author, or `POST_AS_ASSO` on the association it speaks for | yes, on its own | no | no - it would be reporting itself |
 | Any other logged-in reader | - | no | no | yes |
 

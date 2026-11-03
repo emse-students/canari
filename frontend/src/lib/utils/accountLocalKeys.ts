@@ -147,6 +147,12 @@ export const ACCOUNT_KEY = {
    * backups made before it no longer open here; cleared by the next export.
    */
   backupOwedAfterKeyMove: (userId: string) => `canari_backup_owed_after_key_move:v1:${userId}`,
+  /**
+   * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
+   * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
+   * truth; this is the optimistic copy that keeps a help from replaying offline.
+   */
+  seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
@@ -220,6 +226,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
+    ACCOUNT_KEY.seenHelps(userId),
     ACCOUNT_KEY.lastActive(userId),
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
