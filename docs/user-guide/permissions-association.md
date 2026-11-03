@@ -47,8 +47,12 @@ Trois garde-fous :
 
 - Vous ne pouvez **accorder ni retirer** que les droits que vous possedez vous-meme : une case que
   vous n'avez pas est grisee. Pour la meme raison, vous ne pouvez pas retirer de l'association un
-  membre qui a un droit que vous n'avez pas (quitter l'association vous-meme reste toujours
-  possible). Seuls l'administrateur de la plateforme et le BDE (section 3) echappent a cette limite.
+  membre qui a un droit que vous n'avez pas. Seuls l'administrateur de la plateforme et le BDE
+  (section 3) echappent a cette limite.
+- **Tout membre peut quitter l'association lui-meme**, sans rien demander a personne : bouton
+  **"Quitter"** sur la page de l'association. Seule exception : le **dernier** membre qui possede
+  *Gerer les membres* ne peut pas partir, l'application lui demande de donner d'abord ce droit a un
+  autre membre.
 - Vous ne pouvez pas retirer *Gerer les membres* au **dernier** membre qui le possede : l'association
   se retrouverait sans personne pour gerer ses membres. Nommez d'abord son remplacant.
 - A l'ajout d'un membre, le bouton **"Administrateur"** coche d'un coup tous les droits non-BDE,

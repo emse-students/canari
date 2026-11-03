@@ -229,8 +229,27 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
 - **Removing a member is a revocation of everything it holds** (`before` = its flags, `after` = 0):
   otherwise a member holding only `MANAGE_MEMBERS` could remove the treasurer and re-add them with
   nothing. Removing a target above the remover's ceiling takes a super-admin or the platform admin;
-  leaving (removing oneself) stays free; the last-admin guard is unchanged. The delete is
+  leaving is the "Quitter" button (below); the last-admin guard is unchanged. The delete is
   conditioned on the bitmask judged, like the update (`MEMBER_CHANGED_MEANWHILE` otherwise).
+- **The "Quitter" button** (owner, 2026-11-03): every member leaves an association from its page
+  without asking anyone, except the last holder of `MANAGE_MEMBERS`, refused
+  `400 ASSOCIATION_LAST_MEMBER_MANAGER` (the sentence asks them to hand the right on first). The
+  route is `DELETE /api/associations/:id/members/me`: `NginxAuthGuard` only, no role guard, and the
+  row it removes is the caller's own, named by the vouched `x-user-id` and never by a parameter
+  (`AssociationsService.leaveAssociation`). Neither the ceiling nor the institution rule judges it,
+  an institution's member included; the BDE bypass of the last-manager guard does not apply to a
+  leaver. Tests: `member-flag-ceiling.spec.ts` (an ordinary member leaves, the last manager is
+  refused typed, a non-member touches nobody) and `associations.controller.leave.spec.ts` (the
+  guards, the path declared before `:id/members/:userId`, no target parameter).
+- **Peer deposition and the passation** (owner, 2026-11-03, verbatim): *"Tout ce qui concerne une
+  passation doit pouvoir se faire sans admin plateforme. Si le secrétaire veut ajouter et mettre les
+  permissions au nouveau secrétaire (respectivement président, trésorier...) puis se retirer, il
+  faut que ce soit faisable."* So a member holding `MANAGE_MEMBERS` may remove that right - or any
+  right within its own ceiling - from the president, as long as the president is not its last
+  holder. This is the existing rule (the ceiling plus the last-admin guard), not a new one; no code
+  changed. `member-flag-ceiling.spec.ts` pins it: the secretary adds the new secretary with its own
+  flags, then leaves through the "Quitter" route, and a member manager takes `MANAGE_MEMBERS` from a
+  president who is not its last holder.
 - **The super-admin tier cannot be acquired through the audience.** A BDE becomes an association's
   super-admin by governing a space its rules reach, and a BDE may write audiences - so the audience
   bound must have the same granularity as governance. It was per CAMPUS while governance is per
@@ -282,8 +301,9 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   - **an institution's proposal** is told to the BDE validators of the spaces it targets AND to the
     platform admins when a targeted space has no BDE, or it targets none
     (`TARGETS_AN_UNGOVERNED_SPACE_SQL`); the WARN is left for the case nobody at all is told.
-  - **leaving stays free**: a member removing itself is judged by neither the institution rule nor
-    the ceiling (the route still asks `MANAGE_MEMBERS`; there is no separate leave route).
+  - **leaving is the "Quitter" button** (owner, 2026-11-03): an institution's member leaves like
+    any other, judged by neither the institution rule nor the ceiling; only the last holder of
+    `MANAGE_MEMBERS` is refused (see the bullet on the button above).
   - **no BDE moderates an institution's content; only the platform admin does** (owner,
     2026-11-03). Recorded, not yet enforced: `isContentModerator` is platform-wide and takes no
     post ([backlog](backlog.d/p1-no-bde-moderates-an-institutions-content.md)).

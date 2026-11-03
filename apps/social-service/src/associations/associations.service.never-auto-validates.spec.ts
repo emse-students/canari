@@ -63,7 +63,7 @@ function makeService() {
     { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
 
-  const notifyEventValidatorsOfProposal = jest.fn();
+  const notifyEventValidatorsOfProposal = jest.fn().mockResolvedValue(undefined);
   const notifyAssocAdminsOfEventAction = jest.fn();
   Object.assign(service, {
     findById: jest.fn(async () => ({ id: 'asso-1' })),

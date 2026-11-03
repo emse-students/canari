@@ -665,7 +665,8 @@ officer is often the president of another association and seats themself there w
 Only an explicit row carries the two excluded rights, and every super-admin write that grants one -
 or `MANAGE_PRODUCTS`, whose explicit row is what accepts a list's payment delegation - is logged at
 info with the association and the flag names. An ordinary member holding `MANAGE_MEMBERS`
-is capped at its own flags, granting, revoking and removing alike (leaving stays free)
+is capped at its own flags, granting, revoking and removing alike; any member leaves through the
+"Quitter" button, except the last holder of `MANAGE_MEMBERS` (`ASSOCIATION_LAST_MEMBER_MANAGER`)
 ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 
 **WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server

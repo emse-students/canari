@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
@@ -255,8 +255,8 @@ describe('SpacesService', () => {
     });
     const saved = await service.setAudiences('a', [{ campus: 'saint-etienne' }], ADMIN);
     expect(saved).toEqual([
-      { formation: null, campus: 'saint-etienne' },
-      { formation: 'ICM', campus: 'gardanne' },
+      { formation: null, campus: 'saint-etienne', editable: true },
+      { formation: 'ICM', campus: 'gardanne', editable: true },
     ]);
     expect(manager.insert).toHaveBeenCalled();
   });
@@ -311,7 +311,7 @@ describe('SpacesService', () => {
     it('lets an institution address everyone', async () => {
       const { service } = make({ association: { id: 'i', type: 'institution' } });
       await expect(service.setAudiences('i', [{ campus: null }], ADMIN)).resolves.toEqual([
-        { formation: null, campus: null },
+        { formation: null, campus: null, editable: true },
       ]);
     });
 
@@ -321,7 +321,10 @@ describe('SpacesService', () => {
         rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
         bdeCampuses: ['gardanne'],
       });
-      await service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR);
+      // The write answers in the read's shape, so the editor renders it with no second read.
+      await expect(
+        service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR)
+      ).resolves.toEqual([{ formation: 'ICM', campus: 'gardanne', editable: true }]);
       expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
         { associationId: 'a', formation: 'ICM', campus: 'gardanne' },
       ]);
@@ -370,6 +373,25 @@ describe('SpacesService', () => {
       for (const r of [other, beyond, inst, unruled]) {
         expect(r.manager.insert).not.toHaveBeenCalled();
         expect(r.redis.deleteByPattern).not.toHaveBeenCalled();
+      }
+    });
+
+    it('logs every refusal at WARN with its typed code, like the member ceiling', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        const beyond = make({
+          association: { id: 'a', type: 'association' },
+          rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
+          bdeCampuses: ['gardanne'],
+        });
+        await code(beyond.service.setAudiences('a', [{ campus: 'saint-etienne' }], STAR));
+        await code(beyond.service.setAudiences('a', [{ campus: null }], ADMIN));
+        expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+          '[AUDIENCE] write refused: association=a code=AUDIENCE_RULE_BEYOND_BDE_SPACES',
+          '[AUDIENCE] write refused: association=a code=AUDIENCE_EVERYONE_INSTITUTION_ONLY',
+        ]);
+      } finally {
+        warn.mockRestore();
       }
     });
 

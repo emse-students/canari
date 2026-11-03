@@ -156,9 +156,9 @@
       locked: lockedRules.length,
     });
     try {
-      await setAssociationAudiences(asso.id, rules);
-      // Read back rather than kept: which rules stay beyond the reader's spaces is the server's call.
-      currentRules = await getAssociationAudiences(asso.id);
+      // The write's own answer, in the read's shape: which rules stay beyond the reader's spaces is
+      // the server's call, and no second read can fail after the write has landed.
+      currentRules = await setAssociationAudiences(asso.id, rules);
       showToast(m.audience_saved(), 'info');
     } catch (err) {
       Log.d('audience.save failed', err);

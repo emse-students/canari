@@ -8,6 +8,7 @@ import {
 } from './entities/association-member.entity';
 import { ADMIN_ASSOCIATION_ERROR } from './admin-catalogue';
 import {
+  LAST_MEMBER_MANAGER,
   MEMBER_FLAGS_BEYOND_GRANTER,
   flagNames,
   flagsBeyondCeiling,
@@ -111,14 +112,23 @@ function makeService(rows: Row[]) {
       );
       return Promise.resolve([{ holds }]);
     }),
-    // The last-admin guard counts the managers; two keeps it out of these cases. An add reads the
-    // roster's last sort order before `insertMembership` judges the granter.
+    // The last-admin guard counts the association's MANAGE_MEMBERS holders, from the rows. An add
+    // reads the roster's last sort order before `insertMembership` judges the granter.
     createQueryBuilder: jest.fn(() => {
+      let associationId = '';
       const qb = {
         select: () => qb,
-        where: () => qb,
+        where: (_sql: string, params?: { associationId?: string }) => {
+          associationId = params?.associationId ?? associationId;
+          return qb;
+        },
         andWhere: () => qb,
-        getCount: () => Promise.resolve(2),
+        getCount: () =>
+          Promise.resolve(
+            rows.filter(
+              (r) => r.associationId === associationId && (r.permissions & MANAGE_MEMBERS) !== 0
+            ).length
+          ),
         getRawOne: () => Promise.resolve({ max: 0 }),
       };
       return qb;
@@ -480,5 +490,108 @@ describe('AssociationsService - removing a member is a revocation of everything 
         service.removeMember(ASSO, 'plain', { granter: { userId: 'sec', isGlobalAdmin: false } })
       )
     ).toBe('written');
+  });
+});
+
+describe('AssociationsService.leaveAssociation - the "Quitter" button (owner, 2026-11-03)', () => {
+  it('lets an ordinary member leave, without asking anyone', async () => {
+    const { service, remove } = makeService([
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS },
+      { userId: 'plain', associationId: ASSO, permissions: PROPOSE_EVENT },
+    ]);
+    expect(await settle(service.leaveAssociation(ASSO, 'plain'))).toBe('written');
+    expect(remove).toHaveBeenCalledWith({ id: undefined, permissions: PROPOSE_EVENT });
+  });
+
+  it("lets a member of an institution leave, though its members are the platform admin's", async () => {
+    const { service, remove } = makeService([
+      { userId: 'staff', associationId: SCHOOL, permissions: POST_AS_ASSO },
+    ]);
+    expect(await settle(service.leaveAssociation(SCHOOL, 'staff'))).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the last holder of MANAGE_MEMBERS, typed', async () => {
+    const { service, remove } = makeService([
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS | PROPOSE_EVENT },
+      { userId: 'plain', associationId: ASSO, permissions: 0 },
+    ]);
+    expect(await settle(service.leaveAssociation(ASSO, 'pres'))).toBe(LAST_MEMBER_MANAGER);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('refuses the last holder even when it is also the BDE super-admin of the association', async () => {
+    const { service, remove } = makeService([
+      superAdmin,
+      { userId: 'bde-admin', associationId: ASSO, permissions: MANAGE_MEMBERS },
+    ]);
+    expect(await settle(service.leaveAssociation(ASSO, 'bde-admin'))).toBe(LAST_MEMBER_MANAGER);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('acts on the caller only: a non-member leaving touches nobody', async () => {
+    const { service, remove } = makeService([
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS },
+    ]);
+    const outcome = await settle(service.leaveAssociation(ASSO, 'stranger'));
+    expect(outcome).toBeInstanceOf(HttpException);
+    expect((outcome as HttpException).getStatus()).toBe(404);
+    expect(remove).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * PEER DEPOSITION AND THE PASSATION (owner, 2026-11-03): "Tout ce qui concerne une passation doit
+ * pouvoir se faire sans admin plateforme. Si le secretaire veut ajouter et mettre les permissions au
+ * nouveau secretaire (respectivement president, tresorier...) puis se retirer, il faut que ce soit
+ * faisable." No platform admin and no BDE appear below.
+ */
+describe('AssociationsService - a passation needs no platform admin (owner, 2026-11-03)', () => {
+  const SECRETARY = MANAGE_MEMBERS | MANAGE_FORMS | PROPOSE_EVENT;
+
+  it('the secretary adds the new secretary with its own flags, then leaves', async () => {
+    const rows: Row[] = [
+      { userId: 'old-sec', associationId: ASSO, permissions: SECRETARY },
+      { userId: 'pres', associationId: ASSO, permissions: PROPOSE_EVENT },
+    ];
+    const { service, remove } = makeService(rows);
+    Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
+      manager: {
+        query: jest.fn(() => Promise.resolve([])),
+        create: (_entity: unknown, row: unknown) => row,
+        // The added row is on the roster from here on, so the leave counts it as a manager.
+        save: jest.fn((row: Row) => {
+          rows.push(row);
+          return Promise.resolve(row);
+        }),
+      },
+    });
+    const granter = { userId: 'old-sec', isGlobalAdmin: false };
+    expect(
+      await settle(
+        service.addMember(
+          { associationId: ASSO, userId: 'new-sec', role: 'Secretaire', permissions: SECRETARY },
+          granter
+        )
+      )
+    ).toBe('written');
+    expect(rows.find((r) => r.userId === 'new-sec')?.permissions).toBe(SECRETARY);
+    expect(await settle(service.leaveAssociation(ASSO, 'old-sec'))).toBe('written');
+    expect(remove).toHaveBeenCalledWith({ id: undefined, permissions: SECRETARY });
+  });
+
+  it('a member manager removes MANAGE_MEMBERS from the president, who is not the last holder', async () => {
+    const { service, update } = makeService([
+      { userId: 'sec', associationId: ASSO, permissions: MANAGE_MEMBERS | PROPOSE_EVENT },
+      { userId: 'pres', associationId: ASSO, permissions: MANAGE_MEMBERS | PROPOSE_EVENT },
+    ]);
+    expect(
+      await settle(
+        service.updateMemberRole(ASSO, 'pres', undefined, PROPOSE_EVENT, {
+          granter: { userId: 'sec', isGlobalAdmin: false },
+        })
+      )
+    ).toBe('written');
+    expect(update).toHaveBeenCalledTimes(1);
   });
 });

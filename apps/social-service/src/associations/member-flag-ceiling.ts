@@ -33,11 +33,19 @@ import {
  * is a revocation of everything it holds (`before` = its flags, `after` = 0): otherwise a member
  * holding only `MANAGE_MEMBERS` could remove the treasurer and re-add them with nothing. So removing
  * a target above the remover's ceiling takes a super-admin or the platform admin; LEAVING (removing
- * oneself) stays free, and the last-admin guard is unchanged.
+ * oneself, the "Quitter" button, `DELETE :id/members/me`) is judged by neither, and only the
+ * last-member-manager guard can refuse it.
  */
 
 /** The typed code of a write that changes a flag outside the granter's ceiling. */
 export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
+
+/**
+ * The typed code of a removal that would leave an association with nobody holding
+ * `MANAGE_MEMBERS` - its last member manager leaving, or being removed (owner, 2026-11-03: every
+ * member may leave from the association's page, except its last member manager).
+ */
+export const LAST_MEMBER_MANAGER = 'ASSOCIATION_LAST_MEMBER_MANAGER';
 
 /** Who is writing a member row - the identity the gateway vouched for. */
 export interface MemberGranter {

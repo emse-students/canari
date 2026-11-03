@@ -210,7 +210,9 @@ export class SpacesService {
     const current = await this.getAudiences(associationId);
     if (actor.isGlobalAdmin) return current.map((r) => ({ ...r, editable: true }));
     const spaces = await this.bdeSpaceStandings(actor.userId);
-    assertBdeMayReadAudience(association.type, spaces, current);
+    this.judged('read', associationId, () =>
+      assertBdeMayReadAudience(association.type, spaces, current)
+    );
     const view = current.map((r) => ({ ...r, editable: ruleInsideGovernedSpaces(r, spaces) }));
     this.logger.debug(
       `[spaces] audiences of ${associationId} read by a BDE star: ${view.filter((r) => !r.editable).length}/${view.length} rule(s) beyond its spaces`
@@ -235,17 +237,24 @@ export class SpacesService {
    * star that governs the entity and adds or removes rules inside its own spaces only (decision 7,
    * owner 2026-11-03). Visibility is computed from the CURRENT rules at
    * read time, so a change applies to past posts too and nothing is frozen on a post (decision 4).
+   *
+   * It answers what it stored IN THE READ'S SHAPE (each rule with `editable` for this writer), so the
+   * editor renders the write's own result and never needs a second read that could fail after the
+   * write has landed.
    */
   async setAudiences(
     associationId: string,
     submitted: AudienceRuleDto[],
     actor: { userId: string; isGlobalAdmin: boolean }
-  ): Promise<AudienceRule[]> {
+  ): Promise<AudienceRuleView[]> {
     const association = await this.requireAssociation(associationId);
     const rules = normaliseRules(submitted);
-    assertAudienceAllowedForType(association.type, rules);
+    this.judged('write', associationId, () =>
+      assertAudienceAllowedForType(association.type, rules)
+    );
+    let spaces: SpaceStanding[] | null = null;
     if (!actor.isGlobalAdmin) {
-      const spaces = await this.bdeSpaceStandings(actor.userId);
+      spaces = await this.bdeSpaceStandings(actor.userId);
       const current = await this.getAudiences(associationId);
       // Governing it already is what stops a star taking an entity over by adding its own space.
       const [governs] = (await this.dataSource.query(HOLDS_BDE_FLAG_OVER_SQL, [
@@ -253,7 +262,16 @@ export class SpacesService {
         associationId,
         AssociationPermissionFlag.MANAGE_ASSO,
       ])) as { holds: boolean }[];
-      assertBdeMayWriteAudience(association.type, spaces, governs?.holds === true, current, rules);
+      const standings = spaces;
+      this.judged('write', associationId, () =>
+        assertBdeMayWriteAudience(
+          association.type,
+          standings,
+          governs?.holds === true,
+          current,
+          rules
+        )
+      );
     }
     this.logger.log(
       `[spaces] audiences of ${associationId} by ${actor.userId.slice(0, 8)}${actor.isGlobalAdmin ? ' (admin)' : ' (BDE)'}: ${rules.length} rule(s)`
@@ -275,7 +293,30 @@ export class SpacesService {
       return rules;
     });
     await this.invalidateFeedCache();
-    return stored;
+    const governedBy = spaces;
+    return stored.map((r) => ({
+      ...r,
+      editable: governedBy === null || ruleInsideGovernedSpaces(r, governedBy),
+    }));
+  }
+
+  /**
+   * Runs one audience policy check and, when it refuses, logs the refusal at WARN with its typed
+   * code before it reaches the caller - the editor never offers a refused write, so one arriving is
+   * an older client or a hand-made request, and a refusal with no server line is found by hand.
+   */
+  private judged(what: 'read' | 'write', associationId: string, check: () => void): void {
+    try {
+      check();
+    } catch (e) {
+      const response = (e as { getResponse?: () => unknown }).getResponse?.();
+      const code =
+        response && typeof response === 'object' && 'code' in response
+          ? String((response as { code: unknown }).code)
+          : 'untyped';
+      this.logger.warn(`[AUDIENCE] ${what} refused: association=${associationId} code=${code}`);
+      throw e;
+    }
   }
 
   /**

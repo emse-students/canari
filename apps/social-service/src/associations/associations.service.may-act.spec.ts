@@ -420,4 +420,28 @@ describe('AssociationsService scoped event governance', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('nobody who may validate it'));
     warn.mockRestore();
   });
+
+  it('catches a failed notification and logs it at ERROR with the association, never unhandled', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, notifications } = makeGovernanceService({ ungoverned: false, admins: [] });
+    notifications.createNotifications.mockRejectedValueOnce(new Error('db down'));
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      (
+        service as unknown as {
+          tellEventValidatorsOfProposal: (a: string, actor: string, t: string) => void;
+        }
+      ).tellEventValidatorsOfProposal('asso-x', 'author', 'Soiree');
+      // Let the fire-and-forget chain settle.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('asso-x'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('db down'));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      error.mockRestore();
+    }
+  });
 });

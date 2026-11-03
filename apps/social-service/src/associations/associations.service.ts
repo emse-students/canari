@@ -13,6 +13,7 @@ import {
   assertInstitutionMemberWrite,
   assertWithinGrantCeiling,
   grantCeiling,
+  LAST_MEMBER_MANAGER,
   logSuperAdminExcludedGrant,
   type GranterStanding,
   type MemberGranter,
@@ -1604,8 +1605,9 @@ export class AssociationsService {
    * the member itself. HELD TO THE GRANT CEILING like a revocation: removing a member takes away
    * every flag it holds, and a remover that could part with a member above its own rights could
    * re-add them with 0 and strip what it may not revoke. So a target holding a flag beyond the
-   * remover's ceiling needs a super-admin or the platform admin. Leaving (removing oneself) stays
-   * free, an institution included: neither the institution rule nor the ceiling judges it.
+   * remover's ceiling needs a super-admin or the platform admin. Leaving (removing oneself, which
+   * `leaveAssociation` is) is judged by neither the institution rule nor the ceiling, an
+   * institution included; only the last-member-manager guard applies.
    */
   async removeMember(
     associationId: string,
@@ -1618,8 +1620,9 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    // LEAVING STAYS FREE, an institution included: the institution rule and the ceiling judge a
-    // write on SOMEONE ELSE; removing oneself writes no right onto anyone.
+    // LEAVING (the "Quitter" button, `leaveAssociation`), an institution included: the institution
+    // rule and the ceiling judge a write on SOMEONE ELSE; removing oneself writes no right onto
+    // anyone. Only the last-member-manager guard below can refuse it.
     const leaving = opts.granter.userId === targetUserId;
     if (!leaving) {
       assertInstitutionMemberWrite(
@@ -1663,6 +1666,20 @@ export class AssociationsService {
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
     return { ok: true };
+  }
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): every member may leave an association from its page
+   * without asking anyone, except its last holder of `MANAGE_MEMBERS` (`LAST_MEMBER_MANAGER`). It
+   * acts on the caller's OWN row only - the target is the vouched identity, never a parameter - so
+   * it is `removeMember` with the caller as both remover and removed: no ceiling, no institution
+   * rule, and no BDE bypass of the last-manager guard (a leaver speaks for itself, not as a BDE).
+   */
+  async leaveAssociation(associationId: string, userId: string) {
+    this.logger.debug(`leaveAssociation: association=${associationId} user=${userId.slice(0, 8)}`);
+    return this.removeMember(associationId, userId, {
+      granter: { userId, isGlobalAdmin: false },
+    });
   }
 
   /**
@@ -1714,13 +1731,20 @@ export class AssociationsService {
       .getCount();
   }
 
-  /** Block removing the only member with MANAGE_MEMBERS. */
+  /**
+   * Block removing the only member with MANAGE_MEMBERS - by someone else, or by leaving. Typed
+   * (`LAST_MEMBER_MANAGER`), so the "Quitter" button says why rather than a generic error.
+   */
   private async assertNotLastAdminRemoval(associationId: string): Promise<void> {
     const n = await this.manageMembersCount(associationId);
     if (n <= 1) {
-      throw new BadRequestException(
-        'Impossible de retirer le dernier administrateur de cette association'
+      this.logger.warn(
+        `[MEMBER-CEILING] removal refused: association=${associationId} would lose its last member manager`
       );
+      throw new BadRequestException({
+        code: LAST_MEMBER_MANAGER,
+        message: 'Impossible de retirer le dernier administrateur de cette association',
+      });
     }
   }
 
@@ -2861,6 +2885,26 @@ ${rejectionReason}`
   }
 
   /**
+   * Fires `notifyEventValidatorsOfProposal` without holding the write that proposed the event: the
+   * event is stored whatever the notification does. Its failure (a database or notification error)
+   * is caught here and logged at ERROR with the association, never left as an unhandled rejection
+   * that takes no association with it.
+   */
+  private tellEventValidatorsOfProposal(
+    associationId: string,
+    actorId: string,
+    eventTitle: string
+  ): void {
+    this.notifyEventValidatorsOfProposal(associationId, actorId, eventTitle).catch(
+      (err: unknown) => {
+        this.logger.error(
+          `[notify] telling the validators of a proposal for asso ${sanitizeLog(associationId)} failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    );
+  }
+
+  /**
    * Creates a calendar event for the association - ALWAYS `pending`, whoever asks.
    *
    * NO CREATION PATH VALIDATES (user, 2026-09-14: *"Un evenement ne doit jamais etre valide
@@ -2959,7 +3003,7 @@ ${rejectionReason}`
     // the same act; repeating it now would be a notification about a publication that has not
     // happened, and adding a second one at creation would make a cross-asso deposit the only event
     // in the system that notifies its owner twice.
-    void this.notifyEventValidatorsOfProposal(targetId, userId, saved.title);
+    this.tellEventValidatorsOfProposal(targetId, userId, saved.title);
     return this.serializeCalendarEvent(saved, coOwners);
   }
 
@@ -3093,7 +3137,7 @@ ${rejectionReason}`
       // The same route a fresh proposal takes, because that is what this now is. Without it the
       // event leaves the public agenda and lands in a queue nobody is told about - which is worse
       // than the defect it replaces, the event having at least been VISIBLE before.
-      void this.notifyEventValidatorsOfProposal(
+      this.tellEventValidatorsOfProposal(
         saved.associationId,
         callerOpts?.callerUserId ?? saved.createdBy,
         saved.title

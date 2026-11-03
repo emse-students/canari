@@ -910,6 +910,18 @@ export class AssociationsController {
     });
   }
 
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): the caller leaves the association. Any member, no role
+   * guard - the only row it can touch is the caller's own, named by the vouched `x-user-id`, never by
+   * a parameter. Refused `ASSOCIATION_LAST_MEMBER_MANAGER` for its last holder of `MANAGE_MEMBERS`.
+   * Declared BEFORE `:id/members/:userId` so `me` is never read as a user id.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/members/me')
+  leaveAssociation(@Param('id') id: string, @Headers('x-user-id') callerId: string) {
+    return this.service.leaveAssociation(id, callerId.trim());
+  }
+
   /** Removes a member from the association. */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)

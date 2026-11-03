@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { imageSrcOrNull } from '$lib/utils/imageSrc';
@@ -1289,6 +1290,25 @@ export async function removeMember(
   invalidateMyAssociations();
   return result;
 }
+
+/**
+ * THE "QUITTER" BUTTON (owner, 2026-11-03): the signed-in user leaves the association. Acts on the
+ * caller's own row only. Refused with `SocialApiError.code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER`
+ * for its last holder of `MANAGE_MEMBERS`.
+ */
+export async function leaveAssociation(associationId: string): Promise<void> {
+  Log.d('associations.leave', { associationId });
+  await request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/members/me`,
+    { method: 'DELETE' }
+  );
+  invalidateMyAssociations();
+}
+
+/** The typed refusals of {@link leaveAssociation}, read from `SocialApiError.code`. */
+export const LEAVE_REFUSAL = {
+  LAST_MEMBER_MANAGER: 'ASSOCIATION_LAST_MEMBER_MANAGER',
+} as const;
 
 /** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
 export async function reorderMembers(associationId: string, userIds: string[]): Promise<void> {
@@ -3343,8 +3363,10 @@ export async function setSpaceBde(spaceId: string, associationId: string | null)
 export async function setAssociationAudiences(
   associationId: string,
   rules: AudienceRule[]
-): Promise<AudienceRule[]> {
-  const saved = await request<AudienceRule[]>(
+): Promise<AudienceRuleView[]> {
+  // The server answers in the read's shape (`editable` per rule), so a caller renders the write's
+  // own result and never needs a second read that could fail after the write has landed.
+  const saved = await request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`,
     { method: 'PUT', body: JSON.stringify({ rules }) }
   );
