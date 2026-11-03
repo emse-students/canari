@@ -151,6 +151,7 @@
     'event_updated',
     'event_deleted',
     'event_pending',
+    'event_pending_coorganiser',
   ] as const;
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
 
@@ -311,7 +312,7 @@
               ? 'bg-amber-500 text-cn-ink'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
-                : notif.type === 'event_pending'
+                : notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'
                   ? 'bg-amber-500 text-cn-ink'
                   : isEventNotif || isCoorganiseNotif
                     ? 'bg-sky-600 text-white'
@@ -401,7 +402,7 @@
         <CalendarX size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_updated'}
         <CalendarCog size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'event_pending'}
+      {:else if notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'profile_correction_applied'}
         <UserCheck size={glyph} strokeWidth={2.75} />
@@ -501,7 +502,9 @@
                 ? m.notif_event_updated_text()
                 : notif.type === 'event_pending'
                   ? m.notif_event_pending_text()
-                  : m.notif_event_deleted_text()}
+                  : notif.type === 'event_pending_coorganiser'
+                    ? m.notif_event_pending_coorganiser_text()
+                    : m.notif_event_deleted_text()}
         <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
             text={eventReason}
           />{/if}

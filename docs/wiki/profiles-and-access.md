@@ -1259,6 +1259,40 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
 
+#### WP-Q2: an acceptance on a validated event reopens it (2026-11-03)
+
+P13 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): an acceptance adds the partner's
+audience to a validated event with nobody validating the new part. Interim rule, before WP-E:
+
+- **The demotion.** `CoorganisationService.apply` - inside the acceptance's own transaction, so the
+  partner row and the demotion commit together or not at all - sets a VALIDATED event back to
+  `pending` (`status`, `validatedAt` and `validatedBy` cleared) and logs it (`[COORG] ... back to
+  pending`). It fires once: the `WHERE status = 'validated'` guard leaves a pending or rejected event
+  alone (nothing announced), and an acceptance that inserted no row (conflict) does nothing.
+- **The announcement (F7), after commit**, through ONE method every return to the queue now shares,
+  `AssociationsService.announceEventReopened(event, reason, actorId)` (reason typed in
+  `associations/event-reopen.ts`: `date_moved` | `coorganiser_joined`):
+  - the validators concerned, as for a proposal (`notifyEventValidatorsOfProposal`);
+  - the organiser's and every accepted partner's `PROPOSE_EVENT` holders, WITH THE REASON
+    (`notifyEventReopenedParties`): the notification type is the reason (`event_pending` for a moved
+    date, new `event_pending_coorganiser` for a joined partner), `meta.reason` repeats it. The actor
+    is never told their own act.
+- **The date-move path** (`updateCalendarEvent`, the only other place an event returns to pending
+  today) calls the same method. It used to tell the validators and the organiser's proposers only;
+  the partners are now told too, and `notifyAssocAdminsOfEventAction` lost its `'pending'` action.
+- **Native tables.** `event_pending_coorganiser` is a seventh social content key: strings in the
+  Android `values` / `values-en`, the iOS app and NSE `Localizable.strings` (fr, en), the Android
+  service, the NSE and `canari_push.mm`, and `push-category.ts` (`events`). Compiled by nobody here:
+  native verification is owed ([device-verification](device-verification.md)).
+- **Superseded by WP-E.** The whole-event demotion is deliberately blunt. WP-E (events per slice,
+  section 4 of the proposal) replaces it with a per-slice reopening: an acceptance re-opens only the
+  new governors' slices, and the typed reason stays as the cause carried from the write.
+- **Proof.** `coorganisation.integration.spec.ts`: a validated event goes pending with stamps cleared
+  and the row in; the organiser and partners are told once with the reason and the validators once;
+  a second acceptance cannot fire again; a pending and a rejected event are untouched and silent; the
+  date-move path announces by the same rule. Existing reach assertions now re-validate the event
+  after the acceptance, since it leaves the agenda until a validator says yes again.
+
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)
 
 `GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`

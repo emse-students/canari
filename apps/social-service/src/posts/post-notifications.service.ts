@@ -20,6 +20,7 @@ import {
   eventUpdatedContent,
   eventDeletedContent,
   eventPendingContent,
+  eventPendingCoorganiserContent,
   associationPostContent,
   followedPostContent,
   associationRepostContent,
@@ -208,6 +209,8 @@ export class PostNotificationsService {
         return eventDeletedContent(actorName, text);
       case 'event_pending':
         return eventPendingContent(actorName, text);
+      case 'event_pending_coorganiser':
+        return eventPendingCoorganiserContent(actorName, text);
       default:
         return null;
     }

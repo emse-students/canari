@@ -329,6 +329,17 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await proposals.accept(pending.id, 'coPub', false);
       expect(await coOwnersOf(E(1))).toEqual([A3]);
       expect(await associations.findCalendarEventForAssociation(E(1), A3, false)).not.toBeNull();
+      // WP-Q2: the acceptance returned the VALIDATED event to the queue (it is off every agenda
+      // until re-validated); the reach below is the union once a validator has said yes again.
+      expect(
+        (await q(`SELECT status FROM association_calendar_events WHERE id = $1`, [E(1)]))[0]
+      ).toEqual({
+        status: 'pending',
+      });
+      await q(
+        `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+        [E(1)]
+      );
       expect(await agendaOf('gaReader')).toEqual([E(1)]);
       // The organiser's audience keeps it: the union, not a move.
       expect(await agendaOf('seReader')).toContain(E(1));
@@ -626,5 +637,119 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await q(`SELECT 1 FROM associations WHERE id = $1`, [A6])).toEqual([]);
       expect(await q(`SELECT 1 FROM association_members WHERE "userId" = $1`, [GONE])).toEqual([]);
     }, 30_000);
+  });
+
+  describe('an acceptance on a validated event returns it to pending (WP-Q2, P13 interim, F7)', () => {
+    const V = E(30); // validated: the acceptance reopens it
+    const PEND = E(31); // already pending: nothing to reopen, nothing to announce
+    const REJ = E(32); // rejected: stays rejected
+    const MOVED = E(33); // validated, partner accepted, then the DATE moves
+
+    const stamp = async (id: string) =>
+      (
+        (await q(
+          `SELECT status, "validatedAt", "validatedBy" FROM association_calendar_events WHERE id = $1`,
+          [id]
+        )) as { status: string; validatedAt: Date | null; validatedBy: string | null }[]
+      )[0];
+
+    /** What was told, as "type -> recipients", for the reopening types only. */
+    const reopenNotices = () =>
+      told
+        .filter((t) => t.type === 'event_pending_coorganiser' || t.type === 'event_pending')
+        .map((t) => [t.type, t.recipientIds, t.text] as const);
+
+    async function ask(id: string): Promise<string> {
+      await update(A1, id, [A3], 'org');
+      const pending = (await proposals.listPending(A3, 'coPub', false)).incoming.find(
+        (x) => x.subjectId === id
+      );
+      return pending!.id;
+    }
+
+    beforeAll(async () => {
+      for (const [id, status] of [
+        [V, 'validated'],
+        [PEND, 'pending'],
+        [REJ, 'rejected'],
+        [MOVED, 'pending'],
+      ]) {
+        await q(
+          `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+             VALUES ($1, $2, $3, '2026-08-01T18:00:00Z', 'org', $4)`,
+          [id, A1, `Reopen ${id.slice(-2)}`, status]
+        );
+        if (status === 'validated') {
+          await q(
+            `UPDATE association_calendar_events SET "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+            [id]
+          );
+        }
+      }
+    });
+
+    it('accepting on a VALIDATED event: pending, stamps cleared, the partner row in one go, and everyone concerned told ONCE', async () => {
+      const proposalId = await ask(V);
+      expect((await stamp(V)).status).toBe('validated');
+      told.length = 0;
+      await proposals.accept(proposalId, 'coPub', false);
+      expect(await coOwnersOf(V)).toEqual([A3]);
+      expect(await stamp(V)).toEqual({ status: 'pending', validatedAt: null, validatedBy: null });
+      // The organiser and the partners WITH THE REASON; the acceptor (coPub) is dropped, the
+      // organiser's proposer and the partner's other editor stay.
+      expect(reopenNotices()).toEqual([
+        ['event_pending_coorganiser', ['coEd', 'org'], 'Reopen 30'],
+      ]);
+      // The validators as for a proposal.
+      const proposed = told.filter((t) => t.type === 'event_proposed');
+      expect(proposed).toHaveLength(1);
+      expect(proposed[0]).toMatchObject({ postId: A1, text: 'Reopen 30' });
+      // The proposal is decided once: there is nothing left to accept, so nothing can fire twice.
+      const [again] = (await proposals.listPending(A3, 'coPub', false)).incoming.filter(
+        (x) => x.subjectId === V
+      );
+      expect(again).toBeUndefined();
+      await expect(proposals.accept(proposalId, 'coPub', false)).rejects.toBeDefined();
+      expect(reopenNotices()).toHaveLength(1);
+    });
+
+    it('an event already PENDING is not touched and announces nothing', async () => {
+      const proposalId = await ask(PEND);
+      told.length = 0;
+      await proposals.accept(proposalId, 'coPub', false);
+      expect(await coOwnersOf(PEND)).toEqual([A3]);
+      expect((await stamp(PEND)).status).toBe('pending');
+      expect(told.filter((t) => t.type.startsWith('event_'))).toEqual([]);
+    });
+
+    it('a REJECTED event stays rejected', async () => {
+      const proposalId = await ask(REJ);
+      told.length = 0;
+      await proposals.accept(proposalId, 'coPub', false);
+      expect((await stamp(REJ)).status).toBe('rejected');
+      expect(told.filter((t) => t.type.startsWith('event_'))).toEqual([]);
+    });
+
+    it('the date-move path announces by the same rule: partners told with its reason, validators as for a proposal', async () => {
+      const proposalId = await ask(MOVED);
+      await proposals.accept(proposalId, 'coPub', false);
+      await q(
+        `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+        [MOVED]
+      );
+      told.length = 0;
+      const spy = jest.spyOn(associations, 'announceEventReopened');
+      await associations.updateCalendarEvent(
+        A1,
+        MOVED,
+        { startsAt: '2026-08-02T18:00:00.000Z' },
+        { callerUserId: 'org' }
+      );
+      // The announcement is fire-and-forget (void): await the very promise it returned.
+      await Promise.all(spy.mock.results.map((r) => r.value));
+      expect(reopenNotices()).toEqual([['event_pending', ['coEd', 'coPub'], 'Reopen 33']]);
+      expect(told.filter((t) => t.type === 'event_proposed')).toHaveLength(1);
+      expect((await stamp(MOVED)).status).toBe('pending');
+    });
   });
 });

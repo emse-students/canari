@@ -158,6 +158,11 @@ import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
 import type { CoOrganiserPort } from './co-organisers.port';
+import {
+  EVENT_REOPEN_NOTIFICATION_TYPE,
+  type EventReopenReason,
+  type ReopenedEvent,
+} from './event-reopen';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -2569,7 +2574,7 @@ export class AssociationsService {
     associationId: string,
     actorId: string,
     eventTitle: string,
-    action: 'validated' | 'updated' | 'deleted' | 'rejected' | 'pending',
+    action: 'validated' | 'updated' | 'deleted' | 'rejected',
     rejectionReason?: string
   ): Promise<void> {
     const members = await this.memberRepo.find({
@@ -2595,6 +2600,72 @@ ${rejectionReason}`
           : eventTitle,
       pushData: { associationId, action },
     });
+  }
+
+  /**
+   * THE ONE ANNOUNCEMENT OF AN EVENT RETURNING TO THE QUEUE (F7, WP-Q2) - whatever the cause.
+   *
+   * Two audiences, one rule: the validators concerned are told as for a proposal
+   * (`notifyEventValidatorsOfProposal`), and the organiser and every accepted partner are told WITH
+   * THE REASON (`notifyEventReopenedParties`). Every path that sets a validated event back to
+   * `pending` calls this and nothing else, so a new path cannot forget one of the two. Best effort,
+   * and always run AFTER the write has committed: a failure here is logged and loses a message, never
+   * the event's state.
+   */
+  async announceEventReopened(
+    ev: ReopenedEvent,
+    reason: EventReopenReason,
+    actorId: string
+  ): Promise<void> {
+    this.logger.log(
+      `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
+    );
+    const results = await Promise.allSettled([
+      this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title),
+      this.notifyEventReopenedParties(ev, reason, actorId),
+    ]);
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        this.logger.warn(
+          `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): a notification failed: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Tells the people an event belongs to why it left the public agenda: the `PROPOSE_EVENT` holders
+   * of the organiser AND of each ACCEPTED partner (they co-own it, and the one who moved the dates or
+   * accepted is rarely the only person counting on it). The notification type carries the reason
+   * (`EVENT_REOPEN_NOTIFICATION_TYPE`) and so does `meta.reason`, for a client that draws its own
+   * sentence. `createNotifications` drops the actor, and writes one row per person.
+   */
+  private async notifyEventReopenedParties(
+    ev: ReopenedEvent,
+    reason: EventReopenReason,
+    actorId: string
+  ): Promise<void> {
+    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
+    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
+    const members = await this.memberRepo.find({
+      where: { associationId: In(associationIds) },
+      select: { userId: true, permissions: true },
+    });
+    const recipientIds = members
+      .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
+      .map((m) => m.userId);
+    const written = await this.notifications.createNotifications({
+      recipientIds,
+      type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
+      postId: ev.associationId,
+      actorId,
+      text: ev.title,
+      meta: { reason },
+      pushData: { associationId: ev.associationId, action: 'pending', reason },
+    });
+    this.logger.debug(
+      `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): ${written} organiser/partner notice(s) written`
+    );
   }
 
   /**
@@ -2870,21 +2941,12 @@ ${rejectionReason}`
       this.logger.debug(
         `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
-      // The same route a fresh proposal takes, because that is what this now is. Without it the
-      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
-      // than the defect it replaces, the event having at least been VISIBLE before.
-      void this.notifyEventValidatorsOfProposal(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title
-      );
-      // And the association's own proposers, because the one who moved the dates is rarely the
-      // only person counting on the event being on the agenda.
-      void this.notifyAssocAdminsOfEventAction(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title,
-        'pending'
+      // The same route a fresh proposal takes, because that is what this now is: the validators,
+      // and the organiser and the partners with the reason (F7).
+      void this.announceEventReopened(
+        saved,
+        'date_moved',
+        callerOpts?.callerUserId ?? saved.createdBy
       );
     }
     // Notify asso admins when BDE modifies an event from another asso

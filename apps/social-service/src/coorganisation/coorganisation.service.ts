@@ -289,15 +289,35 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
       // deletion; the acceptance rolls back with the transaction.
       throw new NotFoundException('Event not found');
     }
-    await manager.query(
+    const inserted: unknown[] = await manager.query(
       `INSERT INTO association_calendar_event_co_owners (id, event_id, association_id)
-         VALUES (gen_random_uuid(), $1, $2) ON CONFLICT (event_id, association_id) DO NOTHING`,
+         VALUES (gen_random_uuid(), $1, $2) ON CONFLICT (event_id, association_id) DO NOTHING
+         RETURNING id`,
       [ev.id, proposal.toAssociationId]
     );
     this.logger.log(
       `[COORG] ${proposal.toAssociationId.slice(0, 8)} now co-organises ${ev.id.slice(0, 8)} (accepted by ${actorId.slice(0, 8)})`
     );
-    return () => Promise.resolve();
+    if (inserted.length === 0) return () => Promise.resolve();
+    // WP-Q2 (P13 interim): the acceptance WIDENS the event's audience (the union), and nobody
+    // validated the new part - so a VALIDATED event returns to the queue, in THIS transaction: the
+    // partner row and the demotion commit together or not at all. The guard on `status` makes it
+    // fire once (a pending or rejected event is not touched, and neither announces anything).
+    // WP-E later replaces this whole-event demotion with a per-slice reopening.
+    // An UPDATE ... RETURNING answers `[rows, affectedCount]` on this driver, an INSERT the rows.
+    const [demoted]: [unknown[], number] = await manager.query(
+      `UPDATE association_calendar_events
+          SET status = 'pending', "validatedAt" = NULL, "validatedBy" = NULL
+        WHERE id = $1 AND status = 'validated'
+        RETURNING id`,
+      [ev.id]
+    );
+    if (demoted.length === 0) return () => Promise.resolve();
+    this.logger.log(
+      `[COORG] ${ev.id.slice(0, 8)} was validated: back to pending, a partner (${proposal.toAssociationId.slice(0, 8)}) joined it`
+    );
+    // AFTER COMMIT, through the one announcement every return to the queue shares.
+    return () => this.associations.announceEventReopened(ev, 'coorganiser_joined', actorId);
   }
 
   async announce(proposal: AssociationProposal, acceptorIds: string[]): Promise<void> {

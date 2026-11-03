@@ -91,7 +91,7 @@ function makeService(event: Overrides) {
     syncCoOwners: jest.fn(async () => []),
     serializeCalendarEvent: jest.fn((e: Overrides) => e),
     notifyEventValidatorsOfProposal: notifiedValidators,
-    notifyAssocAdminsOfEventAction: notifiedAssoAdmins,
+    notifyEventReopenedParties: notifiedAssoAdmins,
   });
 
   return { service, row, saved, notifiedValidators, notifiedAssoAdmins };
@@ -129,7 +129,11 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
     // Without this the event leaves the public agenda for a queue nobody is told about - worse
     // than the defect it replaces, the event having at least been visible before.
     expect(notifiedValidators).toHaveBeenCalledWith('asso-1', 'admin-1', 'Gala');
-    expect(notifiedAssoAdmins).toHaveBeenCalledWith('asso-1', 'admin-1', 'Gala', 'pending');
+    expect(notifiedAssoAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ev-1', associationId: 'asso-1', title: 'Gala' }),
+      'date_moved',
+      'admin-1'
+    );
   });
 
   it('demotes on a change to endsAt alone - an event that now runs to 3am is a different ask', async () => {

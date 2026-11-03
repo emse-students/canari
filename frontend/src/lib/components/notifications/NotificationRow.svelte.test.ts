@@ -471,6 +471,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'event_updated',
   'event_deleted',
   'event_pending',
+  'event_pending_coorganiser',
   'profile_correction_applied',
   'profile_correction_refused',
 ];

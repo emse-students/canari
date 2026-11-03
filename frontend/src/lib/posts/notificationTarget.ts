@@ -56,6 +56,7 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'event_updated':
     case 'event_deleted':
     case 'event_pending':
+    case 'event_pending_coorganiser':
       return '/calendar';
     // The answer to a profile correction request: `postId` holds the REQUEST's id, which has no page
     // of its own - the profile is where the corrected data, or the request's state, is shown.
@@ -150,6 +151,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'event_updated',
   'event_deleted',
   'event_pending',
+  'event_pending_coorganiser',
   'profile_correction_applied',
   'profile_correction_refused',
   'live_cut',
