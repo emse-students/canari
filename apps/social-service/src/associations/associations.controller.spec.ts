@@ -17,6 +17,7 @@ import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 describe('AssociationsController cotisation config gating (D5)', () => {
   function makeController() {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       // The controller asks ONE predicate now; the three tiers it folds in are tested against the
       // real implementation in associations.service.may-act.spec.ts.
       mayAct: jest.fn(() => Promise.resolve(false)),
@@ -179,6 +180,7 @@ describe('AssociationsController response shape', () => {
 
   function makeController() {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       list: jest.fn(() => Promise.resolve([row])),
       findBySlug: jest.fn(() => Promise.resolve(row)),
       findById: jest.fn(() => Promise.resolve(row)),
@@ -312,6 +314,7 @@ describe('AssociationsController payout account read', () => {
 
   function makeController(allowed: boolean) {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       canManagePayoutAccount: jest.fn(() => Promise.resolve(allowed)),
       getPayoutAccount: jest.fn(() => Promise.resolve(account)),
     };
@@ -363,7 +366,10 @@ describe('AssociationsController payout account read', () => {
  */
 describe('AssociationsController directory scope (D37)', () => {
   function makeController() {
-    const service = { list: jest.fn(() => Promise.resolve([])) };
+    const service = {
+      list: jest.fn(() => Promise.resolve([])),
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
+    };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,
@@ -445,6 +451,7 @@ describe('AssociationsController read guards', () => {
 describe('AssociationsController delete tier', () => {
   function makeController(governs: boolean) {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       remove: jest.fn(() => Promise.resolve({ ok: true })),
       isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(governs)),
     };
@@ -612,6 +619,7 @@ describe('AssociationsController calendar event writes', () => {
 describe('AssociationsController event verdicts and deposits (WP6c step 2)', () => {
   function makeController(governsEvent: boolean, governsTarget = governsEvent) {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       mayValidateEvent: jest.fn(() => Promise.resolve(governsEvent)),
       mayValidateEventsOf: jest.fn(() => Promise.resolve(governsTarget)),
       validateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
@@ -1003,6 +1011,7 @@ describe('AssociationsController.listMembers and the review cohort', () => {
         Promise.resolve(reviewerMemberships.map((associationId) => ({ associationId })) as T),
     };
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       assertReviewerMayReadRoster: (userId: string, id: string) =>
         assertReviewerReachesAssociation(manager, userId, id, 'member list'),
       mayAct: jest.fn(() => Promise.resolve(false)),

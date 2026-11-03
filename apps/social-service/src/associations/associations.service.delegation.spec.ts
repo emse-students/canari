@@ -37,6 +37,19 @@ function makeService(seed: Record<string, Partial<Association>>) {
       return Promise.resolve({ affected: 1 });
     }),
   };
+  // The transactional writes (request, cancel) read and write the same map through a manager.
+  const manager = {
+    findOne: jest.fn((_entity: unknown, { where: { id } }: { where: { id: string } }) =>
+      Promise.resolve(db.get(id) ?? null)
+    ),
+    update: jest.fn((_entity: unknown, id: unknown, patch: Partial<Association>) => {
+      if (typeof id === 'string' && db.has(id)) Object.assign(db.get(id)!, patch);
+      return Promise.resolve({ affected: 0 });
+    }),
+  };
+  Object.assign(assoRepo, {
+    manager: { transaction: jest.fn((cb: (m: typeof manager) => unknown) => cb(manager)) },
+  });
   const redis = { deleteByPattern: jest.fn(() => Promise.resolve()) };
 
   // POSITIONAL, AND FOURTEEN LONG - so a constructor change silently shifts every argument after
@@ -63,52 +76,72 @@ function makeService(seed: Record<string, Partial<Association>>) {
 
 const ready = { lydiaOnboardingComplete: true, lydiaAccountId: 'vendor_x' };
 
-describe('AssociationsService payment delegation of a kind that sells nothing (owner, 2026-10-31)', () => {
+describe('AssociationsService payment delegation by kind (owner, 2026-11-02)', () => {
+  it('refuses a delegation request from an institution, typed', async () => {
+    const { service, db } = makeService({ child: { type: 'institution' }, parent: { ...ready } });
+    await expect(service.requestPaymentDelegation('child', 'parent')).rejects.toMatchObject({
+      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+    });
+    expect(db.get('child')!.paymentParentAssociationId).toBeUndefined();
+  });
+
   it.each(['list', 'institution'] as const)(
-    'refuses a delegation request from a %s, typed',
+    'refuses a %s as the RECEIVER of a delegation, typed',
     async (type) => {
-      const { service, db } = makeService({ child: { type }, parent: { ...ready } });
+      const { service } = makeService({ child: { type: 'list' }, parent: { ...ready, type } });
       await expect(service.requestPaymentDelegation('child', 'parent')).rejects.toMatchObject({
-        response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+        response: {
+          code: type === 'list' ? 'LIST_NO_OWN_LYDIA_ACCOUNT' : 'ASSOCIATION_KIND_DOES_NOT_SELL',
+        },
       });
-      expect(db.get('child')!.paymentParentAssociationId).toBeUndefined();
     }
   );
 
-  it('refuses to approve a delegation for a child or a parent of such a kind', async () => {
-    const pending = {
-      paymentParentAssociationId: 'parent',
-      paymentDelegationStatus: 'pending' as const,
-    };
-    const a = makeService({ child: { ...pending, type: 'list' }, parent: { ...ready } });
-    await expect(a.service.approvePaymentDelegation('parent', 'child')).rejects.toMatchObject({
-      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
-    });
-    const b = makeService({ child: { ...pending }, parent: { ...ready, type: 'institution' } });
-    await expect(b.service.approvePaymentDelegation('parent', 'child')).rejects.toMatchObject({
-      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
-    });
-  });
-
-  it('refuses to enable a cotisation on a list, and still lets one be disabled', async () => {
+  it('refuses to enable a cotisation on a list with no approved delegate, typed', async () => {
     const { service, db } = makeService({ campaign: { type: 'list' } });
     // `findById` wants a UUID and a roster count; the kind is the only thing this case reads.
     jest.spyOn(service, 'findById').mockResolvedValue(db.get('campaign') as never);
     await expect(
       service.update('campaign', { cotisationEnabled: true } as never)
     ).rejects.toMatchObject({
-      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+      response: { code: 'LIST_DELEGATE_REQUIRED' },
     });
     expect(db.get('campaign')!.cotisationEnabled).toBeUndefined();
-    // Disabling passes the kind guard: whatever it does next, it is not this refusal.
+    // Disabling passes the guard: whatever it does next, it is not this refusal.
     const outcome = await service
       .update('campaign', { cotisationEnabled: false } as never)
       .catch((e: unknown) => e);
-    expect(JSON.stringify(outcome)).not.toContain('ASSOCIATION_KIND_DOES_NOT_SELL');
+    expect(JSON.stringify(outcome)).not.toContain('LIST_DELEGATE_REQUIRED');
+  });
+
+  describe('who may accept on the receiver behalf (G7)', () => {
+    const pendingChild = {
+      type: 'list' as const,
+      paymentParentAssociationId: 'parent',
+      paymentDelegationStatus: 'pending' as const,
+    };
+
+    it('refuses a BDE member governing the receiver who is not its own shop manager', async () => {
+      const { service, db } = makeService({ child: pendingChild, parent: { ...ready } });
+      // The BDE tier is what `withoutGoverningBde` drops: the predicate is asked without it.
+      const mayAct = jest
+        .spyOn(service, 'mayAct')
+        .mockImplementation(async (_u, _a, _f, opts) => !opts?.withoutGoverningBde);
+      await expect(
+        service.approvePaymentDelegation('parent', 'child', {
+          userId: 'bde-star',
+          isGlobalAdmin: false,
+        })
+      ).rejects.toMatchObject({ response: { code: 'DELEGATION_ACCEPT_RECEIVER_ONLY' } });
+      expect(mayAct).toHaveBeenCalledWith('bde-star', 'parent', 256, {
+        withoutGoverningBde: true,
+      });
+      expect(db.get('child')!.paymentDelegationStatus).toBe('pending');
+    });
   });
 });
 
-describe('AssociationsService - the bitmask written for a member of a kind that sells nothing', () => {
+describe('AssociationsService - the bitmask written for a member of a list', () => {
   const MEMBERS = 4; // MANAGE_MEMBERS
   const FORMS = 16; // MANAGE_FORMS
   const SHOP = 256; // MANAGE_PRODUCTS
@@ -127,8 +160,8 @@ describe('AssociationsService - the bitmask written for a member of a kind that 
     return (update.mock.calls[0] as unknown[])[1] as { permissions: number };
   }
 
-  it('drops the shop and payout rights for a list, keeping the rest', async () => {
-    expect((await writeFor('list')).permissions).toBe(MEMBERS | FORMS);
+  it('drops only the payout right for a list, keeping its shop', async () => {
+    expect((await writeFor('list')).permissions).toBe(MEMBERS | FORMS | SHOP);
   });
 
   it('keeps every right for an association', async () => {
@@ -192,66 +225,8 @@ describe('AssociationsService payment delegation', () => {
     });
   });
 
-  describe('approvePaymentDelegation', () => {
-    it('approves a pending request when the parent has a ready payout account', async () => {
-      const { service, db } = makeService({
-        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
-        parent: { ...ready },
-      });
-      const res = await service.approvePaymentDelegation('parent', 'club');
-      expect(res).toEqual({ associationId: 'club', status: 'approved' });
-      expect(db.get('club').paymentDelegationStatus).toBe('approved');
-    });
-
-    it('rejects approving when the parent has not finished onboarding', async () => {
-      const { service } = makeService({
-        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
-        parent: { lydiaOnboardingComplete: false, lydiaAccountId: null },
-      });
-      await expect(service.approvePaymentDelegation('parent', 'club')).rejects.toThrow(
-        /payment account onboarding/
-      );
-    });
-
-    it('rejects approving when there is no pending request for this parent', async () => {
-      const { service } = makeService({
-        club: { paymentParentAssociationId: 'other', paymentDelegationStatus: 'pending' },
-        parent: { ...ready },
-      });
-      await expect(service.approvePaymentDelegation('parent', 'club')).rejects.toThrow(
-        /No pending delegation request/
-      );
-    });
-  });
-
-  describe('reject / cancel', () => {
-    it('rejects clears the child link', async () => {
-      const { service, db } = makeService({
-        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' },
-      });
-      await service.rejectPaymentDelegation('parent', 'club');
-      expect(db.get('club').paymentParentAssociationId).toBeNull();
-      expect(db.get('club').paymentDelegationStatus).toBeNull();
-    });
-
-    it('reject refuses a child that does not delegate to this parent', async () => {
-      const { service } = makeService({
-        club: { paymentParentAssociationId: 'other', paymentDelegationStatus: 'approved' },
-      });
-      await expect(service.rejectPaymentDelegation('parent', 'club')).rejects.toThrow(
-        /does not delegate payments to you/
-      );
-    });
-
-    it('cancel clears the association own link', async () => {
-      const { service, db } = makeService({
-        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
-      });
-      await service.cancelPaymentDelegation('club');
-      expect(db.get('club').paymentParentAssociationId).toBeNull();
-      expect(db.get('club').paymentDelegationStatus).toBeNull();
-    });
-  });
+  // Approve, reject, revoke and cancel run in a transaction with row locks, the product pause and
+  // the acceptance record: proven against PostgreSQL in `payment-delegation.integration.spec.ts`.
 
   describe('assertIsApprovedParentOf', () => {
     it('returns the child when it delegates to this parent and is approved', async () => {

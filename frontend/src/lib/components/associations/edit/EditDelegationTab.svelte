@@ -37,6 +37,7 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { SvelteSet } from 'svelte/reactivity';
+  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
 
   interface Props {
     asso: Association;
@@ -67,6 +68,8 @@
   const isParent = $derived(children.length > 0);
   /** Parent-side approvals require this association's own Stripe Connect to be ready. */
   const canReceiveDelegation = $derived(isPaymentAccountReady(asso, activePaymentProvider.current));
+  /** A list holds no Lydia account, so it can only delegate, never receive (server: LIST_NO_OWN_LYDIA_ACCOUNT). */
+  const receivesNever = $derived(asso.type === 'list');
   /** Candidate parents: every other regular association (server enforces chain/parent rules). */
   const parentCandidates = $derived(associations.filter((a) => a.id !== asso.id));
   const parentPickerOptions = $derived<PickerOption[]>(associationPickerOptions(parentCandidates));
@@ -103,7 +106,7 @@
       delegation = await requestPaymentDelegation(asso.id, selectedParentId);
       selectedParentId = '';
     } catch (e) {
-      error = m.common_generic_error_label();
+      error = providerRefusalMessage(e) ?? m.common_generic_error_label();
     } finally {
       requesting = false;
     }
@@ -133,7 +136,8 @@
       await approveDelegatedChild(asso.id, childId);
       children = await listDelegatedChildren(asso.id);
     } catch (e) {
-      error = m.common_load_error();
+      // A BDE governing the receiver may not accept for it (owner, 2026-11-02): say so by its code.
+      error = providerRefusalMessage(e) ?? m.common_load_error();
     } finally {
       setChildBusy(childId, false);
     }
@@ -288,153 +292,156 @@
       {/if}
     </section>
 
-    <!-- Parent-side: incoming delegation requests and approved children accounting. -->
-    <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-      <div>
-        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
-          <Inbox size={20} />
-          {m.asso_deleg_parent_title()}
-        </h2>
-        <p class="text-text-muted mt-1 text-sm">{m.asso_deleg_parent_desc()}</p>
-      </div>
+    <!-- Parent-side: incoming delegation requests and approved children accounting. A list never
+         receives one (it holds no Lydia account of its own, owner 2026-11-02), so it never sees it. -->
+    {#if !receivesNever}
+      <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
+        <div>
+          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+            <Inbox size={20} />
+            {m.asso_deleg_parent_title()}
+          </h2>
+          <p class="text-text-muted mt-1 text-sm">{m.asso_deleg_parent_desc()}</p>
+        </div>
 
-      {#if !canReceiveDelegation}
-        <p class="text-amber-warn flex items-start gap-2 text-sm">
-          <TriangleAlert size={16} class="mt-0.5 shrink-0" />
-          {m.asso_deleg_parent_not_payments_ready()}
-        </p>
-      {/if}
+        {#if !canReceiveDelegation}
+          <p class="text-amber-warn flex items-start gap-2 text-sm">
+            <TriangleAlert size={16} class="mt-0.5 shrink-0" />
+            {m.asso_deleg_parent_not_payments_ready()}
+          </p>
+        {/if}
 
-      {#if children.length === 0}
-        <p class="text-text-muted py-6 text-center text-sm">{m.asso_deleg_queue_empty()}</p>
-      {:else}
-        <ul class="space-y-3">
-          {#each children as child (child.associationId)}
-            <li class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="flex items-center gap-2">
-                  <span class="text-text-main font-semibold">{child.name}</span>
-                  <span
-                    class="rounded-full px-2 py-0.5 text-xs font-semibold {child.status ===
-                    'approved'
-                      ? 'bg-green-ok/15 text-green-ok'
-                      : 'bg-amber-warn/15 text-amber-warn'}"
-                  >
-                    {child.status === 'approved'
-                      ? m.asso_deleg_child_approved_badge()
-                      : m.asso_deleg_child_pending_badge()}
-                  </span>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                  {#if child.status === 'pending'}
-                    <button
-                      type="button"
-                      onclick={() => void handleApprove(child.associationId)}
-                      disabled={busyChildIds.has(child.associationId) || !canReceiveDelegation}
-                      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
+        {#if children.length === 0}
+          <p class="text-text-muted py-6 text-center text-sm">{m.asso_deleg_queue_empty()}</p>
+        {:else}
+          <ul class="space-y-3">
+            {#each children as child (child.associationId)}
+              <li class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div class="flex items-center gap-2">
+                    <span class="text-text-main font-semibold">{child.name}</span>
+                    <span
+                      class="rounded-full px-2 py-0.5 text-xs font-semibold {child.status ===
+                      'approved'
+                        ? 'bg-green-ok/15 text-green-ok'
+                        : 'bg-amber-warn/15 text-amber-warn'}"
                     >
-                      <Check size={14} />
-                      {m.asso_deleg_approve_button()}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => void handleReject(child.associationId)}
-                      disabled={busyChildIds.has(child.associationId)}
-                      class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-                    >
-                      <X size={14} />
-                      {m.asso_deleg_reject_button()}
-                    </button>
-                  {:else}
-                    <button
-                      type="button"
-                      onclick={() => void toggleAccounting(child.associationId)}
-                      class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
-                    >
-                      {#if expandedChildId === child.associationId}
-                        <ChevronUp size={14} />
-                        {m.asso_deleg_hide_accounting()}
-                      {:else}
-                        <ChevronDown size={14} />
-                        {m.asso_deleg_view_accounting()}
-                      {/if}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => void handleExportChild(child.associationId)}
-                      disabled={busyChildIds.has(child.associationId)}
-                      class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-                    >
-                      <Download size={14} />
-                      {m.asso_deleg_export_button()}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => void handleReject(child.associationId)}
-                      disabled={busyChildIds.has(child.associationId)}
-                      class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-                    >
-                      <X size={14} />
-                      {m.asso_deleg_revoke_button()}
-                    </button>
-                  {/if}
-                </div>
-              </div>
-
-              {#if expandedChildId === child.associationId}
-                {#if childLoading === child.associationId}
-                  <div class="flex justify-center py-6">
-                    <div
-                      class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
-                    ></div>
+                      {child.status === 'approved'
+                        ? m.asso_deleg_child_approved_badge()
+                        : m.asso_deleg_child_pending_badge()}
+                    </span>
                   </div>
-                {:else if (childPurchases[child.associationId]?.length ?? 0) === 0}
-                  <p class="text-text-muted py-4 text-center text-sm">
-                    {m.asso_achats_no_purchases()}
-                  </p>
-                {:else}
-                  <div class="border-cn-border/70 overflow-x-auto rounded-lg border">
-                    <table class="w-full text-sm">
-                      <thead
-                        class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase"
+                  <div class="flex flex-wrap items-center gap-2">
+                    {#if child.status === 'pending'}
+                      <button
+                        type="button"
+                        onclick={() => void handleApprove(child.associationId)}
+                        disabled={busyChildIds.has(child.associationId) || !canReceiveDelegation}
+                        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
                       >
-                        <tr>
-                          <th class="px-3 py-2">{m.asso_achats_col_date()}</th>
-                          <th class="px-3 py-2">{m.asso_achats_col_buyer()}</th>
-                          <th class="px-3 py-2">{m.asso_achats_col_item()}</th>
-                          <th class="px-3 py-2">{m.asso_achats_col_payment()}</th>
-                          <th class="px-3 py-2 text-right">{m.asso_achats_col_amount()}</th>
-                        </tr>
-                      </thead>
-                      <tbody class="divide-cn-border/50 divide-y">
-                        {#each childPurchases[child.associationId] as purchase (purchase.id)}
-                          <tr class="bg-cn-bg/20">
-                            <td class="text-text-muted px-3 py-2 whitespace-nowrap">
-                              {new Date(purchase.paidAt).toLocaleString(
-                                getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                              )}
-                            </td>
-                            <td class="text-text-main px-3 py-2 font-medium">
-                              {purchaseBuyerName(purchase)}
-                            </td>
-                            <td class="text-text-main px-3 py-2">{purchase.productName}</td>
-                            <td class="text-text-muted px-3 py-2">
-                              {paymentMethodLabel(purchase.paymentMethod)}
-                            </td>
-                            <td class="px-3 py-2 text-right font-semibold tabular-nums">
-                              {(purchase.amountCents / 100).toFixed(2)} €
-                            </td>
-                          </tr>
-                        {/each}
-                      </tbody>
-                    </table>
+                        <Check size={14} />
+                        {m.asso_deleg_approve_button()}
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => void handleReject(child.associationId)}
+                        disabled={busyChildIds.has(child.associationId)}
+                        class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        <X size={14} />
+                        {m.asso_deleg_reject_button()}
+                      </button>
+                    {:else}
+                      <button
+                        type="button"
+                        onclick={() => void toggleAccounting(child.associationId)}
+                        class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                      >
+                        {#if expandedChildId === child.associationId}
+                          <ChevronUp size={14} />
+                          {m.asso_deleg_hide_accounting()}
+                        {:else}
+                          <ChevronDown size={14} />
+                          {m.asso_deleg_view_accounting()}
+                        {/if}
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => void handleExportChild(child.associationId)}
+                        disabled={busyChildIds.has(child.associationId)}
+                        class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        <Download size={14} />
+                        {m.asso_deleg_export_button()}
+                      </button>
+                      <button
+                        type="button"
+                        onclick={() => void handleReject(child.associationId)}
+                        disabled={busyChildIds.has(child.associationId)}
+                        class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        <X size={14} />
+                        {m.asso_deleg_revoke_button()}
+                      </button>
+                    {/if}
                   </div>
+                </div>
+
+                {#if expandedChildId === child.associationId}
+                  {#if childLoading === child.associationId}
+                    <div class="flex justify-center py-6">
+                      <div
+                        class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+                      ></div>
+                    </div>
+                  {:else if (childPurchases[child.associationId]?.length ?? 0) === 0}
+                    <p class="text-text-muted py-4 text-center text-sm">
+                      {m.asso_achats_no_purchases()}
+                    </p>
+                  {:else}
+                    <div class="border-cn-border/70 overflow-x-auto rounded-lg border">
+                      <table class="w-full text-sm">
+                        <thead
+                          class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase"
+                        >
+                          <tr>
+                            <th class="px-3 py-2">{m.asso_achats_col_date()}</th>
+                            <th class="px-3 py-2">{m.asso_achats_col_buyer()}</th>
+                            <th class="px-3 py-2">{m.asso_achats_col_item()}</th>
+                            <th class="px-3 py-2">{m.asso_achats_col_payment()}</th>
+                            <th class="px-3 py-2 text-right">{m.asso_achats_col_amount()}</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-cn-border/50 divide-y">
+                          {#each childPurchases[child.associationId] as purchase (purchase.id)}
+                            <tr class="bg-cn-bg/20">
+                              <td class="text-text-muted px-3 py-2 whitespace-nowrap">
+                                {new Date(purchase.paidAt).toLocaleString(
+                                  getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                                )}
+                              </td>
+                              <td class="text-text-main px-3 py-2 font-medium">
+                                {purchaseBuyerName(purchase)}
+                              </td>
+                              <td class="text-text-main px-3 py-2">{purchase.productName}</td>
+                              <td class="text-text-muted px-3 py-2">
+                                {paymentMethodLabel(purchase.paymentMethod)}
+                              </td>
+                              <td class="px-3 py-2 text-right font-semibold tabular-nums">
+                                {(purchase.amountCents / 100).toFixed(2)} €
+                              </td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  {/if}
                 {/if}
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+    {/if}
   {/if}
 </div>

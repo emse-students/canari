@@ -28,6 +28,22 @@ The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
 pointing an association's payouts at a bank account and speaking in its name are not
 administration. The platform administrator keeps both.
 
+**Above all three tiers sits the KIND** (owner, 2026-11-02). `TYPE_EXCLUDED_FLAGS`, beside
+`SUPER_ADMIN_EXCLUDED_FLAGS` on the entity, names the flags an entity of a kind can never grant:
+`list` -> `MANAGE_PAYOUT_ACCOUNT` (a list keeps the shop, but collects only through a payment
+delegation and holds no Lydia account), `institution` -> `MANAGE_PRODUCTS | MANAGE_PAYOUT_ACCOUNT`
+(it sells nothing), `association` -> none. `mayAct` reads it FIRST and refuses such a flag to
+everyone, the platform administrator included (a debug line names the kind); `mayActOnAny` drops
+those entities from the batch; `writablePermissions` strips the bits on write; the client
+`mayActOnAssociation` takes an `assoType` and reads the mirror. `GET :id/manage-permission` returns the
+typed code (`LIST_NO_OWN_LYDIA_ACCOUNT`, `ASSOCIATION_KIND_DOES_NOT_SELL`), which core-service
+forwards in its 403, so a list's Lydia Business creation is refused up front.
+
+**`mayAct(..., { withoutGoverningBde: true })` skips the middle tier.** One call uses it: accepting a
+payment delegation for the receiver, which the owner reserved to the receiver's OWN `MANAGE_PRODUCTS`
+holders and the platform admin - a BDE governing the receiver does not accept for it
+([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
+
 The client mirrors it with `mayActOnAssociation(flag, { isGlobalAdmin, isSuperAdmin,
 memberPermissions })` in `frontend/src/lib/associations/api.ts`, reading the same exclusion set, so
 a hidden control and a refused request cannot disagree. `isSuperAdmin` there is THIS association's
@@ -95,8 +111,8 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association (unscoped: there is none yet), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
-| `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
-| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
+| `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id`. Never held on an institution (`TYPE_EXCLUDED_FLAGS`); ACCEPTING a delegation reads it on the receiver without the BDE tier |
+| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL. Never held on a list or an institution (`TYPE_EXCLUDED_FLAGS`) |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
 | `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module (the bookings chantier, WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
 

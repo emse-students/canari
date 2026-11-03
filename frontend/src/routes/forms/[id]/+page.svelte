@@ -424,6 +424,16 @@
   }
 
   // ── Progress bar ─────────────────────────────────────────────────
+  /**
+   * The answer would pay ONLINE while the server reports the form's payments paused: the submit is
+   * held and the reason shown, rather than a checkout refused after the answer is written. A cash
+   * answer, where the form accepts one, is not paused - it never reaches an account.
+   */
+  const onlinePaymentPaused = $derived(
+    !!form?.paymentsPaused &&
+      calculateTotal() > 0 &&
+      !(form.allowCashPayment && paymentMethodChoice === 'cash')
+  );
   const totalCount = $derived(visibleItems.length);
   const answeredCount = $derived.by(() => {
     if (!form) return 0;
@@ -676,6 +686,17 @@
       {/each}
     </div>
 
+    <!-- ── Online payment paused: the organiser has no account to receive it right now ── -->
+    {#if onlinePaymentPaused && !submitted}
+      <div
+        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn mt-4 rounded-2xl border px-4 py-3 text-sm"
+        role="status"
+      >
+        <p class="font-semibold">{m.form_view_payments_paused_title()}</p>
+        <p>{m.form_view_payments_paused_note()}</p>
+      </div>
+    {/if}
+
     <!-- ── Payment method (cash vs online) ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
@@ -754,7 +775,8 @@
           submitting ||
           isNotOpenYet ||
           !maySubmit ||
-          priceUnavailable}
+          priceUnavailable ||
+          onlinePaymentPaused}
         loading={submitting}
         onclick={() => void handleSubmit()}
       >

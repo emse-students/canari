@@ -153,13 +153,53 @@ Two dedicated fields on the association entity, kept distinct from the lists-onl
 
 Constraints (enforced server-side in `associations.service.ts`):
 
-- **Parent must approve.** A request lands as `pending`; the parent approves/rejects it.
+- **Parent must approve - and only ITS OWN managers may** (owner, 2026-11-02). A request lands as
+  `pending`; it is accepted only by a holder of `MANAGE_PRODUCTS` ON THE RECEIVER (read with
+  `mayAct(..., { withoutGoverningBde: true })`, so a BDE governing the receiver does not count) or by
+  the platform administrator. Anyone else gets `403 DELEGATION_ACCEPT_RECEIVER_ONLY`. Rejecting or
+  revoking is still open to the receiver's `MANAGE_PRODUCTS` guard as before.
+- **Every acceptance is recorded.** The same transaction that writes `approved` inserts a row in
+  `payment_delegation_acceptances` (migration 124: child, receiver, `acceptedByUserId`, `acceptedAs`
+  = `member` | `platform-admin`, `acceptedAt` from the database clock), append-only, logged `[AUDIT]`.
+  The accepting account id is anonymised at account erasure (Art. 30 register, C8).
+- **A list collects ONLY this way.** A list holds no Lydia account of its own
+  (`LIST_NO_OWN_LYDIA_ACCOUNT`) and may sell only while its delegation is APPROVED
+  (`mayCollect`, `LIST_DELEGATE_REQUIRED` otherwise). The receiver may be ANY association whose Lydia
+  is ready - not necessarily the list's BDE. A list or an institution can never be a receiver, and an
+  institution never delegates (it sells nothing). See [associations](associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31-lists-re-decided-2026-11-02).
 - **Explicit + always to parent.** Once `approved`, every payment routes to the parent even if the
   child also has its own payment account.
 - **One level only.** A parent that itself delegates cannot be chosen as a parent (no chains), and
   an association that already receives delegated payments cannot delegate its own.
 - **Fails closed.** If a delegating child's parent can't be loaded, or the parent has not finished
   payment onboarding, payments are treated as *not ready* rather than falling back to the child.
+
+### Pause and resume, when the receiver stops collecting (owner, 2026-11-02)
+
+When the receiver REVOKES an approved delegation (`rejectPaymentDelegation`), when the child CANCELS
+one, or when the receiver LOSES its Lydia (`setLydiaReadiness` to not-ready, or `clearLydiaAccount`
+by the platform admin), the stranded child's on-sale products are withheld in the SAME transaction
+(`isActive = false, activationWithheld = true`; a product a manager had already taken off sale is
+left alone). A child whose own account is ready is not stranded and is not touched. Paid forms need
+no write: `paymentsPaused` is DERIVED on every read (`forms.service`, the form charges and
+`collectsNow` is false), and the respondent page holds an online submit with
+`form_view_payments_paused_note`.
+
+The child's `MANAGE_PRODUCTS` holders are told (`tellCollectionManagers`, a `try` per entity) through
+the `lydia_payments_paused` / `lydia_payments_active` notices - **behind the existing
+`LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED` switch, still `false`**, so they are written only once that
+switch is flipped by its own PR.
+
+Everything RESUMES on a new accepted delegation (the approve route runs
+`releaseWithheldProducts(child)` then `tellDelegationResumed`) or, after an unlink or a readiness
+loss, when the receiver is ready again (`markLydiaReady` releases the holder's AND its approved
+delegates' products). After an unlink the link stays `approved`: the products wait withheld until the
+receiver is ready, or until the child picks another receiver.
+
+Proven against PostgreSQL in `associations/payment-delegation.integration.spec.ts` (accept refused to
+a BDE, recorded for the treasurer and the admin, purchase routed to the receiver, revoke and unlink
+pausing, resume) and `refunds/refunds.integration.spec.ts` (a list's payment is refunded by the
+RECEIVER's payout managers once approved, never before).
 
 ### Routing decision point
 
@@ -183,12 +223,12 @@ dashboard or balance.
 
 ### UI
 
-`/associations/[slug]/edit` -> **Delegation** tab (`edit/EditDelegationTab.svelte`, gated on
+`/associations/[slug]/edit` and `/lists/[slug]/edit` -> **Delegation** tab (`edit/EditDelegationTab.svelte`, gated on
 `MANAGE_PRODUCTS`). One component, two sections:
 
 - **Club-side** - pick a parent association, request delegation, and see status (`pending` /
   `approved`, with a warning if the parent isn't payment-ready) or cancel.
-- **Parent-side** - incoming request queue: approve/reject pending requests, revoke approved ones,
+- **Parent-side** (never drawn for a list, which cannot receive) - incoming request queue: approve/reject pending requests, revoke approved ones,
   and expand an approved child to view its accounting table + export button (reuses the "Achats"
   purchase-row layout).
 
@@ -200,7 +240,7 @@ dashboard or balance.
 | POST | `/api/associations/:id/payment-delegation` | Request delegation to `{ parentAssociationId }` |
 | DELETE | `/api/associations/:id/payment-delegation` | Cancel own delegation (pending or approved) |
 | GET | `/api/associations/:id/payment-delegation/children` | Parent's request queue (pending + approved) |
-| POST | `/api/associations/:id/payment-delegation/children/:childId/approve` | Approve a child (parent must be payment-ready) |
+| POST | `/api/associations/:id/payment-delegation/children/:childId/approve` | Approve a child (parent must be payment-ready; the receiver's own `MANAGE_PRODUCTS` holder or the platform admin only; recorded) |
 | POST | `/api/associations/:id/payment-delegation/children/:childId/reject` | Reject/revoke a child |
 | GET | `/api/associations/:id/payment-delegation/children/:childId/purchases` | Read a delegated child's purchases |
 | GET | `/api/associations/:id/payment-delegation/children/:childId/purchases/export` | Child's purchases as `.xlsx` |

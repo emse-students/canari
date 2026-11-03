@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { assertKindMaySell } from '../associations/selling-kinds';
+import { assertMayCollect } from '../associations/collection-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -228,8 +228,9 @@ export class FormsService {
   ) {}
 
   /**
-   * A form of a list or an institution may not be given a price (owner, 2026-10-31): those kinds
-   * collect nothing. Judged on the MERGED form - what the edit leaves, stored fields included - so
+   * A form may be given a price only by an entity that may collect now (`mayCollect`, owner
+   * 2026-11-02): an association, or a list through an approved payment delegation - never an
+   * institution. A list without one is refused `LIST_DELEGATE_REQUIRED`. Judged on the MERGED form - what the edit leaves, stored fields included - so
    * every way to charge counts: the base price, the payment switch, a grid cell and a choice
    * option's supplement (`chargesMoney`).
    *
@@ -258,8 +259,8 @@ export class FormsService {
     if (stored && chargesMoney(stored as unknown as CreateFormDto)) {
       if (priceFingerprint(merged) === priceFingerprint(stored as unknown as CreateFormDto)) return;
     }
-    const kind = await this.associationsService.kindOf(associationId);
-    if (kind) assertKindMaySell(this.logger, associationId, kind, 'form price');
+    const subject = await this.associationsService.collectionSubjectOf(associationId);
+    if (subject) assertMayCollect(this.logger, subject, 'form price');
   }
 
   /**
@@ -680,7 +681,21 @@ export class FormsService {
       !!cotisationGrantRefusal({
         cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
       });
-    return { ...form, submissionCount, cotisationDisabled };
+    const paymentsPaused = await this.paymentsPaused(form);
+    return { ...form, submissionCount, cotisationDisabled, paymentsPaused };
+  }
+
+  /**
+   * A paid form is PAUSED while its association cannot collect online now (`collectsNow`): a list
+   * whose payment delegation was revoked or never accepted, or whose receiver lost its Lydia account
+   * (owner, 2026-11-02). Derived on every read, so it resumes with the next accepted delegation; the
+   * online submit is refused by the same readiness (`assertPaymentsReady`). A free form never is.
+   */
+  private async paymentsPaused(form: Form): Promise<boolean> {
+    if (!formRequiresStripeReadyAssociation(form)) return false;
+    const paused = !(await this.associationsService.collectsNow(form.associationId));
+    if (paused) this.logger.debug(`[Forms] form ${form.id.slice(0, 8)} served paused: payments`);
+    return paused;
   }
 
   /**
@@ -727,6 +742,7 @@ export class FormsService {
       currency: form.currency,
       allowCashPayment: form.allowCashPayment,
       pricing,
+      paymentsPaused: await this.paymentsPaused(form),
     };
   }
 

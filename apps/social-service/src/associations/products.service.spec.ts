@@ -389,10 +389,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(result.amountCents).toBe(1000);
   });
 
-  describe('a list or an institution sells nothing (owner, 2026-10-31)', () => {
-    it.each(['list', 'institution'] as const)(
-      'refuses to create a product on a %s, typed 403',
-      async (type) => {
+  describe('an entity that may not collect now (owner, 2026-11-02)', () => {
+    it.each([
+      ['list', 'LIST_DELEGATE_REQUIRED'],
+      ['institution', 'ASSOCIATION_KIND_DOES_NOT_SELL'],
+    ] as const)(
+      'refuses to create a product on a %s with no approved delegate, typed %s',
+      async (type, code) => {
         const { service, assoRepo, productRepo } = makeService();
         assoRepo.findOne.mockResolvedValue(asso({ type }));
 
@@ -402,12 +405,35 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           false
         );
         await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
-        await expect(attempt).rejects.toMatchObject({
-          response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
-        });
+        await expect(attempt).rejects.toMatchObject({ response: { code } });
         expect(productRepo.save).not.toHaveBeenCalled();
       }
     );
+
+    it('lets a list with an APPROVED delegate create a priced product', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(
+        asso({
+          type: 'list',
+          paymentParentAssociationId: 'receiver',
+          paymentDelegationStatus: 'approved',
+        })
+      );
+      jest.spyOn(service as any, 'resolvePaymentTargetFor').mockResolvedValue({
+        targetAssociationId: 'receiver',
+        provider: 'lydia',
+        connectAccountId: 'vendor_r',
+        ready: true,
+        delegated: true,
+        readinessCause: null,
+      });
+      await service.create(
+        'asso1',
+        { name: 'Sweat', type: 'other', amountCents: 2500 } as any,
+        false
+      );
+      expect(productRepo.save).toHaveBeenCalled();
+    });
 
     it('lets an existing product of a list be taken OFF sale, never put back on or repriced', async () => {
       const { service, assoRepo, productRepo } = makeService();
@@ -424,11 +450,11 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ).resolves.toBeDefined();
     });
 
-    it('refuses to provision a cotisation product for a list', async () => {
+    it('refuses to provision a cotisation product for a list with no approved delegate', async () => {
       const { service } = makeService();
       await expect(
         service.provisionCotisationProduct(asso({ type: 'list', cotisationMode: 'lifetime' }))
-      ).rejects.toMatchObject({ response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' } });
+      ).rejects.toMatchObject({ response: { code: 'LIST_DELEGATE_REQUIRED' } });
     });
 
     it('refuses to update a product of a list, and writes nothing', async () => {

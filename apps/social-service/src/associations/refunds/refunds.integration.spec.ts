@@ -694,6 +694,33 @@ maybe('Lydia refunds against PostgreSQL', () => {
     });
   });
 
+  // G8 (owner, 2026-11-02): a LIST collects only through its receiver, so its payments are refunded
+  // by the RECEIVER's payout managers, from the receiver's route - the list holds no payout right.
+  it("refunds a LIST's payment from its receiver once the delegation is approved, never before", async () => {
+    const list = randomUUID();
+    // This file's `associations` is the minimal table the refund reads; the kind is added here so
+    // the payer is really a list (the refund path itself never reads the kind).
+    await ds.query(
+      `ALTER TABLE associations ADD COLUMN IF NOT EXISTS type varchar(20) NOT NULL DEFAULT 'association'`
+    );
+    await ds.query(
+      `INSERT INTO associations (id, name, type, "paymentParentAssociationId", "paymentDelegationStatus")
+       VALUES ($1, 'Liste', 'list', $2, 'pending')`,
+      [list, ASSO]
+    );
+    const { record } = await boutiquePayment('other', 900, list);
+    await expect(service.refund(ASSO, record.id, MANAGER, total())).rejects.toMatchObject({
+      status: 404,
+    });
+    await ds.query(`UPDATE associations SET "paymentDelegationStatus" = 'approved' WHERE id = $1`, [
+      list,
+    ]);
+    await expect(service.refund(ASSO, record.id, MANAGER, partial(300))).resolves.toMatchObject({
+      state: 'refunded',
+    });
+    expect(await service.statement(list)).toMatchObject({ receivedCents: 900, refundedCents: 300 });
+  });
+
   it('a replay of a refused refund answers 200 with its state, never a refund', async () => {
     const { record } = await boutiquePayment('other');
     const key = randomUUID();

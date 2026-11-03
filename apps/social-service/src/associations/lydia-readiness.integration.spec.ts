@@ -56,7 +56,13 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
   let ds: DataSource;
   let associations: AssociationsService;
   let products: ProductsService;
-  const tell = jest.fn(async () => 1);
+  const tell = jest.fn(async (_asso: { id: string }, _kind: string, _to: string[]) => 1);
+  /**
+   * The notices written for one association: the holder's payout managers, and - since lists collect
+   * through a delegate (owner, 2026-11-02) - each approved delegate's shop managers, once per
+   * transition too.
+   */
+  const tellsTo = (id: string) => tell.mock.calls.filter(([asso]) => asso.id === id).length;
   let savedSecret: string | undefined;
   const requests: unknown[] = [];
 
@@ -231,7 +237,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       );
     }
     expect(outcomes).toEqual(['transitioned', 'replay', 'replay', 'replay', 'replay']);
-    expect(tell).toHaveBeenCalledTimes(1);
+    expect(tellsTo(HOLDER)).toBe(1);
+    expect(tellsTo(CLUB)).toBe(1);
     expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
     expect(await flags(withheld.id)).toEqual({ isActive: true, activationWithheld: false });
   });
@@ -266,7 +273,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     await associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-refused', {
       path: 'form',
     });
-    expect(tell).toHaveBeenCalledTimes(1);
+    expect(tellsTo(HOLDER)).toBe(1);
+    expect(tellsTo(CLUB)).toBe(1);
 
     // An unsigned VALIDATED does not clear Lydia's own refusal: nothing released.
     await expect(
@@ -335,7 +343,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       );
       expect(outcomes.filter((o) => o.kind === 'transitioned')).toHaveLength(1);
       expect(outcomes.filter((o) => o.kind === 'replay')).toHaveLength(7);
-      expect(tell).toHaveBeenCalledTimes(1);
+      expect(tellsTo(HOLDER)).toBe(1);
+      expect(tellsTo(CLUB)).toBe(1);
       expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
     });
 

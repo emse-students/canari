@@ -96,6 +96,11 @@ function makeReadiness(
   };
   const assoRepo = {
     manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager), find },
+    // The approved delegates' names, for their managers' notice (`tellCollectionManagers`).
+    findOne: jest.fn(async ({ where: { id } }: { where: { id: string } }) => ({
+      id,
+      name: 'List',
+    })),
   };
   const listFlagHolders = jest.fn(async () => ['manager-1', 'manager-2']);
   const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
@@ -134,8 +139,13 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
       path: 'webhook',
     });
     expect(first).toMatchObject({ kind: 'transitioned', associationId: HOLDER });
-    expect(notifier.tell).toHaveBeenCalledTimes(1);
-    expect(notifier.tell).toHaveBeenCalledWith({ id: HOLDER, name: 'BDE' }, 'active', [
+    // The holder's payout managers, then its approved delegate's shop managers (owner, 2026-11-02).
+    expect(notifier.tell).toHaveBeenCalledTimes(2);
+    expect(notifier.tell).toHaveBeenNthCalledWith(1, { id: HOLDER, name: 'BDE' }, 'active', [
+      'manager-1',
+      'manager-2',
+    ]);
+    expect(notifier.tell).toHaveBeenNthCalledWith(2, { id: CLUB, name: 'List' }, 'active', [
       'manager-1',
       'manager-2',
     ]);
@@ -150,7 +160,7 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
       });
       expect(again.kind).toBe('replay');
     }
-    expect(notifier.tell).toHaveBeenCalledTimes(1);
+    expect(notifier.tell).toHaveBeenCalledTimes(2);
     expect(logs.warn).toHaveLength(0);
     expect(logs.error).toHaveLength(0);
     expect(logs.debug.join('|')).toContain('replay');
@@ -183,6 +193,11 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(error).toContain('3 on-sale product(s) withheld');
     expect(error).toContain('1 global admin(s) told');
     expect(notifier.tell).toHaveBeenCalledWith(expect.anything(), 'paused', expect.anything());
+    // The delegate (a list paid through this holder) is told by its own shop managers' notice.
+    expect(notifier.tell).toHaveBeenCalledWith({ id: CLUB, name: 'List' }, 'paused', [
+      'manager-1',
+      'manager-2',
+    ]);
   });
 
   it('a revert writes a bell row to EVERY global admin in its own transaction, whatever the switch', async () => {
@@ -1066,7 +1081,18 @@ describe('AssociationsService - the payer`s refusal and the unlink', () => {
   it('the unlink closes the cashier rows of that Business and clears their phone', async () => {
     captureLogs();
     const query = jest.fn(async (_sql: string, _params: unknown[]) => []);
-    const service = makeBare({ assoRepo: { update: jest.fn(async () => ({})), query } });
+    const manager = {
+      findOne: jest.fn(async () => ({ id: HOLDER })),
+      update: jest.fn(async () => ({ affected: 0 })),
+      find: jest.fn(async () => []),
+    };
+    const service = makeBare({
+      assoRepo: {
+        update: jest.fn(async () => ({})),
+        query,
+        manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager) },
+      },
+    });
     await service.clearLydiaAccount(HOLDER);
     const closing = query.mock.calls.find(([sql]) => String(sql).includes('lydia_cashiers'));
     expect(closing?.[0]).toContain('"removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL');

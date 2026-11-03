@@ -1,0 +1,3 @@
+### Changed - a list keeps its shop and collects through an accepted payment delegation
+
+A list keeps the shop, its cotisation and paid forms but holds no Lydia account: it collects only through a delegation that the receiver's own shop managers (or the platform admin) accept, recorded in migration 124; a revoke or the receiver's Lydia loss pauses it, and a BDE governing a list now reaches its edit page ([payments](docs/wiki/frontend/modules/payments.md#pause-and-resume-when-the-receiver-stops-collecting-owner-2026-11-02)).

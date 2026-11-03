@@ -158,6 +158,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // accounting record kept as long as the payment it refunds, its authors anonymised.
   'lydia_refunds.requestedByUserId': { action: 'anonymise' },
   'lydia_refunds.resolvedByUserId': { action: 'anonymise' },
+  // Who accepted a payment delegation on the receiver's behalf (migration 124): the delegation's
+  // accounting trail, kept, its author anonymised.
+  'payment_delegation_acceptances.acceptedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -643,6 +646,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'lydia_refunds_resolved_by',
     sql: `UPDATE lydia_refunds SET "resolvedByUserId" = $2 WHERE "resolvedByUserId" = $1`,
+  },
+  {
+    label: 'payment_delegation_acceptances_accepted_by',
+    sql: `UPDATE payment_delegation_acceptances SET "acceptedByUserId" = $2 WHERE "acceptedByUserId" = $1`,
   },
   {
     label: 'moderation_muted',

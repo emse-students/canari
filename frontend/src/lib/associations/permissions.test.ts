@@ -8,6 +8,7 @@ import {
   AssociationPermissionFlag,
   BDE_ONLY_FLAGS,
   SUPER_ADMIN_EXCLUDED_FLAGS,
+  TYPE_EXCLUDED_FLAGS,
   findBdeAssociationWithFlag,
   hasPermissionFlag,
   holdsBdeFlag,
@@ -101,6 +102,33 @@ describe('BDE-wide flag lookup', () => {
 describe('the constants the server also defines', () => {
   it('keeps the super-admin exclusion set to the two flags that are not administration', () => {
     expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO);
+  });
+
+  // Owner, 2026-11-02: nobody holds a list's payout account, nor an institution's shop. The server's
+  // table is read from its source, so a change on one side alone fails here.
+  it('mirrors the backend TYPE_EXCLUDED_FLAGS, and holds a list payout account for nobody', () => {
+    expect(TYPE_EXCLUDED_FLAGS).toEqual({
+      association: 0,
+      list: MANAGE_PAYOUT_ACCOUNT,
+      institution: AssociationPermissionFlag.MANAGE_PRODUCTS | MANAGE_PAYOUT_ACCOUNT,
+    });
+    const server = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../apps/social-service/src/associations/entities/association-member.entity.ts'
+      ),
+      'utf8'
+    );
+    const table = server.slice(server.indexOf('export const TYPE_EXCLUDED_FLAGS'));
+    const body = table.slice(table.indexOf('{'), table.indexOf('};'));
+    expect(body).toMatch(/association: 0,/);
+    expect(body).toMatch(/list: AssociationPermissionFlag\.MANAGE_PAYOUT_ACCOUNT,/);
+    expect(body.replace(/\s+/g, ' ')).toContain(
+      'institution: AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT'
+    );
+    const ctx = { isGlobalAdmin: true, isSuperAdmin: false, assoType: 'list' as const };
+    expect(mayActOnAssociation(MANAGE_PAYOUT_ACCOUNT, ctx)).toBe(false);
+    expect(mayActOnAssociation(AssociationPermissionFlag.MANAGE_PRODUCTS, ctx)).toBe(true);
   });
 
   it('mirrors the backend ALL_CORE_FLAGS value', () => {
