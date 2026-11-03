@@ -1,6 +1,6 @@
 import { generateAvatarColor, getInitials } from './avatar';
 import { emojiHtml } from '$lib/utils/emojiSvg';
-import { apiAssetUrl } from './apiUrl';
+import { avatarUrl } from './avatarUrl';
 import { Log } from './Log';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import { escapeHtmlAttribute } from '$lib/utils/escapeHtml';
@@ -102,7 +102,7 @@ export function buildTrombinoscopeHtml(
       return `
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;width:110px;">
           <div style="position:relative;width:72px;height:72px;border-radius:50%;overflow:hidden;flex-shrink:0;">
-            <img src="${apiAssetUrl(`/api/users/${encodeURIComponent(m.userId)}/avatar`)}"
+            <img src="${safe(avatarUrl(m.userId))}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:50%;display:block;"
                  data-avatar-fallback />
             <div style="display:none;position:absolute;inset:0;background:${bg};align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;border-radius:50%;">${safe(initials)}</div>

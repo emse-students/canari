@@ -1247,23 +1247,24 @@ Two rules about *when* the queue is allowed to try, both learned from the offlin
   because step 1 OPENS that gate without being the moment to send - a token is not a socket. See the
   trigger table below.
 
-### Eight sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
+### Nine sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
 
 The MLS audit counted the call sites and read them as a duplicate path. They are not one, and the
 count is accurate - which is why the refutation is written down rather than deleted with the row.
-Whoever counts them next should find this before they find eight things to fuse.
+Whoever counts them next should find this before they find nine things to fuse.
 
 Every trigger reaches `runFlush`, and every gate lives there and nowhere else: the tab election, the
 leader gate, `connectivity.isOffline`, `canFlush`, and the per-conversation lane claim (below). There is no
 second flusher. **FIVE sites are internal wake-ups**, each bound to the one condition it is the seam
 for - `connectivity.onReconnect`, `visibilitychange`, a follower tab's `outbox_flush_request`, the
-backoff timer, and `enqueue`. **THREE are external moments nothing inside the module can observe:**
+backoff timer, and `enqueue`. **FOUR are external moments nothing inside the module can observe:**
 
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
 | `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+| `MainChatPage`'s off-screen handler, under `holdWhileLeaving` (2026-11-02) | the iOS background task must last until the owed read marks' send SETTLES; the enqueue raises a flush but hands nobody its end, and `flush()` coalesces with it, so it adds no send |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
 `isOffline` clearing, so binding one to `canFlush` opening reads as the same move. It would fire at
@@ -1280,7 +1281,7 @@ flush look redundant and the reconnect path look uncovered, which are wrong in o
 
 `outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
 `resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
-open, and a source check pins the three external sites so a fourth has to be argued for rather than
+open, and a source check pins the four external sites so a fifth has to be argued for rather than
 added.
 
 ### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
@@ -4333,6 +4334,8 @@ was not up, and every one of these paths is decided in the client.
 | shade "Marquer comme lu" -> the phone's own badge (`read_watermarks.ndjson`) | Android | works | merged at login AND at resume |
 | **Android resumed on an open conversation** | Android | **FAILED** | the receipt effect read `isAppInForeground()`, a plain global; it returned while the app was in the background and nothing ran it again on the way back. What landed in the background stayed unread on the phone, and the mark never left, so on every other device too, until something else changed the conversation (a send, a new message, a reload) |
 | iOS resumed on an open conversation | iOS | works | WKWebView fires `visibilitychange`, which the effect follows |
+| **a frame arriving in the seconds before iOS suspends the app** | iOS | **FAILED** | `isAppInForeground()` was always `true` on iOS, so the arrival counted as read - fixed by the iOS follow-up ([below](#read-state-between-devices---the-census-2026-11-02)) |
+| **a read made inside the 2 s window before leaving the app** | iOS | **FAILED** (late, never lost) | the delivery was handed to the outbox and nothing held the process; it left at the next open - fixed by the iOS follow-up |
 | **resumed from a notification for Y with X left open** | Android (and iOS) | **FAILED** | the foreground edge re-ran the receipt effect on X before the tap's link selected Y, so X was marked read - a conversation nobody looked at. Owner, 2026-11-02: X must not be marked, the same on both platforms (below) |
 | web tab hidden, then shown / window refocused | web | works | `isTabVisible` / `isWindowFocused` are state |
 | **any read (own other device, or the peer's receipt) -> a FOLLOWER tab** | web, desktop | **FAILED** | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded |
@@ -4446,12 +4449,54 @@ calls once, after the account gate: a leader applies `conversation_read` and ign
 only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutation-checked),
 `arrivalRuntime.beingRead.test.ts` (both halves, in a document), `tabReadRelay.wiring.test.ts`.
 
-**Not changed, recorded.** On iOS `arrivalContextNow` asks `isAppInForeground()` alone, which is
-always `true` there, so a frame the JS processes in the seconds before suspension counts as read on
-arrival; the receipt itself is not sent (the effect waits for `visibilitychange`). Not measured, not
-part of this report. An iOS read is delivered when the app is next opened if the process is
-suspended inside the 2 s window: `onAppScreenChange` hands the mark to the outbox, which iOS may not
-let run - durable (`recordDmReadMark`), so late, never lost.
+**iOS, fixed in the follow-up PR (which depends on #2937).** Two iOS paths were left after the census, and the rule is fix, never defer:
+
+- **The foreground is published, not assumed.** `canari_ios.mm` used to observe only the ACTIVE pair
+  (`didBecomeActive` / `willResignActive`) for its own `g_isInForeground` and published nothing to
+  the page. That meant `isAppInForeground()` was always `true` on iOS, so `arrivalContextNow` counted a frame
+  the JS processed in the seconds before suspension as read on arrival. The shell now writes
+  `window.__canariForeground` and dispatches `canari:foreground` on the **background/foreground
+  pair** and after every page load (`CanariPublishForeground`): leaving at `didEnterBackground`;
+  coming back when the resume COMPLETES - the resume begins at `willEnterForeground`
+  (`g_resumePending`) and is published one notification-center round trip AFTER the `didBecomeActive`
+  that ends it (`getNotificationSettingsWithCompletionHandler`, answered on the main queue). A
+  tapped notification is noted (`CanariNoteResumeOpening`, called before the tap is queued for the
+  page) whenever it runs while that resume is pending, so the edge carries the link it opens
+  (`detail.opening`), as Android's does - and the shared hold of
+  [the resume that opens something](#read-state-between-devices---the-census-2026-11-02) applies
+  unchanged. **Either order:** UIKit does not promise whether the delegate runs before or after
+  `didBecomeActive` (review of #2939); a response that caused the activation comes either with the
+  activation itself or on the notification center's own connection, and that the connection hands
+  the response to the main queue before the round trip's answer is LIKELY BUT UNPROVEN - Apple
+  documents no such ordering (re-review F3). It is an ordering argument, never a delay, and it is
+  read on hardware by check LA steps 5 and 8: the shell logs `didBecomeActive: awaiting the
+  notification-center round trip` and `round trip answered: publishing the foreground edge`, and the
+  ONE rule read there is that the tap's line comes BEFORE `round trip answered` (whatever its `state`
+  or `resumePending`, and before or after `awaiting`); a failure blocks the stable. A `didBecomeActive` with no resume pending (Control Centre, a Face ID sheet) publishes
+  nothing and drops a link a cold launch left; a tap on an app active with no resume pending (a
+  banner over the open app) is not a resume (step 10). This is the same contract as Android's `MainActivity.pushForeground`, asserted for
+  both shells by `utils/appForeground.contract.test.ts`. The ACTIVE pair was deliberately not chosen: Control
+  Centre, a Face ID sheet and the notification shade resign ACTIVE without leaving the screen, and
+  a read on screen must not stop counting because a system sheet passed over it. The page now hears
+  two signals for one transition (`visibilitychange` and `canari:foreground`), so `onAppScreenChange`
+  reports one edge per transition (it remembers the last state it reported). The listeners were
+  checked for idempotence anyway, in case one is ever wired to the raw events: the read-mark flush
+  (`take()` empties), connectivity (`probeOwedOnScreen`), the playback arbiter, and the call service
+  (`cameraHeadedOn()`, `videoPausedByBackground`).
+- **A read made in the 2 s window before leaving reaches the other devices now, not at the next
+  open.** The off-screen handler of `MainChatPage` runs its delivery (the debounced mark, the owed
+  salon and DM marks, the outbox flush) under `holdWhileLeaving` (`utils/backgroundFlush.ts`), which
+  asks the shell for a `canari-leave-flush` background task BEFORE the work
+  (`begin_background_flush`) and ends it when the work SETTLES, whichever way it ends
+  (`end_background_flush`, `commands/background_flush.rs`, `canari_push.mm`). There is no timer: the only other
+  end is iOS's own expiration, and the shell logs that as an ERROR. The mark is then still owed
+  (durable) and leaves with the next one. Off iOS the work runs as it did.
+- **The next step, gated on a reading.** The hold keeps the PROCESS alive, but whether iOS keeps
+  WKWebView's WebContent process running under it has not been read on hardware. If the iPhone
+  reading (check LF in [device-verification](../../device-verification.md#lf-a-read-reaches-the-other-devices-when-the-iphone-leaves-the-app---owed-on-the-iphone-12))
+  shows the hold beginning and expiring with no settle, the delivery moves native: the
+  shell drains the durable owed marks itself, under the same task, the way the quick reply sends
+  without the page. That variant is designed and not built, because only that reading tells us whether it is needed.
 
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 

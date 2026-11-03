@@ -72,7 +72,7 @@ const PUBLIC_BY_INTENT = [
   },
   {
     route: 'GET /users/:id/avatar',
-    why: 'an <img> subresource on public pages; an <img> cannot carry a Bearer token',
+    why: 'an <img> subresource, which cannot carry a Bearer token: authorised instead by the viewer-bound avatar token in ?t= (checked against a live session) or the internal secret of a service (avatar-access.ts)',
   },
   {
     route: 'GET /media/public/:id',
@@ -689,6 +689,122 @@ for (const route of CLOSED_TO_ANONYMOUS) {
       );
     }
   }
+}
+
+// THE EDGE NEVER FORWARDS THE INTERNAL CREDENTIAL (2026-11-03). `X-Internal-Secret` is spoken only
+// between services on the Docker network, so every proxying location must hand the upstream an EMPTY
+// value. nginx INHERITS proxy_set_header from the ENCLOSING level - the enclosing location for a nested
+// one, the server for a top-level one - and only into a level that declares NONE of its own. So the
+// header set a proxy_pass uses is the nearest level, itself first, that declares any; that level must
+// empty the credential. Every location is read whatever its modifier (`=`, `^~`, a regex, a named
+// `@`); an `if` block is counted as part of its location.
+const INTERNAL_CREDENTIAL = 'X-Internal-Secret';
+
+/**
+ * Every way `conf` (the nginx config, one directive per line) forwards a client-sent internal
+ * credential, and how many proxying locations it read.
+ */
+function internalCredentialFailures(conf) {
+  const lines = conf.split('\n').map((l) => l.replace(/\\n\\\s*$/, '').trimEnd());
+  const clearedLine = new RegExp(`^\\s*proxy_set_header\\s+${INTERNAL_CREDENTIAL}\\s+"";`, 'i');
+  const server = { path: '(server)', parent: null, proxies: false, declares: false, clears: false };
+  const found = [];
+  // The stack holds the LEVEL each open brace belongs to: a location pushes itself, any other block
+  // (an `if`, the server itself) pushes the level it sits in.
+  const stack = [];
+  const blocks = [];
+  for (const line of lines) {
+    const level = stack.length ? stack[stack.length - 1] : server;
+    const loc = line.match(/^\s*location\s+(.*?)\s*\{\s*$/);
+    if (loc) {
+      const block = { path: loc[1], parent: level, proxies: false, declares: false, clears: false };
+      stack.push(block);
+      blocks.push(block);
+      continue;
+    }
+    if (/\{\s*$/.test(line)) {
+      stack.push(level);
+      continue;
+    }
+    if (/^\s*\}\s*$/.test(line)) {
+      stack.pop();
+      continue;
+    }
+    if (/^\s*proxy_pass\s/.test(line)) level.proxies = true;
+    if (/^\s*proxy_set_header\s/.test(line)) level.declares = true;
+    if (clearedLine.test(line)) level.clears = true;
+  }
+  const proxying = blocks.filter((b) => b.proxies);
+  for (const block of proxying) {
+    let effective = block;
+    while (effective && !effective.declares) effective = effective.parent;
+    // No level declares any header: the server's own check below names that.
+    if (!effective || effective === server) continue;
+    if (!effective.clears) {
+      found.push(
+        effective === block
+          ? `nginx location "${block.path}" declares its own proxy_set_header and never empties ${INTERNAL_CREDENTIAL}, so it forwards whatever the CLIENT sent under that name`
+          : `nginx location "${block.path}" proxies with the headers it inherits from the enclosing location "${effective.path}", which never empties ${INTERNAL_CREDENTIAL}, so it forwards whatever the CLIENT sent under that name`
+      );
+    }
+  }
+  if (!server.clears) {
+    found.push(
+      `the server-level block never clears ${INTERNAL_CREDENTIAL}: the edge must never forward the internal credential`
+    );
+  }
+  return { found, proxying: proxying.length };
+}
+
+// SELF-TEST: the shapes the rule must tell apart, so a parser that stopped modelling inheritance
+// fails here rather than passing the real config vacuously.
+{
+  const SERVER_CLEARS = 'server {\n  proxy_set_header X-Internal-Secret "";\n';
+  const cases = [
+    [
+      'a nested location that declares nothing inherits from its ENCLOSING location, which never clears',
+      `${SERVER_CLEARS}  location ^~ /a/ {\n    proxy_set_header Host $host;\n    location ~ /a/b {\n      proxy_pass http://x;\n    }\n  }\n}`,
+      false,
+    ],
+    [
+      'the same nesting, the enclosing location clearing',
+      `${SERVER_CLEARS}  location ^~ /a/ {\n    proxy_set_header X-Internal-Secret "";\n    location ~ /a/b {\n      proxy_pass http://x;\n    }\n  }\n}`,
+      true,
+    ],
+    [
+      'a location declaring its own headers without clearing',
+      `${SERVER_CLEARS}  location /a {\n    proxy_set_header Host $host;\n    proxy_pass http://x;\n  }\n}`,
+      false,
+    ],
+    [
+      'a location declaring nothing, under a server that clears',
+      `${SERVER_CLEARS}  location /a {\n    if ($x) {\n      return 204;\n    }\n    proxy_pass http://x;\n  }\n}`,
+      true,
+    ],
+    [
+      'a server that never clears',
+      'server {\n  proxy_set_header Host $host;\n  location /a {\n    proxy_pass http://x;\n  }\n}',
+      false,
+    ],
+  ];
+  for (const [label, conf, passes] of cases) {
+    const { found } = internalCredentialFailures(conf);
+    if ((found.length === 0) !== passes) {
+      failures.push(
+        `SELF-TEST: ${label} should ${passes ? 'pass' : 'fail'} the ${INTERNAL_CREDENTIAL} check, and ${passes ? `failed: ${found.join('; ')}` : 'passed'}`
+      );
+    }
+  }
+}
+
+{
+  const { found, proxying } = internalCredentialFailures(readFileSync(NGINX, 'utf8'));
+  if (proxying < 20) {
+    failures.push(
+      `the ${INTERNAL_CREDENTIAL} check found only ${proxying} proxying locations - the parser no longer reads the config`
+    );
+  }
+  failures.push(...found);
 }
 
 // THE IDENTITY A SERVICE RECEIVES MUST NOT DEPEND ON WHICH LOCATION IT CAME THROUGH. See IDENTITY

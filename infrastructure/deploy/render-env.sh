@@ -202,6 +202,9 @@ min_length() {
   # Seals each live's key at rest (migration 110); shorter, social-service refuses every live start
   # with 503 LIVE_KEY_SEALING_UNAVAILABLE.
   LIVE_KEY_ENCRYPTION_SECRET) printf '32' ;;
+  # Signs the viewer-bound avatar token (core-service, avatar-token.ts); shorter, core-service mints
+  # none and every avatar URL goes unsigned.
+  AVATAR_TOKEN_SECRET) printf '32' ;;
   esac
 }
 

@@ -308,7 +308,7 @@ was no wherever the subject is one of these:
   `buildConversationRow.onePolicy`, `groupSweep`, `fixedPopover`, `GifPickerModal.overlay`,
   `cardGrid`, `postMarkdownBlocks`, `ModalOverlay`, `sidePanelInset`, `sidePanelWidth`,
   `serverProse`, `markupSources`, `feedAudience`, `AssociationTile` (the walls half),
-  `associationsHeader`, and the one inventory case inside `outbox` (exactly three sites raise a
+  `associationsHeader`, and the one inventory case inside `outbox` (exactly four sites raise a
   flush) and `distributionGroup` (three entrances, one per moment). An inventory of CALLERS cannot be
   replaced by calling the callee.
 - **A wiring statement in `sessionAuth.ts` (2,475 lines) or `ChatBackgroundService.svelte` (2,187)**,
