@@ -105,6 +105,11 @@ interface SalonSend {
   mentionedUserIds: string[];
   /** The echo writer and logger of the last attempt: what a re-send on the reconnect reuses. */
   deps: SendMessageDeps;
+  /**
+   * An uploaded ATTACHMENT (`salonAttachmentSend.ts`): never given back to the composer, which could
+   * take its caption but not its file.
+   */
+  attachment?: true;
 }
 const salonSends = new Map<string, SalonSend>();
 
@@ -360,6 +365,34 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
   }
 }
 
+/**
+ * Posts a salon ATTACHMENT whose file is uploaded and whose echo already shows the real envelope
+ * (`salonAttachmentSend.ts`), through the same machinery as a text ({@link deliverSalonSend}): the
+ * gate, the offline hold, `unconfirmed`, Retry and Discard. Not written to the unsent ledger, which
+ * rebuilds a text and could not rebuild this payload: a reload before the answer loses the row, as it
+ * loses the upload before it.
+ *
+ * @returns the refusal sentence, or `null` when sent or held for the reconnect.
+ */
+export function deliverSalonAttachment(
+  messageId: string,
+  conversationKey: string,
+  payload: Uint8Array,
+  deps: SendMessageDeps
+): Promise<string | null> {
+  const send: SalonSend = {
+    text: '',
+    conversationKey,
+    channelId: conversationKey.replace(/^channel_/, ''),
+    payload,
+    mentionedUserIds: [],
+    deps,
+    attachment: true,
+  };
+  salonSends.set(messageId, send);
+  return deliverSalonSend(messageId, send);
+}
+
 /** Rows whose retry is on the wire: a second click while one is in flight is refused, not sent. */
 const retrying = new Set<string>();
 
@@ -407,6 +440,12 @@ export async function retrySalonSend(
 export function takeBackSalonSend(messageId: string, userId: string): string | null {
   const send = salonSends.get(messageId);
   if (!send) return null;
+  if (send.attachment) {
+    send.deps.log(
+      `[SEND] take back ${messageId.slice(0, 8)}…: an attachment cannot go back to the composer - Retry or Discard`
+    );
+    return null;
+  }
   discardSalonSend(messageId, userId);
   return send.text;
 }

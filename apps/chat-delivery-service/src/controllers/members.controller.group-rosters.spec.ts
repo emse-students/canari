@@ -68,7 +68,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
   afterEach(() => jest.restoreAllMocks());
 
   it('answers every group the caller is in from ONE query', async () => {
-    const got = await controller.getGroupRosters({ groupIds: ['g-a', 'g-b'] }, 'alice', undefined);
+    const got = await controller.getGroupRosters({ groupIds: ['g-a', 'g-b'] }, 'alice');
 
     expect(got.rosters).toEqual({ 'g-a': ['alice', 'bob'], 'g-b': ['alice', 'carol'] });
     expect(got.refused).toEqual([]);
@@ -78,8 +78,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
   it('refuses, by name, a group the caller is not in - and still answers the others', async () => {
     const got = await controller.getGroupRosters(
       { groupIds: ['g-a', 'g-other', 'g-missing'] },
-      'alice',
-      undefined
+      'alice'
     );
 
     // The single read's 403, per group. A group that does not exist reads exactly like one the
@@ -89,31 +88,39 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
     expect(JSON.stringify(got)).not.toContain('dave');
   });
 
-  it('lets a global admin read any roster, as the single read does', async () => {
-    const got = await controller.getGroupRosters({ groupIds: ['g-other'] }, 'alice', 'true');
+  /**
+   * NO PLATFORM-ADMIN BYPASS ON CONVERSATION DATA (owner, 2026-11-02): a global admin used to be
+   * answered every roster here. One who is not in the group is now refused it like any non-member -
+   * the route no longer reads `x-global-admin` - and still answered the groups it IS in.
+   */
+  it('refuses a global admin the roster of a group it is not in, like any non-member', async () => {
+    const admin = await controller.getGroupRosters({ groupIds: ['g-a', 'g-other'] }, 'alice');
+    const stranger = await controller.getGroupRosters({ groupIds: ['g-other'] }, 'erin');
 
-    expect(got.rosters).toEqual({ 'g-other': ['dave'] });
-    expect(got.refused).toEqual([]);
+    expect(admin.rosters).toEqual({ 'g-a': ['alice', 'bob'] });
+    expect(admin.refused).toEqual(['g-other']);
+    expect(stranger.refused).toEqual(['g-other']);
+    expect(JSON.stringify(admin)).not.toContain('dave');
   });
 
-  it('answers no roster to a caller nobody identified, admin aside', async () => {
+  it('answers no roster to a caller nobody identified', async () => {
     // Unreachable behind HeaderAuthGuard, which refuses an empty x-user-id - and if that ever
     // changed, the batch must not become a read of every roster.
-    const got = await controller.getGroupRosters({ groupIds: ['g-a'] }, undefined, undefined);
+    const got = await controller.getGroupRosters({ groupIds: ['g-a'] }, undefined);
 
     expect(got.rosters).toEqual({});
     expect(got.refused).toEqual(['g-a']);
   });
 
   it('asks once per distinct group however often it is named', async () => {
-    await controller.getGroupRosters({ groupIds: ['g-a', 'g-a'] }, 'alice', undefined);
+    await controller.getGroupRosters({ groupIds: ['g-a', 'g-a'] }, 'alice');
 
     const where = groupMemberRepo.find.mock.calls[0][0].where;
     expect(where.groupId.value).toEqual(['g-a']);
   });
 
   it('answers an empty request without touching the database', async () => {
-    expect(await controller.getGroupRosters({ groupIds: [] }, 'alice', undefined)).toEqual({
+    expect(await controller.getGroupRosters({ groupIds: [] }, 'alice')).toEqual({
       rosters: {},
       refused: [],
       revoked: {},
@@ -136,11 +143,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
         { userId: 'carol', deviceId: 'web-2' },
       ]);
 
-      const got = await controller.getGroupRosters(
-        { groupIds: ['g-a', 'g-b'] },
-        'alice',
-        undefined
-      );
+      const got = await controller.getGroupRosters({ groupIds: ['g-a', 'g-b'] }, 'alice');
 
       expect(got.revoked).toEqual({ 'g-a': ['bob:phone-1'], 'g-b': ['carol:web-2'] });
       // ONE query, over every answered roster's users, under the ban window.
@@ -157,11 +160,7 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
     it('never names a device of a refused group', async () => {
       revokedRepo.find.mockResolvedValue([{ userId: 'dave', deviceId: 'x' }]);
 
-      const got = await controller.getGroupRosters(
-        { groupIds: ['g-a', 'g-other'] },
-        'alice',
-        undefined
-      );
+      const got = await controller.getGroupRosters({ groupIds: ['g-a', 'g-other'] }, 'alice');
 
       expect(got.revoked).toEqual({});
       expect(JSON.stringify(got)).not.toContain('dave');
@@ -170,23 +169,23 @@ describe('MembersController.getGroupRosters - many rosters, one read, the same r
     });
 
     it('asks nothing when no roster was answered', async () => {
-      const got = await controller.getGroupRosters({ groupIds: ['g-other'] }, 'alice', undefined);
+      const got = await controller.getGroupRosters({ groupIds: ['g-other'] }, 'alice');
       expect(got.revoked).toEqual({});
       expect(revokedRepo.find).not.toHaveBeenCalled();
     });
   });
 
   it('refuses a body that is not a list, a malformed id, and more than the cap', async () => {
-    await expect(controller.getGroupRosters({}, 'alice', undefined)).rejects.toBeInstanceOf(
+    await expect(controller.getGroupRosters({}, 'alice')).rejects.toBeInstanceOf(
       BadRequestException
     );
     await expect(
-      controller.getGroupRosters({ groupIds: ['g a/../x'] }, 'alice', undefined)
+      controller.getGroupRosters({ groupIds: ['g a/../x'] }, 'alice')
     ).rejects.toBeInstanceOf(BadRequestException);
     const tooMany = Array.from({ length: GROUP_ROSTERS_MAX_GROUPS + 1 }, (_, i) => `g-${i}`);
-    await expect(
-      controller.getGroupRosters({ groupIds: tooMany }, 'alice', undefined)
-    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.getGroupRosters({ groupIds: tooMany }, 'alice')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
     expect(groupMemberRepo.find).not.toHaveBeenCalled();
   });
 });
@@ -221,11 +220,7 @@ describe('MembersController.getGroupRosters - the seats still awaiting admission
     );
     jest.spyOn(controller['logger'], 'log').mockImplementation(() => undefined);
 
-    const got = await controller.getGroupRosters(
-      { groupIds: ['g-a', 'g-b', 'g-other'] },
-      'alice',
-      undefined
-    );
+    const got = await controller.getGroupRosters({ groupIds: ['g-a', 'g-b', 'g-other'] }, 'alice');
 
     expect(got.awaiting).toEqual({ 'g-a': ['joe'] });
     expect(got.refused).toEqual(['g-other']);

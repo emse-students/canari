@@ -685,6 +685,61 @@ export const MAX_CONCURRENT_SENDS = 3;
 export const UPLOAD_STALL_HINT_MS = 10_000;
 
 /**
+ * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
+ * swap into the optimistic placeholder message. Shared by the DM/group queue and the salon
+ * attachment send (`salonAttachmentSend.ts`), so an attachment is encoded ONE way whichever path
+ * carries it.
+ */
+export function buildMediaMessage(
+  entry: Pick<OutboxEntry, 'id' | 'sentAt'>,
+  media: NonNullable<OutboxEntry['media']>,
+  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+): { proto: Uint8Array; content: string } {
+  // What the sender declared (a reel message's intent, length and expiry hint): empty for an
+  // ordinary attachment, which therefore encodes exactly as before.
+  const declaration = {
+    ...(media.intent ? { intent: media.intent } : {}),
+    ...(media.durationMs ? { durationMs: media.durationMs } : {}),
+    ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
+  };
+  const fullRef: MediaRef = {
+    type: mediaKindToType(media.kind),
+    mediaId: ref.mediaId,
+    key: ref.key,
+    iv: ref.iv,
+    mimeType: media.mimeType,
+    size: media.size,
+    fileName: media.fileName,
+    width: media.width,
+    height: media.height,
+    ...(media.placeholder ? { placeholder: media.placeholder } : {}),
+    ...(media.voiceNote ? { voiceNote: true } : {}),
+    ...(ref.encoding ? { encoding: ref.encoding } : {}),
+    ...declaration,
+  };
+  const proto = encodeAppMessage({
+    ...mkMedia({
+      kind: media.kind,
+      mediaId: ref.mediaId,
+      key: fromHex(ref.key),
+      iv: fromHex(ref.iv),
+      mimeType: media.mimeType,
+      size: media.size,
+      fileName: media.fileName ?? '',
+      voiceNote: media.voiceNote ?? false,
+      caption: media.caption,
+      ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+      ...mediaPlaceholderProtoField(media.placeholder),
+      ...mediaEncodingProtoField(ref.encoding),
+      ...mediaReelProtoFields(declaration),
+    }),
+    messageId: entry.id,
+    sentAt: entry.sentAt,
+  });
+  return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+}
+
+/**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
  * send time (so epoch changes are transparent), is idempotent on the stable messageId (a re-send
  * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
@@ -1847,59 +1902,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       `[OUTBOX] ${id}… take prepared: ${raw.fileBytes.length} -> ${prepared.bytes.length} bytes (${prepared.mimeType}), stored in its place`
     );
     return next;
-  }
-
-  /**
-   * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
-   * swap into the optimistic placeholder message.
-   */
-  function buildMediaMessage(
-    entry: OutboxEntry,
-    media: NonNullable<OutboxEntry['media']>,
-    ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
-  ): { proto: Uint8Array; content: string } {
-    // What the sender declared (a reel message's intent, length and expiry hint): empty for an
-    // ordinary attachment, which therefore encodes exactly as before.
-    const declaration = {
-      ...(media.intent ? { intent: media.intent } : {}),
-      ...(media.durationMs ? { durationMs: media.durationMs } : {}),
-      ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
-    };
-    const fullRef: MediaRef = {
-      type: mediaKindToType(media.kind),
-      mediaId: ref.mediaId,
-      key: ref.key,
-      iv: ref.iv,
-      mimeType: media.mimeType,
-      size: media.size,
-      fileName: media.fileName,
-      width: media.width,
-      height: media.height,
-      ...(media.placeholder ? { placeholder: media.placeholder } : {}),
-      ...(media.voiceNote ? { voiceNote: true } : {}),
-      ...(ref.encoding ? { encoding: ref.encoding } : {}),
-      ...declaration,
-    };
-    const proto = encodeAppMessage({
-      ...mkMedia({
-        kind: media.kind,
-        mediaId: ref.mediaId,
-        key: fromHex(ref.key),
-        iv: fromHex(ref.iv),
-        mimeType: media.mimeType,
-        size: media.size,
-        fileName: media.fileName ?? '',
-        voiceNote: media.voiceNote ?? false,
-        caption: media.caption,
-        ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-        ...mediaPlaceholderProtoField(media.placeholder),
-        ...mediaEncodingProtoField(ref.encoding),
-        ...mediaReelProtoFields(declaration),
-      }),
-      messageId: entry.id,
-      sentAt: entry.sentAt,
-    });
-    return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
   }
 
   /**
@@ -4775,13 +4777,14 @@ export function getOutbox(): OutboxController | null {
  * the per-conversation lanes coalescer. There is no second flusher to fuse this with. FIVE sites are
  * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
  * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
- * THREE are external moments nothing inside this module can observe:
+ * FOUR are external moments nothing inside this module can observe:
  *
  * | Site | The moment, and why nothing in here sees it |
  * | --- | --- |
  * | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
  * | `sessionAuth`'s `onGroupReady`, through {@link resumeOutboxGroup} | one GROUP became sendable; the network never changed |
  * | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+ * | `MainChatPage` leaving the screen, under `holdWhileLeaving` | the iOS background task must last until the owed read marks' send SETTLES; the enqueue hands nobody its end, and this coalesces with it |
  *
  * **THE FUSION THAT LOOKS OBVIOUS IS A REGRESSION, AND IT IS THE FIRST THING ANYONE WILL REACH
  * FOR.** `connectivity.onReconnect` binds a flush to `isOffline` clearing, so binding one to
@@ -4792,7 +4795,7 @@ export function getOutbox(): OutboxController | null {
  * and only the promotion knows the second.**
  *
  * `outbox.test.ts` drives all five internal triggers plus this one over a single table, and a
- * source check pins the three external sites, so a fourth has to be argued for rather than added.
+ * source check pins the four external sites, so a fifth has to be argued for rather than added.
  */
 export function flushOutbox(): void {
   void active?.flush();

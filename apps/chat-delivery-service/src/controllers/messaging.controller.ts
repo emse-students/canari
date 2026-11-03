@@ -477,15 +477,9 @@ export class MessagingController {
     @Body()
     body: { groups?: { groupId: string; after?: string; limit?: number; until?: string }[] },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Headers('x-canari-device') headerDeviceId?: string
   ) {
-    return this.messagingService.getHistoryBatch(
-      body?.groups ?? [],
-      headerUserId,
-      headerGlobalAdmin,
-      headerDeviceId
-    );
+    return this.messagingService.getHistoryBatch(body?.groups ?? [], headerUserId, headerDeviceId);
   }
 
   /**
@@ -504,7 +498,6 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('until') until?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     /**
      * The client's own device id, self-asserted and DIAGNOSTIC ONLY - nothing branches on it, and
      * it cannot refuse the request. It is what lets a burst of walks over one group be attributed
@@ -517,7 +510,6 @@ export class MessagingController {
       groupId,
       after,
       headerUserId,
-      headerGlobalAdmin,
       Number.isFinite(limit) ? limit : undefined,
       until,
       headerDeviceId
@@ -534,7 +526,6 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('after') after?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     // What the fetching session declares, as on its socket (history-answer-addressing, rule 6).
     @Query('caps') caps?: string
   ): Promise<QueuedMessage[]> {
@@ -543,7 +534,6 @@ export class MessagingController {
       userId,
       deviceId,
       headerUserId,
-      headerGlobalAdmin,
       Number.isFinite(limit) ? limit : 500,
       after,
       caps
@@ -554,10 +544,9 @@ export class MessagingController {
   @Post('mls/messages/ack')
   async acknowledgeMessages(
     @Body() body: AckMessagesBody,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
-    return this.messagingService.acknowledgeMessages(body, headerUserId, headerGlobalAdmin);
+    return this.messagingService.acknowledgeMessages(body, headerUserId);
   }
 
   /**

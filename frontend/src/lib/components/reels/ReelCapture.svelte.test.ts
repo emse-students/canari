@@ -845,7 +845,9 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(vi.mocked(pushHistoryOverlay)).toHaveBeenCalledTimes(1);
     const takeClose = vi.mocked(pushHistoryOverlay).mock.calls[0][0];
 
-    // Back #1 asks; Back #2 closes the camera (its owner unmounts it) while the question is up.
+    // Back #1 asks. The question holds its own history entry (ConfirmDialog -> ModalOverlay), so
+    // Back #2 closes the QUESTION and never reaches the camera; here the camera is unmounted while
+    // the question is up (its owner closes it, the X, a navigation), the shape this pins.
     takeClose('back');
     await settle();
     unmount(mounted.pop()!);

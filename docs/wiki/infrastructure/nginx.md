@@ -23,7 +23,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token from `canari_ws_token` cookie |
 | `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis): `POST` with the ids in the body, `client_max_body_size 128k`; the legacy `GET ?users=` for installed clients ([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
-| `/api/admin/presence` | `chat-gateway:3000` | yes | Admin view of connected devices |
+| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: connected people and devices counted by platform and app version, now and over 24 h - counts only ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (Garage) |
@@ -268,6 +268,14 @@ because the value is a request header. Written justification, for the USER to di
   `x-user-logged-in: true` + `x-user-id` without a valid token is refused when the secret is set; production with
   no secret refuses even the `true` header.
 
+**The edge never forwards the internal credential** (2026-11-03). `X-Internal-Secret` is spoken only
+between services on the Docker network, so `proxy_set_header X-Internal-Secret "";` stands at server
+level AND in the header set every `proxy_pass` uses. nginx inherits `proxy_set_header` from the
+ENCLOSING level (the enclosing location for a nested one, the server for a top-level one), and only
+into a level that declares none of its own, so that set is the nearest level, itself first, that
+declares any. `auth-request-coverage.test.mjs` models that inheritance, reads every location whatever
+its modifier, and carries self-tests of the nested shape.
+
 **On the two Axum crates there is no guard layer at all**, so the handler's own body is the whole of
 the enforcement: `get_presence` and `get_admin_presence` read the headers nginx set
 (`is_authenticated`, `x-global-admin`), and both WebSocket upgrades decode the `canari_ws_token` JWT,
@@ -318,7 +326,9 @@ name.
 Four routes are reached by the browser itself rather than by application code -
 `GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image`,
 `GET /api/mls/gifs/media` - so no `Authorization` header exists to check, and on
-`tauri://localhost` no cookie either. The first two serve assets that public pages show anyway. The
+`tauri://localhost` no cookie either. The second serves assets that public pages show anyway. The
+first, a person's photo, carries the viewer's **avatar token** in `?t=`, bound to a live session
+([sessions](../sessions.md#the-avatar-token)); a service asking it presents the internal secret. The
 third served an arbitrary external URL to anybody who asked, so it carries a **ticket** instead: an
 authenticated call to `GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket,
 and the image route verifies that. The fourth, the GIF relay, verifies a second KIND minted by the
@@ -356,6 +366,7 @@ capability. The table is what the container's own config does:
 | `/auth/callback?code=&state=`, `/auth/callback/?...` | `/auth/callback?query-redacted` (slash kept) | `strict-origin` |
 | `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
 | `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
+| `/api/users/<id>/avatar?t=` (the viewer's avatar token, 2026-11-03) | `/api/users/<id>/avatar?query-redacted`; as a referer, its origin only | (API, no page) |
 | a query naming a join path anywhere, plain, percent-encoded or encoded twice (`/login?returnTo=%2Fc%2Fjoin%2F<token>`, `%252F...`), on any route including the invite API routes | `<path>?query-redacted`, so a second invite in it goes too | `strict-origin` on `/login` (any query) |
 | a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
 

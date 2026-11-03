@@ -413,6 +413,8 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Signs the viewer-bound avatar token (docs/wiki/sessions.md, "The avatar token").
+      AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-}
       # The /adminer/ route (database admin UI, global admins only). PRODUCTION ONLY: the dev compose
       # does not set it, so core-service issues no session there and the route does not exist.
       # It also needs INTERNAL_SHARED_SECRET (32+ characters) and refuses to open without it.
@@ -599,12 +601,14 @@ services:
       # `ALLOW_ORIGIN`, which is a CORS allowlist and not an origin.
     # NO HOST PORT SINCE 2026-10-17 - the edge below holds it, so a release can start this
     # container's successor beside it (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
-    # WHICH REPLICAS THIS nginx MAY CHOOSE, written by the deploy (infrastructure/lib/rolling.sh) and
-    # read-only here: a replica is taken out of this list - by a reload, proven - before it is
-    # stopped. The edge reads the same directory through its own mount of edge/.
+    # WHERE THIS nginx SENDS EACH SERVICE, written by the deploy (infrastructure/lib/rolling.sh) and
+    # read-only here: a replica is taken out - by a reload, proven - before it is stopped. The edge
+    # reads the same directory through its own mount of edge/. NOT `edge/rotation` as
+    # `/etc/nginx/rotation`, the `upstream` lists of 1.6.2: the deploy library of 1.6.2, run by a
+    # rollback, must find no `rotation` path in this image to drain it by DNS rather than refuse it.
     # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
     volumes:
-      - ./edge/rotation:/etc/nginx/rotation:ro
+      - ./edge/targets:/etc/nginx/targets:ro
     expose:
       - "80"
     # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means

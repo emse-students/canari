@@ -616,6 +616,51 @@ Facebook / Instagram / Messenger shape, decided by one pure helper,
 The chat has no equivalent grid (one attachment per message), and the composer's previews are
 already fixed `aspect-square` thumbnails in a scrolling row.
 
+### Several documents: compact rows, and a cap of ten attachments (owner, 2026-11-02)
+
+A post of five PDFs was a column of five first-page previews, up to 22rem each. Images were already
+compacted into the gallery; documents were not.
+
+- **One document is a card, several are a list.** `usesCompactDocumentRows`
+  (`utils/posts/documentRows.ts`, the ONE rule) counts a post's `file` media: exactly one keeps the
+  file row plus the first-page preview; from two on EVERY file is a compact row - icon, name, size,
+  download, NO preview - passed to `PostMedia` as `compact`. Audio is not a document and keeps its
+  player. Images keep the gallery, unchanged; the rows sit under it as the cards did. The rule is
+  read by `PostContent` (the feed, the post page, community and channel posts via `PostCard`, the
+  moderation preview) and by `EditPostForm`'s strip of existing attachments.
+- **A compact row downloads nothing until it is asked.** It is drawn from the metadata the post
+  already holds (`PostMedia`, `compactFile`); the row and the full card are ONE snippet
+  (`fileCard`). What a tap does (`activate`):
+  - **Feedback**: while the fetch runs the card is `aria-busy` and the download icon is a spinner.
+  - **The first request wins**: a second tap while one is pending is ignored (it used to overwrite it).
+  - **An open** runs as soon as the file is in (showing the viewer needs no gesture). **A save does
+    not**: a download started from an effect, after the tap, is what WKWebView and Tauri may refuse,
+    so the row turns "ready - tap to save" and the save runs on that second tap. The iPhone reading
+    is owed ([device-verification](../../device-verification.md#m-bis-several-documents-in-a-post-compact-rows-and-the-save-that-needs-its-own-tap---owed-on-iphone)).
+  - **A failure drops the pending request.** "Reessayer" fetches again and the row is then simply
+    ready: the next tap acts at once, the old request never comes back by itself.
+  - **A tap beats `deferred`**: a row far from the viewport still fetches when tapped.
+- **The cap is ten attachments per post, images and documents together.** The constant is stated
+  three times and pinned by one file, `libs/contracts/post-attachments.json` (`max`, `code`):
+  `posts/post-attachment-cap.ts` (social-service), `lib/posts/attachmentCap.ts` (frontend), each
+  spec asserting equality with it.
+  - **Measured 2026-11-02**: production holds 213 posts and none has more than 10 attachments (the
+    maximum is 6); dev has none either. So there is **no escape hatch for old posts**: every write
+    over ten is refused, create or edit alike. Reading is untouched - a stored post renders whatever
+    it holds.
+  - **Server.** `PostsService.createPost` and `updatePost`, the single write funnel, refuse past it
+    with a `400` carrying `code: POST_ATTACHMENTS_TOO_MANY` (and `max`); it is checked there and not
+    by an `@ArrayMaxSize` because the global `ValidationPipe` answers a message list with no code.
+    `media` wins over the legacy `images` when both are sent. **Behaviour change**: on an edit, a
+    `media: null` used to write null over the stored attachments; it now falls through to `images`,
+    and with neither leaves them alone (tested in `posts.service.attachment-cap.spec.ts`).
+  - **Composer.** `PostComposerBar` takes `attachmentCount`, disables its chips at ten and shows
+    "n/10"; `CreatePostForm` and `EditPostForm` (kept media counted) pass every route - picker,
+    camera, drop, paste, and a restored draft - through `admitAttachments`, which takes as many files
+    as fit, in order, and toasts how many were left out (a Paraglide plural in fr and en). Both
+    also refuse BEFORE the upload loop, so no blob is sent only to be refused. The server's code is
+    mapped to the same sentence in `publishFailureMessage`, by code and never by message.
+
 ## PDF previews, and the in-app reader
 
 `utils/pdfDocument.ts` is the one pdf.js seam: it loads the library once, opens a decrypted
@@ -1671,6 +1716,64 @@ preview and republication cards read it; the client shows `post.publishedAt` (`P
 `COALESCE(scheduledAt, createdAt)`, so an immediate post's order is unchanged. Reels cannot be
 scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
 which is already publication time).
+
+## A write or a notification follows the read's predicate (2026-11-02)
+
+**The rule: whatever acts on a post, or tells someone about it, asks the gate the read by id asks.**
+That gate is ONE function, `readPostOpenVerdict` (`apps/social-service/src/posts/post-openable.ts`),
+and its terms are the read's, in the read's order: an expired reel; the audience
+(`postVisibleToViewerSql`); hidden by moderation (the only `403`, and only after the audience term
+passed, so it confirms nothing to an outsider); scheduled later, unless the reader wrote it; a block
+either way with the author of a personal, non-anonymous post (an association or anonymous post is
+exempt, [moderation-and-blocking](../../moderation-and-blocking.md#hiding-a-post-must-not-become-a-way-to-ask-who-wrote-it)).
+Every other refusal is a `404`, typed at the throw.
+
+Before 2026-11-02 the write paths asked the audience term alone, so they honoured less than the read:
+
+- **React, comment, like a comment, the comment page, the calendar link** go through
+  `PostsService.assertVisible`, which is now `getById`'s gate (`assertOpenable`) and not a second
+  copy of part of it. A reaction on a post its author's block hides, or a comment on a hidden post,
+  was accepted until then. The route hands the row it loaded to the write, so a reaction reads the
+  post once.
+- **`allowHidden` is the platform admin's (`x-global-admin`), on the read by id and the comment page
+  only.** A platform admin reads a hidden post and its comments, and never reacts, comments or likes
+  a comment on it: no write route passes the flag, by intent - a hidden post is held for review, not
+  for conversation. A scoped BDE moderator predicate (`mayModeratePost` or its equivalent) is being
+  built on a separate branch; **whichever of the two pull requests lands second derives
+  `allowHidden` on `getById` and `listComments` from that predicate** instead of the header alone.
+- **A mention** (a post's, or a comment's) is told only to a recipient who may open the post, and
+  with no block either way with whoever wrote the mentioning text
+  (`PostNotificationsService.mentionRecipientsOf`). It reached anyone but the review cohort - a reader
+  outside the audience, someone who blocked the author - and pushed them the text. A dropped mention
+  is counted at debug (`[MENTION] ... N of M mention(s) dropped`), never named.
+- **A post's mentions have ONE teller: `PostAnnounceScheduler`**, under its conditional
+  `feedNotifiedAt` claim (never reset), when it first publishes the post - within a sweep (a minute
+  at most) for a post published at once, at its date for a scheduled one. The write paths only STORE
+  `mentions`. A first version had two tellers (the write for an immediate post, the sweep for a
+  scheduled one), and their overlap was a defect both ways: toggling the schedule pushed the
+  mentions again each time, and un-scheduling a post after its date but before its sweep lost them
+  (review of #2947). A post hidden before its sweep is not swept until it is unhidden - its mentions
+  are told then - and never while it stays hidden. An edit of the text after the sweep tells nobody.
+  The claim (`CLAIM_POST_ANNOUNCEMENT_SQL`) carries the publication predicate itself - unstamped,
+  not hidden, `scheduledAt` null or past - and what is told is the row it locked, never the sweep's
+  earlier `find`: a post hidden or re-scheduled between the two is not claimed (re-review of #2947,
+  proven in `post-announce.integration.spec.ts`).
+- **A comment's mentions are asked when it is written**, through the same gate. On a post not yet
+  published only its author may comment, nobody else may open it, so such a comment's mentions are
+  DROPPED, not deferred - deferring them would need a second teller for comments, the overlap above.
+- **A report** on a post or a comment
+  ([moderation-and-blocking](../../moderation-and-blocking.md#a-report-follows-the-reads-predicate-2026-11-02)).
+  The client says `404 CONTENT_NOT_FOUND` as "Cette publication n'est plus disponible" and closes
+  the dialog (`ModerationApiError.isContentNotFound`, `posts/reportComment.ts`: `reportPost`,
+  `reportComment`).
+
+Proven against PostgreSQL in `post-openable.integration.spec.ts` (a reader who may open it, one
+outside the audience, a block both ways, a hidden post, a scheduled one, an anonymous one; the
+follower, member-repost and read-grant readers are the shared audience code's, proven in their own
+integration specs); the routes in `posts.controller.write-gate.spec.ts`; the wiring in
+`posts.service.visibility.spec.ts`, `post-notifications.mention-gate.spec.ts`,
+`post-announce.scheduler.spec.ts`, `posts.service.anonymous-mention.spec.ts` and
+`moderation.service.spec.ts`; the client in `reportComment.test.ts`.
 
 ## A navigation never waits on data: the post page and the root layout (WP-NAV-1, 2026-10-10)
 

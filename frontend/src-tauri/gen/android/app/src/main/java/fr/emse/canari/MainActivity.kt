@@ -45,6 +45,21 @@ class MainActivity : TauriActivity() {
     private var liveWebView: WebView? = null
 
     /**
+     * How many overlays the page says a Back can still close (`BackBridge`). Lowered by
+     * `onBackPressed` at the moment it hands a Back over, so two fast Backs close one overlay each.
+     */
+    private val overlayDepth = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** One atomic step: the decision (a Back is available) and the decrement it implies. */
+    private fun takeOverlayBack(): Boolean {
+        while (true) {
+            val depth = overlayDepth.get()
+            if (depth <= 0) return false
+            if (overlayDepth.compareAndSet(depth, depth - 1)) return true
+        }
+    }
+
+    /**
      * THE HARDWARE BACK PRESS STEPS THE WEBVIEW'S HISTORY, AND WITHOUT THIS LINE NOTHING DECIDED
      * THAT - Chromium did, when it felt like it.
      *
@@ -199,6 +214,7 @@ class MainActivity : TauriActivity() {
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
+        webView.addJavascriptInterface(BackBridge(), "canariBack")
         // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
         // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
@@ -207,6 +223,18 @@ class MainActivity : TauriActivity() {
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
+    }
+
+    /**
+     * `window.canariBack`: the page's overlay depth for the Back (see `overlayDepth`). Registered like the
+     * other bridges, on the app's own WebView, which loads only the app's own origin.
+     */
+    private inner class BackBridge {
+        /** The page's count of overlays a Back can close, pushed whenever it changes. */
+        @JavascriptInterface
+        fun setOverlayDepth(depth: Int) {
+            overlayDepth.set(depth.coerceAtLeast(0))
+        }
     }
 
     /**
@@ -330,10 +358,14 @@ class MainActivity : TauriActivity() {
      * both lifecycle callbacks below are on it. If the WebView is not up yet, `onWebViewCreate`
      * pushes the current value the moment it is.
      */
-    private fun pushForeground(foreground: Boolean) {
+    private fun pushForeground(foreground: Boolean, opening: String? = null) {
         val webView = liveWebView ?: return
+        // `opening`: the link THIS resume opens (a tapped notification), so the page knows it in the
+        // same dispatch as the edge and does not read the conversation left on screen
+        // (`resumeOpening.svelte.ts`). JSON-quoted: it is page data, never code.
+        val openingJs = if (opening != null) org.json.JSONObject.quote(opening) else "null"
         val js = "window.__canariForeground=$foreground;" +
-            "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:$foreground}}));"
+            "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:$foreground,opening:$openingJs}}));"
         try {
             webView.evaluateJavascript(js, null)
         } catch (e: Exception) {
@@ -354,6 +386,18 @@ class MainActivity : TauriActivity() {
      */
     @Deprecated("Called by WryActivity's back callback; the dispatcher has no other hook for the root case")
     override fun onBackPressed() {
+        // A BACK THE PAGE CAN TAKE IS TAKEN BY THE PAGE. Wry calls this only after `canGoBack()` said
+        // no, and Chromium says no for an entry the page pushed with no user activation behind it -
+        // the discard question after a first Back on a take (Mi 9T, 2026-11-02): the second Back
+        // finished the app with a take pending. The page publishes how many overlays a Back can still
+        // close (`BackBridge`, `historyOverlayStack.ts`), so this reads a fact instead of asking a
+        // question: above zero the depth falls HERE and the page steps its own history; zero leaves.
+        val web = liveWebView
+        if (web != null && takeOverlayBack()) {
+            Log.i("MainActivity", "Back handed to the page: an overlay is open")
+            web.evaluateJavascript("window.__canariBackFromNative&&window.__canariBackFromNative()", null)
+            return
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallForegroundService.running) {
             Log.i("MainActivity", "Back at the root during a call on API ${Build.VERSION.SDK_INT} - moving the task back")
             moveTaskToBack(true)
@@ -363,10 +407,17 @@ class MainActivity : TauriActivity() {
         super.onBackPressed()
     }
 
+    /** The link the next `onResume` opens, set by `onNewIntent` and taken by that resume. */
+    private var resumeOpening: String? = null
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // Keep getIntent()/deep-link getCurrent() aligned with the notification tap intent.
         setIntent(intent)
+        // A link opened into a running app (a notification tap) is the resume's purpose: it rides
+        // the foreground edge `onResume` sends next - onNewIntent always precedes onResume, so the
+        // page learns it before it can read the conversation left on screen (owner, 2026-11-02).
+        resumeOpening = if (intent.action == Intent.ACTION_VIEW) intent.dataString else null
         if (IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
@@ -420,7 +471,10 @@ class MainActivity : TauriActivity() {
         CanariFirebaseMessagingService.cancelAllMessageNotifications(this)
         // The notification plugin's empty "Default" channel, created at its load (see the helper).
         CanariApplication.removePluginDefaultChannel(this)
-        pushForeground(true)
+        val opening = resumeOpening
+        resumeOpening = null
+        Log.d("MainActivity", "onResume: opens a link=${opening != null}")
+        pushForeground(true, opening)
         // A call service start refused while the activity was not resumed may be asked again now.
         // AFTER `isInForeground = true` above: the OffScreenGate's contract (call/OngoingCall.kt).
         CallBridge.onActivityResumed()

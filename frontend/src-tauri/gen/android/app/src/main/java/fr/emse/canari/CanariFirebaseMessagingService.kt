@@ -5800,6 +5800,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_booking_added_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_added_body) }
             )
+            // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
+            "social_booking_changed" -> Pair(
+                res.getString(R.string.notif_social_booking_changed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_changed_body) }
+            )
+            "social_booking_removed" -> Pair(
+                res.getString(R.string.notif_social_booking_removed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_removed_body) }
+            )
             // The reminder: nobody acted, a fixed title; the body is the place and the time.
             "social_booking_reminder" -> Pair(
                 res.getString(R.string.notif_social_booking_reminder_title),

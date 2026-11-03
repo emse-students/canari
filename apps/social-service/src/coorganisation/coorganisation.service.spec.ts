@@ -29,7 +29,9 @@ function make(states: { associationId: string; status: CoOrganiserStatus }[]) {
     transaction: jest.fn(async (fn: (m: unknown) => Promise<void>) => fn(manager)),
   };
   const proposals = {
-    propose: jest.fn(() => Promise.resolve({})),
+    proposeWithin: jest.fn(() =>
+      Promise.resolve({ proposal: {}, announce: () => Promise.resolve() })
+    ),
     withdrawBySubject: jest.fn(() => Promise.resolve({ id: 'p' })),
     register: jest.fn(),
   };
@@ -55,22 +57,27 @@ describe('CoorganisationService.sync', () => {
   it('proposes a new name with the sender right vouched, and never the organiser itself', async () => {
     const { service, proposals } = make([]);
     await service.sync({ ...base, desiredIds: ['a3', 'org'] });
-    expect(proposals.propose).toHaveBeenCalledTimes(1);
-    expect(proposals.propose).toHaveBeenCalledWith('coorganise', 'ev-1', 'a3', 'u1', false, {
-      senderVouched: true,
-    });
+    expect(proposals.proposeWithin).toHaveBeenCalledTimes(1);
+    // On the CALLER's connection (the transaction's manager), the sender right vouched by construction.
+    expect(proposals.proposeWithin).toHaveBeenCalledWith(
+      expect.anything(),
+      'coorganise',
+      'ev-1',
+      'a3',
+      'u1'
+    );
   });
 
   it('proposes three co-organisers (four associations in total) and refuses a fourth, typed', async () => {
     const three = make([]);
     await three.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] });
-    expect(three.proposals.propose).toHaveBeenCalledTimes(3);
+    expect(three.proposals.proposeWithin).toHaveBeenCalledTimes(3);
 
     const four = make([]);
     await expect(
       four.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] })
     ).rejects.toMatchObject({ response: { code: 'CALENDAR_COORGANISER_CAP' } });
-    expect(four.proposals.propose).not.toHaveBeenCalled();
+    expect(four.proposals.proposeWithin).not.toHaveBeenCalled();
   });
 
   it('counts the pending seats too, never the refused one', async () => {
@@ -89,7 +96,7 @@ describe('CoorganisationService.sync', () => {
       { associationId: 'a3', status: 'refused' },
     ]);
     await withRefused.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] });
-    expect(withRefused.proposals.propose).toHaveBeenCalledTimes(1);
+    expect(withRefused.proposals.proposeWithin).toHaveBeenCalledTimes(1);
   });
 
   it('lets an event already over the cap be edited without adding', async () => {
@@ -100,7 +107,7 @@ describe('CoorganisationService.sync', () => {
       }))
     );
     await legacy.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] });
-    expect(legacy.proposals.propose).not.toHaveBeenCalled();
+    expect(legacy.proposals.proposeWithin).not.toHaveBeenCalled();
     expect(legacy.proposals.withdrawBySubject).toHaveBeenCalledTimes(1);
   });
 
@@ -111,7 +118,7 @@ describe('CoorganisationService.sync', () => {
       { associationId: 'a3', status: 'refused' },
     ]);
     await service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] });
-    expect(proposals.propose).not.toHaveBeenCalled();
+    expect(proposals.proposeWithin).not.toHaveBeenCalled();
     expect(proposals.withdrawBySubject).not.toHaveBeenCalled();
   });
 
@@ -153,7 +160,7 @@ describe('CoorganisationService.sync', () => {
     await expect(
       adding.service.sync({ ...coSide, desiredIds: ['a1', 'a2', 'a9'] })
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(adding.proposals.propose).not.toHaveBeenCalled();
+    expect(adding.proposals.proposeWithin).not.toHaveBeenCalled();
 
     const removingOther = make(states);
     await expect(

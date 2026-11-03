@@ -5,6 +5,11 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import {
+  armPageTapListener,
+  routePageNotificationTap,
+  type RegisterPageTap,
+} from '$lib/utils/chat/pageNotificationTap';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { playTone } from '$lib/utils/toneOutput';
@@ -150,21 +155,20 @@ export function useNotifications() {
     // one line about it. Both failure branches below were silent, which made "this platform cannot
     // observe a tap" and "the code never got here" the same observation from outside.
     notifTapListenerArmed = true;
-    if (typeof onAction !== 'function') {
-      console.warn(
-        '[NOTIF] This plugin build exposes no onAction, so a tap cannot be observed at all. Taps ' +
-          'open the app on whatever it was last showing.'
-      );
-      return;
-    }
-    try {
-      (
-        onAction as unknown as (
-          cb: (action: { notification?: { id?: number } | null }) => void
-        ) => Promise<unknown>
-      )(async (action) => {
-        const id = action?.notification?.id;
-        if (typeof id !== 'number') {
+    // The registration's every outcome is `armPageTapListener`'s: only a RESOLVED one arms the
+    // resume's hold on a page notification (`resumeOpening.svelte.ts`).
+    armPageTapListener(
+      typeof onAction === 'function' ? (onAction as unknown as RegisterPageTap) : undefined,
+      async (action) => {
+        // PUBLISHING THE TARGET IS ALL A TAP DOES: the landing effect in `ChatBackgroundService`
+        // routes and selects. A `goto` here, on a layout where the conversation is an overlay (a
+        // phone, or a narrow window), drained the overlay the landing had just opened
+        // (`shareLanding.ts`, 2026-10-27). A tap routed nowhere says so to the resume's hold.
+        const outcome = routePageNotificationTap(action, notifTargetsById, (target) => {
+          console.log(`[NOTIF] Tap on ${target}: landing published`);
+          notifNav.navigate(target);
+        });
+        if (outcome === 'no-identity') {
           // ANNOUNCED ONCE PER SESSION. The cause is a property of the platform, not of the tap,
           // so repeating it per tap says nothing new and buries what does.
           if (!notifIdentityMissingAnnounced) {
@@ -178,23 +182,13 @@ export function useNotifications() {
           }
           return;
         }
-        const target = notifTargetsById.get(id);
-        if (!target) {
-          console.warn(`[NOTIF] Tap on notification ${id}, which this session did not post.`);
-          return;
+        if (outcome === 'not-ours') {
+          console.warn(
+            `[NOTIF] Tap on notification ${action?.notification?.id}, which this session did not post.`
+          );
         }
-        // PUBLISHING THE TARGET IS ALL A TAP DOES: the landing effect in `ChatBackgroundService`
-        // routes and selects. A `goto` here, on a layout where the conversation is an overlay (a
-        // phone, or a narrow window), drained the overlay the landing had just opened
-        // (`shareLanding.ts`, 2026-10-27).
-        console.log(`[NOTIF] Tap on ${target}: landing published`);
-        notifNav.navigate(target);
-      });
-    } catch (e) {
-      // Registration itself threw - a plugin version whose `onAction` rejects the shape above. The
-      // latch stays set: calling it again would throw again.
-      console.warn(`[NOTIF] The notification-tap listener could not be registered: ${String(e)}`);
-    }
+      }
+    );
   }
   let browserPermissionRetryAbort: AbortController | null = null;
 

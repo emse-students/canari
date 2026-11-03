@@ -1,6 +1,12 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import {
+    POST_ATTACHMENTS_MAX,
+    admitAttachments,
+    attachmentCapNotice,
+  } from '$lib/posts/attachmentCap';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onDestroy, onMount } from 'svelte';
@@ -101,7 +107,14 @@
    * The media this composer held when it was last closed (`holdPostComposerMedia`), read before
    * anything else runs so the hold below never sees an empty list first and forgets them.
    */
-  const restoredMedia = heldPostComposerMedia();
+  // A held list over the cap (a composer from before it) is trimmed here, through the same rule as
+  // every other way in, and says so once the composer is mounted.
+  const restoredAdmission = admitAttachments(0, heldPostComposerMedia());
+  const restoredMedia = restoredAdmission.accepted;
+  const restoredCapNotice = attachmentCapNotice(restoredAdmission);
+  onMount(() => {
+    if (restoredCapNotice) showToast(restoredCapNotice);
+  });
   if (restoredMedia.length > 0) {
     Log.d('POST_COMPOSER', `${restoredMedia.length} media kept from the last close - restored`);
   }
@@ -418,7 +431,13 @@
    * indistinguishable from a picked one, which is what was asked (user, 2026-09-18: *"Que glisser
    * deposer ajoute le media au post (comme si on cliquait sur Medias -> Envoi du fichier)"*).
    */
-  function addFiles(files: File[]) {
+  function addFiles(incoming: File[]) {
+    if (incoming.length === 0) return;
+    // At most ten attachments a post: as many as fit are taken, the rest are said out loud.
+    const admitted = admitAttachments(selectedFiles.length, incoming);
+    const notice = attachmentCapNotice(admitted);
+    if (notice) showToast(notice);
+    const files = admitted.accepted;
     if (files.length === 0) return;
     selectedFiles = [...selectedFiles, ...files];
     filePreviews = [
@@ -485,6 +504,11 @@
       if (blocker) {
         stage = blocker.stage;
         throw new LocalizedError(blocker.message);
+      }
+      // BEFORE any upload: the server would refuse a post over the cap after every blob was sent.
+      // The composer stops adding at the cap, so this is a net, never a path.
+      if (selectedFiles.length > POST_ATTACHMENTS_MAX) {
+        throw new LocalizedError(m.post_attachments_too_many({ max: POST_ATTACHMENTS_MAX }));
       }
 
       stage = 'moderation';
@@ -793,6 +817,7 @@
 
     <PostComposerBar
       onFiles={addFiles}
+      attachmentCount={selectedFiles.length}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}

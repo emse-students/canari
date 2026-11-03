@@ -102,6 +102,7 @@ REST: those rows need a count, then a migration.
 | Group removal hold (#1878) | floor >= the release carrying it | YES on production since 2026-10-29 (floor `1.2.9`) | - | - | floor met |
 | `GET mls/groups/:id` and `GET mls/group-info/:id` answer `{ found: false }` / `{ groupInfo: null }` instead of a bare `null` (an empty untyped 200), #2428 | the server deploys | not a version question: a deploy-order WINDOW | none | - | A stable ships both stores BEFORE production deploys, so for days new native clients talk to the old server. There, an empty untyped 200 reads as `error`, so a group deleted for everyone is not auto-purged on those clients until the server ships. That costs cleanup, not data. Once the server deploys, OLD clients change too: `fetchGroupInfo` returns `null` instead of throwing on an unpublished base (benign), and their `GroupInfo fetch failed` warn goes quiet ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
 | Send answered without `receivedAt` read as accepted-undated (`postApplicationMessage`, #1878) | no estate runs a chat-delivery older than #1878 | not a client version question | none | the `null` arm | kept: harmless (the copy is undated); only the API's PARSEABLE JSON reaches it since 2026-10-25 - a non-JSON 2xx is no answer ([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) |
+| `GET /api/associations/spaces/audiences` (`SpacesController.listAudiences`), the whole-table rule read | floor past the first stable whose `/admin/spaces` reads `GET associations/admin/catalogue` (2026-11-02) | NO (unreleased) | none | 1 route + 1 service method + its spec | waits for the floor; only an older build's `/admin/spaces` calls it, a platform admin's screen ([admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
 | Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
 | OIDC callback with no PKCE `code_verifier` (`auth.controller.ts`, `oidcCallback`) | floor >= the first stable carrying the client half, AND the `without a PKCE verifier` warning silent for a week on production | NO (unreleased) | none | 1 branch: refuse instead of warn | waits for the floor ([diary](#no-date-yet---an-oidc-callback-with-no-pkce-verifier)) |
@@ -174,13 +175,16 @@ deploy anonymous for up to that hour. The dev estate cannot rehearse it (its tok
 lifetime. Then delete the branch, so a token naming no session is answered anonymous like an ended
 one ([sessions](sessions.md#an-access-token-is-only-as-alive-as-its-session-2026-10-25)).
 
-### No date yet - a frontend image older than the replica lists, drained by DNS (2026-11-01)
+### No date yet - a frontend image older than the target lists, drained by DNS (2026-11-01)
 
 **Site:** `rotation_is_legacy` and the `legacy` branch of `rotation_apply` in
 `infrastructure/lib/rolling.sh`.
-**What it humours:** a frontend nginx from before the lists, which reads no `rotation/frontend.conf`
-and names every service by `<service>:<port>`. The first deploy carrying the lists finds one running,
-and so does every deploy after a rollback to a release older than them. Its retiring replica is kept
+**What it humours:** a frontend nginx from before the target lists, which reads no
+`targets/frontend.conf` and names every service by `<service>:<port>` - by `set` before any list, by
+1.6.2's `upstream` list at rest since (2026-11-02). The first deploy carrying the target lists finds
+one running, and so does every deploy after a rollback to a release older than them. Kept for the same
+reason: `infrastructure/edge/rotation/` and its `.gitignore`, where 1.6.2's frontend reads its list
+and 1.6.2's library writes it on a rollback; this library never touches it. Its retiring replica is kept
 up `ROLLING_RESOLVER_TTL_SECONDS + 1` while that nginx re-resolves - the drain every deploy made
 before the lists - with a `::warning` naming it, rather than refused
 ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
@@ -189,10 +193,11 @@ says this release deploys (`rotation_runs_this_release`, the plan's fifth field)
 release's image is the transition, warned and drained; THIS release's own image reading no list is a
 release built wrong, refused at `::error`; an image that cannot be compared is drained and logged at
 `::error`. `deploy-replace.test.sh` asserts the first two.
-**Condition, and its trigger:** no release a rollback may still target predates the lists - the GHCR
-prune keeps 30 pushes, so once the 30 newest releases of each estate carry them. Measured, not
-remembered: `git tag --contains <the squash commit of #2866> | grep -cE '^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$'`
-reaching 30. Then delete the branch, so a proxy that reads no list is refused like any other. The
+**Condition, and its trigger:** no release a rollback may still target predates the target lists -
+the GHCR prune keeps 30 pushes, so once the 30 newest releases of each estate carry them. Measured,
+not remembered: `git tag --contains <the squash commit that brought the target lists> | grep -cE '^v[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$'`
+reaching 30. Then delete the branch and `edge/rotation/`, so a proxy that reads no target list is
+refused like any other. The
 resting DNS form of the lists is NOT part of this entry: it is the design, and stays.
 
 ### No date yet - the Lydia key paste field of a build older than enrolment lot 1

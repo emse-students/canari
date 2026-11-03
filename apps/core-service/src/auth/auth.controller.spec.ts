@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
+import { mintAvatarToken } from './avatar-token';
 import { AuthController } from './auth.controller';
 import { UserRowGoneError } from '../users/user-write';
 import type { AuthSessionsService, RotateResult } from './auth-sessions.service';
@@ -288,6 +289,31 @@ describe('AuthController sessions', () => {
       expect(access).toEqual(
         expect.objectContaining({ sub: 'user-1', sid: 'sid-1', type: 'access' })
       );
+    });
+
+    it('hands back the avatar token of the SAME session beside the access token', async () => {
+      process.env.AVATAR_TOKEN_SECRET = 'x'.repeat(40);
+      try {
+        sessions.rotate.mockResolvedValue({
+          status: 'rotated',
+          tokenId: 'jti-2',
+          expiresAt: new Date(Date.now() + 1000),
+        });
+        const req = makeReq({
+          cookies: {
+            canari_refresh: signRefresh({
+              sub: 'user-1',
+              type: 'refresh',
+              sid: 'sid-1',
+              jti: 'jti-1',
+            }),
+          },
+        });
+        const body = await controller.refreshToken(req, makeRes().res);
+        expect(body.avatar_token).toBe(mintAvatarToken('sid-1'));
+      } finally {
+        delete process.env.AVATAR_TOKEN_SECRET;
+      }
     });
 
     it('refuses a replayed token and clears the cookie', async () => {
@@ -660,6 +686,28 @@ describe('AuthController sessions', () => {
       const cookie = jwt.verify(out.cookies['canari_refresh'], JWT_SECRET) as { type?: string };
       expect(cookie.type).toBe('refresh');
       expect(cookie).not.toHaveProperty('admin');
+    });
+
+    it('hands the sign-in an avatar token for the session it opened, and none with no secret', async () => {
+      process.env.AVATAR_TOKEN_SECRET = 'x'.repeat(40);
+      try {
+        authentikAnswers();
+        const body = await callbackController().oidcCallback(
+          { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        );
+        expect(body.avatar_token).toBe(mintAvatarToken('sid-new'));
+      } finally {
+        delete process.env.AVATAR_TOKEN_SECRET;
+      }
+      authentikAnswers();
+      const unsigned = await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(unsigned).not.toHaveProperty('avatar_token');
     });
 
     /**

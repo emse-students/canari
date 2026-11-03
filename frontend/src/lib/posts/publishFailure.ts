@@ -27,6 +27,8 @@
  * beside it - which is the half that turns the next report into a lookup instead of a dig.
  */
 import { m } from '$lib/paraglide/messages';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { POST_ATTACHMENTS_MAX, POST_ATTACHMENTS_TOO_MANY } from '$lib/posts/attachmentCap';
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { localizedMessage } from '$lib/utils/localizedError';
@@ -70,6 +72,10 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
   // A video the device could not prepare names its own cause (`videoPrepareMessages.ts`). A cancel
   // the member asked for is filtered out by the composer before it gets here; were one to reach
   // this line anyway it would read as the fallback, never as nothing.
+  // A post written with too many attachments is refused by CODE (the composers stop it first).
+  if (error instanceof ApiRefusalError && error.code === POST_ATTACHMENTS_TOO_MANY) {
+    return m.post_attachments_too_many({ max: POST_ATTACHMENTS_MAX });
+  }
   if (isVideoPrepareError(error)) return videoPrepareFailureMessage(error) ?? fallback;
   return localizedMessage(error, fallback);
 }

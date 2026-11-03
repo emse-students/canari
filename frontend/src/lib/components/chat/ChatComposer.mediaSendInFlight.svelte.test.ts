@@ -3,10 +3,9 @@
  * A SECOND SEND WHILE A MEDIA SEND HOLDS THE STAGING IS A NO-OP (2026-10-31).
  *
  * A member tapped Send 13 times on one staged video while the first tap was held for 18 s, and 13
- * copies went out. The composer's Send is enabled by "text or a staged file" and nothing else in a DM
- * - `isUploading` is raised by the salon branch only - so the fix is that `handleSendChat` claims the
- * staged files before its first await: the composer then holds no file, the button is disabled, and
- * a tap that still reaches it finds nothing to send. The pre-send barrier that held the send then is
+ * copies went out. The composer's Send is enabled by "text or a staged file" and nothing else, so
+ * the fix is that `handleSendChat` claims the staged files before its first await: the composer then
+ * holds no file, the button is disabled, and a tap that still reaches it finds nothing to send. The pre-send barrier that held the send then is
  * gone (the file is queued at the tap, chat.md "A file is queued at the tap"), but a send still
  * awaits its durable write; this drives the REAL composer against the REAL messaging composable with
  * that write held open, and counts what reaches the outbox.
@@ -125,9 +124,6 @@ describe('the composer while a media send holds the staging', () => {
           return messaging.pendingMediaFilesFor(CONVO);
         },
         onRemovePendingFile: () => {},
-        get isUploading() {
-          return messaging.isUploadingMedia;
-        },
       },
     });
     mounted.push(() => void unmount(app));

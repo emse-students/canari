@@ -34,12 +34,24 @@ export function republishedByLine(
 /**
  * The words of that line - "Republie par BDE, BDS +2" - or `null` when nobody republished the post.
  * The post header and the reel overlay both put it beside the time, so they read it from here.
+ *
+ * `repostedByMe` (the card's own WP-F6 field, owner 2026-11-02): the reader who reposted the post
+ * reads "vous" FIRST - "Republie par vous", "vous et Marie", "vous, Marie et 2 autres". Only that
+ * reader's card carries it, so nobody else is ever shown the line.
  */
 export function republishedByText(
   republishedBy: PostEntity['republishedBy'],
-  repostedBy: PostEntity['repostedBy'] = []
+  repostedBy: PostEntity['repostedBy'] = [],
+  repostedByMe = false
 ): string | null {
   const line = republishedByLine(republishedBy, repostedBy);
+  if (repostedByMe) {
+    if (!line) return m.post_republished_by_you();
+    const name = line.names[0];
+    return line.extra > 0
+      ? m.post_republished_by_you_and_more({ name, count: line.extra })
+      : m.post_republished_by_you_and({ name });
+  }
   if (!line) return null;
   const names = line.names.join(', ');
   return line.extra > 0

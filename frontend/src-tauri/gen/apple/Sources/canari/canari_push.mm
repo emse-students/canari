@@ -713,6 +713,9 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_booking_cancelled" : @"booking_cancelled",
     @"social_booking_withdrawn" : @"booking_withdrawn",
     @"social_booking_added" : @"booking_added",
+    // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
+    @"social_booking_changed" : @"booking_changed",
+    @"social_booking_removed" : @"booking_removed",
   };
   // With no name to show (the lookup failed server-side) the title says "someone": an id never
   // reaches a lock screen.
@@ -2530,6 +2533,85 @@ static void CanariPageSettledQuickReply(const char *replyId, int32_t outcome) {
   CanariReleaseQuickReplyHold([NSString stringWithUTF8String:replyId], outcome, @"settled by the page");
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// THE PAGE'S LEAVE FLUSH - a background task held while the page delivers what it owes (2026-11-02)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// A read made inside the 2 s window before leaving the app is handed to the outbox when the app
+// leaves the screen, and nothing held the process for its send: iOS suspended the app first and the
+// read reached the other devices at the next open. The PAGE asks for the hold before that work and
+// ends it after (`commands::background_flush`, `$lib/utils/backgroundFlush.ts`) - an event, never a
+// timer. iOS's expiration handler is iOS's own deadline: the read then stays owed (durable, mirrored)
+// and leaves with the next drain, and this says so as an ERROR.
+//
+// NEXT STEP, GATED ON THE iPHONE READING (docs/wiki/device-verification.md, "LF"): if WebKit
+// suspends the WebContent process although the app holds this task, the page cannot finish its work
+// inside it, and the hold must instead drain the mirrored CONTROL entries natively
+// (`CanariDrainOutboxBackground`, read marks only - a duplicate mark is harmless, the merge is `max`).
+
+/// hold id -> UIBackgroundTaskIdentifier; touched on the MAIN thread only (the expiration handler
+/// runs there, and so does every begin and end below).
+static NSMutableDictionary<NSNumber *, NSNumber *> *g_leaveFlushHolds = nil;
+static uint64_t g_leaveFlushLastId = 0;
+
+/// Ends hold `holdId` (main thread). A second end - the page after an expiry, or the reverse - finds
+/// nothing and says so at debug level: both orders are legitimate.
+static void CanariEndLeaveFlushOnMain(uint64_t holdId, NSString *outcome) {
+  NSNumber *task = g_leaveFlushHolds[@(holdId)];
+  if (task == nil) {
+    NSLog(@"[CanariPush] leave flush %llu: already ended (%@)", holdId, outcome);
+    return;
+  }
+  [g_leaveFlushHolds removeObjectForKey:@(holdId)];
+  [[UIApplication sharedApplication] endBackgroundTask:task.unsignedIntegerValue];
+  NSLog(@"[CanariPush] leave flush %llu ended: %@", holdId, outcome);
+}
+
+/// Begins a hold for the page's leave flush and answers its id, 0 when iOS refused one.
+static uint64_t CanariBeginLeaveFlush(const char *reason) {
+  NSString *why = reason != NULL ? [NSString stringWithUTF8String:reason] : @"(no reason)";
+  __block uint64_t holdId = 0;
+  void (^begin)(void) = ^{
+    if (g_leaveFlushHolds == nil) g_leaveFlushHolds = [NSMutableDictionary dictionary];
+    uint64_t candidate = ++g_leaveFlushLastId;
+    UIBackgroundTaskIdentifier task = [[UIApplication sharedApplication]
+        beginBackgroundTaskWithName:@"canari-leave-flush"
+                  expirationHandler:^{
+                    NSLog(@"[CanariPush] ERROR leave flush %llu (%@): iOS ended the background time "
+                          @"before the page delivered what it owed - the read stays owed and leaves "
+                          @"with the next drain",
+                          candidate, why);
+                    CanariEndLeaveFlushOnMain(candidate, @"expired");
+                  }];
+    if (task == UIBackgroundTaskInvalid) {
+      NSLog(@"[CanariPush] leave flush (%@): iOS refused a background task - the page works unheld", why);
+      return;
+    }
+    // Main thread: the expiration handler above cannot run before this assignment.
+    g_leaveFlushHolds[@(candidate)] = @(task);
+    holdId = candidate;
+    NSLog(@"[CanariPush] leave flush %llu begun (%@)", holdId, why);
+  };
+  if ([NSThread isMainThread]) {
+    begin();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), begin);
+  }
+  return holdId;
+}
+
+/// The page's work for hold `holdId` ended with `outcome`.
+static void CanariEndLeaveFlush(uint64_t holdId, const char *outcome) {
+  NSString *said = outcome != NULL ? [NSString stringWithUTF8String:outcome] : @"(no outcome)";
+  if ([NSThread isMainThread]) {
+    CanariEndLeaveFlushOnMain(holdId, said);
+  } else {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      CanariEndLeaveFlushOnMain(holdId, said);
+    });
+  }
+}
+
 /// Starts holding `completion` and the process for `replyId`, BEFORE the line is written: a take
 /// racing the write (a drain the page runs for its own reasons) then finds the hold already there.
 ///
@@ -3823,9 +3905,11 @@ static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSStri
 /// - A call already reported for `callId` (the FCM `call_ring` rang first) is reported AGAIN under the
 ///   same UUID: CallKit refuses it as a duplicate, which still honours the contract, and nothing
 ///   new rings.
-/// - Audio only (`hasVideo = NO`) until the video lot decides how the native ring announces video.
+/// - `hasVideo` is the call's media kind from the push (the server's `voipRingPayload`): CallKit
+///   announces it and the answer's pending accept carries it, so the join opens the camera. A
+///   payload without the key (a server older than this build) reads as audio.
 static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *callerId,
-                                 long long ringUntilMs) {
+                                 BOOL hasVideo, long long ringUntilMs) {
   CanariEnsureCallProvider();
   if (!kCanariCallsEnabled) {
     // Unreachable by construction: the registry is installed only when the ring is compiled. The
@@ -3853,14 +3937,14 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
       @"groupId" : groupId ?: @"",
       @"callId" : callId,
       @"callerId" : callerId ?: @"",
-      @"hasVideo" : @NO,
+      @"hasVideo" : @(hasVideo),
     };
   }
   NSString *display = CanariCallerDisplayName(callerId);
   CXCallUpdate *update = [[CXCallUpdate alloc] init];
   update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
   update.localizedCallerName = display;
-  update.hasVideo = NO;
+  update.hasVideo = hasVideo;
   update.supportsHolding = NO;
   update.supportsGrouping = NO;
   update.supportsUngrouping = NO;
@@ -3875,9 +3959,9 @@ static void CanariReportVoipCall(NSString *groupId, NSString *callId, NSString *
                                          update:update
                                      completion:^(NSError *_Nullable error) {
                                        if (error == nil) {
-                                         NSLog(@"[CanariCallKit] %@ call=%@ (voip, %lld ms left)",
+                                         NSLog(@"[CanariCallKit] %@ call=%@ video=%d (voip, %lld ms left)",
                                                endAtOnce ? @"reported" : @"ringing", callId,
-                                               remainingMs);
+                                               hasVideo, remainingMs);
                                        } else {
                                          NSLog(@"[CanariCallKit] voip report refused call=%@ "
                                                @"duplicate=%d: %@",
@@ -3999,21 +4083,24 @@ static void CanariPersistVoipToken(NSString *hexToken) {
   long long ringUntilMs = [data[@"ringUntil"] isKindOfClass:[NSString class]]
                               ? [(NSString *)data[@"ringUntil"] longLongValue]
                               : 0;
-  NSLog(@"[CanariCallKit] voip push type=%@ call=%@", msgType, callId);
+  // A string "true" like the FCM data payload's; an absent key (an older server) is audio.
+  BOOL hasVideo = [data[@"hasVideo"] isKindOfClass:[NSString class]] &&
+                  [(NSString *)data[@"hasVideo"] isEqualToString:@"true"];
+  NSLog(@"[CanariCallKit] voip push type=%@ call=%@ video=%d", msgType, callId, hasVideo);
 
   if (CanariPushSignedOut()) {
     // A SIGNED-OUT DEVICE RINGS FOR NOBODY. PushKit still requires every VoIP push to be reported
     // to CallKit, so a placeholder with no caller and no conversation is reported and ended at once
     // (deadline 0) - nothing of the account that signed out is shown.
     NSLog(@"[CanariCallKit] voip push type=%@ while signed out - reported and ended", msgType);
-    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", 0);
+    CanariReportVoipCall(@"", [[NSUUID UUID] UUIDString], @"", NO, 0);
   } else if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
-    CanariReportVoipCall(groupId, callId, callerId, ringUntilMs);
+    CanariReportVoipCall(groupId, callId, callerId, hasVideo, ringUntilMs);
   } else {
     // Contract keeper: an unexpected payload still reports a call, ended at once (deadline 0).
     NSLog(@"[CanariCallKit] ERROR unexpected voip payload type=%@ - reported and ended", msgType);
     NSString *bogusId = callId.length > 0 ? callId : [[NSUUID UUID] UUIDString];
-    CanariReportVoipCall(groupId, bogusId, @"", 0);
+    CanariReportVoipCall(groupId, bogusId, @"", NO, 0);
   }
   completion();
 }
@@ -5443,6 +5530,12 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
     // One posted by an earlier process is not classified here and takes Canari's path below.
     id<UNUserNotificationCenterDelegate> plugin = g_forwardNotifDelegate;
     if ([plugin respondsToSelector:_cmd]) {
+      // FIRST: the resume this tap belongs to says it opens a page notification, whose conversation
+      // only the page's own handler can name - the conversation left on screen is held until it
+      // does (`PAGE_NOTIFICATION_OPENING`, resumeOpening.svelte.ts; the same string as the page's).
+      // Only here: with no plugin to hand it to, no handler will name anything, and a hold would
+      // wait for nothing.
+      CanariNoteResumeOpening(@"fr.emse.canari://page-notification");
       NSLog(@"[CanariPush] notification tap on a page notification - handed to the plugin");
       [plugin userNotificationCenter:center
           didReceiveNotificationResponse:response
@@ -5516,6 +5609,9 @@ static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
   // The page takes the link from durable state (`CanariQueueNotificationTap`), never from an
   // `openURL` on our own scheme: a cold start's tap arrives before the WebView exists.
   if (deepLink.length > 0) {
+    // FIRST, before the page can be told: the resume this tap belongs to announces its link with
+    // the foreground edge, so the conversation left on screen is not read (canari_ios.mm).
+    CanariNoteResumeOpening(deepLink);
     CanariQueueNotificationTap(deepLink);
   }
   completionHandler();
@@ -5531,6 +5627,7 @@ void CanariPushSetup(void) {
     g_quickReplyHolds = [NSMutableDictionary dictionary];
   }
   canari_ios_set_quick_reply_ack_listener(CanariPageSettledQuickReply);
+  canari_ios_set_background_flush_listeners(CanariBeginLeaveFlush, CanariEndLeaveFlush);
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
   // Set now for what arrives before launch completes; taken back at DidFinishLaunching from whatever
   // registered meanwhile (`CanariTakeNotificationDelegate`).

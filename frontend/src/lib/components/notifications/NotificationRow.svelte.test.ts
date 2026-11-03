@@ -32,8 +32,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
 // left to hit the network: happy-dom actually attempts the fetch, which then aborts noisily when
 // the test environment tears down mid-flight.
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/utils/associationLogoCache', () => ({
   resolveAssociationLogoDisplayUrl: async () => null,
@@ -235,6 +235,8 @@ describe('NotificationRow sentence', () => {
       ['booking_cancelled', m.notif_booking_cancelled_text()],
       ['booking_withdrawn', m.notif_booking_withdrawn_text()],
       ['booking_added', m.notif_booking_added_text()],
+      ['booking_changed', m.notif_booking_changed_text()],
+      ['booking_removed', m.notif_booking_removed_text()],
     ] as const) {
       const row = renderRow(booking(type, 'Salle de musique'));
       expect(row.textContent).toContain(sentence);

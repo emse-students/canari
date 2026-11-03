@@ -43,6 +43,8 @@ export type PushContentKey =
   | 'social_booking_withdrawn'
   | 'social_booking_added'
   | 'social_booking_reminder'
+  | 'social_booking_changed'
+  | 'social_booking_removed'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
@@ -798,6 +800,34 @@ export function bookingAddedContent(actorName: string, place: string): PushConte
     arg: place,
     legacyTitle: `${actorName} vous a inscrit à une réservation`,
     legacyBody: place || 'Retrouvez-la dans Réservations',
+  };
+}
+
+/**
+ * A booking the recipient STAYS on was moved by someone else (owner, 2026-11-02): its holder or its
+ * organiser. `arg` is the place; the client's bell row names the new time from `meta`.
+ */
+export function bookingChangedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_changed',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} a modifié votre réservation`,
+    legacyBody: place || 'Retrouvez le nouvel horaire dans Réservations',
+  };
+}
+
+/**
+ * The recipient was REMOVED from a booking by someone else (owner, 2026-11-02): its holder or its
+ * organiser took them off the people of a booking that still takes place.
+ */
+export function bookingRemovedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_removed',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} vous a retiré d'une réservation`,
+    legacyBody: place || "Vous n'en faites plus partie",
   };
 }
 

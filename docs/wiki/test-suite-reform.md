@@ -308,7 +308,7 @@ was no wherever the subject is one of these:
   `buildConversationRow.onePolicy`, `groupSweep`, `fixedPopover`, `GifPickerModal.overlay`,
   `cardGrid`, `postMarkdownBlocks`, `ModalOverlay`, `sidePanelInset`, `sidePanelWidth`,
   `serverProse`, `markupSources`, `feedAudience`, `AssociationTile` (the walls half),
-  `associationsHeader`, and the one inventory case inside `outbox` (exactly three sites raise a
+  `associationsHeader`, and the one inventory case inside `outbox` (exactly four sites raise a
   flush) and `distributionGroup` (three entrances, one per moment). An inventory of CALLERS cannot be
   replaced by calling the callee.
 - **A wiring statement in `sessionAuth.ts` (2,475 lines) or `ChatBackgroundService.svelte` (2,187)**,
@@ -717,3 +717,14 @@ when the upload settled, so a disposed or withdrawn transfer stuck behind a dead
 late event of an aborted transfer (`persist` is deliberately not guarded: a session opened after the
 abort must still reach `openSessions`, which is what releases it). Two cases prove both and fail without
 the code (checked by removing each).
+
+**Third reading, 2026-11-02** (`outbox.reelResume`, "a cancel of an entry PARKED AS FAILED", failing as
+`expected 2 to be greater than or equal to 3` on a branch that already had the second reading's fixes;
+reproduced 1 run in 31 with 48 busy threads and 8 concurrent runs of that one case). **The cause was in
+the test, not the outbox:** the case drove the faked backoff timer with a loop of at most 50
+advance-and-look steps. `uploadViewOf(VIEW).phase` reads `waiting` BEFORE `scheduleBackoff` arms its
+timer (a queue read on fake-IndexedDB, which answers on real macrotask turns), so on a starved worker the
+50 looks were spent on an empty timer queue, the loop ended, and attempt 3 never started - the wait for
+`settled >= 3` then timed out. A bound counted in looks is a clock by another name. The loop now waits
+for the EVENT (`vi.getTimerCount() > 0`, or the attempt having moved on) and advances exactly one timer
+per pass; nothing asserts a duration and a genuine hang still fails at the wait's own ceiling.

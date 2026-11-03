@@ -189,7 +189,9 @@
   /** As on the post card: "Anonyme" is the name, the author the reader was served is a small line. */
   const revealed = $derived(revealedPostAuthor(post));
   /** As on the post card: "Republie par X" beside the time (user, 2026-10-24). */
-  const republished = $derived(republishedByText(post.republishedBy, post.repostedBy));
+  const republished = $derived(
+    republishedByText(post.republishedBy, post.repostedBy, post.repostedByMe === true)
+  );
 
   /** The rail's reaction drawer is open: the tap-outside layer below is drawn. */
   let railDrawerOpen = $state(false);

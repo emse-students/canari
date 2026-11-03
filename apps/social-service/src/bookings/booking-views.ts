@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isErasedAccount } from '../internal/account-erasure';
 /**
  * WHAT EACH VIEWER RECEIVES OF A BOOKING - decided here, on the server, never by a screen hiding a
@@ -85,6 +86,12 @@ export interface BookingView {
    * "Avec : <me>".
    */
   others?: { id: string; name: string }[];
+  /**
+   * What an edit of this booking was built on (`bookingRevision`), echoed by `PATCH` so an edit
+   * from a stale view is refused `BOOKING_EDIT_CONFLICT` / `stale` (review of #2945). Sent exactly
+   * where `holderName` is - to its people and its organiser, who already read what it digests.
+   */
+  revision?: string;
   answers?: Record<string, unknown> | null;
   /**
    * The ORGANISER's reading of the FILE answers (D7, WP-B6), as forms' submissions carry it: the
@@ -139,6 +146,25 @@ export function withAnswerFiles(
   return { ...view, fileNames: live, deletedFileIds: deleted };
 }
 
+/**
+ * THE REVISION OF A BOOKING, derived rather than stored (no migration): a digest of everything an
+ * edit replaces - the range and the set of its people still in (an erased account's tombstone
+ * included, as a row the edit never touches). Any withdrawal, removal, addition or move changes
+ * it; so an edit carrying the revision its sheet was opened on is applied only to the state that
+ * sheet showed. Order-free: the ids are sorted.
+ */
+export function bookingRevision(
+  startsAt: Date | string,
+  endsAt: Date | string,
+  liveParticipantIds: readonly string[]
+): string {
+  const ms = (d: Date | string) => new Date(d).getTime();
+  return createHash('sha256')
+    .update(`${ms(startsAt)}|${ms(endsAt)}|${[...liveParticipantIds].sort().join(',')}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
 /** The view of one booking for one relation and one space setting. */
 export function bookingView(
   booking: BookingRow,
@@ -161,6 +187,11 @@ export function bookingView(
     view.holderName = booking.holderName;
     view.holderId = booking.holderId;
     view.participantNames = inBooking.map((p) => p.userName);
+    view.revision = bookingRevision(
+      booking.startsAt,
+      booking.endsAt,
+      inBooking.map((p) => p.userId)
+    );
     view.others = [
       { id: booking.holderId, name: booking.holderName },
       ...inBooking.map((p) => ({ id: p.userId, name: p.userName })),

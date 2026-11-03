@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { InvitationsController } from './invitations.controller';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -115,8 +115,7 @@ describe('InvitationsController - who may report a device active', () => {
   it('promotes a device reporting on ITSELF through the one writer', async () => {
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
-      TARGET,
-      'false'
+      TARGET
     );
 
     expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
@@ -125,8 +124,7 @@ describe('InvitationsController - who may report a device active', () => {
   it('promotes the same way when another member vouches for the device', async () => {
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
-      MEMBER,
-      'false'
+      MEMBER
     );
 
     expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
@@ -145,23 +143,33 @@ describe('InvitationsController - who may report a device active', () => {
     await expect(
       controller.updateInvitationStatus(
         { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
-        'user-stranger',
-        'false'
+        'user-stranger'
       )
     ).rejects.toThrow('Not a member of this group');
 
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
   });
 
-  // An admin is not the device either, whatever else it is allowed to do.
-  it('promotes the same way for a global admin acting on someone else s device', async () => {
-    await controller.updateInvitationStatus(
-      { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
-      'user-admin',
-      'true'
-    );
+  /**
+   * NO PLATFORM-ADMIN BYPASS ON CONVERSATION DATA (owner, 2026-11-02). A global admin who is not in
+   * the group used to vouch for anybody's device here; it is now the stranger above, refused with
+   * the same answer before anything is written - the route no longer reads `x-global-admin`.
+   */
+  it('a vouch from a global admin who is NOT a member is refused like any non-member', async () => {
+    const asked = (caller: string) =>
+      controller.updateInvitationStatus(
+        { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
+        caller
+      );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
+    const stranger = await asked('user-stranger').catch((e: unknown) => e);
+    const admin = await asked('user-admin').catch((e: unknown) => e);
+
+    expect(admin).toBeInstanceOf(ForbiddenException);
+    expect((admin as ForbiddenException).getResponse()).toEqual(
+      (stranger as ForbiddenException).getResponse()
+    );
+    expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
   });
 
   /**
@@ -173,8 +181,7 @@ describe('InvitationsController - who may report a device active', () => {
     const report = (caller = TARGET) =>
       controller.updateInvitationStatus(
         { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
-        caller,
-        'false'
+        caller
       );
 
     it.each(['no_seat', 'kicked', 'not_on_roster'])(

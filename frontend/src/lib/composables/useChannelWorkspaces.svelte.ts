@@ -1,5 +1,6 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
+import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import {
   clearSalonUnreadLocally,
   communityUnreadUpTo,
@@ -1258,7 +1259,8 @@ export function useChannelWorkspaces() {
   function refreshSalonUnread(ctx: ChannelWorkspaceContext, reason: string): Promise<void> {
     return reconcileSalonUnreadFromServer({
       conversations: ctx.conversations,
-      selectedId: ctx.getSelectedConversationId?.() ?? null,
+      // The salon being READ, not the bare selection (`conversationBeingRead`).
+      selectedId: conversationBeingRead(ctx.getSelectedConversationId?.()),
       userId: currentUserId() ?? '',
       fetchCounts: () => service.listUnreadCounts(),
       settleOwedMarks: () =>

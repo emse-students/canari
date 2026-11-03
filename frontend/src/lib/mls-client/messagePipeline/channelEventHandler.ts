@@ -11,6 +11,7 @@ import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+import { publishReadState } from '$lib/mls-client/tabMessageSync';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
@@ -393,7 +394,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
             return merged ? { ...convo, readWatermarks: merged } : convo;
           })();
-    if (next !== convo) conversations.set(key, next);
+    if (next !== convo) {
+      conversations.set(key, next);
+      // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).
+      publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
+    }
     return;
   }
 
