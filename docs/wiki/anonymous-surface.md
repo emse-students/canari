@@ -56,7 +56,7 @@ roster's.
 | `GET /api/public/posts` (the 500 newest association posts) | **closed (owner 2026-11-02)** - the route is gone | a feed, not a link preview; its one consumer, the sitemap, lists no post any more |
 | `GET /api/public/associations`, `.../slug/:slug` | kept | the showcase's own source: exactly its entity fields |
 | `GET /api/public/associations/slug/:slug` (its `members`), `GET /api/public/associations/:id/members` | kept | the showcase's roster: name, role, promo, board flag, and the photo as `avatarUrl` |
-| `GET /api/public/members/:memberId/avatar` | kept (new) | the roster's photo, reached through the roster row rather than the account: exactly as public as the roster line that lists it, gone when the member leaves. Bodyless on every miss, and unthrottled - a roster or a carte draws a hundred faces, and the showcase's proxy brings all its visitors from one address |
+| `GET /api/public/members/:memberId/avatar` | kept (new) | the roster's photo, reached through the roster row rather than the account: exactly as public as the roster line that lists it, gone when the member leaves. Bodyless on every miss, and unthrottled: the showcase hands `avatarUrl` to the visitor's browser, which asks for every face a carte or a roster draws (a hundred and more), so the default bucket (20 a minute per address, per replica) would turn one carte render into initials. A request costs a uuid check, a primary-key read and one internal hop; core's avatar cache, keyed by account, bounds what reaches the photo provider; the comparable public routes (core's avatar route, `/api/media/public/:id`) are unthrottled too |
 | `GET /api/public/carte` | kept | the showcase's carte; each card carries `avatarUrl` like a roster member |
 | `GET /api/public/posts/:id/preview`, `/preview-image` | **kept - owner decision** | the link preview of one shared association post |
 | `GET /api/public/forms/:id`, `POST .../submit`, `POST .../receipts/confirm` | kept - capability | a form its association chose to make public, answered by a guest on its shared link; the reply is an allowlist naming no owner and no association ([forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)) |
@@ -65,6 +65,7 @@ roster's.
 | `GET /api/bookings/:bookingId/calendar.ics` | kept - capability | an HMAC bound to one of the booking's people |
 | `GET /api/media/public/:id` | kept - capability | association logos and group/community pictures, by unguessable id |
 | `GET /api/media/public/live/...` | kept | ciphertext under a key only a viewer is handed |
+| `GET /api/users/:id/avatar` | kept | an `<img>` subresource; its access model is in [core-service](services/core-service.md#the-avatar-proxy) |
 | `GET /api/payments/provider`, `GET /api/media/limits` | kept - about nobody | platform settings (`lydia`/`disabled`, the upload ceiling) |
 | `POST /api/payments/lydia-*` | kept | Lydia's callbacks; they return nothing about anybody |
 | `/api/auth/*` | kept | the sign-in, refresh, logout and restore flows; every session route needs the token |
@@ -92,6 +93,9 @@ public form's `/f/` page (`isSignedOutPath`), so it was never a consumer of the 
 
 - **portail-etu**: reads `/api/public/associations*` and `/api/public/carte`; every field it reads
   is still served, and `avatarUrl` is added beside them.
+- **The signed-in app and the native apps**: every closed route is called with the session.
+- **The sitemap, the head injector**: changed above.
+- **Le Cercle, Sky**: API-key routes, unchanged.
 
 ## The `avatarUrl` contract
 
@@ -99,6 +103,3 @@ public form's `/f/` page (`isSignedOutPath`), so it was never a consumer of the 
 origin** - the first entry of `FRONTEND_URL`, as every link this service writes for somebody else
 (`common/frontend-url.ts`). A consumer on another origin uses it as it is, with no prefix. It
 answers the image (with an ETag), a 304, or a bodyless 404 when there is no photo.
-- **The signed-in app and the native apps**: every closed route is called with the session.
-- **The sitemap, the head injector**: changed above.
-- **Le Cercle, Sky**: API-key routes, unchanged.

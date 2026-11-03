@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { GUARDS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { PublicController } from './public.controller';
 import { AssociationsService } from '../associations/associations.service';
@@ -166,15 +166,69 @@ describe("PublicController.getMemberAvatar (a public roster row's photo)", () =>
   });
 
   /**
-   * NO THROTTLE ON THE RELAY, AND THAT IS PINNED. A roster or a carte draws a hundred faces and
-   * more, and the showcase's server-side proxy brings every visitor from one address: a per-address
-   * bucket would turn its photos into initials, and a throttler's refusal is a JSON body handed to
-   * an `<img>`.
+   * NO THROTTLE ON THE RELAY, AND THAT IS PINNED, at the handler and at the class. The showcase
+   * hands `avatarUrl` to the visitor's browser, which asks for every face a carte or a roster draws
+   * - a hundred and more, plus each revalidation: the default bucket (20 a minute per address, per
+   * replica) would turn one carte render into initials, and a throttler's refusal is a JSON body
+   * handed to an `<img>`.
    */
   it('carries no guard at all, so no throttle can refuse a face', () => {
     const proto = PublicController.prototype as unknown as Record<string, object>;
-    const handler = proto['getMemberAvatar'];
-    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toBeUndefined();
+    expect(Reflect.getMetadata(GUARDS_METADATA, proto['getMemberAvatar'])).toBeUndefined();
+    expect(Reflect.getMetadata(GUARDS_METADATA, PublicController)).toBeUndefined();
+  });
+
+  describe('the internal secret on the call to core', () => {
+    const saved = process.env.INTERNAL_SECRET;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = saved;
+    });
+
+    function capture() {
+      const fetchSpy = jest.fn((_url: string, _init: { headers: Record<string, string> }) =>
+        Promise.resolve(new Response(null, { status: 404 }))
+      );
+      global.fetch = fetchSpy as unknown as typeof fetch;
+      return fetchSpy;
+    }
+
+    it('carries x-internal-secret when the secret is set', async () => {
+      process.env.INTERNAL_SECRET = 's3cret';
+      const fetchSpy = capture();
+      await makeController('acct-1').getMemberAvatar(
+        'm-1',
+        '"v1"',
+        makeRes() as unknown as AvatarRes
+      );
+      expect(fetchSpy.mock.calls[0][1].headers).toEqual({
+        'x-internal-secret': 's3cret',
+        'If-None-Match': '"v1"',
+      });
+    });
+
+    it('sends no secret header at all when the secret is unset, never an empty one', async () => {
+      delete process.env.INTERNAL_SECRET;
+      const fetchSpy = capture();
+      await makeController('acct-1').getMemberAvatar(
+        'm-1',
+        undefined,
+        makeRes() as unknown as AvatarRes
+      );
+      expect(fetchSpy.mock.calls[0][1].headers).toEqual({});
+    });
+  });
+
+  it('says at warn, accusing core, a status that is neither a photo, a 304 nor a 404', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    global.fetch = jest.fn(() =>
+      Promise.resolve(new Response(null, { status: 403 }))
+    ) as unknown as typeof fetch;
+    const res = makeRes();
+    await makeController('acct-1').getMemberAvatar('m-1', undefined, res as unknown as AvatarRes);
+    expect(res.statusCode).toBe(403);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[PUBLIC_AVATAR] core refused 403'));
+    warn.mockRestore();
   });
 
   it('answers 502 no-store when core-service does not answer, so nothing remembers the outage', async () => {

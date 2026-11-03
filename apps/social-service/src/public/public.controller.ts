@@ -20,6 +20,7 @@ import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
 import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
 import type { PublishedCarteCard, PublishedCarteUnit } from '../associations/published-carte';
+import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
 
@@ -181,11 +182,13 @@ export class PublicController {
    * that did not answer. EVERY ANSWER IS BODYLESS EXCEPT THE IMAGE - an `<img>` handed a JSON body
    * logs three console lines for one miss (core's `getAvatar` says why).
    *
-   * NO THROTTLE, ON PURPOSE, AND THE SPEC PINS IT. One roster or one carte draws a hundred faces
-   * and more, every revalidation (a 304) is a request, and the showcase's server-side proxy brings
-   * all its visitors from ONE address: a per-address bucket sized for anything but faces would turn
-   * the showcase's photos into initials. The work is one primary-key read and the hop to core's
-   * avatar route, which carries no throttle either.
+   * NO THROTTLE, ON PURPOSE, AND THE SPEC PINS IT. The showcase hands `avatarUrl` to the visitor's
+   * browser, so one visitor's page asks for every face it draws: a carte or a roster is a hundred
+   * faces and more, and each revalidation (a 304) is another request. The default bucket (20 a
+   * minute per address, per replica) would turn one carte render into initials. What a request
+   * costs is a uuid check, a primary-key read and one internal hop; core's avatar cache, keyed by
+   * account, bounds what reaches the photo provider; and the comparable public routes (core's own
+   * avatar route, `/api/media/public/:id`) carry no throttle either.
    */
   @Get('members/:memberId/avatar')
   async getMemberAvatar(
@@ -201,8 +204,12 @@ export class PublicController {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), MEMBER_AVATAR_TIMEOUT_MS);
     try {
+      // The shared internal secret, as every server-to-server call to core carries it - and none
+      // at all when it is unset, never an empty header (`internalCoreRequestConfig`).
+      const headers: Record<string, string> = { ...internalCoreRequestConfig().headers };
+      if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
       const upstream = await fetch(coreUrl(`users/${encodeURIComponent(userId)}/avatar`), {
-        headers: ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {},
+        headers,
         signal: abort.signal,
       });
       if (upstream.status === 404) {
@@ -215,8 +222,16 @@ export class PublicController {
         const value = upstream.headers.get(name);
         if (value) res.setHeader(name, value);
       }
+      if (upstream.status === 304) {
+        res.status(304).end();
+        return;
+      }
       if (upstream.status !== 200) {
-        this.logger.debug(`[PUBLIC_AVATAR] ${memberId.slice(0, 8)} -> ${upstream.status}`);
+        // Neither a photo, an unchanged photo nor no photo: core refused or failed, and that is
+        // somebody's fault, said where an operator reads it.
+        this.logger.warn(
+          `[PUBLIC_AVATAR] core refused ${upstream.status} for row ${memberId.slice(0, 8)}`
+        );
         res.status(upstream.status).end();
         return;
       }
