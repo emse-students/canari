@@ -28,6 +28,7 @@ import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
 import { AssociationsService } from '../associations/associations.service';
+import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -73,16 +74,25 @@ export class FormsController {
   }
 
   /**
-   * Association agenda entry linked to this form, if configured.
+   * Association agenda entry linked to this form, if the reader may see it.
    *
-   * PUBLIC BY INTENT, and it says so here because nothing else would: it is read by the public
-   * association page, which renders for a signed-out visitor. It answers one agenda entry and
-   * never the form's contents - `GET :id` is the guarded route for those.
+   * SIGNED IN, LIKE THE FORM ITSELF (2026-11-02): no event is published to an anonymous reader, and
+   * the only caller is the form page, which reads the guarded `GET :id` first. The event is filtered
+   * by the reader's audience (`findCalendarEventByLinkedForm`), so a reader outside it gets `null`,
+   * and it carries `icsSig` like every event this service lists.
    */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/calendar-link')
-  async getFormCalendarLink(@Param('id', ParseUUIDPipe) id: string) {
-    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id);
-    return { linkedEvent };
+  async getFormCalendarLink(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id, {
+      userId: xUserId,
+      isGlobalAdmin: xGlobalAdmin === 'true',
+    });
+    return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
   /** Returns a single form by its ID. */

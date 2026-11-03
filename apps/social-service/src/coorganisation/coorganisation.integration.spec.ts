@@ -667,5 +667,22 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         (await associations.listCalendarEvents(A1, undefined, undefined, reader)).length
       ).toBeGreaterThan(0);
     });
+
+    it("a form's linked event is served only to a reader its audience reaches", async () => {
+      const FORM = '00000000-0000-4000-8000-0000000f0a01';
+      const LINKED = E(31);
+      await q(
+        `INSERT INTO association_calendar_events
+           (id, "associationId", title, "startsAt", "createdBy", status, "linkedFormId")
+           VALUES ($1, $2, 'Signup night', '2026-06-21T18:00:00Z', 'it', 'validated', $3)`,
+        [LINKED, A1, FORM]
+      );
+      const linked = (userId: string, isGlobalAdmin = false) =>
+        associations.findCalendarEventByLinkedForm(FORM, { userId, isGlobalAdmin });
+      expect((await linked('seReader'))?.id).toBe(LINKED); // reached by A1's rule
+      expect(await linked('gaReader')).toBeNull(); // outside A1's audience
+      expect(await linked('nobody')).toBeNull();
+      expect((await linked('platformAdmin', true))?.id).toBe(LINKED);
+    });
   });
 });

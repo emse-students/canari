@@ -416,7 +416,8 @@ export class PostInteractionsService {
 
   /**
    * Removes a comment and all of its replies, for whoever `commentRights` lets: the writer, a
-   * platform admin, a content moderator for an anonymous one, any association holder for its own.
+   * platform admin, a moderator of this post for an anonymous or an association's comment, any
+   * association holder for its own.
    */
   async deleteComment(postId: string, commentId: string, userId: string, isAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });

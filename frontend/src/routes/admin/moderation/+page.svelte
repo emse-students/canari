@@ -540,7 +540,7 @@
                 onCut={handleLiveCut}
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
-                mayActOnBroadcaster={report.canMuteReportedUser !== false}
+                mayActOnBroadcaster={report.canMuteReportedUser === true}
               />
             {/if}
 
@@ -645,7 +645,7 @@
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <!-- A BDE moderator mutes the people of its own spaces only (2026-11-02). -->
-                {#if report.canMuteReporter !== false}
+                {#if report.canMuteReporter === true}
                   <button
                     type="button"
                     onclick={() =>
@@ -662,7 +662,7 @@
                     {m.moderation_muter_signaleur()}
                   </button>
                 {/if}
-                {#if report.reportedUserId && report.canMuteReportedUser !== false}
+                {#if report.reportedUserId && report.canMuteReportedUser === true}
                   <button
                     type="button"
                     onclick={() =>

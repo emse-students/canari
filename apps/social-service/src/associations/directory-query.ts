@@ -79,7 +79,7 @@ export const AGENDA_SELECTION_REQUIRED = 'AGENDA_SELECTION_REQUIRED';
  * `formation`, `associationId`) AND carry the `sig` the server signed for that selection - a
  * capability a member hands out. No selection is a 400 `AGENDA_SELECTION_REQUIRED` - no fallback to
  * "everything"; an unsigned or wrongly signed selection is a 403 (`agenda-signature.ts`). One
- * event's `.ics` has its own signed link, checked by its route (`assertEventIcsSignature`). A
+ * event's `.ics` has its own signed link, checked by its route (`eventIcsSignatureMatches`). A
  * signed-in reader is already narrowed to their own spaces and is not checked here.
  */
 export function assertAgendaAccess(args: {

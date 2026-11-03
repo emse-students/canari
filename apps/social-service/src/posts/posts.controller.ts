@@ -22,6 +22,7 @@ import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
+import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { ModerationService } from '../moderation/moderation.service';
 import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import {
@@ -213,7 +214,8 @@ export class PostsController {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
-    return { linkedEvent };
+    // The detail modal opened from a post offers "add to my calendar" like the agenda's: same `icsSig`.
+    return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
   /** The reverse of the above: the post (if any) linking to this calendar event. */

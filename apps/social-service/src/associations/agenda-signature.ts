@@ -122,6 +122,13 @@ export function withEventIcsSig<T extends { id: string; status?: string }>(
   );
 }
 
+/** `withEventIcsSig` for one event a route answers on its own (a post's or a form's linked event). */
+export function withOneEventIcsSig<T extends { id: string; status?: string }>(
+  row: T | null
+): (T & { icsSig?: string }) | null {
+  return row ? withEventIcsSig([row])[0] : null;
+}
+
 /** Constant-time check of an event `.ics` link's signature; false when absent or wrong. */
 export function eventIcsSignatureMatches(eventId: string, sig: string | undefined): boolean {
   return agendaKeySignatureMatches(canonicalEventIcs(eventId), sig);

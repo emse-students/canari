@@ -3,6 +3,8 @@ import 'reflect-metadata';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+import { UnauthorizedException } from '@nestjs/common';
+
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { FormsController } from './forms.controller';
 
@@ -22,22 +24,13 @@ describe('FormsController - auth_request identifies, the guard refuses', () => {
   const GUARD_METADATA = '__guards__';
 
   /**
-   * The routes that are meant to answer anybody, each with the reason.
-   *
-   * It is a map rather than a set so the reason lives next to the exemption: an exemption with no
-   * reason is indistinguishable from an oversight, which is what the whole audit was about.
+   * EVERY HANDLER, WITH NO EXEMPTION. The last one, the form's agenda link, was guarded on
+   * 2026-11-02 (no event is published to an anonymous reader); a route meant to answer anybody now
+   * belongs on `PublicFormsController`, not here.
    */
-  const PUBLIC_BY_INTENT: Record<string, string> = {
-    getFormCalendarLink:
-      'read by the public association page for a signed-out visitor; answers one agenda entry and never the form contents',
-  };
-
-  /** Every handler on the controller, split by whether it claims an exemption. */
-  const handlers = Object.getOwnPropertyNames(FormsController.prototype).filter(
+  const mustBeGuarded = Object.getOwnPropertyNames(FormsController.prototype).filter(
     (name) => name !== 'constructor'
   );
-  const mustBeGuarded = handlers.filter((h) => !PUBLIC_BY_INTENT[h]);
-  const exempt = handlers.filter((h) => PUBLIC_BY_INTENT[h]);
 
   /** The guards Nest will run for `handler`, read from the metadata Nest itself reads. */
   function guardsOn(handler: string): unknown[] {
@@ -54,18 +47,27 @@ describe('FormsController - auth_request identifies, the guard refuses', () => {
     expect(guardsOn(handler)).toContain(NginxAuthGuard);
   });
 
-  it.each(exempt.map((h) => [h]))('%s is exempt, and says why', (handler) => {
-    // An exemption with no reason is indistinguishable from an oversight, which is the whole of
-    // what this audit found - so the reason is asserted, not just the exemption.
-    expect(PUBLIC_BY_INTENT[handler].length).toBeGreaterThan(20);
-  });
-
   it('guards the route that returns a form, which is the one that was open', () => {
     expect(guardsOn('get')).toContain(NginxAuthGuard);
   });
 
-  it('leaves the public agenda link reachable without a session', () => {
-    expect(guardsOn('getFormCalendarLink')).not.toContain(NginxAuthGuard);
+  it("guards the form's agenda link: no event is published to an anonymous reader (2026-11-02)", () => {
+    expect(guardsOn('getFormCalendarLink')).toContain(NginxAuthGuard);
+  });
+
+  it('refuses an anonymous agenda-link request at the guard, so the handler reads nothing', () => {
+    // The guard runs before the handler: a request with no `X-User-Id` never reaches the read.
+    const previous = process.env.INTERNAL_SHARED_SECRET;
+    process.env.INTERNAL_SHARED_SECRET = 'secret-for-the-guard-test';
+    try {
+      const ctx = {
+        switchToHttp: () => ({ getRequest: () => ({ headers: {} }) }),
+      } as never;
+      expect(() => new NginxAuthGuard().canActivate(ctx)).toThrow(UnauthorizedException);
+    } finally {
+      if (previous === undefined) delete process.env.INTERNAL_SHARED_SECRET;
+      else process.env.INTERNAL_SHARED_SECRET = previous;
+    }
   });
 });
 

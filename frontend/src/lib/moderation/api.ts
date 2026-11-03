@@ -140,7 +140,7 @@ export interface ContentReport {
   live?: ReportedLive | null;
   /**
    * Whether the caller may mute the reporter / the reported person: a BDE moderator mutes the people
-   * of its own spaces only (2026-11-02). Absent from an older server: read as allowed.
+   * of its own spaces only (2026-11-02). Only `true` draws the control: absent means none.
    */
   canMuteReporter?: boolean;
   canMuteReportedUser?: boolean;

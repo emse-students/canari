@@ -1411,11 +1411,18 @@ those:
 - **A signed single-event link** (`feed.ics?eventId=..&sig=..`): `sig` is that EVENT's signature,
   `v1|event-ics|event=<id>` under `AGENDA_SIGNING_KEY` (`signEventIcs`, `agenda-signature.ts`; its own
   canonical prefix, so neither kind can be read as the other). The server serves it on every validated
-  event it lists (`icsSig`, `withEventIcsSig`, on `/calendar/feed` and `/:id/events`); the client puts
+  event it lists (`icsSig`, `withEventIcsSig`, on `/calendar/feed`, `/:id/events`, and the linked
+  event of a post or a form, `withOneEventIcsSig`; `event-ics-sig-routes.spec.ts` fails if a route
+  drops it); the client puts
   it in the "add to my calendar" link (`eventIcsAbsoluteUrl`, the event modal's export) and builds no
   link without it. An unsigned or wrongly signed request is a **bodyless 403**, logged with the tag
   `[AGENDA_ICS_REFUSED]` - the count to read after a release, to measure links still saved in the
   old form. No time-based grace period.
+- **What a signature is, accepted by the owner as a capability link (2026-11-02):** it **never
+  expires**, it is **not bound to the event's current audience** (it names the event, nothing else:
+  a link handed out stays valid if the audience later narrows), and **only a rotation of
+  `AGENDA_SIGNING_KEY` revokes it** - which revokes every agenda link, selections included. The same
+  holds for a signed selection. Whoever holds the link reads that one event; that is the design.
 
 What answers nothing without a session:
 
@@ -1427,7 +1434,10 @@ What answers nothing without a session:
   secret grants the feed nothing.
 - **Consumers, enumerated:** the association page's agenda block (`AssociationCalendarSection`, the
   only anonymous reader of `/:id/events`: empty for a visitor); the composer's linkable-event picker
-  (`listLinkableValidatedCalendarEvents`, signed in); the edit pages (signed in); the event modal's
+  (`listLinkableValidatedCalendarEvents`, signed in); the edit pages (signed in); a post's linked
+  event (`/posts/:id/calendar-link`, guarded, behind the post's own visibility); a form's linked event
+  (`/forms/:id/calendar-link`, guarded since 2026-11-02 and filtered by `eventVisibleToViewerSql`, so a
+  reader outside the event's audience gets `null`); the event modal's
   "add to my calendar" link (signed per event); the native apps run the same web client. **nginx** has
   no per-route allowlist here: `/api/associations` goes through `auth_request` to core's `verify`,
   which answers 200 with empty identity headers for an anonymous caller, so the decision is the

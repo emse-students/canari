@@ -88,6 +88,15 @@ describe('commentRights', () => {
     expect(commentRights(ASSO, holdingAdmin).canEdit).toBe(true);
   });
 
+  it("lets a moderator of the post delete an association's comment, never edit it", () => {
+    // The same answer as `POST /moderation/comments/:id/delete`, so the bin and the route agree.
+    expect(commentRights(ASSO, viewer({ isModerator: true }))).toEqual({
+      canEdit: false,
+      canDelete: true,
+    });
+    expect(commentRights(ASSO, viewer())).toEqual({ canEdit: false, canDelete: false });
+  });
+
   it('lets a moderator delete an anonymous comment but never edit it', () => {
     expect(commentRights(ANON, viewer({ isModerator: true }))).toEqual({
       canEdit: false,

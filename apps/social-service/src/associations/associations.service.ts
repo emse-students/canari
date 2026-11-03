@@ -1560,11 +1560,25 @@ export class AssociationsService {
     return { ...base, associationSlug: asso?.slug ?? '' };
   }
 
-  async findCalendarEventByLinkedForm(formId: string) {
-    const ev = await this.calendarRepo.findOne({
-      where: { linkedFormId: formId, status: AssociationCalendarEventStatus.Validated },
-    });
-    return ev ? this.serializeCalendarEvent(ev) : null;
+  /**
+   * The validated event a form links to, AS THE SIGNED-IN READER MAY SEE IT: the event is kept only
+   * when `eventVisibleToViewerSql` admits it (its organiser or an accepted co-organiser reaches one
+   * of the reader's spaces, or the reader is a member), exactly as the reader's agenda decides; a
+   * global admin reads it whole. An event outside the reader's audience answers `null`, the same
+   * answer as no link at all. The route is guarded, so a reader always has an id.
+   */
+  async findCalendarEventByLinkedForm(formId: string, viewer: CalendarViewer) {
+    const qb = this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e."linkedFormId" = :formId', { formId })
+      .andWhere('e.status = :validated', { validated: AssociationCalendarEventStatus.Validated });
+    if (!viewer.isGlobalAdmin) this.restrictToViewerSpaces(qb, viewer);
+    const ev = await qb.getOne();
+    if (!ev) {
+      this.logger.debug(`[AGENDA] form ${formId.slice(0, 8)} links no event this reader sees`);
+      return null;
+    }
+    return this.serializeCalendarEvent(ev);
   }
 
   private async assertFormBelongsToAssociation(formId: string, associationId: string) {
@@ -2033,7 +2047,9 @@ export class AssociationsService {
     postIds: string[],
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<Set<string>> {
-    const unique = [...new Set(postIds)];
+    // Postgres answers a uuid in lowercase, so the asked ids are lowercased once: an id spelled in
+    // uppercase by a client is the same post, and must not miss its own `.has()`.
+    const unique = [...new Set(postIds.map((id) => id.toLowerCase()))];
     if (opts?.isGlobalAdmin) return new Set(unique);
     if (!userId || unique.length === 0) return new Set();
     const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_POST_IDS_SQL, [
@@ -2046,13 +2062,14 @@ export class AssociationsService {
     return new Set(rows.map((r) => r.id));
   }
 
-  /** `moderatedPostIds` asked of one post. */
+  /** `moderatedPostIds` asked of one post, whatever the case its id is spelled in. */
   async mayModeratePost(
     userId: string | undefined,
     postId: string,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
-    return (await this.moderatedPostIds(userId, [postId], opts)).has(postId);
+    const id = postId.toLowerCase();
+    return (await this.moderatedPostIds(userId, [id], opts)).has(id);
   }
 
   /**

@@ -12,9 +12,11 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { Logger } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { ContentReport } from '../moderation/entities/content-report.entity';
+import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
   BDE_MODERATED_POST_IDS_SQL,
@@ -170,6 +172,20 @@ maybe('BDE moderation scope against PostgreSQL', () => {
   it('a BDE moderates the posts of its governed spaces, association and personal alike', async () => {
     expect(await posts('seMod')).toEqual([P.clubSePost, P.seStudentPost].sort());
     expect(await posts('gaMod')).toEqual([P.clubGaPost, P.gaStudentPost].sort());
+  });
+
+  it('answers the same for a post id spelled in uppercase (`mayModeratePost`)', async () => {
+    // The service on the real query: Postgres answers lowercase ids, so the asked id is lowercased
+    // before its `.has()` - otherwise an uppercase id is refused for a post its BDE moderates.
+    const service = Object.assign(Object.create(AssociationsService.prototype), {
+      memberRepo: {
+        query: async (sql: string, params: unknown[]) => (await client.query(sql, params)).rows,
+      },
+      logger: new Logger('bde-moderation.it'),
+    }) as AssociationsService;
+    expect(await service.mayModeratePost('seMod', P.seStudentPost.toUpperCase())).toBe(true);
+    expect(await service.mayModeratePost('seMod', P.seStudentPost)).toBe(true);
+    expect(await service.mayModeratePost('gaMod', P.seStudentPost.toUpperCase())).toBe(false);
   });
 
   it('leaves an association with no rule and a person with no space to the platform admin', async () => {

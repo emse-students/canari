@@ -26,9 +26,10 @@
     onStale: () => void;
     /**
      * The caller moderates the broadcaster as a person (a BDE: one of its own spaces, 2026-11-02),
-     * the server's `canMuteReportedUser`. False hides the withdrawal the server would refuse.
+     * the server's `canMuteReportedUser`. Required: only true draws the withdrawal, so a caller that
+     * forgets it shows no control rather than one the server would refuse.
      */
-    mayActOnBroadcaster?: boolean;
+    mayActOnBroadcaster: boolean;
   }
 
   let {
@@ -39,7 +40,7 @@
     onCut,
     onWithdrawn,
     onStale,
-    mayActOnBroadcaster = true,
+    mayActOnBroadcaster,
   }: Props = $props();
 
   let dialogOpen = $state(false);

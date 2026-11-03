@@ -84,8 +84,9 @@ export function commentRights(
   // association is the author of its comment, so its POST_AS_ASSO holders edit it; a platform admin
   // or a moderator deletes, never rewrites.
   if (c.associationId) {
+    // A moderator of THIS post deletes it, as `POST /moderation/comments/:id/delete` lets them.
     const holder = v.managedAssociationIds.has(c.associationId);
-    return { canEdit: holder, canDelete: holder || v.isGlobalAdmin };
+    return { canEdit: holder, canDelete: holder || v.isGlobalAdmin || v.isModerator };
   }
   if (c.anonymous === true) {
     return { canEdit: own, canDelete: own || v.isGlobalAdmin || v.isModerator };
