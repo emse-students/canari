@@ -87,11 +87,19 @@ function makeContext() {
 
 /** A context whose storage records the pair write of a placeholder and its entry. */
 function withStorage(ctx: MessagingContext, pair: (row: StoredMessage, e: OutboxEntry) => void) {
+  const saveMessage = vi.fn().mockResolvedValue(undefined);
   Object.assign(ctx, {
     deviceKeyB64: 'device-key',
     saveConversation: vi.fn().mockResolvedValue(undefined),
     storage: {
-      saveMessage: vi.fn().mockResolvedValue(undefined),
+      saveMessage,
+      // An arriving row is written only where none stands; it lands in `saveMessage` here.
+      saveMessagesIfAbsent: vi.fn(async (rows: StoredMessage[], key: string) => {
+        for (const row of rows) await saveMessage(row, key);
+        return new Set(rows.map((row) => row.id));
+      }),
+      getMessagesByIds: vi.fn(async () => ({ rows: new Map(), unreadable: new Set() })),
+      getPendingMutations: vi.fn(async () => ({ entries: [], unreadable: 0 })),
       saveMessageWithOutboxEntry: vi.fn(async (row: StoredMessage, e: OutboxEntry) => pair(row, e)),
       deleteMessage: vi.fn().mockResolvedValue(undefined),
     },
