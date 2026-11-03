@@ -4384,21 +4384,6 @@ ${rejectionReason}`
   }
 
   /**
-   * The Lydia vendor token an association's payments are PAID INTO - its own, or its approved
-   * parent's - whatever provider is active right now: a payment in flight is still checked after
-   * an admin disables payments. Used to refuse a verified callback whose Business is not the one
-   * the row's money goes to (`FormsService.confirmPaymentFromCallback`).
-   */
-  async getLydiaPayeeAccountId(id: string): Promise<string | null> {
-    const asso = await this.assoRepo.findOne({ where: { id } });
-    if (!asso) return null;
-    const parent = isDelegating(asso)
-      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
-      : null;
-    return resolvePaymentTarget(asso, parent, 'lydia').connectAccountId;
-  }
-
-  /**
    * Reads the platform's currently active payment provider from core-service. Exposed for callers
    * (e.g. FormsService) that need it outside of resolvePaymentTarget - such as deciding whether to
    * pass Lydia's order_ref-shaped idempotency key on a form with no associated club.

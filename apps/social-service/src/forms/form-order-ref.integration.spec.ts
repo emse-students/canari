@@ -62,7 +62,6 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
       getPaymentAccountId: async () => payee,
-      getLydiaPayeeAccountId: async () => payee,
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
     };

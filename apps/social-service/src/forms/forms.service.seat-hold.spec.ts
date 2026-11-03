@@ -309,9 +309,6 @@ describe('FormsService - the seat a pending payment holds', () => {
       assertPaymentsReady: jest.fn(async () => undefined),
       collectsNow: jest.fn(async () => true),
       getPaymentAccountId: jest.fn(async () => 'vendor'),
-      // The account the form's money is paid into, whatever provider is active: what a verified
-      // callback's Business must be (`isCallbackPayee`).
-      getLydiaPayeeAccountId: jest.fn(async () => 'vendor'),
       // Nobody manages this form through the association: only its submitter may read its answer.
       mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),

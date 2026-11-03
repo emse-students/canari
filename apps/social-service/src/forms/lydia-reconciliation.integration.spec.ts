@@ -121,7 +121,6 @@ RESET lock_timeout;`
     const purchaseRecordService = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
     const associationsService: any = {
       getPaymentAccountId: async () => VENDOR_WITH_KEY,
-      getLydiaPayeeAccountId: async () => VENDOR_WITH_KEY,
       getActivePaymentProvider: async () => 'lydia',
     };
     forms = new FormsService(
