@@ -2011,9 +2011,11 @@ the channel with nobody draining it. **Fixed by construction**: the channel is u
 unbounded `send` never blocks), the pipe's write end is non-blocking (a full pipe already holds an
 unread wake byte, which owes a drain that takes the new message too, so `EAGAIN` loses nothing), and
 a failed message is logged `[WRY_MAIN_PIPE]` and the drain goes on. The looper callback retries a
-read interrupted by a signal (upstream unregistered the drain on ANY short read, EINTR included) and
-logs the only cases left that unregister it - end of file, or a read error, on a pipe whose write end
-is a static. A drain handles at most the `len()` it read on entry, so it terminates while other
+read interrupted by a signal (upstream unregistered the drain on ANY short read, EINTR included). The
+only cases left - end of file, or a read error, on a pipe whose write end is a static - log at error
+and then ABORT deliberately (`panic!` in the looper callback is SIGABRT through `abort_on_panic`),
+instead of unregistering: owner decision, 2026-11-03, so Play Vitals reports a crash rather than
+leaving a silently frozen UI. A drain handles at most the `len()` it read on entry, so it terminates while other
 threads keep sending; a message sent after that read has its own wake byte, or found the pipe full of
 unread ones, and a later callback drains it. A Java exception left pending is described and cleared
 after EVERY message, not only a failed one - several arms swallow a JNI error and the `Jni` closures

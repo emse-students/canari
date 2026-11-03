@@ -278,7 +278,9 @@ pub unsafe fn onFirstActivityCreateWry(env: JNIEnv, _: JClass) {
         // error, and said nothing. With the channel unbounded that is a silent leak and a WebView
         // that never hears from Rust again. A signal interrupting the read is retried; `recv` no
         // longer fails; anything else (end of file, or an error, on a pipe whose write end is a
-        // static) is a broken premise, and the unregistering is logged as the accusation it is.
+        // static) is a broken premise, and unregistering would freeze the UI with nothing to
+        // report. Owner decision, 2026-11-03: log at error, then ABORT deliberately (a panic in
+        // the looper callback is SIGABRT through `abort_on_panic`), so Play Vitals reports a crash.
         let mut buf = [0u8];
         loop {
           let read = libc::read(fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len());
@@ -287,19 +289,15 @@ pub unsafe fn onFirstActivityCreateWry(env: JNIEnv, _: JClass) {
             return true;
           }
           if read == 0 {
-            log::error!(
-              "[WRY_MAIN_PIPE] the wake pipe reached end of file; the main pipe is no longer drained"
-            );
-            return false;
+            log::error!("[WRY_MAIN_PIPE] the wake pipe reached end of file");
+            panic!("[WRY_MAIN_PIPE] the wake pipe is dead (end of file): aborting rather than freezing the UI");
           }
           let error = std::io::Error::last_os_error();
           if error.kind() == std::io::ErrorKind::Interrupted {
             continue;
           }
-          log::error!(
-            "[WRY_MAIN_PIPE] the wake pipe read failed ({error}); the main pipe is no longer drained"
-          );
-          return false;
+          log::error!("[WRY_MAIN_PIPE] the wake pipe read failed ({error})");
+          panic!("[WRY_MAIN_PIPE] the wake pipe is dead (read failed: {error}): aborting rather than freezing the UI");
         }
       })
       .unwrap();

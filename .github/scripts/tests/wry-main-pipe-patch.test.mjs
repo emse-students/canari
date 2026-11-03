@@ -152,7 +152,7 @@ const PREDICATES = [
   },
   {
     file: 'binding.rs',
-    what: 'the looper callback retries an interrupted read, never stops on recv, and logs when it unregisters',
+    what: 'the looper callback retries an interrupted read, never stops on recv, and ABORTS (logged, then panic) on a dead wake pipe instead of unregistering',
     holds: (s) => {
       const body = fnBody(s, 'onFirstActivityCreateWry');
       return (
@@ -161,7 +161,9 @@ const PREDICATES = [
         /continue;/.test(body) &&
         !/recv\(\)\s*\.is_ok\(\)/.test(body) &&
         /return true;/.test(body) &&
-        (body.match(/log::error!/g) ?? []).length >= 2
+        !/return false;/.test(body) &&
+        (body.match(/log::error!/g) ?? []).length >= 2 &&
+        (body.match(/panic!\(/g) ?? []).length >= 2
       );
     },
     upstream: `pub unsafe fn onFirstActivityCreateWry(env: JNIEnv, _: JClass) {

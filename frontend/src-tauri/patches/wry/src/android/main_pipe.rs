@@ -139,9 +139,14 @@ pub fn first_activity_id() -> Option<ActivityId> {
 /// A live activity whose WebView is not created yet answers `None` too, silently, as upstream does:
 /// that is the ordinary state between `CreateWebView` being queued and handled, not a loss.
 pub fn get_webview(activity_id: ActivityId) -> Option<GlobalRef> {
-  let proxies = ACTIVITY_PROXY.lock().unwrap();
-  match proxies.get(&activity_id) {
-    Some(proxy) => proxy.webview.clone(),
+  // The guard is a temporary of this statement: it is released before anything is logged.
+  let found = ACTIVITY_PROXY
+    .lock()
+    .unwrap()
+    .get(&activity_id)
+    .map(|proxy| proxy.webview.clone());
+  match found {
+    Some(webview) => webview,
     None => {
       if GONE_ACTIVITIES_LOGGED.lock().unwrap().insert(activity_id) {
         log::info!(
