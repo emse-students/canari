@@ -193,6 +193,10 @@ that cannot reach the server shows no new help; the next opening asks again.
 - **Sign-out resets the engine** (`guideEngine.reset()` beside `resetSeenHelps()` in
   `endSessionImpl`): a run suspended for account A, or a replay A asked for, never resumes for
   account B over B's own seen set.
+- **No guidance module imports a component** (`guidance.importGraph.test.ts`). Sign-out imports
+  `guidance.svelte.ts`, and a component's graph reaches `globalChatSingleton` and back to sign-out -
+  importing `NativeTabBar.svelte` for its state closed that cycle in CI. The bar's state lives in
+  `navigation/nativeTabBarState.svelte.ts`, which the component re-exports.
 
 ## The server store
 

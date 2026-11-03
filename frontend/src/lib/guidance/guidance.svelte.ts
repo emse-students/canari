@@ -1,5 +1,5 @@
 import { isPhoneViewport, isSwipeNavViewport } from '$lib/utils/viewport';
-import { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
+import { nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
 import { Log } from '$lib/utils/Log';
 import { GuideEngine } from './guideEngine.svelte';
 import { guideAnchorsVersion, resolveGuideAnchor } from './guideAnchors.svelte';

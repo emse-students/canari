@@ -38,7 +38,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
 vi.mock('$lib/stores/keyboardViewport.svelte', () => ({
   getKeyboardViewport: () => ({ isOpen: false }),
 }));
-vi.mock('$lib/components/navigation/NativeTabBar.svelte', () => ({
+vi.mock('$lib/navigation/nativeTabBarState.svelte', () => ({
   nativeTabBar: { status: 'pending' },
 }));
 vi.mock('$lib/utils/appVersion', () => ({ isIosTauriRuntime: () => false }));

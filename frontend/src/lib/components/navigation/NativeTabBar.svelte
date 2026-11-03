@@ -1,8 +1,7 @@
 <script lang="ts" module>
-  /** Where the bar's state stands - `failed` is what hands the bottom back to the web bar. */
-  export const nativeTabBar = $state<{ status: 'pending' | 'native' | 'failed' }>({
-    status: 'pending',
-  });
+  // The state lives in its own module so a reader of the fact never imports this component's graph.
+  import { nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
+  export { nativeTabBar };
 </script>
 
 <script lang="ts">

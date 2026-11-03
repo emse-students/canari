@@ -14,7 +14,7 @@
     isBelowMinClientVersion,
     isMaintenanceBlockingCurrentUser,
   } from '$lib/stores/appVersionCheck.svelte';
-  import { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
+  import { nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
   import { isFullScreenPlace } from '$lib/navigation/places';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
