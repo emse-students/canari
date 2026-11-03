@@ -100,14 +100,22 @@ export function mergeMessageUpgrade(
   existing: ChatMessage,
   incoming: Pick<
     ChatMessage,
-    'content' | 'senderId' | 'replyTo' | 'isSystem' | 'serverTimestamp' | 'isFcmPreview'
+    | 'content'
+    | 'senderId'
+    | 'replyTo'
+    | 'isSystem'
+    | 'serverTimestamp'
+    | 'isFcmPreview'
+    | 'isEdited'
+    | 'editedAt'
   >
 ): ChatMessage {
   const carried = previewEditWins(existing, incoming);
   return {
     ...existing,
-    // An edit the preview took and that does not win (another sender's) goes with the caption.
-    ...(existing.isEdited && !carried ? { isEdited: false, editedAt: undefined } : {}),
+    // The edit state goes with the text: the preview's when its edit is carried, the incoming
+    // body's otherwise - its own edit (a stored row `reconcile` hands over), or none.
+    ...(carried ? {} : { isEdited: incoming.isEdited, editedAt: incoming.editedAt }),
     content: carried ? bodyEditedAsPreview(existing, incoming) : incoming.content,
     replyTo: incoming.replyTo ?? existing.replyTo,
     isSystem: incoming.isSystem ?? existing.isSystem,

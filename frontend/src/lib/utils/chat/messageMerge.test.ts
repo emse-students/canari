@@ -5,7 +5,9 @@ import {
   mergeMessageUpgrade,
   previewUpgradeOnto,
   isPushPreview,
+  mergeMessagePage,
 } from './messageMerge';
+import { editSupersedes } from './editPrecedence';
 import type { StoredMessage } from '$lib/db/types';
 
 describe('messageMerge', () => {
@@ -246,6 +248,40 @@ describe('the edit an upgrade keeps is decided by editSupersedes, and its proof 
       { content: '{"kind":"text","text":"as sent"}', senderId: 'alice' }
     );
     expect(JSON.parse(shown.content).text).toBe('as sent');
-    expect(shown.isEdited).toBe(false);
+    expect(shown.isEdited).toBeFalsy();
+    expect(shown.editedAt).toBeUndefined();
+  });
+});
+
+describe('reconcile - a stored body whose own edit wins keeps its edit mark in memory', () => {
+  it('shows the body edited, with its editedAt, and refuses a later-arriving older edit', () => {
+    const preview = {
+      id: 'm1',
+      senderId: 'alice',
+      content: '{"kind":"text","text":"preview edit"}',
+      timestamp: new Date(1_000),
+      isOwn: false,
+      isFcmPreview: true,
+      isEdited: true,
+      editedAt: new Date(2_000),
+    };
+    const storedBody = {
+      id: 'm1',
+      senderId: 'alice',
+      content: '{"kind":"text","text":"body edit"}',
+      timestamp: new Date(1_000),
+      isOwn: false,
+      isEdited: true,
+      editedAt: new Date(9_000),
+    };
+
+    const [row] = mergeMessagePage([preview], [storedBody]);
+
+    expect(JSON.parse(row.content).text).toBe('body edit');
+    expect(row.isEdited).toBe(true);
+    expect(row.editedAt?.getTime()).toBe(9_000);
+    expect(row.isFcmPreview).toBe(false);
+    // An older edit arriving later is refused in memory, as the store refuses it.
+    expect(editSupersedes({ editedAt: 5_000, content: 'older' }, row)).toBe(false);
   });
 });
