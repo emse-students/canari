@@ -41,7 +41,7 @@ import {
   splitPendingMutation,
   type PendingMutationRowKey,
 } from './pendingMutationCodec';
-import { casMergeMessages, type RevisedRow } from './messageCas';
+import { casMergeMessages, type RevisedRow, type RevisedWrite } from './messageCas';
 
 import {
   attachOutboxBlob,
@@ -790,10 +790,15 @@ export class SqliteStorage implements IStorage {
    * ({@link mergeMessages}), never a read, an await and a blind write. Primary-key lookups, so the
    * cost is the same in a conversation of ten messages and one of ten thousand.
    */
-  async updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void> {
+  async updateMessage(
+    conversationId: string,
+    id: string,
+    patch: StoredMessagePatch,
+    deviceKeyB64: string
+  ): Promise<void> {
     await casMergeMessages(
       this.revisedRows(),
-      null,
+      conversationId,
       [id],
       (current) => mergeStoredMessage(current, patch),
       deviceKeyB64
@@ -821,16 +826,16 @@ export class SqliteStorage implements IStorage {
         this.readRows(conversationId, ids, deviceKeyB64),
       writeIfUnchanged: async (
         conversationId: string | null,
-        writes: ReadonlyArray<{ msg: StoredMessage; rev: number }>,
+        writes: ReadonlyArray<RevisedWrite>,
         deviceKeyB64: string
       ): Promise<Set<string>> => {
         const written = new Set<string>();
-        for (const { msg, rev } of writes) {
+        for (const { msg, rev, stamp } of writes) {
           const sealed = await encryptData(toMessagePayload(msg), deviceKeyB64);
           const result = await this.db.execute(
             `UPDATE messages SET timestamp = $1, iv = $2, cipher_text = $3, order_at = $4,
                order_pending = NULL, rev = rev + 1
-             WHERE id = $5 AND rev = $6 AND ($7 IS NULL OR conversation_id = $7)`,
+             WHERE id = $5 AND rev = $6 AND iv = $8 AND ($7 IS NULL OR conversation_id = $7)`,
             [
               msg.timestamp,
               uint8ToBase64(sealed.iv),
@@ -839,6 +844,7 @@ export class SqliteStorage implements IStorage {
               msg.id,
               rev,
               conversationId,
+              stamp,
             ]
           );
           if ((result?.rowsAffected ?? 0) > 0) {
@@ -883,6 +889,7 @@ export class SqliteStorage implements IStorage {
           )) as Record<string, unknown>;
           out.rows.set(row.id, {
             rev: Number(row.rev ?? 0),
+            stamp: String(row.iv),
             msg: fromMessagePayload(
               {
                 id: row.id,
@@ -1113,7 +1120,9 @@ export class SqliteStorage implements IStorage {
     const out: PendingMutationRead = { entries: [], removedUnreadable: 0 };
     const unique = [...new Set(messageIds)];
     if (unique.length === 0) return out;
-    const tags = await Promise.all(unique.map((id) => pendingMessageTag(deviceKeyB64, id)));
+    const tags = await Promise.all(
+      unique.map((id) => pendingMessageTag(deviceKeyB64, conversationId, id))
+    );
     for (const batch of chunk(tags, MAX_BOUND_PARAMETERS - 1)) {
       const placeholders = batch.map((_, i) => `$${i + 2}`).join(', ');
       const rows: any[] = await this.db.select(
@@ -1439,9 +1448,10 @@ export class SqliteStorage implements IStorage {
   async deleteOldMessages(maxAgeMs: number): Promise<number> {
     // Age-based, so it cannot name the conversations it touched: everything goes.
     invalidateAllHistoryStateKeys();
-    const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [
-      Date.now() - maxAgeMs,
-    ]);
+    const cutoff = Date.now() - maxAgeMs;
+    const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [cutoff]);
+    // The mutations whose frame predates the cutoff wait for a message older still (see IStorage).
+    await this.db.execute('DELETE FROM pending_mutations WHERE at < $1', [cutoff]);
     return result?.rowsAffected ?? 0;
   }
 

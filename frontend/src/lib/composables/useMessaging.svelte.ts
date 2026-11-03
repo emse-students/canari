@@ -136,7 +136,11 @@ import {
 import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
-import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import {
+  shouldUpgradeMessage,
+  mergeMessageUpgrade,
+  previewUpgradeOnto,
+} from '$lib/utils/chat/messageMerge';
 import type { PendingMutation, StoredRowsById } from '$lib/db/types';
 import {
   settleAgainstPending,
@@ -1082,10 +1086,9 @@ export function useMessaging() {
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
-            // The row is replaced wholesale, so everything the merged message still carries has to
-            // be written back: a reaction that landed on the FCM preview before the real body
-            // arrived would otherwise be erased by the upgrade.
-            await ctx.storage.saveMessage(
+            // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
+            // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
+            const written = await writeShownUpgrades(ctx, normalized, [
               {
                 id: upgraded.id,
                 conversationId: normalized,
@@ -1103,9 +1106,8 @@ export function useMessaging() {
                 ...proofFields,
                 ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
               },
-              ctx.deviceKeyB64
-            );
-            await removeSettled(ctx, settled.consumed);
+            ]);
+            if (written.has(upgraded.id)) await removeSettled(ctx, settled.consumed);
           } catch (e) {
             console.error('[DB] Failed to upgrade message:', e);
           }
@@ -1408,6 +1410,43 @@ export function useMessaging() {
       // Not every entry: one retained for a proven copy of an unproven body stays kept.
       consumed: settlement.consumed,
     };
+  }
+
+  /**
+   * Writes the upgrades of SHOWN previews: a compare-and-set onto each stored row
+   * (`previewUpgradeOnto`, which re-asks `shouldUpgradeMessage` of the row as it stands at the
+   * write), and an insert only where no row stands. Never a whole-row write: the stored preview may
+   * have taken a reaction, a deletion or another writer's upgrade since memory was read. Resolves
+   * with the ids written either way; a row left as it was is said.
+   */
+  async function writeShownUpgrades(
+    ctx: MessagingContext,
+    conversationId: string,
+    upgrades: readonly StoredMessage[]
+  ): Promise<ReadonlySet<string>> {
+    if (!ctx.storage || upgrades.length === 0) return new SvelteSet<string>();
+    const byId = new SvelteMap(upgrades.map((row) => [row.id, row]));
+    const merged = await ctx.storage.mergeMessages(
+      conversationId,
+      [...byId.keys()],
+      (current) => {
+        const upgrade = byId.get(current.id);
+        return upgrade ? previewUpgradeOnto(current, upgrade) : null;
+      },
+      ctx.deviceKeyB64
+    );
+    const inserted = await ctx.storage.saveMessagesIfAbsent(
+      upgrades.filter((row) => !merged.has(row.id)),
+      ctx.deviceKeyB64
+    );
+    const written = new SvelteSet([...merged, ...inserted]);
+    const left = upgrades.length - written.size;
+    if (left > 0) {
+      console.log(
+        `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
+      );
+    }
+    return written;
   }
 
   /** Removes the pending entries a written body consumed; a failure costs a re-settle, which is a no-op. */
@@ -1822,15 +1861,15 @@ export function useMessaging() {
     // and its row then stands and memory takes it (`showStoredInstead`).
     if (ctx.storage && persisted && (upgradeRows.length > 0 || newRows.length > 0)) {
       try {
-        if (upgradeRows.length > 0) await ctx.storage.saveMessages(upgradeRows, ctx.deviceKeyB64);
+        // An upgrade row carries no reactions, edit or deletion of its own: written by
+        // compare-and-set onto the stored row, it adds to them and never erases them.
+        const upgraded = await writeShownUpgrades(ctx, normalized, upgradeRows);
         const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
         const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
         if (standing.length > 0) await showStoredInstead(ctx, normalized, standing);
         await removeSettled(
           ctx,
-          [...upgradeRows.map((row) => row.id), ...written].flatMap(
-            (id) => consumedById.get(id) ?? []
-          )
+          [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
         );
         await ctx.saveConversation(normalized);
       } catch (e) {
@@ -2656,12 +2695,17 @@ export function useMessaging() {
    * Best-effort by design: the control event is already durable in the outbox, so a failed write
    * costs a stale local row, never a lost mutation for the group.
    */
-  async function persistLocalMutation(msg: ChatMessage, ctx: MessagingContext): Promise<void> {
+  async function persistLocalMutation(
+    conversationId: string,
+    msg: ChatMessage,
+    ctx: MessagingContext
+  ): Promise<void> {
     if (!ctx.storage) return;
     try {
       // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
       // one, and a full-row write erased it every time the user reacted.
       await ctx.storage.updateMessage(
+        conversationId,
         msg.id,
         {
           content: msg.content,
@@ -2712,7 +2756,7 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-      await persistLocalMutation(nextMsgs[msgIdx], ctx);
+      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx);
     }
 
     const act: ControlAct = { kind: 'reaction', emoji, remove: alreadyReacted, at };
@@ -2982,7 +3026,7 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(key, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx);
+      await persistLocalMutation(key, msgs[idx], ctx);
     }
   }
 
@@ -3042,7 +3086,12 @@ export function useMessaging() {
         ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
         return;
       }
-      await ctx.storage.updateMessage(messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
+      await ctx.storage.updateMessage(
+        stored.conversationId,
+        messageId,
+        { mediaPurgedAt: atMs },
+        ctx.deviceKeyB64
+      );
       // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
       // what tells "on disk" from "asked".
       const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
@@ -3105,7 +3154,7 @@ export function useMessaging() {
         content: applyEditToBody(msgs[idx].content, text),
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx);
+      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx);
     }
   }
 

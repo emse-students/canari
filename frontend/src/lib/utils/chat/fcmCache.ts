@@ -29,6 +29,7 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import type { ConversationIdentity } from '$lib/utils/chat/conversations';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { noteServerTime } from '$lib/utils/chat/serverClock';
 
@@ -330,7 +331,15 @@ async function consumeFcmCacheOnce(
       // is worth making; asked here it decides the write is not. The row is left exactly as it is,
       // and it is NOT reported as injected: the in-memory merge that follows would otherwise be
       // handed a caption to draw over a message already on screen.
-      const existing = await storage.getMessage(entry.messageId, deviceKeyB64);
+      // Read in the push's conversation, like every lookup by id: a row of another one is absent.
+      const found = await storage.getMessagesByIds(entry.groupId, [entry.messageId], deviceKeyB64);
+      if (found.unreadable.has(entry.messageId)) {
+        appendLog(
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} stands as a row this device cannot open, preview dropped`
+        );
+        continue;
+      }
+      const existing = found.rows.get(entry.messageId);
       if (existing && isEnvelopeContent(existing.content)) {
         appendLog(
           `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} already a full envelope, preview dropped`
@@ -363,8 +372,24 @@ async function consumeFcmCacheOnce(
       // RECORDED ONLY ON THE PATH THAT WROTE IT, so the caller cannot be handed a label for a row
       // that does not exist: a throw below leaves neither store carrying this group.
       placeholders.set(entry.groupId, placeholder);
-      // .saveMessage() uses .put() - the MLS pipeline can overwrite with the full data
-      await storage.saveMessage(msg, deviceKeyB64);
+      // A preview replaces a preview by COMPARE-AND-SET, re-asking at the write whether the row is
+      // still one - a body the drain stored meanwhile is never written over, and a reaction merged
+      // onto the old preview stays. A new row is written only where none stands.
+      const written = existing
+        ? await storage.mergeMessages(
+            entry.groupId,
+            [msg.id],
+            (current) =>
+              isEnvelopeContent(current.content) ? null : mergeStoredMessage(current, msg),
+            deviceKeyB64
+          )
+        : await storage.saveMessagesIfAbsent([msg], deviceKeyB64);
+      if (!written.has(msg.id)) {
+        appendLog(
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} was written by another writer meanwhile, preview dropped`
+        );
+        continue;
+      }
       injected.push(msg);
       appendLog(
         `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} group=${entry.groupId.slice(0, 8)} type=${entry.type}`

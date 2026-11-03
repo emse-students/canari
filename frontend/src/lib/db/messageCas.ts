@@ -8,17 +8,35 @@ import type { StoredMessage, StoredMessageMerge } from './types';
  * it, permanently. Each message row now carries a revision (`rev`), raised by EVERY write, and a
  * rewrite applies only while the revision is still the one it read: on IndexedDB a get, a compare and
  * a put in one readwrite transaction (the payload sealed before it opens), on SQLite
- * `UPDATE ... WHERE rev = ?`. A row that moved is read again and merged again.
+ * `UPDATE ... WHERE rev = ? AND iv = ?`. A row that moved is read again and merged again.
+ *
+ * THE TOKEN IS THE REVISION AND THE ROW'S IV, AND THAT CLOSES ABA. A revision alone can repeat: a
+ * row deleted and inserted again starts over, and rewritten as often reaches the revision a stale
+ * reader holds. The iv cannot repeat - every seal draws a fresh 96-bit nonce, and AES-GCM under one
+ * key REQUIRES that it never does (a repeat would already be a break of the encryption, not of this
+ * check). So a compare that also holds the iv it read matches only the very write it read, whatever
+ * happened to the row in between; nothing is seeded, counted or stored for it.
  *
  * TERMINATION IS A PROOF, NOT A CLOCK: a retry happens only when another writer COMMITTED a new
  * revision of that row between this one's read and its write. With finitely many writers the rounds
  * end - and there is no bound to tune, no timer to be wrong.
  */
 
-/** A stored row as read for a compare-and-set: the row, and the revision it was read at. */
+/**
+ * A stored row as read for a compare-and-set: the row, the revision it was read at, and the iv of
+ * the write it read (`stamp`, opaque to the loop) - the token the write must still find.
+ */
 export interface RevisedRow {
   msg: StoredMessage;
   rev: number;
+  stamp: string;
+}
+
+/** One write of {@link RevisedRowStore.writeIfUnchanged}: the row, and the token it was read at. */
+export interface RevisedWrite {
+  msg: StoredMessage;
+  rev: number;
+  stamp: string;
 }
 
 /** What a backend provides for {@link casMergeMessages}. */
@@ -32,10 +50,10 @@ export interface RevisedRowStore {
     ids: readonly string[],
     deviceKeyB64: string
   ): Promise<{ rows: Map<string, RevisedRow> }>;
-  /** Writes each row only while its revision is still `rev`; resolves with the ids written. */
+  /** Writes each row only while its token is still `rev` and `stamp`; resolves with the ids written. */
   writeIfUnchanged(
     conversationId: string | null,
-    writes: ReadonlyArray<{ msg: StoredMessage; rev: number }>,
+    writes: ReadonlyArray<RevisedWrite>,
     deviceKeyB64: string
   ): Promise<Set<string>>;
 }
@@ -57,7 +75,7 @@ export async function casMergeMessages(
   let round = 0;
   while (pending.length > 0) {
     const { rows } = await store.read(conversationId, pending, deviceKeyB64);
-    const writes: Array<{ msg: StoredMessage; rev: number }> = [];
+    const writes: RevisedWrite[] = [];
     for (const id of pending) {
       const current = rows.get(id);
       if (!current) continue;
@@ -66,6 +84,7 @@ export async function casMergeMessages(
       writes.push({
         msg: { ...next, id: current.msg.id, conversationId: current.msg.conversationId },
         rev: current.rev,
+        stamp: current.stamp,
       });
     }
     if (writes.length === 0) break;

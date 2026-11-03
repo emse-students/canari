@@ -14,6 +14,15 @@ import type { IStorage, PendingMutation, StoredMessage } from './types';
 import { encryptData } from '../encryption';
 import { mergeStoredMessage, toMessagePayload } from './messagePayload';
 import { replayedMutationsOnto, replayedStoredRow } from '$lib/utils/chat/history';
+import {
+  settleWalkedMutations,
+  type DeferredMutation,
+  type PendingMutationDeps,
+} from '$lib/utils/chat/pendingMutationStore';
+import {
+  PENDING_MUTATIONS_PER_CONVERSATION,
+  PENDING_MUTATIONS_PER_SENDER,
+} from '$lib/utils/chat/pendingMutations';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
@@ -57,6 +66,10 @@ interface Rig {
   revisionOf(id: string): Promise<number>;
   /** Stores `value` as a message row's timestamp, as an older build or a phone backup did. */
   setTimestamp(id: string, value: unknown): Promise<void>;
+  /** Every pending-mutation row exactly as stored. */
+  pendingRows(): Promise<any[]>;
+  /** Writes `rows` back as they were read by {@link pendingRows} - an interrupted move's leftovers. */
+  restorePending(rows: any[]): Promise<void>;
 }
 
 async function sqliteRig(): Promise<Rig> {
@@ -75,6 +88,17 @@ async function sqliteRig(): Promise<Rig> {
       ),
     setTimestamp: async (id, value) => {
       engine.prepare('UPDATE messages SET timestamp = ? WHERE id = ?').run(value as never, id);
+    },
+    pendingRows: async () => engine.prepare('SELECT * FROM pending_mutations').all(),
+    restorePending: async (rows) => {
+      for (const row of rows) {
+        const cols = Object.keys(row);
+        engine
+          .prepare(
+            `INSERT OR REPLACE INTO pending_mutations (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+          )
+          .run(...(cols.map((c) => row[c]) as never[]));
+      }
     },
   };
 }
@@ -117,6 +141,14 @@ async function idbRig(): Promise<Rig> {
     revisionOf: async (id) => Number((await all('messages')).find((r) => r.id === id)?.rev),
     setTimestamp: (id, value) =>
       rewrite('messages', (row) => (row.id === id ? { ...row, timestamp: value } : null)),
+    pendingRows: () => all('pendingMutations'),
+    restorePending: (rows) =>
+      new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('pendingMutations', 'readwrite');
+        for (const row of rows) tx.objectStore('pendingMutations').put(row);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      }),
   };
 }
 
@@ -362,6 +394,52 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
     });
   });
 
+  it("tags one sender's entries in two conversations apart - nothing at rest links them", async () => {
+    const { storage, pendingRows } = await rig();
+    await storage.putPendingMutation(entry({ conversationId: 'conv' }), ROOMY, KEY);
+    await storage.putPendingMutation(entry({ conversationId: 'conv-b' }), ROOMY, KEY);
+
+    const rows = await pendingRows();
+    const tagsOf = (r: any) => [r.message_tag ?? r.messageTag, r.sender_tag ?? r.senderTag];
+    expect(rows).toHaveLength(2);
+    const [a, b] = rows.map(tagsOf);
+    expect(a[0]).not.toBe(b[0]);
+    expect(a[1]).not.toBe(b[1]);
+  });
+
+  it('a move interrupted after its new row leaves the old one, and the next run sweeps it', async () => {
+    const { storage, pendingRows, restorePending } = await rig();
+    await storage.putPendingMutation(entry({ kind: 'edit', rank: 3, text: 'x' }), ROOMY, KEY);
+    const before = await pendingRows();
+    await storage.resealPendingMutations(KEY, OTHER_KEY);
+    // The crash: the new row was written, the old one never deleted.
+    await restorePending(before);
+    expect(await pendingRows()).toHaveLength(2);
+
+    expect((await storage.resealPendingMutations(KEY, OTHER_KEY)).resealed).toBe(1);
+
+    expect(await pendingRows()).toHaveLength(1);
+    expect((await storage.getPendingMutations('conv', ['m1'], OTHER_KEY)).entries).toEqual([
+      entry({ kind: 'edit', rank: 3, text: 'x' }),
+    ]);
+  });
+
+  it('is collected with the messages older than its frame', async () => {
+    const { storage } = await rig();
+    const now = Date.now();
+    await storage.putPendingMutation(
+      entry({ messageId: 'old', at: now - 10 * 86_400_000 }),
+      ROOMY,
+      KEY
+    );
+    await storage.putPendingMutation(entry({ messageId: 'new', at: now }), ROOMY, KEY);
+
+    await storage.deleteOldMessages(86_400_000);
+
+    const left = await storage.getPendingMutations('conv', ['old', 'new'], KEY);
+    expect(left.entries.map((e) => e.messageId)).toEqual(['new']);
+  });
+
   it('goes with its conversation', async () => {
     const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
@@ -437,7 +515,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     await storage.saveMessage(body('m1'), KEY);
     const first = await revisionOf('m1');
     await storage.saveMessage(body('m1', 'again'), KEY);
-    await storage.updateMessage('m1', { isEdited: true }, KEY);
+    await storage.updateMessage('conv', 'm1', { isEdited: true }, KEY);
     expect(await revisionOf('m1')).toBe(first + 2);
   });
 
@@ -447,7 +525,12 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     await storage.saveMessage(body('m1', 'the secret'), KEY);
     // The live drain stores the author's deletion between the replay's read and its write.
     writeBetweenReadAndWrite(storage, () =>
-      storage.updateMessage('m1', { isDeleted: true, content: 'deleted', authorship: null }, KEY)
+      storage.updateMessage(
+        'conv',
+        'm1',
+        { isDeleted: true, content: 'deleted', authorship: null },
+        KEY
+      )
     );
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const merge = vi.fn((current: StoredMessage) =>
@@ -472,6 +555,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     await storage.saveMessage(body('m1', 'v0'), KEY);
     writeBetweenReadAndWrite(storage, () =>
       storage.updateMessage(
+        'conv',
         'm1',
         {
           content: 'live v2',
@@ -503,6 +587,35 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     ]);
   });
 
+  it('a row deleted and stored again is never taken for the one read before (ABA)', async () => {
+    const { storage, revisionOf } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('m1', 'first life'), KEY);
+    await storage.updateMessage('conv', 'm1', { serverTimestamp: 1 }, KEY);
+    await storage.updateMessage('conv', 'm1', { serverTimestamp: 2 }, KEY);
+    const readAt = await revisionOf('m1');
+    // Between the read and the write: deleted, stored again, and rewritten back to the SAME revision.
+    writeBetweenReadAndWrite(storage, async () => {
+      await storage.deleteMessage('m1', 'conv');
+      await storage.saveMessage(body('m1', 'second life'), KEY);
+      for (let i = 0; (await revisionOf('m1')) < readAt && i < 10; i++) {
+        await storage.saveMessage(body('m1', 'second life'), KEY);
+      }
+      expect(await revisionOf('m1')).toBe(readAt);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const merge = vi.fn((current: StoredMessage) => ({ ...current, isEdited: true }));
+
+    await storage.mergeMessages('conv', ['m1'], merge, KEY);
+
+    expect(merge).toHaveBeenCalledTimes(2);
+    expect(merge.mock.calls[1][0]).toMatchObject({ content: 'second life' });
+    expect(await storage.getMessage('m1', KEY)).toMatchObject({
+      content: 'second life',
+      isEdited: true,
+    });
+  });
+
   it('two updateMessage calls racing each other both land', async () => {
     const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
@@ -510,9 +623,9 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await Promise.all([
-      storage.updateMessage('m1', { serverTimestamp: 42 }, KEY),
-      storage.updateMessage('m1', { isEdited: true, editedAt: 9 }, KEY),
-      storage.updateMessage('m1', { mediaPurgedAt: 7 }, KEY),
+      storage.updateMessage('conv', 'm1', { serverTimestamp: 42 }, KEY),
+      storage.updateMessage('conv', 'm1', { isEdited: true, editedAt: 9 }, KEY),
+      storage.updateMessage('conv', 'm1', { mediaPurgedAt: 7 }, KEY),
     ]);
 
     expect(await storage.getMessage('m1', KEY)).toMatchObject({
@@ -589,7 +702,7 @@ describe('the upgrade of a database the previous build left', () => {
     expect(await storage.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
     expect((await storage.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
     // A row from before revisions reads at 0, and the compare-and-set takes it from there.
-    await storage.updateMessage('m1', { isEdited: true }, KEY);
+    await storage.updateMessage('conv', 'm1', { isEdited: true }, KEY);
     expect(await storage.getMessage('m1', KEY)).toMatchObject({ isEdited: true });
   });
 
@@ -610,7 +723,69 @@ describe('the upgrade of a database the previous build left', () => {
     expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 0 });
     expect(await upgraded.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
     expect((await upgraded.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
-    await upgraded.updateMessage('m1', { isEdited: true }, KEY);
+    await upgraded.updateMessage('conv', 'm1', { isEdited: true }, KEY);
     expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 1 });
   });
+});
+
+describe.each(backends)('%s - a replay settles what it deferred', (_name, rig) => {
+  it('loses none of a sign-in flood on buffered bodies - over the per-sender AND per-conversation bounds', async () => {
+    const { storage, pendingRows } = await rig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    const total = PENDING_MUTATIONS_PER_CONVERSATION + 100;
+    const byAlice = PENDING_MUTATIONS_PER_SENDER + 50;
+    // The walk buffered every body and wrote them at its end, as the replay's flush does.
+    await storage.saveMessages(
+      Array.from({ length: total }, (_, i) => body(`m${i}`)),
+      KEY
+    );
+    const walked: DeferredMutation[] = Array.from({ length: total }, (_, i) => ({
+      entry: {
+        conversationId: 'conv',
+        messageId: `m${i}`,
+        sender: i < byAlice ? 'alice' : `member-${i % 7}`,
+        kind: 'reaction',
+        slot: '👍',
+        rank: 10 + i,
+      },
+      frameAt: 5_000 + i,
+    }));
+    // And one whose message this walk never saw: that one, and only that one, is parked.
+    walked.push({
+      entry: {
+        conversationId: 'conv',
+        messageId: 'not-here',
+        sender: 'alice',
+        kind: 'delete',
+        slot: '',
+        rank: 0,
+      },
+      frameAt: 9_000,
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.fn();
+    const deps: PendingMutationDeps = {
+      storage,
+      deviceKey: () => KEY,
+      conversations: new Map(),
+      messageReactions: new Map(),
+      log,
+    } as unknown as PendingMutationDeps;
+
+    await settleWalkedMutations(deps, 'conv', walked);
+
+    const rows = await storage.getMessagesByIds(
+      'conv',
+      Array.from({ length: total }, (_, i) => `m${i}`),
+      KEY
+    );
+    const withReaction = [...rows.rows.values()].filter((r) =>
+      (r.reactions ?? []).some((x) => (x as { emoji: string }).emoji === '👍')
+    );
+    expect(withReaction).toHaveLength(total);
+    expect(await pendingRows()).toHaveLength(1);
+    const said = log.mock.calls.map((c) => String(c[0]));
+    expect(said.filter((l) => l.includes('arrived before its message'))).toHaveLength(1);
+    // Over a thousand real seals and opens, twice: a time bound on the size, never on the outcome.
+  }, 120_000);
 });

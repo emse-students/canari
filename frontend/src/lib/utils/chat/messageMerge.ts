@@ -1,5 +1,8 @@
 import type { ChatMessage } from '$lib/types';
+import type { StoredMessage } from '$lib/db/types';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { compareMessageOrder } from './messageOrder';
+import { mergeReactions } from './messageReactions';
 
 /** Returns true when `content` is a serialized MessageEnvelope JSON object. */
 export function isEnvelopeContent(content: string): boolean {
@@ -54,6 +57,35 @@ export function mergeMessageUpgrade(
     isFcmPreview: false,
     serverTimestamp: incoming.serverTimestamp ?? existing.serverTimestamp,
   };
+}
+
+/**
+ * A preview's upgrade folded onto the stored row AS IT STANDS AT THE WRITE - the merge a
+ * compare-and-set runs (`IStorage.mergeMessages`), never a whole row written over it.
+ *
+ * `null` when the stored row is no longer a preview this body upgrades (deleted, or upgraded by
+ * another writer since the caller looked): it is left as it is. Otherwise the upgrade's fields are
+ * laid over it, with three things the upgrade can only ADD to, never take away - which a whole-row
+ * write did, erasing a reaction merged onto the preview between the caller's read and its write:
+ *
+ *   - the reactions are the union of both, pair by pair (`mergeReactions`);
+ *   - a deletion, an edit and a recorded media purge the upgrade does not carry stay as stored
+ *     (`false` and absent alike say nothing, and a tombstone already refused the upgrade above).
+ */
+export function previewUpgradeOnto(
+  current: StoredMessage,
+  upgrade: StoredMessage
+): StoredMessage | null {
+  if (!shouldUpgradeMessage(current, upgrade.content)) return null;
+  const { reactions, isDeleted, isEdited, editedAt, mediaPurgedAt, ...rest } = upgrade;
+  return mergeStoredMessage(current, {
+    ...rest,
+    isFcmPreview: false,
+    reactions: mergeReactions(current.reactions ?? [], reactions ?? []) ?? current.reactions,
+    ...(isDeleted ? { isDeleted } : {}),
+    ...(isEdited ? { isEdited, ...(editedAt ? { editedAt } : {}) } : {}),
+    ...(mediaPurgedAt ? { mediaPurgedAt } : {}),
+  });
 }
 
 /** True when a message has been composed but not yet confirmed by the server. */

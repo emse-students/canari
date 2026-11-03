@@ -45,8 +45,9 @@ import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
 import {
-  keepPendingMutation,
   settlePendingFor,
+  settleWalkedMutations,
+  type DeferredMutation,
   type PendingMutationDeps,
 } from './pendingMutationStore';
 
@@ -946,6 +947,11 @@ export async function replayConversationHistory(params: {
       messageReactions,
       log,
     };
+    // The mutations of a target this walk does not show - stored, buffered in this walk, or not here
+    // yet. Held IN MEMORY until the walk's bodies are written (unbounded, like the walk's own
+    // buffers), then settled in one batch: only a target the store still lacks reaches the BOUNDED
+    // pending store, so a fresh sign-in's thousands of reactions never evict each other there.
+    const walked: DeferredMutation[] = [];
 
     // Collect reaction mutations so we can persist them to DB in one pass after
     // the main message batch write (reactions reference messages from previous
@@ -1268,11 +1274,10 @@ export async function replayConversationHistory(params: {
             const emoji = parsed.reaction.emoji ?? '';
             const shown = getConversation(contactName)?.messages.some((m) => m.id === messageId);
             if (messageId && emoji && !shown) {
-              // Not shown: stored, buffered in this page, or not here yet - the store settles all
-              // three, and a reaction on a message this replay never writes is no longer lost.
-              await keepPendingMutation(
-                pendingDeps,
-                {
+              // Not shown: stored, buffered in this page, or not here yet - settled after the walk
+              // (`walked`), and a reaction on a message this replay never writes is not lost.
+              walked.push({
+                entry: {
                   conversationId: id,
                   messageId,
                   sender: senderNorm,
@@ -1282,8 +1287,8 @@ export async function replayConversationHistory(params: {
                   ...(parsed.reaction.removed === true ? { removed: true } : {}),
                   ...(authorship ? { proof: authorship } : {}),
                 },
-                parseServerTimestampMs(msg.timestamp)
-              );
+                frameAt: parseServerTimestampMs(msg.timestamp),
+              });
               mlsUpdated = true;
               continue;
             }
@@ -1324,7 +1329,7 @@ export async function replayConversationHistory(params: {
               historyFloorUpdate,
               pushPendingMessage,
               keepPending: (entry) =>
-                keepPendingMutation(pendingDeps, entry, parseServerTimestampMs(msg.timestamp)),
+                walked.push({ entry, frameAt: parseServerTimestampMs(msg.timestamp) }),
               dropOwnExcluded: (messages) =>
                 dropOwnExcludedMessages(id, userId, messages, { mlsService, log }),
             });
@@ -1632,6 +1637,10 @@ export async function replayConversationHistory(params: {
       }
     }
 
+    // After the bodies and the post-save pass: each deferred mutation onto the row the store now
+    // holds (one batched read), and only those whose target is still absent are parked.
+    await settleWalkedMutations(pendingDeps, id, walked);
+
     if (mlsUpdated) {
       log(
         `[OK] ${addedMsg} message(s) caught up for ${contactName}.` +
@@ -1748,29 +1757,36 @@ export async function retroactivelyResolveHexIds(
   });
 
   if (storage) {
-    const toSave: StoredMessage[] = updated
-      .filter((m, i) => m !== messages[i])
-      .map((m) => ({
-        id: m.id,
-        conversationId,
-        senderId: 'system',
-        content: m.content,
-        timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-        reactions: m.reactions,
-        ...(m.isDeleted ? { isDeleted: true } : {}),
-        ...(m.isEdited ? { isEdited: true } : {}),
-      }));
-    if (toSave.length > 0) {
+    // Each resolved line, keyed by the text it was resolved FROM: the write is a compare-and-set
+    // that rewrites a row only while it still holds that text, so a deletion, an edit or a reaction
+    // stored since the read is never written over by the whole row this read built.
+    const resolved = new Map<string, { from: string; to: string }>();
+    updated.forEach((m, i) => {
+      if (m !== messages[i]) resolved.set(m.id, { from: messages[i].content, to: m.content });
+    });
+    if (resolved.size > 0) {
       // A best-effort write, and a log is all a loss leaves here: failing means these names are
       // re-resolved on every later load of this conversation, which is a cost nobody can see and
       // nobody can attribute while the branch is silent.
-      storage.saveMessages(toSave, deviceKeyB64).catch((e: unknown) => {
-        console.warn(
-          `[History] could not persist ${toSave.length} message(s) whose hex ids were resolved ` +
-            `(group ${conversationId.slice(0, 8)}…): ${String(e)} - ` +
-            `they will be resolved again on the next load`
-        );
-      });
+      storage
+        .mergeMessages(
+          conversationId,
+          [...resolved.keys()],
+          (current) => {
+            const line = resolved.get(current.id);
+            return line && current.content === line.from
+              ? mergeStoredMessage(current, { content: line.to })
+              : null;
+          },
+          deviceKeyB64
+        )
+        .catch((e: unknown) => {
+          console.warn(
+            `[History] could not persist ${resolved.size} message(s) whose hex ids were resolved ` +
+              `(group ${conversationId.slice(0, 8)}…): ${String(e)} - ` +
+              `they will be resolved again on the next load`
+          );
+        });
     }
   }
 

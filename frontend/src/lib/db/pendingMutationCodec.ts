@@ -12,7 +12,9 @@ import type { PendingMutation, PendingMutationKind } from './types';
  * TAGGED: the message id, the sender and the slot (a reaction's emoji) - the rest of the key - are
  * stored only as tags under the device key (`deviceKeyTag`), so the store can look an entry up and
  * compare two of them without anything at rest saying who reacted with what to which message. A
- * message row seals its sender and its reactions; an entry is held to the same standard.
+ * message row seals its sender and its reactions; an entry is held to the same standard. Every tag
+ * is taken over the CONVERSATION as well as the value, so one sender's entries in two conversations
+ * carry unrelated tags: nothing at rest links a member across the conversations they share.
  *
  * SEALED under the device key: those three again, in full, and what the mutation SAYS - an edit's
  * text, a reaction taken back, the author's proof.
@@ -58,20 +60,35 @@ export function pendingMutationTier(kind: PendingMutationKind): PendingMutationT
   return kind === 'reaction' ? 0 : 1;
 }
 
-/** The tag of a message id - what a lookup by message is keyed on. */
-export function pendingMessageTag(deviceKeyB64: string, messageId: string): Promise<string> {
-  return deviceKeyTag(deviceKeyB64, 'pending-mutation/message', messageId);
+/** The tag of one value of an entry in `conversationId`: over the conversation AND the value. */
+function scopedTag(
+  deviceKeyB64: string,
+  label: string,
+  conversationId: string,
+  value: string
+): Promise<string> {
+  return deviceKeyTag(deviceKeyB64, label, `${conversationId}\u0000${value}`);
+}
+
+/** The tag of a message id in `conversationId` - what a lookup by message is keyed on. */
+export function pendingMessageTag(
+  deviceKeyB64: string,
+  conversationId: string,
+  messageId: string
+): Promise<string> {
+  return scopedTag(deviceKeyB64, 'pending-mutation/message', conversationId, messageId);
 }
 
 /** The three tags of an entry's key under `deviceKeyB64`. */
 export async function pendingMutationTags(
-  entry: Pick<PendingMutation, 'messageId' | 'sender' | 'slot'>,
+  entry: Pick<PendingMutation, 'conversationId' | 'messageId' | 'sender' | 'slot'>,
   deviceKeyB64: string
 ): Promise<PendingMutationTags> {
+  const c = entry.conversationId;
   const [messageTag, senderTag, slotTag] = await Promise.all([
-    pendingMessageTag(deviceKeyB64, entry.messageId),
-    deviceKeyTag(deviceKeyB64, 'pending-mutation/sender', entry.sender),
-    deviceKeyTag(deviceKeyB64, 'pending-mutation/slot', entry.slot),
+    pendingMessageTag(deviceKeyB64, c, entry.messageId),
+    scopedTag(deviceKeyB64, 'pending-mutation/sender', c, entry.sender),
+    scopedTag(deviceKeyB64, 'pending-mutation/slot', c, entry.slot),
   ]);
   return { messageTag, senderTag, slotTag };
 }

@@ -14,7 +14,7 @@
  * (`deletePendingMutations`), so a newer one kept meanwhile survives the removal of an older.
  */
 import type { Conversation, ChatMessage, MessageReaction } from '$lib/types';
-import type { IStorage, PendingMutation, StoredMessagePatch } from '$lib/db/types';
+import type { IStorage, PendingMutation, StoredMessagePatch, StoredRowsById } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
 import {
   PENDING_MUTATION_LIMITS,
@@ -64,6 +64,12 @@ function countEvictions(conversationId: string, n: number): void {
   );
 }
 
+/** A mutation whose target this caller could not find, with its frame's server time. */
+export interface DeferredMutation {
+  entry: Omit<PendingMutation, 'at'>;
+  frameAt: number | undefined;
+}
+
 /**
  * Keeps `entry`, whose target is neither shown nor stored, then looks for the target once more - it
  * may have been written between the caller's look and this write - and settles it if it is there.
@@ -78,23 +84,48 @@ export async function keepPendingMutation(
   entry: Omit<PendingMutation, 'at'>,
   frameAt: number | undefined
 ): Promise<void> {
+  await keepPendingMutations(deps, entry.conversationId, [{ entry, frameAt }]);
+}
+
+/**
+ * {@link keepPendingMutation} for a batch of one conversation: every entry written, then ONE look
+ * for all their targets ({@link settlePendingFor}) - never a store read per frame.
+ */
+export async function keepPendingMutations(
+  deps: PendingMutationDeps,
+  conversationId: string,
+  batch: readonly DeferredMutation[]
+): Promise<void> {
+  const ids = new Set<string>();
+  for (const { entry, frameAt } of batch) {
+    if (await parkPendingMutation(deps, entry, frameAt)) ids.add(entry.messageId);
+  }
+  if (ids.size > 0) await settlePendingFor(deps, conversationId, [...ids]);
+}
+
+/** Writes one entry to the store, with the checks and the log; whether anything was written. */
+async function parkPendingMutation(
+  deps: PendingMutationDeps,
+  entry: Omit<PendingMutation, 'at'>,
+  frameAt: number | undefined
+): Promise<boolean> {
   const { storage, deviceKey, conversations, log } = deps;
   const what = `${entry.kind} of ${short(entry.messageId)} by ${short(entry.sender)}`;
   if (frameAt === undefined || !Number.isFinite(frameAt)) {
     console.error(
       `[PENDING] ${what} arrived before its message with no server time - nothing orders it in the store, not kept`
     );
-    return;
+    return false;
   }
   const floor = conversations.get(entry.conversationId)?.historyFloor ?? 0;
   if (frameAt < floor) {
     log(`[PENDING] ${what} predates the history floor - its message can never arrive, not kept`);
-    return;
+    return false;
   }
   if (!storage) {
     // Every inbound path of this build runs with a store; one without has nowhere to keep it.
     console.error(`[PENDING] ${what} arrived before its message and there is no store to keep it`);
-    return;
+    return false;
   }
   let write;
   try {
@@ -105,7 +136,7 @@ export async function keepPendingMutation(
     );
   } catch (e) {
     console.error(`[PENDING] ${what} arrived before its message and could not be kept:`, e);
-    return;
+    return false;
   }
   if (write.evicted > 0) countEvictions(entry.conversationId, write.evicted);
   log(
@@ -115,7 +146,108 @@ export async function keepPendingMutation(
         ? `[PENDING] ${what} arrived before its message - kept for it`
         : `[PENDING] ${what} arrived before its message - written, then evicted by the same write (its sender is over the bound and this was its lowest)`
   );
-  await settlePendingFor(deps, entry.conversationId, [entry.messageId]);
+  return write.written;
+}
+
+/**
+ * Settles the mutations a WALK collected for targets it did not show - the archive replay, whose
+ * bodies are buffered for the whole walk and written only at its end. Held in memory for the walk
+ * (unbounded, like the walk itself), so a mutation of a body this same walk writes is never sent
+ * through the BOUNDED store, where a fresh sign-in's thousands of reactions would evict each other.
+ *
+ * Called once, after the walk's bodies and its post-save pass are written: ONE batched read of the
+ * targets, each target the store now holds settled by a compare-and-set (`settleAgainstPending`,
+ * against its author), and only what still has no target - or waits for a proof of its author - is
+ * parked in the store ({@link keepPendingMutations}), where "arrived before its message" is said.
+ */
+export async function settleWalkedMutations(
+  deps: PendingMutationDeps,
+  conversationId: string,
+  walked: readonly DeferredMutation[]
+): Promise<void> {
+  const { storage, deviceKey, log } = deps;
+  if (!storage || walked.length === 0) return;
+  const byId = new Map<string, DeferredMutation[]>();
+  for (const d of walked) {
+    const list = byId.get(d.entry.messageId) ?? [];
+    list.push(d);
+    byId.set(d.entry.messageId, list);
+  }
+  let found: StoredRowsById;
+  try {
+    found = await storage.getMessagesByIds(conversationId, [...byId.keys()], deviceKey());
+  } catch (e) {
+    console.error(
+      `[PENDING] the store could not say which of ${byId.size} replayed target(s) of ${short(conversationId)}... it holds - their mutations are kept for them:`,
+      e
+    );
+    found = { rows: new Map(), unreadable: new Set() };
+  }
+  const park: DeferredMutation[] = [];
+  // The entries of each target the store holds, as the settlement reads them.
+  const present = new Map<string, PendingMutation[]>();
+  for (const [id, list] of byId) {
+    if (found.unreadable.has(id)) {
+      console.warn(
+        `[PENDING] ${list.length} replayed mutation(s) of ${short(id)} target a row this device cannot open - not applied`
+      );
+    } else if (found.rows.has(id)) {
+      present.set(
+        id,
+        list.map((d) => ({ ...d.entry, at: d.frameAt ?? 0 }))
+      );
+    } else {
+      park.push(...list);
+    }
+  }
+  // ONE compare-and-set over every present target; a target merged again keeps its LAST outcome,
+  // the one taken against the row that was written.
+  const outcomes = new Map<string, { settlement: Settlement; author: string }>();
+  if (present.size > 0) {
+    try {
+      await storage.mergeMessages(
+        conversationId,
+        [...present.keys()],
+        (current) => {
+          const entries = present.get(current.id);
+          if (!entries) return null;
+          const next = settleAgainstPending(current, entries);
+          outcomes.set(current.id, { settlement: next, author: current.senderId });
+          return next.fields ? mergeStoredMessage(current, settledStoredPatch(next.fields)) : null;
+        },
+        deviceKey()
+      );
+    } catch (e) {
+      console.error(
+        `[PENDING] the replayed mutations of ${present.size} message(s) of ${short(conversationId)}... were not persisted - kept for them:`,
+        e
+      );
+      outcomes.clear();
+    }
+  }
+  let settled = 0;
+  for (const [id, entries] of present) {
+    const list = byId.get(id) ?? [];
+    const done = outcomes.get(id);
+    if (!done) {
+      park.push(...list);
+      continue;
+    }
+    logDiscarded(done.settlement, done.author);
+    if (done.settlement.fields) {
+      showSettled(deps, conversationId, id, done.settlement.fields);
+      settled++;
+    }
+    // Waiting for a proven copy of an unproven body: those, and only those, go to the store.
+    const retained = new Set(done.settlement.retained);
+    list.forEach((d, k) => {
+      if (retained.has(entries[k])) park.push(d);
+    });
+  }
+  log(
+    `[PENDING] ${walked.length} replayed mutation(s) of ${short(conversationId)}...: ${settled} message(s) took theirs, ${park.length} wait in the store`
+  );
+  await keepPendingMutations(deps, conversationId, park);
 }
 
 /**
@@ -157,21 +289,47 @@ export async function pendingFor(
 }
 
 /**
- * Logs what a settlement refused: each entry discarded for good (only a message's author may delete
- * or edit it), and the ones retained because the body's author is a claim nobody proved.
+ * The entries already said by {@link logDiscarded} in this session, by their identity and rank. A
+ * retained entry is settled again at every look at its message, and saying it each time is the
+ * noise that hides the next defect: each entry is said ONCE.
+ */
+const saidEntries = new Set<string>();
+
+/** Whether `entry` (at its rank) is said for the first time, recording that it now is. */
+function firstSaying(entry: PendingMutation, verdict: 'discarded' | 'retained'): boolean {
+  const key = [
+    verdict,
+    entry.conversationId,
+    entry.messageId,
+    entry.sender,
+    entry.kind,
+    entry.slot,
+    entry.rank,
+  ].join('\u0000');
+  if (saidEntries.has(key)) return false;
+  saidEntries.add(key);
+  return true;
+}
+
+/**
+ * Logs what a settlement refused, ONCE per entry: each entry discarded for good (only a message's
+ * author may delete or edit it), and each one retained because the body's author is a claim nobody
+ * proved.
  */
 export function logDiscarded(
   settlement: Pick<Settlement, 'discarded' | 'retained'>,
   author: string
 ): void {
   for (const entry of settlement.discarded) {
+    if (!firstSaying(entry, 'discarded')) continue;
     console.warn(
       `[PENDING] Discarded a ${entry.kind} of ${short(entry.messageId)} by ${short(entry.sender)} - its author is ${short(author)}, and only an author may ${entry.kind} it`
     );
   }
-  if (settlement.retained.length > 0) {
+  for (const entry of settlement.retained) {
+    if (!firstSaying(entry, 'retained')) continue;
     console.log(
-      `[PENDING] ${settlement.retained.length} mutation(s) of ${short(settlement.retained[0].messageId)} by someone other than its claimed, unproven author ${short(author)} - kept for a proven copy`
+      `[PENDING] Kept a ${entry.kind} of ${short(entry.messageId)} by ${short(entry.sender)} for a proven copy - the body's author ${short(author)} is a claim nobody proved`
     );
   }
 }

@@ -1617,7 +1617,9 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
 - **nothing at rest says who reacted with what to which message**: the message id, the sender and
   the slot are stored only as TAGS - HMAC-SHA256 under a key derived from the device key
   (`deviceKeyTag` in `encryption.ts`, labelled per field), truncated to 16 bytes - and in full only
-  inside the sealed payload (`pendingMutationCodec.ts`). The conversation, the kind, its eviction
+  inside the sealed payload (`pendingMutationCodec.ts`). Each tag is taken over the CONVERSATION and
+  the value together, so one sender's entries in two conversations carry unrelated tags and nothing
+  at rest links a member across the conversations they share. The conversation, the kind, its eviction
   tier, the rank and the frame time stay clear: they are what the store decides on without opening
   anything, and a message row names its conversation in clear too. A PIN change re-seals AND
   re-tags every entry (`resealPendingMutations`, from `resealDeviceKeyStores`), resumably;
@@ -1635,8 +1637,17 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   proven copy settles it later (`settlePendingFor` runs after the bundle merge for that reason).
   The settlement returns what it `consumed`, and only that is removed. Every writer settles through it: the
   live add and the batch flush (`useMessaging.svelte.ts`), the bundle merge (through the batch) and
-  the archive replay (`history.ts`, whose replayed deletions, edits and reactions of a message it
-  does not show are kept the same way, and whose written rows are settled after the write);
+  the archive replay (`history.ts`; see the next point for what it does with a mutation of a
+  message it does not show, and its written rows are settled after the write);
+- **the archive replay holds its own deferred mutations IN MEMORY, never in the bounded store.** It
+  buffers every body of its walk and writes them at the end, so on a fresh sign-in almost every
+  replayed deletion, edit and reaction names a body that is buffered, not stored - thousands of
+  them, past both bounds below, and sent through the store they evicted each other. They are
+  collected in the walk (`walked`, unbounded like the walk's own buffers) and settled once, after
+  the bodies and the post-save pass are written (`settleWalkedMutations`): ONE batched
+  `getMessagesByIds`, ONE compare-and-set over every target the store now holds (settled against
+  the author, as everywhere), and only a target the store still lacks - or an entry retained for a
+  proven copy - is parked in the store, the only place "arrived before its message" is said;
 - **no read-then-write gap, from either side.** A handler WRITES the entry and then looks for the
   target again (`keepPendingMutation`); a writer WRITES the row and then reads the entries again
   (`settlePendingFor`). Whichever lands second sees the other's write. An entry is consumed only
@@ -1669,7 +1680,14 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   that wait for good are mutations of a message this device will never receive; 1000 sealed entries
   are tens of kilobytes per conversation, and a clock would decide wrongly in both directions. Why
   200 per sender: a fifth of that, so at least five senders fill a conversation before the larger
-  bound has anything to choose between.
+  bound has anything to choose between;
+- **collected with the old messages**: `deleteOldMessages(maxAgeMs)` also removes the entries whose
+  FRAME is older than the same cutoff, on both backends. The frame's time is an upper bound on its
+  target's, so the message such an entry waits for is older still, and would be collected the moment
+  it arrived;
+- **said once per entry**: a retained entry is settled again at every look at its message, so the
+  warn of a discarded entry and the line of a retained one are said ONCE per entry and rank in a
+  session (`logDiscarded`), never once per look.
 
 The serialisation the writers rely on is the per-group drain: `MlsPerGroupScheduler.drain` awaits
 each frame's handler, and the drain's end (`onDrainEnd` -> `endBulkMessageIngest` ->
@@ -1692,14 +1710,32 @@ writes (a get and a put in their own transaction on IndexedDB, an upsert `rev = 
 SQLite - never `INSERT OR REPLACE`, which would reset it), and the PIN-change re-seal. A rewrite goes
 through `IStorage.mergeMessages(conversationId, ids, merge)` (`messageCas.ts`): each row is read
 with its revision, `merge` - a pure function of the row as it stands - gives the row to write, and
-the write applies only while the revision is still the one read: on IndexedDB a get, a compare and a
+the write applies only while the token is still the one read: on IndexedDB a get, a compare and a
 put in ONE readwrite transaction with every payload sealed before it opens, on SQLite
-`UPDATE ... WHERE id = ? AND rev = ?`. A row that moved is read and merged again. **Termination is a
+`UPDATE ... WHERE id = ? AND rev = ? AND iv = ?`. A row that moved is read and merged again.
+
+**The token is the revision AND the row's iv, which closes ABA.** A revision alone repeats: a row
+deleted and stored again starts over, and rewritten as often reaches the revision a stale reader
+holds. The iv cannot repeat - every seal draws a fresh 96-bit nonce, and AES-GCM under one key
+requires that it never does - so the compare matches only the very write it read, whatever happened
+to the row in between. Nothing is seeded, counted or stored for it. **Termination is a
 proof, not a clock**: a retry happens only when another writer COMMITTED that row in between.
 `updateMessage` is that loop with `mergeStoredMessage`. The replay's known rows, its post-save pass
 (`replayedMutationsOnto`: reactions merged pair by pair, a tombstone final, an older edit refused),
 the live edit, deletion and reaction writes, the bundle merges and the stored-preview upgrade all
-compute their change INSIDE `merge`, from the current row.
+compute their change INSIDE `merge`, from the current row. So do the upgrades of a SHOWN preview
+(`writeShownUpgrades` in `useMessaging.svelte.ts`, folding `previewUpgradeOnto` from
+`messageMerge.ts`: `shouldUpgradeMessage` asked again of the row as it stands, the reactions unioned,
+a deletion or an edit the upgrade does not carry kept), the push cache's preview (`fcmCache.ts`),
+the outbox's write of a sent message (`persistSent`), the replay's resolved display names and
+`updateMessage`, which takes the conversation at every caller.
+
+**The whole-row writes left are MOVES**, which the scoped compare-and-set refuses by design: the
+merge of a duplicate DM at boot (`mergeDirectConversationDuplicates`, which now writes only the
+duplicate's own rows, as stored), the re-key of a DM onto the group just joined
+(`setupMessageHandler.ts`, which moves the STORED rows - proofs included - and writes from memory
+only a row no store holds, where none stands), and a sent message whose group was re-keyed mid-send
+(`persistSent`, said when taken). The orphan mirror adoption writes only where no row stands.
 
 The alternative the review offered - running the replay under `runCommitUnderMlsLock` - was not
 taken: that lock is the MLS service's global commit mutex, not exposed on `IMlsService`, and holding
@@ -1721,7 +1757,10 @@ build stored as text is read and dated on IndexedDB as SQLite always did.
 Pinned by `pendingMutationsStore.test.ts` (both backends: tags at rest, the per-sender flood, the
 tier order, `kept`, the damaged-entry removal, the re-seal, the scope, the three races - a replay
 write against a live delete, the post-save pass against a live edit, `updateMessage` against itself -
-and the upgrade of a v12 IndexedDB and a v17 SQLite store), `pendingMutations.test.ts`,
+the ABA of a row deleted and stored again, the conversation-scoped tags, an interrupted re-seal's
+leftover swept by the next run, the collection with old messages, a replay settling a sign-in flood
+over both bounds without losing one, and the upgrade of a v12 IndexedDB and a v17 SQLite store),
+`pendingMutations.test.ts`, `messageMerge.test.ts` (`previewUpgradeOnto`), `fcmCache.test.ts`,
 `pendingMutationStore.test.ts` (the eviction warnings), `useMessaging.deletionInOneDrain.svelte.test.ts`
 (each finding of the review by number, and both races),
 `useMessaging.mutationsReachTargets.svelte.test.ts` (the conversation scope) and

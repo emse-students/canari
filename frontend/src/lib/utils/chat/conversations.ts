@@ -7,7 +7,7 @@ import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
-import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
+import type { IStorage, ConversationMeta } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -726,13 +726,17 @@ export async function mergeDirectConversationDuplicates(
     try {
       const canonicalMessages = await storage.getMessages(canonical.id, deviceKeyB64);
       const duplicateMessages = await storage.getMessages(duplicate.id, deviceKeyB64);
-      const byId = new Map<string, StoredMessage>();
-      for (const m of canonicalMessages) byId.set(m.id, { ...m, conversationId: canonical.id });
-      for (const m of duplicateMessages) {
-        if (!byId.has(m.id)) byId.set(m.id, { ...m, conversationId: canonical.id });
-      }
-      const merged = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
-      if (merged.length > 0) await storage.saveMessages(merged, deviceKeyB64);
+      const inCanonical = new Set(canonicalMessages.map((m) => m.id));
+      // A MOVE, AND THE ONE WHOLE-ROW WRITE THIS MERGE MAKES. Only the duplicate's own rows are
+      // written - the canonical's stand as they are, never rewritten from this read. A move changes
+      // a row's conversation, which the scoped compare-and-set (`mergeMessages`) refuses by design,
+      // so each moved row is the STORED row just read - every field, proofs and reactions included -
+      // under its new conversation. What it cannot see is a write to that row after the read; the
+      // duplicate is deleted in the next statement, so such a write would be lost with it anyway.
+      const moved = duplicateMessages
+        .filter((m) => !inCanonical.has(m.id))
+        .map((m) => ({ ...m, conversationId: canonical.id }));
+      if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.

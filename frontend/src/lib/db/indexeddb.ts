@@ -38,7 +38,7 @@ import {
   pendingMutationTags,
   splitPendingMutation,
 } from './pendingMutationCodec';
-import { casMergeMessages, type RevisedRow } from './messageCas';
+import { casMergeMessages, type RevisedRow, type RevisedWrite } from './messageCas';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -922,10 +922,15 @@ export class IndexedDbStorage implements IStorage {
    * See {@link IStorage.updateMessage}: a compare-and-set on the row's revision
    * ({@link mergeMessages}), never a read, an await and a blind write.
    */
-  async updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void> {
+  async updateMessage(
+    conversationId: string,
+    id: string,
+    patch: StoredMessagePatch,
+    deviceKeyB64: string
+  ): Promise<void> {
     await casMergeMessages(
       this.revisedRows(),
-      null,
+      conversationId,
       [id],
       (current) => mergeStoredMessage(current, patch),
       deviceKeyB64
@@ -953,12 +958,13 @@ export class IndexedDbStorage implements IStorage {
         this.readRows(conversationId, ids, deviceKeyB64),
       writeIfUnchanged: async (
         conversationId: string | null,
-        writes: ReadonlyArray<{ msg: StoredMessage; rev: number }>,
+        writes: ReadonlyArray<RevisedWrite>,
         deviceKeyB64: string
       ): Promise<Set<string>> => {
         const sealed = await Promise.all(
-          writes.map(async ({ msg, rev }) => ({
+          writes.map(async ({ msg, rev, stamp }) => ({
             rev,
+            stamp,
             record: {
               id: msg.id,
               conversationId: msg.conversationId,
@@ -973,11 +979,11 @@ export class IndexedDbStorage implements IStorage {
         await new Promise<void>((resolve, reject) => {
           const tx = db.transaction('messages', 'readwrite');
           const store = tx.objectStore('messages');
-          for (const { rev, record } of sealed) {
+          for (const { rev, stamp, record } of sealed) {
             const req = store.get(record.id);
             req.onsuccess = () => {
               const current = req.result;
-              if (!current || revisionOf(current) !== rev) return;
+              if (!current || revisionOf(current) !== rev || ivStamp(current.iv) !== stamp) return;
               if (conversationId !== null && current.conversationId !== conversationId) return;
               if (guardedPut(store, { ...record, rev: rev + 1 })) written.add(record.id);
             };
@@ -1034,6 +1040,7 @@ export class IndexedDbStorage implements IStorage {
         )) as Record<string, unknown>;
         out.rows.set(existing.id, {
           rev: revisionOf(existing),
+          stamp: ivStamp(existing.iv),
           msg: fromMessagePayload(
             {
               id: existing.id,
@@ -1264,7 +1271,9 @@ export class IndexedDbStorage implements IStorage {
     const out: PendingMutationRead = { entries: [], removedUnreadable: 0 };
     const unique = [...new Set(messageIds)];
     if (unique.length === 0) return out;
-    const tags = await Promise.all(unique.map((id) => pendingMessageTag(deviceKeyB64, id)));
+    const tags = await Promise.all(
+      unique.map((id) => pendingMessageTag(deviceKeyB64, conversationId, id))
+    );
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
       const tx = db.transaction(PENDING_MUTATIONS, 'readonly');
@@ -1704,8 +1713,17 @@ export class IndexedDbStorage implements IStorage {
     const db = this.ensureDb();
     const cutoff = Date.now() - maxAgeMs;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('messages', 'readwrite');
+      const tx = db.transaction(['messages', PENDING_MUTATIONS], 'readwrite');
       const store = tx.objectStore('messages');
+      // The mutations whose frame predates the cutoff wait for a message older still, which this
+      // collection would take the moment it arrived: they go with it (see IStorage).
+      const pending = tx.objectStore(PENDING_MUTATIONS).openCursor();
+      pending.onsuccess = () => {
+        const cursor = pending.result;
+        if (!cursor) return;
+        if (Number(cursor.value.at) < cutoff) cursor.delete();
+        cursor.continue();
+      };
       const req = store.openCursor();
       let deleted = 0;
       req.onsuccess = () => {
@@ -2411,6 +2429,18 @@ export class IndexedDbStorage implements IStorage {
  * strings, binaries and arrays - so `[id, this]` up to `[id, []]` holds every non-numeric timestamp.
  */
 const NON_NUMERIC_KEY_FLOOR = new Date(-8640000000000000);
+
+/** A record's iv as the compare-and-set token's second half (`messageCas.ts`). */
+function ivStamp(iv: unknown): string {
+  return iv instanceof Uint8Array ? uint8ToB64(iv) : String(iv);
+}
+
+/** Base64 of `bytes`, for a token compared as a string. */
+function uint8ToB64(bytes: Uint8Array): string {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
 
 /** A message record's revision; a record written before revisions existed is at 0. */
 function revisionOf(record: { rev?: unknown }): number {

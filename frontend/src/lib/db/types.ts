@@ -148,12 +148,6 @@ export interface PageKey {
   provisional: boolean;
 }
 
-/**
- * The fields of a stored message a mutation is allowed to change.
- *
- * `id` and `conversationId` are the row's identity, never patchable: a reaction may not move a
- * message to another conversation. Applied by `mergeStoredMessage`.
- */
 /** The answer of {@link IStorage.getMessagesByIds}. */
 export interface StoredRowsById {
   /** The rows found and opened, by id - only rows of the conversation asked about. */
@@ -169,6 +163,12 @@ export interface StoredRowsById {
  */
 export type StoredMessageMerge = (current: StoredMessage) => StoredMessage | null;
 
+/**
+ * The fields of a stored message a mutation is allowed to change.
+ *
+ * `id` and `conversationId` are the row's identity, never patchable: a reaction may not move a
+ * message to another conversation. Applied by `mergeStoredMessage`.
+ */
 export type StoredMessagePatch = Partial<Omit<StoredMessage, 'id' | 'conversationId'>>;
 
 /** What a {@link PendingMutation} does to its message once the message is here. */
@@ -778,9 +778,15 @@ export interface IStorage {
    *
    * A COMPARE-AND-SET on the row's revision ({@link mergeMessages}), never a read, an await and a
    * blind write: a patch merged onto a row another writer changed in between is merged again onto
-   * what that writer left.
+   * what that writer left. SCOPED like every lookup by id: a row of another conversation than
+   * `conversationId` is left alone.
    */
-  updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void>;
+  updateMessage(
+    conversationId: string,
+    id: string,
+    patch: StoredMessagePatch,
+    deviceKeyB64: string
+  ): Promise<void>;
   /**
    * Rewrites the rows of `conversationId` stored under `ids` from their CURRENT state: each row is
    * read with its revision, `merge` gives the row to write, and the write applies only while the
@@ -932,7 +938,12 @@ export interface IStorage {
 
   // Garbage collection - delete messages older than the given threshold.
 
-  /** Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. */
+  /**
+   * Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. The
+   * pending mutations whose FRAME is older than the same cutoff go with them: a frame's time is an
+   * upper bound on its target's, so the message such an entry waits for is older still, and would
+   * be collected the moment it arrived.
+   */
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require

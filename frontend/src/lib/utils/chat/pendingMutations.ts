@@ -38,7 +38,10 @@ import { m } from '$lib/paraglide/messages';
  * not wrong because it is old - its message may still come - only because the store must be bounded.
  *
  * 1000 because the entries a correct device needs are those of mutations whose message is in flight:
- * the same catch-up drain (settled when that drain flushes), or a bundle or replay that follows it.
+ * the same catch-up drain (settled when that drain flushes), or a bundle that follows it. NOT the
+ * archive replay: it holds the mutations of the bodies it buffers in memory and parks here only
+ * those whose message it never wrote (`settleWalkedMutations`) - a fresh sign-in's thousands of
+ * replayed reactions never reach this bound.
  * One conversation would need over a thousand deletions, edits and reaction states of messages it
  * has not yet received for a live entry to be evicted - while what the cap is FOR, entries whose
  * message never comes (a message from before this device's arrival, an id nobody sent), is bounded

@@ -84,6 +84,8 @@ function makeContext() {
         return new Set(rows.map((row) => row.id));
       }),
       getMessagesByIds: vi.fn(async () => ({ rows: new Map(), unreadable: new Set() })),
+      // No row stands in this store: a compare-and-set finds nothing, and the insert writes.
+      mergeMessages: vi.fn(async () => new Set()),
       getPendingMutations: vi.fn(async () => ({ entries: [], unreadable: 0 })),
     } as never,
     setAuthToken: vi.fn(),
@@ -311,7 +313,7 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
     });
   });
 
-  it("keeps THIS device's record of a reel's 410 across the upgrade's wholesale rewrite (RC-6)", async () => {
+  it("keeps THIS device's record of a reel's 410 across the upgrade (RC-6)", async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = withPreview();
     const row = conversations.get(CONVO)!;
@@ -328,12 +330,7 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
 
   it("keeps it through batchAddMessages' upgrade too, the other seam that rewrites the row", async () => {
     const messaging = useMessaging();
-    const { ctx, conversations } = withPreview();
-    const saveMessages = vi.fn().mockResolvedValue(undefined);
-    (ctx as unknown as { storage: Record<string, unknown> }).storage = {
-      ...(ctx.storage as unknown as Record<string, unknown>),
-      saveMessages,
-    };
+    const { ctx, conversations, saveMessage } = withPreview();
     const row = conversations.get(CONVO)!;
     conversations.set(CONVO, {
       ...row,
@@ -348,7 +345,7 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
     );
 
     expect(conversations.get(CONVO)!.messages[0].mediaPurgedAt).toBe(4242);
-    const written = saveMessages.mock.calls.flatMap((c) => c[0] as { id: string }[]);
+    const written = saveMessage.mock.calls.map((c) => c[0] as { id: string });
     expect(written.find((r) => r.id === 'photo-1')).toMatchObject({ mediaPurgedAt: 4242 });
   });
 

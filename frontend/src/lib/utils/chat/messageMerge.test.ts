@@ -3,7 +3,9 @@ import {
   isFcmPreviewContent,
   shouldUpgradeMessage,
   mergeMessageUpgrade,
+  previewUpgradeOnto,
 } from './messageMerge';
+import type { StoredMessage } from '$lib/db/types';
 
 describe('messageMerge', () => {
   it('detects envelope JSON vs plain preview', () => {
@@ -55,5 +57,48 @@ describe('a deleted preview', () => {
         '{"kind":"text","text":"body"}'
       )
     ).toBe(false);
+  });
+});
+
+describe('previewUpgradeOnto - a preview upgrade folded onto the row as it stands', () => {
+  const BODY = '{"kind":"text","text":"the body"}';
+  const preview = (over: Partial<StoredMessage> = {}): StoredMessage => ({
+    id: 'm1',
+    conversationId: 'c',
+    senderId: 'alice',
+    content: 'caption',
+    timestamp: 1,
+    isFcmPreview: true,
+    ...over,
+  });
+  const upgrade: StoredMessage = {
+    id: 'm1',
+    conversationId: 'c',
+    senderId: 'alice',
+    content: BODY,
+    timestamp: 1,
+    serverTimestamp: 7,
+    isFcmPreview: false,
+  };
+
+  it('keeps a reaction the stored preview took after memory was read (the bulk row carries none)', () => {
+    const bob = { userId: 'bob', emoji: '👍', at: 5 };
+    const next = previewUpgradeOnto(preview({ reactions: [bob] }), upgrade);
+    expect(next).toMatchObject({ content: BODY, isFcmPreview: false, serverTimestamp: 7 });
+    expect(next?.reactions).toEqual([bob]);
+  });
+
+  it('unions both sides reactions, and keeps an edit the upgrade does not carry', () => {
+    const next = previewUpgradeOnto(
+      preview({ reactions: [{ userId: 'bob', emoji: '👍', at: 5 }] }),
+      { ...upgrade, reactions: [{ userId: 'carol', emoji: '🎉', at: 6 }], isDeleted: false }
+    );
+    expect(next?.reactions?.map((r) => r.userId).sort()).toEqual(['bob', 'carol']);
+    expect(next?.isDeleted).toBeUndefined();
+  });
+
+  it('leaves a row that is no longer a preview - deleted, or upgraded by another writer', () => {
+    expect(previewUpgradeOnto(preview({ isDeleted: true }), upgrade)).toBeNull();
+    expect(previewUpgradeOnto(preview({ content: BODY, isFcmPreview: false }), upgrade)).toBeNull();
   });
 });

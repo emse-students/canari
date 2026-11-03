@@ -66,12 +66,40 @@ const previewRow = (): StoredMessage => ({
   isFcmPreview: true,
 });
 
+/**
+ * A store holding `existing` (or nothing). `saveMessage` is the ONE spy every row write reaches -
+ * the compare-and-set's merged row, or the insert-if-absent's row - so a test asserts the write
+ * whichever path took it.
+ */
 function fakeStorage(existing: StoredMessage | null) {
-  const saveMessage = vi.fn().mockResolvedValue(undefined);
+  const saveMessage = vi.fn(async (_row: StoredMessage) => undefined);
   const storage = {
-    getMessage: vi.fn().mockResolvedValue(existing),
+    getMessagesByIds: vi.fn(async () => ({
+      rows: new Map(existing ? [[existing.id, existing]] : []),
+      unreadable: new Set(),
+    })),
     mergeConversation: vi.fn().mockResolvedValue(undefined),
-    saveMessage,
+    mergeMessages: vi.fn(
+      async (
+        _c: string,
+        ids: string[],
+        merge: (current: StoredMessage) => StoredMessage | null
+      ) => {
+        const next = existing && ids.includes(existing.id) ? merge(existing) : null;
+        if (!next) return new Set<string>();
+        await saveMessage(next);
+        return new Set([next.id]);
+      }
+    ),
+    saveMessagesIfAbsent: vi.fn(async (rows: StoredMessage[]) => {
+      const written = new Set<string>();
+      for (const row of rows) {
+        if (existing?.id === row.id) continue;
+        await saveMessage(row);
+        written.add(row.id);
+      }
+      return written;
+    }),
   } as unknown as IStorage;
   return { storage, saveMessage };
 }
@@ -114,6 +142,19 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
 
     expect(saveMessage).toHaveBeenCalledTimes(1);
     expect(result.messages).toHaveLength(1);
+  });
+
+  it('keeps what the stored preview took meanwhile - a reaction is never erased by the caption', async () => {
+    const reacted = { ...previewRow(), reactions: [{ userId: 'bob', emoji: '👍', at: 5 }] };
+    const { storage, saveMessage } = fakeStorage(reacted as StoredMessage);
+
+    await consumeFcmCache(KEY, storage, SELF);
+
+    expect(saveMessage).toHaveBeenCalledTimes(1);
+    expect(saveMessage.mock.calls[0][0]).toMatchObject({
+      content: CAPTION,
+      reactions: [{ userId: 'bob', emoji: '👍', at: 5 }],
+    });
   });
 
   it('leaves a full envelope alone, and does not report it as injected', async () => {

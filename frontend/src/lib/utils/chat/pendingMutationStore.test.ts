@@ -3,7 +3,11 @@
  * session total reaches a new power of two - a flood is visible in a handful of lines, never one per
  * put - and an entry the same write evicted is never logged as kept.
  */
-import { keepPendingMutation, type PendingMutationDeps } from './pendingMutationStore';
+import {
+  keepPendingMutation,
+  logDiscarded,
+  type PendingMutationDeps,
+} from './pendingMutationStore';
 import type { PendingMutationWrite } from '$lib/db/types';
 
 let n = 0;
@@ -80,5 +84,24 @@ describe('keepPendingMutation - what it says', () => {
     const said = log.mock.calls.map((c) => String(c[0])).join('\n');
     expect(said).toContain('evicted by the same write');
     expect(said).not.toContain('kept for it');
+  });
+});
+
+describe('logDiscarded - each entry said once', () => {
+  it('says a discarded and a retained entry once, however often their message is settled again', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const conversation = `once-${n++}`;
+    const discarded = { ...entry(conversation), at: 1 };
+    const retained = { ...entry(conversation), sender: 'eve', kind: 'edit' as const, at: 1 };
+
+    for (let i = 0; i < 5; i++)
+      logDiscarded({ discarded: [discarded], retained: [retained] }, 'bob');
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledTimes(1);
+    // Another entry is still said.
+    logDiscarded({ discarded: [{ ...discarded, messageId: 'm2' }], retained: [] }, 'bob');
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });

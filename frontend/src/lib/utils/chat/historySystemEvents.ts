@@ -117,11 +117,13 @@ export interface ReplaySystemEventCtx {
    */
   pendingById: Map<string, Omit<PendingHistoryMessage, 'ingestSequence'>>;
   /**
-   * Keeps a deletion, an edit or a reaction whose message memory does not show, in the store of
-   * mutations that came before their message (`pendingMutations.ts`), dated by this frame's server
-   * time: the live path's own seam, so the replay settles against the AUTHOR exactly as it does.
+   * Defers a deletion, an edit or a reaction whose message memory does not show, dated by this
+   * frame's server time. The replay holds it IN MEMORY until its bodies are written, then settles it
+   * against the stored row and its AUTHOR (`settleWalkedMutations`), exactly as the live path does;
+   * only one whose target the store still lacks reaches the bounded store of mutations that came
+   * before their message (`pendingMutations.ts`).
    */
-  keepPending: (entry: Omit<PendingMutation, 'at'>) => Promise<void>;
+  keepPending: (entry: Omit<PendingMutation, 'at'>) => void;
   /**
    * Messages deleted via a `delete_message` event during this replay whose message memory shows,
    * each with the id of the member that sent the event (checked against the shown row first).
@@ -354,8 +356,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // this branch was dead. The durability split made it live again, hole and all.
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'delete')) return;
       if (!known) {
-        // Not shown: stored, buffered in this page, or not here yet - the store settles all three.
-        await ctx.keepPending({
+        // Not shown: stored, buffered in this page, or not here yet - settled once the bodies land.
+        ctx.keepPending({
           conversationId: ctx.conversationId,
           messageId: data.messageId,
           sender: senderNorm,
@@ -399,7 +401,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const known = convo?.messages.find((m) => m.id === data.messageId);
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
       if (!known) {
-        await ctx.keepPending({
+        ctx.keepPending({
           conversationId: ctx.conversationId,
           messageId: data.messageId,
           sender: senderNorm,
