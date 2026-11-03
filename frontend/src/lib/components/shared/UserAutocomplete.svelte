@@ -3,6 +3,7 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { Search } from '@lucide/svelte';
+  import { insideViewerLayer, popoverLayerClass as popoverRung } from '$lib/utils/viewerLayer';
   import { m } from '$lib/paraglide/messages';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -12,6 +13,9 @@
     id: string;
     displayName: string | null;
   }
+
+  /** A dropdown inside a lifted dialog must clear it (`utils/viewerLayer.ts`). */
+  const popoverLayerClass = popoverRung(insideViewerLayer());
 
   interface Props {
     /** Currently selected user ID (empty string when nothing is selected). */
@@ -275,7 +279,7 @@
       id={listboxId}
       role="listbox"
       aria-label={placeholder}
-      class="bg-cn-surface fixed z-(--z-modal-popover) overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
+      class="bg-cn-surface fixed {popoverLayerClass} overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
     >
       {#each suggestions as user, index (user.id)}
         <!--

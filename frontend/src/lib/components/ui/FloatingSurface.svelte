@@ -6,6 +6,7 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { m } from '$lib/paraglide/messages';
+  import { insideViewerLayer, popoverLayerClass as popoverRung } from '$lib/utils/viewerLayer';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   /**
@@ -77,6 +78,9 @@
 
   // Escape bubbles up from whatever holds focus inside the panel - an option, a day, a button -
   // so it is caught on the panel itself, in both shapes, rather than on each control.
+  /** Inside a nested dialog or a viewer, its own rung is under the dialog it belongs to. */
+  const popoverLayerClass = popoverRung(insideViewerLayer());
+
   $effect(() => {
     if (!open || !panelEl) return;
     const panel = panelEl;
@@ -92,7 +96,7 @@
 </script>
 
 {#if open && asSheet}
-  <div use:portal use:coversScreen class="fixed inset-0 z-(--z-modal-popover)">
+  <div use:portal use:coversScreen class="fixed inset-0 {popoverLayerClass}">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"
@@ -128,7 +132,7 @@
     role="group"
     aria-label={label}
     tabindex="-1"
-    class="bg-surface-elevated border-cn-border fixed z-(--z-modal-popover) flex flex-col overflow-hidden rounded-xl border shadow-lg {popoverWidth ===
+    class="bg-surface-elevated border-cn-border fixed {popoverLayerClass} flex flex-col overflow-hidden rounded-xl border shadow-lg {popoverWidth ===
     'content'
       ? 'w-max'
       : 'w-max max-w-[min(22rem,calc(100vw-1rem))]'}"
