@@ -5,8 +5,15 @@
 --
 -- Every post flagged `posts.pinned` (exactly one on production, measured 2026-11-03) is pinned in
 -- EVERY space that a BDE governs, where the post is visible, and that has room (fewer than 3 pins
--- there - all empty today). A flagged post visible in NO governed space is pinned nowhere, and a
--- NOTICE names its id. Deterministic, loses no pin that has a possible home, invents no space.
+-- there - all empty today; with several flagged posts competing for one space's room, the lower
+-- post id goes first). Deterministic, loses no pin that has a possible home, invents no space.
+--
+-- EVERY PIN NOT CARRIED IS NAMED BY A NOTICE, so the run's log is the hand-work list:
+-- - each governed space where a flagged post is visible but which had no room left (post, space);
+-- - each flagged post that ends with no pin row at all - visible in no governed space, or NOT LIVE
+--   at run time (hidden by moderation, scheduled for later, an expired reel). Such a post is not
+--   re-examined later: nothing re-runs this migration, so it is re-pinned by hand if wanted
+--   (docs/wiki/legacy-compatibility.md, the `posts.pinned` row).
 --
 -- "Visible in a space" is the SQL of `postReachesSpaceSql` + `postPinnableInSpaceSql`
 -- (`spaces/reader-spaces.ts`, `posts/space-pins.ts`), written out here because a migration is frozen
@@ -27,12 +34,15 @@
 -- writes nothing. Requires migration 127.
 --
 -- LOCKS: none beyond the row locks of the INSERT into `post_space_pins` (a table no other
--- transaction writes before this release); `posts`, `spaces`, `users`, `association_audiences` and
+-- transaction writes before this release) and the transaction's own temporary table
+-- (`m128_candidates`, dropped at COMMIT); `posts`, `spaces`, `users`, `association_audiences` and
 -- `post_republications` are only read.
 SET lock_timeout = '5s';
 
 BEGIN;
 
+-- Every (flagged live post, governed space where it is visible) pair, room or not.
+CREATE TEMPORARY TABLE m128_candidates ON COMMIT DROP AS
 WITH flagged AS (
     SELECT p.* FROM posts p
      WHERE p.pinned = true
@@ -59,22 +69,40 @@ WITH flagged AS (
                  WHERE rep."postId" = f.id
                    AND (rr.formation IS NULL OR rr.formation = s.formation)
                    AND (rr.campus IS NULL OR rr.campus = s.campus)))
-       AND (SELECT count(*) FROM post_space_pins room WHERE room.space_id = s.id) < 3
 )
+SELECT post_id, space_id FROM homes;
+
+-- The room: a space takes candidates (lowest post id first) only up to 3 pins in all, counting the
+-- pins it already holds. A pair already present (a replay) is neither re-inserted nor counted twice.
 INSERT INTO post_space_pins (post_id, space_id, pinned_by)
-SELECT post_id, space_id, 'migration:128' FROM homes
+SELECT c.post_id, c.space_id, 'migration:128'
+  FROM (SELECT c0.*, ROW_NUMBER() OVER (PARTITION BY c0.space_id ORDER BY c0.post_id) AS nth
+          FROM m128_candidates c0
+         WHERE NOT EXISTS (SELECT 1 FROM post_space_pins e
+                            WHERE e.post_id = c0.post_id AND e.space_id = c0.space_id)) c
+ WHERE (SELECT count(*) FROM post_space_pins room WHERE room.space_id = c.space_id) + c.nth <= 3
 ON CONFLICT DO NOTHING;
 
 DO $$
 DECLARE
+    skipped RECORD;
     homeless RECORD;
 BEGIN
+    FOR skipped IN
+        SELECT c.post_id, c.space_id FROM m128_candidates c
+         WHERE NOT EXISTS (SELECT 1 FROM post_space_pins h
+                            WHERE h.post_id = c.post_id AND h.space_id = c.space_id)
+         ORDER BY c.post_id, c.space_id
+    LOOP
+        RAISE NOTICE 'migration 128: pinned post % is visible in governed space % but that space had no room - not pinned there, re-pin by hand', skipped.post_id, skipped.space_id;
+    END LOOP;
     FOR homeless IN
         SELECT p.id FROM posts p
          WHERE p.pinned = true
            AND NOT EXISTS (SELECT 1 FROM post_space_pins h WHERE h.post_id = p.id)
+         ORDER BY p.id
     LOOP
-        RAISE NOTICE 'migration 128: pinned post % is visible in no governed space with room - pinned nowhere', homeless.id;
+        RAISE NOTICE 'migration 128: pinned post % is pinned nowhere (not live at run time, or visible in no governed space with room) - not re-run, re-pin by hand', homeless.id;
     END LOOP;
 END
 $$;

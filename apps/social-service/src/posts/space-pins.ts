@@ -32,8 +32,10 @@ export const SPACE_REQUIRED = 'space_required';
 export const SPACE_PIN_FORBIDDEN = 'space_pin_forbidden';
 /** 409 `code`: the post is not visible to this space's readers, so it cannot be promoted there. */
 export const POST_NOT_IN_SPACE = 'post_not_in_space';
-/** 404 `code`: no space has this id. */
+/** 404 `code`: no space has this id - told to the platform admin only (anyone else is told 403). */
 export const SPACE_NOT_FOUND = 'space_not_found';
+/** 404 `code`: no post has this id - told only to a caller already authorised in the space. */
+export const POST_NOT_FOUND = 'post_not_found';
 
 const MODERATE = String(AssociationPermissionFlag.MODERATE);
 
@@ -112,6 +114,14 @@ export const PIN_SPACES_FOR_VIEWER_SQL = `WITH ps_governed AS MATERIALIZED (
 /** May user `$1` (`$2`: platform admin) pin in space `$3`? Answers `found` (the space exists) and `may`. */
 export const MAY_PIN_IN_SPACE_SQL = `SELECT true AS found, ($2::boolean OR ${bdePinsInSpaceSql('$1', 'mp_space')}) AS may
   FROM spaces mp_space WHERE mp_space.id = $3::uuid`;
+
+/**
+ * Does user `$1` hold the pin right as a BDE in ANY space? Answers `governs`. The door of a body-less
+ * pin or unpin: a caller who governs nothing is told 403 before any post is looked at, so the answer
+ * says nothing about whether the post exists.
+ */
+export const GOVERNS_ANY_SPACE_SQL = `SELECT EXISTS (SELECT 1 FROM spaces ga_space
+  WHERE ${bdePinsInSpaceSql('$1', 'ga_space')}) AS governs`;
 
 /** Is post `$1` pinnable in space `$2`? Answers `pinnable`. */
 export const POST_PINNABLE_IN_SPACE_SQL = `SELECT EXISTS (SELECT 1 FROM posts pp_post

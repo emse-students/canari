@@ -30,12 +30,14 @@ import type { Post } from './entities/post.entity';
 import {
   PINNED_FOR_VIEWER_IDS_SQL,
   PIN_STANDING_IN_SPACE_SQL,
+  POST_NOT_FOUND,
   POST_NOT_IN_SPACE,
+  SPACE_NOT_FOUND,
   SPACE_PIN_FORBIDDEN,
   SPACE_PIN_LIMIT_CODE,
   SPACE_REQUIRED,
 } from './space-pins';
-import { SpacePinsService } from './space-pins.service';
+import { SpacePinsService, type PinActor } from './space-pins.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -404,30 +406,61 @@ maybe('pins per space against PostgreSQL', () => {
     expect(await pinnedFor('isminReader')).toEqual([]);
   });
 
-  it('migration 128 moves the global pin to every governed space where the post is visible', async () => {
+  it('authorises before it looks: an unauthorised caller is told 403 whether or not the post exists', async () => {
+    const missing = '00000000-0000-4000-8000-000000000000';
+    for (const act of ['pin', 'unpin'] as const) {
+      const run = (post: string, who: PinActor, space: string | undefined) =>
+        outcome(service[act](post, who, space));
+      // Named space the caller does not govern: the same 403 for a real post and a missing one.
+      expect(await run(P.inst, asUser('icmMod'), isminSe)).toBe(SPACE_PIN_FORBIDDEN);
+      expect(await run(missing, asUser('icmMod'), isminSe)).toBe(SPACE_PIN_FORBIDDEN);
+      // A missing space is no more telling than a foreign one - only the admin hears 404.
+      expect(await run(P.inst, asUser('icmMod'), missing)).toBe(SPACE_PIN_FORBIDDEN);
+      expect(await run(P.inst, GRANT, missing)).toBe(SPACE_NOT_FOUND);
+      // Body-less, from a caller who governs nothing: 403 either way.
+      expect(await run(P.inst, asUser('isminReader'), undefined)).toBe(SPACE_PIN_FORBIDDEN);
+      expect(await run(missing, asUser('isminReader'), undefined)).toBe(SPACE_PIN_FORBIDDEN);
+      // Authorised, the missing post is a typed 404 - named space or not.
+      expect(await run(missing, asUser('isminMod'), isminSe)).toBe(POST_NOT_FOUND);
+      expect(await run(missing, asUser('isminMod'), undefined)).toBe(POST_NOT_FOUND);
+    }
+  });
+
+  it('migration 128 moves the global pin to every governed space where the post is visible, and names every pin it does not carry', async () => {
     const client = new Client({ connectionString: URL });
     await client.connect();
     const notices: string[] = [];
     client.on('notice', (n) => notices.push(n.message ?? ''));
     try {
       await client.query(`SET search_path TO ${schema}, public`);
-      await client.query(`UPDATE posts SET pinned = (id = ANY($1::uuid[]))`, [[P.inst, P.gaOnly]]);
+      await client.query(`UPDATE posts SET pinned = (id = ANY($1::uuid[]))`, [
+        [P.inst, P.gaOnly, P.scheduled],
+      ]);
+      // ICM x saint-etienne is full before the run: the institution's post has no room there.
+      await client.query(
+        `INSERT INTO post_space_pins (post_id, space_id, pinned_by)
+         SELECT unnest($1::uuid[]), $2::uuid, 'fixture'`,
+        [[P.club1, P.club2, P.club3], icmSe]
+      );
       await client.query(migration('128_move_global_pin_to_spaces.sql'));
       // A replay writes nothing more.
       await client.query(migration('128_move_global_pin_to_spaces.sql'));
       const rows = (
         await client.query<{ post_id: string; space_id: string; pinned_by: string }>(
-          `SELECT post_id, space_id, pinned_by FROM post_space_pins ORDER BY space_id`
+          `SELECT post_id, space_id, pinned_by FROM post_space_pins
+            WHERE pinned_by = 'migration:128' ORDER BY space_id`
         )
       ).rows;
-      expect(rows.map((r) => `${r.post_id} in ${r.space_id}`).sort()).toEqual(
-        [`${P.inst} in ${icmSe}`, `${P.inst} in ${isminSe}`].sort()
-      );
-      expect(rows.every((r) => r.pinned_by === 'migration:128')).toBe(true);
+      expect(rows.map((r) => `${r.post_id} in ${r.space_id}`)).toEqual([`${P.inst} in ${isminSe}`]);
+      // The full space is named with the post it could not take (once per run: two runs, two).
+      expect(notices.filter((n) => n.includes(P.inst) && n.includes(icmSe))).toHaveLength(2);
+      expect(notices.filter((n) => n.includes(P.inst) && !n.includes(icmSe))).toEqual([]);
+      // Visible in no governed space, and not live at run time: each named, pinned nowhere.
       expect(notices.some((n) => n.includes(P.gaOnly))).toBe(true);
-      expect(notices.some((n) => n.includes(P.inst))).toBe(false);
+      expect(notices.some((n) => n.includes(P.scheduled))).toBe(true);
     } finally {
       await client.query(`UPDATE posts SET pinned = false`);
+      await client.query(`DELETE FROM post_space_pins`);
       await client.end();
     }
   });

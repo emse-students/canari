@@ -11,9 +11,11 @@ import { RedisService } from '../common/redis/redis.service';
 import { Post } from './entities/post.entity';
 import { invalidatePostListCache } from './post-list-cache';
 import {
+  GOVERNS_ANY_SPACE_SQL,
   MAY_PIN_IN_SPACE_SQL,
   PIN_SPACES_FOR_VIEWER_SQL,
   PIN_STANDING_IN_SPACE_SQL,
+  POST_NOT_FOUND,
   POST_NOT_IN_SPACE,
   POST_PINNABLE_IN_SPACE_SQL,
   SPACE_NOT_FOUND,
@@ -113,11 +115,11 @@ export class SpacePinsService {
     this.logger.debug(
       `[PIN] pin post=${postId} space=${spaceId ?? '(none)'} admin=${actor.isGlobalAdmin}`
     );
-    await this.assertPostExists(postId);
     const target = spaceId ?? (await this.onlySpace(postId, actor, 'pin'));
     const result = await this.postRepo.manager.transaction(async (m) => {
-      await this.lockSpace(m, target);
       await this.assertMayPin(m, actor, target);
+      await this.lockSpace(m, target);
+      await this.assertPostExists(m, postId);
       const [{ pinnable }] = (await m.query(POST_PINNABLE_IN_SPACE_SQL, [postId, target])) as {
         pinnable: boolean;
       }[];
@@ -167,11 +169,11 @@ export class SpacePinsService {
     this.logger.debug(
       `[PIN] unpin post=${postId} space=${spaceId ?? '(none)'} admin=${actor.isGlobalAdmin}`
     );
-    await this.assertPostExists(postId);
     const target = spaceId ?? (await this.onlySpace(postId, actor, 'unpin'));
     await this.postRepo.manager.transaction(async (m) => {
-      await this.lockSpace(m, target);
       await this.assertMayPin(m, actor, target);
+      await this.lockSpace(m, target);
+      await this.assertPostExists(m, postId);
       await m.query(`DELETE FROM post_space_pins WHERE post_id = $1 AND space_id = $2`, [
         postId,
         target,
@@ -201,8 +203,20 @@ export class SpacePinsService {
   /**
    * The ONE space a body-less request means (an older client): for `pin`, every space where the
    * actor may pin the post; for `unpin`, those where it is pinned. Exactly one, or `space_required`.
+   * AUTHORISED FIRST: a caller who governs no space is told 403 before the post is looked at, so
+   * neither answer says whether the post exists; then a missing post is a typed 404.
    */
   private async onlySpace(postId: string, actor: PinActor, act: 'pin' | 'unpin'): Promise<string> {
+    if (!actor.isGlobalAdmin) {
+      const [{ governs }] = (await this.postRepo.manager.query(GOVERNS_ANY_SPACE_SQL, [
+        actor.userId,
+      ])) as { governs: boolean }[];
+      if (!governs) {
+        this.logger.log(`[PIN] refused: ${actor.userId} governs no space (body-less ${act})`);
+        throw this.forbidden();
+      }
+    }
+    await this.assertPostExists(this.postRepo.manager, postId);
     const spaces = (await this.pinSpacesFor([postId], actor)).get(postId) ?? [];
     const fits = act === 'pin' ? spaces : spaces.filter((s) => s.state !== null);
     if (fits.length !== 1) {
@@ -218,14 +232,15 @@ export class SpacePinsService {
     return fits[0].spaceId;
   }
 
-  /** A 404 for a post that does not exist, before any space is looked for. */
-  private async assertPostExists(postId: string): Promise<void> {
-    const rows = (await this.postRepo.manager.query(`SELECT 1 FROM posts WHERE id = $1`, [
-      postId,
-    ])) as unknown[];
+  /**
+   * A typed 404 for a post that does not exist - asked only AFTER the caller is authorised, so an
+   * unauthorised caller learns nothing about which posts exist.
+   */
+  private async assertPostExists(m: EntityManager, postId: string): Promise<void> {
+    const rows = (await m.query(`SELECT 1 FROM posts WHERE id = $1`, [postId])) as unknown[];
     if (rows.length === 0) {
       this.logger.log(`[PIN] refused: no post ${postId}`);
-      throw new NotFoundException('Post not found');
+      throw new NotFoundException({ code: POST_NOT_FOUND, message: 'Post not found' });
     }
   }
 
@@ -236,24 +251,32 @@ export class SpacePinsService {
     ]);
   }
 
-  /** 404 for an unknown space, a typed 403 for a caller who does not govern it. */
+  /**
+   * THE FIRST CHECK of every pin surface: a typed 403 for a caller who does not govern the space -
+   * an unknown space included, so only the platform admin is told `space_not_found` (404).
+   */
   private async assertMayPin(m: EntityManager, actor: PinActor, spaceId: string): Promise<void> {
     const rows = (await m.query(MAY_PIN_IN_SPACE_SQL, [
       actor.userId,
       actor.isGlobalAdmin,
       spaceId,
     ])) as { found: boolean; may: boolean }[];
-    if (rows.length === 0) {
+    if (rows.length === 0 && actor.isGlobalAdmin) {
       this.logger.log(`[PIN] refused: no space ${spaceId}`);
       throw new NotFoundException({ code: SPACE_NOT_FOUND, message: 'Space not found' });
     }
-    if (!rows[0].may) {
+    if (rows.length === 0 || !rows[0].may) {
       this.logger.log(`[PIN] refused: ${actor.userId} does not govern space ${spaceId}`);
-      throw new ForbiddenException({
-        code: SPACE_PIN_FORBIDDEN,
-        message: "Only the platform admin or a MODERATE holder of this space's BDE pins here",
-      });
+      throw this.forbidden();
     }
+  }
+
+  /** The one typed 403 of every pin surface. */
+  private forbidden(): ForbiddenException {
+    return new ForbiddenException({
+      code: SPACE_PIN_FORBIDDEN,
+      message: "Only the platform admin or a MODERATE holder of this space's BDE pins here",
+    });
   }
 
   /** A pin reorders every reader's feed of that space: the whole cache goes, as for any post write. */
