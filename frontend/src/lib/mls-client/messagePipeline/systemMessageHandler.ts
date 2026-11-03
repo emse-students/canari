@@ -73,6 +73,7 @@ import type {
 } from '$lib/db/types';
 import { keepPendingMutation, settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
 
@@ -319,7 +320,8 @@ async function storedTarget(
  *   against the stored row.
  * - **Not here yet**: KEPT as a pending mutation (`keepPendingMutation`), settled against the body's
  *   author when it arrives (`pendingMutations.ts`).
- * - **Here only as a push PREVIEW** (`isFcmPreview`): not here yet either. The caption is not the
+ * - **Here only as a push PREVIEW** (`isPushPreview`: flagged, or a non-envelope body an older
+ *   build stored unflagged): not here yet either. The caption is not the
  *   body - an edit applied to it was laid under the body when the body arrived (the upgrade takes
  *   the body's content and kept `isEdited`), so the edit was lost. Kept the same way, it is settled
  *   by the upgrade itself (`settleWithPending`, `settledWith`), against the body's author.
@@ -342,7 +344,7 @@ async function applyEdit(
   if (found.kind === 'unreadable' && !held) return;
   const stored = found.kind === 'stored' ? found.row : null;
   const target = held ?? stored;
-  const previewOnly = !!target && !target.isDeleted && target.isFcmPreview === true;
+  const previewOnly = !!target && isPushPreview(target);
   if (previewOnly) {
     log(
       `[PENDING] ${targetId.slice(0, 8)} is here only as a push preview - its edit is kept for the body`

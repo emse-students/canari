@@ -424,6 +424,22 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
     ]);
   });
 
+  it('is collected with the messages older than its frame', async () => {
+    const { storage } = await rig();
+    const now = Date.now();
+    await storage.putPendingMutation(
+      entry({ messageId: 'old', at: now - 10 * 86_400_000 }),
+      ROOMY,
+      KEY
+    );
+    await storage.putPendingMutation(entry({ messageId: 'new', at: now }), ROOMY, KEY);
+
+    await storage.deleteOldMessages(86_400_000);
+
+    const left = await storage.getPendingMutations('conv', ['old', 'new'], KEY);
+    expect(left.entries.map((e) => e.messageId)).toEqual(['new']);
+  });
+
   it('goes with its conversation', async () => {
     const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });

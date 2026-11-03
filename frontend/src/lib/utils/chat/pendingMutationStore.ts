@@ -16,6 +16,7 @@
 import type { Conversation, ChatMessage, MessageReaction } from '$lib/types';
 import type { IStorage, PendingMutation, StoredMessagePatch, StoredRowsById } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { isPushPreview } from './messageMerge';
 import {
   PENDING_MUTATION_LIMITS,
   settleAgainstPending,
@@ -356,6 +357,21 @@ export function settledChatMessage(msg: ChatMessage, fields: SettledFields): Cha
 }
 
 /**
+ * The entries `target` can take NOW. A push PREVIEW ({@link isPushPreview}) is not the body:
+ * an edit applied to its caption is laid under the body when the body arrives (the upgrade takes
+ * the body's content), so an edit of a preview waits - kept, never consumed - for the upgrade,
+ * which settles it against the body itself. A deletion (absorbing) and reactions (unioned by the
+ * upgrade) apply to a preview as to any row.
+ */
+export function settleableNow(
+  target: Pick<SettleTarget, 'isDeleted' | 'content'> & { isFcmPreview?: boolean },
+  entries: readonly PendingMutation[]
+): PendingMutation[] {
+  if (!isPushPreview(target)) return [...entries];
+  return entries.filter((e) => e.kind !== 'edit');
+}
+
+/**
  * Settles every entry waiting for `ids` whose message now exists, and removes those entries.
  *
  * **AN ENTRY IS CONSUMED ONLY ONCE THE ROW AT REST CARRIES IT.** A writer shows a message before it
@@ -364,21 +380,6 @@ export function settledChatMessage(msg: ChatMessage, fields: SettledFields): Cha
  * alone lost the mutation at rest, and a reload brought the body back. A message still absent keeps
  * its entries; a stored row this device cannot open is left alone, and so are they.
  */
-/**
- * The entries `target` can take NOW. A push PREVIEW (`isFcmPreview`, not deleted) is not the body:
- * an edit applied to its caption is laid under the body when the body arrives (the upgrade takes
- * the body's content), so an edit of a preview waits - kept, never consumed - for the upgrade,
- * which settles it against the body itself. A deletion (absorbing) and reactions (unioned by the
- * upgrade) apply to a preview as to any row.
- */
-export function settleableNow(
-  target: Pick<SettleTarget, 'isDeleted'> & { isFcmPreview?: boolean },
-  entries: readonly PendingMutation[]
-): PendingMutation[] {
-  if (target.isDeleted || target.isFcmPreview !== true) return [...entries];
-  return entries.filter((e) => e.kind !== 'edit');
-}
-
 export async function settlePendingFor(
   deps: PendingMutationDeps,
   conversationId: string,

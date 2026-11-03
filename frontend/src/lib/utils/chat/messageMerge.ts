@@ -3,6 +3,7 @@ import type { StoredMessage } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { compareMessageOrder } from './messageOrder';
 import { mergeReactions } from './messageReactions';
+import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
 
 /** Returns true when `content` is a serialized MessageEnvelope JSON object. */
 export function isEnvelopeContent(content: string): boolean {
@@ -40,7 +41,39 @@ export function shouldUpgradeMessage(
 }
 
 /**
- * Merges incoming envelope fields into an existing message (FCM preview upgrade path).
+ * Whether `row` is a push PREVIEW standing in for a body not here yet: flagged (`isFcmPreview`,
+ * sealed with the row since #2936), or - for a row an older build stored without the flag - a body
+ * that is not an envelope. A deleted row is not one: the tombstone is final.
+ */
+export function isPushPreview(row: {
+  isDeleted?: boolean;
+  isFcmPreview?: boolean;
+  content: string;
+}): boolean {
+  if (row.isDeleted) return false;
+  return row.isFcmPreview === true || isFcmPreviewContent(row.content);
+}
+
+/**
+ * The body an upgrade writes, with the edit the PREVIEW already took carried onto it. A signed edit
+ * can reach a preview (a history bundle applies one), and the upgrade takes the body's content - so
+ * without this the edit was laid under the body, and lost while `isEdited` stayed. The preview's
+ * edited text is applied to the new body (`applyEditToBody`, which keeps the reply quote) unless
+ * the upgrade carries an edit of its own at least as recent.
+ */
+function bodyWithPreviewEdit(
+  preview: { isEdited?: boolean; editedAt?: number | Date | null; content: string },
+  upgrade: { isEdited?: boolean; editedAt?: number | Date | null; content: string }
+): string {
+  if (!preview.isEdited) return upgrade.content;
+  const at = (v: number | Date | null | undefined) => (v instanceof Date ? v.getTime() : (v ?? 0));
+  if (upgrade.isEdited && at(upgrade.editedAt) >= at(preview.editedAt)) return upgrade.content;
+  return applyEditToBody(upgrade.content, envelopeBodyText(preview.content));
+}
+
+/**
+ * Merges incoming envelope fields into an existing message (FCM preview upgrade path), carrying an
+ * edit the preview took onto the body ({@link bodyWithPreviewEdit}).
  */
 export function mergeMessageUpgrade(
   existing: ChatMessage,
@@ -51,7 +84,7 @@ export function mergeMessageUpgrade(
 ): ChatMessage {
   return {
     ...existing,
-    content: incoming.content,
+    content: bodyWithPreviewEdit(existing, incoming),
     replyTo: incoming.replyTo ?? existing.replyTo,
     isSystem: incoming.isSystem ?? existing.isSystem,
     isFcmPreview: false,
@@ -80,6 +113,7 @@ export function previewUpgradeOnto(
   const { reactions, isDeleted, isEdited, editedAt, mediaPurgedAt, ...rest } = upgrade;
   return mergeStoredMessage(current, {
     ...rest,
+    content: bodyWithPreviewEdit(current, upgrade),
     isFcmPreview: false,
     reactions: mergeReactions(current.reactions ?? [], reactions ?? []) ?? current.reactions,
     ...(isDeleted ? { isDeleted } : {}),

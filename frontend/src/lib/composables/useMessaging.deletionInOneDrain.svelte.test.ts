@@ -251,6 +251,66 @@ describe('a message and its mutations delivered in one drain', () => {
     expect((await pending(d.storage)).entries).toEqual([]);
   });
 
+  it('a signed edit a bundle laid on a stored PREVIEW survives the body arriving', async () => {
+    const d = await device();
+    // What a bundle merge leaves: the preview, edited (`mergeVettedRow`).
+    const edited = '{"kind":"text","text":"the edited text"}';
+    d.conversations.set(CONVO, {
+      ...d.conversations.get(CONVO)!,
+      messages: [
+        {
+          id: 'm1',
+          senderId: PEER,
+          content: edited,
+          timestamp: new Date(2_000),
+          isOwn: false,
+          isFcmPreview: true,
+          isEdited: true,
+          editedAt: new Date(5_000),
+        },
+      ],
+    });
+    await d.storage.saveMessage(
+      {
+        id: 'm1',
+        conversationId: CONVO,
+        senderId: PEER,
+        content: edited,
+        timestamp: 2_000,
+        isFcmPreview: true,
+        isEdited: true,
+        editedAt: 5_000,
+      },
+      KEY
+    );
+
+    d.messaging.beginBulkMessageIngest(DRAIN);
+    await bodyFrame(d, PEER, 'm1', '{"kind":"text","text":"the original text"}');
+    await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
+
+    expect(d.shown()[0].content).toContain('the edited text');
+    const row = await d.storage.getMessage('m1', KEY);
+    expect(row?.content).toContain('the edited text');
+    expect(row).toMatchObject({ isEdited: true, editedAt: 5_000 });
+    expect(row?.isFcmPreview).toBeFalsy();
+  });
+
+  it('an edit of a preview an OLDER build stored unflagged waits for the body too', async () => {
+    const d = await device();
+    await d.storage.saveMessage(
+      { id: 'm1', conversationId: CONVO, senderId: PEER, content: 'caption', timestamp: 2_000 },
+      KEY
+    );
+
+    await editFrame(d, PEER, 'm1', 'the edited text', 5_000);
+    expect((await d.storage.getMessage('m1', KEY))?.isEdited).toBeFalsy();
+    expect((await pending(d.storage)).entries).toMatchObject([{ kind: 'edit' }]);
+    await bodyFrame(d, PEER, 'm1', '{"kind":"text","text":"the original text"}');
+
+    expect((await d.storage.getMessage('m1', KEY))?.content).toContain('the edited text');
+    expect((await pending(d.storage)).entries).toEqual([]);
+  });
+
   it('keeps an edit across a restart - the store, not memory, holds it', async () => {
     const first = await device();
     await editFrame(first, PEER, 'm1', 'edited before arrival', 5_000);

@@ -228,9 +228,12 @@ Two consequences, both handled where the assumption lived:
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
   messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
-  **The local store keeps ALL of its history - no retention pruning (owner, 2026-11-03).** The
-  90-day garbage collector (`deleteOldMessages`, every 6 hours on both backends, which pruned a
-  native device at 90 days while it claimed 5 years) was deleted in #2936 with the decision.
+  **What is actually enforced today (verified 2026-10-22): 90 days on EVERY platform.** The window
+  above is what a device CLAIMS (`historyWindow.ts:39-47`, `deviceWindowMs()`), but the only local
+  deletion is the garbage collector in `ChatBackgroundService.svelte:1789-1802`, which calls
+  `deleteOldMessages(90 days)` every 6 hours with no platform check, on IndexedDB
+  (`db/indexeddb.ts:924`) and on SQLite (`db/sqlite.ts:773`) alike. So a native device prunes at 90
+  days while claiming 5 years - an open decision, in [backlog](../backlog.md) (P2, local retention).
 
 ### Completeness is asked from the requester's side
 
@@ -362,7 +365,7 @@ holds nothing.
 **The invalidation lives at the storage layer, not at the call sites**, and is conservative by
 construction: a stale key claiming agreement loses messages silently, while an over-eager
 invalidation costs one walk. Every `IStorage` method that writes message rows drops the entry -
-per conversation where it can name one, wholesale where it cannot (`clear`, a whole-store import).
+per conversation where it can name one, wholesale where it cannot (`deleteOldMessages`, `clear`).
 Both backends are separate classes with separate write sites, so "IndexedDB was updated and SQLite
 was not" is the shape the mistake takes; `historyStateKeyInvalidation.test.ts` reads both sources to
 keep it from being made, and carries a vacuity guard so it cannot quietly stop checking.
@@ -1651,9 +1654,13 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   buffered bodies have, closed only by settling before the checkpoint commits;
 - **an edit of a push PREVIEW waits for the body.** A caption is not the body: an edit applied to
   it was laid under the body by the upgrade (which takes the body's content), and lost. A target
-  that is only a preview (`isFcmPreview`, sealed in the row's payload since this change; a row an
-  older build wrote reads as unflagged) is "not here yet" for an edit (`applyEdit`), and no
-  settlement hands it one (`settleableNow`): the upgrade settles it against the body. A deletion
+  that is only a preview (`isPushPreview`: `isFcmPreview`, sealed in the row's payload since this
+  change, or a non-envelope body an older build stored unflagged) is "not here yet" for an edit
+  (`applyEdit`), and no settlement hands it one (`settleableNow`): the upgrade settles it against
+  the body. An edit that reached the preview another way - a signed edit a history bundle applies
+  (`mergeVettedRow`) - is carried by the upgrade itself: `previewUpgradeOnto` and
+  `mergeMessageUpgrade` apply the preview's edited text to the new body unless the body carries an
+  edit at least as recent. A deletion
   and reactions apply to a preview as to any row - and a push preview is never written over a
   tombstone (`fcmCache.ts`, `previewMayReplace`: a tombstone's content is plain text, so the
   envelope test alone took it for a preview);
@@ -1690,9 +1697,10 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   are tens of kilobytes per conversation, and a clock would decide wrongly in both directions. Why
   200 per sender: a fifth of that, so at least five senders fill a conversation before the larger
   bound has anything to choose between;
-- **never collected by age**: the local store keeps all of its history (owner, 2026-11-03), so an
-  entry leaves only when its message settles it, its sender's bound evicts it, or its conversation
-  goes;
+- **collected with the old messages**: `deleteOldMessages(maxAgeMs)` also removes the entries whose
+  FRAME is older than the same cutoff, on both backends. The frame's time is an upper bound on its
+  target's, so the message such an entry waits for is older still, and would be collected the moment
+  it arrived;
 - **said once per entry**: a retained entry is settled again at every look at its message, so the
   warn of a discarded entry and the line of a retained one are said ONCE per entry and rank in a
   session (`logDiscarded`), never once per look.

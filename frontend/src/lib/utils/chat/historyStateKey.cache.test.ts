@@ -126,7 +126,7 @@ describe('invalidation', () => {
   });
 
   it('drops everything when a write cannot name a conversation', async () => {
-    // `clear` and a whole-store import span the whole store, so there is no id to be selective with.
+    // `deleteOldMessages` and `clear` span the whole store, so there is no id to be selective with.
     // Dropping everything costs one walk per conversation and is the only safe reading.
     const a = loader([msg('m1')]);
     const b = loader([msg('m2')]);

@@ -4,6 +4,7 @@ import {
   shouldUpgradeMessage,
   mergeMessageUpgrade,
   previewUpgradeOnto,
+  isPushPreview,
 } from './messageMerge';
 import type { StoredMessage } from '$lib/db/types';
 
@@ -100,5 +101,67 @@ describe('previewUpgradeOnto - a preview upgrade folded onto the row as it stand
   it('leaves a row that is no longer a preview - deleted, or upgraded by another writer', () => {
     expect(previewUpgradeOnto(preview({ isDeleted: true }), upgrade)).toBeNull();
     expect(previewUpgradeOnto(preview({ content: BODY, isFcmPreview: false }), upgrade)).toBeNull();
+  });
+});
+
+describe('an edit the preview took is carried onto the body that upgrades it', () => {
+  const BODY =
+    '{"kind":"text","text":"the original","replyTo":{"id":"q","senderId":"a","content":"quoted"}}';
+  const EDITED_PREVIEW = '{"kind":"text","text":"the edited text"}';
+
+  it('previewUpgradeOnto: a bundle edit on the stored preview survives the body arriving', () => {
+    const next = previewUpgradeOnto(
+      {
+        id: 'm1',
+        conversationId: 'c',
+        senderId: 'alice',
+        content: EDITED_PREVIEW,
+        timestamp: 1,
+        isFcmPreview: true,
+        isEdited: true,
+        editedAt: 5_000,
+      },
+      { id: 'm1', conversationId: 'c', senderId: 'alice', content: BODY, timestamp: 1 }
+    );
+    expect(next).toMatchObject({ isEdited: true, editedAt: 5_000, isFcmPreview: false });
+    expect(JSON.parse(next!.content)).toMatchObject({
+      text: 'the edited text',
+      replyTo: { id: 'q' },
+    });
+  });
+
+  it('mergeMessageUpgrade: the same on screen', () => {
+    const merged = mergeMessageUpgrade(
+      {
+        id: 'm1',
+        senderId: 'alice',
+        content: EDITED_PREVIEW,
+        timestamp: new Date(1),
+        isOwn: false,
+        isFcmPreview: true,
+        isEdited: true,
+        editedAt: new Date(5_000),
+      },
+      { content: BODY }
+    );
+    expect(JSON.parse(merged.content)).toMatchObject({ text: 'the edited text' });
+    expect(merged.isEdited).toBe(true);
+  });
+
+  it('an unedited preview takes the body as it is', () => {
+    const merged = mergeMessageUpgrade(
+      { id: 'm1', senderId: 'a', content: 'caption', timestamp: new Date(1), isOwn: false },
+      { content: BODY }
+    );
+    expect(merged.content).toBe(BODY);
+  });
+});
+
+describe('isPushPreview', () => {
+  it('reads an unflagged non-envelope row an older build stored as a preview, never a tombstone', () => {
+    expect(isPushPreview({ content: 'caption' })).toBe(true);
+    expect(isPushPreview({ content: '{"kind":"text","text":"x"}', isFcmPreview: true })).toBe(true);
+    expect(isPushPreview({ content: '{"kind":"text","text":"x"}' })).toBe(false);
+    expect(isPushPreview({ content: 'deleted', isDeleted: true })).toBe(false);
   });
 });

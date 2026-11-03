@@ -1185,6 +1185,16 @@ Restored history carries each message's author signature, and frames carry a sig
 - **The floor:** unsigned messages are only MARKED today, because every older client sends them. Refusing them outright waits until `minClientVersion` ([the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24)) is a signing build, plus the retention window of the oldest unsigned message.
 - **P3 - a history bundle has no byte cap per chunk, only a message count**, and each message now carries its body and proof beside its content (about 2.5x per message). A cap in bytes is owed before bundles of long messages are common.
 
+## P2 - Local retention is 90 days everywhere while 5 years was intended on native - decision owed (found 2026-10-22)
+
+`ChatBackgroundService.svelte:1789-1802` runs `deleteOldMessages(90 * 24 h)` every 6 hours with no
+platform check (`db/indexeddb.ts:924`, `db/sqlite.ts:773`), while `historyWindow.ts`
+(`NATIVE_DEVICE_WINDOW_MS`, 5 years) and
+[history-reconciliation](protocols/history-reconciliation.md#two-boundaries-not-one) promise 5 years
+on a phone or desktop. No decision that 90 days is intended was found. Whether native keeps 5 years
+(gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
+changed. Until it is taken, a native device claims coverage it deleted.
+
 ## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 
 - **A salon reorder can deadlock with a departure or a community deletion.** A departure now locks
