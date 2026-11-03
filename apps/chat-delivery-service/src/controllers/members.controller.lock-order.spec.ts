@@ -100,9 +100,9 @@ describe('MembersController - lock order of an add and a removal', () => {
     // The route enrols nobody but a creator (ADM-3): for a person an accepted commit admitted, it
     // re-reads their ADMITTED seat under the group's seat lock and writes their device rows.
     const add = await controllerOn(answerAsAdmitted);
-    await add.controller.addGroupMember('g-1', { userId: 'bob' }, 'alice', undefined);
+    await add.controller.addGroupMember('g-1', { userId: 'bob' }, 'alice');
     const remove = await controllerOn();
-    await remove.controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    await remove.controller.removeGroupMember('g-1', 'bob', 'alice');
 
     const addOrder = tablesInTransaction(add.statements);
     const removeOrder = tablesInTransaction(remove.statements);
@@ -131,7 +131,7 @@ describe('MembersController - lock order of an add and a removal', () => {
       tableOf(stmt.sql) === 'dm_group_members' ? [] : answerAsAdmitted(stmt)
     );
     await expect(
-      add.controller.addGroupMember('g-1', { userId: 'bob' }, 'alice', undefined)
+      add.controller.addGroupMember('g-1', { userId: 'bob' }, 'alice')
     ).rejects.toMatchObject({ status: 409, response: { code: 'MEMBER_NOT_ADMITTED' } });
     expect(add.statements.some((s) => s.sql.startsWith('INSERT'))).toBe(false);
   });
@@ -159,9 +159,9 @@ describe('MembersController - lock order of an add and a removal', () => {
             : answerAsAdmitted(stmt),
         'bob'
       );
-      await expect(
-        add.controller.addGroupMember('g-1', { userId: 'bob' }, 'bob', undefined)
-      ).resolves.toEqual({ status: 'added' });
+      await expect(add.controller.addGroupMember('g-1', { userId: 'bob' }, 'bob')).resolves.toEqual(
+        { status: 'added' }
+      );
       const lock = add.statements.find((s) => s.sql.includes('pg_advisory_xact_lock'));
       expect(lock?.sql).not.toContain('_shared');
       expect(
@@ -176,7 +176,7 @@ describe('MembersController - lock order of an add and a removal', () => {
       // with userId 'bob'; the caller here is 'carol', the group's recorded creator).
       const add = await creatorOn((stmt) => answerAsAdmitted(stmt, 'carol'), 'carol');
       await expect(
-        add.controller.addGroupMember('g-1', { userId: 'carol' }, 'carol', undefined)
+        add.controller.addGroupMember('g-1', { userId: 'carol' }, 'carol')
       ).rejects.toMatchObject({ status: 409, response: { code: 'MEMBER_NOT_ADMITTED' } });
       expect(add.statements.some((s) => s.sql.startsWith('INSERT'))).toBe(false);
     });
@@ -184,7 +184,7 @@ describe('MembersController - lock order of an add and a removal', () => {
 
   it('the removal takes the queued Welcomes inside the transaction that ends the membership', async () => {
     const remove = await controllerOn();
-    await remove.controller.removeGroupMember('g-1', 'bob', 'bob', undefined);
+    await remove.controller.removeGroupMember('g-1', 'bob', 'bob');
 
     const begin = remove.statements.findIndex((s) => s.sql === 'BEGIN');
     const commit = remove.statements.findIndex((s) => s.sql === 'COMMIT');

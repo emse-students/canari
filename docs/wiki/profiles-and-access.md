@@ -12,6 +12,11 @@ starting point, not as today's state. Anyone can log in to MiConnect with a Scho
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
 
+> **Proposed reform (2026-11-02, partly decided):** audience and dependencies as two independent axes -
+> an association or list under at most one BDE, one governor per space - amending D20, D22, D23,
+> D33 and D39. See
+> [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
+
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
 Read with `ak shell` on the identity-provider host, read-only. Counts are a
@@ -810,7 +815,7 @@ the grid. The creator is the caller, who need not become a member.
 | `scope` | Lists | Read by |
 | --- | --- | --- |
 | `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
-| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
 pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one
