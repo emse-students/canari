@@ -681,6 +681,64 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     }, 30_000);
   });
 
+  /**
+   * NO EVENT IS PUBLISHED TO AN ANONYMOUS READER (owner, 2026-11-02), whatever the audience: an
+   * institution with a (NULL, NULL) rule - addressing everyone - is no exception. On the real tables.
+   */
+  describe('the anonymous agenda', () => {
+    const EVERYONE = '00000000-0000-4000-8000-0000000c0a07'; // a (NULL, NULL) rule: addresses everyone
+    const OPEN_DAY = E(90);
+
+    beforeAll(async () => {
+      await q(
+        `INSERT INTO associations (id, name, slug, "createdBy") VALUES ($1, 'School', 'school', 'it')`,
+        [EVERYONE]
+      );
+      await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [EVERYONE]);
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, NULL)`,
+        [EVERYONE]
+      );
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Open day', '2026-06-20T18:00:00Z', 'it', 'validated')`,
+        [OPEN_DAY, EVERYONE]
+      );
+    });
+
+    it("one association's agenda read anonymously is empty, an everyone-addressing one too", async () => {
+      expect(await associations.listCalendarEvents(A1)).toEqual([]);
+      expect(await associations.listCalendarEvents(EVERYONE)).toEqual([]);
+      // A signed-in reader keeps both: the event exists, it is simply not published anonymously.
+      const reader = { viewer: { userId: 'seReader' } };
+      expect(
+        (await associations.listCalendarEvents(EVERYONE, undefined, undefined, reader)).map(
+          (r) => r.id
+        )
+      ).toEqual([OPEN_DAY]);
+      expect(
+        (await associations.listCalendarEvents(A1, undefined, undefined, reader)).length
+      ).toBeGreaterThan(0);
+    });
+
+    it("a form's linked event is served only to a reader its audience reaches", async () => {
+      const FORM = '00000000-0000-4000-8000-0000000f0a01';
+      const LINKED = E(91);
+      await q(
+        `INSERT INTO association_calendar_events
+           (id, "associationId", title, "startsAt", "createdBy", status, "linkedFormId")
+           VALUES ($1, $2, 'Signup night', '2026-06-21T18:00:00Z', 'it', 'validated', $3)`,
+        [LINKED, A1, FORM]
+      );
+      const linked = (userId: string, isGlobalAdmin = false) =>
+        associations.findCalendarEventByLinkedForm(FORM, { userId, isGlobalAdmin });
+      expect((await linked('seReader'))?.id).toBe(LINKED); // reached by A1's rule
+      expect(await linked('gaReader')).toBeNull(); // outside A1's audience
+      expect(await linked('nobody')).toBeNull();
+      expect((await linked('platformAdmin', true))?.id).toBe(LINKED);
+    });
+  });
+
   describe('partner rights (E2, WP-Q1): the text and the poster belong to a partner, the rest to the organiser', () => {
     const P = E(20); // refusals, then the allowed edits
     const W = E(21); // the partner withdraws

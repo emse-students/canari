@@ -83,6 +83,8 @@ function makeService(opts: {
     {} as FollowsService,
     {
       isContentModerator: () => Promise.resolve(false),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
       mayActOnAny: () => Promise.resolve(new Set()),
     } as unknown as AssociationsService,
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,

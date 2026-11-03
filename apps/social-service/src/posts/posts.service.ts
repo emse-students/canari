@@ -63,6 +63,7 @@ import {
   reviewCohortAuthorFilterSql,
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
+import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-moderation';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
@@ -81,8 +82,12 @@ interface PostViewerContext {
   viewerId: string | undefined;
   /** Platform administrator: manages every post, member or not. */
   isGlobalAdmin: boolean;
-  /** BDE `MODERATE` holder: curates the whole feed, whoever published what. */
-  isModerator: boolean;
+  /**
+   * Ids, among the batch, of the posts the reader moderates as a BDE `MODERATE` holder - those in
+   * the spaces its BDE governs (owner, 2026-11-02; `AssociationsService.moderatedPostIds`). Empty for
+   * a global admin, who moderates every post (`isGlobalAdmin` decides that).
+   */
+  moderatedIds: Set<string>;
   /** Associations where the reader holds `POST_AS_ASSO`, hence may manage what was said in their name. */
   managedAssociationIds: Set<string>;
   /**
@@ -137,13 +142,19 @@ type PersonalRepublicationRequestState = StandingPersonalRequest & {
 /**
  * What one reader may do with one post, decided by the server and rendered as-is by the client.
  *
- * One field per control, because the controls do not share a rule: a moderator edits, deletes and
- * pins a post they did not publish and may still report it, while the association's own officer
- * edits and deletes but pins nothing and has nobody to report themselves to.
+ * One field per control, because the controls do not share a rule: a moderator deletes and pins a
+ * post they did not publish and may still report it, but never edits it; the association's own
+ * officer edits and deletes but pins nothing and has nobody to report themselves to.
  */
 interface PostCapabilities {
-  /** The pencil and the bin. */
+  /** The bin (and, for an older client, the pencil too - which is why `canEdit` was added beside it). */
   canManage: boolean;
+  /**
+   * The pencil: the post's AUTHOR alone (its publisher - for an association's post, whoever speaks
+   * for it). Never a BDE moderator, never the platform admin (owner, 2026-11-02: "tout sauf changer
+   * l'integrite du post"), so it can be false where `canManage` is true.
+   */
+  canEdit: boolean;
   /** The pin. Moderation of the feed's shape, not of one post's content. */
   canPin: boolean;
   /** The flag. Withheld only from the post's own publisher - reporting yourself means nothing. */
@@ -324,7 +335,7 @@ export class PostsService {
   private static readonly EMPTY_VIEWER: PostViewerContext = {
     viewerId: undefined,
     isGlobalAdmin: false,
-    isModerator: false,
+    moderatedIds: new Set(),
     managedAssociationIds: new Set(),
     republishAsIds: new Set(),
     grantFreeIds: new Set(),
@@ -360,12 +371,24 @@ export class PostsService {
         personalIds.length > 0
           ? await this.republishAsOf(viewerId)
           : { all: new Set<string>(), personal: new Set<string>() };
+      const adminAssociationIds = rows
+        .map((row) => row.associationId)
+        .filter((id): id is string => !!id);
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         viewerId,
         isGlobalAdmin: true,
-        isModerator: true,
-        managedAssociationIds: new Set(),
+        moderatedIds: new Set(),
+        // Their OWN memberships, not the admin tier: the pencil is the author's alone, and an admin
+        // is the author of an association's post only by holding POST_AS_ASSO there (2026-11-02).
+        managedAssociationIds:
+          adminAssociationIds.length > 0
+            ? await this.associationsService.mayActOnAny(
+                viewerId,
+                adminAssociationIds,
+                AssociationPermissionFlag.POST_AS_ASSO
+              )
+            : new Set<string>(),
         republishAsIds: new Set(),
         grantFreeIds: new Set(),
         firstHandIds: new Set(),
@@ -373,14 +396,14 @@ export class PostsService {
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator, memberships, grantFree, memberReposts] =
+    const [managedAssociationIds, moderatedIds, memberships, grantFree, memberReposts] =
       await Promise.all([
         this.associationsService.mayActOnAny(
           viewerId,
           associationIds,
           AssociationPermissionFlag.POST_AS_ASSO
         ),
-        this.associationsService.isContentModerator(viewerId),
+        this.associationsService.moderatedPostIds(viewerId, postIds),
         this.republishAsOf(viewerId),
         this.grantFreeVisibleIds(postIds, viewerId),
         memberRepostContext(this.postRepo.manager, postIds, viewerId),
@@ -389,7 +412,7 @@ export class PostsService {
       memberReposts,
       viewerId,
       isGlobalAdmin: false,
-      isModerator,
+      moderatedIds,
       managedAssociationIds,
       republishAsIds: memberships.all,
       grantFreeIds: grantFree.grantFreeIds,
@@ -571,6 +594,11 @@ export class PostsService {
     return !!post.authorId && post.authorId === viewer.viewerId;
   }
 
+  /** The reader moderates this post: a platform admin, or a BDE whose governed spaces hold it. */
+  private viewerModerates(post: { id?: string }, viewer: PostViewerContext): boolean {
+    return viewer.isGlobalAdmin || (!!post.id && viewer.moderatedIds.has(post.id));
+  }
+
   /**
    * What this reader may do with this post - the answer behind every control on the card, and
    * behind the guards that accept the matching write.
@@ -581,9 +609,10 @@ export class PostsService {
    * officers from strangers. It had to ask the only party that still knows.
    *
    * Three tiers reach a post, and they do not overlap tidily: the platform administrator holds
-   * everything; a BDE `MODERATE` holder curates the feed, so it may edit, delete and pin what it
-   * did not publish, while remaining entitled to report it like any other reader; the publisher
-   * corrects and withdraws its own words and pins nothing.
+   * everything; a BDE `MODERATE` holder moderates the posts of the spaces its BDE governs, so it may
+   * delete, pin and unmask what it did not publish - never EDIT it (owner, 2026-11-02) - while
+   * remaining entitled to report it like any other reader; the publisher corrects and withdraws its
+   * own words and pins nothing.
    */
   private viewerCapabilities(
     post: {
@@ -596,9 +625,10 @@ export class PostsService {
     viewer: PostViewerContext
   ): PostCapabilities {
     const isPublisher = this.viewerIsPublisher(post, viewer);
-    const isModeratorTier = viewer.isGlobalAdmin || viewer.isModerator;
+    const isModeratorTier = this.viewerModerates(post, viewer);
     return {
       canManage: isModeratorTier || isPublisher,
+      canEdit: isPublisher,
       canPin: isModeratorTier,
       canReport: !!viewer.viewerId && !isPublisher,
       canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
@@ -703,11 +733,11 @@ export class PostsService {
    * the real `authorId`.
    */
   private mustHideAnonymousAuthor(
-    post: { anonymous?: boolean; authorId?: string | null },
+    post: { id?: string; anonymous?: boolean; authorId?: string | null },
     viewer: PostViewerContext
   ) {
     if (!post.anonymous) return false;
-    if (viewer.isGlobalAdmin || viewer.isModerator) return false;
+    if (this.viewerModerates(post, viewer)) return false;
     return !viewer.viewerId || viewer.viewerId !== post.authorId;
   }
 
@@ -763,7 +793,7 @@ export class PostsService {
       raw.comments = await this.commentIdentity.serve(raw.comments, raw, {
         viewerId: viewer.viewerId,
         isGlobalAdmin: viewer.isGlobalAdmin,
-        isModerator: viewer.isModerator,
+        isModerator: this.viewerModerates(raw, viewer),
       });
     }
     Object.assign(raw, this.viewerCapabilities(raw, viewer));
@@ -1155,7 +1185,7 @@ export class PostsService {
     await this.commentIdentity.serveRows(rawPosts, {
       viewerId: viewer?.viewerUserId,
       isGlobalAdmin: viewerCtx.isGlobalAdmin,
-      isModerator: viewerCtx.isModerator,
+      moderatedPostIds: viewerCtx.moderatedIds,
     });
 
     const result = rawPosts.map((p: any) => {
@@ -1510,7 +1540,7 @@ export class PostsService {
     await this.commentIdentity.serveRows(rawPosts, {
       viewerId: viewerUserId,
       isGlobalAdmin: viewerCtx.isGlobalAdmin,
-      isModerator: viewerCtx.isModerator,
+      moderatedPostIds: viewerCtx.moderatedIds,
     });
 
     const result = rawPosts.map((p: any) => {
@@ -1546,18 +1576,21 @@ export class PostsService {
   }
 
   /**
-   * Returns all posts currently hidden by moderation, with their pending report count.
-   * Admin only.
+   * Returns the posts currently hidden by moderation, with their pending report count, within the
+   * caller's scope (owner, 2026-11-02): every one for a platform admin, those of its governed spaces
+   * for a BDE `MODERATE` holder (`bdeModeratesContentSql`). The caller is a moderator already.
    */
-  async getHiddenPosts(): Promise<any[]> {
+  async getHiddenPosts(scope: { userId: string; isGlobalAdmin: boolean }): Promise<any[]> {
     return this.postRepo.manager.query(
       `SELECT p.id, p."authorId", p.markdown, p."createdAt", p."associationId",
               (SELECT COUNT(*)::int FROM content_reports cr
                WHERE cr."contentId" = p.id::text AND cr.status = 'pending') AS "pendingReportCount"
        FROM posts p
        WHERE p."hiddenByModeration" = true
+         AND ($2::boolean OR ${bdeModeratesContentSql('$1', 'p."associationId"', 'p."authorId"')})
        ORDER BY p."createdAt" DESC
-       LIMIT 200`
+       LIMIT 200`,
+      [scope.userId ?? '', scope.isGlobalAdmin]
     );
   }
 
@@ -1659,7 +1692,7 @@ export class PostsService {
     await this.commentIdentity.serveRows([post], {
       viewerId,
       isGlobalAdmin: viewerCtx.isGlobalAdmin,
-      isModerator: viewerCtx.isModerator,
+      moderatedPostIds: viewerCtx.moderatedIds,
     });
     return this.stripBigIntForJson(this.shapeListRow(post, viewerCtx));
   }
@@ -1793,7 +1826,7 @@ export class PostsService {
     return page;
   }
 
-  /** Updates a post's content. See `assertMayManage` for who may. */
+  /** Updates a post's content. Its author alone: see `assertMayEdit`. */
   async updatePost(
     postId: string,
     userId: string,
@@ -1810,7 +1843,7 @@ export class PostsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    await this.assertMayManage(post, userId, isGlobalAdmin);
+    await this.assertMayEdit(post, userId, isGlobalAdmin);
 
     // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
     if (post.kind === 'reel') {
@@ -1873,10 +1906,47 @@ export class PostsService {
   }
 
   /**
-   * Refuses the write to whoever may not manage this post - the server half of the very predicate
-   * the pencil is drawn from, so a visible control and an accepted write cannot disagree.
+   * Is `userId` the post's PUBLISHER - its author, or for a post in an association's name an officer
+   * holding `POST_AS_ASSO` there (`viewerIsPublisher`'s server half)? `mayAct` WITHOUT the global
+   * admin tier: being the platform admin publishes nothing, and `POST_AS_ASSO` is excluded from the
+   * BDE super-admin tier (`SUPER_ADMIN_EXCLUDED_FLAGS`), so this is the member bitmask alone.
+   */
+  private async isPublisherOf(post: Post, userId: string): Promise<boolean> {
+    if (!userId) return false;
+    return post.associationId
+      ? this.associationsService.mayAct(
+          userId,
+          post.associationId,
+          AssociationPermissionFlag.POST_AS_ASSO
+        )
+      : post.authorId === userId;
+  }
+
+  /**
+   * A POST'S INTEGRITY: ONLY ITS AUTHOR CHANGES ITS TEXT (owner, 2026-11-02). Nobody else edits it -
+   * not a BDE moderator, NOT THE PLATFORM ADMIN: moderation hides, deletes, pins and unmasks, and
+   * never puts words in someone's mouth. "Author" is the publisher (`isPublisherOf`): for a post in an
+   * association's name, the association, i.e. whoever speaks for it.
    *
-   * `mayAct` rather than its batch form: one post, one association.
+   * Anyone else - a moderator, the platform admin, any other reader - is refused 403
+   * `POST_EDIT_PUBLISHER_ONLY`: a 403 and never a 401, which may log a user out (review of #2953).
+   */
+  private async assertMayEdit(post: Post, userId: string, isGlobalAdmin: boolean): Promise<void> {
+    if (await this.isPublisherOf(post, userId)) return;
+    this.logger.log(
+      `[PERM] edit of post ${post.id} refused to ${userId ? userId.slice(0, 8) : 'anonymous'} (admin=${isGlobalAdmin}): the author alone edits`
+    );
+    throw new ForbiddenException({
+      code: POST_EDIT_PUBLISHER_ONLY,
+      message: "Only a post's author may change its text",
+    });
+  }
+
+  /**
+   * Refuses the DELETE to whoever may not take this post down - the server half of `canManage`, so
+   * a visible bin and an accepted delete cannot disagree: its publisher, a platform admin, or a BDE
+   * `MODERATE` holder whose governed spaces hold it (`mayModeratePost`, owner 2026-11-02). Anyone
+   * else is a typed 403 (`refuseModeration`: `MODERATION_OUT_OF_SCOPE` or `MODERATOR_REQUIRED`).
    *
    * @returns in which capacity the caller acts: `publisher` (the post's author, or its association's
    *   officer) or `moderator` (a content moderator or a global admin acting on someone else's post) -
@@ -1890,21 +1960,12 @@ export class PostsService {
   ): Promise<'publisher' | 'moderator'> {
     if (isGlobalAdmin) return post.authorId === userId ? 'publisher' : 'moderator';
     if (!userId) throw new UnauthorizedException('Not your post');
-    const isPublisher = post.associationId
-      ? await this.associationsService.mayAct(
-          userId,
-          post.associationId,
-          AssociationPermissionFlag.POST_AS_ASSO
-        )
-      : post.authorId === userId;
-    const allowed = isPublisher || (await this.associationsService.isContentModerator(userId));
-    if (!allowed) {
-      this.logger.debug(
-        `[PERM] ${userId?.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`
-      );
-      throw new UnauthorizedException('Not your post');
-    }
-    return isPublisher ? 'publisher' : 'moderator';
+    if (await this.isPublisherOf(post, userId)) return 'publisher';
+    if (await this.associationsService.mayModeratePost(userId, post.id)) return 'moderator';
+    this.logger.debug(
+      `[PERM] ${userId.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`
+    );
+    return this.associationsService.refuseModeration(userId, `post:${post.id}`);
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */

@@ -57,10 +57,10 @@ export class LiveChatController {
   }
 
   /**
-   * Hides a message, by the live's broadcaster or STAFF - D6, C14. Staff is `isContentModerator`
-   * (a platform admin, or a BDE member holding `MODERATE`): the ONE predicate of the posts'
-   * moderation controls, reused rather than restated. No watch check: the broadcaster is the live's
-   * own, and staff moderate what they may not watch.
+   * Hides a message, by the live's broadcaster or STAFF - D6, C14. Staff is `mayModerateLive` (a
+   * platform admin, or a BDE member holding `MODERATE` whose governed spaces hold the live - scoped
+   * since 2026-11-02, like the posts' moderation controls). No watch check: the broadcaster is the
+   * live's own, and staff moderate what they may not watch.
    */
   @Post(':id/messages/:messageId/hide')
   @HttpCode(200)
@@ -71,9 +71,12 @@ export class LiveChatController {
     @Headers('x-global-admin') globalAdmin: string | undefined
   ) {
     const caller = callerOf(userId);
-    const staff = await this.associations.isContentModerator(caller, {
+    // ParseUUIDPipe accepts either case; the stored ids are lowercase, so the id is normalised ONCE
+    // here, as `cut` does, and every comparison below reads the same value.
+    const liveId = id.toLowerCase();
+    const staff = await this.associations.mayModerateLive(caller, liveId, {
       isGlobalAdmin: globalAdmin === 'true',
     });
-    return this.chat.hide(caller, staff, id, messageId);
+    return this.chat.hide(caller, staff, liveId, messageId.toLowerCase());
   }
 }

@@ -31,7 +31,7 @@ describe('ModerationController - admin paths refuse a non-moderator', () => {
   };
 
   const handlers = Object.getOwnPropertyNames(ModerationController.prototype).filter(
-    (name) => name !== 'constructor' && name !== 'assertModerator'
+    (name) => name !== 'constructor' && !name.startsWith('assert')
   );
 
   const service = {
@@ -51,10 +51,115 @@ describe('ModerationController - admin paths refuse a non-moderator', () => {
   });
 
   it.each(Object.keys(ADMIN_CALLS))(
-    '%s answers 403 and never reaches the service',
+    '%s answers a typed 403 (never a 401, which may log out) and never reaches the service',
     async (name) => {
-      await expect(ADMIN_CALLS[name](controller)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(ADMIN_CALLS[name](controller)).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'MODERATOR_REQUIRED' },
+      });
       for (const fn of Object.values(service)) expect(fn).not.toHaveBeenCalled();
     }
   );
+});
+
+/**
+ * MODERATE IS SCOPED (owner, 2026-11-02): a BDE moderator passes the door, then acts only on what
+ * lives in the spaces its BDE governs; a target outside is a typed 403 and never reaches the service.
+ * The platform admin is never asked a scope.
+ */
+describe('ModerationController - the BDE scope', () => {
+  const OUT = 'outsider';
+  const IN = 'insider';
+  function make() {
+    const service = {
+      listAllReports: jest
+        .fn()
+        .mockResolvedValue([{ id: 'r1', reporterId: IN, reportedUserId: OUT }]),
+      reviewReport: jest.fn().mockResolvedValue({}),
+      muteUser: jest.fn().mockResolvedValue({}),
+      unmuteUser: jest.fn().mockResolvedValue({}),
+      listMutedUsers: jest.fn().mockResolvedValue([]),
+      findPostIdForComment: jest.fn().mockResolvedValue('p-out'),
+      deleteCommentById: jest.fn().mockResolvedValue({ postId: 'p-out' }),
+    };
+    const assoc = {
+      isContentModerator: jest.fn().mockResolvedValue(true),
+      mayModerateUser: jest.fn((_u: string, target: string, o?: { isGlobalAdmin?: boolean }) =>
+        Promise.resolve(o?.isGlobalAdmin === true || target === IN)
+      ),
+      moderatedUserIds: jest.fn((_u: string, ids: string[], o?: { isGlobalAdmin?: boolean }) =>
+        Promise.resolve(new Set(ids.filter((id) => o?.isGlobalAdmin === true || id === IN)))
+      ),
+      mayModeratePost: jest.fn((_u: string, _p: string, o?: { isGlobalAdmin?: boolean }) =>
+        Promise.resolve(o?.isGlobalAdmin === true)
+      ),
+      mayModerateReport: jest.fn((_u: string, _r: string, o?: { isGlobalAdmin?: boolean }) =>
+        Promise.resolve(o?.isGlobalAdmin === true)
+      ),
+      refuseModeration: jest.fn(() =>
+        Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
+      ),
+    };
+    return {
+      service,
+      assoc,
+      controller: new ModerationController(service as never, assoc as never),
+    };
+  }
+
+  it('mutes a person of its spaces', async () => {
+    const { controller, service } = make();
+    await controller.muteUser(IN, 'bde', undefined, { reason: 'x' } as never);
+    expect(service.muteUser).toHaveBeenCalledWith(IN, 'bde', 'x');
+  });
+
+  it('refuses to mute a person outside its spaces, with the typed 403', async () => {
+    const { controller, service } = make();
+    const refusal = await controller
+      .muteUser(OUT, 'bde', undefined, { reason: 'x' } as never)
+      .catch((e: unknown) => e);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: 'MODERATION_OUT_OF_SCOPE',
+    });
+    expect(service.muteUser).not.toHaveBeenCalled();
+  });
+
+  it('lets the platform admin mute anyone', async () => {
+    const { controller, service } = make();
+    await controller.muteUser(OUT, 'admin', 'true', { reason: 'x' } as never);
+    expect(service.muteUser).toHaveBeenCalled();
+  });
+
+  it('refuses a report and a comment outside its scope before the service acts', async () => {
+    const { controller, service } = make();
+    await expect(
+      controller.reviewReport('r1', 'bde', undefined, { action: 'dismissed' } as never)
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.deleteReportedComment('c1', 'bde', undefined)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(service.reviewReport).not.toHaveBeenCalled();
+    expect(service.deleteCommentById).not.toHaveBeenCalled();
+  });
+
+  it('reads the queue in its scope and says which person on each row it may mute', async () => {
+    const { controller, service } = make();
+    const [row] = (await controller.listReports('bde')) as {
+      canMuteReporter: boolean;
+      canMuteReportedUser: boolean;
+    }[];
+    expect(service.listAllReports).toHaveBeenCalledWith(
+      { userId: 'bde', isGlobalAdmin: false },
+      50,
+      0
+    );
+    expect(row.canMuteReporter).toBe(true);
+    expect(row.canMuteReportedUser).toBe(false);
+  });
+
+  it('reads the muted list in its scope', async () => {
+    const { controller, service } = make();
+    await controller.listMutedUsers('bde');
+    expect(service.listMutedUsers).toHaveBeenCalledWith({ userId: 'bde', isGlobalAdmin: false });
+  });
 });

@@ -1,0 +1,3 @@
+### Changed - a BDE moderates its own spaces, only the author edits a post, an institution is the admin's to delete, no event is published to an anonymous reader
+
+`MODERATE` is scoped to the spaces the BDE governs; nobody, the platform admin included, edits another person's post or comment; deleting an institution needs the global admin; no event is served without a session except through a signed link, and a single event's `.ics` link is signed ([D23 amended](docs/wiki/profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02), [D40 closed](docs/wiki/profiles-and-access.md#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)).

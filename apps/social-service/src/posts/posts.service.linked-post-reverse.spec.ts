@@ -36,6 +36,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
     };
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,
