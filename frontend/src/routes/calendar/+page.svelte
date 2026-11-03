@@ -48,6 +48,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import EventFormModal from '$lib/components/calendar/EventFormModal.svelte';
   import {
     blankEventFormValues,
@@ -548,6 +549,7 @@
         <button
           type="button"
           onclick={openDeposit}
+          use:guideAnchor={'calendar.deposit'}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />

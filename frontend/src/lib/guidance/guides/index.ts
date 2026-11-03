@@ -1,4 +1,7 @@
 import type { GuideDefinition } from '../guideTypes';
+import { createEventHint } from './createEventHint';
+import { createFormHint } from './createFormHint';
+import { createPostHint } from './createPostHint';
 import { welcomeTour } from './welcomeTour';
 
 /**
@@ -6,4 +9,9 @@ import { welcomeTour } from './welcomeTour';
  * is seen, the first one starts, and the next waits for the next quiet moment. A new help is a file
  * beside this one and a line here (docs/wiki/frontend/guided-help.md#declaring-a-help).
  */
-export const GUIDES: readonly GuideDefinition[] = [welcomeTour];
+export const GUIDES: readonly GuideDefinition[] = [
+  welcomeTour,
+  createPostHint,
+  createEventHint,
+  createFormHint,
+];

@@ -297,3 +297,54 @@ describe('GuideEngine', () => {
     errors.mockRestore();
   });
 });
+
+describe('at most one help per visit (2026-11-03)', () => {
+  const hint = (id: HelpId, anchor: string): GuideDefinition => ({
+    id,
+    kind: 'hint',
+    appliesTo: (p) => p === '/posts',
+    steps: [step('only', anchor)],
+  });
+  const two = () => harness([tour([step('one', null)]), hint('hint-create-post', 'compose')]);
+
+  it('offers no second help once one was shown, and offers it on the next visit', () => {
+    const v1 = two();
+    v1.rendered.add('compose');
+    v1.engine.consider(true, '/posts');
+    expect(v1.engine.activeId).toBe('welcome-tour');
+    v1.engine.end('finished');
+    v1.engine.consider(true, '/posts');
+    expect(v1.engine.view).toBeNull();
+    expect(v1.seen.has('hint-create-post')).toBe(false);
+    // The next app open is a new engine over the same account: the tour is seen, the hint is offered.
+    const v2 = two();
+    v2.rendered.add('compose');
+    v2.seen.add('welcome-tour');
+    v2.engine.consider(true, '/posts');
+    expect(v2.engine.activeId).toBe('hint-create-post');
+  });
+
+  it('lets another help run after one declined as not-rendered', () => {
+    const g = harness([hint('hint-create-event', 'missing'), hint('hint-create-post', 'compose')]);
+    g.rendered.add('compose');
+    g.engine.consider(true, '/posts'); // the first declines: nothing drawn
+    expect(g.engine.activeId).toBeNull();
+    g.engine.consider(true, '/posts'); // the scheduler asks again
+    expect(g.engine.activeId).toBe('hint-create-post');
+  });
+
+  it('counts a replay as the help of the visit, and never blocks one', () => {
+    const g = two();
+    g.rendered.add('compose');
+    g.seen.add('welcome-tour');
+    g.engine.request('welcome-tour');
+    g.engine.consider(true, '/posts');
+    expect(g.engine.activeId).toBe('welcome-tour');
+    g.engine.end('finished');
+    g.engine.consider(true, '/posts');
+    expect(g.engine.view).toBeNull();
+    g.engine.request('welcome-tour');
+    g.engine.consider(true, '/posts');
+    expect(g.engine.activeId).toBe('welcome-tour');
+  });
+});

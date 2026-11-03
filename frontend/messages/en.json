@@ -5169,5 +5169,15 @@
   "guide_profile_body": "Your profile and your settings. You can replay this tour from Settings, Preferences.",
   "guide_replay_label": "Guided tour",
   "guide_replay_desc": "See the tour of the interface again, from the feed.",
-  "guide_replay_button": "Replay the tour"
+  "guide_replay_button": "Replay the tour",
+  "guide_hint_create_post_title": "Publish a post",
+  "guide_hint_create_post_body": "Text, photos, a poll or a form. You can publish as yourself or as an association, and schedule it for later.",
+  "guide_hint_create_event_title": "Submit an event",
+  "guide_hint_create_event_body": "Pick the association hosting it, the date and the place. The event shows in the agenda once it is approved.",
+  "guide_hint_create_form_general_title": "The form",
+  "guide_hint_create_form_general_body": "Give it a title and, if needed, choose the association it belongs to: that choice is final.",
+  "guide_hint_create_form_questions_title": "The questions",
+  "guide_hint_create_form_questions_body": "Add your questions one by one, with the answer type you want. You can make them required.",
+  "guide_hint_create_form_settings_title": "Advanced settings",
+  "guide_hint_create_form_settings_body": "Audience, opening date, number of answers: it is all here, folded away by default."
 }
