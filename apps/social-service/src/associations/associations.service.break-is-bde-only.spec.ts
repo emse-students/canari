@@ -99,7 +99,7 @@ function makeService(event?: Overrides) {
     batchLoadCoOwners: jest.fn(async () => new Map()),
     syncCoOwners: jest.fn(async () => []),
     serializeCalendarEvent: jest.fn((e: Overrides) => e),
-    notifyEventValidatorsOfProposal: jest.fn(),
+    notifyEventValidatorsOfProposal: jest.fn().mockResolvedValue(undefined),
     notifyAssocAdminsOfEventAction: jest.fn(),
   });
 

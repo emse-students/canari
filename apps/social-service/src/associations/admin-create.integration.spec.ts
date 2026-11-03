@@ -37,6 +37,9 @@ const ADMIN_PRESET =
   AssociationPermissionFlag.PROPOSE_EVENT |
   AssociationPermissionFlag.MANAGE_MEMBERS;
 
+/** The granter of a member write the platform admin makes from the roster editor. */
+const PLATFORM_ADMIN = { userId: 'platform-admin', isGlobalAdmin: true };
+
 maybe('platform admin create and catalogue against PostgreSQL', () => {
   const schema = `admin_create_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
@@ -122,12 +125,15 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     expect(await members.count({ where: { associationId: created.id } })).toBe(0);
     expect(created.createdBy).toBe('platform-admin');
     // Manageable afterwards: adding the first member later works on the empty roster.
-    await service.addMember({
-      associationId: created.id,
-      userId: 'officer',
-      role: 'Admin',
-      permissions: ADMIN_PRESET,
-    });
+    await service.addMember(
+      {
+        associationId: created.id,
+        userId: 'officer',
+        role: 'Admin',
+        permissions: ADMIN_PRESET,
+      },
+      PLATFORM_ADMIN
+    );
     const roster = await members.find({ where: { associationId: created.id } });
     expect(roster.map((r) => [r.userId, r.sortOrder])).toEqual([['officer', 0]]);
   });
@@ -178,6 +184,50 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     });
     const [only] = await members.find({ where: { associationId: created.id } });
     expect(only.permissions & AssociationPermissionFlag.MANAGE_MEMBERS).toBe(0);
+  });
+
+  it('refuses it through the ONE member writer: the same code the roster editor gets, no row left', async () => {
+    // The placement's first admin is written by `insertMembership`, the writer `addMember` uses:
+    // one rule, one code, whichever door the write came through.
+    const refusal = await adminCreate('Mines Instit Bis', {
+      type: 'institution',
+      firstAdmin: { userId: 'officer', permissions: AssociationPermissionFlag.MANAGE_MEMBERS },
+    }).then(
+      () => null,
+      (e: { getStatus: () => number; getResponse: () => { code: string } }) => e
+    );
+    expect(refusal?.getStatus()).toBe(400);
+    expect(refusal?.getResponse().code).toBe(
+      ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY
+    );
+    expect(await assos.count({ where: { name: 'Mines Instit Bis' } })).toBe(0);
+
+    const school = await adminCreate('Mines Instit Ter', { type: 'institution' });
+    // The platform admin adding a member manager later is the same 400 ...
+    await expect(
+      service.addMember(
+        {
+          associationId: school.id,
+          userId: 'officer',
+          role: 'Directeur',
+          permissions: AssociationPermissionFlag.MANAGE_MEMBERS,
+        },
+        PLATFORM_ADMIN
+      )
+    ).rejects.toMatchObject({
+      response: { code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY },
+    });
+    // ... and anyone else adding any member is the 403 of the same rule.
+    await expect(
+      service.addMember(
+        { associationId: school.id, userId: 'officer', role: 'Directeur', permissions: 0 },
+        { userId: 'bde-star', isGlobalAdmin: false }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY },
+    });
+    expect(await members.count({ where: { associationId: school.id } })).toBe(0);
   });
 
   it('a name already taken gets -2, and the preview named it before the create', async () => {

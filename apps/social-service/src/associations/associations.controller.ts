@@ -236,7 +236,8 @@ export class AssociationsController {
   @Get('me/bde-reach')
   async myBdeReach(@Headers('x-user-id') userId: string) {
     const [validateEvents, manageAsso] = await Promise.all([
-      this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.VALIDATE_EVENTS),
+      // The agenda rule (owner, 2026-11-03): an institution's events are in it, its management is not.
+      this.service.associationsUnderBdeAgendaRight(userId),
       this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO),
     ]);
     return { validateEvents, manageAsso };
@@ -870,8 +871,16 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
-  addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
-    return this.service.addMember({ associationId: id, ...dto });
+  addMember(
+    @Param('id') id: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: AddMemberDto
+  ) {
+    return this.service.addMember(
+      { associationId: id, ...dto },
+      { userId: callerId.trim(), isGlobalAdmin: ga === 'true' }
+    );
   }
 
   /** Updates the role or permission bitmask of an existing association member. */
@@ -886,10 +895,31 @@ export class AssociationsController {
     @Body() dto: UpdateMemberRoleDto
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,
     });
+  }
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): the caller leaves the association. Any member, no role
+   * guard - the only row it can touch is the caller's own, named by the vouched `x-user-id`, never by
+   * a parameter. Refused `ASSOCIATION_LAST_MEMBER_MANAGER` for its last holder of `MANAGE_MEMBERS`.
+   * Declared BEFORE `:id/members/:userId` so `me` is never read as a user id.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/members/me')
+  leaveAssociation(@Param('id') id: string, @Headers('x-user-id') callerId: string) {
+    return this.service.leaveAssociation(id, callerId.trim());
   }
 
   /** Removes a member from the association. */
@@ -903,8 +933,19 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
-    return this.service.removeMember(id, targetUserId, { bypassLastAdmin: isGlobalAdmin || isBde });
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
+    return this.service.removeMember(id, targetUserId, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
+      bypassLastAdmin: isGlobalAdmin || isBde,
+    });
   }
 
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────

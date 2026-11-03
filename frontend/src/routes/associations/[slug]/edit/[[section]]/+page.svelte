@@ -11,6 +11,7 @@
     listMembers,
     isPaymentAccountReady,
     getMyBdeReach,
+    grantableFlags,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -78,10 +79,14 @@
   let isGlobalAdminUser = $derived(isGlobalAdmin());
   /**
    * BDE super-admin OF THIS association (MANAGE_ASSO in the BDE of a space it reaches, WP6c step
-   * 2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`.
+   * 2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`,
+   * which never lists an institution: an institution has no governing BDE (owner, 2026-11-02), and
+   * the type check says so here too rather than trusting a stale list.
    */
   let superAdminOf = $state<string[]>([]);
-  let isSuperAdminUser = $derived(!!asso && superAdminOf.includes(asso.id));
+  let isSuperAdminUser = $derived(
+    !!asso && asso.type !== 'institution' && superAdminOf.includes(asso.id)
+  );
 
   /**
    * The wording of what is being edited - an association, a list or an institution. The ONE
@@ -400,8 +405,13 @@
         </div>
       {/if}
 
-      {#if editSection === 'members' && canManageMembers}
-        <EditMembersTab {asso} bind:members bind:resolvedMemberNames />
+      {#if editSection === 'members' && rights.memberRoster}
+        <EditMembersTab
+          {asso}
+          grantable={grantableFlags(permissionContext)}
+          bind:members
+          bind:resolvedMemberNames
+        />
       {/if}
 
       {#if editSection === 'documents' && canManageDocuments && asso}
