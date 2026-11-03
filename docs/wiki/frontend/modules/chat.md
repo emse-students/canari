@@ -4337,16 +4337,23 @@ was the one that moved only the first.
   - Y's landing ENDS, read from `notifNav`: released, or abandoned (`clear()`), whether it was
     published before the edge or after - the baseline is the landing count at the LEAVE when it was
     published before (review of #2937, F1: taken at the edge, an abandon left the count equal and X
-    held for good);
+    held for good). A landing for ANOTHER conversation replacing Y's keeps X held - a `chat` hold
+    uses the `landing` hold's rule, held while a landing not for X is pending;
   - a page link navigated (`noteOpenNavigated`, from `afterNavigate`);
   - the open was routed NOWHERE (`noteOpenRoutedNowhere`): the router's every non-routing branch
     (`mobile/appLinkRouter.ts`: an unclaimed `open?url=`, a link not ours, a callback with no code,
-    and every `catch` of a publish or a `goto` that failed), a native tap record that is not a link,
-    a page notification's tap with no identity or not posted by this session;
-  - on iOS, the page's tap listener could not be armed (`notePageTapsUnroutable`: no `onAction`, or
-    its registration threw or rejected): a page-notification resume then holds nothing, and one
-    already waiting for its landing is released;
+    a checkout return to no known page, and every failure that leaves nothing shown - a chat
+    landing that could not be published, a `goto` that failed with no document-load fallback, a
+    claimed link whose in-app navigation failed, reported by `openClaimedAppLink`; the `catch`es that
+    fall back to a document load navigate, so they report nothing), a native tap record that is not
+    a link, a page notification's tap with no identity or not posted by this session;
   - the app left again, or a resume carried no link.
+
+  On iOS a page-notification resume waits for its landing ONLY while this page's tap listener is
+  REGISTERED (`notePageTapsRoutable`, set by `armPageTapListener` when the plugin's `onAction`
+  registration RESOLVED - a positive signal). No `onAction`, a throw, a rejection, or simply no
+  notification posted since the page loaded (a WebView reload, then a tap on a notification posted
+  before it) leave it unset: that resume holds nothing and warns `page notification tap lost`.
 
   **The router's outcomes, before or after the edge.** The link reaches the router (and its landing,
   navigation or "nowhere") through its own channel, before OR after the edge, so each of those
@@ -4373,8 +4380,10 @@ was the one that moved only the first.
   published, landing abandoned, navigated, nowhere) before and after the edge, a repeated leave
   signal, Y already selected before the edge, a DM's own notification, a non-navigating link driven
   through the REAL `processAppLinks` and `listenForNativeNotificationTaps`, the page notification's
-  tap, a cold start, the arrival rule; `resumeOpening.pageTapsUnroutable.svelte.test.ts` - the
-  listener that could not be armed.
+  tap, a cold start, the arrival rule, another conversation's landing replacing Y's, a claimed link
+  whose navigation fails, a checkout return to no known page;
+  `resumeOpening.pageTapListener.svelte.test.ts` - every registration outcome of
+  `armPageTapListener`, each test on fresh modules (a page load), so each passes alone.
 
 **The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
 server answer that moved a count (one entry per moved salon). Neither grows with a conversation's

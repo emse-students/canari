@@ -191,6 +191,11 @@ export function processAppLinks(urls: string[]): void {
           } else {
             navigate('/forms');
           }
+        } else {
+          console.warn(
+            `[hooks] checkout return to no known page, ignoring: ${describeDeepLink(url)}`
+          );
+          noteOpenRoutedNowhere('a checkout return to no known page');
         }
         continue;
       }
