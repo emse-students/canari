@@ -297,7 +297,7 @@ describe('SecurityController - resetPin', () => {
   });
 
   it('deletes the verifier before it purges any device', async () => {
-    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).resolves.toEqual({
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1')).resolves.toEqual({
       ok: true,
       devicesPurged: 2,
     });
@@ -310,7 +310,7 @@ describe('SecurityController - resetPin', () => {
     verifierDelete.mockImplementation(async () => {
       throw new Error('db down');
     });
-    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).rejects.toThrow('db down');
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1')).rejects.toThrow('db down');
     expect(revocationsDelete).not.toHaveBeenCalled();
     expect(purge).not.toHaveBeenCalled();
   });
@@ -321,7 +321,7 @@ describe('SecurityController - resetPin', () => {
       throw new Error('db down');
     });
     const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).rejects.toBeInstanceOf(
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1')).rejects.toBeInstanceOf(
       InternalServerErrorException
     );
     expect(order.slice(0, 2)).toEqual(['delete verifier', 'delete revocations']);
@@ -336,7 +336,7 @@ describe('SecurityController - resetPin', () => {
       if (d === 'd1') throw new Error('redis down');
     });
     const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    await expect(controller.resetPin({ userId: 'u1' }, 'u1', 'false')).rejects.toBeInstanceOf(
+    await expect(controller.resetPin({ userId: 'u1' }, 'u1')).rejects.toBeInstanceOf(
       InternalServerErrorException
     );
     expect(order).toContain('delete verifier');
