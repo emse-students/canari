@@ -124,7 +124,11 @@ export interface ProposalKindHandler {
    * The sending association for this subject, after refusing (with a typed HTTP error) a subject
    * that may not be proposed to `toAssociationId` at all.
    */
-  resolveSender(subjectId: string, toAssociationId: string): Promise<string>;
+  resolveSender(
+    subjectId: string,
+    toAssociationId: string,
+    manager?: EntityManager
+  ): Promise<string>;
   /**
    * Row-locks the SUBJECT before the decision locks the proposal, when `apply` locks the subject:
    * every other writer (a moderation hide, a delete) takes the subject first and the proposals
@@ -312,10 +316,59 @@ export class ProposalsService {
       );
       throw new ForbiddenException('You may not propose in this association name');
     }
+    const saved = await this.storePending(
+      this.repo,
+      kind,
+      subjectId,
+      fromAssociationId,
+      toAssociationId,
+      actorId
+    );
+    await this.announceProposal(handler, saved);
+    return saved;
+  }
+
+  /**
+   * `propose` INSIDE the caller's transaction, for a subject whose write path already holds its
+   * locks and must commit as ONE unit (an event edit that proposes co-organisers: a failure of the
+   * k-th proposal leaves no earlier one behind). The sender right is always the caller's to vouch
+   * for, the same `senderVouched` as above. Nothing is announced here: the returned `announce`
+   * runs AFTER the caller's commit, and a rolled-back transaction never calls it.
+   */
+  async proposeWithin(
+    manager: EntityManager,
+    kind: ProposalKind,
+    subjectId: string,
+    toAssociationId: string,
+    actorId: string
+  ): Promise<{ proposal: Proposal; announce: AfterCommit }> {
+    const handler = this.associationHandler(kind);
+    const fromAssociationId = await handler.resolveSender(subjectId, toAssociationId, manager);
+    this.logger.debug(`[PROPOSAL] ${kind} by ${actorId.slice(0, 8)}: sender right vouched`);
+    const saved = await this.storePending(
+      manager.getRepository(Proposal),
+      kind,
+      subjectId,
+      fromAssociationId,
+      toAssociationId,
+      actorId
+    );
+    return { proposal: saved, announce: () => this.announceProposal(handler, saved) };
+  }
+
+  /** Stores a pending association-addressed proposal on `repo`; the unique pair is a 409. */
+  private async storePending(
+    repo: Repository<Proposal>,
+    kind: ProposalKind,
+    subjectId: string,
+    fromAssociationId: string,
+    toAssociationId: string,
+    actorId: string
+  ): Promise<Proposal> {
     let saved: Proposal;
     try {
-      saved = await this.repo.save(
-        this.repo.create({
+      saved = await repo.save(
+        repo.create({
           kind,
           subjectId,
           fromAssociationId,
@@ -339,15 +392,22 @@ export class ProposalsService {
     this.logger.log(
       `[PROPOSAL] ${kind} ${saved.id.slice(0, 8)}: ${fromAssociationId.slice(0, 8)} -> ${toAssociationId.slice(0, 8)} by ${actorId.slice(0, 8)}`
     );
+    return saved;
+  }
+
+  /** Tells the receiving association's acceptors a stored proposal waits. Best effort, logged. */
+  private async announceProposal(handler: ProposalKindHandler, saved: Proposal): Promise<void> {
     try {
-      const acceptorIds = await this.holdersOf(toAssociationId, handler.acceptorFlag);
+      const acceptorIds = await this.holdersOf(
+        saved.toAssociationId as string,
+        handler.acceptorFlag
+      );
       await handler.announce(saved as AssociationProposal, acceptorIds);
     } catch (e: unknown) {
       // The proposal is stored and sits in the queue whatever happens here; what a failure loses is
       // the notification, and this line is all that loss leaves.
       this.logger.warn(`[PROPOSAL] ${saved.id} stored but its acceptors were not told`, e);
     }
-    return saved;
   }
 
   /**

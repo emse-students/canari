@@ -162,7 +162,22 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D20 - A new publishing entity type, "Institution"** (Ecole, ME, Alumni association), beside
   association and list, to publish in its own name and propose events. Its members are added
   NOMINATIVELY by an admin: declaring "personnel ME" proves nothing (D8) and only informs the
-  directory.
+  directory. Since 2026-11-02 the server holds "an admin" to the PLATFORM administrator: adding,
+  editing or removing an institution's member is a 403
+  `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY` for anyone else, its own members and a BDE
+  super-admin included, and handing one of its members `MANAGE_MEMBERS` is a 400 of the same code
+  ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+  **No BDE manages an institution, ever** (owner, 2026-11-02: "une institution n'a personne au
+  dessus"): its audience reaching a BDE's space confers no super-admin tier (archive, members,
+  profile, audience, delete). `holdsBdeFlagOverSql` carries the condition once, so every management
+  caller inherits it; only its own members, within their flags, and the platform admin manage it.
+  **But the agenda is the BDE's** (owner, 2026-11-03: *"Aucun BDE n'a les droits de gestion sur une
+  institution, mais c'est le BDE qui a tous les droits sur l'agenda des formations dont il est le
+  BDE"*): event validation follows the spaces an event TARGETS, not who governs its organiser, so the
+  BDE of those spaces validates, rejects and holds every agenda right over an institution's event
+  (`holdsBdeAgendaRightOverSql`). Until WP-E brings per-slice validation, an institution's event is
+  validated by a BDE governing the spaces it targets, or by the platform admin
+  ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 - **D21 - Joining an association of another space opens its content** to that member.
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces
@@ -643,6 +658,17 @@ reviewers - WP7's question. Table, routes and proof:
 saint-etienne) rule, the one BDE governs all of them and nothing changes; the scoping bites the day
 the grid gives an association a reach outside its BDE's spaces.
 
+**The super-admin writing a member row (owner, 2026-11-02).** The tier EXERCISES every right on
+the associations it governs except `SUPER_ADMIN_EXCLUDED_FLAGS` (`POST_AS_ASSO`,
+`MANAGE_PAYOUT_ACCOUNT`), but it may WRITE any flag into a membership row, its own included: a BDE
+officer is often the president of another association and seats themself there with full rights.
+Only an explicit row carries the two excluded rights, and every super-admin write that grants one -
+or `MANAGE_PRODUCTS`, whose explicit row is what accepts a list's payment delegation - is logged at
+info with the association and the flag names. An ordinary member holding `MANAGE_MEMBERS`
+is capped at its own flags, granting, revoking and removing alike; any member leaves through the
+"Quitter" button, except the last holder of `MANAGE_MEMBERS` (`ASSOCIATION_LAST_MEMBER_MANAGER`)
+([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+
 **WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server
 read that serves a post, an event or an announcement asks ONE module,
 `social-service/src/spaces/reader-spaces.ts`; `posts/feed-audience.ts` ("ICM plus global admins")
@@ -764,7 +790,7 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association, a list or an institution its author let carry it (D38b, every kind since 2026-11-02: [amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); an institution only with the author's consent; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a members-only entity (WP-F6, lists admitted 2026-11-02, since `v1.6.1`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
+| Personal post | author and people sharing a space; the readers of an association, a list or an institution its author let carry it (D38b, every kind since 2026-11-02: [amended](#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); an institution only with the author's consent; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a members-only entity (WP-F6, built in #2859, released in `v1.6.0`; lists admitted 2026-11-02, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
 | Republication (D38) | associations, lists (2026-10-31) and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent, asked by any of the three kinds (D38b, amended 2026-11-02); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
@@ -1269,6 +1295,122 @@ removes the co-organiser branch of `eventVisibleToUserSql` fails 2 cases.
 **Not verified**: no browser pass (the picker states, the queue rows and the notification were
 checked by `svelte-check` and the component tests only), and no device push.
 
+#### E2: partner rights on a co-organised event (WP-Q1, 2026-11-03)
+
+Owner decision E2 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): **a partner edits
+the text and the poster and may withdraw; only the organiser changes the date, the audience or the
+partner list, and only the organiser deletes.** Before it, "edit, poster, delete" of D39 as built
+above meant every right, the date and the delete included (P14: a Gardanne partner could delete a
+Saint-Etienne event).
+
+- **The side.** `assertMayWriteEvent` now returns `{ isGlobalAdmin, isBde, side }`. `side` comes from
+  `eventWriteSide` (`associations/event-write-side.ts`, the one rule): the organiser when the write
+  is routed through the event's own association, a `partner` when it is routed through an accepted
+  co-organiser. The organiser is read from the event ROW, never the URL.
+- **The refusals**, one typed 403 `CALENDAR_PARTNER_ORGANISER_ONLY` (`partnerOrganiserOnlyRefusal`),
+  thrown before any write of the event:
+  - `updateCalendarEvent`: a partner whose `startsAt` or `endsAt` actually MOVED (a resubmitted,
+    unchanged date is not a change - both modals send every field);
+  - `CoorganisationService.sync`: a partner-side list that adds anyone or removes anyone but itself
+    (it was a bare 403 with a message; now typed);
+  - `deleteCalendarEvent`'s member branch.
+- **No partial write.** Every partner-side refusal (and the cap) is checked BEFORE the first write of `updateCalendarEvent`: `CoOrganiserPort.check` runs the read-only plan of `sync` ahead of the form-link detach, so a refused request changes nothing (integration case: form link plus an illegal partner-list change).
+- **Allowed for a partner**: title, description, the poster routes (they ask `assertMayWriteEvent`,
+  which a partner passes), and WITHDRAWAL (`coOwnerIds` without itself, unchanged).
+- **Audience.** An event has no audience of its own today (it is the union of the organiser's and the
+  accepted partners', D39), so no write field exists to refuse. When WP-I gives institutions an item
+  audience, that write must call the same `eventWriteSide` and refuse a partner.
+- **Not changed**: a platform admin and a governing validator (`isBde`) are the organiser side through
+  every route, as before - E2 narrows the partner, nobody above. Verified in the integration spec.
+- **The form.** `GET /api/associations/:id/events/:eventId/write-side` answers `{ side }` from that
+  same rule; the form reads it with the co-organiser states (a failure of either is `failed`, the side
+  stays `unknown`). The date and the partner list are drawn and SENT for `organiser` only; a partner
+  sees a note and a "withdraw" button instead. The delete buttons of an association's own calendar
+  section are shown only for events it organises (the server stays the authority).
+- **The form link is the organiser's too** (decision, review of 2026-11-03; reversible, it is one
+  condition in `updateCalendarEvent` and one in `toUpdatePayload`). A partner does NOT own the link: a
+  CHANGE of `linkedFormId` from the partner side (detach, or another form) is the same typed 403
+  (`partnerOrganiserOnlyRefusal('linkedForm')`), before any write; resending the value it loaded is not
+  a change and is accepted. The client never sends `linkedFormId` unless the side is `organiser`. This
+  also removes an untyped 400 (the partner's own association does not own the organiser's form) that
+  broke a partner's plain text edit.
+- **One transaction, one lock, one connection.** `updateCalendarEvent`, `validateCalendarEvent` and
+  `rejectCalendarEvent` run inside `withEventLock` (`AssociationsService`). Its lock order is THE GLOBAL
+  ONE (`ProposalsService.lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE`
+  before it deletes events): the event's organiser and every association the edit names as a partner,
+  `FOR KEY SHARE` in id order, THEN the event row `FOR NO KEY UPDATE`. The first draft locked the event
+  first, and an edit adding a partner could hold the event while a delete of the organiser held the
+  association: a cycle Postgres could not see, because the edit's proposal insert ran on another
+  connection while the edit's own connection sat idle. `NO KEY UPDATE` rather than `UPDATE` so the
+  `FOR KEY SHARE` of foreign-key inserts into tables referencing the event is not blocked.
+- **Everything on the lock's manager.** The checks (`CoOrganiserPort.check(request, manager)`), the form
+  ownership read, the form-link detach, the partner endings, the k proposals
+  (`ProposalsService.proposeWithin`, which hands back its announcement) and the event save are ONE
+  transaction on ONE pooled connection: they commit or none does (a failing k-th proposal leaves no
+  field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
+  The announcements and the other notices run after the commit. An event CREATION is the same
+  unit (`createCalendarEvent`): associations `KEY SHARE` first, then the form ownership read, the
+  detach, the event insert and `sync(request, manager)` in ONE transaction, so a failing k-th proposal
+  leaves no event behind (it used to leave an event with no proposals and a 500, which the retry
+  duplicated). The manager-less `sync(request)` branch was deleted: creation was its only caller, and it now passes its manager.
+  The delete-versus-edit integration case bounds its deleter with `lock_timeout` (failure path only: a
+  lock-order regression fails with SQLSTATE 55P03 instead of hanging the suite) and its waiter matches
+  any lock wait under the suite's `application_name`, not statement text.
+- **A co-organisation ACCEPTANCE takes the same lock** (WP-Q2): `CoorganisationService.lockSubject`
+  locks the event row in `lockInOrder`, so it runs `associations -> event row -> proposal` and is serialised
+  with an edit, a validation and a rejection.
+- **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
+  delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock, failing explicitly if it settles first), the organiser-delete versus partner-edit ordering (a held association lock, never a hang) and the rollback of a failing k-th proposal;
+  `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
+
+#### WP-Q2: an acceptance on a validated event reopens it (2026-11-03)
+
+P13 of [spaces-and-audiences-reform](spaces-and-audiences-reform.md): an acceptance adds the partner's
+audience to a validated event with nobody validating the new part. Interim rule, before WP-E:
+
+- **The demotion.** `CoorganisationService.apply` - inside the acceptance's own transaction, so the
+  partner row and the demotion commit together or not at all - sets a VALIDATED event back to
+  `pending` (`status`, `validatedAt` and `validatedBy` cleared) and logs it (`[COORG] ... back to
+  pending`). It fires once: the `WHERE status = 'validated'` guard leaves a pending or rejected event
+  alone (nothing announced), and an acceptance that inserted no row (conflict) does nothing.
+- **The announcement (F7), after commit**, through ONE method every return to the queue now shares,
+  `AssociationsService.announceEventReopened(event, reason, actorId)` (reason typed in
+  `associations/event-reopen.ts`: `date_moved` | `coorganiser_joined`):
+  - the validators concerned (`notifyEventValidatorsOfProposal`): as for a proposal on a date move; for
+    an ACCEPTANCE they get the same type as the parties (`event_pending_coorganiser`) with
+    `meta.audience = 'validators'`, so the bell reads "a accepté de co-organiser un événement, à valider
+    de nouveau" and never shows the acceptor as proposing. They are told FIRST, and the parties' list
+    excludes them: somebody who is both gets ONE notice, the actionable one;
+  - the organiser's and every accepted partner's `PROPOSE_EVENT` holders, WITH THE REASON
+    (`notifyEventReopenedParties`): the notification type is the reason (`event_pending` for a moved
+    date, new `event_pending_coorganiser` for a joined partner), `meta.reason` repeats it. The actor
+    is never told their own act. The row says "a accepté de co-organiser votre événement, qui attend une
+    nouvelle validation". The announcement RE-READS `status = 'pending'` first and logs and skips when
+    a validator said yes in the meantime;
+- **The date-move path** (`updateCalendarEvent`, the only other place an event returns to pending
+  today) calls the same method. It used to tell the validators and the organiser's proposers only;
+  the partners are now told too, and `notifyAssocAdminsOfEventAction` lost its `'pending'` action.
+- **Lock order.** The acceptance is serialised with an event edit, a validation and a rejection:
+  `CoorganisationService.lockSubject` takes the event row `FOR NO KEY UPDATE` in `lockInOrder`, so every
+  decision is associations (`KEY SHARE`) -> event row -> proposal, the order of `withEventLock`. The
+  demotion is an explicit `UPDATE` of the three status columns; an edit that waited for the lock
+  reads the demoted row, so no stale `validated` is ever written back.
+- **Native tables.** `event_pending_coorganiser` is a seventh social content key: strings in the
+  Android `values` / `values-en`, the iOS app and NSE `Localizable.strings` (fr, en), the Android
+  service, the NSE and `canari_push.mm`, and `push-category.ts` (`events`). Compiled by nobody here:
+  native verification is owed ([device-verification](device-verification.md)).
+- **Superseded by WP-E.** The whole-event demotion is deliberately blunt. WP-E (events per slice,
+  section 4 of the proposal) replaces it with a per-slice reopening: an acceptance re-opens only the
+  new governors' slices, and the typed reason stays as the cause carried from the write.
+- **Proof.** `coorganisation.integration.spec.ts`: a validated event goes pending with stamps cleared
+  and the row in; the organiser and partners are told once with the reason and the validators once;
+  a second acceptance cannot fire again; a pending and a rejected event are untouched and silent; the
+  date-move path announces by the same rule; one person who is validator and party gets one notice; a
+  re-validated event is not announced; a failing notification is logged and the commit stays; two
+  acceptances at once give one demotion and one announcement; an acceptance interleaved with an
+  organiser edit ends pending with the stamps cleared. Existing reach assertions now re-validate the event
+  after the acceptance, since it leaves the agenda until a validator says yes again.
+
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)
 
 `GET /api/associations/calendar/feed` and `feed.ics` (public) take `?campus=` and `?formation=`
@@ -1477,7 +1619,7 @@ An institution is an `associations` row of that type, so it reuses every mechani
 
 - **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
   member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
-- **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
+- **Members are added nominatively** by the platform administrator alone (since 2026-11-02, D20 above; it was the existing member admin until then); **publishing in its name needs membership of it**
   with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
   `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
 - **Republishing**: `REPUBLISHING_ASSOCIATION_TYPES` is now `association, institution` (a list still does not); the
@@ -1501,9 +1643,9 @@ An institution is an `associations` row of that type, so it reuses every mechani
 
 Server half of the seven decisions of [the decisions](#the-audiences-chantier---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08); the client presets (WP-B) come after. One module, `spaces/audience-policy.ts`, holds the rules and the typed codes (classified at the throw: a client reads `code`, never the message).
 
-- **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, ONE rule `(formation NULL, campus = the creator's profile campus)` for an association AND a list. A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
+- **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, the creator's default for an association AND a list - a global admin's whole profile campus, a BDE star's governed spaces of it (`creatorDefaultRules`, aligned 2026-11-03, see WP-B below). A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
 - **`everyone` refused outside institutions** (decision 6): `setAudiences`, the one write path of the audience (the admin grid and the BDE both call it), refuses any rule with `campus` NULL - a formation across campuses included, which is the multi-campus audience decision 3 rules out - with `400 AUDIENCE_EVERYONE_INSTITUTION_ONLY`, for a global admin too. Creation writes only a campus rule, and `PATCH` cannot change an entity's type, so nothing else writes a rule. Existing everyone rules stay until someone edits that entity.
-- **The BDE star** (decision 7): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (`BDE_GOVERNED_CAMPUSES_SQL`: the campuses of the spaces that BDE governs). A star is refused `403` when it is not a star (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), when the target is an institution (`AUDIENCE_INSTITUTION_ADMIN_ONLY`), or when EITHER what the entity addresses now OR what is submitted leaves its campuses, or the entity has no rule at all (`AUDIENCE_OUTSIDE_BDE_CAMPUS`). `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. `GET .../audiences` is open to a star on the same bound since 2026-10-08 (see WP-B below).
+- **The BDE star** (decision 7; since 2026-11-03 "Lire tout, modifier dans ses espaces", owner, verbatim): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (the spaces that BDE governs, `BDE_SPACE_STANDINGS_SQL`); `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. A star is refused `AUDIENCE_ADMIN_OR_BDE_REQUIRED` when it governs no space and `AUDIENCE_INSTITUTION_ADMIN_ONLY` on an institution. Otherwise a star READS the audience of any association or list of its campus (`assertBdeMayReadAudience`: one rule on a campus where it governs a space, or no rule); it WRITES only an entity it already governs (`holdsBdeFlagOverSql` at MANAGE_ASSO - never an institution, never another BDE, `AUDIENCE_OUTSIDE_BDE_CAMPUS`), and every rule the write ADDS or REMOVES must lie inside the spaces it governs (`changedRules` + `ruleInsideGovernedSpaces`). A rule already in force that exceeds them - a whole-campus rule over a campus two BDEs share - is left as it is: the star can neither remove nor widen it (`403 AUDIENCE_RULE_BEYOND_BDE_SPACES`); widening beyond its spaces is the platform admin's alone. The read returns each rule with `editable`, and the editor lists the non-editable ones read-only and sends them back unchanged. This closes the two-granularity gap until the governance reform lands (WP-R1 of `spaces-and-audiences-reform.md`, draft PR #2948); see [association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02).
 - **A change applies to everything, past posts included** (decision 4): visibility is computed from the CURRENT rules at read time and nothing is stored on a post (D38). Proof: `reader-spaces.integration.spec.ts` moves an association's audience under a stored post and the post follows (gated on `SOCIAL_IT_DATABASE_URL`, which CI's `test-social-integration` sets).
 - **No back-fill migration.** `users` belongs to core-service, so a social migration reading `users.campus` would fail on a fresh database, and an entity D36 left rule-less (creator with no space) was left so on purpose. Measure first, read-only (never run by an agent against production), then decide with the user:
 
@@ -1516,7 +1658,7 @@ WHERE a.type IN ('association', 'list')
 GROUP BY a.type;
 ```
 
-Closed by WP-B (2026-10-08): `AssociationsService.create` refuses a NON-admin creator `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when the default campus is not one `BDE_GOVERNED_CAMPUSES_SQL` returns for them, inside the transaction (the row rolls back; `assertCreatorCampusGoverned` in `audience-policy.ts`). A global admin is unchanged and runs no governed-campus query. Cases in `associations.service.create-default-audience.spec.ts`.
+Closed by WP-B (2026-10-08), aligned 2026-11-03: a NON-admin creator's entity starts with an audience it may EDIT (`creatorDefaultRules` in `audience-policy.ts`, from `BDE_SPACE_STANDINGS_SQL`): the spaces of its profile campus its BDE governs - the whole campus when it governs every opened space of it, otherwise one rule per governed formation, never a whole campus it shares with another BDE. A creator governing no space of its campus is refused `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` inside the transaction (the row rolls back). A global admin is unchanged (its whole profile campus) and runs no standing query. Cases in `associations.service.create-default-audience.spec.ts`.
 
 ### Audiences client presets as built (WP-B, 2026-10-08)
 
@@ -1524,7 +1666,7 @@ Client half of the seven decisions. Files: `lib/associations/audiencePresets.ts`
 
 - **Three presets, and `everyone` only for an institution.** Decision 1 lists three presets but also says `everyone` is for institutions, so an association or a list is offered TWO (`campus`, `formations`) and an institution THREE. `presetToRules` maps them to `(null, campus)`, `(formation, campus)` per ticked formation, and `(null, null)`; a half-filled choice yields NO rule, never a wider one. The server stays the rule (`AUDIENCE_EVERYONE_INSTITUTION_ONLY`).
 - **Where.** An "Audience" tab on the association edit page, for a global admin, or a BDE star of THIS association (`me/bde-reach`) when it is not an institution. A member of the association alone does not see it: the server refuses them (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), so offering it would be a button that can only fail. The global admin keeps the campus picker and a link to the `/admin/spaces` grid.
-- **A star READS the current audience, inside its campus (user, 2026-10-08: "campus de l'etoile seulement").** `GET /api/associations/:id/audiences` is a global admin's, or a star's for an entity whose CURRENT rules all lie within the campuses it governs (`assertBdeMayReadAudience`, the read half of the write check: same codes `AUDIENCE_OUTSIDE_BDE_CAMPUS` / `AUDIENCE_INSTITUTION_ADMIN_ONLY` / `AUDIENCE_ADMIN_OR_BDE_REQUIRED`, an unruled entity refused). The editor reads it with `getAssociationAudiences` for both roles and preselects the matching preset (a custom, grid-edited audience is reported as custom); only when the read is refused does it open with no preset ticked and the "saving replaces what is in force" warning.
+- **A star READS the current audience of its campus ("Lire tout", owner 2026-11-03; it was "campus de l'etoile seulement", 2026-10-08, with every rule inside).** `GET /api/associations/:id/audiences` is a global admin's, or a star's for an entity with a rule on a campus where it governs a space, or with no rule (`assertBdeMayReadAudience`: codes `AUDIENCE_OUTSIDE_BDE_CAMPUS` / `AUDIENCE_INSTITUTION_ADMIN_ONLY` / `AUDIENCE_ADMIN_OR_BDE_REQUIRED`). Each rule carries `editable`; the ones beyond the star's spaces are listed read-only. The editor reads it with `getAssociationAudiences` for both roles and preselects the matching preset (a custom, grid-edited audience is reported as custom); only when the read is refused does it open with no preset ticked and the "saving replaces what is in force" warning.
 - **Typed refusals.** `audienceRefusalCode` reads `SocialApiError.code` (set by `request()` from the body), never the message; each of the five codes has a Paraglide sentence (`audience_err_*`).
 - **No campus: the profile prompt** (decision 5). `AssociationCreatePage` reads the own profile on mount and, for an association or a list with no valid campus, shows `ProfileCampusPrompt` instead of the form; a stale profile that the server still refuses (`AUDIENCE_CREATOR_CAMPUS_REQUIRED`) lands on the same prompt. The campus is MiConnect's and only an admin edits it, so "complete the profile" is the EXISTING correction request (`ProfileCorrectionRequest`) plus the link to `/profile`.
 - Tests: `audiencePresets.test.ts`, `audienceRefusal.test.ts`; server `associations.service.create-default-audience.spec.ts`.

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
-import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { BDE_SPACE_STANDINGS_SQL } from '../spaces/bde';
+import type { SpaceStanding } from '../spaces/audience-policy';
 import { SLUG_EXHAUSTED } from './association-slug.util';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
@@ -14,7 +15,8 @@ import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
  */
 function makeService(
   campus: string | null,
-  governed: string[] = [],
+  /** The creator's BDE standing over every opened space (`BDE_SPACE_STANDINGS_SQL`). */
+  standings: SpaceStanding[] = [],
   /** Other associations' slugs and tier keys, read by the cotisation-stem guard. */
   stems: { slug: string; variantKey: string | null }[] = []
 ) {
@@ -24,8 +26,8 @@ function makeService(
       Promise.resolve(
         sql.includes('association_products')
           ? stems
-          : sql === BDE_GOVERNED_CAMPUSES_SQL
-            ? governed.map((c) => ({ campus: c }))
+          : sql === BDE_SPACE_STANDINGS_SQL
+            ? standings
             : [{ campus }]
       )
     ),
@@ -131,9 +133,16 @@ describe('AssociationsService.create - the default reach (campus, every formatio
   });
 });
 
-describe('AssociationsService.create - a non-admin creator is bound to the campuses its BDE governs', () => {
-  it('creates when the default campus is governed by the creator BDE', async () => {
-    const { service, manager } = makeService('gardanne', ['gardanne']);
+/** Gardanne's two opened spaces, each governed or not by the creator's BDE. */
+const gardanne = (ismin: boolean, icm: boolean): SpaceStanding[] => [
+  { formation: 'ISMIN', campus: 'gardanne', governed: ismin },
+  { formation: 'ICM', campus: 'gardanne', governed: icm },
+  { formation: 'ICM', campus: 'saint-etienne', governed: false },
+];
+
+describe('AssociationsService.create - a non-admin creator gets an audience it may edit (owner, 2026-11-03)', () => {
+  it('writes the whole campus when its BDE governs every space of it', async () => {
+    const { service, manager } = makeService('gardanne', gardanne(true, true));
 
     await service.create(dto, 'star-1', false);
 
@@ -142,9 +151,19 @@ describe('AssociationsService.create - a non-admin creator is bound to the campu
     ]);
   });
 
-  it('REFUSES with a typed 403 when the profile campus is not governed, and writes no rule', async () => {
-    for (const governed of [[], ['saint-etienne']]) {
-      const { service, manager } = makeService('gardanne', governed);
+  it('writes only its governed spaces when the campus is shared with another BDE', async () => {
+    const { service, manager } = makeService('gardanne', gardanne(true, false));
+
+    await service.create(dto, 'star-1', false);
+
+    expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+      { associationId: 'new-asso', formation: 'ISMIN', campus: 'gardanne' },
+    ]);
+  });
+
+  it('REFUSES with a typed 403 when no space of the profile campus is governed, and writes no rule', async () => {
+    for (const standings of [[], gardanne(false, false)]) {
+      const { service, manager } = makeService('gardanne', standings);
       const err = await service.create(dto, 'star-2', false).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
       expect((err as ForbiddenException).getResponse()).toMatchObject({
@@ -154,13 +173,15 @@ describe('AssociationsService.create - a non-admin creator is bound to the campu
     }
   });
 
-  it('leaves a global admin unchanged: no governed-campus query at all', async () => {
+  it('leaves a global admin unchanged: the whole campus, no standing query at all', async () => {
     const { service, manager } = makeService('gardanne', []);
 
     await service.create(dto, 'admin-1', true);
 
-    expect(manager.query).not.toHaveBeenCalledWith(BDE_GOVERNED_CAMPUSES_SQL, expect.anything());
-    expect(manager.insert).toHaveBeenCalled();
+    expect(manager.query).not.toHaveBeenCalledWith(BDE_SPACE_STANDINGS_SQL, expect.anything());
+    expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+      { associationId: 'new-asso', formation: null, campus: 'gardanne' },
+    ]);
   });
 });
 

@@ -757,6 +757,12 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
  * lock `UPDATE associations SET "createdBy"` takes later anyway (no upgrade), and it does NOT
  * conflict with a proposal decision's `KEY SHARE`, so a decision is not serialised behind an
  * erasure. Ordered by id, so two erasures sharing associations take them in one order too.
+ *
+ * It also serialises the erasure with the LAST-MANAGER GUARD of a member write
+ * (`AssociationsService.underMemberLock`, `FOR UPDATE` of one association before any member row):
+ * the guard's count never races the `association_members` delete below. The erasure is not refused
+ * by that guard - erasing the last manager leaves none, recovered by a super-admin or the platform
+ * admin (association-permissions.md).
  */
 export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
   WHERE a.id::text IN (

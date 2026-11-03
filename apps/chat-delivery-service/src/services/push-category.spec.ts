@@ -41,6 +41,7 @@ describe('categoryOfDataPush', () => {
     ['event_updated', 'events'],
     ['event_deleted', 'events'],
     ['event_pending', 'events'],
+    ['event_pending_coorganiser', 'events'],
     ['social_booking_cancelled', 'bookings'],
     ['social_booking_withdrawn', 'bookings'],
     ['social_booking_added', 'bookings'],

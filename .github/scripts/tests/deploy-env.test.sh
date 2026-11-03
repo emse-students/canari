@@ -66,7 +66,8 @@ dev_env() {
     DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef \
     DEV_LIVE_REPORT_SIGNING_KEY=d9-0123456789abcdef0123456789abcdef \
     DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde \
-    DEV_LIVE_KEY_ENCRYPTION_SECRET=d11-0123456789abcdef0123456789abcde
+    DEV_LIVE_KEY_ENCRYPTION_SECRET=d11-0123456789abcdef0123456789abcde \
+    DEV_AVATAR_TOKEN_SECRET=d12-0123456789abcdef0123456789abcde
 }
 
 prod_env() {
@@ -89,6 +90,7 @@ prod_env() {
     LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
     LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde \
     LIVE_KEY_ENCRYPTION_SECRET=p11-0123456789abcdef0123456789abcde \
+    AVATAR_TOKEN_SECRET=p12-0123456789abcdef0123456789abcde \
     LYDIA_ENV=production \
     LYDIA_PROVIDER_PRIVATE_TOKEN=test-provider-private-token
 }
@@ -585,6 +587,28 @@ elif grep -q 'LIVE_KEY_ENCRYPTION_SECRET is set for the dev environment but is o
   pass "a 31-character LIVE_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
 else
   fail "dev refused a short LIVE_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/prod-noavatarkey.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^AVATAR_TOKEN_SECRET=') >"$TMP/prod-noavatarkey.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with no AVATAR_TOKEN_SECRET"
+elif grep -q 'AVATAR_TOKEN_SECRET is not set for the prod environment' "$TMP/prod-noavatarkey.log"; then
+  pass "a missing AVATAR_TOKEN_SECRET fails the production render, naming the secret"
+else
+  fail "production refused a missing AVATAR_TOKEN_SECRET without naming it"
+fi
+
+out="$TMP/dev-shortavatarkey.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_AVATAR_TOKEN_SECRET=') DEV_AVATAR_TOKEN_SECRET=0123456789abcdef0123456789abcde >"$TMP/dev-shortavatarkey.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with a 31-character AVATAR_TOKEN_SECRET"
+elif grep -q 'AVATAR_TOKEN_SECRET is set for the dev environment but is only 31 characters' "$TMP/dev-shortavatarkey.log"; then
+  pass "a 31-character AVATAR_TOKEN_SECRET fails the dev render, naming the secret"
+else
+  fail "dev refused a short AVATAR_TOKEN_SECRET without naming it"
 fi
 
 # PRODUCTION'S LYDIA_ENV IS EXPLICIT (2026-10-23). The template says `homologation`, so a production

@@ -96,6 +96,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
 | S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
+| AV | Signed avatar URLs: the community open with COLD avatars ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md#the-cold-avatar-cost---owed-before-the-phase-1-stable)) - the [community-open budget](frontend/community-open-budget.md) rows on the Mi 9T, first open of the day after a sign-in (no warm blob, no browser-cache entry for the new URLs), against the same rows on the build before | **owed BEFORE the phase-1 stable**, on its pre-release | n/a |
 | T | The welcome tour ([guided-help](frontend/guided-help.md)): starts after the PIN on `/posts` of a fresh account, six steps light the real bottom-bar tabs and the avatar, Back closes it, it does not return after a reinstall (the account's `help_seen`), Settings replays it | owed | owed - and the native bar's band on iOS 26 (the halo is the bar's whole band, the bubble's icon names the tab) |
 
 **The `ios-release` artifact CANNOT be installed on a device, and this paragraph said to install it
@@ -339,6 +340,47 @@ one's), or any thumbnail.
 Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
+
+## WMP. The wry main pipe after an activity destroy - owed on Android
+
+**Proves** the vendored wry fork ([mobile](frontend/mobile.md#wry-main-pipe-patch)) on a device: a
+message for a destroyed activity no longer aborts the process (Play crash `e3697bc4...`).
+Compiling it proved nothing about that. Mi 9T, a build carrying the fork, logcat filtered to the
+three lines that decide it: `adb logcat | grep -E "WRY_MAIN_PIPE|SIGABRT|ANR in"`.
+
+**The ANR (`f51255a5...`) is NOT what this row proves.** It is fixed by construction - an unbounded
+channel's `send` cannot block, and the wake write is non-blocking - and no bench sequence fills an
+eight-slot channel on demand, so a quiet bench would prove nothing about it. Its proof is the field
+reading below.
+
+1. `adb shell settings put global always_finish_activities 1` ("Don't keep activities": leaving the
+   app now destroys its activity while the process lives, `isChangingConfigurations` false - the
+   path that removes the activity's proxy).
+2. Open the app, sign in, open a conversation, press Home. **Expect** the process still alive
+   (`adb shell pidof fr.emse.canari`).
+3. From a second device, send three messages to that conversation, and wait one minute. **Expect**
+   `[WRY_MAIN_PIPE] no WebView for activity N: it was destroyed, so its queued messages are dropped`,
+   exactly ONCE for that activity id. **That line is the proof the trigger was reached** - a message
+   did arrive for a destroyed activity, which on `v1.6.2` was the abort. Without it the row proves
+   nothing and says so; the chat socket lives in Rust (`tauri-plugin-websocket`) and is the expected
+   sender. **And expect** no `SIGABRT` line and the process still alive.
+4. Reopen the app from the launcher. **Expect** the conversation to load normally, no `ANR in
+   fr.emse.canari`, and no other `[WRY_MAIN_PIPE]` line - `failed`, `left a Java exception
+   pending`, `stopped waiting` each name a defect, with the Java stack just above for an
+   exception; so do `the wake pipe reached end of file` and `the wake pipe read failed`, each followed
+   by a SIGABRT (the deliberate abort of a dead wake pipe, owner decision 2026-11-03).
+5. Repeat 2-4 five times (each destroyed activity logs its own one line), then
+   `adb shell settings put global always_finish_activities 0`.
+
+**And in the field - the ANR's only proof, and the crash's second**: once a release carrying the fork
+has served a fortnight, run `bun tools/play-vitals/vitals.mjs`; neither `f51255a5...` nor
+`e3697bc4...` may show a report at or above that release's versionCode. Then add both to
+`tools/play-vitals/known-issues.json` (the merge commit, and that versionCode as
+`fixedInVersionCode`), so any later report reads as a REGRESSION.
+
+Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both being a SIGABRT from the
+looper callback, so read the frames below `cb_handler`: an `onFirstActivityCreateWry` closure means
+a dead pipe (the owner-decided abort); `get_webview` or `handle_message` means a real regression.
 
 ## The VoIP ring announces a video call as video - owed
 
@@ -1205,6 +1247,92 @@ the same swipe opens the camera from a feed nobody published on. The bench posts
 afterwards. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkV*.json` and frames.
 
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
+
+## AS. Two accounts on one iPhone install: A -> B -> A -> B - owed on the iPhone 12 before the stable
+
+**Proves** [one MLS state per account](frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)
+on the platform it was built for: every gate on it is a host test, and the switch, the App Group
+copy the notification extension decrypts with and the activation mirror are native. **This is the
+reading the per-account slot (#2919) owes before a stable carries it.** **Precondition:** a
+pre-release carrying #2919 on the iPhone 12 bench phone, two bench accounts A and B where B has
+never signed in on this install, a third device signed in as a third account with a DM to A and a
+DM to B, and the device log (`tools/ios-device`) for the `[MLS_ACCOUNT]`, `[MLS]` and `[CanariPush]`
+lines.
+
+1. **A, then A -> B.** A signed in with a DM open. Sign out, sign in as B. Expect
+   `slot selected for the signing-in account: Moved { parked_other: true, unparked: false }`,
+   `slot state parked` and `the extension's copy of the previous account's state removed`.
+   Background the app, then bring it back. Lock the phone; the third device writes to B - the
+   notification shows the CONTENT. It writes to A - the notification shows no content, and nothing is
+   written for A (no `[KG_PUSH_JOIN]` or state write naming A's account).
+2. **B -> A.** Sign out, sign in as A. Expect `Moved { parked_other: true, unparked: true }`. A's
+   history opens. The third device sends, A replies, the third device decrypts the reply. Lock the
+   phone; a message for A shows its content.
+3. **A -> B.** Sign out, sign in as B. B's DM continues where step 1 left it. Kill the app and
+   relaunch it once: `[CanariPush] mirror to App Group done` appears, and no
+   `[CanariPush] mirror mls.bin failed`.
+4. **Reboot.** Unlock once, lock, the third device writes to B: the content shows.
+4b. **B's "forgot PIN" leaves A intact.** With A having signed in last, sign in as B and take "forgot
+   PIN" at B's PIN gate. Expect `[MLS_ACCOUNT] the PIN reset is staged` then `the PIN reset is
+   committed`, and no `terminer_session_mls` with a sweep; A's state - parked under A's directory - has
+   the same sha256 as before, and A then signs in with its history. With the network cut before the
+   reset, expect `the PIN reset is rolled back` and B's old PIN still opening B's history.
+4c. **An unproven state is never shown to a new account, and goes back to its owner.** On a SECOND
+   install (or after steps 5-7 below are read: this step leaves A's state where steps 1-4 did not),
+   install a build from before the owner record, sign A in, then install the pre-release over it (A's
+   `mls.bin`, no `mls.owner`; at the first start expect `the account its push context names is marked
+   as one a state opened for`, and NEVER `could not be seeded at start-up` nor `is created after
+   start-up`). **Accepted residue, pre-1.3.0 installs only**: if the old build's last sign-in was B's
+   (B used the phone after A and never wrote a state), the seed marks B, and B meets A's state once as
+   the old-PIN refusal - A's state stays whole and A still opens it. Record which account the seed line
+   names when the reading is taken. Sign in as B, who never signed in on this install, and MISTYPE B's PIN
+   once before typing it right: expect `the slot's state of UNPROVEN owner set aside as
+   unproven.residue-<n>` at B's sign-in, and B's PIN gate is B's
+   ordinary one - "Créer mon PIN" when B has no PIN yet, "Déverrouiller" otherwise - which opens with
+   B's own PIN on a fresh state. B never sees "Mon PIN a changé sur un autre appareil → Récupérer mes
+   messages", nor any failure to open a saved state (round 6 offered B A's state, and B met it). Sign out,
+   sign in as A: expect `a state of unproven owner set aside earlier is offered to the signing-in
+   account`, A's history opens, and `mls.owner` names A.
+4d. **B revoking the phone with A parked leaves A whole, and takes B's key.** With A parked and B signed
+   in, note B's keystore alias (`<B's userId>_<B's deviceId>`, in `keystore_aliases.xml` on Android, the
+   `[DEL-LOCAL]` lines on iOS). Remove this phone from B's device list on another device. Expect
+   `another account's MLS state is on this install - only the revoked account is wiped` (or `other
+   account(s) recorded`), never `wiping this device back to a fresh install`; then `[REVOKED-LOCAL] ...
+   done` for B, and no `[DEL-LOCAL]` line about B (B was revoked, not deleted). Afterwards B's alias is ABSENT from the keystore (`BiometricService.isKeyPresent` false; on
+   Android no `<B's alias>` entry), and the run holds ZERO `no keystore entry can be named` lines and
+   ZERO `the revoked account's wipe did not finish` lines. A then signs in with its history, its PIN and
+   its biometric unlock.
+4e. **A reset cut by a reload, then an account switch** (rounds 9 to 11 of the review of #2919). At B's
+   PIN gate take "forgot PIN", and kill the app the moment `the PIN reset is staged by document <n>`
+   appears (before `committed`); relaunch online. Expect, before any unlock, `an unsettled PIN reset is
+   adopted by document <m>` and then, from the server's answer, `the reset is committed` with the gate
+   at once in "Créer mon PIN" (or `rolled back` when the server had not been reached, and B's old PIN
+   opening B's history) - never a `.resetting` left behind, never B's old state unparked after a
+   commit. Repeat with the phone OFFLINE at the relaunch: B's sign-in shows "La réinitialisation de
+   votre PIN attend la réponse du serveur", logged `sign-in refused, as expected` at INFO; reconnect,
+   retry, and the reset settles. Then sign out, sign in as A: A's history opens, its state's sha256
+   unchanged; back to B: B's new PIN opens a fresh state. At every activation of this step note the
+   `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it M ms` line - a reset holds
+   the state lock, and a wait here is the one most likely to stall.
+5. **The greps, over the whole run, each ZERO:** `TWO STATES`, `cut part-way`, `sign-in refused`,
+   `superseded`, `not the push's account`, `a PIN reset was cut`, `committed PIN reset's removal was cut`, `no keystore entry can be named`,
+   `wipe did not finish`, `[DEL-LOCAL]`, `after its erasure`. `residue` appears ONLY on step 4c's install (`UNPROVEN owner set aside as
+   unproven.residue-<n>`), never on the install of steps 1-4.
+6. **The files** (`xcrun devicectl device info files` on the app container and the App Group), on the
+   install of steps 1-4, once step 4d ended with A signed in: NO 64-hex directory under
+   `mls_accounts/` - A's state is in the slot again and B's went with its revoked wipe - and no
+   `.parking`, `.unparking`, `.resetting`, `.committed` or `.residue-<n>` entry; `mls_accounts/unproven.declined`
+   absent or empty (B's entry from 4b, if its reset committed, is pruned by the wipe of B);
+   `mls.owner` in the slot names A; the App Group `mls.bin` has the same sha256 as the slot's.
+7. **The mirror's cost:** between the two `didBecomeActive` mirror lines of one activation, under
+   about 100 ms; and every `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it
+   M ms` line of the run, both numbers noted - a wait in the hundreds of milliseconds is a main-thread
+   stall behind a multi-megabyte write, and blocks the stable like step 5.
+
+`sign-in refused` is expected ONLY as step 4e's offline `sign-in refused, as expected` (INFO).
+
+**Any line of step 5, a missing content in steps 1-4, a key of B left in step 4d, or any directory or suffix in step 6 blocks the
+stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).
 
 ## X. The scroll after an edge swipe - owed on the Mi 9T
 

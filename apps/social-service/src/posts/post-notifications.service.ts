@@ -20,6 +20,7 @@ import {
   eventUpdatedContent,
   eventDeletedContent,
   eventPendingContent,
+  eventPendingCoorganiserContent,
   associationPostContent,
   followedPostContent,
   associationRepostContent,
@@ -161,6 +162,23 @@ const withIcon = (content: PushContent, icon?: PushIcon): PushContent =>
     ? { ...content, icon }
     : content;
 
+/**
+ * The rows of a notice are SAVED and only its push failed (the mute lookup is fail-closed).
+ * Typed so a caller that must know whether somebody HAS the in-app row - to avoid telling the same
+ * person twice - can tell this apart from a failure that wrote nothing, without reading a message.
+ */
+export class NotificationPushFailedError extends Error {
+  constructor(
+    /** Who has the saved in-app row. */
+    readonly recipientIds: string[],
+    readonly cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'NotificationPushFailedError';
+    if (cause instanceof Error && cause.stack) this.stack = cause.stack;
+  }
+}
+
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {
@@ -265,6 +283,8 @@ export class PostNotificationsService {
         return eventDeletedContent(actorName, text);
       case 'event_pending':
         return eventPendingContent(actorName, text);
+      case 'event_pending_coorganiser':
+        return eventPendingCoorganiserContent(actorName, text);
       default:
         return null;
     }
@@ -492,7 +512,9 @@ export class PostNotificationsService {
    * which is precisely how its push escaped `pushContent` and stayed English for as long as it did.
    * Batching belongs here so that the mapping cannot be bypassed to get it.
    *
-   * Returns how many rows were written, so a caller can log a delivery that reached nobody.
+   * Returns how many rows were written, so a caller can log a delivery that reached nobody. When the
+   * rows are saved and only the push fails it throws {@link NotificationPushFailedError}, which
+   * carries who has the row.
    */
   async createNotifications(data: {
     recipientIds: string[];
@@ -538,7 +560,11 @@ export class PostNotificationsService {
     );
     if (data.skipPush) return recipients.length;
 
-    await this.fanOutPush({ ...data, actorName }, recipients);
+    try {
+      await this.fanOutPush({ ...data, actorName }, recipients);
+    } catch (err) {
+      throw new NotificationPushFailedError(recipients, err);
+    }
     return recipients.length;
   }
 

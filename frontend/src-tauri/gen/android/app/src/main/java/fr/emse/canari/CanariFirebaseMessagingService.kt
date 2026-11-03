@@ -161,8 +161,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         private const val WAKE_FETCH_DEADLINE_MS = 20_000L
 
-        /** The wake lock of one fetch is what is left of its deadline, plus this, to settle its ticket. */
+        /** The wake lock of one fetch is what is left of its budget, plus this, to settle its ticket. */
         private const val WAKE_FETCH_WAKELOCK_MARGIN_MS = 10_000L
+
+        /**
+         * What the FETCH may spend of its ticket's [WAKE_FETCH_DEADLINE_MS], strictly less than all
+         * of it: the fetch gives up first and settles its own ticket with the phase it stalled in,
+         * so a timeout is one accusing line (the fetch's), and the deadline is left to settle only
+         * a fetch that never got a thread. The 2 s between them are for the fetch to settle.
+         */
+        private const val WAKE_FETCH_BUDGET_MS = WAKE_FETCH_DEADLINE_MS - 2_000L
 
         /**
          * Where every wake ticket's deadline fires, [WAKE_FETCH_DEADLINE_MS] after the push ARRIVED.
@@ -3022,10 +3030,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // what each answer means is [KeyGroupPushJoin]; the orchestration is [joinKeyGroupFromPush].
 
     /**
-     * Claims one attempt at [groupId]: `granted`, `attempted:<state>`, `full`, or `error`. The
-     * ledger is sealed under [cacheKeyB64]; an empty key answers `error` and nothing is written.
+     * Claims one attempt at [groupId] for [userId], the push's account: `granted`, `attempted:<state>`,
+     * `full`, `not-the-accounts-slot` (the app's MLS state slot holds another account's state, so
+     * nothing is written), or `error`. The ledger is sealed under [cacheKeyB64]; an empty key answers
+     * `error` and nothing is written.
      */
-    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, groupId: String): String
+    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, userId: String, groupId: String): String
 
     /**
      * Settles an attempt: [state] is `joined` ([a] = scope kind, [b] = scope id), `refused`, `lost`
@@ -3035,6 +3045,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeKeyGroupJoinSettle(
         filesDir: String,
         cacheKeyB64: String,
+        userId: String,
         groupId: String,
         state: String,
         a: String,
@@ -3059,11 +3070,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
     ): String
 
-    /** Installs the staged state, refused if `mls.bin` changed since it was read. False = lost. */
-    external fun nativeFinishKeyGroupJoin(filesDir: String): Boolean
+    /**
+     * Installs [userId]'s staged state, refused if `mls.bin` changed since it was read or the slot is
+     * no longer that account's. False = lost.
+     */
+    external fun nativeFinishKeyGroupJoin(filesDir: String, userId: String): Boolean
 
-    /** Deletes the staged state of a commit the server did not accept. */
-    external fun nativeAbandonKeyGroupJoin(filesDir: String)
+    /** Deletes [userId]'s staged state of a commit the server did not accept - only from that account's slot. */
+    external fun nativeAbandonKeyGroupJoin(filesDir: String, userId: String)
 
     /**
      * Settles the Add staged in [stateBytes] (the mls.bin just loaded) for [groupId] on a DEFINITIVE
@@ -3868,18 +3882,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun executeOnLane(name: String, timeoutMs: Long, onLane: () -> Unit, block: () -> Unit) {
         onLane()
-        MLS_PUSH_LANE.execute {
-            val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
-            wl.acquire(timeoutMs)
-            try {
-                block()
-            } catch (e: Throwable) {
-                // A task that dies must not take the lane with it: the executor would keep running,
-                // but this is the only place the failure is visible at all.
-                Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
-            } finally {
-                if (wl.isHeld) wl.release()
+        // Through [WakeOrder.handOff]: inside a release batch, the lane is handed this task only once
+        // every action of the batch has run - so every [onLane] of the batch has counted before the
+        // lane can start any of its tasks.
+        WAKE_ORDER.handOff {
+            MLS_PUSH_LANE.execute {
+                var wl: PowerManager.WakeLock? = null
+                try {
+                    // INSIDE the try: a wake lock that cannot be taken must not skip [block], whose own
+                    // `finally` releases what [onLane] counted ([WELCOMES_ON_LANE]) - a count left
+                    // stranded would re-queue its group's frames for ever.
+                    wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
+                    wl.acquire(timeoutMs)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "$name: wake lock NOT taken, running without it: ${e.javaClass.simpleName}", e)
+                }
+                try {
+                    block()
+                } catch (e: Throwable) {
+                    // A task that dies must not take the lane with it: the executor would keep running,
+                    // but this is the only place the failure is visible at all.
+                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
+                } finally {
+                    if (wl?.isHeld == true) wl.release()
+                }
             }
         }
     }
@@ -4462,10 +4489,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * ticket is taken here, on FCM's thread; every full push bound for the lane takes one too
      * ([runSerializedWithWakeLock]). The fetch runs on [WAKE_FETCH_POOL], and [WAKE_ORDER] releases
      * the results in ticket order - so a Welcome sent as a wake is still joined before the salon push
-     * that arrived after it, and the lane is never held by a round trip. One request, no retry: the
-     * whole fetch is held to [WAKE_FETCH_DEADLINE_MS], and the ticket is settled on every path (the
-     * fetch's `finally`, or here if it could not be scheduled), so no path leaves a later push
-     * waiting.
+     * that arrived after it, and the lane is never held by a round trip.
+     *
+     * THE DEADLINE COUNTS FROM ARRIVAL. [WakeOrder.arrive] schedules it here, [WAKE_FETCH_DEADLINE_MS]
+     * from now, so the ticket is settled within that bound whatever the fetch is doing - waiting for a
+     * thread, running, stuck - and a push behind it waits at most that long. One request, no retry:
+     * the fetch gets [WAKE_FETCH_BUDGET_MS] from the same arrival, strictly less, so it normally
+     * settles its own ticket first; the ticket is also settled here if the fetch cannot be scheduled,
+     * and at once if the deadline cannot. Both are counted in awake time (`System.nanoTime`).
      *
      * A FAILED FETCH IS NEVER DRAWN AS THE GENERIC TEXT. It is logged at ERROR with its stage, and a
      * visible frame gets a notification that SAYS the message could not be loaded; a silent one gets
@@ -4491,23 +4522,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (!silent) runWithWakeLock("fcm_wake_unavailable") { showWakeUnavailableNotification(mentionsOnly) }
             return
         }
-        val arrivedAt = android.os.SystemClock.elapsedRealtime()
+        // ONE CLOCK: the deadline's executor counts in `System.nanoTime`, so the fetch's budget does
+        // too - both stop in deep sleep, and neither can run out while the other has not.
+        val arrivedAtNs = System.nanoTime()
         // THE TICKET IS BOUNDED FROM ARRIVAL: unless its fetch settles it first, its deadline does,
         // [WAKE_FETCH_DEADLINE_MS] from now - whether the fetch is queued behind stuck ones, running,
-        // or never scheduled at all.
-        val ticket = WAKE_ORDER.arrive {
-            Log.e(TAG, "[PUSH_WAKE] DEADLINE queued=$queuedMessageId not settled $WAKE_FETCH_DEADLINE_MS ms after it arrived " +
-                "(its fetch still queued or running) - settled as not loaded, so nothing behind it waits longer")
+        // or never scheduled at all. Settled by the deadline, its one accusing line is
+        // [onWakeFetched]'s `stage=deadline`.
+        val ticket = WAKE_ORDER.arrive(
+            onScheduleFailed = { e ->
+                Log.e(TAG, "[PUSH_WAKE] deadline NOT scheduled queued=$queuedMessageId (${e.javaClass.simpleName}) - settled as not loaded at once")
+            },
+        ) {
             onWakeFetched(queuedMessageId, silent, mentionsOnly, WakeAnswer.Outcome.Failed("deadline"))
         }
         val settle = { outcome: WakeAnswer.Outcome ->
             try {
                 val released = WAKE_ORDER.settle(ticket) { onWakeFetched(queuedMessageId, silent, mentionsOnly, outcome) }
-                if (released == null) {
-                    Log.w(TAG, "[PUSH_WAKE] late result DROPPED queued=$queuedMessageId ticket=$ticket outcome=${outcome.javaClass.simpleName} " +
-                        "- its deadline settled it first; the frame stays queued for the next open")
-                } else {
-                    Log.d(TAG, "[PUSH_WAKE] settled queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
+                when {
+                    released != null ->
+                        Log.d(TAG, "[PUSH_WAKE] settled queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
+                    // Its deadline already accused it; a failure arriving after says nothing new.
+                    outcome is WakeAnswer.Outcome.Failed ->
+                        Log.d(TAG, "[PUSH_WAKE] late failure ignored queued=$queuedMessageId ticket=$ticket stage=${outcome.stage}")
+                    // A real answer lost to the deadline: the deadline's line said "not loaded", this
+                    // says the server had in fact answered - the frame stays queued for the next open.
+                    else ->
+                        Log.w(TAG, "[PUSH_WAKE] late result DROPPED queued=$queuedMessageId ticket=$ticket outcome=${outcome.javaClass.simpleName} " +
+                            "- its deadline settled it first; the frame stays queued for the next open")
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
@@ -4518,12 +4560,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 var outcome: WakeAnswer.Outcome = WakeAnswer.Outcome.Failed("uncaught")
                 var wl: PowerManager.WakeLock? = null
                 try {
-                    // What is left of the ticket's bound: a fetch that waited its turn here gets the
-                    // remainder, and one whose deadline already passed is not started at all.
-                    val remainingMs = arrivedAt + WAKE_FETCH_DEADLINE_MS - android.os.SystemClock.elapsedRealtime()
+                    // What is left of the fetch's budget: a fetch that waited its turn here gets the
+                    // remainder, and one whose budget already ran out is not started (its deadline
+                    // says so - no second line here).
+                    val remainingMs = WAKE_FETCH_BUDGET_MS - (System.nanoTime() - arrivedAtNs) / 1_000_000L
                     if (remainingMs <= 0) {
-                        Log.w(TAG, "[PUSH_WAKE] fetch NOT started queued=$queuedMessageId - it waited past its deadline for a fetch thread")
-                        outcome = WakeAnswer.Outcome.Failed("deadline")
+                        outcome = WakeAnswer.Outcome.Failed("deadline-queued")
                     } else {
                         wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
                             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_wake_fetch")
@@ -4546,9 +4588,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
-     * [fetchWakeFrame] held to [budgetMs] - what is left of its ticket's deadline - as a whole. Past
-     * it the connection is disconnected, the call abandoned on [WAKE_HTTP_POOL], and the fetch is a
-     * failure accused at ERROR - the frame stays queued for the next open.
+     * [fetchWakeFrame] held to [budgetMs] - what is left of [WAKE_FETCH_BUDGET_MS], itself short of
+     * the ticket's deadline - as a whole. Past it the connection is disconnected, the call abandoned
+     * on [WAKE_HTTP_POOL], and the fetch is `Failed("deadline-<phase>")`, accused once by
+     * [onWakeFetched] - the frame stays queued for the next open.
      */
     private fun fetchWakeFrameWithinDeadline(queuedMessageId: String, silent: Boolean, budgetMs: Long): WakeAnswer.Outcome {
         val connection = AtomicReference<HttpURLConnection?>(null)
@@ -4559,11 +4602,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return try {
             call.get(budgetMs, TimeUnit.MILLISECONDS)
         } catch (e: TimeoutException) {
-            Log.e(TAG, "[PUSH_WAKE] fetch EXCEEDED the $budgetMs ms left of its deadline queued=$queuedMessageId " +
-                "phase=${phase.get()} - abandoned, the ticket is settled by its deadline")
+            // No line here: the outcome carries the phase, and [onWakeFetched] says it once, at ERROR.
             connection.get()?.disconnect()
             call.cancel(true)
-            WakeAnswer.Outcome.Failed("deadline")
+            WakeAnswer.Outcome.Failed("deadline-${phase.get()}")
         } catch (e: java.util.concurrent.ExecutionException) {
             Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
             WakeAnswer.Outcome.Failed("uncaught")
@@ -5834,6 +5876,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_event_pending_title),
                 res.getString(R.string.notif_event_pending_body, arg)
             )
+            "event_pending_coorganiser" -> Pair(
+                res.getString(R.string.notif_event_pending_coorganiser_title),
+                res.getString(R.string.notif_event_pending_coorganiser_body, arg)
+            )
             else -> {
                 Log.w(TAG, "unknown contentKey=$key - using the server's own wording")
                 null
@@ -6087,7 +6133,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
 
         val claim = try {
-            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId))
+            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, ctx.userId, groupId))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
             return
@@ -6107,7 +6153,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Anything thrown before the install is a join that did not happen; the staged state,
             // if any, is deleted so it can never be installed later by mistake.
             Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.message}")
-            nativeAbandonKeyGroupJoin(filesDir)
+            nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             KeyGroupPushJoin.Settlement.Retryable("exception")
         }
         if (settlement == null) {
@@ -6123,7 +6169,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is KeyGroupPushJoin.Settlement.Retryable -> settlement.reason to ""
             is KeyGroupPushJoin.Settlement.Deferred -> settlement.reason to settlement.baseEpoch.toString()
         }
-        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, groupId, settlement.token, a, b)
+        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, ctx.userId, groupId, settlement.token, a, b)
         val level = when (settlement) {
             is KeyGroupPushJoin.Settlement.Joined -> Log.INFO
             is KeyGroupPushJoin.Settlement.Retryable -> Log.INFO
@@ -6212,14 +6258,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             base.baseEpoch,
         )
         if (step == KeyGroupPushJoin.AfterCommit.ABANDON) {
-            nativeAbandonKeyGroupJoin(filesDir)
+            nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             return refusal ?: KeyGroupPushJoin.Settlement.Retryable("commit-unsettled")
         }
         // ACCEPTED: the server now holds this device's leaf. The install is the one step whose
         // failure leaves a leaf with no secrets behind it - LOST, and the app's join replaces it.
         // A lock not taken is NOT a refusal: null, and the attempt is left unsettled.
-        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir) }
-        if (installed == false) nativeAbandonKeyGroupJoin(filesDir)
+        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir, ctx.userId) }
+        if (installed == false) nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
         return KeyGroupPushJoin.afterInstall(installed, base)
     }
 

@@ -18,7 +18,9 @@
 # AN ALLOWLIST, NOT A DERIVATION, and every entry is asserted against the tree: a crate listed here
 # that is no longer patched fails (the entry is stale - delete it), so the list cannot rot into a
 # watch over nothing. The other `[patch.crates-io]` entries are not on it because the backlog row
-# that asked for this named one crate; adding one is adding a line.
+# that asked for this named one crate; adding one is adding a line. `wry` joined on 2026-11-03: it
+# is not a direct dependency, so its `=` pin in `[dependencies]` exists ONLY to hold the fork in
+# place (a newer registry release would otherwise out-resolve the path patch and drop it silently).
 #
 # HOW IT REPORTS. `gh run list` shows 1 and 75 alike - both are an ordinary failed run - so what
 # tells them apart is the `::error` annotation TITLE, legible in the run summary without opening the
@@ -32,7 +34,7 @@
 #       wins, so a flaky registry cannot hide one.
 #
 # Usage: .github/scripts/vendored-upstream-report.sh
-# Env:   REPO_ROOT, CURL, CRATES_IO_API - overridden by the self-test only.
+# Env:   REPO_ROOT, CURL, CRATES_IO_API, VENDORED_WATCHED - overridden by the self-test only.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -43,8 +45,9 @@ TAURI_DIR="$REPO_ROOT/frontend/src-tauri"
 MANIFEST="$TAURI_DIR/Cargo.toml"
 
 # THE ALLOWLIST. One crate per line; each must be a `[patch.crates-io]` entry of `$MANIFEST` whose
-# path is `patches/<crate>`.
-readonly WATCHED='tauri-plugin-websocket'
+# path is `patches/<crate>`. The self-test narrows it to the one crate its fixture trees carry.
+readonly WATCHED="${VENDORED_WATCHED:-tauri-plugin-websocket
+wry}"
 
 # crates.io refuses an anonymous client (its crawler policy asks for a contact in the User-Agent).
 readonly USER_AGENT='canari-ci vendored-upstream-report (https://github.com/emse-students/canari)'

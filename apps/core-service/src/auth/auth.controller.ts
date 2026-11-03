@@ -44,6 +44,7 @@ import {
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
 import { ACCESS_TOKEN_TTL_SECONDS } from './token-lifetimes';
+import { mintAvatarToken } from './avatar-token';
 import { assertMintableUserId } from '../users/user-id';
 import {
   AccountErasureService,
@@ -164,7 +165,25 @@ interface IssuedSession {
   access_token: string;
   /** Present only for a client whose engine cannot keep the cookie - see `refresh-transport.ts`. */
   refresh_token?: string;
+  /**
+   * The viewer-bound token an avatar URL carries as `?t=` (`avatar-token.ts`), minted for the same
+   * session as `access_token`. Absent only on an estate with no `AVATAR_TOKEN_SECRET`.
+   */
+  avatar_token?: string;
   user: SignedInUserDto;
+}
+
+/** What a refresh answers: the next access token, and the avatar token of the same session. */
+interface RefreshedSession {
+  access_token: string;
+  refresh_token?: string;
+  avatar_token?: string;
+}
+
+/** `{ avatar_token }` for `sessionId`, or nothing when this estate cannot mint one. */
+function avatarTokenField(sessionId: string): { avatar_token?: string } {
+  const avatar_token = mintAvatarToken(sessionId);
+  return avatar_token ? { avatar_token } : {};
 }
 
 /**
@@ -506,26 +525,17 @@ export class AuthController {
     @Body() body: OidcCallbackDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
-  ): Promise<{
-    access_token: string;
-    /** Present only for a client whose engine cannot keep the cookie - see `refresh-transport.ts`. */
-    refresh_token?: string;
-    /**
-     * MiConnect's id_token, handed on for ONE use: the `id_token_hint` the client's sign-out sends to
-     * MiConnect's end-session, which refuses a return address without it. It authenticates nothing
-     * here or there (docs/wiki/infrastructure/authentik.md, "Signing out of Canari ends MiConnect").
-     */
-    id_token?: string;
-    user: {
-      id: string;
-      displayName: string;
-      promo: number | null;
-      firstName: string | null;
-      lastName: string | null;
-      bio: string | null;
-      admin: boolean;
-    };
-  }> {
+  ): Promise<
+    IssuedSession & {
+      /**
+       * MiConnect's id_token, handed on for ONE use: the `id_token_hint` the client's sign-out sends
+       * to MiConnect's end-session, which refuses a return address without it. It authenticates
+       * nothing here or there (docs/wiki/infrastructure/authentik.md, "Signing out of Canari ends
+       * MiConnect").
+       */
+      id_token?: string;
+    }
+  > {
     const { code, redirect_uri, code_verifier } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
     if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
@@ -711,6 +721,7 @@ export class AuthController {
     return {
       access_token,
       ...(bodyTransport ? { refresh_token } : {}),
+      ...avatarTokenField(session.sessionId),
       user: {
         id: user.id,
         displayName: user.displayName || '',
@@ -762,7 +773,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Query('clientVersion') clientVersion?: string
-  ): Promise<{ access_token: string; refresh_token?: string }> {
+  ): Promise<RefreshedSession> {
     const refresh_token = this.presentedRefreshToken(req);
     if (!refresh_token) {
       // THIS 401 HAS TWO CAUSES AND CANNOT ITSELF TELL THEM APART, so the line carries the
@@ -896,10 +907,10 @@ export class AuthController {
     // carrying its own copy must persist the new one before relying on it.
     this.setRefreshCookie(res, new_refresh);
     if (this.carriesOwnRefreshCredential(req.get('origin'))) {
-      return { access_token, refresh_token: new_refresh };
+      return { access_token, refresh_token: new_refresh, ...avatarTokenField(sessionId) };
     }
 
-    return { access_token };
+    return { access_token, ...avatarTokenField(sessionId) };
   }
 
   // ─── Logout ────────────────────────────────────────────────────────────────

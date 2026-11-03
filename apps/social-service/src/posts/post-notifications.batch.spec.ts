@@ -175,6 +175,7 @@ describe('PostNotificationsService.createNotifications', () => {
     ['event_updated', 'event_updated'],
     ['event_deleted', 'event_deleted'],
     ['event_pending', 'event_pending'],
+    ['event_pending_coorganiser', 'event_pending_coorganiser'],
   ])('%s pushes a CONTENT KEY, never a composed sentence', async (type, expectedKey) => {
     await service().createNotifications({
       recipientIds: ['a'],
