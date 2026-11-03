@@ -5168,5 +5168,15 @@
   "guide_profile_body": "Votre profil et vos réglages. Cette visite peut être revue depuis Réglages, Préférences.",
   "guide_replay_label": "Visite guidée",
   "guide_replay_desc": "Revoir la présentation de l'interface, depuis le fil.",
-  "guide_replay_button": "Revoir la visite"
+  "guide_replay_button": "Revoir la visite",
+  "guide_hint_create_post_title": "Publier un message",
+  "guide_hint_create_post_body": "Texte, photos, sondage ou formulaire. Vous pouvez publier en votre nom ou en celui d'une association, et programmer l'envoi.",
+  "guide_hint_create_event_title": "Déposer un événement",
+  "guide_hint_create_event_body": "Choisissez l'association qui l'organise, la date et le lieu. L'événement apparaît dans l'agenda une fois validé.",
+  "guide_hint_create_form_general_title": "Le formulaire",
+  "guide_hint_create_form_general_body": "Donnez-lui un titre et, si besoin, choisissez l'association à laquelle il appartient : ce choix est définitif.",
+  "guide_hint_create_form_questions_title": "Les questions",
+  "guide_hint_create_form_questions_body": "Ajoutez vos questions une à une, avec le type de réponse voulu. Vous pouvez les rendre obligatoires.",
+  "guide_hint_create_form_settings_title": "Réglages avancés",
+  "guide_hint_create_form_settings_body": "Public concerné, date d'ouverture, nombre de réponses : tout est ici, replié par défaut."
 }

@@ -163,6 +163,25 @@ it points at is drawn). A replay ignores the seen set and still waits for the qu
 local copy alone would replay on a new device a tour the account finished on another one. A device
 that cannot reach the server shows no new help; the next opening asks again.
 
+## The first-time hints, batch 1 - create
+
+Built 2026-11-03, `kind: 'hint'` each, once per account, listed after the welcome tour (so a hint
+never precedes it on `/posts`). **A help never runs over a modal** (the quiet state), and the post
+composer and the event form ARE modals - so those two hints point at the control that OPENS them, and
+say what a first-timer would miss (publishing as an association, scheduling, validation) in the body.
+The form builder is a page, so its hint points inside it.
+
+| Id | Route | Anchor(s) | Steps (fr) |
+| --- | --- | --- | --- |
+| `hint-create-post` | `/posts` | `posts.compose`: the phone header's "+" (`MobileHeader`) and the desktop "Publier" button (both marked, the drawn one wins) | "Publier un message" - texte, photos, sondage ou formulaire, en son nom ou celui d'une association, envoi programmable |
+| `hint-create-event` | `/calendar` | `calendar.deposit`: the "Deposer un evenement" button, drawn only for an account that may post on an association (else the step is left out, not-rendered) | "Déposer un événement" - association, date, lieu; visible dans l'agenda une fois validé |
+| `hint-create-form` | `/forms/create` | `forms.create.general`, `.questions`, `.settings`: wrappers of the page's three blocks | "Le formulaire" (titre, association, choix définitif), "Les questions", "Réglages avancés" |
+
+Pinned by `guides/createHints.test.ts` (kind, route, registered, every step kept on phone and desktop,
+left out when not drawn, and the anchors really marked in the page sources). Owed: the three read on a
+phone and a desktop with a signed-in account; the next batches (chats and CanaReels, associations and
+spaces, booking a room) follow.
+
 ## Back, focus, motion
 
 - **Back** closes a help like every overlay: its entry is pushed on the history overlay stack

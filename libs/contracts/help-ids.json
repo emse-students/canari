@@ -1,5 +1,5 @@
 {
   "description": "Every first-time help and guided tour the client may record as seen on the account (core-service `help_seen`, docs/wiki/frontend/guided-help.md). core-service refuses any other id (HELP_IDS in apps/core-service/src/platform/help-ids.ts), so the table holds at most one row per account per entry here; the client declares a help only under one of these ids (HELP_IDS in frontend/src/lib/guidance/helpIds.ts). Each side's spec asserts its list equals this one. A new help appends its id here and in both lists, in the same pull request. `unknownIdCode` is the `code` of the 400 refusing an id outside the list - the ONE refusal a client drops for good; any other failure stays owed.",
-  "ids": ["welcome-tour"],
+  "ids": ["welcome-tour", "hint-create-post", "hint-create-event", "hint-create-form"],
   "unknownIdCode": "HELP_ID_UNKNOWN"
 }
