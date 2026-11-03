@@ -77,6 +77,20 @@ type StackEntry = {
 };
 
 const stack: StackEntry[] = [];
+
+/**
+ * Who is told when the stack's depth changes - the guided-help overlay, which must not START over
+ * an open menu or sheet (`guidance/GuideOverlay.svelte`). An event, so that reader needs no poll.
+ */
+const depthListeners = new Set<(depth: number) => void>();
+
+/** Calls `listener` with the new depth after every change of the stack. Returns the unsubscribe. */
+export function onHistoryOverlayDepthChange(listener: (depth: number) => void): () => void {
+  depthListeners.add(listener);
+  return () => {
+    depthListeners.delete(listener);
+  };
+}
 /** The id of the last entry pushed by this load. */
 let lastId = 0;
 /**
@@ -167,6 +181,24 @@ function publishNativeBackDepth(force = false): void {
 }
 
 /**
+ * THE ONE CALL AT EVERY POINT THE STACK CHANGES: hands the native Back its depth
+ * ({@link publishNativeBackDepth}) and tells the depth listeners ({@link onHistoryOverlayDepthChange}).
+ * One call, so a change point can never publish to one reader and forget the other - the guided
+ * tour's entry is only closable by Android's Back because its push publishes like any overlay's.
+ * `force` re-sends an unchanged native depth (the native layer lowered its own before asking).
+ */
+function stackChanged(force = false): void {
+  publishNativeBackDepth(force);
+  for (const listener of depthListeners) {
+    try {
+      listener(stack.length);
+    } catch (e) {
+      console.error('[historyOverlay] a depth listener threw', e);
+    }
+  }
+}
+
+/**
  * Called by the native Back (`window.__canariBackFromNative`) for a Back its own depth said the
  * page can take: steps the history one entry, which closes the overlay on top through `popstate`
  * like any other Back. The depth is lowered AT THIS CALL, never at the `popstate`, so two fast Backs
@@ -179,7 +211,7 @@ export function backForNativeWhenOverlayOpen(): boolean {
   if (depth === 0) {
     // The native layer lowered ITS depth before asking; tell it what is true (a router write such
     // as a `replaceState` can move the pointer without a publish).
-    publishNativeBackDepth(true);
+    stackChanged(true);
     return false;
   }
   nativeTarget = depth - 1;
@@ -187,7 +219,7 @@ export function backForNativeWhenOverlayOpen(): boolean {
     'historyOverlay',
     `native Back with ${stack.length} overlay(s) open - stepping the history`
   );
-  publishNativeBackDepth(true);
+  stackChanged(true);
   history.back();
   return true;
 }
@@ -221,14 +253,14 @@ export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}):
       !byWalk && from > 0 && fromHref === currentHref() && !stack.some((e) => e.id === from);
     settleArrival(event.state, leftGhost);
     if (nativeTarget !== null && stack.length <= nativeTarget) nativeTarget = null;
-    publishNativeBackDepth();
+    stackChanged();
   };
 
   window.addEventListener('popstate', onPopState);
   (window as unknown as Record<string, unknown>).__canariBackFromNative =
     backForNativeWhenOverlayOpen;
   publishedDepth = -1;
-  publishNativeBackDepth();
+  stackChanged();
   return () => {
     window.removeEventListener('popstate', onPopState);
     delete (window as unknown as Record<string, unknown>).__canariBackFromNative;
@@ -240,7 +272,7 @@ export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}):
     writesEntries = true;
     nativeTarget = null;
     // Cleared FIRST, then told: the native layer must hear the empty stack, never the old depth.
-    publishNativeBackDepth();
+    stackChanged();
   };
 }
 
@@ -259,7 +291,7 @@ export function pushHistoryOverlay(close: OverlayClose): void {
   nativeTarget = null;
   if (!writesEntries) {
     stack.push({ close, id });
-    publishNativeBackDepth();
+    stackChanged();
     return;
   }
   const state = { [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID };
@@ -272,7 +304,7 @@ export function pushHistoryOverlay(close: OverlayClose): void {
   stack.push({ close, id });
   here = id;
   hereHref = currentHref();
-  publishNativeBackDepth();
+  stackChanged();
 }
 
 /**
@@ -382,7 +414,7 @@ export function backHistoryOverlayFromGesture(arm: HistoryGestureArm | null): bo
     return false;
   }
   Log.i('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
-  publishNativeBackDepth();
+  stackChanged();
   top.close('back');
   return true;
 }
@@ -427,7 +459,7 @@ export function releaseHistoryOverlay(close: () => void): void {
   if (!isBrowser) return;
   const idx = stack.findIndex((e) => e.close === close);
   if (idx >= 0) stack.splice(idx, 1);
-  publishNativeBackDepth();
+  stackChanged();
 }
 
 /**
@@ -452,7 +484,7 @@ export function drainHistoryOverlayStack(): void {
   here = 0;
   hereHref = '';
   nativeTarget = null;
-  publishNativeBackDepth();
+  stackChanged();
 }
 
 /**
@@ -477,7 +509,7 @@ export function clearHistoryOverlayStack(): void {
   hereHref = '';
   walking = false;
   nativeTarget = null;
-  publishNativeBackDepth();
+  stackChanged();
 }
 
 export function historyOverlayStackDepth(): number {

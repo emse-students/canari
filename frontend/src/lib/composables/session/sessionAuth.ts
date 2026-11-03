@@ -90,6 +90,8 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
+import { resetSeenHelps } from '$lib/guidance/seenHelps.svelte';
+import { guideEngine } from '$lib/guidance/guidance.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import {
   flushPendingGroupExits,
@@ -3494,6 +3496,10 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
   // this the next account signing in in the same tab was never asked on its own behalf (the store's
   // `checked` latch stayed set) and could be shown the previous account's.
   resetAnnouncementState();
+  // The first-time helps the leaving account has seen, and its tour on screen or suspended: the next
+  // account is read on its own behalf, and never handed the previous one's half-walked run.
+  resetSeenHelps();
+  guideEngine.reset();
   ctx.setStorage(null);
   ctx.setAuthToken('');
   cb.log('[LOGOUT] Live session stopped.');
