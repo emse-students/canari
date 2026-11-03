@@ -143,38 +143,52 @@ are always optional and associations leave them NULL.
 
 ### What a list and an institution manage (owner, 2026-10-31)
 
-ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
-the hub, the route guard and the permission editor all read it. An association has every section. A
-**list** and an **institution** sell nothing (no shop, cotisations, purchases, delegation or payments)
-and share eight: profile, members, documents, forms, bookings, partnerships, the republication /
-co-organisation queue and danger; an institution adds its audience (global admin only). The list
-route `/lists/[slug]/edit/[[section]]` renders them with the SAME tab components as the association
-page. `/associations/<slug>/edit` of a list forwards to the list route, so an old link or a
-notification lands on the same section.
+*Lists re-decided by the owner on 2026-11-02 (below); the heading keeps its date so its links hold.*
 
-**The role editor derives its rights from that table** (`permissionMaskFor`): a list or institution
-is offered `POST_AS_ASSO`, `PROPOSE_EVENT`, `MANAGE_MEMBERS`, `EDIT_PROFILE`, `MANAGE_DOCUMENTS`,
-`MANAGE_FORMS`, `MANAGE_PARTNERSHIPS` and `MANAGE_BOOKINGS`, never `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT`. A
-checkbox edits its own bit only; the server strips the shop and payout rights on write (below). The admin preset a new member receives is
-`adminPresetFor(kind)`, narrowed the same way. **Server side**: forms, documents and partnerships
-endpoints carry no type check, so they already accepted a list; the republication allowlist
-(`REPUBLISHING_ASSOCIATION_TYPES`) gained `list`. A person's consent to republish
-(`PERSONAL_REPUBLISHING_ASSOCIATION_TYPES`) stays association-only. **The server holds the same rule** (`associations/selling-kinds.ts`, an allowlist: only `association`
-sells). A list or an institution gets a typed `403 ASSOCIATION_KIND_DOES_NOT_SELL`, logged at ERROR, on:
-product create and update (`ProductsService`), the cotisation provisioning and `cotisationEnabled: true`
-on `PATCH :id`, the Lydia account link (`setLydiaAccountId`, the one writer of the payout account),
-`requestPaymentDelegation` / `approvePaymentDelegation`, and a form price (`POST` and `PUT` of a form).
-It judges NEW WRITES only: no existing product, account or priced form is deleted or rewritten. An
-existing product may be taken OFF sale (`isActive: false` alone), never put on sale or repriced. A form
-is judged MERGED (`assertKindMayPrice`): any price source counts - base price, payment switch, grid cell,
-a choice option's supplement (only a CHOICE question's: `isChoiceQuestion`, the one rule at save and at submit) - and a form that already charges stays editable while its
-`priceFingerprint` (key-order-insensitive: jsonb reorders a grid's keys) is unchanged, and may always be
-made free. The shop and payout rights are STRIPPED from any member bitmask written for such a kind
-(`writablePermissions`, on `addMember` and `updateMemberRole`); a bit stored before stays until that
-member is next saved and opens nothing meanwhile, since every route behind it refuses the kind. The
-role editor never shows them. The form editor draws no price section for these kinds; a priced one is
-shown frozen with a "make this form free" button (it also clears option supplements) (`FormPaymentSection`, `associationSells`), and the
-refusal reads from the typed code (`asso_kind_does_not_sell`), never the server's English.
+ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
+the hub, the route guard and the permission editor all read it. An association has every section.
+
+**A list keeps the shop, its cotisation, paid forms, purchases and the vault, but holds NO Lydia
+account of its own** (owner, 2026-11-02): it collects ONLY through a payment delegation to an
+association that accepts it (`paymentParentAssociationId`). Its sections are the eight selling-free
+ones - profile, members, documents, forms, bookings, partnerships, the republication / co-organisation
+queue and danger - plus payments (the shop only: no bank-account or Lydia enrolment card), purchases,
+cotisations and delegation. **An institution sells nothing**: the eight, plus its audience (global
+admin only). The list route `/lists/[slug]/edit/[[section]]` renders them with the SAME tab components
+as the association page; `/associations/<slug>/edit` of a list forwards to the list route.
+
+**Who enters the edit area** is `mayEnterEditArea` (global admin, the BDE governing the entity, or its
+own officer), and both edit pages AWAIT the BDE reach before deciding: the list page used to fire it
+and forget it, so a BDE governing a list - not a member of it - was sent to the public page and could
+not delete its lists (F2).
+
+**The kind table is `TYPE_EXCLUDED_FLAGS`** (server: `association-member.entity.ts`; client mirror in
+`api.ts`, compared against the server source by `permissions.test.ts`): a list never holds
+`MANAGE_PAYOUT_ACCOUNT`, an institution never holds `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT` -
+whoever asks, the platform admin included. `mayAct` and `mayActOnAny` read it ABOVE every tier;
+`writablePermissions` strips those bits on `addMember` / `updateMemberRole`; the role editor
+(`permissionMaskFor`) never offers them, so a new list admin's preset is 7455 (with `EDIT_PROFILE`,
+bit 12, since #2964: a list and an institution have a profile too, and the flag survives
+`writablePermissions` on every kind).
+
+**Whether an entity may collect is ONE predicate, `mayCollect`** (`associations/collection-policy.ts`,
+derived from the same table): an association always, a list only with an APPROVED delegation, an
+institution never. `assertMayCollect` refuses at every entry point - product create and update (taking
+a product OFF sale is always allowed), the cotisation provisioning and `cotisationEnabled: true`, a form
+price (`POST` / `PUT`, judged MERGED by `priceFingerprint` as before) - with a typed 403: a list without
+an approved delegate gets `LIST_DELEGATE_REQUIRED` (WARN), an institution
+`ASSOCIATION_KIND_DOES_NOT_SELL` (ERROR). A list's own Lydia link is refused up front with
+`LIST_NO_OWN_LYDIA_ACCOUNT`, and a list or institution can never RECEIVE a delegation. The client reads
+each refusal by its code (`providerRefusalMessage`), never the server's English; the not-ready banners
+of the list's shop and forms tabs link to its delegation section.
+
+**Readiness is the server's**: every member read of an association carries the derived
+`paymentsReady` (`withPaymentsReady`: its own Lydia, or its approved delegate's), and the client asks
+`canTakePayments` - which also fixed a delegating ASSOCIATION, told "payments not configured" while it
+collected through its parent. The delegation lifecycle (who may accept, the acceptance record, the
+pause and resume) is in [payments](payments.md#payment-delegation-parent-association-routing). The form editor draws its price
+section for every kind with a `payments` section; for an institution a priced form is shown frozen
+with a "make this form free" button (`FormPaymentSection`, `associationSells`).
 
 ### The half that could only ever be turned off
 

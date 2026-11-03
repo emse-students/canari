@@ -76,6 +76,12 @@
 "notif.lydia_payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
 "notif.lydia_refund_issued.title" = "Remboursement";
 "notif.lydia_refund_issued.body" = "%1$@ vous a remboursé un paiement.";
+"notif.delegation_revoked.title" = "Paiements en pause";
+"notif.delegation_revoked.body" = "L'association qui recevait les paiements de %1$@ a mis fin à la délégation : ses paiements sont en pause.";
+"notif.delegation_receiver_not_ready.title" = "Paiements en pause";
+"notif.delegation_receiver_not_ready.body" = "L'association qui reçoit les paiements de %1$@ ne peut plus les encaisser : ses paiements sont en pause.";
+"notif.delegation_resumed.title" = "Paiements rétablis";
+"notif.delegation_resumed.body" = "Les paiements de %1$@ reprennent.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";

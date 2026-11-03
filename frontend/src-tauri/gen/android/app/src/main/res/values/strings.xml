@@ -148,6 +148,12 @@
     <string name="notif_lydia_payments_paused_body">Les paiements Lydia de %1$s sont suspendus : Lydia a refusé une demande de paiement.</string>
     <string name="notif_lydia_refund_issued_title">Remboursement</string>
     <string name="notif_lydia_refund_issued_body">%1$s vous a remboursé un paiement.</string>
+    <string name="notif_delegation_revoked_title">Paiements en pause</string>
+    <string name="notif_delegation_revoked_body">L\'association qui recevait les paiements de %1$s a mis fin à la délégation : ses paiements sont en pause.</string>
+    <string name="notif_delegation_receiver_not_ready_title">Paiements en pause</string>
+    <string name="notif_delegation_receiver_not_ready_body">L\'association qui reçoit les paiements de %1$s ne peut plus les encaisser : ses paiements sont en pause.</string>
+    <string name="notif_delegation_resumed_title">Paiements rétablis</string>
+    <string name="notif_delegation_resumed_body">Les paiements de %1$s reprennent.</string>
     <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
          is the only one naming an actor, because it is the only one where WHO acted is the useful
          half: the other four are always "the BDE".

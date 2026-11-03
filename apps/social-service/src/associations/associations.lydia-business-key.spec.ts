@@ -153,17 +153,18 @@ describe('AssociationsService - the Lydia Business key', () => {
   });
 });
 
-describe('AssociationsService.setLydiaAccountId - a list or an institution collects nothing (owner, 2026-10-31)', () => {
-  it.each(['list', 'institution'] as const)(
-    'refuses to link a Business to a %s, typed 403, nothing written',
-    async (type) => {
+describe('AssociationsService.setLydiaAccountId - only an association holds a Business of its own (owner, 2026-11-02)', () => {
+  it.each([
+    ['list', 'LIST_NO_OWN_LYDIA_ACCOUNT'],
+    ['institution', 'ASSOCIATION_KIND_DOES_NOT_SELL'],
+  ] as const)(
+    'refuses to link a Business to a %s, typed %s, nothing written',
+    async (type, code) => {
       const { service, table } = makeService([
         { id: ASSO_A, lydiaAccountId: null, sealed: null, type },
       ]);
       const attempt = service.setLydiaAccountId(ASSO_A, 'vendor-a', null, KEY_A);
-      await expect(attempt).rejects.toMatchObject({
-        response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
-      });
+      await expect(attempt).rejects.toMatchObject({ response: { code } });
       expect(table[0]).toMatchObject({ lydiaAccountId: null, sealed: null });
     }
   );

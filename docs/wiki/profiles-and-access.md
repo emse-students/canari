@@ -926,6 +926,21 @@ owner's space is booked by a student of its campus and refused to the other one,
 campus is no bridge across the review cohort. A control that opened personal spaces to everyone made
 the three personal-space cases fail.
 
+### Who sells: an association, a list through its delegate, never an institution (owner, 2026-11-02)
+
+| Kind | Shop, cotisation, paid forms | Own Lydia account | How it collects |
+| --- | --- | --- | --- |
+| Association | yes | yes | its own Lydia, or a delegate's if it delegates |
+| List | yes | **never** (`LIST_NO_OWN_LYDIA_ACCOUNT`) | ONLY through an APPROVED payment delegation to any association whose Lydia is ready - not necessarily its BDE; without one, every collecting write is refused `LIST_DELEGATE_REQUIRED` |
+| Institution | **never** (`ASSOCIATION_KIND_DOES_NOT_SELL`) | never | does not collect |
+
+The delegation is accepted only by the receiver's own `MANAGE_PRODUCTS` holders or the platform
+admin - never by a BDE governing the receiver - and every acceptance is recorded. A revoke, or the
+receiver losing its Lydia, pauses the list's products and paid forms and tells its managers; a new
+acceptance resumes them. The mechanism is in
+[associations](frontend/modules/associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31)
+and [payments](frontend/modules/payments.md#pause-and-resume-when-the-receiver-stops-collecting-owner-2026-11-02).
+
 ### D38 republication as built (2026-10-04)
 
 Branch `feat/spaces-repost`, stacked on `feat/spaces-6c-scope`. Migration `073_republications.sql`

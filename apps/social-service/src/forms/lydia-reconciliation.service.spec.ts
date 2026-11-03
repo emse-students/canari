@@ -60,24 +60,23 @@ function makeService(
     expireUnprovenCheckout: jest.fn(async () => 'expired'),
     cancelStillOpenCheckout: jest.fn(async () => 'cancelled'),
   };
-  const associationsService = {
-    getLydiaPayeeAccountId: jest.fn(async () =>
-      opts.payee === undefined ? 'vendor-payee' : opts.payee
-    ),
+  // The Business the row's request was ISSUED to (`lydiaVendorToken`), read by name.
+  const submissionRepo = {
+    createQueryBuilder: jest.fn(() => builder(opts.submissions ?? [])),
+    findOne: jest.fn(async () => ({
+      id: 'sub-1',
+      lydiaVendorToken: opts.payee === undefined ? 'vendor-payee' : opts.payee,
+    })),
   };
-  const submissionRepo = { createQueryBuilder: jest.fn(() => builder(opts.submissions ?? [])) };
-  const formRepo = { findOne: jest.fn(async () => ({ id: 'form-1', associationId: 'asso-1' })) };
   const checkoutRepo = { createQueryBuilder: jest.fn(() => builder(opts.checkouts ?? [], 3)) };
   const Service = opts.testFinal ? WithTestFinal : LydiaReconciliationService;
   const service = new Service(
     submissionRepo as never,
-    formRepo as never,
     checkoutRepo as never,
     formsService as never,
-    productsService as never,
-    associationsService as never
+    productsService as never
   );
-  return { service, formsService, productsService, associationsService, checkoutRepo };
+  return { service, formsService, productsService, submissionRepo, checkoutRepo };
 }
 
 const submission = (overrides: Partial<Submission> = {}) =>

@@ -5850,6 +5850,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_lydia_refund_issued_title),
                 res.getString(R.string.notif_lydia_refund_issued_body, arg)
             )
+            // A delegate (a list) paused or resumed by its receiver: `arg` is its name only.
+            "delegation_revoked" -> Pair(
+                res.getString(R.string.notif_delegation_revoked_title),
+                res.getString(R.string.notif_delegation_revoked_body, arg)
+            )
+            "delegation_receiver_not_ready" -> Pair(
+                res.getString(R.string.notif_delegation_receiver_not_ready_title),
+                res.getString(R.string.notif_delegation_receiver_not_ready_body, arg)
+            )
+            "delegation_resumed" -> Pair(
+                res.getString(R.string.notif_delegation_resumed_title),
+                res.getString(R.string.notif_delegation_resumed_body, arg)
+            )
             // The agenda's five. `arg` is the event's title for all of them; only `event_proposed`
             // also uses the actor, because it is the only one where WHO acted is the useful half.
             "event_proposed" -> Pair(

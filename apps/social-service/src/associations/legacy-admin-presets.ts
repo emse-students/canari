@@ -1,6 +1,5 @@
 import type { Logger } from '@nestjs/common';
 import { ALL_CORE_FLAGS, AssociationPermissionFlag } from './entities/association-member.entity';
-import { writablePermissions } from './selling-kinds';
 
 /**
  * LEGACY SHIM - remove on or after 2027-05-03 (docs/wiki/legacy-compatibility.md, "an admin preset
@@ -21,11 +20,25 @@ export const LEGACY_EDIT_PROFILE_REMOVAL_DATE = '2027-05-03';
 const OLD_CORE_FLAGS = ALL_CORE_FLAGS & ~AssociationPermissionFlag.EDIT_PROFILE;
 const OLD_ADMIN_PRESET = OLD_CORE_FLAGS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
 
+/**
+ * What the OLD client's `adminPresetFor` took out of a list's and an institution's preset: the shop
+ * and the payout account (the pre-2026-11-02 "a list sells nothing" rule). Frozen here on purpose -
+ * NOT today's `writablePermissions`, which since #2967 leaves a list its shop: the shim must match
+ * what those builds actually posted.
+ */
+const OLD_CLIENT_NON_SELLING_FLAGS =
+  AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
+
+/** `mask` narrowed for `kind` exactly as a pre-`EDIT_PROFILE` build narrowed it. */
+function oldClientPreset(kind: 'association' | 'list' | 'institution', mask: number): number {
+  return kind === 'association' ? mask : mask & ~OLD_CLIENT_NON_SELLING_FLAGS;
+}
+
 /** Every admin preset a pre-`EDIT_PROFILE` build could post, for every kind. */
 export const LEGACY_ADMIN_PRESETS: ReadonlySet<number> = new Set(
   (['association', 'list', 'institution'] as const).flatMap((kind) => [
-    writablePermissions(kind, OLD_ADMIN_PRESET),
-    writablePermissions(kind, OLD_CORE_FLAGS),
+    oldClientPreset(kind, OLD_ADMIN_PRESET),
+    oldClientPreset(kind, OLD_CORE_FLAGS),
   ])
 );
 

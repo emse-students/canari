@@ -115,6 +115,12 @@
     <string name="notif_lydia_payments_paused_body">Lydia payments for %1$s are paused: Lydia refused a payment request.</string>
     <string name="notif_lydia_refund_issued_title">Refund</string>
     <string name="notif_lydia_refund_issued_body">%1$s refunded one of your payments.</string>
+    <string name="notif_delegation_revoked_title">Payments paused</string>
+    <string name="notif_delegation_revoked_body">The association receiving %1$s\'s payments ended the delegation: its payments are paused.</string>
+    <string name="notif_delegation_receiver_not_ready_title">Payments paused</string>
+    <string name="notif_delegation_receiver_not_ready_body">The association receiving %1$s\'s payments can no longer collect them: its payments are paused.</string>
+    <string name="notif_delegation_resumed_title">Payments back on</string>
+    <string name="notif_delegation_resumed_body">%1$s\'s payments are back on.</string>
     <!-- The agenda's five. See the note in values/strings.xml. -->
     <string name="notif_event_proposed_title">Event to review</string>
     <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>

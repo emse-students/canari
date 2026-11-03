@@ -84,6 +84,10 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   lydia_payments_paused: 'forms',
   // A payer refunded by an association (Lydia refunds, lot 4): a money matter, same EXISTING id.
   lydia_refund_issued: 'forms',
+  // A delegate (a list) paused or resumed by its receiver: a money matter, same EXISTING id.
+  delegation_revoked: 'forms',
+  delegation_receiver_not_ready: 'forms',
+  delegation_resumed: 'forms',
   event_proposed: 'events',
   event_validated: 'events',
   event_rejected: 'events',

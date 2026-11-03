@@ -174,8 +174,11 @@ export class Association {
   categoryId: string | null;
 
   /**
-   * Discriminates a regular association from a promo "list". Lists behave like
-   * associations (members, events) minus the banking/shop/vault features.
+   * Discriminates a regular association from a promo "list" and an institution. A list keeps the
+   * shop, its cotisation, paid forms and the vault, but holds NO Lydia account of its own: it
+   * collects only through an accepted payment delegation (`paymentParentAssociationId`). An
+   * institution sells nothing. The table is `TYPE_EXCLUDED_FLAGS`, read by `collection-policy.ts`
+   * (owner, 2026-11-02).
    */
   @Column({ type: 'varchar', length: 20, default: 'association' })
   type: 'association' | 'list' | 'institution';

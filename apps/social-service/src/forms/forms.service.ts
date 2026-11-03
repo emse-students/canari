@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { assertKindMaySell } from '../associations/selling-kinds';
+import { assertMayCollect } from '../associations/collection-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -55,6 +55,7 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
 import { formOrderRef } from './form-order-ref';
+import { requestAccountOf } from './request-account';
 import {
   GUEST_RECEIPT_NOT_FOUND,
   guestReference,
@@ -121,19 +122,20 @@ function makeId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(6).toString('base64url')}`;
 }
 
-/** True when the form is configured to collect money for an association recipient. */
-function formRequiresStripeReadyAssociation(input: {
-  associationId?: string;
-  basePrice?: number;
-  priceMatrix?: unknown;
-  requiresPayment?: boolean;
-}): boolean {
+/**
+ * True when the form collects money for an association recipient: it names one AND it charges, by
+ * the ONE predicate that counts every price source - a choice option's supplement included
+ * (`chargesMoney`). It used to count the base price, the switch and the grid only, so a form priced
+ * by a supplement alone read "free" here: never paused, never asked for a ready association
+ * (owner review of #2967, 2026-11-03).
+ */
+function formRequiresStripeReadyAssociation(
+  input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
+    associationId?: string;
+  }
+): boolean {
   if (!input.associationId?.trim()) return false;
-  if ((input.basePrice ?? 0) > 0 || input.requiresPayment) return true;
-  // A grid can charge while `basePrice` is 0 - that is the whole point of a cell. Any non-zero cell
-  // makes this a paid form, so the beneficiary has to be able to receive the money.
-  const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
-  return !!cells && Object.values(cells).some((c) => (c ?? 0) > 0);
+  return chargesMoney(input as CreateFormDto);
 }
 
 /**
@@ -228,8 +230,9 @@ export class FormsService {
   ) {}
 
   /**
-   * A form of a list or an institution may not be given a price (owner, 2026-10-31): those kinds
-   * collect nothing. Judged on the MERGED form - what the edit leaves, stored fields included - so
+   * A form may be given a price only by an entity that may collect now (`mayCollect`, owner
+   * 2026-11-02): an association, or a list through an approved payment delegation - never an
+   * institution. A list without one is refused `LIST_DELEGATE_REQUIRED`. Judged on the MERGED form - what the edit leaves, stored fields included - so
    * every way to charge counts: the base price, the payment switch, a grid cell and a choice
    * option's supplement (`chargesMoney`).
    *
@@ -258,21 +261,19 @@ export class FormsService {
     if (stored && chargesMoney(stored as unknown as CreateFormDto)) {
       if (priceFingerprint(merged) === priceFingerprint(stored as unknown as CreateFormDto)) return;
     }
-    const kind = await this.associationsService.kindOf(associationId);
-    if (kind) assertKindMaySell(this.logger, associationId, kind, 'form price');
+    const subject = await this.associationsService.collectionSubjectOf(associationId);
+    if (subject) assertMayCollect(this.logger, subject, 'form price');
   }
 
   /**
    * Paid forms linked to an association require its payment onboarding to be complete.
    * @throws BadRequestException when the association cannot receive payments yet
    */
-  private async assertPaidFormAssociationReady(input: {
-    associationId?: string;
-    basePrice?: number;
-    /** A grid can charge while `basePrice` is 0, so it counts towards "this form takes money". */
-    priceMatrix?: unknown;
-    requiresPayment?: boolean;
-  }): Promise<void> {
+  private async assertPaidFormAssociationReady(
+    input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
+      associationId?: string;
+    }
+  ): Promise<void> {
     if (!formRequiresStripeReadyAssociation(input)) return;
     await this.associationsService.assertPaymentsReady(input.associationId!.trim());
   }
@@ -680,7 +681,21 @@ export class FormsService {
       !!cotisationGrantRefusal({
         cotisationMode: await this.userTagService.cotisationModeOf(form.associationId),
       });
-    return { ...form, submissionCount, cotisationDisabled };
+    const paymentsPaused = await this.paymentsPaused(form);
+    return { ...form, submissionCount, cotisationDisabled, paymentsPaused };
+  }
+
+  /**
+   * A paid form is PAUSED while its association cannot collect online now (`collectsNow`): a list
+   * whose payment delegation was revoked or never accepted, or whose receiver lost its Lydia account
+   * (owner, 2026-11-02). Derived on every read, so it resumes with the next accepted delegation; the
+   * online submit is refused by the same readiness (`assertPaymentsReady`). A free form never is.
+   */
+  private async paymentsPaused(form: Form): Promise<boolean> {
+    if (!formRequiresStripeReadyAssociation(form as unknown as CreateFormDto)) return false;
+    const paused = !(await this.associationsService.collectsNow(form.associationId));
+    if (paused) this.logger.debug(`[Forms] form ${form.id.slice(0, 8)} served paused: payments`);
+    return paused;
   }
 
   /**
@@ -727,6 +742,7 @@ export class FormsService {
       currency: form.currency,
       allowCashPayment: form.allowCashPayment,
       pricing,
+      paymentsPaused: await this.paymentsPaused(form),
     };
   }
 
@@ -1870,11 +1886,13 @@ export class FormsService {
     if (!requestId && !sessionId) {
       throw this.previousPaymentOpen(row.id, 'its request is being issued');
     }
+    // The Business the request was ISSUED to, not the form's payee now: a delegation revoked or
+    // moved meanwhile leaves the request payable on the first one (owner review of #2967).
     const connectAccountId = form.associationId
-      ? await this.associationsService.getPaymentAccountId(form.associationId)
+      ? await requestAccountOf(this.submissionRepo, row.id, 'settleOpenRequest')
       : null;
     if (!connectAccountId) {
-      throw this.previousPaymentOpen(row.id, 'the form has no payment account to cancel it with');
+      throw this.previousPaymentOpen(row.id, 'the row records no Business to cancel it with');
     }
     try {
       if (requestId) {
@@ -2255,12 +2273,13 @@ export class FormsService {
     let requestState: RequestState | undefined;
     if (sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+      // Read with the Business that issued the request (see `requestAccountOf`).
       const connectAccountId = form?.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
+        ? await requestAccountOf(this.submissionRepo, submissionId, 'confirmPayment')
         : null;
       if (!connectAccountId) {
         this.logger.warn(
-          `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
+          `[Forms] confirmPayment ${submissionId}: no issuing Business to read request ${sessionId} with`
         );
       } else {
         const outcome = await this.settleFromProvider(
@@ -2406,25 +2425,21 @@ export class FormsService {
   }
 
   /**
-   * Whether `vendorToken` - the Business whose key verified a callback - is the account this row's
-   * money is paid into. Logs the refusal at ERROR (see `confirmPaymentFromCallback`).
+   * Whether `vendorToken` - the Business whose key verified a callback - is the one this row's
+   * request was ISSUED to (`requestAccountOf`), so the money is there whatever the form's payee is
+   * now (a list's delegation revoked or moved meanwhile, owner review of #2967). Logs the refusal
+   * at ERROR (see `confirmPaymentFromCallback`).
    */
   private async isCallbackPayee(
     submission: Submission,
     vendorToken: string,
     what: string
   ): Promise<boolean> {
-    const form = await this.formRepo.findOne({
-      where: { id: submission.formId },
-      select: { id: true, associationId: true },
-    });
-    const payee = form?.associationId
-      ? await this.associationsService.getLydiaPayeeAccountId(form.associationId)
-      : null;
-    if (payee && payee === vendorToken) return true;
+    const issuer = await requestAccountOf(this.submissionRepo, submission.id, `${what} callback`);
+    if (issuer && issuer === vendorToken) return true;
     this.logger.error(
       `[Forms] ${what} callback for submission ${submission.id} REFUSED: verified for a Business ` +
-        `that is not the row's payee (${payee ? 'the form pays into another account' : 'the form has no Lydia payee'}) - nothing written`
+        `that is not the one its request was issued to (${issuer ? 'another account' : 'the row records none'}) - nothing written`
     );
     return false;
   }
