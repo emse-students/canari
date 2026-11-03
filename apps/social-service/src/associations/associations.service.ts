@@ -182,7 +182,9 @@ import {
   DEPENDENCY_PARENT_CHOICE_REQUIRED,
   DEPENDENCY_PARENT_NOT_A_BDE,
   DEPENDENCY_PARENT_NOT_YOURS,
+  DEPENDENCY_DELETE_ADMIN_ONLY,
   dependencyConflict,
+  withDependencyRefusals,
 } from '../spaces/dependency-rules';
 import type { AudienceRuleDto } from '../spaces/dto/space.dto';
 import type { FirstAdminDto } from './dto/admin-association.dto';
@@ -800,9 +802,24 @@ export class AssociationsService {
       contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
       createdBy: userId,
     });
+    // A parent the trigger refuses (a race with the check below, or a placement naming a parented
+    // governor) reaches the client as the same typed 409 as every other dependency door (F6).
+    return withDependencyRefusals(this.logger, `the creation of ${slug}`, () =>
+      this.insertAssociationTx(asso, dto, userId, isGlobalAdmin, placement)
+    );
+  }
+
+  /** The transaction of {@link insertAssociation}: the row, its parent, its default audience. */
+  private insertAssociationTx(
+    asso: Association,
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
+  ) {
     return this.assoRepo.manager.transaction(async (manager) => {
       // Its base cotisation tag must never coincide with another association's tag names.
-      await assertCotisationStemFree(manager, null, slug);
+      await assertCotisationStemFree(manager, null, asso.slug);
       const dependency = await this.resolveCreateDependency(manager, dto, userId, isGlobalAdmin);
       asso.parentAssociationId = dependency.parentId;
       asso.displayParentAssociationId = dependency.labelId;
@@ -1225,27 +1242,12 @@ export class AssociationsService {
     return this.findById(id);
   }
 
-  /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
-  /**
-   * Deletes an association, everything scoped to it, and says so.
-   *
-   * IT HAD NO LOG AT ALL, WHICH WAS SURVIVABLE ONLY WHILE ONE PERSON COULD REACH IT. Since
-   * 2026-09-10 a BDE `MANAGE_ASSO` holder may call it too, so "who removed the association" has
-   * more than one possible answer and nothing recorded it: the rows are gone, the caller is not in
-   * any request log this service keeps, and no other table remembers the association existed.
-   *
-   * The counts are read BEFORE the deletes and logged after, because they are the only measure of
-   * what the call actually destroyed - `delete()` returns an affected count, but a caller reading
-   * "0 members" cannot tell an empty association from a failed cascade.
-   *
-   * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
-   */
   /**
    * Inside a delete's transaction: nothing may keep naming the association being deleted on the
    * dependency axis (WP-D1, reform 2.7). Its children lose their governing parent and the spaces it
-   * governed lose their governor - each change journaled with the admin who deleted it - and a G3
-   * label naming it is cleared (display only, not journaled). The columns carry no foreign key, so
-   * without this a dangling id would survive the row.
+   * governed lose their governor, and a G3 label naming it is cleared - each change journaled with
+   * the admin who deleted it. The columns carry no foreign key, so without this a dangling id would
+   * survive the row.
    */
   private async releaseDependents(
     manager: EntityManager,
@@ -1267,18 +1269,67 @@ export class AssociationsService {
     for (const space of spaces) {
       await writeDependencyJournal(manager, 'space', space.id, id, null, actorUserId, 'admin');
     }
-    await manager.query(
-      `UPDATE associations SET "displayParentAssociationId" = NULL WHERE "displayParentAssociationId" = $1`,
+    const [labelled] = (await manager.query(
+      `UPDATE associations SET "displayParentAssociationId" = NULL WHERE "displayParentAssociationId" = $1 RETURNING id`,
       [id]
-    );
-    if (children.length > 0 || spaces.length > 0) {
+    )) as [{ id: string }[], number];
+    for (const entity of labelled) {
+      await writeDependencyJournal(manager, 'label', entity.id, id, null, actorUserId, 'admin');
+    }
+    if (children.length > 0 || spaces.length > 0 || labelled.length > 0) {
       this.logger.warn(
-        `[DEPENDENCY] DELETE ${id}: ${children.length} child(ren) left without a parent, ${spaces.length} space(s) without a governor`
+        `[DEPENDENCY] DELETE ${id}: ${children.length} child(ren) left without a parent, ${spaces.length} space(s) without a governor, ${labelled.length} label(s) cleared`
       );
     }
   }
 
-  async remove(id: string, actorUserId: string) {
+  /**
+   * A delete CHANGES dependencies when the association governs a space or has children, and only
+   * the platform admin changes a dependency (owner A4): anybody else - a BDE's MANAGE_ASSO holder,
+   * whom the route admits for an ordinary association - is refused with the typed 403
+   * `DEPENDENCY_DELETE_ADMIN_ONLY`. Asked inside the delete's transaction, after the row lock.
+   */
+  private async assertMayReleaseDependents(
+    manager: EntityManager,
+    id: string,
+    isGlobalAdmin: boolean
+  ): Promise<void> {
+    if (isGlobalAdmin) return;
+    const [{ governs, children }] = (await manager.query(
+      `SELECT (SELECT count(*) FROM spaces WHERE "bdeAssociationId" = $1)::int AS governs,
+              (SELECT count(*) FROM associations WHERE "parentAssociationId" = $1)::int AS children`,
+      [id]
+    )) as { governs: number; children: number }[];
+    if (governs > 0 || children > 0) {
+      this.logger.warn(
+        `[DEPENDENCY] DELETE ${id} refused to a non-admin: governs ${governs} space(s), ${children} child(ren)`
+      );
+      throw new ForbiddenException({
+        code: DEPENDENCY_DELETE_ADMIN_ONLY,
+        message:
+          'Only the platform admin deletes an association that governs a space or has children',
+      });
+    }
+  }
+
+  /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
+  /**
+   * Deletes an association, everything scoped to it, and says so.
+   *
+   * IT HAD NO LOG AT ALL, WHICH WAS SURVIVABLE ONLY WHILE ONE PERSON COULD REACH IT. Since
+   * 2026-09-10 a BDE `MANAGE_ASSO` holder may call it too, so "who removed the association" has
+   * more than one possible answer and nothing recorded it: the rows are gone, the caller is not in
+   * any request log this service keeps, and no other table remembers the association existed.
+   *
+   * The counts are read BEFORE the deletes and logged after, because they are the only measure of
+   * what the call actually destroyed - `delete()` returns an affected count, but a caller reading
+   * "0 members" cannot tell an empty association from a failed cascade.
+   *
+   * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
+   * @param isGlobalAdmin The platform admin: the only caller who may delete an association that
+   *   governs a space or has children (`assertMayReleaseDependents`).
+   */
+  async remove(id: string, actorUserId: string, isGlobalAdmin: boolean) {
     const [memberCount, eventCount, formCount] = await Promise.all([
       this.memberRepo.count({ where: { associationId: id } }),
       this.calendarRepo.count({ where: { associationId: id } }),
@@ -1311,6 +1362,7 @@ export class AssociationsService {
       // its associations first too (`ERASURE_ASSOCIATION_LOCK_SQL`), so the two never cross.
       await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
       this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
+      await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
       // Its Lydia cashier rows go with it (ON DELETE CASCADE). A LIVE one is a cashier Lydia still
       // lists on that Business, which nothing in Canari tracks afterwards: said at ERROR, never the
       // phone.

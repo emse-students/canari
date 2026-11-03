@@ -16,19 +16,26 @@
 -- possible): the service logs it and the Dependencies panel shows the mismatch.
 --
 -- THE GUARD (2.7, "refused while the count is above zero"): before any trigger exists, every existing
--- row is judged by the SAME function, and the migration RAISES with the count if one fails. Migration
--- 130 corrects every row the validated list names, so on production this reads zero after it.
+-- row is judged by the SAME function, and the migration RAISES with the count if one fails. It is
+-- STRICTER than the 2.7 query (it also counts a dangling parent, an institution or a space governor
+-- with a parent, a child with children). Migration 130 fixes only the rows it names; that this reads
+-- zero after it on production is a MEASUREMENT (reform 2.8, read-only, 2026-11-03), not a
+-- construction - anywhere else it may refuse, and says how many rows.
 --
 -- Concurrency: both triggers take ONE transaction-scoped advisory lock before reading, so a parent
 -- write and a governor designation cannot each pass on a snapshot that misses the other.
 --
 -- Idempotent for CD: CREATE OR REPLACE, and DROP TRIGGER IF EXISTS before each CREATE TRIGGER.
--- LOCKS: SHARE ROW EXCLUSIVE on `associations` and `spaces` for each CREATE TRIGGER, released at
--- COMMIT; it gives up after 5 s rather than queue (the re-run is safe).
+-- LOCKS: SHARE ROW EXCLUSIVE on `associations` and `spaces`, taken right after BEGIN, BEFORE the
+-- guard, and held to COMMIT - so no write can slip in between the guard's count and the triggers
+-- (reads go on; writes to the two tables wait for the transaction, a few milliseconds). It gives up
+-- after 5 s rather than queue (the re-run is safe).
 
 SET lock_timeout = '5s';
 
 BEGIN;
+
+LOCK TABLE associations, spaces IN SHARE ROW EXCLUSIVE MODE;
 
 -- The one judgement: NULL when (child of type p_child_type, governing a space or not, with parent
 -- p_parent) is allowed, the refusal code otherwise.

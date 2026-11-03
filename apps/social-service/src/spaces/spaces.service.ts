@@ -21,7 +21,7 @@ import {
   dependencyConflict,
   dependencyMismatches,
   dependencyRefusal,
-  dependencyRefusalOf,
+  withDependencyRefusals,
 } from './dependency-rules';
 import type { DependencyMismatch } from './dependency-rules';
 import { writeDependencyJournal } from './dependency-journal';
@@ -270,21 +270,34 @@ export class SpacesService {
       `[DEPENDENCY] parent of ${associationId} -> ${parentId ?? 'none'}${displayParentId === undefined ? '' : ` label=${displayParentId ?? 'none'}`}`
     );
     const child = await this.requireAssociation(associationId);
-    const parent =
-      parentId === null ? null : await this.associations.findOne({ where: { id: parentId } });
-    if (parentId !== null && !parent) throw new NotFoundException('Parent association not found');
-    const governing = await this.governingIds([child.id, ...(parent ? [parent.id] : [])]);
-    const refusal = dependencyRefusal(
-      { type: child.type, governs: governing.has(child.id) },
-      parent ? { type: parent.type, governs: governing.has(parent.id) } : null
-    );
-    if (refusal !== null) {
-      this.logger.warn(
-        `[DEPENDENCY] parent of ${associationId} -> ${parentId} refused: ${refusal}`
-      );
-      throw dependencyConflict(refusal, 'This dependency is not allowed');
+    // Unchanged first: an older client resending the parent it read, or a label-only edit, is not a
+    // dependency write - judging it would refuse a row for a state it did not create (F4).
+    const parentChanges = child.parentAssociationId !== parentId;
+    const labelChanges =
+      displayParentId !== undefined && child.displayParentAssociationId !== displayParentId;
+    if (!parentChanges && !labelChanges) {
+      this.logger.debug(`[DEPENDENCY] parent of ${associationId} unchanged`);
+      return;
     }
-    if (displayParentId !== undefined && displayParentId !== null) {
+    if (parentChanges) {
+      const parent =
+        parentId === null ? null : await this.associations.findOne({ where: { id: parentId } });
+      if (parentId !== null && !parent) {
+        throw new NotFoundException('Parent association not found');
+      }
+      const governing = await this.governingIds([child.id, ...(parent ? [parent.id] : [])]);
+      const refusal = dependencyRefusal(
+        { type: child.type, governs: governing.has(child.id) },
+        parent ? { type: parent.type, governs: governing.has(parent.id) } : null
+      );
+      if (refusal !== null) {
+        this.logger.warn(
+          `[DEPENDENCY] parent of ${associationId} -> ${parentId} refused: ${refusal}`
+        );
+        throw dependencyConflict(refusal, 'This dependency is not allowed');
+      }
+    }
+    if (labelChanges && displayParentId !== null && displayParentId !== undefined) {
       const label = await this.associations.findOne({ where: { id: displayParentId } });
       if (!label || label.type === 'institution' || label.id === child.id) {
         this.logger.warn(`[DEPENDENCY] label of ${associationId} -> ${displayParentId} refused`);
@@ -293,13 +306,6 @@ export class SpacesService {
           message: 'A label names another association or list',
         });
       }
-    }
-    const parentChanges = child.parentAssociationId !== parentId;
-    const labelChanges =
-      displayParentId !== undefined && child.displayParentAssociationId !== displayParentId;
-    if (!parentChanges && !labelChanges) {
-      this.logger.debug(`[DEPENDENCY] parent of ${associationId} unchanged`);
-      return;
     }
     await this.mappingTriggerRefusals(() =>
       this.dataSource.transaction(async (manager) => {
@@ -318,6 +324,16 @@ export class SpacesService {
             associationId,
             child.parentAssociationId,
             parentId,
+            actor
+          );
+        }
+        if (labelChanges) {
+          await this.journal(
+            manager,
+            'label',
+            associationId,
+            child.displayParentAssociationId,
+            displayParentId ?? null,
             actor
           );
         }
@@ -392,7 +408,7 @@ export class SpacesService {
   /** Appends one `dependency_journal` line (2.7), inside the caller's transaction. */
   private async journal(
     manager: EntityManager,
-    kind: 'entity' | 'space',
+    kind: 'entity' | 'space' | 'label',
     subjectId: string,
     from: string | null,
     to: string | null,
@@ -405,15 +421,8 @@ export class SpacesService {
    * Runs a dependency write and turns a refusal of migration 131's triggers - a write that raced
    * the service's own check - into the same typed 409, logged; any other error passes through.
    */
-  private async mappingTriggerRefusals<T>(write: () => Promise<T>): Promise<T> {
-    try {
-      return await write();
-    } catch (e) {
-      const code = dependencyRefusalOf(e);
-      if (code === null) throw e;
-      this.logger.warn(`[DEPENDENCY] the database refused the write: ${code}`);
-      throw dependencyConflict(code, 'This dependency is not allowed');
-    }
+  private mappingTriggerRefusals<T>(write: () => Promise<T>): Promise<T> {
+    return withDependencyRefusals(this.logger, 'a dependency write', write);
   }
 
   /** WARN when `formerGovernorId` governs no space any more while entities still depend on it. */

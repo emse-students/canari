@@ -1147,6 +1147,23 @@ event as `icsSig`); without it, or with another one, the answer is a bodyless 40
 - **What to measure:** the `[AGENDA_ICS_REFUSED]` count in the social-service logs after the release;
   the day it is zero, nobody holds an old link. There is no branch to delete: the refusal is the rule.
 
+## Nothing to remove - a creator managing TWO BDEs gets `DEPENDENCY_PARENT_CHOICE_REQUIRED` from an old build (WP-D1, 2026-11-03)
+
+**A BREAK, not a shim.** Since WP-D1 a new association or list depends on a BDE, and a non-admin
+creator holding `MANAGE_ASSO` in SEVERAL BDEs must name which (`POST /associations` answers a typed 409
+`DEPENDENCY_PARENT_CHOICE_REQUIRED` otherwise; [reform 2.8](spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner)).
+A build that predates the WP-D1 create form (#2986) sends no parent for an association, and for a
+list sends whatever association was picked, so such a creator reads the build's GENERIC creation error.
+A creator managing ONE BDE is not affected (that BDE is taken), nor is the platform admin.
+
+- **Who is affected:** today, a person holding `MANAGE_ASSO` in both saint-etienne BDEs (the main one
+  and the FSSS one), creating from an old build. They update the app, or create from the web.
+- **Floor:** the first stable carrying #2986's create form. **Removal condition:** none - the refusal
+  is the rule, there is no branch to delete; the entry is closed once `minClientVersion` reaches that
+  stable (the floor rule above), after which no supported build can meet the generic error.
+- **What to measure:** the `[DEPENDENCY] create refused: ... manages N BDEs and named none` WARN count
+  in the social-service logs after the release.
+
 ## Nothing to remove, revisit 2027-10-13 - an UNSIGNED salon row now gets a 400 (2026-10-13)
 
 **A BREAK, not a shim.** `POST /api/channels/:channelId/messages` refuses a row with no Graine v2

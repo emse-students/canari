@@ -1,7 +1,7 @@
 -- canari:hold-for-owner - WP-D1 data: the parents list the owner validated on 2026-11-03, as is.
 -- Migration 130 : every existing association and list gets its governing parent BDE (G1-G6).
 --
--- docs/wiki/spaces-and-audiences-reform.md 2.7, where the list itself is kept row for row, with
+-- docs/wiki/spaces-and-audiences-reform.md 2.8, where the list itself is kept row for row, with
 -- names ("The parents list, validated by the owner on 2026-11-03, as is"). The owner may correct a
 -- row later in production, from the Dependencies panel (journaled); this file is never edited to do
 -- it.
@@ -24,8 +24,14 @@
 --   database): it RAISES A NOTICE saying so and writes nothing;
 -- - each row's type must be the validated one, its CURRENT parent must be the validated "from" (or
 --   already the "to" - a re-run), it must govern no space, and `bde` must be an association that
---   governs at least one space - otherwise it RAISES naming the slug. So migration 131's guard reads
---   zero after it, by construction.
+--   governs at least one space - otherwise it RAISES naming the slug.
+-- WHAT IT GUARANTEES, AND WHAT IT DOES NOT: after it, none of the 74 rows it names breaks the
+-- two-level rule. Migration 131's guard is STRICTER than that: it judges EVERY row (a dangling parent,
+-- an institution or a space governor with a parent, a child with children), and 130 does not touch a
+-- row it does not name. On production the rest was measured read-only on 2026-11-03 (reform 2.8): 0
+-- dangling parents, 0 institutions or governors with a parent, 0 children with children, and the
+-- rows whose parent governs nothing were exactly the 26 BDS/BDA lists this file moves - so 131's
+-- guard reads zero after it THERE. Elsewhere, 131 refuses and names the count.
 -- Idempotent: a value already equal is not rewritten, so a re-run writes no row and no journal line.
 -- Every change is reported with RAISE NOTICE (slug, from, to), and a final NOTICE gives the counts.
 --

@@ -9,8 +9,9 @@
 --    right. The governing parent stays `"parentAssociationId"`, which migration 131 binds to a BDE.
 --    A loose uuid, like every reference column of this table (no foreign key).
 -- 2. `dependency_journal` (2.7, the shape of `read_grant_journal`, migration 078): one append-only
---    line per change of a governing parent (`subject_kind = 'entity'`) or of a space's governor
---    (`subject_kind = 'space'`), written in the transaction of the change. `actor` is the platform
+--    line per change of a governing parent (`subject_kind = 'entity'`), of a space's governor
+--    (`subject_kind = 'space'`) or of a list's G3 label (`subject_kind = 'label'`; display only, but
+--    a platform admin's act all the same), written in the transaction of the change. `actor` is the platform
 --    admin's user id, or NULL for a line written by a migration (130), which says so in `source`.
 --
 -- Idempotent for CD: IF NOT EXISTS everywhere.
@@ -26,7 +27,7 @@ ALTER TABLE associations ADD COLUMN IF NOT EXISTS "displayParentAssociationId" u
 
 CREATE TABLE IF NOT EXISTS dependency_journal (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  subject_kind varchar(8) NOT NULL CHECK (subject_kind IN ('entity', 'space')),
+  subject_kind varchar(8) NOT NULL CHECK (subject_kind IN ('entity', 'space', 'label')),
   subject_id uuid NOT NULL,
   from_id uuid NULL,
   to_id uuid NULL,

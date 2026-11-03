@@ -263,6 +263,27 @@ describe('AssociationsService.create - the governing parent and its default audi
     });
   });
 
+  // F6: the trigger is the last word on every door. A refusal it raises during the create (a write
+  // that raced the check, a placement naming a parented governor) is the same typed 409, never a 500.
+  it('turns a trigger refusal of the insert into the typed 409, and lets any other error through', async () => {
+    const raced = withDependencies({ governing, mine: ['bde'] });
+    raced.manager.save.mockRejectedValueOnce(
+      Object.assign(new Error('dependency refused'), {
+        driverError: { code: '23514', constraint: DEPENDENCY_PARENT_NOT_A_BDE },
+      })
+    );
+    expect(await codeOf(raced.service.create(dto, 'star-1', false))).toBe(
+      DEPENDENCY_PARENT_NOT_A_BDE
+    );
+
+    const other = withDependencies({ governing, mine: ['bde'] });
+    const boom = Object.assign(new Error('other check'), {
+      driverError: { code: '23514', constraint: 'some_other_check' },
+    });
+    other.manager.save.mockRejectedValueOnce(boom);
+    await expect(other.service.create(dto, 'star-1', false)).rejects.toBe(boom);
+  });
+
   it('refuses a parent for an institution, and an institution as a parent', async () => {
     const { service } = withDependencies({ byId: { bde: BDE, school: SCHOOL }, governing });
     expect(

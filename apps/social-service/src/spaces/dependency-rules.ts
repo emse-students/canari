@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import type { LoggerService } from '@nestjs/common';
 
 /**
  * THE DEPENDENCY AXIS, AS RULES (WP-D1; docs/wiki/spaces-and-audiences-reform.md 2.2, owner D2).
@@ -26,6 +27,12 @@ export const DEPENDENCY_PARENT_CHOICE_REQUIRED = 'DEPENDENCY_PARENT_CHOICE_REQUI
 export const DEPENDENCY_PARENT_NOT_YOURS = 'DEPENDENCY_PARENT_NOT_YOURS';
 /** A label names an association that does not exist, or an institution, or the entity itself. */
 export const DEPENDENCY_LABEL_INVALID = 'DEPENDENCY_LABEL_INVALID';
+
+/**
+ * A delete of an association that governs a space or has children, asked by anybody but the
+ * platform admin (owner A4: only the platform admin changes a dependency, and a delete changes them).
+ */
+export const DEPENDENCY_DELETE_ADMIN_ONLY = 'DEPENDENCY_DELETE_ADMIN_ONLY';
 
 /** A list designated as a space governor: a governor is an association or an institution (2.3). */
 export const SPACE_GOVERNOR_TYPE = 'SPACE_GOVERNOR_TYPE';
@@ -120,4 +127,25 @@ export function dependencyRefusalOf(err: unknown): DependencyRefusalCode | null 
   return (DATABASE_DEPENDENCY_CODES as readonly string[]).includes(source.constraint)
     ? (source.constraint as DependencyRefusalCode)
     : null;
+}
+
+/**
+ * THE ONE MAPPING OF A TRIGGER REFUSAL (F6): runs a write that may touch the dependency axis and
+ * turns a refusal of migration 131's triggers - a write that raced the caller's own check, or a door
+ * that has none - into the same typed 409, logged at WARN with `context`; any other error passes
+ * through untouched. Every writer of `parentAssociationId` or of a space's governor goes through it.
+ */
+export async function withDependencyRefusals<T>(
+  logger: Pick<LoggerService, 'warn'>,
+  context: string,
+  write: () => Promise<T>
+): Promise<T> {
+  try {
+    return await write();
+  } catch (e) {
+    const code = dependencyRefusalOf(e);
+    if (code === null) throw e;
+    logger.warn(`[DEPENDENCY] the database refused ${context}: ${code}`);
+    throw dependencyConflict(code, 'This dependency is not allowed');
+  }
 }

@@ -321,8 +321,9 @@ says how many, and **the migration that adds the trigger must not run while that
 nothing reads the governing parent for governance until WP-D2.
 
 - **Migration 129** (held): `associations."displayParentAssociationId"`, the G3 display-only label,
-  and `dependency_journal` (`subject_kind`, `subject_id`, `from_id`, `to_id`, `actor`, `source`,
-  `at`; the actor is anonymised by the account erasure).
+  and `dependency_journal` (`subject_kind` - `entity` for a governing parent, `space` for a governor,
+  `label` for a list's G3 label - `subject_id`, `from_id`, `to_id`, `actor`, `source`, `at`; the
+  actor is anonymised by the account erasure).
 - **Migration 130** (held): the parents list below, applied by SLUG, all or nothing - every slug must
   exist once, each row's type must be the validated one and its current parent the validated "from"
   (or already `bde`, a re-run), `bde` must govern a space; otherwise it RAISES naming the slug and
@@ -338,11 +339,20 @@ nothing reads the governing parent for governance until WP-D2.
   refused too. Both triggers take one transaction-scoped advisory lock, so a parent write and a
   governor designation cannot each pass on a snapshot missing the other (an integration test parks
   the second on the lock and watches it refused).
-- **The 2.7 count, encoded.** It is the second query above: the rows whose parent is not an
-  association governing a space. Migration 131 runs the SAME judgement over every existing row
-  BEFORE it creates a trigger, and RAISES with the count when it is above zero - so the triggers are
-  "refused while the count is above zero" mechanically, and 130, ordered first, is what brings it to
-  zero (the 26 lists under the BDS or the BDA, whose link becomes the label).
+- **The 2.7 count, encoded - and stricter.** Migration 131 locks `associations` and `spaces` (SHARE
+  ROW EXCLUSIVE, right after BEGIN), runs the SAME judgement as its triggers over every existing row,
+  and RAISES with the count when it is above zero - so the triggers are "refused while the count is
+  above zero" mechanically, and no write slips between the count and the triggers. The guard is
+  stricter than the second 2.7 query: it also counts a dangling parent, an institution or a space
+  governor with a parent, and a child with children. **What 130 guarantees** is only that none of
+  the 74 rows it names breaks the rule; that the guard then reads zero is true of production by
+  MEASUREMENT, not by construction:
+- **Production, measured read-only on 2026-11-03** (the coordinator): 0 dangling parents; 0
+  institutions or space governors with a parent; 0 children with children; the rows whose parent
+  governs nothing are exactly the 26 BDS/BDA lists 130 moves. So after 130, 131's guard reads zero
+  on production. Gardanne: only ISMIN is governed (by MINITEL); Autre, FSSS, ICM and PDIS have no
+  governor, and no audience rule of an entity that is neither an institution nor a BDE reaches those
+  four spaces - so G4 (MINITEL governs all five) changes nobody's rights today.
 - **Service** (`spaces/dependency-rules.ts`, `SpacesService`): `PUT associations/spaces/dependencies/:id`
   and `GET associations/spaces/dependencies` (platform admin), every refusal a typed 409; a platform
   admin's `PATCH :id` with a parent goes through the same `setParent`, journaled; `setBde` takes an
@@ -350,8 +360,13 @@ nothing reads the governing parent for governance until WP-D2.
   and no longer writes an audience rule; `setAudiences` no longer adds a governor's spaces back (2.5,
   closes P2). An institution governing a space answers for its agenda and its students' personal
   content, and MANAGES nothing (`governorIsAnAssociationSql` in the management predicate, the
-  standings and the MANAGE_ASSO door). A deleted association releases its children, its spaces and
-  the labels naming it, journaled. Creation (2.5, closes P4): the parent is the creating BDE (picked
+  standings and the MANAGE_ASSO door). `setParent` returns before judging anything when neither the
+  parent nor the label changes, and judges only what changes - an older client resending the parent
+  it read, or a label-only edit, is never refused for a state it did not create. Every writer of the
+  axis (the panel, a governor, the profile form, CREATION) maps a trigger refusal to the same typed
+  409 through ONE helper, `withDependencyRefusals`. A deleted association releases its children, its
+  spaces and the labels naming it, each journaled; deleting one that governs a space or has children
+  is the platform admin's alone (A4), anyone else gets the typed 403 `DEPENDENCY_DELETE_ADMIN_ONLY`. Creation (2.5, closes P4): the parent is the creating BDE (picked
   among several, `DEPENDENCY_PARENT_CHOICE_REQUIRED`; held to the creator's own,
   `DEPENDENCY_PARENT_NOT_YOURS`), a named body governing nothing becomes the label (G3, which keeps
   an older client's "for the BDS" list working), and the default audience is the parent's spaces.
@@ -365,7 +380,9 @@ validated by the owner on his tracking page as is (G1); he may correct a row lat
 from the Dependencies panel. 74 rows: 44 lists, 30 associations, every governing parent the main BDE
 (`bde`, which governs four saint-etienne spaces). 26 lists now under the BDS (14) or the BDA (12)
 keep that link as the G3 label only. Migration 130 carries the same rows; its integration spec reads
-them from the file.
+them from the file. The second BDE's new name, **"BDE FSSS - Bureau des Élèves"** (G2, applied by
+130), is the owner's exact choice of 2026-11-03, given to the lead as the answer to a direct
+question.
 
 | Name | Slug | Type | Current parent | New governing parent | G3 label |
 | --- | --- | --- | --- | --- | --- |

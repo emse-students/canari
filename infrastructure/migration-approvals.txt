@@ -40,6 +40,6 @@ apps/social-service/src/migrations/128_move_global_pin_to_spaces.sql 888e4370644
 # refuses while any row breaks them. The schema, the triggers and the list were decided to need the
 # owner's yes; these lines are written by the author for the files' final SQL, and the owner's merge
 # of the pull request by hand is the approval.
-apps/social-service/src/migrations/129_dependencies_schema.sql e80485c006936b76b16de917dc7f58f41f6df5afd95b50d877585409067735b1
-apps/social-service/src/migrations/130_dependency_parents.sql cf7146856a806441bebbcf9d4c608d77e17d83a73301c4b574deab8306fdfceb
-apps/social-service/src/migrations/131_dependency_triggers.sql 1b904940e6c595b626b2e6ea8bc192bc5734f644a9d3bc7801b0c0105479ff1b
+apps/social-service/src/migrations/129_dependencies_schema.sql 4d112c09116509833f8cb594ad08ff9800fd0019852e2309a6f35d48dde77ad3
+apps/social-service/src/migrations/130_dependency_parents.sql 8aadee6313cca95e35472ab94ba2d0745bd7649ea59b278c96815915d94ad2ab
+apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f6390073662ebe08aba12c1c41656d64bd10484160102cdf061

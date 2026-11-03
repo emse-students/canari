@@ -818,7 +818,7 @@ export class AssociationsController {
         });
       }
     }
-    return this.service.remove(id, userId);
+    return this.service.remove(id, userId, ga === 'true');
   }
 
   // ── Association details: each field asks its own right (UPDATE_FIELD_RIGHTS) ──
