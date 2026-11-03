@@ -471,6 +471,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'event_updated',
   'event_deleted',
   'event_pending',
+  'event_pending_coorganiser',
   'profile_correction_applied',
   'profile_correction_refused',
 ];
@@ -491,6 +492,32 @@ describe('NotificationRow with every known type', () => {
       expect(target.textContent, type).not.toContain(m.notif_unknown_type_text());
       expect(target.querySelector('button')!.disabled, type).toBe(false);
     }
+  });
+});
+
+describe('NotificationRow for an event returned to the queue by an acceptance', () => {
+  const base: PostNotification = {
+    id: 'n-co',
+    type: 'event_pending_coorganiser',
+    postId: 'asso-1',
+    actorId: 'u1',
+    actorName: 'Marie',
+    text: 'Gala',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('tells the organiser it is THEIR event, and tells a validator it is an acceptance', () => {
+    const party = renderRow({ ...base, meta: { reason: 'coorganiser_joined' } });
+    expect(party.textContent).toContain(m.notif_event_pending_coorganiser_text());
+    expect(party.textContent).not.toContain(m.notif_event_pending_coorganiser_validators_text());
+
+    const validator = renderRow({
+      ...base,
+      meta: { reason: 'coorganiser_joined', audience: 'validators' },
+    });
+    expect(validator.textContent).toContain(m.notif_event_pending_coorganiser_validators_text());
+    expect(validator.textContent).not.toContain(m.notif_event_pending_coorganiser_text());
   });
 });
 

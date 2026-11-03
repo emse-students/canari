@@ -3211,6 +3211,8 @@
   "notif_event_updated_text": "updated your event",
   "notif_event_deleted_text": "removed your event",
   "notif_event_pending_text": "changed the dates of your event, which is awaiting approval again:",
+  "notif_event_pending_coorganiser_text": "accepted to co-organise your event, which is awaiting approval again:",
+  "notif_event_pending_coorganiser_validators_text": "accepted to co-organise an event, which needs approval again:",
   "notif_lydia_payments_active_text": "Lydia payments for {name} are active",
   "notif_lydia_payments_paused_text": "Lydia payments for {name} are paused: Lydia refused a payment request",
   "notif_lydia_cashier_added_text": "You are now a cashier of {name} on Lydia Pro",
