@@ -523,6 +523,34 @@ else
   fail "production refused a short AGENDA_SIGNING_KEY without naming it"
 fi
 
+# The local stack's AGENDA_SIGNING_KEY default is long enough and PUBLIC (the compose file is in a
+# public repository): an estate holding it signs every agenda link with a key anybody can read. It
+# must fail the render, naming the secret. The literal is read from the compose file itself, so the
+# refusal and the default cannot drift apart.
+# `[$]` rather than `\$`: the dollar is the compose file's literal, not a shell expansion.
+local_default="$(sed -n 's/^ *AGENDA_SIGNING_KEY: [$][{]AGENDA_SIGNING_KEY:-\(.*\)}$/\1/p' infrastructure/local/docker-compose.yml)"
+if [ -z "$local_default" ]; then
+  fail "could not read the local AGENDA_SIGNING_KEY default from the compose file"
+else
+  for estate in dev prod; do
+    out="$TMP/$estate-publickey.env"
+    if [ "$estate" = dev ]; then
+      # shellcheck disable=SC2046
+      render dev "$out" $(dev_env | grep -v '^DEV_AGENDA_SIGNING_KEY=') "DEV_AGENDA_SIGNING_KEY=$local_default" >"$TMP/$estate-publickey.log" || true
+    else
+      # shellcheck disable=SC2046
+      render prod "$out" $(prod_env | grep -v '^AGENDA_SIGNING_KEY=') "AGENDA_SIGNING_KEY=$local_default" >"$TMP/$estate-publickey.log" || true
+    fi
+    if [ -f "$out" ]; then
+      fail "$estate rendered with the local stack's public AGENDA_SIGNING_KEY"
+    elif grep -q "AGENDA_SIGNING_KEY is set for the $estate environment to the local stack's PUBLIC default" "$TMP/$estate-publickey.log"; then
+      pass "the local stack's public AGENDA_SIGNING_KEY fails the $estate render, naming the secret"
+    else
+      fail "$estate refused the public AGENDA_SIGNING_KEY without naming it"
+    fi
+  done
+fi
+
 # A TURN budget that is not a whole number is read as 0 by chat-delivery - TURN off on every call,
 # silently as far as the deploy is concerned. It must fail the render, naming the key; 0 must pass.
 out="$TMP/prod-budget.env"

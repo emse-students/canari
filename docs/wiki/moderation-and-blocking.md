@@ -129,6 +129,33 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 `/api/moderation/*` and by the post controls that give the same people the same reach - and, since
 WP-L8, by the staff cut of a live.
 
+**SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
+reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
+delete, pin, unmask, mute, cut, review) asks the scope of its target - a 403
+`MODERATION_OUT_OF_SCOPE` outside it. The platform admin stays global. What "in scope" means per
+target is tabled in [profiles-and-access, D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
+
+**A post's integrity: only its author changes its text (owner, 2026-11-02).** Moderation hides,
+deletes, pins and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
+another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served `canEdit`, apart from
+the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): its author alone edits
+it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
+`COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
+of `POST_AS_ASSO` in it (decided the same day). Deleting a comment is MODERATE's within its scope: a
+moderator of the post deletes any comment under it - plain, anonymous or an association's - which
+`commentRights.canDelete` serves and `POST /moderation/comments/:id/delete` enforces alike.
+
+**A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
+A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or
+rewrite its reason, whichever BDE took it, and the platform admin always may. Deliberate, not an
+oversight - a second BDE seeing the same person is a second moderator of them.
+
+**What an out-of-scope moderator can infer, accepted (owner, 2026-11-02).** On an anonymous post a BDE
+moderator outside its scope is served no pin and no unmask capability, so it can tell the post is not
+in its scope - which says the author belongs to another BDE's spaces. This follows from the rule that
+moderation goes to the author's BDE: serving the controls to the right BDE alone is what tells the
+others they are not it.
+
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association
@@ -136,7 +163,8 @@ post already anonymizes its author for everyone unconditionally) can be marked `
 creation - one option in the same "who is publishing" identity picker as the personal profile and
 each managed association, open to every user rather than gated to association admins.
 `PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
-**except** the same `isContentModerator` tier, or the post's own author (2026-09-17: a moderator
+**except** a moderator of THAT post (the platform admin, or since 2026-11-02 a BDE whose governed
+spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
 post - not just THAT it exists). `canUnmaskAnonymous` (same shape as `canPin`) is drawn from the
 moderator tier only, never from self-authorship. `PATCH /posts/:postId/unmask` (`PostsController`,

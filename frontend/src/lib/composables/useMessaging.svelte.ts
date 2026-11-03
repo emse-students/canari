@@ -44,6 +44,7 @@ import {
   indexMessagesById,
   isStaleInboundMessage,
   isSystemSender,
+  mapStoredMessagesToChatMessages,
   normalizeMessageId,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
@@ -138,7 +139,26 @@ import {
 import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
-import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import {
+  shouldUpgradeMessage,
+  mergeMessageUpgrade,
+  previewUpgradeOnto,
+} from '$lib/utils/chat/messageMerge';
+import type { PendingMutation, StoredRowsById } from '$lib/db/types';
+import {
+  settleAgainstPending,
+  type SettledFields,
+  type Settlement,
+} from '$lib/utils/chat/pendingMutations';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
+import {
+  logDiscarded,
+  pendingFor,
+  settledChatMessage,
+  settledStoredPatch,
+  settlePendingFor,
+  type PendingMutationDeps,
+} from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
@@ -212,6 +232,13 @@ function mediaKindFromEnvelope(type: string): number {
       return MediaKind.MEDIA_KIND_UNSPECIFIED;
   }
 }
+
+/** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
+type StoredBodyVerdict =
+  | { kind: 'new' }
+  | { kind: 'unreadable'; id: string }
+  | { kind: 'held'; id: string }
+  | { kind: 'upgrade'; row: StoredMessage; content: string };
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
@@ -1108,7 +1135,13 @@ export function useMessaging() {
     if (dupIdx !== -1) {
       const existing = convo.messages[dupIdx];
       if (shouldUpgradeMessage(existing, content)) {
-        const upgraded = mergeMessageUpgrade(existing, newMsg);
+        // A shown PREVIEW may have met a mutation before it: what is pending lands with the body.
+        const settled = await settleWithPending(
+          ctx,
+          normalized,
+          mergeMessageUpgrade(existing, newMsg)
+        );
+        const upgraded = settled.message;
         const nextMessages = insertMessageOrdered(
           convo.messages.filter((m) => m.id !== newMsg.id),
           upgraded
@@ -1120,10 +1153,9 @@ export function useMessaging() {
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
-            // The row is replaced wholesale, so everything the merged message still carries has to
-            // be written back: a reaction that landed on the FCM preview before the real body
-            // arrived would otherwise be erased by the upgrade.
-            await ctx.storage.saveMessage(
+            // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
+            // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
+            const written = await writeShownUpgrades(ctx, normalized, [
               {
                 id: upgraded.id,
                 conversationId: normalized,
@@ -1139,12 +1171,14 @@ export function useMessaging() {
                 ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
                 isFcmPreview: false,
                 ...proofFields,
+                ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
               },
-              ctx.deviceKeyB64
-            );
+            ]);
+            if (written.has(upgraded.id)) await removeSettled(ctx, settled.consumed);
           } catch (e) {
             console.error('[DB] Failed to upgrade message:', e);
           }
+          await settlePendingFor(pendingDeps(ctx), normalized, [upgraded.id]);
         }
         const updatedConvo = ctx.conversations.get(normalized);
         if (updatedConvo) {
@@ -1164,6 +1198,27 @@ export function useMessaging() {
       }
       console.log(`[ADD_MSG] Duplicate ignored id=${newMsg.id}`);
       return;
+    }
+
+    // NOT SHOWN IS NOT NEW. Memory is a window, so a body it does not show may be a row the store
+    // holds - a re-delivery, a bundle restating old history - and writing it would replace that row
+    // whole: its tombstone, its edit, its reactions. The store is asked, by the one id. An own
+    // message composed here names a fresh id, so nothing can stand or wait under it.
+    const persisted =
+      ctx.storage !== null && !(options.skipDbSave ?? isChannelConversationId(normalized));
+    const arriving = persisted && !options.outboxEntry;
+    let settled: Settled = { message: newMsg, fields: null, consumed: [] };
+    if (arriving) {
+      const stored = await storedRowsFor(ctx, normalized, [newMsg.id]);
+      const verdict = storedBodyVerdict(stored, newMsg.id, content);
+      if (verdict.kind !== 'new') {
+        await settleStoredBodies([verdict], normalized, ctx);
+        return;
+      }
+      // What reached this device before the body - its author's deletion or edit, everyone's
+      // reactions - lands WITH it, so the screen and the store never hold the body without it.
+      settled = await settleWithPending(ctx, normalized, newMsg);
+      Object.assign(newMsg, settled.message);
     }
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
@@ -1239,6 +1294,8 @@ export function useMessaging() {
     if (
       !isOwn &&
       !isSystem &&
+      // A message deleted before it arrived says nothing: no tone, no notification.
+      !newMsg.isDeleted &&
       // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
       !isStaleInboundMessage(messageDate(newMsg)) &&
       canSeeArrival(ctx, normalized)
@@ -1251,20 +1308,22 @@ export function useMessaging() {
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
-    notifyInbound(
-      ctx,
-      normalized,
-      convo,
-      senderId,
-      content,
-      mentionsUser(content, ctx.userId),
-      isSystem,
-      isOwn,
-      resolvedTimestamp.getTime(),
-      newMsg.serverTimestamp,
-      1,
-      options.authorProven === true
-    );
+    if (!newMsg.isDeleted) {
+      notifyInbound(
+        ctx,
+        normalized,
+        convo,
+        senderId,
+        content,
+        mentionsUser(content, ctx.userId),
+        isSystem,
+        isOwn,
+        resolvedTimestamp.getTime(),
+        newMsg.serverTimestamp,
+        1,
+        options.authorProven === true
+      );
+    }
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     let pairWriteFailure: MessagePairWriteError | null = null;
@@ -1279,6 +1338,7 @@ export function useMessaging() {
           serverTimestamp: options.serverTimestamp,
           ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
           ...proofFields,
+          ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
         };
         // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
         // the echo and then queuing it was two awaits, and a document torn down between them left a
@@ -1304,12 +1364,20 @@ export function useMessaging() {
             );
           }
         } else {
-          await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
+          // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
+          // outside the inbound drain) may have written the id since. Its row stands, and memory
+          // takes it.
+          const written = await ctx.storage.saveMessagesIfAbsent([row], ctx.deviceKeyB64);
+          if (written.has(row.id)) await removeSettled(ctx, settled.consumed);
+          else await showStoredInstead(ctx, normalized, [row.id]);
         }
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
       }
+      // Kept between the read above and the write - or while the message was shown and not stored
+      // yet, whoever wrote it: settled now, against the row that stands.
+      await settlePendingFor(pendingDeps(ctx), normalized, [newMsg.id]);
     }
     if (pairWriteFailure) throw pairWriteFailure;
 
@@ -1318,6 +1386,236 @@ export function useMessaging() {
     // reader had scrolled up to read, and not even whether this message belongs to the thread they
     // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
     // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
+  }
+
+  /** What keeping and settling a pending mutation reads and writes, from a messaging context. */
+  function pendingDeps(ctx: MessagingContext): PendingMutationDeps {
+    return {
+      storage: ctx.storage,
+      deviceKey: () => ctx.deviceKeyB64,
+      conversations: ctx.conversations,
+      messageReactions,
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * The rows the store holds under `ids` IN `conversationId` - `null` when it could not be asked,
+   * which is said. A row of another conversation reads as absent: a body never lands on, nor is
+   * judged against, a row of a conversation it was not sent in.
+   */
+  async function storedRowsFor(
+    ctx: MessagingContext,
+    conversationId: string,
+    ids: readonly string[]
+  ): Promise<StoredRowsById | null> {
+    if (!ctx.storage || ids.length === 0) return null;
+    try {
+      return await ctx.storage.getMessagesByIds(conversationId, ids, ctx.deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] the store could not say whether it holds ${ids.length} arriving message(s) - they are written only where no row stands:`,
+        e
+      );
+      return null;
+    }
+  }
+
+  /**
+   * What an arriving body does, given what the store holds under its id while memory shows nothing:
+   * `new` (nothing stands there - the body is written), `unreadable` (a row this device cannot open,
+   * never written over), `held` (the same message, left as the store holds it - its tombstone, edit
+   * and reactions included) or `upgrade` (a stored notification preview the body replaces, exactly
+   * as a shown one is).
+   */
+  function storedBodyVerdict(
+    stored: StoredRowsById | null,
+    id: string,
+    content: string
+  ): StoredBodyVerdict {
+    if (!stored) return { kind: 'new' };
+    if (stored.unreadable.has(id)) return { kind: 'unreadable', id };
+    const row = stored.rows.get(id);
+    if (!row) return { kind: 'new' };
+    if (shouldUpgradeMessage(row, content)) return { kind: 'upgrade', row, content };
+    return { kind: 'held', id };
+  }
+
+  /** A body with what was pending for it settled in, and the entries that settlement consumed. */
+  type Settled = {
+    message: ChatMessage;
+    fields: SettledFields | null;
+    consumed: PendingMutation[];
+  };
+
+  /**
+   * Folds the mutations kept for `msg` (`pendingMutations.ts`) into it BEFORE it is shown or written:
+   * its author's deletion or edit, everyone's reactions. Anybody else's deletion or edit is
+   * discarded, logged. The consumed entries are removed by the caller once the body is written.
+   */
+  async function settleWithPending(
+    ctx: MessagingContext,
+    normalized: string,
+    msg: ChatMessage
+  ): Promise<Settled> {
+    const waiting = (await pendingFor(pendingDeps(ctx), normalized, [msg.id])).get(msg.id) ?? [];
+    return settledWith(msg, waiting);
+  }
+
+  /** {@link settleWithPending} on entries already read. */
+  function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
+    if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
+    const settlement = settleAgainstPending(msg, waiting);
+    logDiscarded(settlement, msg.senderId);
+    if (settlement.fields?.reactions) messageReactions.set(msg.id, settlement.fields.reactions);
+    console.log(
+      `[ADD_MSG] ${msg.id.slice(0, 8)} met ${waiting.length} mutation(s) that arrived before it`
+    );
+    return {
+      message: settlement.fields ? settledChatMessage(msg, settlement.fields) : msg,
+      fields: settlement.fields,
+      // Not every entry: one retained for a proven copy of an unproven body stays kept.
+      consumed: settlement.consumed,
+    };
+  }
+
+  /**
+   * Writes the upgrades of SHOWN previews: a compare-and-set onto each stored row
+   * (`previewUpgradeOnto`, which re-asks `shouldUpgradeMessage` of the row as it stands at the
+   * write), and an insert only where no row stands. Never a whole-row write: the stored preview may
+   * have taken a reaction, a deletion or another writer's upgrade since memory was read. Resolves
+   * with the ids written either way; a row left as it was is said.
+   */
+  async function writeShownUpgrades(
+    ctx: MessagingContext,
+    conversationId: string,
+    upgrades: readonly StoredMessage[]
+  ): Promise<ReadonlySet<string>> {
+    if (!ctx.storage || upgrades.length === 0) return new SvelteSet<string>();
+    const byId = new SvelteMap(upgrades.map((row) => [row.id, row]));
+    const merged = await ctx.storage.mergeMessages(
+      conversationId,
+      [...byId.keys()],
+      (current) => {
+        const upgrade = byId.get(current.id);
+        return upgrade ? previewUpgradeOnto(current, upgrade) : null;
+      },
+      ctx.deviceKeyB64
+    );
+    const inserted = await ctx.storage.saveMessagesIfAbsent(
+      upgrades.filter((row) => !merged.has(row.id)),
+      ctx.deviceKeyB64
+    );
+    const written = new SvelteSet([...merged, ...inserted]);
+    const left = upgrades.length - written.size;
+    if (left > 0) {
+      console.log(
+        `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
+      );
+    }
+    return written;
+  }
+
+  /** Removes the pending entries a written body consumed; a failure costs a re-settle, which is a no-op. */
+  async function removeSettled(ctx: MessagingContext, consumed: readonly PendingMutation[]) {
+    if (!ctx.storage || consumed.length === 0) return;
+    try {
+      await ctx.storage.deletePendingMutations(consumed, ctx.deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] ${consumed.length} settled pending mutation(s) were not removed:`,
+        e
+      );
+    }
+  }
+
+  /**
+   * RE-READ ON CONFLICT. A body this device was about to write found a row already standing under
+   * its id - written by another writer between this one's read and its write. The stored row is the
+   * truth, so memory shows it instead of the copy built here.
+   */
+  async function showStoredInstead(ctx: MessagingContext, normalized: string, ids: string[]) {
+    console.log(
+      `[ADD_MSG] ${ids.length} arriving message(s) of "${normalized}" found a row written meanwhile - the stored row stands`
+    );
+    const stored = await storedRowsFor(ctx, normalized, ids);
+    const c = ctx.conversations.get(normalized);
+    if (!stored || !c) return;
+    const rows = new SvelteMap(
+      mapStoredMessagesToChatMessages([...stored.rows.values()], ctx.userId).map((m) => [m.id, m])
+    );
+    ctx.conversations.set(normalized, {
+      ...c,
+      messages: c.messages.map((m) => rows.get(m.id) ?? m),
+    });
+  }
+
+  /**
+   * Carries out the {@link storedBodyVerdict}s other than `new`. The rows are not shown, and they
+   * stay that way: the page that reaches them reads them from the store. What was pending for them is
+   * settled too - an upgrade folds it in before its write, and a held row takes it after
+   * (`settlePendingFor`).
+   */
+  async function settleStoredBodies(
+    verdicts: ReadonlyArray<Exclude<StoredBodyVerdict, { kind: 'new' }>>,
+    normalized: string,
+    ctx: MessagingContext
+  ) {
+    const touched: string[] = [];
+    for (const verdict of verdicts) {
+      if (verdict.kind === 'unreadable') {
+        console.warn(
+          `[ADD_MSG] ${verdict.id.slice(0, 8)} is stored under a key this device cannot open - the arriving copy does not overwrite it`
+        );
+        continue;
+      }
+      if (verdict.kind === 'held') {
+        console.log(`[ADD_MSG] Duplicate ignored id=${verdict.id} - stored, not shown`);
+        touched.push(verdict.id);
+        continue;
+      }
+      touched.push(verdict.row.id);
+      if (!ctx.storage) continue;
+      const waiting =
+        (await pendingFor(pendingDeps(ctx), normalized, [verdict.row.id])).get(verdict.row.id) ??
+        [];
+      const { content } = verdict;
+      let settlement: Settlement | null = null;
+      try {
+        // A compare-and-set on the row as it stands AT THE WRITE: a row deleted, edited or upgraded
+        // since the read above is no longer a preview, and is left as it is.
+        const written = await ctx.storage.mergeMessages(
+          normalized,
+          [verdict.row.id],
+          (current) => {
+            if (!shouldUpgradeMessage(current, content)) return null;
+            const next =
+              waiting.length > 0 ? settleAgainstPending({ ...current, content }, waiting) : null;
+            settlement = next;
+            return mergeStoredMessage(current, {
+              content,
+              isFcmPreview: false,
+              ...(next?.fields ? settledStoredPatch(next.fields) : {}),
+            });
+          },
+          ctx.deviceKeyB64
+        );
+        const done = settlement as Settlement | null;
+        if (done) logDiscarded(done, verdict.row.senderId);
+        if (written.size > 0) {
+          console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
+          if (done) await removeSettled(ctx, done.consumed);
+        } else {
+          console.log(
+            `[ADD_MSG] ${verdict.row.id.slice(0, 8)} is no longer a stored preview - the arriving body leaves it as it is`
+          );
+        }
+      } catch (e) {
+        console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
+      }
+    }
+    // A held row takes what waited for it; an upgrade, what was kept after its read.
+    if (touched.length > 0) await settlePendingFor(pendingDeps(ctx), normalized, touched);
   }
 
   /**
@@ -1353,7 +1651,29 @@ export function useMessaging() {
     // conversation rather than with the batch. It has to work at any size, so it is an index.
     // Ids seen during THIS batch are added to it too, which is what the separate dedup set did.
     const byId = indexMessagesById(convo.messages);
-    const toStore: StoredMessage[] = [];
+    // NOT SHOWN IS NOT NEW (see `addMessageToChat`): the ids memory does not show are asked of the
+    // store, and the mutations kept for any of them (`pendingMutations.ts`), in ONE read each, whose
+    // cost is the batch's and never the conversation's.
+    const persisted = ctx.storage !== null && !isChannelConversationId(normalized);
+    const batchIds = [
+      ...new SvelteSet(
+        messages
+          .map((pm) => normalizeMessageId(pm.messageId))
+          .filter((id): id is string => id !== undefined)
+      ),
+    ];
+    const notShown = batchIds.filter((id) => !byId.has(id));
+    const stored =
+      persisted && notShown.length > 0 ? await storedRowsFor(ctx, normalized, notShown) : null;
+    const waiting = persisted
+      ? await pendingFor(pendingDeps(ctx), normalized, batchIds)
+      : new SvelteMap<string, PendingMutation[]>();
+    const storedVerdicts: Array<Exclude<StoredBodyVerdict, { kind: 'new' }>> = [];
+    const settledIds = new SvelteSet<string>();
+    // The pending entries each written row consumed, removed once the row is on disk.
+    const consumedById = new SvelteMap<string, PendingMutation[]>();
+    const upgradeRows: StoredMessage[] = [];
+    const newRows: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
@@ -1371,16 +1691,32 @@ export function useMessaging() {
       // seam that materialises a row, and the `history_bundle` reaches BOTH of them.
       const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);
       const existingMsg = byId.get(id);
+      if (settledIds.has(id)) continue;
+      if (!existingMsg) {
+        const verdict = storedBodyVerdict(stored, id, pm.content);
+        if (verdict.kind !== 'new') {
+          storedVerdicts.push(verdict);
+          // Settled once in this batch: a second copy of the id meets the same verdict.
+          settledIds.add(id);
+          continue;
+        }
+      }
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
-        const upgraded = mergeMessageUpgrade(existingMsg, {
-          content: pm.content,
-          replyTo: pm.replyTo,
-          isSystem,
-          serverTimestamp: pm.serverTimestamp,
-        });
+        const settled = settledWith(
+          mergeMessageUpgrade(existingMsg, {
+            content: pm.content,
+            senderId: pm.senderId,
+            replyTo: pm.replyTo,
+            isSystem,
+            serverTimestamp: pm.serverTimestamp,
+          }),
+          waiting.get(id) ?? []
+        );
+        const upgraded = settled.message;
         upgradedById.set(id, upgraded);
+        consumedById.set(id, settled.consumed);
         if (ctx.storage) {
-          toStore.push({
+          upgradeRows.push({
             id,
             conversationId: normalized,
             senderId: upgraded.senderId,
@@ -1392,6 +1728,7 @@ export function useMessaging() {
             ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
             // This device's record of a reel's 410 (RC-6), carried over the wholesale rewrite.
             ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
+            ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
           });
         }
         continue;
@@ -1400,24 +1737,30 @@ export function useMessaging() {
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
       const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
-      const newMsg: ChatMessage = {
-        id,
-        senderId: pm.senderId.toLowerCase(),
-        content: pm.content,
-        timestamp: new SvelteDate(resolvedTimestamp),
-        isOwn,
-        replyTo: pm.replyTo,
-        isSystem,
-        ingestSequence: pm.ingestSequence,
-        ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
-      };
+      // What reached this device before the body lands WITH it (`settleAgainstPending`).
+      const settled = settledWith(
+        {
+          id,
+          senderId: pm.senderId.toLowerCase(),
+          content: pm.content,
+          timestamp: new SvelteDate(resolvedTimestamp),
+          isOwn,
+          replyTo: pm.replyTo,
+          isSystem,
+          ingestSequence: pm.ingestSequence,
+          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+        },
+        waiting.get(id) ?? []
+      );
+      const newMsg = settled.message;
+      consumedById.set(id, settled.consumed);
       brandNew.push(newMsg);
       if (pm.authorProven === true) authorProvenIds.add(id);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
       byId.set(id, newMsg);
 
       if (ctx.storage) {
-        toStore.push({
+        newRows.push({
           id,
           conversationId: normalized,
           senderId: newMsg.senderId,
@@ -1430,9 +1773,11 @@ export function useMessaging() {
           ...(isSystem ? { readBy: [] } : {}),
           ...(pm.authorship ? { authorship: pm.authorship } : {}),
           ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+          ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
         });
       }
     }
+    await settleStoredBodies(storedVerdicts, normalized, ctx);
 
     if (upgradedById.size === 0 && brandNew.length === 0) {
       // Ordinary - a re-drain of frames this device already holds - and still not silent: it is the
@@ -1507,9 +1852,10 @@ export function useMessaging() {
     // nothing at all (TAB-1). ONE notification per flush, for the LAST inbound message: the
     // 800 ms throttle in `sendSystemNotification` would collapse a per-message loop to one anyway,
     // and the one a reader wants is the most recent, not the oldest.
+    // A message deleted before it arrived says nothing, so it is never the one announced.
     const lastInbound = [...brandNew]
       .reverse()
-      .find((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId));
+      .find((msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId));
     // AND IT ASKS THE APP, NOT THE DOCUMENT - THIS GUARD WAS THE ONE SITE IN THIS FILE THAT STILL
     // DID NOT (2026-09-24). `document.visibilityState` is permanently `'visible'` in a backgrounded
     // Android Tauri WebView - `hidden: false` and `hasFocus: true` too, byte for byte its
@@ -1547,7 +1893,7 @@ export function useMessaging() {
       );
     } else if (lastInbound) {
       const inbound = brandNew.filter(
-        (msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)
+        (msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId)
       );
       notifyInbound(
         ctx,
@@ -1577,14 +1923,28 @@ export function useMessaging() {
       unreadCount: nextUnreadCount,
     });
 
-    // Single batch DB write (community channels are server-authoritative)
-    if (ctx.storage && toStore.length > 0 && !isChannelConversationId(normalized)) {
+    // Single batch DB write (community channels are server-authoritative). An upgrade rewrites the
+    // preview it replaces; a NEW row is written only where no row stands - another writer (the
+    // archive replay runs outside the inbound drain) may have written the id since the read above,
+    // and its row then stands and memory takes it (`showStoredInstead`).
+    if (ctx.storage && persisted && (upgradeRows.length > 0 || newRows.length > 0)) {
       try {
-        await ctx.storage.saveMessages(toStore, ctx.deviceKeyB64);
+        // An upgrade row carries no reactions, edit or deletion of its own: written by
+        // compare-and-set onto the stored row, it adds to them and never erases them.
+        const upgraded = await writeShownUpgrades(ctx, normalized, upgradeRows);
+        const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
+        const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
+        if (standing.length > 0) await showStoredInstead(ctx, normalized, standing);
+        await removeSettled(
+          ctx,
+          [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
+        );
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] batchAddMessages failed:', e);
       }
+      // Kept between the read above and the writes: settled now, against the rows that stand.
+      await settlePendingFor(pendingDeps(ctx), normalized, batchIds);
     }
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
@@ -2378,12 +2738,17 @@ export function useMessaging() {
    * Best-effort by design: the control event is already durable in the outbox, so a failed write
    * costs a stale local row, never a lost mutation for the group.
    */
-  async function persistLocalMutation(msg: ChatMessage, ctx: MessagingContext): Promise<void> {
+  async function persistLocalMutation(
+    conversationId: string,
+    msg: ChatMessage,
+    ctx: MessagingContext
+  ): Promise<void> {
     if (!ctx.storage) return;
     try {
       // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
       // one, and a full-row write erased it every time the user reacted.
       await ctx.storage.updateMessage(
+        conversationId,
         msg.id,
         {
           content: msg.content,
@@ -2434,7 +2799,7 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-      await persistLocalMutation(nextMsgs[msgIdx], ctx);
+      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx);
     }
 
     const act: ControlAct = { kind: 'reaction', emoji, remove: alreadyReacted, at };
@@ -2704,7 +3069,7 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(key, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx);
+      await persistLocalMutation(key, msgs[idx], ctx);
     }
   }
 
@@ -2764,7 +3129,12 @@ export function useMessaging() {
         ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
         return;
       }
-      await ctx.storage.updateMessage(messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
+      await ctx.storage.updateMessage(
+        stored.conversationId,
+        messageId,
+        { mediaPurgedAt: atMs },
+        ctx.deviceKeyB64
+      );
       // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
       // what tells "on disk" from "asked".
       const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
@@ -2827,7 +3197,7 @@ export function useMessaging() {
         content: applyEditToBody(msgs[idx].content, text),
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx);
+      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx);
     }
   }
 

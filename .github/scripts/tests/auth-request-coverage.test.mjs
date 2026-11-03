@@ -56,15 +56,15 @@ const NGINX = join(REPO, 'infrastructure', 'local', 'Dockerfile.frontend');
 const PUBLIC_BY_INTENT = [
   {
     route: 'GET /associations/:id/events',
-    why: 'public association agenda; pending events need a signed-in caller and are filtered in the handler',
+    why: 'answers an anonymous caller an EMPTY list, whatever the audience (owner, 2026-11-02): it stays reachable so the association page draws "no event" without a 401; a signed-in reader gets their spaces, pending events filtered in the handler',
   },
   {
     route: 'GET /associations/calendar/feed',
-    why: 'public aggregated agenda; includePending is honoured only for a caller who is identified',
+    why: 'answers an anonymous caller only through a SIGNED selection (a capability a member hands out, agenda-signature.ts); an unsigned anonymous read is refused; includePending is honoured only for an identified caller',
   },
   {
     route: 'GET /associations/calendar/feed.ics',
-    why: 'subscribed by an external calendar client, which cannot carry a session at all',
+    why: 'subscribed by an external calendar client, which cannot carry a session at all: answers only a signed selection or a signed single-event link (agenda-signature.ts), a bodyless 403 otherwise',
   },
   {
     route: 'GET /bookings/:bookingId/calendar.ics',

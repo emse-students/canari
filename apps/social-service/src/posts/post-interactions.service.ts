@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -19,6 +19,7 @@ import {
 import { PushService } from '../push/push.service';
 import { isAnonymousPoll, recordAnonymousVote } from './anonymous-poll';
 import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
+import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
 import {
@@ -387,8 +388,10 @@ export class PostInteractionsService {
   }
 
   /**
-   * Updates the text of a comment. `commentRights` says who: the writer of an ordinary or an
-   * anonymous comment, any holder of `POST_AS_ASSO` (or a platform admin) for an association's.
+   * Updates the text of a comment. `commentRights` says who: its author only - the writer of an
+   * ordinary or an anonymous comment, any holder of `POST_AS_ASSO` for an association's (owner,
+   * 2026-11-02). Anyone else - a moderator of the post, the platform admin, any other reader - is
+   * refused 403 `COMMENT_EDIT_AUTHOR_ONLY`: never a 401, which may log a user out.
    */
   async editComment(
     postId: string,
@@ -402,9 +405,19 @@ export class PostInteractionsService {
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    const viewer = await this.identity.viewerFor([comment], { viewerId: userId, isGlobalAdmin });
+    const viewer = await this.identity.viewerFor([comment], {
+      viewerId: userId,
+      isGlobalAdmin,
+      postId,
+    });
     if (!commentRights(comment, viewer).canEdit) {
-      throw new UnauthorizedException('Not your comment');
+      this.logger.warn(
+        `[PERM] comment edit refused: not its author user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
+      );
+      throw new ForbiddenException({
+        code: COMMENT_EDIT_AUTHOR_ONLY,
+        message: "Only a comment's author may change its text",
+      });
     }
     comment.text = text;
     // Served as "(modifie)" - the client had no way to tell an edited comment from the original.
@@ -419,8 +432,8 @@ export class PostInteractionsService {
   }
 
   /**
-   * Removes a comment and all of its replies, for whoever `commentRights` lets: the writer, a
-   * platform admin, a content moderator for an anonymous one, any association holder for its own.
+   * Removes a comment and all of its replies, for whoever `commentRights` lets: the writer (any
+   * association holder for its own), a platform admin, or a moderator of this post.
    */
   async deleteComment(postId: string, commentId: string, userId: string, isAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
@@ -428,12 +441,20 @@ export class PostInteractionsService {
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
+    // The moderator half is asked of THIS post: a BDE moderates the comments of its governed spaces.
     const viewer = await this.identity.viewerFor([comment], {
       viewerId: userId,
       isGlobalAdmin: isAdmin,
+      postId,
     });
     if (!commentRights(comment, viewer).canDelete) {
-      throw new UnauthorizedException('Not your comment');
+      this.logger.warn(
+        `[PERM] comment delete refused user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
+      );
+      throw new ForbiddenException({
+        code: COMMENT_DELETE_FORBIDDEN,
+        message: 'You may not delete this comment',
+      });
     }
     const removed = comments.filter((c: any) => c.id === commentId || c.parentId === commentId);
     post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);

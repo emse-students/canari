@@ -22,7 +22,9 @@ import { reelLimits } from './reel.constants';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
+import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { ModerationService } from '../moderation/moderation.service';
+import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import {
   CreatePostDto,
   ListPostsQueryDto,
@@ -126,7 +128,8 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
-    return this.service.getHiddenPosts();
+    // The door is "moderates somewhere"; the list is narrowed to the caller's scope (2026-11-02).
+    return this.service.getHiddenPosts({ userId: xUserId, isGlobalAdmin: xGlobalAdmin === 'true' });
   }
 
   /** Returns posts matching the given search query. */
@@ -211,7 +214,8 @@ export class PostsController {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
-    return { linkedEvent };
+    // The detail modal opened from a post offers "add to my calendar" like the agenda's: same `icsSig`.
+    return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
   /** The reverse of the above: the post (if any) linking to this calendar event. */
@@ -248,7 +252,10 @@ export class PostsController {
     });
   }
 
-  /** Updates a post's content. Author, a POST_AS_ASSO holder of its association, or a global admin. */
+  /**
+   * Updates a post's content: its author alone (a POST_AS_ASSO holder for an association's post),
+   * never a moderator nor the global admin (owner, 2026-11-02; `PostsService.assertMayEdit`).
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId')
   updatePost(
@@ -407,8 +414,8 @@ export class PostsController {
   }
 
   /**
-   * Pins a post to the top of the feed. Content moderators - a platform admin, or a BDE member
-   * holding MODERATE - which is the same tier the `canPin` field on the post is drawn from.
+   * Pins a post to the top of the feed. Its moderators - a platform admin, or a BDE member holding
+   * MODERATE whose governed spaces hold the post (2026-11-02) - the tier `canPin` is drawn from.
    */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/pin')
@@ -417,7 +424,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.setPinned(postId, true);
   }
 
@@ -429,7 +436,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.setPinned(postId, false);
   }
 
@@ -441,11 +448,11 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.clearAnonymousFlag(postId);
   }
 
-  /** Refuses the caller unless they may moderate content anywhere on the platform. */
+  /** Refuses the caller unless they moderate SOMEWHERE - the door of the moderation lists. */
   private async assertContentModerator(
     userId: string,
     globalAdminHeader: string | undefined
@@ -453,7 +460,28 @@ export class PostsController {
     const mayModerate = await this.associationsService.isContentModerator(userId, {
       isGlobalAdmin: globalAdminHeader === 'true',
     });
-    if (!mayModerate) throw new UnauthorizedException('Content moderator required');
+    if (!mayModerate) {
+      throw new ForbiddenException({
+        code: MODERATOR_REQUIRED,
+        message: 'Content moderator required',
+      });
+    }
+  }
+
+  /**
+   * Refuses the caller unless they moderate THIS post (owner, 2026-11-02): a platform admin, or a
+   * BDE `MODERATE` holder whose governed spaces hold it. A BDE moderator outside its scope is a 403
+   * `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere a 403 `MODERATOR_REQUIRED` - never a
+   * 401, which may log a user out.
+   */
+  private async assertModeratesPost(
+    userId: string,
+    globalAdminHeader: string | undefined,
+    postId: string
+  ): Promise<void> {
+    const isGlobalAdmin = globalAdminHeader === 'true';
+    if (await this.associationsService.mayModeratePost(userId, postId, { isGlobalAdmin })) return;
+    await this.associationsService.refuseModeration(userId, `post:${postId}`);
   }
 
   /** Hides a post from public feeds (moderation). Content moderators. */
@@ -464,7 +492,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.hidePostByModeration(postId);
   }
 
@@ -476,7 +504,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.unhidePost(postId);
   }
 }

@@ -83,6 +83,7 @@ async function replayBundle(
     pendingById: sinks.pendingById,
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
+    keepPending: async () => {},
     readWatermarkUpdates: {} as ReadWatermarks,
     serverReadWatermarkUpdates: {} as ReadWatermarks,
     historyFloorUpdate: { at: 0 },

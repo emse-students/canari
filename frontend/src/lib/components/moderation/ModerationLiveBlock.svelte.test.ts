@@ -92,7 +92,7 @@ const standingOf = (over: Partial<LiveStanding> = {}): LiveStanding => ({
   ...over,
 });
 
-function render(live: ReportedLive) {
+function render(live: ReportedLive, mayActOnBroadcaster = true) {
   const onCut = vi.fn<(r: LiveCutResult) => void>();
   const onWithdrawn = vi.fn<(r: LiveWithdrawalResult) => void>();
   const onStale = vi.fn<() => void>();
@@ -108,6 +108,7 @@ function render(live: ReportedLive) {
       onCut,
       onWithdrawn,
       onStale,
+      mayActOnBroadcaster,
     },
   });
   mounted.push(() => void unmount(app));
@@ -315,6 +316,12 @@ describe("the broadcaster's standing and the withdrawal", () => {
     );
     expect(target.querySelector('[data-moderation-live-due]')).not.toBeNull();
     expect(target.querySelector('[data-moderation-live-withdraw]')).not.toBeNull();
+  });
+
+  it('offers no withdrawal to a caller who does not moderate the broadcaster', () => {
+    const { target } = render(openLive({ broadcasterStanding: standingOf() }), false);
+    expect(target.querySelector('[data-moderation-live-due]')).not.toBeNull();
+    expect(target.querySelector('[data-moderation-live-withdraw]')).toBeNull();
   });
 
   it('offers no withdrawal below the cuts it needs', () => {

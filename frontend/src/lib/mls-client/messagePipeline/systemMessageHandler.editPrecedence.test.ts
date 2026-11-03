@@ -24,24 +24,34 @@ function makeCtx(
   reply?: { id: string; senderId: string; content: string }
 ) {
   const conversations = new Map<string, any>();
-  conversations.set('g1', {
-    id: 'g1',
-    unreadCount: 0,
-    messages: [
-      {
-        id: 'm1',
-        senderId: 'peer',
-        content: serializeEnvelope(
-          mkTextEnvelope(editedAt === undefined ? 'original' : 'held-edit', reply)
-        ),
-        readBy: [],
-        ...(editedAt === undefined ? {} : { isEdited: true, editedAt: new Date(editedAt) }),
-      },
-    ],
-  });
+  const row = {
+    id: 'm1',
+    senderId: 'peer',
+    content: serializeEnvelope(
+      mkTextEnvelope(editedAt === undefined ? 'original' : 'held-edit', reply)
+    ),
+    readBy: [],
+    ...(editedAt === undefined ? {} : { isEdited: true, editedAt: new Date(editedAt) }),
+  };
+  conversations.set('g1', { id: 'g1', unreadCount: 0, messages: [row] });
+  const write = vi.fn();
   return {
     mlsService: {},
-    storage: { updateMessage: vi.fn().mockResolvedValue(undefined) },
+    // Shown AND stored: an edit is written at rest only to a row that stands there.
+    storage: {
+      // Every rewrite of a stored row is a compare-and-set: `write` records what it wrote.
+      write,
+      mergeMessages: vi.fn(async function (_c: string, ids: string[], merge: (row: any) => any) {
+        const next = merge({ ...row, editedAt: row.editedAt?.getTime?.() ?? row.editedAt });
+        if (!next) return new Set();
+        write(ids[0], next);
+        return new Set(ids);
+      }),
+      getMessagesByIds: vi.fn(async () => ({
+        rows: new Map([['m1', row]]),
+        unreadable: new Set(),
+      })),
+    },
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
@@ -75,7 +85,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
     );
 
     expect(bodyOf(ctx)).toBe('first');
-    expect(ctx.storage.updateMessage).toHaveBeenCalled();
+    expect(ctx.storage.write).toHaveBeenCalled();
   });
 
   it('applies an edit NEWER than the one held', async () => {
@@ -98,7 +108,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
     );
 
     expect(bodyOf(ctx)).toBe('held-edit');
-    expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
+    expect(ctx.storage.write).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped an edit'));
   });
 
@@ -111,7 +121,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
     );
 
     expect(bodyOf(ctx)).toBe('held-edit');
-    expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
+    expect(ctx.storage.write).not.toHaveBeenCalled();
   });
 
   it('CONVERGES: two devices given the same pair in opposite orders end on the same body', async () => {
@@ -147,7 +157,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
     const applied = parseEnvelope(msgOf(ctx).content);
     expect(applied.kind === 'text' && applied.text).toBe('Done');
     expect(applied.kind === 'text' && applied.replyTo).toEqual(quote);
-    const written = ctx.storage.updateMessage.mock.calls[0][1].content;
+    const written = ctx.storage.write.mock.calls[0][1].content;
     expect(parseEnvelope(written)).toEqual(applied);
   });
 
@@ -155,7 +165,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
     const ctx = makeCtx('peer');
     await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
     const tombstone = msgOf(ctx).content;
-    ctx.storage.updateMessage.mockClear();
+    ctx.storage.write.mockClear();
 
     await handleSystemEvent(
       'edit_message',
@@ -167,7 +177,7 @@ describe('handleSystemEvent - edit_message precedence', () => {
     // on screen - the one outcome a delete exists to prevent.
     expect(msgOf(ctx).content).toBe(tombstone);
     expect(msgOf(ctx).isDeleted).toBe(true);
-    expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
+    expect(ctx.storage.write).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('a tombstone is final'));
   });
 

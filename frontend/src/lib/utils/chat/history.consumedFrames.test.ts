@@ -829,7 +829,8 @@ describe('an archive row whose sender does not match MLS', () => {
     resetReportedSenderMismatches();
     const wire = new Uint8Array([0x61, 0x62, 0x63]);
     const plaintext = encodeAppMessage({ ...mkText('hi'), messageId: 'm-1' });
-    const saveMessages = vi.fn().mockResolvedValue(undefined);
+    // A row this replay did not read before is written only where none stands (`saveMessagesIfAbsent`).
+    const write = vi.fn().mockResolvedValue(new Set());
     const mlsService = createMlsServiceStub({
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       createDecryptSession: vi.fn().mockResolvedValue({
@@ -844,7 +845,12 @@ describe('an archive row whose sender does not match MLS', () => {
       contactName: 'peer',
       userId: USER,
       deviceKey: () => 'device-key',
-      storage: { getMessages: vi.fn().mockResolvedValue([]), saveMessages } as never,
+      storage: {
+        getMessages: vi.fn().mockResolvedValue([]),
+        saveMessages: vi.fn(),
+        saveMessagesIfAbsent: write,
+        getPendingMutations: vi.fn().mockResolvedValue({ entries: [], unreadable: 0 }),
+      } as never,
       getConversation: () => undefined,
       setConversation: () => undefined,
       messageReactions: new Map(),
@@ -860,19 +866,19 @@ describe('an archive row whose sender does not match MLS', () => {
         ],
       },
     });
-    return { saveMessages, wire };
+    return { write, wire };
   };
 
   it('stores the row when the two agree', async () => {
-    const { saveMessages } = await replayWithSender('peer:dev-p');
-    expect(saveMessages).toHaveBeenCalledTimes(1);
+    const { write } = await replayWithSender('peer:dev-p');
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it('stores nothing of it when they do not, and still counts its bytes consumed', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { saveMessages, wire } = await replayWithSender('mallory:dev-m');
+    const { write, wire } = await replayWithSender('mallory:dev-m');
 
-    expect(saveMessages).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(true);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('SENDER MISMATCH (user)'));
     error.mockRestore();

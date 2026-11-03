@@ -117,6 +117,8 @@ export async function answerHistoryDigest(params: {
     to: requesterIdentity,
     since,
     requestId,
+    // The digest names ids, the state key that asked for it counts deletions as well.
+    withTombstones: true,
   }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterIdentity}: ${String(e)}`));
 
   // The requester listed messages we do not have, so we ask for them on the same exchange.

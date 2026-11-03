@@ -177,7 +177,13 @@ export interface PostEntity {
    * association's officers manage, and nothing in a post says whether its reader moderates the feed.
    */
   canManage?: boolean;
-  /** The pin: a content moderator (BDE `MODERATE`) or a platform admin. */
+  /**
+   * The pencil alone: the post's AUTHOR (its publisher). Nobody else changes a post's text - not a
+   * moderator, not the platform admin (owner, 2026-11-02) - so it can be false where `canManage`
+   * (the bin) is true. Absent from an older server: `canManage` decides both, as it did.
+   */
+  canEdit?: boolean;
+  /** The pin: a moderator of this post (a BDE `MODERATE` of its spaces) or a platform admin. */
   canPin?: boolean;
   /** The flag: any logged-in reader who is not the post's own publisher. */
   canReport?: boolean;

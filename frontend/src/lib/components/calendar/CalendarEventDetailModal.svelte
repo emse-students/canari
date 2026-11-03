@@ -126,7 +126,10 @@
       sourceUrl: origin
         ? `${origin}/associations/${encodeURIComponent(ev.associationSlug)}`
         : undefined,
-      icsUrl: ev.status === 'validated' ? eventIcsAbsoluteUrl(ev.id, ev.startsAt) : undefined,
+      icsUrl:
+        ev.status === 'validated'
+          ? eventIcsAbsoluteUrl(ev.id, ev.startsAt, ev.icsSig) || undefined
+          : undefined,
     };
   }
 </script>

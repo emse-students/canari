@@ -1050,6 +1050,19 @@ a subscription is restricted to the reader's own spaces by a signed URL, and the
 - **Why nothing is removed later:** the signature IS the rule. Rotating `AGENDA_SIGNING_KEY` repeats this
   break on purpose (it is the revocation) and needs no code.
 
+## Nothing to remove - an UNSIGNED single-event calendar link now gets a 403 (2026-11-02)
+
+**A BREAK, not a shim.** `feed.ics?eventId=..` now needs that event's signature (`sig`, served with the
+event as `icsSig`); without it, or with another one, the answer is a bodyless 403 logged
+`[AGENDA_ICS_REFUSED]`. The owner decided it on 2026-11-02, with no time-based grace period
+([D40 closed](profiles-and-access.md#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)).
+
+- **Who is affected:** a one-event link opened from an app build that predates the signature (it builds
+  the unsigned form), or one saved before this release. The reader opens the event again in an
+  updated app, which builds the signed link.
+- **What to measure:** the `[AGENDA_ICS_REFUSED]` count in the social-service logs after the release;
+  the day it is zero, nobody holds an old link. There is no branch to delete: the refusal is the rule.
+
 ## Nothing to remove, revisit 2027-10-13 - an UNSIGNED salon row now gets a 400 (2026-10-13)
 
 **A BREAK, not a shim.** `POST /api/channels/:channelId/messages` refuses a row with no Graine v2
