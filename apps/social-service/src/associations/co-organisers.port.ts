@@ -1,3 +1,5 @@
+import type { EntityManager } from 'typeorm';
+
 /**
  * WHAT THE EVENT WRITE PATH ASKS OF CO-ORGANISATION (D39), stated here so `AssociationsService`
  * needs nothing from the module that implements it.
@@ -25,6 +27,9 @@ export interface CoOrganiserSyncRequest {
   viaAssociationId: string;
 }
 
+/** What to run once the caller's transaction has COMMITTED (a rolled-back one never runs it). */
+export type CoOrganiserAfterCommit = () => Promise<void>;
+
 /** The co-organisation half the event write path calls. */
 export interface CoOrganiserPort {
   /**
@@ -32,5 +37,11 @@ export interface CoOrganiserPort {
    * accepts), a pending one left out is WITHDRAWN, an accepted one left out is ENDED (its rights and
    * its audience go with its row). A refused one stays refused and is not proposed again.
    */
-  sync(request: CoOrganiserSyncRequest): Promise<void>;
+  sync(request: CoOrganiserSyncRequest, manager?: EntityManager): Promise<CoOrganiserAfterCommit>;
+  /**
+   * Every refusal `sync` can give (the cap, a partner changing more than its own presence), with NO
+   * write. The event write calls it BEFORE its first write, so a refused request leaves nothing
+   * behind - `sync` itself runs its writes last and re-checks, the same plan.
+   */
+  check(request: CoOrganiserSyncRequest, manager?: EntityManager): Promise<void>;
 }
