@@ -9,6 +9,7 @@
   import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   /** A sign-out is under way: it can wait up to the logout deadline, and a second tap is ignored. */
   let signingOut = $state(false);
@@ -65,6 +66,7 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
+          use:guideAnchor={'nav.profile'}
           title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
           data-slow-link={slowLink.active || undefined}
           class="tap-target rounded-2xl ring-3 transition-all duration-200 {slowLink.active

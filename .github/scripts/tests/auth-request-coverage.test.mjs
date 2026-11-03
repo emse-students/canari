@@ -48,23 +48,12 @@ const NGINX = join(REPO, 'infrastructure', 'local', 'Dockerfile.frontend');
  * alternative is an omission that looks exactly like this and says nothing. `route` is matched
  * against `VERB /full/path` exactly.
  */
+//
+// THE PUBLIC SHOWCASE IS THE CEILING (owner, 2026-11-02): without an account Canari shows nothing
+// portail-etu.emse.fr does not. A new entry here must name what of the showcase it serves, or be a
+// capability (a signed or unguessable link handed out by a member), a liveness probe, or a value
+// about nobody. The audit and the route-by-route table: docs/wiki/anonymous-surface.md.
 const PUBLIC_BY_INTENT = [
-  {
-    route: 'GET /associations/:id/products',
-    why: 'the association shop page renders for a signed-out visitor; x-user-id is optional and only picks the price band',
-  },
-  {
-    route: 'GET /associations/categories',
-    why: 'category list for the public associations directory',
-  },
-  {
-    route: 'GET /associations/users/:userId/memberships',
-    why: 'public profile - current association memberships',
-  },
-  {
-    route: 'GET /associations/users/:userId/role-history',
-    why: 'public profile - past and honorary roles',
-  },
   {
     route: 'GET /associations/:id/events',
     why: 'public association agenda; pending events need a signed-in caller and are filtered in the handler',
@@ -79,11 +68,7 @@ const PUBLIC_BY_INTENT = [
   },
   {
     route: 'GET /bookings/:bookingId/calendar.ics',
-    why: 'one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking\'s people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person\'s (D10), never answers, private texts or the holder\'s or participants\' names',
-  },
-  {
-    route: 'GET /forms/:id/calendar-link',
-    why: 'one agenda entry for a form, read by the public association page; never the form contents',
+    why: "one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking's people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person's (D10), never answers, private texts or the holder's or participants' names",
   },
   {
     route: 'GET /users/:id/avatar',
@@ -279,7 +264,11 @@ function nestRoutes(dir) {
       // past a handler reads somebody else's authorization, and an over-credit here is a route
       // this gate reports as closed while it answers anybody.
       let end = k;
-      while (end < lines.length && !(ROUTE_DECORATOR.test(lines[end]) && !isCommentLine(lines[end]))) end++;
+      while (
+        end < lines.length &&
+        !(ROUTE_DECORATOR.test(lines[end]) && !isCommentLine(lines[end]))
+      )
+        end++;
       while (end > k && /^\s*(@|\*|\/\*\*|$)/.test(lines[end - 1])) end--;
       const body = lines.slice(k, end).join('\n');
       const authorized =
@@ -312,6 +301,11 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
+  // `get_admin_presence` and `get_admin_presence_history` ask that claim through ONE helper,
+  // `presence.rs::is_global_admin`, which holds the literal above (2026-11-02). The handlers name
+  // the helper, not the header, and a helper that stopped reading the header would be a handler
+  // credited by a name - so the helper's own body is asserted below to still read it.
+  'is_global_admin',
   // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
   // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
   // also refuses a refresh token.
@@ -464,6 +458,47 @@ function rustFnBody(crateDir, name) {
   return null;
 }
 
+/**
+ * Whether a handler body names one of {@link RUST_AUTH}, matched as a WHOLE identifier (`caller_id`
+ * must not be credited by `not_caller_id_at_all`). The header literal is a string, matched as text.
+ *
+ * A handler credited by the NAME of the global-admin helper is credited only while that helper's own
+ * body still reads the header: a helper that stopped asking would otherwise keep every caller's
+ * handler "authorized" by a name. `helperBody(name)` answers a function's body or `null`.
+ */
+function isRustAuthorized(body, helperBody) {
+  const named = (text, id) => new RegExp(`(?<![A-Za-z0-9_])${id}(?![A-Za-z0-9_])`).test(text);
+  return RUST_AUTH.some((idiom) => {
+    if (idiom === 'x-global-admin') return body.includes(idiom);
+    if (!named(body, idiom)) return false;
+    if (idiom !== 'is_global_admin') return true;
+    const helper = helperBody('is_global_admin');
+    return helper !== null && helper.includes('x-global-admin');
+  });
+}
+
+// THE GATE'S OWN NEGATIVE TESTS: a helper that stops reading the header must FAIL the check, and a
+// near-miss identifier must not be credited. Run on every invocation, so a gate that was loosened
+// fails here before it can wave a handler through.
+{
+  const asks = () => '{ headers.get("x-global-admin").is_some() }';
+  const silent = () => '{ true }';
+  const handler = '{ if !is_global_admin(&headers) { return forbidden(); } }';
+  const checks = [
+    ['a handler asking through a helper that reads the header', isRustAuthorized(handler, asks), true],
+    ['a handler asking through a helper that stopped reading it', isRustAuthorized(handler, silent), false],
+    ['a handler naming a helper that does not exist', isRustAuthorized(handler, () => null), false],
+    ['a near-miss identifier', isRustAuthorized('{ my_is_global_admin_x(&h) }', asks), false],
+    ['the header read inline', isRustAuthorized('{ h.get("x-global-admin") }', () => null), true],
+  ];
+  for (const [what, got, want] of checks) {
+    if (got !== want) {
+      console.error(`FAIL: this gate's own self-test - ${what}: expected ${want}, got ${got}`);
+      process.exit(1);
+    }
+  }
+}
+
 // ── The assertions ───────────────────────────────────────────────────────────────────────────────
 
 const failures = [];
@@ -570,7 +605,7 @@ for (const loc of locations) {
       );
       continue;
     }
-    if (RUST_AUTH.some((idiom) => body.includes(idiom))) {
+    if (isRustAuthorized(body, (name) => rustFnBody(dir, name))) {
       rustAuthorized++;
       continue;
     }
@@ -603,6 +638,35 @@ for (const entry of PUBLIC_BY_INTENT) {
   );
 }
 
+// ROUTES CLOSED TO A SIGNED-OUT CALLER ON 2026-11-02, AND KEPT CLOSED. Each served data the public
+// showcase does not show; a PUBLIC_BY_INTENT entry for one of them would re-open it with a reason
+// that reads like every other, so the list is asserted by name: the route still exists, and it is
+// authorized (docs/wiki/anonymous-surface.md).
+const CLOSED_TO_ANONYMOUS = [
+  'GET /associations/:id/products',
+  'GET /associations/categories',
+  'GET /associations/users/:userId/memberships',
+  'GET /associations/users/:userId/role-history',
+  'GET /forms/:id/calendar-link',
+];
+for (const route of CLOSED_TO_ANONYMOUS) {
+  const hits = allRoutes.get(route);
+  if (!hits) {
+    failures.push(
+      `CLOSED_TO_ANONYMOUS names "${route}", which no controller declares any more - delete the entry`
+    );
+  } else if (!hits.every((h) => h.authorized)) {
+    failures.push(
+      `${route} was closed to a signed-out caller on 2026-11-02 and answers anybody again`
+    );
+  }
+  if (declared.has(route)) {
+    failures.push(
+      `${route} is closed to a signed-out caller and must not be declared PUBLIC_BY_INTENT`
+    );
+  }
+}
+
 // A CLIENT MAY SEND ANY HEADER IT LIKES, SO EVERY IDENTITY NAME IS EMPTIED AT SERVER LEVEL.
 // nginx forwards a request header nobody overrode, and it inherits a `proxy_set_header` set only
 // into a location that declares NONE of its own - so the server-level block is the net for a
@@ -615,10 +679,9 @@ for (const entry of PUBLIC_BY_INTENT) {
   const conf = readFileSync(NGINX, 'utf8');
   const serverLevel = conf.slice(0, conf.search(/^\s*location\s/m));
   for (const [, header] of IDENTITY) {
-    const cleared = new RegExp(
-      `proxy_set_header\\s+${header}\\s+"(?:|false)"`,
-      'i'
-    ).test(serverLevel);
+    const cleared = new RegExp(`proxy_set_header\\s+${header}\\s+"(?:|false)"`, 'i').test(
+      serverLevel
+    );
     if (!cleared) {
       failures.push(
         `the server-level block never clears ${header}, so a location that declares no ` +

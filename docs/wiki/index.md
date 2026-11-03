@@ -51,6 +51,7 @@
 ### Frontend
 
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
+- [Guided help](frontend/guided-help.md) - the welcome tour and first-time hints: one engine, how to declare a help, a missing target decided by an event, the quiet state, and the per-account seen store
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
@@ -104,6 +105,8 @@
 - [CAS callback without state](infrastructure/cas-callback-state.md) — school CAS sign-ins that return with no code: pinned cookie, setting, measurements
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels
 - [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
+- [What Canari serves without an account](anonymous-surface.md) — the owner's rule of 2026-11-02 (the public showcase is the ceiling) and every anonymous route, page head and sitemap entry with its verdict: closed, stripped or kept, and why
+- [Spaces, audiences and dependencies (proposal)](spaces-and-audiences-reform.md) — PROPOSAL 2026-11-02, for the owner to decide: audience and dependencies as two independent axes with two admin panels, a two-level dependency (an association or list under at most one BDE) and one governor per space, institution-only item narrowing, events and partnerships validated per governor slice, associations vs lists vs institutions compared, the work packages and the owner's open questions
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync

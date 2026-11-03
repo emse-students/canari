@@ -36,12 +36,10 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-/**
- * `git ls-files -s` gives mode and path for every tracked file, which is the only source here. Its
- * output crossed `execFileSync`'s 1 MiB default buffer on 2026-11-03 (ENOBUFS, the whole gate red),
- * so the buffer is sized for the listing rather than left to the default.
- */
+/** `git ls-files -s` gives mode and path for every tracked file, which is the only source here. */
 function trackedFiles() {
+  // The WHOLE tree's listing outgrows Node's 1 MiB default buffer (`ls-files -s` crossed it on
+  // 2026-11-03, ENOBUFS in CI): 64 MiB, as every other whole-tree listing in these tests reads it.
   const out = execFileSync('git', ['ls-files', '-s'], {
     cwd: repoRoot,
     encoding: 'utf8',

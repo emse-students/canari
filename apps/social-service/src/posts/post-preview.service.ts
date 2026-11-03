@@ -365,26 +365,4 @@ export class PostPreviewService {
       clearTimeout(timer);
     }
   }
-
-  /**
-   * Recent shareable posts, newest first - the sitemap's half of this surface.
-   *
-   * It applies the SAME eligibility as a single preview, in SQL: an association post, not hidden,
-   * published. `/api/posts?feed=associations` used to serve this and has answered 401 to the
-   * sitemap builder since the feed gate shipped, which is why production advertised zero post URLs
-   * to every crawler for ten days.
-   */
-  async listShareable(limit: number): Promise<{ id: string; updatedAt: string }[]> {
-    const rows = await this.postRepo
-      .createQueryBuilder('p')
-      .select(['p.id', 'p.updatedAt'])
-      .where('p.associationId IS NOT NULL')
-      .andWhere('p.hiddenByModeration = false')
-      .andWhere('(p.scheduledAt IS NULL OR p.scheduledAt <= NOW())')
-      .orderBy('p.publishedAt', 'DESC')
-      .limit(limit)
-      .getMany();
-
-    return rows.map((row) => ({ id: row.id, updatedAt: new Date(row.updatedAt).toISOString() }));
-  }
 }
