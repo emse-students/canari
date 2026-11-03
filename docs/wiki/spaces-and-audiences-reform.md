@@ -357,6 +357,18 @@ nothing reads the governing parent for governance until WP-D2.
   an older client's "for the BDS" list working), and the default audience is the parent's spaces.
 - `parentName` (the line above a list) prints the label, else the governing parent, for LISTS only -
   an association gains a parent too and must not start showing "BDE" above every club.
+- **The screens** (second pull request). `/admin/spaces` gains the Dependencies panel (each BDE with
+  its children, the orphaned, the unattached and the institutions apart, every mismatch shown, a
+  parent and a list label changed in place) and lets an institution take the governor star; a
+  governor's reach box is no longer locked ([admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)).
+  The create form asks a creator managing several BDEs which one (none asked of a creator with one,
+  every BDE offered to the platform admin), and a list may still be shown under a non-BDE. The
+  profile form's parent picker (platform admin, lists) offers the BDEs only and sends the parent
+  only when it changed. **F9**: a BDE's edit hub lists the entities depending on it, read-only, with
+  a link to `/admin/spaces` for the platform admin, and its members editor offers a "Bureau du BDE"
+  preset (the admin preset plus `VALIDATE_EVENTS`, `MANAGE_ASSO`, `MODERATE`, `bdePresetFor`). A
+  BDE's own officers do not see which SPACES it governs there: that list is platform-admin only
+  (`GET associations/spaces`), and WP-D1 opens no new read for it.
 
 #### The parents list, validated by the owner on 2026-11-03, as is
 
@@ -899,7 +911,7 @@ Concerns for whoever builds it:
 | F6 | The Achats tab learns a right by failing | `EditAchatsTab.svelte:125-132` | pass `rights.payoutAccount` down; a 403 is then a defect, logged as one |
 | F7 | Wording: `kindWording.list.editTitle` says "Gestion de l'association" while the list page says "Gestion de la liste"; `asso_flag_post_as` says "Publier au nom de l'asso" on lists and institutions | `lib/associations/kindWording.ts:76`, `frontend/messages/fr.json:1612` | `editTitle` from `list_edit_page_title`; a kind-neutral "Publier en son nom" |
 | F8 | Presets per type: association Admin = 3871 (bank account included); list and institution Admin = 3103 (`adminPresetFor` masks the shop and the bank account); institution default = Publisher. After WP-L a list Admin is 3359 (shop, no bank account) | `EditMembersTab.svelte:40-47`, `editSections.ts:200-202` | follows from G2/G3 |
-| F9 | A BDE association sees the same sections; only its member editor adds `VALIDATE_EVENTS`, `MANAGE_ASSO`, `MODERATE` (`AssociationMemberRow.svelte:67-72`). The Admin preset grants none of them, and nothing on its edit page shows the spaces it governs or the entities that depend on it | - | a "BDE" preset (Admin + the three), and a read-only dependencies row linking to `/admin/spaces` (WP-D1) |
+| F9 | A BDE association sees the same sections; only its member editor adds `VALIDATE_EVENTS`, `MANAGE_ASSO`, `MODERATE` (`AssociationMemberRow.svelte:67-72`). The Admin preset grants none of them, and nothing on its edit page shows the spaces it governs or the entities that depend on it | - | **built (2.8)**: a "Bureau du BDE" preset (Admin + the three), and the entities depending on it, read-only on its edit hub, linking to `/admin/spaces` for the platform admin; the spaces it governs stay platform-admin only |
 | F10 | Institutions on `main`: governed by any reaching BDE for members and deletion (G6, E5) | `mayAct`, `DELETE :id` | #2949 and #2953, both open |
 | F11 | Institutions sell nothing on `main` (`selling-kinds.ts:13`), while section 6 rows 16-18 still say "yes" | section 6 of this page | answered by F3 (sells nothing, as today); section 6 corrected |
 | F12 | The `MANAGE_ASSO` comment says it does not delete an association | `association-member.entity.ts:20-24` | WP-R5 (known) |

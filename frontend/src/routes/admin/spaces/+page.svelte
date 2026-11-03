@@ -7,7 +7,6 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { internalPath } from '$lib/utils/internalPath';
   import {
-    getAssociationAudiences,
     listAdminCatalogue,
     listSpaces,
     setSpaceBde,
@@ -34,6 +33,8 @@
   import { CAMPUSES, FORMATIONS, campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AdminEntityCreateForm from '$lib/components/admin/spaces/AdminEntityCreateForm.svelte';
+  import AdminDependenciesPanel from '$lib/components/admin/spaces/AdminDependenciesPanel.svelte';
+  import { dependencyRefusalMessage } from '$lib/associations/dependencies';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import Button from '$lib/components/ui/Button.svelte';
@@ -74,6 +75,8 @@
   let rulesById = $state<Record<string, AudienceRule[]>>({});
   /** The cell being persisted, so a second click cannot race the first. */
   let busy = $state<string | null>(null);
+  /** Bumped when a governor changes: who is a BDE moved, so the Dependencies panel reads again. */
+  let governorRevision = $state(0);
   /** Numbers each catalogue reload when SENT: an answer older than the one on screen is dropped. */
   let loadSeq = 0;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -207,8 +210,8 @@
 
   /**
    * Saves the pairs an association reaches, in the smallest equivalent rule set. None is allowed
-   * (it then reaches nobody); the server puts back the pairs it governs as BDE, and what it answers
-   * is what the grid shows.
+   * (it then reaches nobody), a governor included (reform 2.5, WP-D1: governing a space adds no
+   * reach); what the server answers is what the grid shows.
    */
   async function saveReach(association: Association, cells: Set<Cell>, cellKey: string) {
     busy = cellKey;
@@ -230,18 +233,21 @@
     return saveReach(association, toggleGroup(reachOf(association), group), cellKey);
   }
 
-  /** The sentence for a refused BDE designation, chosen by the HTTP status (never by the message). */
+  /**
+   * The sentence for a refused governor designation: the typed code first (a list, a parented
+   * association), then the HTTP status - never the message.
+   */
   function bdeRefusal(e: unknown): string {
-    if (e instanceof SocialApiError) {
-      if (e.status === 400) return m.admin_spaces_bde_not_association();
-      if (e.status === 404) return m.admin_spaces_bde_missing();
-    }
+    const typed = dependencyRefusalMessage(e);
+    if (typed) return typed;
+    if (e instanceof SocialApiError && e.status === 404) return m.admin_spaces_bde_missing();
     return m.admin_spaces_bde_error();
   }
 
   /**
-   * Makes an association the BDE of a pair, or clears it when it already is. A BDE always reaches
-   * what it governs: the server adds that reach with the designation, so ITS rules are read back.
+   * Makes an association or an institution the governor of a pair (D3), or clears it when it
+   * already is. Since WP-D1 the server writes no audience rule with it, so only the spaces and the
+   * dependency axis are read back.
    */
   async function toggleBde(space: SpaceRow, association: Association) {
     const cellKey = `${association.id}:${cellOf(space.formation, space.campus)}`;
@@ -249,7 +255,7 @@
     error = null;
     try {
       await setSpaceBde(space.id, space.bde?.id === association.id ? null : association.id);
-      rulesById[association.id] = await getAssociationAudiences(association.id);
+      governorRevision += 1;
     } catch (e) {
       Log.d('admin.spaces.setBde failed', e);
       error = bdeRefusal(e);
@@ -344,6 +350,8 @@
       />
     </div>
   </div>
+
+  <AdminDependenciesPanel revision={governorRevision} />
 
   {#if loading}
     <div class="flex justify-center py-16">
@@ -476,26 +484,22 @@
                     {@const isBde = space?.bde?.id === association.id}
                     <td class="px-1.5 py-2 text-center">
                       <div class="group relative inline-flex">
-                        <!-- A BDE reaches the pair it governs: the box stays ticked until the star goes. -->
+                        <!-- Governing a pair and reaching it are two axes (reform 2.5): each its own button. -->
                         <button
                           type="button"
                           disabled={busy === cellKey}
                           aria-pressed={reached.has(cell)}
-                          aria-disabled={isBde}
                           aria-label={m.admin_spaces_reach_aria({
                             association: association.name,
                             space: label,
                           })}
-                          onclick={() => {
-                            if (!isBde) void toggleReachGroup(association, [cell], cellKey);
-                          }}
-                          class="{cellButton} {isBde ? 'cursor-default' : ''} {boxClass(
-                            reached.has(cell) ? 'all' : 'none'
-                          )}"
+                          onclick={() => toggleReachGroup(association, [cell], cellKey)}
+                          class="{cellButton} {boxClass(reached.has(cell) ? 'all' : 'none')}"
                         >
                           <Check size={14} />
                         </button>
-                        {#if association.type === 'association' && space}
+                        <!-- A list never governs; an institution may (D3), and manages nothing by it. -->
+                        {#if association.type !== 'list' && space}
                           <button
                             type="button"
                             disabled={busy === cellKey}

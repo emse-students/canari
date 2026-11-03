@@ -12,6 +12,7 @@
  */
 import {
   ASSOCIATION_ADMIN_PRESET,
+  BDE_ONLY_FLAGS,
   AssociationPermissionFlag,
   mayActOnAssociation,
   type Association,
@@ -225,6 +226,19 @@ export function permissionMaskFor(kind: Association['type']): number {
  */
 export function adminPresetFor(kind: Association['type']): number {
   return ASSOCIATION_ADMIN_PRESET & permissionMaskFor(kind);
+}
+
+/**
+ * The BDE preset (reform F9, WP-D1): the admin preset plus the three rights that only mean
+ * something in a BDE - validating its spaces' agenda, managing its associations, moderating. Offered
+ * only on an association that governs a space (`isBDE`); anywhere else it is `null`, since those
+ * flags are inert there and the members editor hides them.
+ */
+export function bdePresetFor(asso: Pick<Association, 'type' | 'isBDE'>): number | null {
+  if (asso.type !== 'association' || !asso.isBDE) return null;
+  let preset = adminPresetFor(asso.type);
+  for (const flag of BDE_ONLY_FLAGS) preset |= flag;
+  return preset;
 }
 
 /**

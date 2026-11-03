@@ -70,7 +70,10 @@ Now:
   THAT directory creates (`Créer l'association`, `Créer une liste`, `Créer une institution`). The lists and
   institutions pages lost their "back to Associations" link: the nav carries it.
 - `AssociationCreatePage.svelte` is the one creation flow, `kind = association | list | institution`; the
-  three `/new` routes are three lines. A list adds campaign and parent fields; an institution adds an
+  three `/new` routes are three lines. A list adds a campaign field. An association or a list asks
+  for its governing BDE only when there is a choice (`createParentField`, reform 2.8): a creator
+  managing several BDEs picks one, one managing a single BDE is told which, the platform admin may
+  pick any or none; a list may instead be SHOWN under a non-BDE (the G3 label). An institution adds an
   **audience choice**: none (default, D36 - visible to its members only), the whole School, one campus, or one
   campus x formation (`reachChoiceToRules` in `audienceRules.ts`; a half-filled choice yields no rule and the
   submit is disabled, never a wider reach). The rule is written right after the creation with the grid's own
@@ -133,9 +136,11 @@ The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global ad
 
 A list is NOT its own entity: it is a row in `associations` discriminated by `type = 'list'`, so the
 entity, the DTOs, the service, the frontend types and `AssociationTile` are all shared with
-associations. Four columns are list-only: `promo` (the campaign year), `parentAssociationId` (the
-association that runs it, surfaced on the read side as the denormalised `parentName`), and
-`name2` / `logoMediaId2` - the SECOND THEME.
+associations. Four columns are list-only: `promo` (the campaign year), `displayParentAssociationId`
+(the association a list is SHOWN under, the G3 label), and `name2` / `logoMediaId2` - the SECOND
+THEME. `parentAssociationId`, the governing BDE, is no longer list-only since WP-D1 (an association
+has one too, [reform 2.8](../../spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner));
+a list's read side surfaces the label, else the parent, as the denormalised `parentName`.
 
 **A campaign list can run two themes at once**, a public one and the one it is actually called, so
 it carries two names and two logos. Migration `015_list_second_theme.sql` added both columns; they
