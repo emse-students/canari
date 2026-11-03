@@ -67,7 +67,7 @@ function lengthPrefixed(...units: number[][]): Uint8Array {
 const KEY_FRAME = lengthPrefixed([0x09, 0x10], SPS, PPS, [0x65, 0x88, 0x84, 0x00, 0x33, 0xff]);
 
 const FIREFOX_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0";
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0';
 
 /** What the fake encoder hands back for every frame; each test sets it. */
 let emitted: { data: Uint8Array; description: Uint8Array } = {
@@ -76,13 +76,13 @@ let emitted: { data: Uint8Array; description: Uint8Array } = {
 };
 
 class FakeEncodedVideoChunk {
-  readonly type: "key" | "delta";
+  readonly type: 'key' | 'delta';
   readonly timestamp: number;
   readonly duration: number;
   readonly byteLength: number;
   private readonly data: Uint8Array;
   constructor(init: {
-    type: "key" | "delta";
+    type: 'key' | 'delta';
     timestamp: number;
     duration: number;
     data: Uint8Array;
@@ -105,11 +105,11 @@ class FakeVideoFrame {
   readonly codedHeight: number;
   readonly displayWidth: number;
   readonly displayHeight: number;
-  readonly format = "RGBX";
+  readonly format = 'RGBX';
   readonly colorSpace = {};
   constructor(
     _data: unknown,
-    init: { timestamp: number; duration?: number; codedWidth: number; codedHeight: number },
+    init: { timestamp: number; duration?: number; codedWidth: number; codedHeight: number }
   ) {
     this.timestamp = init.timestamp;
     this.duration = init.duration ?? null;
@@ -126,7 +126,7 @@ class FakeVideoEncoder {
   static async isConfigSupported(config: unknown) {
     return { supported: true, config };
   }
-  state = "unconfigured";
+  state = 'unconfigured';
   encodeQueueSize = 0;
   private config: { codec: string; width: number; height: number } | null = null;
   constructor(private readonly init: { output: (chunk: unknown, meta?: unknown) => void }) {}
@@ -134,11 +134,11 @@ class FakeVideoEncoder {
   removeEventListener() {}
   configure(config: { codec: string; width: number; height: number }) {
     this.config = config;
-    this.state = "configured";
+    this.state = 'configured';
   }
   encode(frame: FakeVideoFrame) {
     const chunk = new FakeEncodedVideoChunk({
-      type: "key",
+      type: 'key',
       timestamp: frame.timestamp,
       duration: frame.duration ?? 33_333,
       data: emitted.data,
@@ -154,7 +154,7 @@ class FakeVideoEncoder {
   }
   async flush() {}
   close() {
-    this.state = "closed";
+    this.state = 'closed';
   }
 }
 
@@ -168,9 +168,9 @@ function indexOf(haystack: Uint8Array, needle: number[]): number {
 
 beforeEach(() => {
   vi.resetModules();
-  vi.stubGlobal("VideoEncoder", FakeVideoEncoder);
-  vi.stubGlobal("VideoFrame", FakeVideoFrame);
-  vi.stubGlobal("EncodedVideoChunk", FakeEncodedVideoChunk);
+  vi.stubGlobal('VideoEncoder', FakeVideoEncoder);
+  vi.stubGlobal('VideoFrame', FakeVideoFrame);
+  vi.stubGlobal('EncodedVideoChunk', FakeEncodedVideoChunk);
 });
 
 afterEach(() => {
@@ -179,25 +179,25 @@ afterEach(() => {
 
 /** Encodes two frames through the fake encoder and returns the `avcC` record the MP4 carries. */
 async function writtenAvcRecord(userAgent: string): Promise<number[]> {
-  vi.stubGlobal("navigator", { userAgent });
+  vi.stubGlobal('navigator', { userAgent });
   const { BufferTarget, Mp4OutputFormat, Output, VideoSample, VideoSampleSource } =
-    await import("mediabunny");
+    await import('mediabunny');
   const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: "fragmented" }),
+    format: new Mp4OutputFormat({ fastStart: 'fragmented' }),
     target: new BufferTarget(),
   });
-  const source = new VideoSampleSource({ codec: "avc", bitrate: 1_000_000 });
+  const source = new VideoSampleSource({ codec: 'avc', bitrate: 1_000_000 });
   output.addVideoTrack(source);
   await output.start();
   for (let i = 0; i < 2; i++) {
     await source.add(
       new VideoSample(new Uint8Array(16 * 16 * 4), {
-        format: "RGBX",
+        format: 'RGBX',
         codedWidth: 16,
         codedHeight: 16,
         timestamp: i / 30,
         duration: 1 / 30,
-      }),
+      })
     );
   }
   await output.finalize();
@@ -209,7 +209,7 @@ async function writtenAvcRecord(userAgent: string): Promise<number[]> {
   return Array.from(bytes.subarray(avcC + 4, avcC - 4 + boxSize));
 }
 
-describe("mediabunny AVC description (issue 559)", () => {
+describe('mediabunny AVC description (issue 559)', () => {
   it("writes a well-formed record when Firefox's encoder hands back a malformed one", async () => {
     emitted = { data: KEY_FRAME, description: FIREFOX_AVCC };
     // Mediabunny strips the doubled bytes and re-serialises the record it parsed, which had no
