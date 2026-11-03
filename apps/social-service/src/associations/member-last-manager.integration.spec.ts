@@ -142,8 +142,9 @@ maybe('the last member manager against PostgreSQL', () => {
       let settled = 0;
       for (const outcome of outcomes) void outcome.then(() => (settled += 1));
       let waiting = 0;
-      // Ends on an event (both blocked, or both settled), never on a timer.
-      while (waiting < outcomes.length && settled < outcomes.length) {
+      // Ends on an event - every write either blocked or settled - never on a timer; a write that
+      // fails fast while the other blocks ends it too, and the `waiting` assertion then says so.
+      while (waiting + settled < outcomes.length) {
         const { rows } = await admin.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM pg_stat_activity
             WHERE application_name = $1 AND wait_event_type = 'Lock'`,
