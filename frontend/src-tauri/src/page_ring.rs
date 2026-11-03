@@ -29,13 +29,22 @@
 //! the next service before the last one has let go) would otherwise let the first one's `false`
 //! erase the second one's `true`.
 //!
-//! **EVERY STATEMENT CARRIES ITS DOCUMENT.** A new document holds no socket and rings no call, so
-//! every statement of the previous one is void the moment a document starts loading
-//! ([`forget_on_page_load`]), whether or not that page could still say so - and the document
-//! generation moves on. A statement still in flight from the previous document (a late
+//! **EVERY STATEMENT CARRIES ITS DOCUMENT, AND THE DOCUMENT MINTS IT.** A new document holds no
+//! socket and rings no call, so every statement of the previous one is void the moment the new page
+//! CLAIMS its generation ([`page_ring_document`], its first native call, made as its module loads):
+//! the claim moves the generation on, clears every statement, and returns the new value to that
+//! page alone. A statement still in flight from the previous document (a late
 //! `set_page_gateway_socket(.., true)` sent just before a navigation committed) names the old
-//! generation and is ignored, rather than leaving a holder nobody will ever withdraw. A page learns
-//! its generation once, from [`page_ring_document`], at its first statement.
+//! generation and is ignored, rather than leaving a holder nobody will ever withdraw.
+//!
+//! **NOT THE PAGE-LOAD EVENT** (round 9 of the review of #2919): it moved the generation on before,
+//! and the page read it at load. On Android `onPageStarted` is posted to the UI thread while the new
+//! page's JavaBridge call can already run, so the page could read the generation BEFORE the event
+//! moved it on - and keep a stale one for its whole life: every statement ignored, every PIN-reset
+//! step refused. A generation minted by the call that returns it cannot be read early. The cost,
+//! accepted: a document that never claims (a page that is not the app's) leaves the last page's
+//! statements standing until the next app page claims. Owed: a reading of a reload on the Mi 9T,
+//! the stale-statement line absent for the new page.
 //!
 //! A page that dies with its web content process (iOS) is replaced by a reload, which starts a
 //! document too; the termination handler clears the facts first all the same
@@ -175,13 +184,6 @@ fn forget(why: &str) {
     }
 }
 
-/// A document started loading: it holds no socket and rings no call yet, and every statement of the
-/// previous one went with it - even when that page left without saying so (a renderer that died, a
-/// reload with no `pagehide`).
-pub(crate) fn forget_on_page_load() {
-    forget("a document started loading");
-}
-
 /// The web content process died, and its page with it (WKWebView). Cleared here, before the reload
 /// the handler asks for, so a ring arriving in between is rung natively.
 #[cfg(any(target_os = "ios", target_os = "macos", test))]
@@ -189,10 +191,21 @@ pub(crate) fn forget_on_web_content_terminated() {
     forget("the web content process terminated");
 }
 
-/// The generation of the current document, which the page names in every statement it makes, so a
-/// statement still in flight across a navigation is told apart from one of the new page.
+/// A NEW DOCUMENT CLAIMS ITS GENERATION: the generation moves on, every statement of the previous
+/// document goes - even when that page left without saying so (a renderer that died, a reload with no
+/// `pagehide`) - and the new value is returned to the page, which names it in every statement and
+/// every PIN-reset step it makes. Asked ONCE per document, as its module loads.
 #[tauri::command]
 pub(crate) fn page_ring_document() -> u64 {
+    forget("a document claimed its generation");
+    let document = current_page_document();
+    log::info!("[CALL_RING] a document claimed generation {document}");
+    document
+}
+
+/// The current document's generation, READ without claiming one: the PIN reset's registry compares a
+/// step's document with it (`mls_account_state::current_document`).
+pub(crate) fn current_page_document() -> u64 {
     with_page_ring(|r| r.document)
 }
 
@@ -387,21 +400,20 @@ mod tests {
 
     // The process-wide wrappers, in ONE test: the state is shared by every test of the process.
     #[test]
-    fn the_commands_and_the_page_load_drive_the_process_wide_facts() {
-        forget_on_page_load();
+    fn the_commands_and_the_claim_drive_the_process_wide_facts() {
         let doc = page_ring_document();
+        assert_eq!(current_page_document(), doc, "reading claims nothing");
         assert!(!page_rings_in_app());
         set_page_gateway_socket(doc, "a".into(), true);
         set_page_ringing_call(doc, "s".into(), Some("call-9".into()));
         assert!(page_rings_in_app());
         assert!(page_rings_call("call-9"));
 
-        forget_on_page_load();
-        assert_ne!(
-            page_ring_document(),
-            doc,
-            "a new document is a new generation"
-        );
+        // The next document's claim: a new generation, and the old page's facts gone with it.
+        let next = page_ring_document();
+        assert_ne!(next, doc, "a new document is a new generation");
+        assert!(!page_rings_in_app());
+        assert!(!page_rings_call("call-9"));
         set_page_gateway_socket(doc, "a".into(), true);
         assert!(
             !page_rings_in_app(),

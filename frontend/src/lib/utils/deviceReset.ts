@@ -7,6 +7,8 @@ import { discardAppLog } from '$lib/utils/appLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
+import { wipeDeletedAccountLocalData } from '$lib/utils/accountLocalWipe';
+import { markDeletedAccountWipePending } from '$lib/utils/deletedAccountMarker';
 
 /**
  * Everything still on this device that a factory wipe was supposed to remove.
@@ -48,20 +50,128 @@ async function surveyDeviceStorage(): Promise<string[]> {
  * MUST BE READ BEFORE `localStorage.clear()`, which is why it is a separate step and not inlined.
  */
 function recordedKeystoreAliases(): string[] {
+  return recordedDeviceIds().map(([userId, deviceId]) => keystoreAlias(userId, deviceId));
+}
+
+/**
+ * Every `[userId, deviceId]` this device recorded (`mls_device_id_<userId>`): the accounts that ever
+ * signed in here and kept a device identity.
+ */
+function recordedDeviceIds(): Array<[string, string]> {
   const DEVICE_ID_PREFIX = ACCOUNT_KEY.deviceId('');
-  const aliases: string[] = [];
+  const pairs: Array<[string, string]> = [];
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key === null || !key.startsWith(DEVICE_ID_PREFIX)) continue;
       const userId = key.slice(DEVICE_ID_PREFIX.length);
       const deviceId = localStorage.getItem(key);
-      if (userId && deviceId) aliases.push(keystoreAlias(userId, deviceId));
+      if (userId && deviceId) pairs.push([userId, deviceId]);
     }
   } catch (e) {
     console.warn('[RESET] could not read the recorded device ids back:', e);
   }
-  return aliases;
+  return pairs;
+}
+
+/**
+ * What a revoked device's wipe may erase (round 6 of the review of #2919): the WHOLE INSTALL only
+ * when no other account lives on it, otherwise THE REVOKED ACCOUNT ALONE.
+ *
+ * Account B removing "this phone" from another device used to run the factory wipe, which takes the
+ * whole app data directory with it - the parked state, the vault slot and the keys of account A,
+ * who still uses this phone. Another account is present when the device recorded another account's
+ * device identity, or when the native side holds another account's MLS state - parked, set aside,
+ * of unproven owner, or in the slot (`mls_other_accounts_present`). An answer the native side cannot
+ * give is read as "present", accused at ERROR: the account-scoped wipe erases less, and what it
+ * leaves is named. The web has one store per account but one browser profile per person, and keeps
+ * the whole-install wipe.
+ */
+export async function revokedWipeScope(userId: string): Promise<'install' | 'account'> {
+  if (!isTauriRuntime()) return 'install';
+  const others = recordedDeviceIds().filter(([id]) => id !== userId);
+  if (others.length > 0) {
+    console.log(
+      `[RESET] ${others.length} other account(s) recorded on this install - only the revoked account is wiped`
+    );
+    return 'account';
+  }
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    if (await invoke<boolean>('mls_other_accounts_present', { userId })) {
+      console.log(
+        "[RESET] another account's MLS state is on this install - only the revoked account is wiped"
+      );
+      return 'account';
+    }
+  } catch (e) {
+    console.error(
+      '[RESET] whether another account lives on this install could not be read - only the revoked account is wiped:',
+      e
+    );
+    return 'account';
+  }
+  console.log('[RESET] no other account on this install - the whole install is wiped');
+  return 'install';
+}
+
+/**
+ * The wipe of a revoked device that ANOTHER ACCOUNT STILL USES ({@link revokedWipeScope}): every
+ * item of {@link wipeDeviceToFactory}, scoped to the revoked account - what cannot be scoped is
+ * left, and named here:
+ *
+ * - the message store, outbox and MLS connections: closed (all of this realm's, after `clearAuth`);
+ * - the native MLS state: the account's slot (its owner record naming it), its parked state and its
+ *   residue (`delete_user_mls_state`), the native session ended first WITHOUT a sweep;
+ * - the native message database, its push files (outbox, cached pushes, read marks, device notices,
+ *   `push_context.json` when it names the account), its names copy and its waiting quick replies;
+ * - the WebView databases named by the account; its at-rest key marker and keystore entry; its
+ *   session metadata, upload release marks, per-account local keys and its vault slot.
+ *
+ * LEFT, because nothing in them names an account and another account reads them: the in-app log,
+ * the HTTP cache, the cached notification avatars, the device-wide FCM token and keystore alias
+ * index, the share captured by the Share Extension, and the push service's sealed caches
+ * (`graine_seeds.json`, `channel_keys.json`) - see auth.md, "A revoked device another account uses".
+ *
+ * @returns the steps that failed, empty when everything of the account was removed
+ */
+export async function wipeAccountOfRevokedDevice(userId: string): Promise<string[]> {
+  console.log(
+    `[RESET] wiping the revoked account ${userId.slice(0, 8)} only - another account stays`
+  );
+  // OWED BEFORE THE FIRST STEP, AND FINISHED FROM DURABLE STATE (round 7 of the review of #2919): the
+  // marker the deleted-account wipe resumes from. A step that fails leaves it, and the next start
+  // resumes the wipe (`resumePendingDeletedAccountWipes`); the wipe clears it once nothing failed.
+  // Until then an offline unlock of this account is refused, as for a deleted one - and an online
+  // sign-in of the account drops it (`forgetDeletedAccountOnSignIn`): its data is a new session's.
+  markDeletedAccountWipePending(userId, 'revoked');
+  const failures: string[] = [];
+  try {
+    // No sweep: the slot may be another account's. `delete_user_mls_state` refuses under a live
+    // manager, so the session ends first.
+    await endNativeMlsSession('revoked account wipe', { sweepState: false });
+  } catch (e) {
+    failures.push('the native MLS session');
+    console.error('[RESET] could not end the native MLS session:', e);
+  }
+  failures.push(
+    ...(await wipeDeletedAccountLocalData(userId, {
+      closeThisRunsHandles: true,
+      expectNativeDatabase: false,
+      accountStillExists: true,
+    }))
+  );
+  if (failures.length > 0) {
+    for (const failure of failures) {
+      console.error(`[RESET] the revoked account's wipe did not finish: ${failure}`);
+    }
+    console.error(
+      `[RESET] the revoked account's wipe left ${failures.length} step(s) - it resumes at the next start`
+    );
+  } else {
+    console.log("[RESET] the revoked account's local data is gone; the other accounts keep theirs");
+  }
+  return failures;
 }
 
 /**
