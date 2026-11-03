@@ -121,6 +121,7 @@ REST: those rows need a count, then a migration.
 | `internal/reel-purge` with NO `reason` read as the pre-RC-14 delete (`purgeReels`, `media.service.ts`; review of #2898) | BOTH estates run the social-service carrying RC-14, which always names one | not a client version question: a deploy-order WINDOW (media-service may be replaced before social-service, or rolled back past it) | none | the `undefined` arm, its warn and the controller's absent-reason branch | remove once both estates deploy RC-14: then a missing reason is a `400`. Until then the old caller gets the old delete for a file no LIVE chat hold keeps; for a file a live chat hold keeps, the post hold is RELEASED and the answer is `refused` (the old caller drops its post row on any answer, and an older reel worker counts outcomes by name, so `released` would read as NaN), since that caller cannot say moderator from post end and the release is the safe reading - each call logs `Reel purge ... with NO reason - an older social-service` ([media-service](services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
 | An institution's republication request accepted with NO `audienceFingerprint` is REFUSED, 409 `REPOST_PERSONAL_AUDIENCE_CHANGED` (`assertConsentCurrent`, `personal-republications.service.ts`; review of #2965) | `minClientVersion` >= the first stable carrying the consent screen's warning and fingerprint (#2965), raised once BOTH stores serve it | NO (unreleased) | none | nothing to remove - the refusal IS the rule, not a shim | waits for the floor. Deliberate: the warning is the consent, and an older build never drew it. Until the floor, an older build lists the institution's request, and its Accept is refused and read as "Cette proposition n'est plus en attente" while the list re-reads with the request STILL there - stuck on that device until the app updates; Refuse works ([diary](#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)) |
+| `kind=reel` on `feed=all` (or no feed) read as `feed=reels`, the CanaReels viewer's list (`resolveListFeed`, `posts/list-feed.ts`; 2026-11-03) | (1) BOTH estates serve `feed=reels`, then the client sends it; (2) `minClientVersion` >= the first stable sending it, and the `[LEGACY]` line silent | NO (unreleased) | none | 1 branch + its spec cases + 1 log | waits for the server deploy, then the floor ([diary](#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -908,6 +909,34 @@ over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---deci
 ([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts))
 and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
 `LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
+
+### No date yet - `kind=reel` on `feed=all` read as the CanaReels viewer list (2026-11-03)
+
+**Site:** `resolveListFeed` in
+[`apps/social-service/src/posts/list-feed.ts`](../../apps/social-service/src/posts/list-feed.ts),
+called first in `PostsController.listPosts`.
+**What it humours:** every installed client up to `1.6.x` asks the CanaReels viewer's list as
+`GET /api/posts?kind=reel&singlePhotos=true` with NO `feed` (`buildListPostsSearchParams` drops
+`feed=all`), which ran the "Mon espace" arm - filtered by spaces, so a reel the reader may see only
+as an accepted follower, or through a member repost, never reached the viewer
+([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16),
+point 3). The server reads that shape as `feed=reels`, so installed apps get the fix with the server
+deploy. **Why the mapping is safe:** since `1.2.9` no tab sends `kind` - the filtered-feed mode was
+deleted (reels.md point 5; `routes/posts/+page.ts` and `buildListOptions` never set it), and the
+only `listPosts({ kind })` caller in the client is `reels/allReels.ts`. Production's floor is past
+`1.2.9`, and dev's `1.2.7`-`1.2.8` builds predate the filter, so their only `kind=reel` was the
+viewer too. A `1.2.9-alpha.2`/`.3` device still filtering its "Tout" tab would get the viewer's set
+there: reels it may see, nothing more.
+**Why the client still sends the old shape:** a stable ships both stores BEFORE production deploys,
+and `feed=reels` is refused `400` by an older server's `@IsIn` - a native build sending it would
+lose the viewer for those days. So the client switches (`listAllReels`: `feed: 'reels'`, and
+`ListPostsOptions.feed` learns the value) in a PR merged once BOTH estates serve `feed=reels`.
+Measured by its line at `log` level, one per legacy request: `[LEGACY] list: kind=reel on feed=all
+read as feed=reels (an installed client)`.
+**Cost while it stands:** none - one comparison per list request.
+**Removal** (once `minClientVersion` is the first stable sending `feed=reels` on both estates, and the
+`[LEGACY]` line is silent on both): delete the `all` + `reel` branch of `resolveListFeed`, its log and
+its spec cases; `kind=reel` on `all` is then "Mon espace" narrowed to reels, which no client asks.
 
 ### 2027-05-03 - a list profile save that resends its unchanged parent (2026-11-03)
 

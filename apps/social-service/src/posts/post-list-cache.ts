@@ -24,7 +24,7 @@ export const POST_LIST_CACHE_PREFIX = 'posts:list:v2:';
 
 /** What one cached feed page is keyed by. */
 export interface PostListCacheKeyParts {
-  /** `all`, `followed`, `custom` or `associations` - validated by the DTO, never a colon. */
+  /** `all`, `followed`, `custom`, `associations` or `reels` - validated by the DTO, never a colon. */
   feed: string;
   viewerUserId: string | undefined;
   promo: number | undefined;
