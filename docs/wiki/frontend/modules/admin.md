@@ -171,6 +171,18 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   Measured 2026-11-02, read-only: production holds 97 entities (49 associations, 44 lists, 4
   institutions; 49 of them already have no member), dev holds 10. The paging is there so that the
   count does not matter.
+- **The governor star and the reach box are two axes** (reform 2.5, WP-D1). The star designates a
+  space's governor - an association, or an institution (D3), never a list - and since WP-D1 writes no
+  audience rule; the reach box beside it is a box like any other, a governor's included. A refused
+  designation is worded by its typed code (`dependencyRefusalMessage`).
+- **The Dependencies panel** (`AdminDependenciesPanel.svelte`, `GET`/`PUT
+  /api/associations/spaces/dependencies[/:id]`, reform 2.7): each BDE with the entities that depend on
+  it, then the entities attached to a non-BDE (orphaned), those with no BDE, and the institutions,
+  apart; each mismatch of 2.5 beside its entity. A platform admin changes a parent, and a list's
+  display label (G3), here; the server journals it and refuses what the two-level rule forbids. The
+  panel reads the axis again after every governor designation (`revision`). The arrangement is
+  `groupDependencies` (`$lib/associations/dependencies.ts`), which puts every entity in exactly one
+  group.
 - **The create form** (`AdminEntityCreateForm.svelte`, `POST /api/associations/admin`) asks for exactly
   four things:
   - a name;

@@ -13,7 +13,7 @@
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { adminPresetFor, memberGrantable } from '$lib/associations/editSections';
+  import { adminPresetFor, bdePresetFor, memberGrantable } from '$lib/associations/editSections';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { Download, GripVertical, UserPlus } from '@lucide/svelte';
@@ -71,6 +71,12 @@
     const admin = adminPresetFor(asso.type) & forNew;
     if (admin !== 0 && admin !== PUBLISHER_PRESET) {
       options.push({ value: String(admin), label: m.asso_members_role_admin() });
+    }
+    // A BDE's officers also validate its spaces' agenda, manage its associations and moderate (F9).
+    const bdePreset = bdePresetFor(asso);
+    const bde = bdePreset === null ? 0 : bdePreset & forNew;
+    if (bde !== 0 && bde !== admin) {
+      options.push({ value: String(bde), label: m.asso_members_role_bde() });
     }
     return options;
   });
