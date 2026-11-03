@@ -64,6 +64,18 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
 | 6 | F6 | **The receiver may be any association that accepts**; it need not be the list's BDE | 8.1; 10.6 question 4 closed |
 | 6 | F7 | **When an event returns to pending, the organiser and the partners are notified with the reason, and so are the validators concerned** | 4.2, WP-Q2, WP-E |
 | 6 | F8 | **Build: once this proposal merges, EVERY work package is built.** Every migration stays held for the owner's hand-merge ([held](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)) | section 8 |
+| 7 | G1 | Parents for WP-D1: **Claude proposes an entity to parent-BDE list, the owner validates it on his private tracking page, and only then is it applied by a reviewed migration** | WP-D1, 2.7 |
+| 7 | G2 | Saint-etienne has **TWO distinct BDEs**: the main one (Autre, ICM, ISMIN, PDIS) and an FSSS BDE (FSSS only); not a duplicate. The second is renamed so the two are told apart; the exact name goes through the validated list (G1) | WP-D1 |
+| 7 | G3 | A list whose current parent is the BDS or the BDA (which govern no space): **the governing parent becomes the main BDE**; the link to the BDS or BDA stays as a display-only label ("liste pour le BDS") carrying no right, in a field distinct from the governing parent | 2.2, WP-D1 |
+| 7 | G4 | Gardanne: **MINITEL governs all five Gardanne spaces**. Owner: *"En fait, il n'y a en pratique pas d'ICM, FSSS, PDIS a Gardanne."* | WP-D1 (parents list) |
+| 7 | G5 | **A new admin interface to manage the existing campuses and each campus's formations**, including a formation spanning two campuses (*"peu utile mais on sait jamais"*) | WP-D1b (section 8) |
+| 7 | G6 | The 30 associations whose audience is the whole of saint-etienne take **the main BDE as parent** (it governs 4 of their 5 spaces) | WP-D1 (parents list) |
+| 7 | G7 | *"Aucun BDE n'a les droits de gestion sur une institution, mais c'est le BDE qui a tous les droits sur l'agenda des formations dont il est le BDE."* An institution's event is validated by the BDE of each space it targets (per slice under WP-E; the whole event until then), or by the platform admin where no BDE governs a targeted space | 2.3, section 4, WP-E |
+| 7 | G8 | Audience writes by a BDE: *"Lire tout, modifier dans ses espaces"*. A BDE always reads the audience of an association on its campus; it adds or removes rules inside its own governed spaces; a rule exceeding them (e.g. the whole campus) stays untouched by it; widening beyond is the platform admin's | 2.5, WP-D2 |
+| 7 | G9 | **No BDE moderates an institution's content; only the platform admin does** | 2.4, WP-R4 |
+| 7 | G10 | *"Un BDE n'est gere par personne"*, including by another BDE whose audience overlaps it | 2.2 |
+
+Round 7 ids are the owner's own labels; they are distinct from the G1-G7 of the first table.
 
 ## 1. The current model
 
@@ -178,6 +190,12 @@ peut-etre reformer un peu les espaces/audiences, je ne sais pas si on peut ameli
     association that governs nothing, which the predicate treats as no parent (2.4) and the panel
     lists as a mismatch, with a warn log.
   - Two levels follow: a parent is a BDE, a BDE has no parent, so no chain can be longer than one.
+  - **A BDE is governed by nobody, another BDE with an overlapping audience included (G10).**
+  - **A display-only label is a separate field (G3).** A list made "for the BDS" or "for the BDA"
+    (bodies that govern no space) takes the main BDE of its campus as governing parent; the link to
+    the BDS or BDA lives in its own column, is shown as a label ("liste pour le BDS") and grants no
+    right. `parentAssociationId` therefore never names a body that governs nothing. The column is
+    added by WP-D1.
   - The service checks the same rules first, so a refusal reaches the client as a typed 4xx; the
     trigger is what makes a hand-written `UPDATE` unable to break it.
 
@@ -189,6 +207,8 @@ institution`; closes P10). So the admin may place a formation with no BDE under 
 `VALIDATE_EVENTS` holders then answer for it; a space with no governor is the platform admin's. An
 institution governing a space is still not a BDE for D2: it never becomes a parent, and nothing
 depends on it.
+
+**Institution events (G7, G9).** No BDE governs an institution, but a BDE holds every right over the agenda of the formations it governs: an institution's event is validated by the BDE of each space it targets (per slice under WP-E, the whole event until then), or by the platform admin where no BDE governs a targeted space. No BDE moderates an institution's content; only the platform admin does.
 
 ### 2.4 Who governs what, and how the predicates change
 
@@ -255,8 +275,14 @@ formations among them"; the grid stays the admin's.
 
 Only the platform admin changes a parent or a space governor; each change writes an append-only
 `dependency_journal` line (`subject_kind` entity|space, `subject_id`, `from_id`, `to_id`, `actor`,
-`at`) in the same transaction (the shape of `read_grant_journal`, migration 078). The owner sets
-the existing parents by hand; WP-D2 ships when he says they are set. **Read-only counts for him**
+`at`) in the same transaction (the shape of `read_grant_journal`, migration 078). The existing
+parents are set from a list (G1): Claude proposes an entity to parent-BDE list, the owner validates
+it on his private tracking page, and only then is it applied by a reviewed migration (held for his
+hand-merge); WP-D2 ships when he says they are applied. The list follows the owner's decisions of
+2026-11-03: saint-etienne has two distinct BDEs, the main one (Autre, ICM, ISMIN, PDIS) and an FSSS
+BDE (FSSS only), the second renamed so they are told apart (G2); lists attached to the BDS or the
+BDA move under the main BDE, the old link kept as a label (G3); MINITEL governs all five Gardanne
+spaces (G4); the associations whose audience is the whole of saint-etienne take the main BDE (G6). **Read-only counts for him**
 (aggregates; no agent runs them against production):
 
 ```sql
@@ -287,7 +313,7 @@ WHERE type IN ('association', 'list') AND "parentAssociationId" IS NULL GROUP BY
 
 The trigger of 2.2 would refuse an existing list whose display parent is not a BDE: the second count
 says how many, and **the migration that adds the trigger must not run while that count is above zero**
-(the owner clears or corrects those rows by hand first).
+(those rows are corrected through the validated parents list of G1; the BDS and BDA links move to the display-only label of G3).
 
 ## 3. Per-item audience, for institutions only (C1)
 
@@ -476,9 +502,10 @@ merge on their own.
 | --- | --- | --- | --- |
 | **WP-R0** | The institution half is **#2949** (E5, at the predicate level). What remains: the moderator's EDIT removed (G3, P7) | one capability | none |
 | **WP-R1** | Audience bounds per SPACE (`GOVERNED_SPACES_SQL`) | server checks; closes P3 | none |
-| **WP-D1** | `parentAssociationId` generalised to associations; the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
-| **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes; deletion of an association or list by its parent BDE (E3) | ships when the owner says the parents are set; closes P1, P5, P9 | none |
-| **WP-R4** | `MODERATE` scoped (2.4) | needs WP-D2; closes P6 | none |
+| **WP-D1** | `parentAssociationId` generalised to associations; a separate display-only label column for the BDS or BDA link (G3); the parents list validated by the owner (G1); the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
+| **WP-D1b** | An admin interface to manage the existing campuses and each campus's formations (G5): list, create, rename and retire a campus or a formation, including a formation attached to two campuses. A space is a formation x campus, so what a cross-campus formation means for its spaces (one space per campus, a BDE per space as today) MUST be designed before it is built; reversible choices are taken and written down here, an irreversible one goes to the owner. Built inside WP-D1 as its own step, AFTER the parents list is applied | WP-D1's parents list comes first; the interface edits `spaces` and the formation and campus lists only | needs the spaces model: owner's yes if a schema change |
+| **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes (G8: a BDE reads every audience on its campus and writes only inside its governed spaces; a wider rule is the admin's); deletion of an association or list by its parent BDE (E3) | ships when the owner says the parents are set; closes P1, P5, P9 | none |
+| **WP-R4** | `MODERATE` scoped (2.4); no BDE moderates an institution's content, only the platform admin (G9) | needs WP-D2; closes P6 | none |
 | **WP-I** | Institution item audience (section 3) | additive; closes P12 | **two tables: owner's yes** |
 | **WP-E** | Events per slice (section 4) and partnerships under it (section 5): the decisions table, the space-governor predicate, both agendas and the `.ics`, per-slice notifications (the validators concerned, and the organiser and partners with the reason, F7), D4's re-opening (replacing WP-Q2's whole-event demotion), `EXPLAIN` | needs WP-D1 (space governors) and, for institutions, WP-I; closes P11, P13 | **one table + the event migration of 4.3: owner's yes** |
 | **WP-R5** | Parent presets; `openedAt` and "OPEN spaces" removed; the stale WP6e line on lists; **the `MANAGE_ASSO` comment (`association-member.entity.ts:20-24`) corrected to say it includes deleting an association or list the BDE governs (E3)** | cosmetics | dropping `openedAt`: owner's yes |
