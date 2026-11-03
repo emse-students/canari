@@ -17,14 +17,14 @@ it: the measurement below does.
 from that one sends the token. A web tab gets it at its next load after the deploy; the iOS and
 Android apps only once the store has delivered that build.
 
-### The measurement that lifts the gate
+### The measurement that lifts the gate - the owner's decision (2026-11-03)
 
-On production's core-service log, over the 7 days before the phase-2 cut:
-
-- `access=unsigned via=nginx` divided by all `[AVATAR]` lines (`grep -c`, per day). It must have
-  fallen to the residue of installs that never update - read against the store adoption of the floor
-  (`bun tools/play-vitals/vitals.mjs` for Android, App Store Connect for iOS) - and the owner decides
-  the residue is acceptable, since phase 2 shows those installs initials until they update.
+**Phase 2 ships only when, for 7 CONSECUTIVE days, fewer than 1 % of avatar requests arrive
+unsigned, and never before the `1.6.3` stable.** The ratio, per UTC day, on production's
+core-service log: `access=unsigned via=nginx` lines divided by all `[AVATAR]` lines (`grep -c`). A
+day at or above 1 % restarts the count. Read it against the store adoption of the floor (`bun
+tools/play-vitals/vitals.mjs` for Android, App Store Connect for iOS) to say WHO the residue is,
+since phase 2 shows those installs initials until they update. Also:
 - `origin=native` and `origin=web` split the residue: a `web` line after the deploy is a page that
   builds the URL by hand (a defect - `avatarUrl.test.ts` should have caught it), not an old build.
 - **`access=unsigned via=direct` must be ZERO.** It is a service on the Docker network calling
@@ -78,7 +78,7 @@ What that means, with no change made:
   Rule that ignores `t` is NOT that answer - it would hand a cached photo to a request core would
   refuse), not a weaker token.
 
-### Also before phase 2
+### The secrets
 
-- `AVATAR_TOKEN_SECRET` and `DEV_AVATAR_TOKEN_SECRET` provisioned (the deploy refuses to render
-  without them, `infrastructure/deploy/env-manifest.tsv`).
+`AVATAR_TOKEN_SECRET` and `DEV_AVATAR_TOKEN_SECRET` were created by the owner (repo-level, 2026-11-03);
+the deploy refuses to render without them (`infrastructure/deploy/env-manifest.tsv`).
