@@ -37,7 +37,7 @@ export interface CoOrganiserPort {
    * accepts), a pending one left out is WITHDRAWN, an accepted one left out is ENDED (its rights and
    * its audience go with its row). A refused one stays refused and is not proposed again.
    */
-  sync(request: CoOrganiserSyncRequest, manager?: EntityManager): Promise<CoOrganiserAfterCommit>;
+  sync(request: CoOrganiserSyncRequest, manager: EntityManager): Promise<CoOrganiserAfterCommit>;
   /**
    * Every refusal `sync` can give (the cap, a partner changing more than its own presence), with NO
    * write. The event write calls it BEFORE its first write, so a refused request leaves nothing

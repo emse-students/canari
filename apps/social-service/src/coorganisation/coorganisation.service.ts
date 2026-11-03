@@ -181,28 +181,13 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    *   `withdrawn` so the pair may be asked again later.
    * A caller writing through a CO-ORGANISER association may only remove that association itself
    * (leave); anything else is a 403 BEFORE any write.
+   *
+   * It runs on the CALLER'S connection (`manager`): the endings and the k proposals are written in
+   * that transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event
+   * edit or creation, none of the event's own writes either). The proposals are announced by the
+   * returned function, which the caller runs AFTER its commit - a rolled-back write tells nobody.
    */
   async sync(
-    request: CoOrganiserSyncRequest,
-    manager?: EntityManager
-  ): Promise<CoOrganiserAfterCommit> {
-    if (manager) return this.syncWithin(request, manager);
-    // No caller transaction (an event CREATION): the list is still ONE unit, committed or not at all.
-    let announce: CoOrganiserAfterCommit = () => Promise.resolve();
-    await this.coOwnerRepo.manager.transaction(async (own) => {
-      announce = await this.syncWithin(request, own);
-    });
-    await announce();
-    return () => Promise.resolve();
-  }
-
-  /**
-   * `sync` on the CALLER'S connection: the endings and the k proposals are written in `manager`'s
-   * transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event edit,
-   * none of the event's own writes either). The proposals are announced by the returned function,
-   * which the caller runs AFTER its commit - a rolled-back edit tells nobody.
-   */
-  private async syncWithin(
     request: CoOrganiserSyncRequest,
     manager: EntityManager
   ): Promise<CoOrganiserAfterCommit> {

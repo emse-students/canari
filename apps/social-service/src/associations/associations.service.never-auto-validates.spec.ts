@@ -43,6 +43,14 @@ function makeService() {
       return e;
     }),
   };
+  // The creation is ONE transaction in production; here it runs on the stub repository.
+  const manager = {
+    query: jest.fn(async () => []),
+    getRepository: () => calendarRepo,
+  };
+  Object.assign(calendarRepo, {
+    manager: { transaction: async (work: (m: unknown) => unknown) => work(manager) },
+  });
 
   // POSITIONAL, AND FOURTEEN LONG - keep these comments aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
