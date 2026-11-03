@@ -116,8 +116,9 @@ async function loadAvatar(userId: string): Promise<AvatarDisplay> {
       } else if (fetched.status === 403) {
         // A REFUSED TOKEN, not an answer about the photo: the server holds this session's avatar
         // token to be wrong or its session ended. Not remembered - the next load carries whatever
-        // token the next refresh adopts - and said, because a 403 here is never expected.
-        Log.d('AvatarCache', `403 for ${who}: the avatar token was refused`);
+        // token the next refresh adopts - and said at warn, because a 403 here is never expected (a
+        // token too old to be honoured is not sent at all, `avatarUrl.ts`).
+        console.warn(`[AvatarCache] 403 for ${who}: the avatar token was refused`);
       }
       return { kind: 'none' };
     }

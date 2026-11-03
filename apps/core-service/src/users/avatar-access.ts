@@ -15,11 +15,12 @@ import { assertInternalSecret } from '../internal/internal-secret.util';
  *   exists to sign for. The exemption is a CREDENTIAL, never a network position: a request is not
  *   exempt for arriving from inside the Docker network, only for proving it is a service.
  * - `signed` - a viewer whose `?t=` token verifies and whose session is live.
- * - `unsigned` - no token at all. PHASE 1: accepted, and counted as `[AVATAR_UNSIGNED]` by the
- *   caller, so the population of builds that do not send one yet is measured before phase 2 refuses
- *   it (docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md).
+ * - `unsigned` - no token at all. PHASE 1: accepted, and logged by the caller as `[AVATAR] ...
+ *   access=unsigned via=... origin=...`, so the population of builds that do not send one yet is
+ *   measured before phase 2 refuses it (docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md).
  * - `refused` - a credential WAS presented and is wrong: a bad internal secret, or a token that is
- *   malformed, signed for another bucket or session, or names a session that has ended.
+ *   malformed, not signed by this server (`bad-signature`), signed for a day it no longer honours
+ *   (`stale`), or names a session that has ended.
  */
 export type AvatarAccess =
   | { readonly kind: 'internal' }

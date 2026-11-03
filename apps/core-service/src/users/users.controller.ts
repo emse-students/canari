@@ -70,6 +70,21 @@ export function etagMatches(header: string | undefined, etag: string): boolean {
   return header.split(',').some((t) => t.trim() === '*' || opaque(t) === ours);
 }
 
+/**
+ * Where an unsigned avatar request came from, as the ` via=... origin=...` tail of its `[AVATAR]`
+ * line (see `UsersController.logAvatar`).
+ */
+function unsignedProvenance(req: Request): string {
+  const via = req.headers['x-real-ip'] ? 'nginx' : 'direct';
+  const origin = req.headers.origin;
+  const originClass = !origin
+    ? 'none'
+    : (TAURI_WEBVIEW_ORIGINS as readonly string[]).includes(origin)
+      ? 'native'
+      : 'web';
+  return ` via=${via} origin=${originClass}`;
+}
+
 /** The outcome word of an `[AVATAR]` line - the vocabulary `grep AVATAR` reads. */
 type AvatarLogOutcome =
   | 'served'
@@ -89,48 +104,35 @@ export class UsersController {
    * TRUNCATED to 8 characters (never the full id, the image or the token), and who asked
    * (`access=internal|signed|unsigned|refused`, with the refusal's `reason`). `served`/`absent` log
    * at info, every failure at warn, so `grep AVATAR | grep -v outcome=served` finds a failed fetch.
-   */
-  private logAvatar(
-    outcome: AvatarLogOutcome,
-    status: number,
-    startedAt: number,
-    userId: string,
-    access: AvatarAccess
-  ): void {
-    const line =
-      `[AVATAR] outcome=${outcome} status=${status} ms=${Date.now() - startedAt} ` +
-      `target=${String(userId).slice(0, 8)}` +
-      ` access=${access.kind}` +
-      (access.kind === 'refused' ? ` reason=${access.reason}` : '');
-    if (outcome === 'served' || outcome === 'not-modified' || outcome === 'absent') {
-      this.logger.log(line);
-    } else this.logger.warn(line);
-  }
-
-  /**
-   * PHASE 1 OF THE SIGNED AVATAR URL: an avatar request carrying no token is ANSWERED, and counted
-   * here at `warn` - one `[AVATAR_UNSIGNED]` line per request, so its rate against `[AVATAR]` is the
-   * population of builds (or callers) that do not send one yet. Phase 2 refuses them once that rate
-   * says the old builds are gone (docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md).
    *
-   * THE LINE CARRIES WHAT SEPARATES ITS CAUSES, since it cannot tell them apart itself:
+   * PHASE 1 OF THE SIGNED AVATAR URL: a request carrying no token is ANSWERED, and its line says
+   * `access=unsigned` - its rate against every `[AVATAR]` line is the population of builds (or
+   * callers) that do not send one yet. Phase 2 refuses them once that rate says the old builds are
+   * gone (docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md). An unsigned line carries
+   * what separates its causes, since it cannot tell them apart itself:
    * - `via=nginx` (nginx always writes `X-Real-IP`) is a client - an old build, or a page that
    *   builds the URL by hand; `via=direct` is a service on the Docker network that forgot its
    *   `x-internal-secret`, which no client upgrade will ever fix;
    * - `origin=native|web|none`: a cache `fetch` from the app shell, from a browser, or an `<img>`
    *   (which sends no `Origin`) - the last is a builder that bypasses the helper, or an old build.
    */
-  private countUnsigned(req: Request, userId: string): void {
-    const via = req.headers['x-real-ip'] ? 'nginx' : 'direct';
-    const origin = req.headers.origin;
-    const originClass = !origin
-      ? 'none'
-      : (TAURI_WEBVIEW_ORIGINS as readonly string[]).includes(origin)
-        ? 'native'
-        : 'web';
-    this.logger.warn(
-      `[AVATAR_UNSIGNED] via=${via} origin=${originClass} target=${String(userId).slice(0, 8)}`
-    );
+  private logAvatar(
+    outcome: AvatarLogOutcome,
+    status: number,
+    startedAt: number,
+    userId: string,
+    access: AvatarAccess,
+    req: Request
+  ): void {
+    const line =
+      `[AVATAR] outcome=${outcome} status=${status} ms=${Date.now() - startedAt} ` +
+      `target=${String(userId).slice(0, 8)}` +
+      ` access=${access.kind}` +
+      (access.kind === 'refused' ? ` reason=${access.reason}` : '') +
+      (access.kind === 'unsigned' ? unsignedProvenance(req) : '');
+    if (outcome === 'served' || outcome === 'not-modified' || outcome === 'absent') {
+      this.logger.log(line);
+    } else this.logger.warn(line);
   }
 
   constructor(
@@ -343,7 +345,7 @@ export class UsersController {
    * WHO MAY ASK (docs/wiki/sessions.md, "The avatar token"): a service proving `x-internal-secret`,
    * or a viewer whose `?t=` avatar token verifies against a LIVE session - see `avatar-access.ts`. A
    * presented credential that is wrong is a bodyless `403`, never stored. A request with no token
-   * at all is still answered in PHASE 1 and counted as `[AVATAR_UNSIGNED]` (see `countUnsigned`).
+   * at all is still answered in PHASE 1, its line saying `access=unsigned` (see `logAvatar`).
    *
    * EVERY RESPONSE IS BODYLESS EXCEPT THE IMAGE. A JSON error body on a request an `<img>` made is
    * what produced THREE console lines for one benign miss - 404, then `ERR_BLOCKED_BY_ORB` (Chrome
@@ -373,14 +375,13 @@ export class UsersController {
     if (access.kind === 'refused') {
       // BODYLESS, like every other non-image answer here (see above), and never stored: a token
       // refused today must not be remembered by anything between here and the `<img>`.
-      this.logAvatar('refused', 403, startedAt, userId, access);
+      this.logAvatar('refused', 403, startedAt, userId, access, req);
       res.set({ 'Cache-Control': 'no-store' });
       res.status(403).end();
       return;
     }
-    if (access.kind === 'unsigned') this.countUnsigned(req, userId);
     const log = (outcome: AvatarLogOutcome, status: number) =>
-      this.logAvatar(outcome, status, startedAt, userId, access);
+      this.logAvatar(outcome, status, startedAt, userId, access, req);
     // A review account has no public face (review-cohort.ts). An `<img>` carries no session, so the
     // viewer is unknown here: the answer is the same 404 for everybody, and never cached, so it is
     // not a fact an edge could keep about the id.

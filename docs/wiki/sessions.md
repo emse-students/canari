@@ -646,33 +646,39 @@ neither carries the access token** - an `<img>` cannot send a header, the refres
 `/api/auth`, and on `tauri://localhost` there is no cookie at all. So the viewer proves itself IN THE
 URL, as `?t=<avatar token>`, decided owner 2026-11-02.
 
-- **What it is.** `<sessionId>.<mac>`, the base64url HMAC-SHA256 under `AVATAR_TOKEN_SECRET` of
-  `avatar-v1|<sessionId>|<UTC day>` (`apps/core-service/src/auth/avatar-token.ts`). Core mints it
-  beside EVERY access token - the sign-in, a restore and every refresh (`avatar_token` in the body) -
-  for the same session.
+- **What it is.** `<sessionId>.<day>.<mac>`: the UTC day it was minted in (days since the epoch) and
+  the base64url HMAC-SHA256 under `AVATAR_TOKEN_SECRET` of `avatar-v1|<sessionId>|<day>`
+  (`apps/core-service/src/auth/avatar-token.ts`). Core mints it beside EVERY access token - the
+  sign-in, a restore and every refresh (`avatar_token` in the body) - for the same session. It has
+  exactly ONE spelling: a non-canonical last base64url character, or a day with a leading zero, is
+  `malformed`.
 - **What makes it valid is durable state, not the clock.** It is honoured only while the session it
   names is LIVE (`AuthSessionsService.isLiveSession`, the same row and the same two conditions as
   [an access token's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). Ending a
   session deletes its row, and every avatar URL minted for it is refused at its next request.
 - **The day bucket is a cache-friendliness choice, NOT a termination proof.** It keeps one URL per
-  face per day, so the browser's HTTP cache and its ETag revalidation keep working; the current and
-  the previous day are accepted, so a URL minted at 23:59 is not refused at midnight. A token older
-  than that belongs to a client that has not refreshed for a day, whose one-hour access token is long
-  dead too: it re-mints both at once.
+  face per day, so the browser's HTTP cache and its ETag revalidation keep working. The day TRAVELS
+  IN THE TOKEN: core checks the MAC over the day the token names, then honours yesterday, today and
+  tomorrow by its own clock (midnight, and a clock a little ahead, refuse nothing). A genuine token of
+  another day is `stale`, a forged one `bad-signature` - two reasons in the log, never one. The client
+  reads the day too, and does not send a token older than yesterday (a session that has not
+  refreshed for a day): it loads the face unsigned until the next refresh rather than earning a 403
+  and initials.
 - **Who is exempt: a service, by credential.** chat-delivery's notification face
   (`GET /api/mls/push/avatar/:id`) and social-service's public roster relay ask core on behalf of a
   caller they authenticated themselves, with `x-internal-secret` - the credential every
   service-to-service call to core already carries ([api-surface](protocols/api-surface.md#internal-cross-service-calls)).
   The exemption is that credential, never a network position.
-- **Every answer to a wrong credential is a bodyless `403`, `no-store`**: a malformed token, one
-  signed for another session or an older day, one of an ended session, a wrong internal secret.
+- **Every answer to a wrong credential is a bodyless `403`, `no-store`**: a malformed token, a
+  forged one, a stale one, one of an ended session, a wrong internal secret. The client says a 403
+  at `warn`, since a token too old to be honoured is never sent.
   Bodyless for the reason every non-image answer of that route is
   ([core-service](services/core-service.md#the-avatar-proxy)). A session store that does not answer
   is a bodyless `503`, never a verdict.
 - **The rollout has two phases and no date.** Phase 1 (this release): clients send the token, and
-  a request carrying none is counted at `warn` as `[AVATAR_UNSIGNED] via=<nginx|direct>
-  origin=<native|web|none>` - the evidence that separates an old build from a builder that bypasses
-  the helper or a service missing its secret. Phase 2 refuses it once that count says the old builds
+  a request carrying none is still answered, its one `[AVATAR]` line saying `access=unsigned
+  via=<nginx|direct> origin=<native|web|none>` - the evidence that separates an old build from a
+  builder that bypasses the helper or a service missing its secret. Phase 2 refuses it once that count says the old builds
   are gone ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)).
 - **One client builder, and every cache keyed by the PERSON.** `avatarUrl(userId)`
   (`frontend/src/lib/utils/avatarUrl.ts`) is the only place the URL is built; the token is in memory

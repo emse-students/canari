@@ -268,6 +268,11 @@ because the value is a request header. Written justification, for the USER to di
   `x-user-logged-in: true` + `x-user-id` without a valid token is refused when the secret is set; production with
   no secret refuses even the `true` header.
 
+**The edge never forwards the internal credential** (2026-11-03). `X-Internal-Secret` is spoken only
+between services on the Docker network, so `proxy_set_header X-Internal-Secret "";` stands at server
+level AND in every proxying location (each declares headers of its own, so none inherits the server's
+line). `auth-request-coverage.test.mjs` asserts both, reading every location whatever its modifier.
+
 **On the two Axum crates there is no guard layer at all**, so the handler's own body is the whole of
 the enforcement: `get_presence` and `get_admin_presence` read the headers nginx set
 (`is_authenticated`, `x-global-admin`), and both WebSocket upgrades decode the `canari_ws_token` JWT,
@@ -358,6 +363,7 @@ capability. The table is what the container's own config does:
 | `/auth/callback?code=&state=`, `/auth/callback/?...` | `/auth/callback?query-redacted` (slash kept) | `strict-origin` |
 | `/api/channels/invites/<token>[/accept]`, `/api/mls/group-invites/<token>[/accept]` | token replaced by `redacted`, suffix kept | (API, no page) |
 | `/api/mls/link-preview`, `/link-preview/image`, `/link-safety` with a query | `<path>?query-redacted` | (API, no page) |
+| `/api/users/<id>/avatar?t=` (the viewer's avatar token, 2026-11-03) | `/api/users/<id>/avatar?query-redacted`; as a referer, its origin only | (API, no page) |
 | a query naming a join path anywhere, plain, percent-encoded or encoded twice (`/login?returnTo=%2Fc%2Fjoin%2F<token>`, `%252F...`), on any route including the invite API routes | `<path>?query-redacted`, so a second invite in it goes too | `strict-origin` on `/login` (any query) |
 | a `token` key spelled twice, percent-encoded, in another case or as an array (`token[]`) | `<path>?query-redacted` | - |
 

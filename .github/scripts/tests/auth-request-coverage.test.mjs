@@ -628,6 +628,58 @@ for (const entry of PUBLIC_BY_INTENT) {
   }
 }
 
+// THE EDGE NEVER FORWARDS THE INTERNAL CREDENTIAL (2026-11-03). `X-Internal-Secret` is spoken only
+// between services on the Docker network, so nginx empties it at server level AND in every location
+// that proxies: a location declaring any proxy_set_header of its own inherits none of the server's,
+// so the server-level line alone reaches nothing today. Every location is read here, whatever its
+// modifier (`=`, `^~`, a regex, a named `@`), with an `if` block counted as part of its location.
+{
+  const INTERNAL_CREDENTIAL = 'X-Internal-Secret';
+  const conf = readFileSync(NGINX, 'utf8');
+  const lines = conf.split('\n').map((l) => l.replace(/\\n\\\s*$/, '').trimEnd());
+  const clearedLine = new RegExp(`^\\s*proxy_set_header\\s+${INTERNAL_CREDENTIAL}\\s+"";`, 'i');
+  const firstLocation = lines.findIndex((l) => /^\s*location\s/.test(l));
+  if (!lines.slice(0, firstLocation).some((l) => clearedLine.test(l))) {
+    failures.push(
+      `the server-level block never clears ${INTERNAL_CREDENTIAL}: the edge must never forward the internal credential`
+    );
+  }
+  const stack = [];
+  const blocks = [];
+  for (const line of lines) {
+    const loc = line.match(/^\s*location\s+(.*?)\s*\{\s*$/);
+    if (loc) {
+      const block = { path: loc[1], proxies: false, declares: false, clears: false };
+      stack.push(block);
+      blocks.push(block);
+      continue;
+    }
+    if (stack.length === 0) continue;
+    const current = stack[stack.length - 1];
+    if (/\{\s*$/.test(line)) {
+      stack.push(current);
+      continue;
+    }
+    if (/^\s*proxy_pass\s/.test(line)) current.proxies = true;
+    if (/^\s*proxy_set_header\s/.test(line)) current.declares = true;
+    if (clearedLine.test(line)) current.clears = true;
+    if (/^\s*\}\s*$/.test(line)) stack.pop();
+  }
+  const proxying = blocks.filter((b) => b.proxies);
+  if (proxying.length < 20) {
+    failures.push(
+      `the ${INTERNAL_CREDENTIAL} check found only ${proxying.length} proxying locations - the parser no longer reads the config`
+    );
+  }
+  for (const block of proxying) {
+    if (block.declares && !block.clears) {
+      failures.push(
+        `nginx location "${block.path}" declares its own proxy_set_header and never empties ${INTERNAL_CREDENTIAL}, so it forwards whatever the CLIENT sent under that name`
+      );
+    }
+  }
+}
+
 // THE IDENTITY A SERVICE RECEIVES MUST NOT DEPEND ON WHICH LOCATION IT CAME THROUGH. See IDENTITY
 // above: three guards read two different discriminators out of these headers, and they can only be
 // collapsed into one once nothing may set half of them.

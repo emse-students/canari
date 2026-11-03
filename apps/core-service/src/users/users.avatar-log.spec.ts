@@ -84,7 +84,9 @@ describe('GET /users/:id/avatar logging', () => {
 
     it('an invalid token is a bodyless, unstored 403 - and the provider is never asked', async () => {
       const fetchUserAvatar = jest.fn(IMAGE_OUTCOME);
-      const res = await run(fetchUserAvatar, undefined, { token: `${SID}.${'A'.repeat(43)}` });
+      const res = await run(fetchUserAvatar, undefined, {
+        token: `${SID}.20000.${'A'.repeat(43)}`,
+      });
       expect(res.status).toHaveBeenCalledWith(403);
       expect(res.end).toHaveBeenCalled();
       expect(res.send).not.toHaveBeenCalled();
@@ -104,28 +106,27 @@ describe('GET /users/:id/avatar logging', () => {
       expect(String(warn.mock.calls[0][0])).toContain('reason=session-ended');
     });
 
-    it('PHASE 1: no token is still served, and counted at warn as [AVATAR_UNSIGNED] with its evidence', async () => {
+    it('PHASE 1: no token is still served, on ONE [AVATAR] line saying access=unsigned with its evidence', async () => {
       const res = await run(IMAGE_OUTCOME, undefined, {
         headers: { 'x-real-ip': '203.0.113.7', origin: 'tauri://localhost' },
       });
       expect(res.send).toHaveBeenCalled();
-      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
-        '[AVATAR_UNSIGNED] via=nginx origin=native target=abcdef01',
-      ]);
-      expect(String(info.mock.calls[0][0])).toMatch(/outcome=served .* access=unsigned$/);
+      expect(warn).not.toHaveBeenCalled();
+      expect(info.mock.calls.map((c) => String(c[0]))).toHaveLength(1);
+      expect(String(info.mock.calls[0][0])).toMatch(
+        /^\[AVATAR\] outcome=served status=200 ms=\d+ target=abcdef01 access=unsigned via=nginx origin=native$/
+      );
     });
 
     it('an unsigned request from inside the network names itself via=direct origin=none', async () => {
       await run(IMAGE_OUTCOME, undefined, {});
-      expect(String(warn.mock.calls[0][0])).toBe(
-        '[AVATAR_UNSIGNED] via=direct origin=none target=abcdef01'
-      );
+      expect(String(info.mock.calls[0][0])).toMatch(/ access=unsigned via=direct origin=none$/);
     });
 
     it('the internal exemption: a service credential needs no token and is not counted', async () => {
       const res = await run(IMAGE_OUTCOME);
       expect(res.send).toHaveBeenCalled();
-      expect(String(info.mock.calls[0][0])).toMatch(/access=internal$/);
+      expect(String(info.mock.calls[0][0])).toMatch(/ access=internal$/);
       expect(warn).not.toHaveBeenCalled();
     });
 

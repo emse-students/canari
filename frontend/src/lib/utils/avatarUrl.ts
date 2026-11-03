@@ -34,12 +34,55 @@ export function setAvatarToken(token: string | null | undefined): void {
   avatarToken = next;
 }
 
+/** One UTC day, the unit of the bucket an avatar token names. */
+const DAY_MS = 86_400_000;
+
+/** The token this session already said it would not send, so the line is said once per token. */
+let staleSaid: string | null = null;
+
 /**
- * The URL of `userId`'s avatar, carrying the viewer's avatar token when this session holds one.
- * Absolute (`coreUrl()`), so it resolves the same from a browser tab and from a native shell whose
- * page origin serves no API.
+ * The UTC day bucket `token` names - its middle part, `<sessionId>.<bucket>.<mac>` - or null when it
+ * does not read as one.
  */
-export function avatarUrl(userId: string): string {
+function tokenBucket(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !/^(?:0|[1-9][0-9]{0,9})$/.test(parts[1])) return null;
+  return Number(parts[1]);
+}
+
+/**
+ * The avatar token to send at `nowMs`, or null to send none. THE SERVER HONOURS YESTERDAY, TODAY AND
+ * TOMORROW, so a token older than yesterday (a session that has not refreshed for a day: an app left
+ * in the background, a laptop asleep) would only earn a 403 and a face drawn as initials. It is not
+ * sent: the request goes unsigned, which phase 1 still answers, until the next refresh adopts a token
+ * of today (docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md says what phase 2 owes
+ * this case).
+ */
+function usableToken(nowMs: number): string | null {
+  if (!avatarToken) return null;
+  const bucket = tokenBucket(avatarToken);
+  if (bucket !== null && bucket >= Math.floor(nowMs / DAY_MS) - 1) return avatarToken;
+  if (staleSaid !== avatarToken) {
+    staleSaid = avatarToken;
+    Log.i(
+      'AvatarUrl',
+      bucket === null
+        ? 'avatar token unreadable - avatar URLs unsigned until the next refresh'
+        : `avatar token of day ${bucket} is older than yesterday - avatar URLs unsigned until the next refresh`
+    );
+  }
+  return null;
+}
+
+/**
+ * The URL of `userId`'s avatar, carrying the viewer's avatar token when this session holds one
+ * the server still honours. Absolute (`coreUrl()`), so it resolves the same from a browser tab and
+ * from a native shell whose page origin serves no API.
+ *
+ * @param nowMs the instant the token's day is read against - passed by a test, never asserted
+ */
+export function avatarUrl(userId: string, nowMs: number = Date.now()): string {
   const base = `${coreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`;
-  return avatarToken ? `${base}?t=${encodeURIComponent(avatarToken)}` : base;
+  const token = usableToken(nowMs);
+  return token ? `${base}?t=${encodeURIComponent(token)}` : base;
 }

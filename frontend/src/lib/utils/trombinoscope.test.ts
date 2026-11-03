@@ -57,11 +57,11 @@ describe('buildTrombinoscopeHtml', () => {
 
   it("builds each member photo with the ONE avatar helper, carrying the viewer's token", async () => {
     const { setAvatarToken } = await import('./avatarUrl');
-    setAvatarToken('sid.mac');
+    setAvatarToken(`sid.${Math.floor(Date.now() / 86_400_000)}.mac`);
     try {
       const host = render(buildTrombinoscopeHtml(asso({}), [member({ userId: 'u-9' })], {}));
       expect(host.querySelector('img[data-avatar-fallback]')?.getAttribute('src')).toMatch(
-        /\/api\/users\/u-9\/avatar\?t=sid\.mac$/
+        /\/api\/users\/u-9\/avatar\?t=sid\.\d+\.mac$/
       );
     } finally {
       setAvatarToken(null);

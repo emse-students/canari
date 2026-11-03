@@ -219,8 +219,11 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 a viewer whose `?t=` avatar token verifies against a live session, or a service proving
 `x-internal-secret`. A wrong credential is a bodyless `403` (`no-store`) before any answer about the
 id, so a refusal never says whether there is a photo. Every `[AVATAR]` line carries
-`access=internal|signed|unsigned|refused` (and the refusal's `reason`); a request with no token at
-all is also counted as `[AVATAR_UNSIGNED]` for the rollout.
+`access=internal|signed|unsigned|refused` (and the refusal's `reason`: `malformed`,
+`bad-signature`, `stale`, `session-ended`, `unconfigured`, `bad-internal-secret`); a request with no
+token at all adds `via=<nginx|direct> origin=<native|web|none>` for the rollout. The edge never
+forwards `x-internal-secret` ([nginx](../infrastructure/nginx.md)): a service proves it on the
+Docker network only.
 
 | outcome | when | response | cached |
 | --- | --- | --- | --- |

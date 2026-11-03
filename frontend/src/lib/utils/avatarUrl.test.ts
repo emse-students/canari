@@ -7,7 +7,7 @@ import { avatarUrl, setAvatarToken } from './avatarUrl';
  * ONE BUILDER OF A USER'S AVATAR URL (docs/wiki/sessions.md, "The avatar token").
  *
  * The URL carries the viewer's avatar token, and a builder that spells `/api/users/<id>/avatar` by
- * hand sends none: in phase 1 the server still answers it and counts it as `[AVATAR_UNSIGNED]`, and
+ * hand sends none: in phase 1 the server still answers it and logs it `access=unsigned`, and
  * in phase 2 it is refused - a face drawn as initials, with nothing in the client saying why. Three
  * such builders existed (`Avatar.svelte`, `PosterCanvas.svelte`, `trombinoscope.ts`); this file
  * fails if a fourth appears anywhere in `src/`.
@@ -40,23 +40,46 @@ function sourceFiles(dir: string): string[] {
 describe('avatarUrl', () => {
   afterEach(() => setAvatarToken(null));
 
+  const DAY = 86_400_000;
+  /** Noon, UTC, on day 20000: every instant below is passed in, never read from the wall clock. */
+  const NOON = 20_000 * DAY + DAY / 2;
+  const SID = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
   it('carries the avatar token as ?t= while the session holds one', () => {
-    setAvatarToken('0f8fad5b-d9cb-469f-a165-70867728950e.mac_-');
-    expect(avatarUrl('u 1')).toMatch(
-      /\/api\/users\/u%201\/avatar\?t=0f8fad5b-d9cb-469f-a165-70867728950e\.mac_-$/
+    setAvatarToken(`${SID}.20000.mac_-`);
+    expect(avatarUrl('u 1', NOON)).toMatch(
+      /\/api\/users\/u%201\/avatar\?t=0f8fad5b-d9cb-469f-a165-70867728950e\.20000\.mac_-$/
     );
   });
 
+  it("still sends yesterday's token - the server honours it - but not one older", () => {
+    setAvatarToken(`${SID}.20000.mac`);
+    expect(avatarUrl('u1', NOON + DAY)).toContain('?t=');
+    // Two days on and not refreshed: a token the server would refuse is not sent, the request goes
+    // unsigned (answered in phase 1) instead of earning a 403 and a face drawn as initials.
+    expect(avatarUrl('u1', NOON + 2 * DAY)).toMatch(/\/api\/users\/u1\/avatar$/);
+    // ...until the next refresh adopts a token of today.
+    setAvatarToken(`${SID}.20002.mac`);
+    expect(avatarUrl('u1', NOON + 2 * DAY)).toContain('?t=');
+  });
+
+  it('a token whose day cannot be read is not sent', () => {
+    setAvatarToken(`${SID}.mac`);
+    expect(avatarUrl('u1', NOON)).not.toContain('?t=');
+    setAvatarToken(`${SID}.020000.mac`);
+    expect(avatarUrl('u1', NOON)).not.toContain('?t=');
+  });
+
   it('is unsigned with no token (signed out, or a server that minted none)', () => {
-    expect(avatarUrl('u1')).toMatch(/\/api\/users\/u1\/avatar$/);
+    expect(avatarUrl('u1', NOON)).toMatch(/\/api\/users\/u1\/avatar$/);
     setAvatarToken('');
-    expect(avatarUrl('u1')).not.toContain('?t=');
+    expect(avatarUrl('u1', NOON)).not.toContain('?t=');
   });
 
   it('forgets the token when the session ends', () => {
-    setAvatarToken('sid.mac');
+    setAvatarToken(`${SID}.20000.mac`);
     setAvatarToken(null);
-    expect(avatarUrl('u1')).not.toContain('?t=');
+    expect(avatarUrl('u1', NOON)).not.toContain('?t=');
   });
 });
 

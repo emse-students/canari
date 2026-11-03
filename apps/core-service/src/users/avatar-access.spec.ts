@@ -1,3 +1,4 @@
+import { createHmac } from 'crypto';
 import { avatarAccessOf } from './avatar-access';
 import { avatarDayBucket, checkAvatarTokenSignature, mintAvatarToken } from '../auth/avatar-token';
 
@@ -59,14 +60,28 @@ describe('avatar access', () => {
     await expect(access(token)).resolves.toEqual({ kind: 'signed' });
   });
 
-  it('a token two buckets old is refused, and no session is read', async () => {
-    const token = mintAvatarToken(SID, NOON - 2 * DAY)!;
-    const live = store();
-    await expect(access(token, live)).resolves.toEqual({
-      kind: 'refused',
-      reason: 'bad-signature',
-    });
-    expect(live.asked).toEqual([]);
+  it('a token of the NEXT bucket is signed too - a clock a little ahead is not refused', async () => {
+    const token = mintAvatarToken(SID, NOON + DAY)!;
+    await expect(access(token)).resolves.toEqual({ kind: 'signed' });
+  });
+
+  it.each([
+    ['two buckets old', -2],
+    ['two buckets ahead', 2],
+  ])(
+    'a genuine token %s is STALE, told apart from a forgery, and no session is read',
+    async (_l, days) => {
+      const token = mintAvatarToken(SID, NOON + days * DAY)!;
+      const live = store();
+      await expect(access(token, live)).resolves.toEqual({ kind: 'refused', reason: 'stale' });
+      expect(live.asked).toEqual([]);
+    }
+  );
+
+  it('a genuine token with its day rewritten is a forgery, not a stale token', async () => {
+    const [sid, bucket, mac] = mintAvatarToken(SID, NOON - 2 * DAY)!.split('.');
+    const moved = `${sid}.${Number(bucket) + 2}.${mac}`;
+    await expect(access(moved)).resolves.toEqual({ kind: 'refused', reason: 'bad-signature' });
   });
 
   it('a token of a session that has ended is refused, though perfectly signed', async () => {
@@ -91,7 +106,8 @@ describe('avatar access', () => {
 
   it("another session's mac under this session's id is refused (wrong session)", async () => {
     const theirs = mintAvatarToken(OTHER_SID, NOON)!;
-    const forged = `${SID}.${theirs.split('.')[1]}`;
+    const [, bucket, mac] = theirs.split('.');
+    const forged = `${SID}.${bucket}.${mac}`;
     const live = store([SID, OTHER_SID]);
     await expect(access(forged, live)).resolves.toEqual({
       kind: 'refused',
@@ -108,9 +124,13 @@ describe('avatar access', () => {
 
   it.each([
     ['empty', ''],
-    ['no mac', SID],
-    ['not a uuid', `not-a-session.${'A'.repeat(43)}`],
-    ['a short mac', `${SID}.abc`],
+    ['no bucket nor mac', SID],
+    ['the bucketless shape', `${SID}.${'A'.repeat(43)}`],
+    ['not a uuid', `not-a-session.20000.${'A'.repeat(43)}`],
+    ['a short mac', `${SID}.20000.abc`],
+    ['a bucket with a leading zero', `${SID}.020000.${'A'.repeat(43)}`],
+    ['a signed bucket', `${SID}.-1.${'A'.repeat(43)}`],
+    ['a fourth part', `${SID}.20000.${'A'.repeat(43)}.x`],
     ['repeated', ['x', 'y']],
   ])('a malformed token (%s) is refused before any session read', async (_label, token) => {
     const live = store();
@@ -128,9 +148,40 @@ describe('avatar access', () => {
   it('a secret shorter than 32 characters counts as none', () => {
     process.env.AVATAR_TOKEN_SECRET = 'x'.repeat(31);
     expect(mintAvatarToken(SID, NOON)).toBeNull();
-    expect(checkAvatarTokenSignature(`${SID}.${'A'.repeat(43)}`, NOON)).toEqual({
+    expect(checkAvatarTokenSignature(`${SID}.20000.${'A'.repeat(43)}`, NOON)).toEqual({
       ok: false,
       reason: 'unconfigured',
+    });
+  });
+
+  it('the three other spellings of the last mac character are refused: one token, one form', async () => {
+    const token = mintAvatarToken(SID, NOON)!;
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = alphabet.indexOf(token[token.length - 1]);
+    // 43 characters carry 258 bits for 256: the last character's two low bits are padding, so these
+    // three decode to the very same bytes as the canonical one.
+    const others = [0, 1, 2, 3]
+      .map((low) => (last & ~3) | low)
+      .filter((index) => index !== last)
+      .map((index) => token.slice(0, -1) + alphabet[index]);
+    expect(others).toHaveLength(3);
+    for (const spelling of others) {
+      await expect(access(spelling)).resolves.toEqual({ kind: 'refused', reason: 'malformed' });
+    }
+    await expect(access(token)).resolves.toEqual({ kind: 'signed' });
+  });
+
+  it('the MAC is bound to its use: it is the HMAC of `avatar-v1|<session>|<bucket>`, and of nothing shorter', async () => {
+    const bucket = avatarDayBucket(NOON);
+    const hmac = (input: string) => createHmac('sha256', SECRET).update(input).digest('base64url');
+    expect(mintAvatarToken(SID, NOON)).toBe(
+      `${SID}.${bucket}.${hmac(`avatar-v1|${SID}|${bucket}`)}`
+    );
+    // The same secret over the same session and day WITHOUT the domain prefix is another use's MAC.
+    const undomained = `${SID}.${bucket}.${hmac(`${SID}|${bucket}`)}`;
+    await expect(access(undomained)).resolves.toEqual({
+      kind: 'refused',
+      reason: 'bad-signature',
     });
   });
 

@@ -86,14 +86,15 @@ describe('resolveUserAvatarDisplay', () => {
     const user = nextUser();
     const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
-    setAvatarToken('sid.mac');
+    // A token of today: the helper sends no token older than yesterday (`avatarUrl.ts`).
+    setAvatarToken(`sid.${Math.floor(Date.now() / 86_400_000)}.mac`);
 
     await resolveUserAvatarDisplay(user);
     releaseUserAvatarDisplay(user);
 
     const asked = String((fetchSpy.mock.calls[0] as unknown[])[0]);
     expect(asked).toBe(avatarUrl(user));
-    expect(asked).toMatch(/\/api\/users\/user-\d+\/avatar\?t=sid\.mac$/);
+    expect(asked).toMatch(/\/api\/users\/user-\d+\/avatar\?t=sid\.\d+\.mac$/);
   });
 
   // Mi 9T, 2026-10-13: 25 refused avatar requests in one salon open. The list's presence answer
@@ -381,9 +382,15 @@ describe('a known absence', () => {
     const user = nextUser();
     const fetchSpy = vi.fn(async () => new Response(null, { status: 403 }));
     vi.stubGlobal('fetch', fetchSpy);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await resolveUserAvatarDisplay(user);
     await resolveUserAvatarDisplay(user);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // Said at warn, naming the cut id and never the URL that carries the token.
+    expect(warn).toHaveBeenCalledWith(
+      `[AvatarCache] 403 for ${user.slice(0, 8)}: the avatar token was refused`
+    );
+    warn.mockRestore();
   });
 
   it('is forgotten when the signed-in reader changes', async () => {
