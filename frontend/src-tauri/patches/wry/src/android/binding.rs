@@ -273,15 +273,33 @@ pub unsafe fn onFirstActivityCreateWry(env: JNIEnv, _: JClass) {
 
     looper
       .add_fd_with_callback(MAIN_PIPE[0].as_fd(), FdEvent::INPUT, move |fd, _event| {
+        // CANARI PATCH: upstream returned `false` - unregistering the ONLY drain of the main pipe
+        // for the rest of the process - on ANY short read, EINTR included, and on any `recv`
+        // error, and said nothing. With the channel unbounded that is a silent leak and a WebView
+        // that never hears from Rust again. A signal interrupting the read is retried; `recv` no
+        // longer fails; anything else (end of file, or an error, on a pipe whose write end is a
+        // static) is a broken premise, and the unregistering is logged as the accusation it is.
         let mut buf = [0u8];
-        if libc::read(fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len())
-          == buf.len() as libc::ssize_t
-        {
-          // unregister itself on errors
-          main_pipe.recv().is_ok()
-        } else {
-          // unregister itself
-          false
+        loop {
+          let read = libc::read(fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len());
+          if read == buf.len() as libc::ssize_t {
+            main_pipe.recv();
+            return true;
+          }
+          if read == 0 {
+            log::error!(
+              "[WRY_MAIN_PIPE] the wake pipe reached end of file; the main pipe is no longer drained"
+            );
+            return false;
+          }
+          let error = std::io::Error::last_os_error();
+          if error.kind() == std::io::ErrorKind::Interrupted {
+            continue;
+          }
+          log::error!(
+            "[WRY_MAIN_PIPE] the wake pipe read failed ({error}); the main pipe is no longer drained"
+          );
+          return false;
         }
       })
       .unwrap();

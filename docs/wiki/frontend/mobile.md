@@ -2010,8 +2010,14 @@ drain for good the first time ONE message's JNI call failed (`recv()?` then `is_
 the channel with nobody draining it. **Fixed by construction**: the channel is unbounded (an
 unbounded `send` never blocks), the pipe's write end is non-blocking (a full pipe already holds an
 unread wake byte, which owes a drain that takes the new message too, so `EAGAIN` loses nothing), and
-a failed message is logged `[WRY_MAIN_PIPE]` with its Java exception described and cleared, and the
-drain goes on.
+a failed message is logged `[WRY_MAIN_PIPE]` and the drain goes on. The looper callback retries a
+read interrupted by a signal (upstream unregistered the drain on ANY short read, EINTR included) and
+logs the only cases left that unregister it - end of file, or a read error, on a pipe whose write end
+is a static. A drain handles at most the `len()` it read on entry, so it terminates while other
+threads keep sending; a message sent after that read has its own wake byte, or found the pipe full of
+unread ones, and a later callback drains it. A Java exception left pending is described and cleared
+after EVERY message, not only a failed one - several arms swallow a JNI error and the `Jni` closures
+return nothing, and an exception they leave would poison the next message.
 
 **Crash `e3697bc4ad55d069ebb94d3d4a528c34`** (1 report, `1.2.4`, Nothing Phone (2a), API 36).
 `abort_internal` <- `ndk::utils::abort_on_panic` <- the looper callback registered by
@@ -2019,12 +2025,18 @@ drain goes on.
 a message queued for that activity before the destroy then reached `get_webview`, which `unwrap`ped
 the missing entry, and the looper callback turns any panic into SIGABRT. Upstream measured the same
 abort after a back gesture and fixed it on `dev` (tauri-apps/wry#1846, `790ca0df48`, 2026-10-28) -
-in no release yet; the fork carries the same change. `None` is what every caller already handles.
+in no release yet; the fork carries the same change. `None` is what every caller already handles,
+and the gone-activity case logs `[WRY_MAIN_PIPE] no WebView for activity N` ONCE per activity - the
+evidence the device row reads. The same abort had a second road: every reply to a requester was
+`unwrap`ped, and a requester waits with `recv_timeout`, so an answer arriving after it gave up
+panicked in the same callback. Replies now go through `reply`, which logs the loss.
 
-`.github/scripts/tests/wry-main-pipe-patch.test.mjs` fails a rebase that drops any of the four hunks,
-and proves each check against the upstream code it replaces. The device reading is owed:
+`.github/scripts/tests/wry-main-pipe-patch.test.mjs` fails a rebase that drops any hunk (in
+`main_pipe.rs` and in `binding.rs`'s looper callback), proves each check against the upstream code it
+replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
+reading is owed:
 [device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).
-The fork is deleted once an upstream release carries all four.
+The fork is deleted once an upstream release carries every hunk.
 
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 

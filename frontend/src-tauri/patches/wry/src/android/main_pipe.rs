@@ -10,7 +10,7 @@ use jni::{
   objects::{GlobalRef, JMap, JObject, JString},
 };
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, BTreeSet},
   ffi::c_void,
   os::unix::prelude::*,
   sync::{Arc, LazyLock, Mutex},
@@ -133,16 +133,40 @@ pub fn first_activity_id() -> Option<ActivityId> {
 /// typically) panicked here, inside the looper callback, where `ndk::utils::abort_on_panic` turns any
 /// panic into SIGABRT - Play's crash e3697bc4ad55d069ebb94d3d4a528c34. Every caller already reads
 /// `None` as "no WebView, nothing to do", which is exactly what a destroyed activity is.
+///
+/// The gone-activity branch logs ONCE per activity (`GONE_ACTIVITIES_LOGGED`): it is the evidence
+/// that a message really reached a destroyed activity, and one line says that as well as a hundred.
+/// A live activity whose WebView is not created yet answers `None` too, silently, as upstream does:
+/// that is the ordinary state between `CreateWebView` being queued and handled, not a loss.
 pub fn get_webview(activity_id: ActivityId) -> Option<GlobalRef> {
-  let webview = ACTIVITY_PROXY
-    .lock()
-    .unwrap()
-    .get(&activity_id)
-    .and_then(|proxy| proxy.webview.clone());
-  if webview.is_none() {
-    log::debug!("[WRY_MAIN_PIPE] no WebView for activity {activity_id}; its message is dropped");
+  let proxies = ACTIVITY_PROXY.lock().unwrap();
+  match proxies.get(&activity_id) {
+    Some(proxy) => proxy.webview.clone(),
+    None => {
+      if GONE_ACTIVITIES_LOGGED.lock().unwrap().insert(activity_id) {
+        log::info!(
+          "[WRY_MAIN_PIPE] no WebView for activity {activity_id}: it was destroyed, so its queued messages are dropped"
+        );
+      }
+      None
+    }
   }
-  webview
+}
+
+/// CANARI PATCH: the activities whose "destroyed, messages dropped" line was already written.
+static GONE_ACTIVITIES_LOGGED: LazyLock<Mutex<BTreeSet<ActivityId>>> =
+  LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+/// CANARI PATCH: answer a requester, logging when it is no longer listening.
+///
+/// Upstream `unwrap`ped every reply. A requester waits with `recv_timeout`; once it gave up, its
+/// receiver is dropped and the send fails - and an `unwrap` there panics inside the looper callback,
+/// which `abort_on_panic` turns into SIGABRT (the same signature as e3697bc4). The answer has no
+/// one left to read it, so the loss is the log line.
+fn reply<T>(tx: &Sender<T>, value: T, what: &str) {
+  if tx.send(value).is_err() {
+    log::error!("[WRY_MAIN_PIPE] the {what} requester stopped waiting before its answer");
+  }
 }
 
 pub struct MainPipe<'a> {
@@ -171,30 +195,51 @@ impl<'a> MainPipe<'a> {
     }
   }
 
-  /// Drain every queued message on the main thread.
+  /// Drain the messages queued when this wake-up began, on the main thread.
   ///
-  /// CANARI PATCH: a JNI error on ONE message is logged and the drain goes on. Upstream returned it,
-  /// and the looper callback then unregistered itself (`recv().is_ok()`), so a single failed call -
-  /// an `evalScript` on a WebView being torn down - left nothing draining this channel for the rest
-  /// of the process: every later message queued forever, and with the old bound every later SEND
-  /// parked its thread. A pending Java exception is described (its stack is the evidence of which
-  /// call threw) and cleared, so it cannot poison the next message's calls.
-  pub fn recv(&mut self) -> JniResult<()> {
+  /// CANARI PATCH, three changes from upstream's `while try_recv() { handle_message()? }`:
+  /// - A JNI error on ONE message is logged and the drain goes on. Upstream returned it, and the
+  ///   looper callback then unregistered itself, so a single failed call left nothing draining this
+  ///   channel for the rest of the process. So this returns nothing: no failure here may stop the
+  ///   drain.
+  /// - A pending Java exception is checked after EVERY message, not only a failed one: several arms
+  ///   swallow a JNI error (`unwrap_or_default`) and the `Jni` closures return nothing, and each can
+  ///   leave an exception pending that would poison the next message's calls. It is described (its
+  ///   stack is the evidence of which call threw) and cleared.
+  /// - It handles at most the `len()` read on entry, so it TERMINATES even while other threads keep
+  ///   sending. A message sent after that read is not lost: its send wrote its own wake byte, or
+  ///   found the pipe full of unread ones - either way a later callback drains it.
+  pub fn recv(&mut self) {
     let package = super::PACKAGE.get().unwrap();
-    while let Ok((activity_id, message)) = CHANNEL.1.try_recv() {
+    let pending = CHANNEL.1.len();
+    for _ in 0..pending {
+      let Ok((activity_id, message)) = CHANNEL.1.try_recv() else {
+        // Only this thread receives, so `len()` messages are there; an empty channel here means
+        // that premise broke.
+        log::error!("[WRY_MAIN_PIPE] the channel held fewer messages than it reported");
+        break;
+      };
       if let Err(error) = self.handle_message(package, activity_id, message) {
-        if self.env.exception_check().unwrap_or(false) {
-          if let Err(describe) = self.env.exception_describe() {
-            log::error!("[WRY_MAIN_PIPE] could not describe the pending exception: {describe}");
-          }
-          if let Err(clear) = self.env.exception_clear() {
-            log::error!("[WRY_MAIN_PIPE] could not clear the pending exception: {clear}");
-          }
-        }
         log::error!("[WRY_MAIN_PIPE] a message for activity {activity_id} failed: {error}");
       }
+      self.clear_pending_exception(activity_id);
     }
-    Ok(())
+  }
+
+  /// CANARI PATCH: describe and clear a Java exception a message left pending.
+  fn clear_pending_exception(&mut self, activity_id: ActivityId) {
+    if !self.env.exception_check().unwrap_or(false) {
+      return;
+    }
+    log::error!(
+      "[WRY_MAIN_PIPE] a message for activity {activity_id} left a Java exception pending"
+    );
+    if let Err(describe) = self.env.exception_describe() {
+      log::error!("[WRY_MAIN_PIPE] could not describe the pending exception: {describe}");
+    }
+    if let Err(clear) = self.env.exception_clear() {
+      log::error!("[WRY_MAIN_PIPE] could not clear the pending exception: {clear}");
+    }
   }
 
   fn handle_message(
@@ -450,13 +495,11 @@ impl<'a> MainPipe<'a> {
                 .get_string(&s)
                 .map(|v| v.to_string_lossy().to_string())
             }) {
-            Ok(version) => {
-              tx.send(Ok(version)).unwrap();
-            }
-            Err(e) => tx.send(Err(e.into())).unwrap(),
+            Ok(version) => reply(&tx, Ok(version), "WebView version"),
+            Err(e) => reply(&tx, Err(e.into()), "WebView version"),
           }
         } else {
-          tx.send(Err(Error::ActivityNotFound)).unwrap();
+          reply(&tx, Err(Error::ActivityNotFound), "WebView version");
         }
       }
       WebViewMessage::GetUrl(tx) => {
@@ -474,7 +517,7 @@ impl<'a> MainPipe<'a> {
             })
             .unwrap_or_default();
 
-          tx.send(url).unwrap()
+          reply(&tx, url, "URL");
         }
       }
       WebViewMessage::Jni(f) => {
@@ -526,14 +569,14 @@ impl<'a> MainPipe<'a> {
       }
       WebViewMessage::CanGoForward(tx) => {
         if let Some(webview) = get_webview(activity_id) {
-          tx.send(can_go_forward(&mut self.env, webview.as_obj())?)
-            .unwrap();
+          let can = can_go_forward(&mut self.env, webview.as_obj())?;
+          reply(&tx, can, "can-go-forward");
         }
       }
       WebViewMessage::CanGoBack(tx) => {
         if let Some(webview) = get_webview(activity_id) {
-          tx.send(can_go_back(&mut self.env, webview.as_obj())?)
-            .unwrap();
+          let can = can_go_back(&mut self.env, webview.as_obj())?;
+          reply(&tx, can, "can-go-back");
         }
       }
       WebViewMessage::GetCookies(tx, url) => {
@@ -557,13 +600,14 @@ impl<'a> MainPipe<'a> {
             })
             .unwrap_or_default();
 
-          tx.send(
+          reply(
+            &tx,
             cookies
               .split("; ")
               .flat_map(|c| cookie::Cookie::parse(c.to_string()))
               .collect(),
-          )
-          .unwrap();
+            "cookies",
+          );
         }
       }
       WebViewMessage::OnDestroy {

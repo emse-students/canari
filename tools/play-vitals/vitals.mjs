@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { classify, judgePlatform } from './classify.mjs';
 import {
   METRIC_SETS,
   PKG,
@@ -35,25 +36,6 @@ const known = JSON.parse(
   readFileSync(new URL('./known-issues.json', import.meta.url), 'utf8')
 ).issues;
 
-/**
- * Decide what an issue MEANS against what this repo already fixed.
- *
- * The three verdicts are not cosmetic: `KNOWN` is the only one that may be ignored, and it is
- * earned only by every report predating the fix. One report at or above `fixedInVersionCode` makes
- * the whole issue a `REGRESSION` - the fix did not hold, which is the report worth waking up for.
- *
- * @param {object} issue an `errorIssues:search` entry
- * @returns {{ verdict: 'NEW'|'KNOWN'|'REGRESSION', record?: object }}
- */
-function classify(issue) {
-  const id = issue.name?.split('/').pop();
-  const record = known[id];
-  if (!record) return { verdict: 'NEW' };
-  const lastSeen = Number(issue.lastAppVersion?.versionCode ?? 0);
-  if (lastSeen >= record.fixedInVersionCode) return { verdict: 'REGRESSION', record };
-  return { verdict: 'KNOWN', record };
-}
-
 /** @param {object[]} rows metric-set rows @returns {string} a one-line summary or a stated absence */
 function summarise(rows) {
   if (rows.length === 0) return 'no rows - either nothing happened, or too few users to report';
@@ -62,6 +44,55 @@ function summarise(rows) {
     .map((m) => `${m.metric}=${m.decimalValue?.value ?? m.value ?? '?'}`)
     .join(' ');
   return `${rows.length} row(s), latest: ${points}`;
+}
+
+/**
+ * What Play reports about every PLATFORM issue present, for `judgePlatform` to read: each one's
+ * reports in the window, its report count per versionCode, and Play's distinct users per
+ * versionCode. Fetched once per run, and only when a PLATFORM issue is present.
+ *
+ * @param {object[]} issues the `errorIssues:search` entries
+ * @param {Date} start
+ * @param {Date} end
+ * @returns {Promise<{judge: (id: string) => string[]}>}
+ */
+async function readPlatformEvidence(issues, start, end) {
+  const ids = issues
+    .map((issue) => issue.name?.split('/').pop())
+    .filter((id) => known[id]?.kind === 'PLATFORM');
+  if (ids.length === 0) return { judge: () => [] };
+
+  const errorCount = METRIC_SETS.find((spec) => spec.set === 'errorCountMetricSet');
+  const crashRate = METRIC_SETS.find((spec) => spec.set === 'crashRateMetricSet');
+  const counts = await queryMetricSet(errorCount, WINDOW_DAYS - 1, ['issueId', 'versionCode']);
+  const users = await queryMetricSet(
+    { ...crashRate, metrics: ['distinctUsers'] },
+    WINDOW_DAYS - 1,
+    ['versionCode']
+  );
+  if (counts.note) console.error(`  ! errorCountMetricSet by issue: ${counts.note}`);
+  if (users.note) console.error(`  ! crashRateMetricSet users by version: ${users.note}`);
+
+  const dimension = (row, name) => row.dimensions?.find((d) => d.dimension === name)?.stringValue;
+  const metric = (row, name) =>
+    Number(row.metrics?.find((m) => m.metric === name)?.decimalValue?.value ?? 0);
+  const usersByVersion = new Map();
+  for (const row of users.rows) {
+    const code = Number(dimension(row, 'versionCode'));
+    usersByVersion.set(code, (usersByVersion.get(code) ?? 0) + metric(row, 'distinctUsers'));
+  }
+
+  const evidence = new Map();
+  for (const id of ids) {
+    const countsByVersion = new Map();
+    for (const row of counts.rows.filter((r) => dimension(r, 'issueId') === id)) {
+      const code = Number(dimension(row, 'versionCode'));
+      countsByVersion.set(code, (countsByVersion.get(code) ?? 0) + metric(row, 'errorReportCount'));
+    }
+    const reports = await searchErrorReports(id, start, end, 100);
+    evidence.set(id, { reports, countsByVersion, usersByVersion });
+  }
+  return { judge: (id) => judgePlatform(known[id], evidence.get(id)) };
 }
 
 async function main() {
@@ -94,12 +125,13 @@ async function main() {
   console.log(`\n## Crash and ANR issues, last ${WINDOW_DAYS} days`);
   const issues = await searchErrorIssues(start, end);
   raw.issues = issues;
+  const platformEvidence = await readPlatformEvidence(issues, start, end);
   let actionable = 0;
   if (issues.length === 0) console.log('  none');
   for (const issue of issues) {
     const id = issue.name?.split('/').pop();
-    const { verdict, record } = classify(issue);
-    if (verdict !== 'KNOWN') actionable += 1;
+    const { verdict, record, reopened } = classify(issue, known, () => platformEvidence.judge(id));
+    if (verdict !== 'KNOWN' && verdict !== 'PLATFORM') actionable += 1;
     console.log(
       `\n  [${verdict}] ${issue.type} ${issue.cause}\n` +
         `    ${issue.location}\n` +
@@ -107,7 +139,10 @@ async function main() {
         `    versionCode ${issue.firstAppVersion?.versionCode} -> ${issue.lastAppVersion?.versionCode}, API ${issue.lastOsVersion?.apiLevel}\n` +
         `    ${issue.issueUri}`
     );
-    if (record) {
+    if (record?.kind === 'PLATFORM') {
+      console.log(`    platform: ${record.diagnosis}`);
+      for (const reason of reopened ?? []) console.log(`    !! RE-OPENED: ${reason}`);
+    } else if (record) {
       console.log(
         `    known: fixed by ${record.fixedBy}, first good build ${record.fixedInVersionCode}`
       );
@@ -115,7 +150,7 @@ async function main() {
     if (verdict === 'REGRESSION') {
       console.log('    !! seen at or above the build that fixed it - the fix did not hold');
     }
-    if (wantStacks && verdict !== 'KNOWN') {
+    if (wantStacks && verdict !== 'KNOWN' && verdict !== 'PLATFORM') {
       const [report] = await searchErrorReports(id, start, end, 1);
       if (report?.reportText) {
         console.log(
@@ -152,7 +187,7 @@ async function main() {
   if (wantJson) console.log(`\n${JSON.stringify(raw, null, 2)}`);
 
   console.log(
-    `\n=> ${actionable} issue(s) needing attention, ${issues.length - actionable} already known and fixed.`
+    `\n=> ${actionable} issue(s) needing attention, ${issues.length - actionable} already known (fixed, or platform and still holding).`
   );
   return actionable === 0 ? 0 : 1;
 }

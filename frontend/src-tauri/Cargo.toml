@@ -88,7 +88,7 @@ tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
 # and alone drains (Play ANR f51255a5...) - and ABORT the process on a message for a destroyed
 # activity (Play crash e3697bc4...). The local patch makes the channel unbounded, its wake pipe's
 # write non-blocking, `get_webview` answer `None` for a gone activity, and a failed message log
-# instead of unregistering the drain - the `CANARI PATCH` hunks in `src/android/main_pipe.rs`;
+# instead of unregistering the drain - the `CANARI PATCH` hunks in `src/android/`;
 # everything else is the published crate. Why: docs/wiki/frontend/mobile.md#wry-main-pipe-patch.
 wry = { path = "patches/wry" }
 

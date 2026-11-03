@@ -1,17 +1,19 @@
-> **CANARI'S COPY OF wry 0.57.1, PATCHED - read this before the upstream text below.** Four changes, all
-> in `src/android/main_pipe.rs` and each marked `CANARI PATCH`, plus a `log` dependency in `Cargo.toml`:
-> the main-thread message channel is UNBOUNDED (upstream `bounded(8)` deadlocked the main thread
-> sending into a channel only the main thread drains - Play ANR `f51255a5a831e715b4fc8d976e87be11`)
-> and its wake pipe's write end is non-blocking (a refused write logged unless it is the harmless EAGAIN); `get_webview` answers `None` for a destroyed activity
-> instead of panicking inside the looper callback (Play crash `e3697bc4ad55d069ebb94d3d4a528c34`, a
-> SIGABRT through `abort_on_panic`); and a JNI error on one message is logged instead of unregistering
-> the drain for the rest of the process. Everything else is the published crate, unchanged (its
-> `.cargo/`, `Cargo.lock`, `renovate.json` and `MOBILE.md` dropped - the last carries an example private
-> address the public-repo guard rejects, and no build reads it). Upstream fixed the `get_webview` panic on `dev`
-> (tauri-apps/wry#1846, `790ca0df48`, 2026-10-28, not in any release - 0.57.1 still unwraps); the channel
-> bound and the self-unregistering drain are still upstream as of 2026-11-03. A vendored fork: an
-> upstream release is rebased by hand, and this patch is deleted once a release carries all four. Why:
-> `docs/wiki/frontend/mobile.md#wry-main-pipe-patch`.
+> **CANARI'S COPY OF wry 0.57.1, PATCHED - read this before the upstream text below.** Every change
+> is marked `CANARI PATCH`, in `src/android/main_pipe.rs` and in `src/android/binding.rs`'s looper
+> callback, plus a `log` dependency in `Cargo.toml`: the main-thread message channel is UNBOUNDED
+> (upstream `bounded(8)` deadlocked the main thread sending into a channel only the main thread
+> drains - Play ANR `f51255a5a831e715b4fc8d976e87be11`) and its wake pipe's write end non-blocking;
+> nothing in the looper callback can panic into its `abort_on_panic` any more - `get_webview` answers
+> `None` for a destroyed activity (Play crash `e3697bc4ad55d069ebb94d3d4a528c34`) and replies go
+> through a logging `reply` instead of `unwrap`; the drain no longer unregisters itself on one failed
+> message or an EINTR read, handles at most the `len()` it read on entry, and clears a pending Java
+> exception after every message. Everything else is the published crate, unchanged (its `.cargo/`,
+> `Cargo.lock`, `renovate.json` and `MOBILE.md` dropped - the last carries an example private address
+> the public-repo guard rejects, and no build reads it). Upstream fixed the `get_webview` panic on
+> `dev` (tauri-apps/wry#1846, `790ca0df48`, 2026-10-28, in no release - 0.57.1 still unwraps); the rest
+> is still upstream as of 2026-11-03. A vendored fork: an upstream release is rebased by hand, and
+> this fork is deleted once a release carries every hunk. Guarded by
+> `.github/scripts/tests/wry-main-pipe-patch.test.mjs`. Why: `docs/wiki/frontend/mobile.md#wry-main-pipe-patch`.
 
 <p align="center"><img height="100" src="https://raw.githubusercontent.com/tauri-apps/wry/refs/heads/dev/.github/splash.png" alt="WRY Webview Rendering library" /></p>
 
