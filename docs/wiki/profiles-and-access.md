@@ -1,5 +1,9 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
+> **Without an account, see [What Canari serves without an account](anonymous-surface.md)** (owner,
+> 2026-11-02): nothing a signed-out visitor reads may go further than portail-etu.emse.fr shows. A
+> profile's memberships and past roles need a session since that day.
+
 **Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 is BUILT AND
 TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 is BUILT (backend, backfill, directory), WP4 to WP9 are PLANNED**. Every answer below was given by the user on
 2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
@@ -1771,8 +1775,8 @@ review account. A READ across the boundary returns nothing, as for anything outs
 | --- | --- | --- |
 | Search and the people directory | a review account finds the cohort only; nobody but a global admin finds a review account | `applyReviewCohortVisibility`, core `users.service.ts` |
 | A profile (`GET /users/:id`, `POST /users/batch`) | refused across the boundary, both ways (a batch reads an id across it as unknown); a global admin opens every profile, a review account opens no admin's | `assertMayOpenProfile` / `profilesOpenTo`, core `users.service.ts` |
-| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles read with no session are empty for a review account | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
-| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - the member's name in the head, nothing more | core `users.controller.ts`, `internal-users.controller.ts` |
+| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles need a session since 2026-11-02 ([anonymous-surface](anonymous-surface.md)) | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
+| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - since 2026-11-02 the generic head, never the member's name ([anonymous-surface](anonymous-surface.md)) | core `users.controller.ts`, `internal-users.controller.ts` |
 | Spaces | a review account has NO real space | `isReaderSpaceSql`, its pure twin `readerSpaces`, `spaces/reader-spaces.ts` |
 | Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
 | The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |
