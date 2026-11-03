@@ -8,6 +8,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import Host from './ViewerLayerHost.test-helper.svelte';
+import NestedHost from './NestedDialogHost.test-helper.svelte';
 
 const mounted: Record<string, unknown>[] = [];
 afterEach(() => {
@@ -36,4 +37,19 @@ it('anywhere else, they keep their own rung', () => {
   expect(modal.className).toContain('z-(--z-modal)');
   expect(modal.className).not.toContain('z-(--z-viewer-dialog)');
   expect(overlay.className).not.toContain('z-(--z-viewer-dialog)');
+});
+
+/**
+ * THE COMMENT GIF PICKER OPENED UNDER ITS OWN COMMENTS SHEET (iPhone, 2026-11-03): the picker is a
+ * `ModalOverlay` on `--z-sheet` (160), the sheet a `CommentsDrawer` (phone) or `Modal` (desktop) on
+ * `--z-modal` (280). What a dialog opens must clear the dialog.
+ */
+it.each(['modal', 'drawer'] as const)('a picker opened from a %s clears it', (host) => {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  mounted.push(mount(NestedHost, { target, props: { host } }));
+  flushSync();
+  const overlay = document.querySelector('[data-overlay-body]')!.closest('.fixed') as HTMLElement;
+  expect(overlay.className).toContain('z-(--z-viewer-dialog)');
+  expect(overlay.className).not.toContain('z-(--z-sheet)');
 });

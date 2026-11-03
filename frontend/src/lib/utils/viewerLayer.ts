@@ -13,6 +13,12 @@ import { getContext, setContext } from 'svelte';
  * of them knows, or should know, what is above it. `--z-critical` (a confirmation) already clears
  * the viewer and is left alone.
  */
+/**
+ * THE SAME FACT HOLDS FOR ANY SURFACE ON `--z-modal`: a `Modal` and the page-level `CommentsDrawer`
+ * mark their subtree too, because a picker or dialog they open sits on a LOWER rung (`--z-sheet`)
+ * and would open under them. The name is the viewer's for history; the rule is "what a dialog
+ * opens must clear it".
+ */
 const VIEWER_LAYER = Symbol('viewer-layer');
 
 /** Called by a full-screen viewer during its own initialisation: its subtree's dialogs clear it. */
