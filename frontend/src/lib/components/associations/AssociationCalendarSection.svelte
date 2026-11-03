@@ -125,7 +125,10 @@
    * forms. A band speaks for the SCHOOL, so it needs the authority that speaks for it; a linked form
    * is this association's own, so it needs the right to edit this association.
    */
-  const capabilities = $derived({ canSetKind: canDeclareBreak, canLinkForm: canEdit });
+  const capabilities = $derived({
+    canSetKind: canDeclareBreak,
+    canLinkForm: canEdit && formValues.writeSide === 'organiser',
+  });
 
   let showSubscribeModal = $state(false);
 
@@ -313,6 +316,15 @@
    */
   async function withdrawFromEvent() {
     if (!editingId) return;
+    // Withdrawing ends this association's part in the event and is not undone from here: asked,
+    // like the delete it sits beside.
+    if (
+      !(await showConfirm(m.asso_calendar_partner_withdraw_confirm(), {
+        danger: true,
+        confirmLabel: m.common_leave_button(),
+      }))
+    )
+      return;
     Log.d('[asso-calendar] withdrawing from event', editingId);
     await updateAssociationCalendarEvent(associationId, editingId, {
       coOwnerIds: withdrawalCoOwnerIds(formValues.coOwnerStates, associationId),

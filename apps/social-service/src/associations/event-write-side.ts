@@ -15,7 +15,7 @@ export type EventWriteSide = 'organiser' | 'partner';
 export const CALENDAR_PARTNER_ORGANISER_ONLY = 'CALENDAR_PARTNER_ORGANISER_ONLY';
 
 /** What a partner asked for that only the organiser may do - named in the log, never in the reply. */
-export type PartnerRefusedAction = 'date' | 'coOwnerIds' | 'delete';
+export type PartnerRefusedAction = 'date' | 'coOwnerIds' | 'delete' | 'linkedForm';
 
 /**
  * The side a caller writes from. A platform admin and a governing validator (`crossTier`) keep the
@@ -33,10 +33,17 @@ export function eventWriteSide(
   return organiserId === viaAssociationId ? 'organiser' : 'partner';
 }
 
+const PARTNER_REFUSED_WHAT: Record<PartnerRefusedAction, string> = {
+  date: 'its date',
+  coOwnerIds: 'its partners',
+  delete: 'it by deleting it',
+  linkedForm: 'its linked form',
+};
+
 /** The ONE refusal of a partner doing what only the organiser may (403, typed at the throw). */
 export function partnerOrganiserOnlyRefusal(action: PartnerRefusedAction): ForbiddenException {
   return new ForbiddenException({
     code: CALENDAR_PARTNER_ORGANISER_ONLY,
-    message: `Only the organiser of an event may change ${action === 'date' ? 'its date' : action === 'delete' ? 'it by deleting it' : 'its partners'}.`,
+    message: `Only the organiser of an event may change ${PARTNER_REFUSED_WHAT[action]}.`,
   });
 }

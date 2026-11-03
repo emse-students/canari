@@ -95,6 +95,18 @@ describe('toUpdatePayload', () => {
     expect(payload.linkedFormId).toBeNull();
   });
 
+  // The form link is the organiser's: a partner's save carries text only, even on a surface that
+  // may link forms, or a partner saving a typo would resend (and the server would refuse) the link.
+  it('sends the linked form for the organiser only', () => {
+    const caps = { canLinkForm: true };
+    expect(toUpdatePayload({ ...BASE, linkedFormId: 'f-1' }, caps).linkedFormId).toBe('f-1');
+    for (const writeSide of ['partner', 'unknown'] as const) {
+      expect(
+        'linkedFormId' in toUpdatePayload({ ...BASE, linkedFormId: 'f-1', writeSide }, caps)
+      ).toBe(false);
+    }
+  });
+
   it('leaves kind alone for a surface that cannot set it', () => {
     // Harmless today, since the server gates on the value CHANGING rather than being sent - but a
     // surface with no kind control resending one is a claim it has no business making.

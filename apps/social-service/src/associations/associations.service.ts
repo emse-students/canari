@@ -1586,6 +1586,31 @@ export class AssociationsService {
   }
 
   /**
+   * Runs `work` in ONE transaction that starts by locking the event row, so every read-check-write
+   * on an event (an edit, a validation, a rejection, a co-organisation acceptance that returns it to
+   * the queue) is serialised: the second one starts from what the first committed, never from the
+   * snapshot it took before waiting. Without it an edit and a validation both load the row, both
+   * save, and the later save writes back the other's stale status columns.
+   *
+   * `FOR NO KEY UPDATE`, not `FOR UPDATE`: it conflicts with every other writer of the row but
+   * not with the `FOR KEY SHARE` an insert of a co-owner or proposal row takes through its foreign
+   * key, which the co-organisation sync issues on its own connection while this lock is held.
+   * The order is always event row first, associations second (the proposals' own lock order).
+   */
+  async withEventLock<T>(
+    eventId: string,
+    work: (repo: Repository<AssociationCalendarEvent>) => Promise<T>
+  ): Promise<T> {
+    return this.calendarRepo.manager.transaction(async (manager) => {
+      await manager.query(
+        'SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE',
+        [eventId]
+      );
+      return work(manager.getRepository(AssociationCalendarEvent));
+    });
+  }
+
+  /**
    * Returns the event if the caller's association is the primary owner OR an ACCEPTED co-organiser
    * (D39: a co-owner row exists only once its `coorganise` proposal was accepted, so a pending one
    * reaches nothing here). Pass `canCrossAsso = true` for BDE / global-admin callers.
@@ -1593,12 +1618,13 @@ export class AssociationsService {
   async findCalendarEventForAssociation(
     eventId: string,
     associationId: string,
-    canCrossAsso: boolean
+    canCrossAsso: boolean,
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
   ): Promise<AssociationCalendarEvent | null> {
     if (canCrossAsso) {
-      return this.calendarRepo.findOne({ where: { id: eventId } });
+      return repo.findOne({ where: { id: eventId } });
     }
-    return this.calendarRepo
+    return repo
       .createQueryBuilder('e')
       .where('e.id = :eventId', { eventId })
       .andWhere(
@@ -1782,13 +1808,13 @@ export class AssociationsService {
   }
 
   /** Ensures at most one calendar row references a given form. */
-  private async detachCalendarLinksExcept(opts: { formId?: string | null; exceptEventId: string }) {
+  private async detachCalendarLinksExcept(
+    opts: { formId?: string | null; exceptEventId: string },
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
+  ) {
     const { formId, exceptEventId } = opts;
     if (formId) {
-      await this.calendarRepo.update(
-        { linkedFormId: formId, id: Not(exceptEventId) },
-        { linkedFormId: null }
-      );
+      await repo.update({ linkedFormId: formId, id: Not(exceptEventId) }, { linkedFormId: null });
     }
   }
 
@@ -2783,9 +2809,66 @@ ${rejectionReason}`
     dto: UpdateAssociationCalendarEventDto,
     callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
   ) {
-    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, canCrossAsso);
+    // EVERY CHECK AND EVERY WRITE UNDER THE EVENT'S LOCK: the event is read AFTER the lock is
+    // taken, so a validation or an acceptance that committed first is what this edit starts from.
+    const { saved, demoted } = await this.withEventLock(eventId, (repo) =>
+      this.applyCalendarEventUpdate(repo, associationId, eventId, dto, callerOpts)
+    );
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
+    this.logger.debug(
+      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
+    );
+    // Notifications run AFTER the commit: a notice for a write that rolled back would be a lie.
+    if (demoted) {
+      this.logger.debug(
+        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
+      );
+      // The same route a fresh proposal takes, because that is what this now is. Without it the
+      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
+      // than the defect it replaces, the event having at least been VISIBLE before.
+      void this.notifyEventValidatorsOfProposal(
+        saved.associationId,
+        callerOpts?.callerUserId ?? saved.createdBy,
+        saved.title
+      );
+      // And the association's own proposers, because the one who moved the dates is rarely the
+      // only person counting on the event being on the agenda.
+      void this.notifyAssocAdminsOfEventAction(
+        saved.associationId,
+        callerOpts?.callerUserId ?? saved.createdBy,
+        saved.title,
+        'pending'
+      );
+    }
+    // Notify asso admins when BDE modifies an event from another asso
+    if (canCrossAsso && saved.associationId !== associationId && callerOpts?.callerUserId) {
+      void this.notifyAssocAdminsOfEventAction(
+        saved.associationId,
+        callerOpts.callerUserId,
+        saved.title,
+        'updated'
+      );
+    }
+    return this.serializeCalendarEvent(saved, coOwners);
+  }
+
+  /** The checks and writes of `updateCalendarEvent`, run by it inside the event's lock. */
+  private async applyCalendarEventUpdate(
+    repo: Repository<AssociationCalendarEvent>,
+    associationId: string,
+    eventId: string,
+    dto: UpdateAssociationCalendarEventDto,
+    callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
+  ): Promise<{ saved: AssociationCalendarEvent; demoted: boolean }> {
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const ev = await this.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      canCrossAsso === true,
+      repo
+    );
     if (!ev) throw new NotFoundException('Event not found');
 
     // Before any mutation: a refusal must leave the entity as it was found.
@@ -2864,6 +2947,18 @@ ${rejectionReason}`
       );
       throw partnerOrganiserOnlyRefusal('date');
     }
+    // The form link is the organiser's too (decided with E2, D39): a CHANGE from the partner side
+    // is refused; resending the value it already has is not a change.
+    if (
+      side === 'partner' &&
+      dto.linkedFormId !== undefined &&
+      (dto.linkedFormId || null) !== (ev.linkedFormId ?? null)
+    ) {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused a form link change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('linkedForm');
+    }
     const demoted = wasValidated && datesMoved;
     if (demoted) {
       ev.status = AssociationCalendarEventStatus.Pending;
@@ -2891,15 +2986,23 @@ ${rejectionReason}`
       await this.coOrganiserPort().check(coOrganiserRequest);
     }
 
-    if (dto.linkedFormId !== undefined) {
+    // Only an actual CHANGE of the link is a write (and is checked against the form's owner): a
+    // modal resending the value it loaded changes nothing, whichever side it writes from.
+    if (
+      dto.linkedFormId !== undefined &&
+      (dto.linkedFormId || null) !== (ev.linkedFormId ?? null)
+    ) {
       if (dto.linkedFormId === null || dto.linkedFormId === '') {
         ev.linkedFormId = null;
       } else {
         await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId);
-        await this.detachCalendarLinksExcept({
-          formId: dto.linkedFormId,
-          exceptEventId: ev.id,
-        });
+        await this.detachCalendarLinksExcept(
+          {
+            formId: dto.linkedFormId,
+            exceptEventId: ev.id,
+          },
+          repo
+        );
         ev.linkedFormId = dto.linkedFormId;
       }
     }
@@ -2907,59 +3010,30 @@ ${rejectionReason}`
     // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
     // trying to change anything but its own presence, 403) leaves the event as it was found.
     if (coOrganiserRequest) await this.coOrganiserPort().sync(coOrganiserRequest);
-    const saved = await this.calendarRepo.save(ev);
-    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
-    this.logger.debug(
-      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
-    );
-    if (demoted) {
-      this.logger.debug(
-        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
-      );
-      // The same route a fresh proposal takes, because that is what this now is. Without it the
-      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
-      // than the defect it replaces, the event having at least been VISIBLE before.
-      void this.notifyEventValidatorsOfProposal(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title
-      );
-      // And the association's own proposers, because the one who moved the dates is rarely the
-      // only person counting on the event being on the agenda.
-      void this.notifyAssocAdminsOfEventAction(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title,
-        'pending'
-      );
-    }
-    // Notify asso admins when BDE modifies an event from another asso
-    if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
-      void this.notifyAssocAdminsOfEventAction(
-        ev.associationId,
-        callerOpts.callerUserId,
-        saved.title,
-        'updated'
-      );
-    }
-    return this.serializeCalendarEvent(saved, coOwners);
+    const saved = await repo.save(ev);
+    return { saved, demoted };
   }
 
   /** Marks a pending calendar event as validated (visible on public agenda and feeds). */
   async validateCalendarEvent(associationId: string, eventId: string, userId: string) {
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
-    if (!ev) throw new NotFoundException('Event not found');
-    if (ev.status === AssociationCalendarEventStatus.Validated) {
-      return this.serializeCalendarEvent(ev);
-    }
-    ev.status = AssociationCalendarEventStatus.Validated;
-    ev.validatedAt = new Date();
-    ev.validatedBy = userId;
-    const saved = await this.calendarRepo.save(ev);
+    // Under the event's lock, so a validation never overwrites an edit or an acceptance it did not see.
+    const outcome = await this.withEventLock(eventId, async (repo) => {
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
+      if (!ev) throw new NotFoundException('Event not found');
+      if (ev.status === AssociationCalendarEventStatus.Validated) {
+        return { ev, changed: false };
+      }
+      ev.status = AssociationCalendarEventStatus.Validated;
+      ev.validatedAt = new Date();
+      ev.validatedBy = userId;
+      return { ev: await repo.save(ev), changed: true };
+    });
+    if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
+    const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
     // Notify asso admins that their event has been validated
-    void this.notifyAssocAdminsOfEventAction(ev.associationId, userId, ev.title, 'validated');
+    void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
   }
 
@@ -2971,21 +3045,25 @@ ${rejectionReason}`
     reason?: string
   ) {
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
-    if (!ev) throw new NotFoundException('Event not found');
-    if (ev.status === AssociationCalendarEventStatus.Rejected) {
-      return this.serializeCalendarEvent(ev);
-    }
-    ev.status = AssociationCalendarEventStatus.Rejected;
-    ev.rejectedAt = new Date();
-    ev.rejectedBy = userId;
-    ev.rejectionReason = reason ?? null;
-    const saved = await this.calendarRepo.save(ev);
+    const outcome = await this.withEventLock(eventId, async (repo) => {
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
+      if (!ev) throw new NotFoundException('Event not found');
+      if (ev.status === AssociationCalendarEventStatus.Rejected) {
+        return { ev, changed: false };
+      }
+      ev.status = AssociationCalendarEventStatus.Rejected;
+      ev.rejectedAt = new Date();
+      ev.rejectedBy = userId;
+      ev.rejectionReason = reason ?? null;
+      return { ev: await repo.save(ev), changed: true };
+    });
+    if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
+    const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
     void this.notifyAssocAdminsOfEventAction(
-      ev.associationId,
+      saved.associationId,
       userId,
-      ev.title,
+      saved.title,
       'rejected',
       reason
     );

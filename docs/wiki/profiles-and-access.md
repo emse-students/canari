@@ -1291,8 +1291,25 @@ Saint-Etienne event).
   stays `unknown`). The date and the partner list are drawn and SENT for `organiser` only; a partner
   sees a note and a "withdraw" button instead. The delete buttons of an association's own calendar
   section are shown only for events it organises (the server stays the authority).
+- **The form link is the organiser's too** (decision, review of 2026-11-03; reversible, it is one
+  condition in `updateCalendarEvent` and one in `toUpdatePayload`). A partner does NOT own the link: a
+  CHANGE of `linkedFormId` from the partner side (detach, or another form) is the same typed 403
+  (`partnerOrganiserOnlyRefusal('linkedForm')`), before any write; resending the value it loaded is not
+  a change and is accepted. The client never sends `linkedFormId` unless the side is `organiser`. This
+  also removes an untyped 400 (the partner's own association does not own the organiser's form) that
+  broke a partner's plain text edit.
+- **One transaction, one lock.** `updateCalendarEvent`, `validateCalendarEvent` and
+  `rejectCalendarEvent` run inside `withEventLock`: a transaction that starts with
+  `SELECT ... FOR NO KEY UPDATE` on the event row, so every check is made AFTER the lock, on the row
+  as the previous writer committed it, and the form-link detach and the save are in the same
+  transaction. `NO KEY UPDATE` rather than `UPDATE`: it conflicts with every writer of the row but
+  not with the `FOR KEY SHARE` that inserts into the co-owner and proposal tables take through their
+  foreign keys (the co-organisation sync runs on its own connection while the lock is held). The lock
+  order is always the event row, then associations. Notifications go out after the commit. The
+  partner-list `sync` stays outside the transaction (its proposals have their own); `check` ran
+  inside, so every refusal still precedes every write.
 - **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
-  delete), the allowed text and poster, the withdrawal, and the platform-admin and validator rights;
+  delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock);
   `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.
 
 ### D40 - the anonymous agenda per selection, as built (2026-10-05)

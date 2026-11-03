@@ -180,7 +180,18 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    */
   async sync(request: CoOrganiserSyncRequest): Promise<void> {
     const { eventId, actorId } = request;
-    const { toPropose, toEnd } = await this.plan(request);
+    const { toPropose, toEnd, refusedAgain } = await this.plan(request);
+    // Logged HERE and not in plan(): the form save runs check() and then sync(), and the same
+    // decision must not be written twice.
+    this.logger.debug(
+      `[COORG] sync ${eventId.slice(0, 8)} by ${actorId.slice(0, 8)} (organiserSide=${request.organiserSide}): ` +
+        `propose=${toPropose.length} end=${toEnd.length} refusedAgain=${refusedAgain.length}`
+    );
+    if (refusedAgain.length > 0) {
+      this.logger.log(
+        `[COORG] ${eventId.slice(0, 8)}: ${refusedAgain.length} refused co-organiser(s) not asked again`
+      );
+    }
     if (toEnd.length > 0) {
       await this.coOwnerRepo.manager.transaction(async (manager) => {
         for (const state of toEnd) {
@@ -212,7 +223,7 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    */
   private async plan(
     request: CoOrganiserSyncRequest
-  ): Promise<{ toPropose: string[]; toEnd: CoOrganiserView[] }> {
+  ): Promise<{ toPropose: string[]; toEnd: CoOrganiserView[]; refusedAgain: string[] }> {
     const { eventId, organiserId, actorId } = request;
     const states = await this.listStates(eventId);
     const byId = new Map(states.map((s) => [s.associationId, s]));
@@ -220,15 +231,6 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
     const toPropose = [...desired].filter((id) => !byId.has(id));
     const refusedAgain = [...desired].filter((id) => byId.get(id)?.status === 'refused');
     const toEnd = states.filter((s) => s.status !== 'refused' && !desired.has(s.associationId));
-    this.logger.debug(
-      `[COORG] sync ${eventId.slice(0, 8)} by ${actorId.slice(0, 8)} (organiserSide=${request.organiserSide}): ` +
-        `propose=${toPropose.length} end=${toEnd.length} refusedAgain=${refusedAgain.length}`
-    );
-    if (refusedAgain.length > 0) {
-      this.logger.log(
-        `[COORG] ${eventId.slice(0, 8)}: ${refusedAgain.length} refused co-organiser(s) not asked again`
-      );
-    }
     // THE CAP (2026-10-10): accepted + pending after this save, a refused one holding nothing. Only
     // an ADDITION is refused, so an event already over the cap may still be edited and shrunk
     // (none exists on prod, measured 2026-10-10; the rule is cheap and never destroys).
@@ -251,7 +253,7 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         throw partnerOrganiserOnlyRefusal('coOwnerIds');
       }
     }
-    return { toPropose, toEnd };
+    return { toPropose, toEnd, refusedAgain };
   }
 
   /** Withdraws a pending co-organiser, or ends an accepted one, inside `manager`'s transaction. */

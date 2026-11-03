@@ -796,11 +796,43 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(new Date(after.startsAt)).toEqual(new Date(before.startsAt));
     });
 
-    it('the POSTER belongs to a partner: its routes ask assertMayWriteEvent, which a partner passes', async () => {
-      await expect(associations.assertMayWriteEvent('coEd', false, A3, P)).resolves.toMatchObject({
-        isGlobalAdmin: false,
-        isBde: false,
-      });
+    it('the POSTER belongs to a partner: it sets and clears the poster through the service, the status untouched', async () => {
+      // The media-service round trip is the one thing replaced; everything the service decides runs.
+      const media = associations as unknown as Record<string, (...a: unknown[]) => unknown>;
+      const upload = jest
+        .spyOn(media, 'uploadLogoToMedia')
+        .mockResolvedValue('media-partner' as never);
+      const cleanup = jest
+        .spyOn(media, 'deleteMediaBestEffort')
+        .mockResolvedValue(undefined as never);
+      try {
+        const tier = await associations.assertMayWriteEvent('coEd', false, A3, P);
+        expect(tier.side).toBe('partner');
+        const posterOf = async () =>
+          (
+            (await q(
+              `SELECT "imageMediaId", status FROM association_calendar_events WHERE id = $1`,
+              [P]
+            )) as { imageMediaId: string | null; status: string }[]
+          )[0];
+
+        await associations.setEventImageFromUpload(
+          A3,
+          P,
+          { buffer: Buffer.from('png'), mimetype: 'image/png', size: 3 },
+          'Bearer t',
+          tier
+        );
+        expect(await posterOf()).toEqual({ imageMediaId: 'media-partner', status: 'validated' });
+
+        await associations.clearEventImage(A3, P, 'Bearer t', tier);
+        expect(await posterOf()).toEqual({ imageMediaId: null, status: 'validated' });
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(cleanup).toHaveBeenCalledTimes(1);
+      } finally {
+        upload.mockRestore();
+        cleanup.mockRestore();
+      }
     });
 
     it('a partner may WITHDRAW: its rights and reach go, the event stays with its organiser', async () => {
@@ -811,21 +843,144 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     });
 
     it('a platform admin and a governing validator keep their rights through the partner route', async () => {
-      await associations.updateCalendarEvent(
-        A3,
-        D,
-        { startsAt: '2026-07-03T18:00:00.000Z' },
-        { isGlobalAdmin: true }
+      // A REAL governing validator: VALIDATE_EVENTS in the BDE of the space the organiser reaches
+      // (A4 is made the BDE of ICM x saint-etienne, which A1's default audience reaches), so the
+      // tier comes from mayValidateEvent and not from a hand-passed flag.
+      await q(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'ICM' AND campus = 'saint-etienne'`,
+        [A4]
       );
-      await associations.updateCalendarEvent(
-        A3,
-        D,
-        { startsAt: '2026-07-04T18:00:00.000Z' },
-        { isBde: true }
+      await q(
+        `INSERT INTO association_members ("associationId", "userId", role, permissions) VALUES ($1, 'bdeVal', 'admin', $2)`,
+        [A4, AssociationPermissionFlag.VALIDATE_EVENTS]
       );
-      expect(new Date((await stored(D)).startsAt).toISOString()).toBe('2026-07-04T18:00:00.000Z');
-      await associations.deleteCalendarEvent(A3, D, { isGlobalAdmin: true });
-      expect(await q(`SELECT 1 FROM association_calendar_events WHERE id = $1`, [D])).toEqual([]);
+      try {
+        await associations.updateCalendarEvent(
+          A3,
+          D,
+          { startsAt: '2026-07-03T18:00:00.000Z' },
+          { isGlobalAdmin: true }
+        );
+        const tier = await associations.assertMayWriteEvent('bdeVal', false, A3, D);
+        expect(tier).toEqual({ isGlobalAdmin: false, isBde: true, side: 'organiser' });
+        await associations.updateCalendarEvent(
+          A3,
+          D,
+          { startsAt: '2026-07-04T18:00:00.000Z' },
+          { isBde: tier.isBde, callerUserId: 'bdeVal' }
+        );
+        expect(new Date((await stored(D)).startsAt).toISOString()).toBe('2026-07-04T18:00:00.000Z');
+        await associations.deleteCalendarEvent(A3, D, { isGlobalAdmin: true });
+        expect(await q(`SELECT 1 FROM association_calendar_events WHERE id = $1`, [D])).toEqual([]);
+      } finally {
+        await q(`DELETE FROM association_members WHERE "userId" = 'bdeVal'`);
+        await q(`UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1`, [A4]);
+      }
     });
+
+    it("the FORM LINK is the organiser's: a partner keeps the link through a text edit and cannot change it", async () => {
+      const forms = ds.getRepository(Form);
+      const organiserForm = await forms.save(
+        forms.create({
+          title: 'Organiser form',
+          associationId: A1,
+          ownerId: 'org',
+        } as Partial<Form>)
+      );
+      const partnerForm = await forms.save(
+        forms.create({ title: 'Partner form', associationId: A3, ownerId: 'coEd' } as Partial<Form>)
+      );
+      await q(`UPDATE association_calendar_events SET "linkedFormId" = $2 WHERE id = $1`, [
+        P,
+        organiserForm.id,
+      ]);
+      const link = async () =>
+        (
+          (await q(`SELECT "linkedFormId" FROM association_calendar_events WHERE id = $1`, [
+            P,
+          ])) as {
+            linkedFormId: string | null;
+          }[]
+        )[0].linkedFormId;
+
+      // A text edit, with and without the unchanged link resent: the pre-fix 400 ("Form must belong
+      // to this association") broke exactly this, and the link survives it.
+      await associations.updateCalendarEvent(
+        A3,
+        P,
+        { title: 'Edited beside a linked form' },
+        { callerUserId: 'coEd' }
+      );
+      await associations.updateCalendarEvent(
+        A3,
+        P,
+        { title: 'Edited again', linkedFormId: organiserForm.id },
+        { callerUserId: 'coEd' }
+      );
+      expect((await stored(P)).title).toBe('Edited again');
+      expect(await link()).toBe(organiserForm.id);
+
+      // Detaching it, and swapping it for its own form, are the organiser's: typed 403, link intact.
+      for (const linkedFormId of [null, '', partnerForm.id]) {
+        await expect(
+          associations.updateCalendarEvent(
+            A3,
+            P,
+            { title: 'Not saved', linkedFormId },
+            { callerUserId: 'coEd' }
+          )
+        ).rejects.toMatchObject(PARTNER_ONLY);
+      }
+      expect(await link()).toBe(organiserForm.id);
+      expect((await stored(P)).title).toBe('Edited again');
+    });
+
+    it('an edit and a validation of the same event are SERIALISED: the validation waits for the edit and keeps it', async () => {
+      const I = E(24);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Before the edit', '2026-07-10T18:00:00Z', 'org', 'pending')`,
+        [I, A1]
+      );
+      // The hook sits BETWEEN the edit's checks and its save: it starts the concurrent validation
+      // and returns only once the database reports that statement WAITING on a lock. No sleep:
+      // the loop ends on that observable condition, which is the proof the two cannot interleave.
+      let validating: Promise<unknown> | null = null;
+      const realCheck = coorg.check.bind(coorg);
+      const check = jest.spyOn(coorg, 'check').mockImplementation(async (request) => {
+        await realCheck(request);
+        validating = associations.validateCalendarEvent(A1, I, 'validator');
+        for (;;) {
+          const waiting = (await q(
+            `SELECT 1 FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'
+                AND query LIKE '%association_calendar_events%FOR NO KEY UPDATE%'`
+          )) as unknown[];
+          if (waiting.length > 0) return;
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      });
+      try {
+        await associations.updateCalendarEvent(
+          A1,
+          I,
+          { title: 'After the edit', coOwnerIds: [] },
+          { callerUserId: 'org' }
+        );
+        await validating;
+      } finally {
+        check.mockRestore();
+      }
+      const [row] = (await q(
+        `SELECT title, status, "validatedBy" FROM association_calendar_events WHERE id = $1`,
+        [I]
+      )) as { title: string; status: string; validatedBy: string | null }[];
+      // Both writes survive, in order: the edit's title AND the validation's status.
+      expect(row).toEqual({
+        title: 'After the edit',
+        status: 'validated',
+        validatedBy: 'validator',
+      });
+    }, 30_000);
   });
 });

@@ -197,7 +197,10 @@ export function toUpdatePayload(
       ? { coOwnerIds: values.coOwnerIds }
       : {}),
     ...(caps.canSetKind ? { kind: values.kind } : {}),
-    ...(caps.canLinkForm ? { linkedFormId: values.linkedFormId.trim() || null } : {}),
+    // The form link is the organiser's too (D39, E2): a partner's save carries text only.
+    ...(caps.canLinkForm && values.writeSide === 'organiser'
+      ? { linkedFormId: values.linkedFormId.trim() || null }
+      : {}),
   };
 }
 
