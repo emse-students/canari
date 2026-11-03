@@ -61,12 +61,17 @@ export class PostInteractionsService {
     return out;
   }
 
-  /** Sets or replaces the reaction emoji for a user on a post (one reaction per user). */
-  async addReaction(postId: string, userId: string, reactionType: string) {
+  /**
+   * Sets or replaces the reaction emoji for a user on a post (one reaction per user).
+   *
+   * @param opened the row the route's gate (`PostsService.assertVisible`) just loaded, so the post
+   *   is read once per reaction; read here when absent.
+   */
+  async addReaction(postId: string, userId: string, reactionType: string, opened?: Post) {
     if (isUnsafeObjectKey(userId)) {
       throw new BadRequestException('Invalid userId');
     }
-    const post = await this.postRepo.findOne({ where: { id: postId } });
+    const post = opened ?? (await this.postRepo.findOne({ where: { id: postId } }));
     // A reel past its expiry is dead to every reader until the worker removes it; a reaction on it
     // would be content nobody can ever see.
     if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
@@ -309,9 +314,21 @@ export class PostInteractionsService {
         }
       }
 
-      // Mention notifications
+      // Mention notifications - only to who may open the post, with no block with the writer: the
+      // read's gate (`mentionRecipientsOf`), so a mention never pushes this text past it.
       if (data.text) {
-        const mentionedIds = this.notifications.resolveMentionedUserIds(data.text);
+        let mentionedIds: string[] = [];
+        try {
+          mentionedIds = await this.notifications.mentionRecipientsOf(
+            post,
+            data.userId,
+            this.notifications
+              .resolveMentionedUserIds(data.text)
+              .filter((id) => !alreadyNotified.has(id))
+          );
+        } catch (e) {
+          this.logger.warn(`[NOTIFY] mention recipients of post=${postId} unreadable`, e);
+        }
         for (const recipientId of mentionedIds) {
           if (alreadyNotified.has(recipientId)) continue;
           alreadyNotified.add(recipientId);
