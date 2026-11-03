@@ -1,8 +1,7 @@
 <script lang="ts" module>
-  /** Where the bar's state stands - `failed` is what hands the bottom back to the web bar. */
-  export const nativeTabBar = $state<{ status: 'pending' | 'native' | 'failed' }>({
-    status: 'pending',
-  });
+  // The state lives in its own module so a reader of the fact never imports this component's graph.
+  import { nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
+  export { nativeTabBar };
 </script>
 
 <script lang="ts">
@@ -28,6 +27,7 @@
   import { classColorHex, lucideIconPng, TAB_ICON_CLASSES } from '$lib/mobile/nativeTabIcons';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { Log } from '$lib/utils/Log';
+  import { registerGuideRegion } from '$lib/guidance/guideAnchors.svelte';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
@@ -128,8 +128,12 @@
   const activePlaceId = $derived(resolveActivePlaceId(page.url.pathname));
   const shown = $derived(visible && !wide);
 
+  /** The band the bar covers at the bottom of the viewport, as the plugin last measured it. */
+  let insetPx = $state(0);
+
   async function publishInsets() {
     const { bottom } = await getTabBarInsets();
+    insetPx = bottom;
     document.documentElement.style.setProperty('--bottom-nav-reserve', `${bottom}px`);
     Log.d('NativeTabBar', `bottom inset ${bottom}px`);
   }
@@ -214,6 +218,26 @@
     if (tintedForDark === dark) return;
     tintedForDark = dark;
     void configure().catch(logFailure('re-colour'));
+  });
+
+  /**
+   * THE TABS A GUIDED TOUR POINTS AT (docs/wiki/frontend/guided-help.md). They are drawn above the
+   * WebView, so no page element is a tab: each place registers the BAND the bar covers, under the id
+   * the web bar's tab carries (`nav.<place>`), and the bubble's icon names which tab it means. The
+   * plugin gives the band's height, not where each item sits - a slice per item would be a guess
+   * about the iOS 26 floating pill. Registered only while the bar is on screen.
+   */
+  $effect(() => {
+    if (nativeTabBar.status !== 'native' || !shown || insetPx <= 0) return;
+    const band = insetPx;
+    const rect = () => ({
+      left: 0,
+      top: window.innerHeight - band,
+      width: window.innerWidth,
+      height: band,
+    });
+    const releases = MOBILE_NAV_PLACES.map((p) => registerGuideRegion(`nav.${p.id}`, rect));
+    return () => releases.forEach((release) => release());
   });
 
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.

@@ -75,10 +75,11 @@ export class FormsController {
   /**
    * Association agenda entry linked to this form, if configured.
    *
-   * PUBLIC BY INTENT, and it says so here because nothing else would: it is read by the public
-   * association page, which renders for a signed-out visitor. It answers one agenda entry and
-   * never the form's contents - `GET :id` is the guarded route for those.
+   * Signed-in only since 2026-11-02: the app renders no association page for a signed-out visitor,
+   * and the public showcase shows no agenda
+   * ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
    */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/calendar-link')
   async getFormCalendarLink(@Param('id', ParseUUIDPipe) id: string) {
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id);

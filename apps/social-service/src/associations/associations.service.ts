@@ -160,6 +160,7 @@ import { assertAssociationImageUrl } from './association-image-url';
 import type { CoOrganiserPort } from './co-organisers.port';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
+import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -1355,11 +1356,16 @@ export class AssociationsService {
 
   /**
    * Public members list for the read-only showcase (portail-etu vitrine).
-   * Never exposes the raw permission bitmask - only a coarse `isAdmin` flag -
-   * and joins the users mirror for display name and promo. Ordered like the
-   * public members grid (sortOrder, then createdAt).
+   *
+   * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
+   * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
+   * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
+   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
+   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * Ordered like the public members grid (sortOrder, then createdAt). See
+   * docs/wiki/anonymous-surface.md.
    */
-  async listMembersPublic(associationId: string) {
+  async listMembersPublic(associationId: string): Promise<PublicMember[]> {
     const rows = await this.memberRepo
       .createQueryBuilder('m')
       .select(['m.id', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
@@ -1388,7 +1394,49 @@ export class AssociationsService {
         lastName: r.lastName || null,
         promo: r.promo ?? null,
         createdAt: r.m_createdAt,
+        avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
+  }
+
+  /**
+   * The account behind one row of a PUBLIC roster, for the showcase's photo
+   * (`GET /api/public/members/:memberId/avatar`), or `null` when the id names no row or names a
+   * review account (which has no public face, review-cohort.ts). A malformed id is a miss, never a
+   * 500: the id comes from the URL.
+   */
+  async publicMemberUserId(memberId: string): Promise<string | null> {
+    if (!isUUID(memberId)) return null;
+    const row = await this.memberRepo.findOne({
+      where: { id: memberId },
+      select: { userId: true },
+    });
+    if (!row || isInReviewCohort(row.userId)) {
+      this.logger.debug(`[PUBLIC_AVATAR] no public roster row ${memberId.slice(0, 8)}`);
+      return null;
+    }
+    return row.userId;
+  }
+
+  /**
+   * The photo URL of each card of the published carte, keyed `assoId:userId`, for the cards that
+   * are still on that association's roster - the same address the public roster hands out, so the
+   * showcase reaches a carte face and a roster face the same way. A card whose person left the
+   * association gets none: they are no longer on a public roster.
+   */
+  async publicAvatarUrlsFor(
+    pairs: { associationId: string; userId: string }[]
+  ): Promise<Map<string, string>> {
+    const wanted = pairs.filter((p) => isUUID(p.associationId) && p.userId);
+    if (wanted.length === 0) return new Map();
+    const rows = await this.memberRepo.find({
+      where: wanted.map((p) => ({ associationId: p.associationId, userId: p.userId })),
+      select: { id: true, associationId: true, userId: true },
+    });
+    return new Map(
+      rows
+        .filter((r) => !isInReviewCohort(r.userId))
+        .map((r) => [`${r.associationId}:${r.userId}`, publicMemberAvatarUrl(r.id)])
+    );
   }
 
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */

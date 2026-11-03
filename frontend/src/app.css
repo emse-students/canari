@@ -37,6 +37,9 @@
   --color-cn-tooltip: #242424;
   --color-cn-yellow: var(--cn-yellow);
   --color-cn-yellow-hover: var(--cn-yellow-hover);
+  /* The guided help's accent ink - its step icon and swipe mime, on the popover. The brand's dark
+     ink in light, its yellow in dark: one token, so no component spells a dark variant. */
+  --color-guide-ink: var(--guide-ink);
   --color-cn-bg: var(--cn-bg);
   /* Panel/card background. Exposed as a utility (`bg-cn-surface`) so components stop
      hardcoding `bg-white`, which never flips and turns text-on-surface unreadable in dark. */
@@ -267,6 +270,12 @@
   --z-side-panel: 260;
 
   --z-modal: 280;
+  /* The guided help (`GuideOverlay`): coach marks over the real interface. A rung of its own, one
+     over the modal it must never be confused with - it only starts on a QUIET app (no modal, sheet,
+     call, viewer or PIN lock open), and when one opens over it the help is suspended, not drawn
+     under it, so the rung decides nothing against them; above the drawer, the rail and the banner
+     column it points at. Under `--z-modal-popover` and everything above. */
+  --z-guide: 285;
   /* A dropdown opened from INSIDE a modal, portalled out of it so nothing can clip it. It has to
      clear the modal it belongs to, which is the whole reason it is a rung of its own. */
   --z-modal-popover: 290;
@@ -323,6 +332,7 @@
   /* THE TWO LINES THAT DO NOT MOVE, IN EITHER THEME. */
   --cn-yellow: #f6c232;
   --cn-yellow-hover: #e4af1b;
+  --guide-ink: var(--cn-dark);
   /* AVATAR PLACEHOLDER PALETTE (user, 2026-10-30, Telegram-style): eight hues, a diagonal pair of
      stops each, picked by `avatarHueIndex(id)`. THEME-INDEPENDENT ON PURPOSE: the initials are
      white on every hue in both themes, so the stops are the same in light and dark. Every stop keeps
@@ -464,6 +474,7 @@
   --cn-dark: #e4e6eb;
   --cn-yellow: #ffd45d;
   --cn-yellow-hover: #ffe082;
+  --guide-ink: var(--cn-yellow);
   /* DARKER THAN THE REFERENCE, ON PURPOSE (user, 2026-09-08: OLED). Messenger measures #1f1f1f /
      #2e2e2e / #3e4042, and on an OLED panel every one of those keeps the whole screen lit. True
      black switches the pixels OFF, which is both the power saving and the reason blacks look
@@ -699,6 +710,88 @@ img[src^='/emoji/'] {
 /* One new item arriving in a list that is already on screen. */
 .motion-pop-in {
   animation: motionPopIn var(--motion-base) var(--motion-ease-out);
+}
+
+/* THE GUIDED HELP (`components/guidance/GuideOverlay.svelte`, docs/wiki/frontend/guided-help.md).
+   The spotlight is a box over the target: on a tour its giant spread shadow is the scrim, so the
+   target is the one undimmed hole in it; on a hint it carries the ring alone. It GLIDES from one
+   control to the next (a transform, on the motion scale), its ring breathes, and the
+   gesture mime slides - every one of them stopped by the global reduced-motion rule, and the two
+   infinite ones are not even started there (`data-pulse` / `data-play` are left off). */
+/* Placed by a TRANSFORM, never by left/top/width/height: the move between steps glides on the
+   compositor, and while the page scrolls (`data-tracking`, set by the overlay) there is no
+   transition at all - the spotlight follows the target frame by frame instead of lagging it. */
+.guide-spotlight {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+  transition:
+    transform var(--motion-slow) var(--motion-ease-out),
+    width var(--motion-slow) var(--motion-ease-out),
+    height var(--motion-slow) var(--motion-ease-out);
+}
+
+.guide-spotlight[data-tracking],
+.guide-bubble[data-tracking] {
+  transition: none;
+}
+
+.guide-spotlight[data-dim] {
+  box-shadow: 0 0 0 200vmax color-mix(in srgb, var(--color-cn-scrim) 55%, transparent);
+}
+
+.guide-spotlight-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0.125rem var(--cn-yellow);
+}
+
+.guide-spotlight-ring[data-pulse] {
+  animation: guideHalo 1.8s var(--motion-ease-out) infinite;
+}
+
+@keyframes guideHalo {
+  0% {
+    box-shadow:
+      0 0 0 0.125rem var(--cn-yellow),
+      0 0 0 0 color-mix(in srgb, var(--cn-yellow) 60%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0.125rem var(--cn-yellow),
+      0 0 0 0.875rem transparent;
+  }
+}
+
+.guide-bubble {
+  left: 0;
+  top: 0;
+  transition: transform var(--motion-slow) var(--motion-ease-out);
+}
+
+.guide-swipe-mime {
+  display: inline-flex;
+}
+
+.guide-swipe-mime[data-play] {
+  animation: guideSwipe 1.6s var(--motion-ease-out) infinite;
+}
+
+@keyframes guideSwipe {
+  0% {
+    transform: translateX(-1rem);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(1rem);
+    opacity: 0;
+  }
 }
 
 /* Press feedback on a control: a shrink on touch, back on release. It restates the colour
