@@ -98,10 +98,21 @@ export function assertWithinGrantCeiling(
 }
 
 /**
- * THE AUDIT LINE of a BDE super-admin writing a row that carries a right the BDE role does not
- * inherit (`SUPER_ADMIN_EXCLUDED_FLAGS`): at INFO, naming the association and the flags, never a
- * user. Logged only for a granter that is a super-admin of the association and not the platform
- * administrator, and only for an excluded bit the write ADDS.
+ * The rights whose grant BY A BDE SUPER-ADMIN is audited: the two the BDE role does not inherit
+ * (`SUPER_ADMIN_EXCLUDED_FLAGS`), plus `MANAGE_PRODUCTS`. That one IS inherited, but holding it on an
+ * explicit row is what makes its holder one of the association's OWN managers - the standing that
+ * accepts a list's payment delegation (owner rule: acceptance belongs to the receiver's managers).
+ * A super-admin seating itself with it is therefore a visible act, like the other two. Auditing
+ * changes nothing about who may grant it.
+ */
+export const SUPER_ADMIN_AUDITED_GRANTS =
+  SUPER_ADMIN_EXCLUDED_FLAGS | AssociationPermissionFlag.MANAGE_PRODUCTS;
+
+/**
+ * THE AUDIT LINE of a BDE super-admin writing a row that carries a right in
+ * `SUPER_ADMIN_AUDITED_GRANTS`: at INFO, naming the association and the flags, never a user. Logged
+ * only for a granter that is a super-admin of the association and not the platform administrator,
+ * and only for an audited bit the write ADDS.
  */
 export function logSuperAdminExcludedGrant(
   logger: Logger,
@@ -111,7 +122,7 @@ export function logSuperAdminExcludedGrant(
   ctx: { associationId: string; what: string }
 ): void {
   if (standing.isGlobalAdmin || !standing.isSuperAdminOf) return;
-  const granted = after & ~before & SUPER_ADMIN_EXCLUDED_FLAGS;
+  const granted = after & ~before & SUPER_ADMIN_AUDITED_GRANTS;
   if (granted === 0) return;
   logger.log(
     `[MEMBER-CEILING] ${ctx.what}: a BDE super-admin granted ${flagNames(granted).join('|')} on association ${ctx.associationId}`

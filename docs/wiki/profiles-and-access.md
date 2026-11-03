@@ -643,8 +643,9 @@ the grid gives an association a reach outside its BDE's spaces.
 the associations it governs except `SUPER_ADMIN_EXCLUDED_FLAGS` (`POST_AS_ASSO`,
 `MANAGE_PAYOUT_ACCOUNT`), but it may WRITE any flag into a membership row, its own included: a BDE
 officer is often the president of another association and seats themself there with full rights.
-Only an explicit row carries the two excluded rights, and every super-admin write that grants one is
-logged at info with the association and the flag names. An ordinary member holding `MANAGE_MEMBERS`
+Only an explicit row carries the two excluded rights, and every super-admin write that grants one -
+or `MANAGE_PRODUCTS`, whose explicit row is what accepts a list's payment delegation - is logged at
+info with the association and the flag names. An ordinary member holding `MANAGE_MEMBERS`
 is capped at its own flags, granting, revoking and removing alike (leaving stays free)
 ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 

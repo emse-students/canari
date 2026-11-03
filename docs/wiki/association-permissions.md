@@ -247,7 +247,11 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   WRITE them into a row, its own included - a BDE officer is often another association's president.
   Only an explicit row carries them, and every super-admin write that grants one is logged at info
   (`[MEMBER-CEILING] ... a BDE super-admin granted <FLAGS> on association <id>`, no user id), after
-  the write lands.
+  the write lands. **`MANAGE_PRODUCTS` is audited the same way** (`SUPER_ADMIN_AUDITED_GRANTS`,
+  from the review of #2967): the tier inherits it, but an explicit row of it makes its holder one of
+  the association's OWN managers, the standing that accepts a list's payment delegation - so a
+  super-admin seating itself with it is a visible act. Auditing changes nothing about who may grant
+  it.
 - **An institution has no governing BDE** (owner, 2026-11-02): `holdsBdeFlagOverSql` never holds
   over an association of type `institution`, so neither the super-admin tier (`mayAct`,
   `mayActOnAny`, `DELETE :id`, the archive at `MANAGE_MEMBERS`) nor event validation reaches one,

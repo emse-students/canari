@@ -27,6 +27,7 @@ const {
   MANAGE_FORMS,
   MANAGE_DOCUMENTS,
   MANAGE_PAYOUT_ACCOUNT,
+  MANAGE_PRODUCTS,
   MANAGE_ASSO,
 } = AssociationPermissionFlag;
 
@@ -193,6 +194,9 @@ describe('AssociationsService - the grant ceiling on a member write', () => {
   it.each([
     ['POST_AS_ASSO', POST_AS_ASSO],
     ['MANAGE_PAYOUT_ACCOUNT', MANAGE_PAYOUT_ACCOUNT],
+    // Not excluded from inheritance, but an explicit row of it makes its holder one of the
+    // association's own managers - the standing that accepts a list's payment delegation.
+    ['MANAGE_PRODUCTS', MANAGE_PRODUCTS],
   ])('lets a super-admin grant itself %s, and audits it with no user id', async (name, flag) => {
     const { service, update } = makeService([
       superAdmin,
@@ -245,7 +249,9 @@ describe('AssociationsService - the grant ceiling on a member write', () => {
     expect(created).toHaveBeenCalledWith(
       expect.objectContaining({ permissions: ALL_PERMISSION_FLAGS })
     );
-    expect(auditLines()).toEqual([expect.stringContaining('POST_AS_ASSO|MANAGE_PAYOUT_ACCOUNT')]);
+    expect(auditLines()).toEqual([
+      expect.stringContaining('POST_AS_ASSO|MANAGE_PRODUCTS|MANAGE_PAYOUT_ACCOUNT'),
+    ]);
   });
 
   it('writes no audit line for a super-admin granting an administration flag', async () => {
