@@ -119,7 +119,7 @@ export const LIVE_ENABLED = true;
  * - `android: true` - the service's `onWakePush` takes it.
  * - `ios: false` - **the owner's order of 2026-11-02**: the wake push goes on in production for
  *   Android ONLY until the iOS "notifications without content" P1 is closed
- *   (docs/wiki/backlog.d/p1-ios-notifications-show-no-content.md); the wake would make the
+ *   (its backlog entry was withdrawn by the owner on 2026-11-03); the wake would make the
  *   extension the only source of content and hide that measurement behind a second cause. The
  *   handlers (`handleWake`, `CanariHandleWakeBackgroundFrame`) are built and stay built; turning
  *   iOS on is this one value and a store build.
