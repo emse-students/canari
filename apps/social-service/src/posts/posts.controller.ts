@@ -413,33 +413,6 @@ export class PostsController {
     return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /**
-   * Pins a post to the top of the feed. Its moderators - a platform admin, or a BDE member holding
-   * MODERATE whose governed spaces hold the post (2026-11-02) - the tier `canPin` is drawn from.
-   */
-  @UseGuards(NginxAuthGuard)
-  @Patch(':postId/pin')
-  async pinPost(
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
-    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
-    return this.service.setPinned(postId, true);
-  }
-
-  /** Unpins a post. Same tier as pinning. */
-  @UseGuards(NginxAuthGuard)
-  @Patch(':postId/unpin')
-  async unpinPost(
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
-    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
-    return this.service.setPinned(postId, false);
-  }
-
   /** Clears the anonymous flag on a post, revealing its author again. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/unmask')
