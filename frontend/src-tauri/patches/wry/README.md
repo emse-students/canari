@@ -3,7 +3,9 @@
 > callback, plus a `log` dependency in `Cargo.toml`: the main-thread message channel is UNBOUNDED
 > (upstream `bounded(8)` deadlocked the main thread sending into a channel only the main thread
 > drains - Play ANR `f51255a5a831e715b4fc8d976e87be11`) and its wake pipe's write end non-blocking;
-> nothing in the looper callback can panic into its `abort_on_panic` any more - `get_webview` answers
+> the only panic left in the looper callback is deliberate - a dead wake pipe (end of file or a read
+> error) aborts on purpose, owner decision 2026-11-03, so Play reports a crash instead of a silently
+> frozen UI - and nothing else there can panic into `abort_on_panic`: `get_webview` answers
 > `None` for a destroyed activity (Play crash `e3697bc4ad55d069ebb94d3d4a528c34`) and replies go
 > through a logging `reply` instead of `unwrap`; the drain no longer unregisters itself on one failed
 > message or an EINTR read, handles at most the `len()` it read on entry, and clears a pending Java

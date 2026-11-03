@@ -364,8 +364,9 @@ reading below.
    sender. **And expect** no `SIGABRT` line and the process still alive.
 4. Reopen the app from the launcher. **Expect** the conversation to load normally, no `ANR in
    fr.emse.canari`, and no other `[WRY_MAIN_PIPE]` line - `failed`, `left a Java exception
-   pending`, `stopped waiting`, `no longer drained` each name a defect, with the Java stack just above
-   for an exception.
+   pending`, `stopped waiting` each name a defect, with the Java stack just above for an
+   exception; so do `the wake pipe reached end of file` and `the wake pipe read failed`, each followed
+   by a SIGABRT (the deliberate abort of a dead wake pipe, owner decision 2026-11-03).
 5. Repeat 2-4 five times (each destroyed activity logs its own one line), then
    `adb shell settings put global always_finish_activities 0`.
 
@@ -374,6 +375,10 @@ has served a fortnight, run `bun tools/play-vitals/vitals.mjs`; neither `f51255a
 `e3697bc4...` may show a report at or above that release's versionCode. Then add both to
 `tools/play-vitals/known-issues.json` (the merge commit, and that versionCode as
 `fixedInVersionCode`), so any later report reads as a REGRESSION.
+
+Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both being a SIGABRT from the
+looper callback, so read the frames below `cb_handler`: an `onFirstActivityCreateWry` closure means
+a dead pipe (the owner-decided abort); `get_webview` or `handle_message` means a real regression.
 
 ## The VoIP ring announces a video call as video - owed
 
