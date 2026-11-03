@@ -14,6 +14,7 @@ import {
   type AccountLiveness,
 } from './accountLocalWipe';
 import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
+import { isDeletedAccountHere } from './deletedAccountMarker';
 
 /** Nobody signed in here but `liveId`, and no sign-in in flight. */
 function settledAs(liveId: string | null): AccountLiveness {
@@ -111,6 +112,14 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(order.join(' ')).not.toContain('CanariDBLog');
   });
 
+  it("a revoked device's account wipe does not mark the account deleted - it may sign in here again", async () => {
+    // Round 6 of the review of #2919: the wipe of ONE account of a revoked device another account uses.
+    await wipeDeletedAccountLocalData('user-c', { ...AFTER_DELETE, accountStillExists: true });
+    expect(isDeletedAccountHere('user-c')).toBe(false);
+    await wipeDeletedAccountLocalData('user-d', AFTER_DELETE);
+    expect(isDeletedAccountHere('user-d')).toBe(true);
+  });
+
   it("drops that account's vault slot and leaves another account's, and the preferences", async () => {
     localStorage.setItem('canari_theme', 'dark');
     await saveDeviceKey('user-a', KEY_A);
@@ -126,7 +135,9 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(4);
+    expect(invokeMock).toHaveBeenCalledTimes(5);
+    // The account's MLS states - its parked one, and the slot only when its record names it.
+    expect(invokeMock).toHaveBeenCalledWith('delete_user_mls_state', { userId: 'user-a' });
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
     // And this account's waiting quick replies - its lines only, never the whole file.

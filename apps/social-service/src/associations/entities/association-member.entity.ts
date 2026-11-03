@@ -70,6 +70,12 @@ export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
  * - `POST_AS_ASSO` speaks in the association's name, which is an identity rather than a right over
  *   its data.
  *
+ * It is about INHERITANCE, never about granting (owner, 2026-11-02): the BDE role does not
+ * EXERCISE these two through `mayAct`, but a super-admin may still WRITE a membership row carrying
+ * them - itself included, since a BDE officer is often another association's president. Only an
+ * explicit row carries them, and every such super-admin write is logged for audit
+ * (`member-flag-ceiling.ts`).
+ *
  * This is the ONLY place the exception is written. It was previously an omission at two call sites
  * (`canPostAs`, `canManagePayoutAccount`), which is indistinguishable from a forgotten check.
  */

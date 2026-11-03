@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { imageSrcOrNull } from '$lib/utils/imageSrc';
@@ -114,6 +115,31 @@ export function mayActOnAssociation(
   if (ctx.isGlobalAdmin) return true;
   if (ctx.isSuperAdmin && (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0) return true;
   return hasPermissionFlag(ctx.memberPermissions ?? 0, flag);
+}
+
+/** Every flag the enum defines, OR-ed together. Mirrors the backend `ALL_PERMISSION_FLAGS`. */
+export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
+  .filter((value): value is AssociationPermissionFlag => typeof value === 'number')
+  .reduce<number>((mask, flag) => mask | flag, 0);
+
+/** The refusal of a member write that changes a flag the writer does not hold itself. */
+export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
+
+/**
+ * The flags the viewer may grant OR revoke on a member of one association - the client mirror of
+ * the server's `grantCeiling` (`member-flag-ceiling.ts`), so the editor never offers a box the
+ * server would refuse. Every flag for the platform administrator AND for this association's BDE
+ * super-admin (owner, 2026-11-02: a BDE officer may seat themself with full rights in an association
+ * they also run - `SUPER_ADMIN_EXCLUDED_FLAGS` is about what the tier EXERCISES, not what it may
+ * write into a row); otherwise the viewer's own row.
+ */
+export function grantableFlags(ctx: {
+  isGlobalAdmin: boolean;
+  isSuperAdmin: boolean;
+  memberPermissions?: number;
+}): number {
+  if (ctx.isGlobalAdmin || ctx.isSuperAdmin) return ALL_PERMISSION_FLAGS;
+  return (ctx.memberPermissions ?? 0) & ALL_PERMISSION_FLAGS;
 }
 
 /**
@@ -797,6 +823,24 @@ export async function listEventCoOrganisers(
   );
 }
 
+/**
+ * Which side the signed-in caller writes an event from (owner decision E2): `organiser`, or
+ * `partner` - an accepted co-organiser, who edits the text and the poster and may withdraw, but
+ * never changes the date or the partner list and never deletes. The SERVER's answer, from the rule
+ * it enforces on the write, so the form hides exactly what the write would refuse.
+ */
+export type EventWriteSide = 'organiser' | 'partner';
+
+/** `GET .../events/:eventId/write-side`: the side the caller writes the event from through `associationId`. */
+export async function getEventWriteSide(
+  associationId: string,
+  eventId: string
+): Promise<{ side: EventWriteSide }> {
+  return request<{ side: EventWriteSide }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/write-side`
+  );
+}
+
 export async function deleteAssociationCalendarEvent(
   associationId: string,
   eventId: string
@@ -1270,6 +1314,25 @@ export async function removeMember(
   invalidateMyAssociations();
   return result;
 }
+
+/**
+ * THE "QUITTER" BUTTON (owner, 2026-11-03): the signed-in user leaves the association. Acts on the
+ * caller's own row only. Refused with `SocialApiError.code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER`
+ * for its last holder of `MANAGE_MEMBERS`.
+ */
+export async function leaveAssociation(associationId: string): Promise<void> {
+  Log.d('associations.leave', { associationId });
+  await request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/members/me`,
+    { method: 'DELETE' }
+  );
+  invalidateMyAssociations();
+}
+
+/** The typed refusals of {@link leaveAssociation}, read from `SocialApiError.code`. */
+export const LEAVE_REFUSAL = {
+  LAST_MEMBER_MANAGER: 'ASSOCIATION_LAST_MEMBER_MANAGER',
+} as const;
 
 /** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
 export async function reorderMembers(associationId: string, userIds: string[]): Promise<void> {
@@ -3280,6 +3343,15 @@ export interface AudienceRule {
   campus: Campus | null;
 }
 
+/**
+ * A rule as the server hands it to its reader: `editable` is false for a BDE star when the rule
+ * exceeds the spaces it governs ("Lire tout, modifier dans ses espaces", owner 2026-11-03). The
+ * editor shows such a rule read-only and sends it back unchanged.
+ */
+export interface AudienceRuleView extends AudienceRule {
+  editable: boolean;
+}
+
 /** Lists every formation x campus space with its BDE. Global admins only. */
 export function listSpaces(): Promise<SpaceRow[]> {
   return request<SpaceRow[]>('/api/associations/spaces');
@@ -3289,8 +3361,8 @@ export function listSpaces(): Promise<SpaceRow[]> {
  * The audience rules of ONE association: a global admin's, or a BDE star's for an entity whose
  * rules lie within the campuses it governs (the server refuses the rest with a typed code).
  */
-export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
+export function getAssociationAudiences(associationId: string): Promise<AudienceRuleView[]> {
+  return request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`
   );
 }
@@ -3315,8 +3387,10 @@ export async function setSpaceBde(spaceId: string, associationId: string | null)
 export async function setAssociationAudiences(
   associationId: string,
   rules: AudienceRule[]
-): Promise<AudienceRule[]> {
-  const saved = await request<AudienceRule[]>(
+): Promise<AudienceRuleView[]> {
+  // The server answers in the read's shape (`editable` per rule), so a caller renders the write's
+  // own result and never needs a second read that could fail after the write has landed.
+  const saved = await request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`,
     { method: 'PUT', body: JSON.stringify({ rules }) }
   );
@@ -3344,8 +3418,9 @@ export interface AdminCataloguePage {
 export const ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN = 'ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN';
 
 /**
- * The `code` of a create whose institution first admin was asked to manage members: an
- * institution's members are the platform admin's alone (owner, 2026-11-02).
+ * The ONE refusal of the institution rule (owner, 2026-11-02): an institution's members are the
+ * platform admin's alone, so a member write on one by anyone else (403) and a write handing one of
+ * its members `MANAGE_MEMBERS` (400, the create form's first admin included) carry this `code`.
  */
 export const ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY =
   'ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY';

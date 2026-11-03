@@ -59,7 +59,13 @@ export interface EditRights {
   profile: boolean;
   /** A list's parent association: the platform admin's alone (`UPDATE_FIELD_RIGHTS`). */
   parent: boolean;
+  /** `MANAGE_MEMBERS`: the cotisations panel reads it; archiving is `archive`. */
   members: boolean;
+  /**
+   * Writing the roster (the `members` section): `members`, except on an institution, whose members
+   * are the platform admin's alone (D20, `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`).
+   */
+  memberRoster: boolean;
   documents: boolean;
   products: boolean;
   forms: boolean;
@@ -76,18 +82,25 @@ export interface EditRights {
 }
 
 /**
- * Every right the management sections read, from one context. `assoType` matters for exactly one
- * thing: an institution's audience is a global admin's alone (`AUDIENCE_INSTITUTION_ADMIN_ONLY`).
+ * Every right the management sections read, from one context. `assoType` matters for an
+ * institution, which no BDE MANAGES (owner, 2026-11-02 - the server's `holdsBdeFlagOverSql` never
+ * grants the tier over one; its events stay on the BDE's agenda, which these sections do not
+ * draw): the super-admin tier is dropped whatever the context says, and
+ * its roster and audience are the platform admin's alone (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
+ * `AUDIENCE_INSTITUTION_ADMIN_ONLY`). Its own members keep their flags.
  */
 export function editRights(
-  ctx: EditPermissionContext,
+  given: EditPermissionContext,
   assoType: Association['type'] = 'association'
 ): EditRights {
+  const ctx = assoType === 'institution' ? { ...given, isSuperAdmin: false } : given;
   const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, ctx);
+  const members = may(AssociationPermissionFlag.MANAGE_MEMBERS);
   return {
     profile: mayWriteFields(PROFILE_FORM_FIELDS, ctx),
     parent: mayWriteFields(['parentAssociationId'], ctx),
-    members: may(AssociationPermissionFlag.MANAGE_MEMBERS),
+    members,
+    memberRoster: assoType === 'institution' ? ctx.isGlobalAdmin : members,
     documents: may(AssociationPermissionFlag.MANAGE_DOCUMENTS),
     products: may(AssociationPermissionFlag.MANAGE_PRODUCTS),
     forms: may(AssociationPermissionFlag.MANAGE_FORMS),
@@ -98,7 +111,7 @@ export function editRights(
       may(AssociationPermissionFlag.POST_AS_ASSO) || may(AssociationPermissionFlag.PROPOSE_EVENT),
     payoutAccount: may(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT),
     archive: mayWriteFields(['archived'], ctx),
-    audience: ctx.isGlobalAdmin || (ctx.isSuperAdmin && assoType !== 'institution'),
+    audience: ctx.isGlobalAdmin || ctx.isSuperAdmin,
     delete: ctx.isGlobalAdmin || ctx.isSuperAdmin,
   };
 }
@@ -112,7 +125,7 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
     case 'profile':
       return true;
     case 'members':
-      return rights.members;
+      return rights.memberRoster;
     case 'payments':
       return rights.payoutAccount || rights.products;
     case 'documents':
@@ -222,6 +235,21 @@ export function adminPresetFor(kind: Association['type']): number {
 export function firstAdminPresetFor(kind: Association['type']): number {
   const preset = adminPresetFor(kind);
   return kind === 'institution' ? preset & ~AssociationPermissionFlag.MANAGE_MEMBERS : preset;
+}
+
+/**
+ * The flags the viewer may set on ONE member of `kind`, from what it may grant (`grantableFlags`)
+ * and what the member already `held`. An institution's member is never HANDED `MANAGE_MEMBERS` -
+ * the server's one institution rule, the same that shapes `firstAdminPresetFor` - but an older row
+ * holding it can still have it taken back.
+ */
+export function memberGrantable(
+  kind: Association['type'],
+  grantable: number,
+  held: number
+): number {
+  if (kind !== 'institution') return grantable;
+  return grantable & ~(AssociationPermissionFlag.MANAGE_MEMBERS & ~held);
 }
 
 /** Whether `kind` has `section` at all, whatever the reader's rights. */

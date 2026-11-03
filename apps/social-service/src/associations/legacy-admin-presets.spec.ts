@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import {
   ALL_CORE_FLAGS,
+  ALL_PERMISSION_FLAGS,
   AssociationPermissionFlag as F,
 } from './entities/association-member.entity';
 import { LEGACY_ADMIN_PRESETS, withLegacyEditProfile } from './legacy-admin-presets';
@@ -28,14 +29,24 @@ describe('legacy admin presets (shim until 2027-05-03)', () => {
   it('adds EDIT_PROFILE to an exact old preset, and logs the legacy match', () => {
     const debug = jest.spyOn(logger, 'debug').mockImplementation(() => undefined);
     for (const mask of LEGACY_ADMIN_PRESETS) {
-      expect(withLegacyEditProfile(logger, mask, 'addMember')).toBe(mask | F.EDIT_PROFILE);
+      expect(withLegacyEditProfile(logger, mask, ALL_PERMISSION_FLAGS, 'addMember')).toBe(
+        mask | F.EDIT_PROFILE
+      );
     }
     expect(debug).toHaveBeenCalledWith(expect.stringContaining('[LEGACY] addMember'));
   });
 
+  // The member-flag ceiling (#2949): the shim never grants a bit its granter does not hold.
+  it('leaves an old preset as sent when the granter does not hold EDIT_PROFILE', () => {
+    const ceiling = ALL_PERMISSION_FLAGS & ~F.EDIT_PROFILE;
+    for (const mask of LEGACY_ADMIN_PRESETS) {
+      expect(withLegacyEditProfile(logger, mask, ceiling, 'addMember')).toBe(mask);
+    }
+  });
+
   it('leaves every other mask alone: a near-preset, a plain member, a current preset', () => {
     for (const mask of [0, 3871 & ~F.MANAGE_FORMS, 3871 | F.EDIT_PROFILE, F.MANAGE_MEMBERS]) {
-      expect(withLegacyEditProfile(logger, mask, 'addMember')).toBe(mask);
+      expect(withLegacyEditProfile(logger, mask, ALL_PERMISSION_FLAGS, 'addMember')).toBe(mask);
     }
   });
 
@@ -48,11 +59,12 @@ describe('legacy admin presets (shim until 2027-05-03)', () => {
   it('is applied by addMember and never by updateMemberRole', () => {
     const source = readFileSync(join(__dirname, 'associations.service.ts'), 'utf8');
     const body = (name: string) => {
-      const start = source.indexOf(`  async ${name}(`);
+      const start = source.indexOf(` async ${name}(`);
       expect(start).toBeGreaterThan(-1);
       return source.slice(start, source.indexOf('\n  }\n', start));
     };
-    expect(body('addMember')).toContain('withLegacyEditProfile(');
-    expect(body('updateMemberRole')).not.toContain('withLegacyEditProfile(');
+    expect(body('addMember')).toContain('this.legacyAddMask(');
+    expect(body('legacyAddMask')).toContain('withLegacyEditProfile(');
+    expect(body('updateMemberRole')).not.toMatch(/legacyAddMask\(|withLegacyEditProfile\(/);
   });
 });

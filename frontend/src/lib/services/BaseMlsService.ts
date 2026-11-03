@@ -913,6 +913,17 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void>;
 
   /**
+   * The fresh start of {@link rotateDeviceIdentity}: a new state that REPLACES the saved one that did
+   * not open. The native side refuses every other fresh start over a saved state (round 4 of the
+   * review of #2919: the caller decided "no state" on an answer that did not see it), so this one
+   * says what it means; Tauri overrides it. The web's store is per account and keyed by version, so
+   * there it is the plain fresh load.
+   */
+  protected async loadFreshStateReplacingUnopened(deviceKeyB64: string): Promise<void> {
+    await this.loadStateWithKey(deviceKeyB64, undefined);
+  }
+
+  /**
    * Forgot-PIN-elsewhere recovery, first half: the account PIN was changed on another device, so
    * this device's local state is still sealed under the OLD key. Opens it with `deviceKeyB64`
    * (non-destructively - no fresh start, device id untouched, nothing written) and marks the client
@@ -3673,7 +3684,7 @@ export abstract class BaseMlsService implements IMlsService {
     // A brand new identity has never held a state, and the load below deliberately passes none.
     // Left true, the abandonment of a device would report itself as a loss.
     this.stateWasExpected = false;
-    await this.loadStateWithKey(deviceKeyB64, undefined);
+    await this.loadFreshStateReplacingUnopened(deviceKeyB64);
     try {
       // ENDS THE DOCUMENT ON REFUSAL, inside the transaction that refuses it: a flight of this
       // document already past its start check must find the latch set at its own put.

@@ -7,6 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * The arrival-order buffer in front of the MLS lane: wake fetches settle in any order, full pushes
@@ -52,6 +53,23 @@ class WakeOrderTest {
     }
 
     @Test
+    fun `a wake that arrives after a full push does not hold it`() {
+        assertTrue(order.inOrder { lane += "full" })
+        val wake = order.arrive { lane += "deadline" }
+        order.settle(wake) { lane += "wake" }
+        assertEquals(listOf("full", "wake"), lane)
+    }
+
+    @Test
+    fun `a failed fetch settles its ticket like any other, so nothing behind it stalls`() {
+        val failed = order.arrive { lane += "deadline" }
+        order.inOrder { lane += "after" }
+        order.settle(failed) { lane += "not-loaded" }
+        assertEquals(listOf("not-loaded", "after"), lane)
+        assertEquals(0L, order.waiting())
+    }
+
+    @Test
     fun `every wake's deadline is scheduled at ARRIVAL, for the whole bound`() {
         repeat(5) { order.arrive {} }
         assertEquals(List(5) { deadline }, scheduled.map { it.first })
@@ -78,6 +96,41 @@ class WakeOrderTest {
         order.settle(wake) { lane += "fetched" }
         fireDeadlines()
         assertEquals(listOf("fetched"), lane)
+    }
+
+    @Test
+    fun `a deadline that cannot be scheduled settles the ticket at once, so nothing behind it is stranded`() {
+        val refusing = WakeOrder(deadline) { _, _ -> throw RejectedExecutionException("shut down") }
+        val reasons = mutableListOf<String>()
+        val wake = refusing.arrive(onScheduleFailed = { reasons += it.javaClass.simpleName }) { lane += "not-loaded" }
+        assertEquals(listOf("RejectedExecutionException"), reasons)
+        assertEquals(listOf("not-loaded"), lane)
+        assertTrue(refusing.inOrder { lane += "after" })
+        assertEquals(listOf("not-loaded", "after"), lane)
+        // The fetch that comes back later finds its ticket settled.
+        assertNull(refusing.settle(wake) { lane += "late" })
+    }
+
+    @Test
+    fun `in one release batch every action runs before any hand-off - the Welcome is counted before the lane runs the frame`() {
+        val wake = order.arrive {}
+        // Released in the same batch: the frame (counted nothing) then the Welcome (counts its group).
+        order.inOrder { lane += "frame:counted"; order.handOff { lane += "frame:on-lane" } }
+        order.inOrder { lane += "welcome:counted"; order.handOff { lane += "welcome:on-lane" } }
+        order.settle(wake) { lane += "wake:counted"; order.handOff { lane += "wake:on-lane" } }
+        assertEquals(
+            listOf(
+                "wake:counted", "frame:counted", "welcome:counted",
+                "wake:on-lane", "frame:on-lane", "welcome:on-lane",
+            ),
+            lane,
+        )
+    }
+
+    @Test
+    fun `outside a release a hand-off goes at once`() {
+        order.handOff { lane += "requeue" }
+        assertEquals(listOf("requeue"), lane)
     }
 
     @Test

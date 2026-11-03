@@ -8,6 +8,10 @@
 -- Read-only count of the rows it rewrites (run BEFORE applying):
 --   SELECT COUNT(*) FROM association_members
 --   WHERE ("permissions" & 4) <> 0 AND ("permissions" & 4096) = 0;
+-- LOCKS: row locks on the rows it rewrites; a member write holding one makes it wait, so it gives up
+-- after 5 s rather than queue (the re-run is safe: it is idempotent).
+
+SET lock_timeout = '5s';
 
 BEGIN;
 

@@ -559,7 +559,13 @@ export class PushController {
     }
 
     try {
+      // THE SERVICE CREDENTIAL, because no viewer session exists here to sign an avatar token for:
+      // core exempts a caller proving `INTERNAL_SECRET` from the token (`avatar-access.ts` in
+      // core-service). Unset, the request goes unsigned and core counts it as
+      // `[AVATAR] ... access=unsigned via=direct` - the line that names this estate's missing secret.
+      const internalSecret = process.env.INTERNAL_SECRET ?? '';
       const upstream = await fetch(coreUrl(`users/${encodeURIComponent(targetUserId)}/avatar`), {
+        headers: internalSecret ? { 'x-internal-secret': internalSecret } : {},
         signal: AbortSignal.timeout(4_000),
       });
       if (!upstream.ok) {

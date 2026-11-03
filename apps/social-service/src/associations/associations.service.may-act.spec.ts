@@ -1,8 +1,12 @@
+import { Logger } from '@nestjs/common';
 import { AssociationsService } from './associations.service';
 import {
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
+  PLATFORM_ADMINS_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
 } from '../spaces/bde';
 import {
   AssociationPermissionFlag,
@@ -309,12 +313,22 @@ describe('AssociationsService.mayActOnAny', () => {
  * the service asks it about the right association and hands its answer through untouched.
  */
 describe('AssociationsService scoped event governance', () => {
-  function makeGovernanceService(opts: { holds?: boolean; holders?: string[] }) {
+  function makeGovernanceService(opts: {
+    holds?: boolean;
+    holders?: string[];
+    /** Whether the proposing association targets a space no BDE governs. */
+    ungoverned?: boolean;
+    admins?: string[];
+  }) {
     const query = jest.fn((sql: string) =>
       Promise.resolve(
-        sql === HOLDS_BDE_FLAG_OVER_SQL
+        sql === HOLDS_BDE_AGENDA_RIGHT_OVER_SQL
           ? [{ holds: opts.holds ?? false }]
-          : (opts.holders ?? []).map((userId) => ({ userId }))
+          : sql === TARGETS_AN_UNGOVERNED_SPACE_SQL
+            ? [{ ungoverned: opts.ungoverned ?? false }]
+            : sql === PLATFORM_ADMINS_SQL
+              ? (opts.admins ?? []).map((userId) => ({ userId }))
+              : (opts.holders ?? []).map((userId) => ({ userId }))
       )
     );
     const calendarRepo = {
@@ -345,11 +359,8 @@ describe('AssociationsService scoped event governance', () => {
   it("judges an event on its OWN association's BDE, read from the row", async () => {
     const { service, query } = makeGovernanceService({ holds: true });
     await expect(service.mayValidateEvent('bde1', 'ev1')).resolves.toBe(true);
-    expect(query).toHaveBeenCalledWith(HOLDS_BDE_FLAG_OVER_SQL, [
-      'bde1',
-      'owner-asso',
-      AssociationPermissionFlag.VALIDATE_EVENTS,
-    ]);
+    // The AGENDA predicate (owner, 2026-11-03), never the management one.
+    expect(query).toHaveBeenCalledWith(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['bde1', 'owner-asso']);
   });
 
   it('refuses when the BDE does not govern the event association', async () => {
@@ -382,12 +393,72 @@ describe('AssociationsService scoped event governance', () => {
       }
     ).notifyEventValidatorsOfProposal.bind(service);
     await notify('club', 'author', 'Gala');
-    expect(query).toHaveBeenCalledWith(BDE_FLAG_HOLDERS_OVER_SQL, [
-      'club',
-      AssociationPermissionFlag.VALIDATE_EVENTS,
-    ]);
+    expect(query).toHaveBeenCalledWith(BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL, ['club']);
     expect(notifications.createNotifications).toHaveBeenCalledWith(
       expect.objectContaining({ recipientIds: ['se1', 'ga1'], type: 'event_proposed' })
     );
+    // Every targeted space has a BDE: the platform admins are not asked about.
+    expect(query).not.toHaveBeenCalledWith(PLATFORM_ADMINS_SQL);
+  });
+
+  it('tells the platform admins too when a targeted space has no BDE (an institution, say)', async () => {
+    const { service, notifications } = makeGovernanceService({
+      holders: ['se1'],
+      ungoverned: true,
+      admins: ['admin1', 'se1'],
+    });
+    const notify = (
+      service as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<string[]>;
+      }
+    ).notifyEventValidatorsOfProposal.bind(service);
+    const told = await notify('school', 'author', 'Forum');
+    expect(notifications.createNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientIds: ['se1', 'admin1'], type: 'event_proposed' })
+    );
+    // The ids returned are the caller's dedupe set (`announceEventReopened`): the admins are in it,
+    // so an admin who is also a party of a reopened event is told once, not twice.
+    expect(told).toEqual(['se1', 'admin1']);
+  });
+
+  it('warns only when nobody at all could be told', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, notifications } = makeGovernanceService({ ungoverned: true, admins: [] });
+    notifications.createNotifications.mockResolvedValueOnce(0);
+    const notify = (
+      service as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<void>;
+      }
+    ).notifyEventValidatorsOfProposal.bind(service);
+    await notify('orphan', 'author', 'Soiree');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('nobody who may validate it'));
+    warn.mockRestore();
+  });
+
+  it("never rejects the proposers' notice: a failure is logged at WARN with the association and its stack", async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service } = makeGovernanceService({ ungoverned: false, admins: [] });
+    Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
+      find: jest.fn(() => Promise.reject(new Error('db down'))),
+    });
+    try {
+      const notify = (
+        service as unknown as {
+          notifyAssocAdminsOfEventAction: (
+            a: string,
+            actor: string,
+            t: string,
+            action: 'validated'
+          ) => Promise<void>;
+        }
+      ).notifyAssocAdminsOfEventAction.bind(service);
+      await expect(notify('asso-y', 'author', 'Soiree', 'validated')).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('asso-y'),
+        expect.stringContaining('db down')
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

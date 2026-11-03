@@ -323,6 +323,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/local-copy-guards.test.sh
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
+	@bun test ./tools/play-vitals/
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/env-from-prod.test.sh
@@ -358,6 +359,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bash .github/scripts/tests/backup-retention.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/wry-main-pipe-patch.test.mjs
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs

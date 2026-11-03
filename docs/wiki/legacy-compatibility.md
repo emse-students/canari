@@ -896,7 +896,9 @@ like any other platform-admin field.
 
 **Site:** `withLegacyEditProfile` in
 [`apps/social-service/src/associations/legacy-admin-presets.ts`](../../apps/social-service/src/associations/legacy-admin-presets.ts),
-called by `AssociationsService.addMember` ONLY.
+called by `AssociationsService.addMember` ONLY (through `legacyAddMask`), and only when the granter's
+member-flag ceiling (#2949) covers `EDIT_PROFILE` - the shim never grants what its granter could not
+grant by hand; otherwise the mask is left as sent.
 **What it humours:** a store build up to `1.6.2` offers its "Administrateur" preset without bit 12
 (`EDIT_PROFILE`, 2026-11-02), so an admin it adds would manage the roster and could not edit the
 profile. A member ADD whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is

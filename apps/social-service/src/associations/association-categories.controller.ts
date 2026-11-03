@@ -20,7 +20,11 @@ import {
 export class AssociationCategoriesController {
   constructor(private readonly service: AssociationCategoriesService) {}
 
-  /** Lists categories in display order. Public. */
+  /**
+   * Lists categories in display order. Signed-in only since 2026-11-02: the public showcase shows
+   * no categories ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
+   */
+  @UseGuards(NginxAuthGuard)
   @Get()
   list() {
     return this.service.list();

@@ -25,4 +25,4 @@ apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql 76
 # so moving `PATCH /associations/:id` and the logo routes onto the new flag takes the profile from
 # nobody. Approved in principle by the owner on 2026-11-02; this line is written by the author for the
 # file's final SQL, and the owner's merge of the pull request by hand is the approval.
-apps/social-service/src/migrations/124_edit_profile.sql 84bf0f120837774e86ce69c970386114b4637656e5a932f3e6e3194f12660d6d
+apps/social-service/src/migrations/124_edit_profile.sql d1fc5f6dc5055e9ff03565a109badab7c8d48d75a421a2c0751c7a91ded36843

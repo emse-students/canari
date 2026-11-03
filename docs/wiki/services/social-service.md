@@ -1177,6 +1177,8 @@ having at least been visible before. The association's own admins get
 `notifyAssocAdminsOfEventAction(..., 'pending')`, which is the sixth key in `PushContentKey`
 (`event_pending`) and therefore owes a string in all six native tables
 ([mobile](../frontend/mobile.md)).
+
+**One announcement, whatever the cause (WP-Q2, 2026-11-03).** The demotion's two notifications now live in `announceEventReopened(event, reason, actorId)`: the validators as for a proposal, and the organiser plus every accepted partner with the reason (`event_pending` for a moved date, `event_pending_coorganiser` when a partner accepted a validated event - [profiles-and-access](../profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)). Both are best effort and run after the write committed.
 ### A school-wide break is not an association's to declare
 
 `kind` was a free field. `event` renders as a card on the owning association's row; `break` renders

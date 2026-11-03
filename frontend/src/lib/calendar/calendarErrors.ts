@@ -27,6 +27,7 @@ const BY_CODE: Record<string, () => string> = {
   CALENDAR_INVALID_START: m.calendar_error_invalid_start,
   CALENDAR_INVALID_END: m.calendar_error_invalid_end,
   CALENDAR_END_BEFORE_START: m.calendar_error_end_before_start,
+  CALENDAR_PARTNER_ORGANISER_ONLY: m.calendar_error_partner_organiser_only,
   [CO_ORGANISER_CAP_CODE]: () =>
     m.calendar_error_coorganiser_cap({
       total: MAX_ORGANISING_ASSOCIATIONS,

@@ -112,10 +112,16 @@ on Android a wake is bounded FROM ITS ARRIVAL: `WAKE_FETCH_DEADLINE_MS` = 20 s c
 fetch thread, the DNS lookup (which `connectTimeout` does not cover), the connect and the last byte
 (which `readTimeout`, per read, does not bound). Its ticket's deadline is scheduled when the push
 arrives and settles the ticket as not loaded, logged at ERROR, whatever the fetch is doing - queued,
-running or stuck; the fetch itself gets only what is left of the 20 s (none: not started), is
-disconnected and abandoned when that runs out (`phase=connecting|awaiting-response|reading-body`),
-and a result that comes back after its ticket was settled is dropped and logged. The fetch's wake
-lock is its remaining budget plus 10 s. Every client asks
+running or stuck. The fetch itself has a budget STRICTLY SHORTER, 18 s from the same arrival (none
+left: not started), so it normally gives up first and settles its own ticket as
+`stage=deadline-<phase>` (`connecting`, `awaiting-response`, `reading-body`, `queued`): ONE accusing
+line per timeout, the fetch's or, if the fetch never got a thread, the deadline's. A failure that
+comes back after its ticket was settled is ignored at debug; a real answer that does is dropped with
+a warning. Both clocks are one: `System.nanoTime`, the scheduler's own, which stops in deep sleep -
+so the 20 s are counted in AWAKE time. A running fetch holds a wake lock (its remaining budget plus
+10 s), so the CPU stays awake while it runs; with nothing holding one, a deep sleep pauses the
+deadline and the work alike and releases nothing early. If the deadline cannot even be scheduled,
+the ticket is settled as not loaded at once. Every client asks
 with caching off (`useCaches = false`, `reloadIgnoringLocalCacheData`), and the server answers
 `Cache-Control: no-store`.
 
@@ -132,10 +138,15 @@ already in its turn and goes straight to the lane. New work a lane task spawns (
 queued behind its banner) takes a ticket like an arrival - the lane never waits on the order, a
 ticket that cannot run yet is stored and run by the settlement that releases it - and only the
 re-queue of the SAME frame behind its Welcome goes straight back. `WELCOMES_ON_LANE` is counted
-right before the Welcome's task is handed to the lane, so it still means "on the lane".
+right before the Welcome's task is handed to the lane, so it still means "on the lane" - and BY
+CONSTRUCTION within a batch: every action released by one settlement runs (and counts) before any
+of their tasks is handed to the lane (`WakeOrder.handOff`), so a frame released in the same batch
+as its Welcome cannot run before the Welcome is counted. The lane task takes its wake lock inside
+its `try`, so a wake lock that cannot be taken never skips the `finally` that releases the count.
 
-**The bound, by construction**: every wake ticket is settled at most 20 s after it ARRIVED, so a
-push - wake or full - is handed to the lane at most 20 s after the latest wake ahead of it arrived,
+**The bound, by construction, in awake time**: every wake ticket is settled at most 20 s after it
+ARRIVED, so a push - wake or full - is handed to the lane at most 20 s after the latest wake ahead of
+it arrived,
 never "N stalled wakes times the fetch timeout" (four fetch threads, any queue length). The ticket
 is also settled by the fetch's `finally`, or by the arrival thread if the fetch could not be
 scheduled; an action that throws does not strand the ones behind it (`WakeOrderTest`, with the
@@ -151,7 +162,7 @@ can stay on.
 
 ### How it interlocks with the P1 iOS-notifications entry
 
-[p1-ios-notifications-show-no-content](p1-ios-notifications-show-no-content.md) is still measuring
+The P1 iOS-notifications entry (withdrawn from the backlog by the owner on 2026-11-03, unreviewed for too long) was measuring
 whether the extension RUNS and decrypts on the bench and on a user's phone (`[NSE_OUTCOME]`,
 `peakMB`, killed vs fallback). The wake mode makes the extension the ONLY source of content on iOS:
 the server's alert no longer even names the sender, and a tap on a banner the extension did not

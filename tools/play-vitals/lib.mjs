@@ -296,7 +296,8 @@ export async function searchErrorIssues(start, end, pageSize = 50) {
  * @param {Date} start
  * @param {Date} end
  * @param {number} [pageSize]
- * @returns {Promise<object[]>}
+ * @returns {Promise<{reports: object[], note?: string}>} `note` is set when the fetch failed, so an
+ *   empty list is never mistaken for "no reports"
  */
 export async function searchErrorReports(issueId, start, end, pageSize = 3) {
   const params = new URLSearchParams({
@@ -307,9 +308,9 @@ export async function searchErrorReports(issueId, start, end, pageSize = 3) {
   const response = await api(`${REPORTING}/apps/${PKG}/errorReports:search?${params}`);
   if (!response.ok) {
     console.error(`  ! errorReports:search(${issueId}) -> ${response.status}`);
-    return [];
+    return { reports: [], note: `errorReports:search(${issueId}) HTTP ${response.status}` };
   }
-  return response.body?.errorReports ?? [];
+  return { reports: response.body?.errorReports ?? [] };
 }
 
 /**

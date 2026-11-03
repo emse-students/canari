@@ -30,11 +30,24 @@ export const LEGACY_ADMIN_PRESETS: ReadonlySet<number> = new Set(
 );
 
 /**
- * `permissions` with `EDIT_PROFILE` ORed in when it is exactly an old admin preset, else unchanged.
- * Logged at debug as a legacy match, so the traffic is measured before the shim is removed.
+ * `permissions` with `EDIT_PROFILE` ORed in when it is exactly an old admin preset AND the granter's
+ * `ceiling` (`grantCeiling`, the member-flag ceiling) covers the bit, else unchanged: the shim never
+ * hands out a right its granter could not grant by hand. Logged at debug as a legacy match, so the
+ * traffic is measured before the shim is removed.
  */
-export function withLegacyEditProfile(logger: Logger, permissions: number, where: string): number {
+export function withLegacyEditProfile(
+  logger: Logger,
+  permissions: number,
+  ceiling: number,
+  where: string
+): number {
   if (!LEGACY_ADMIN_PRESETS.has(permissions)) return permissions;
+  if ((ceiling & AssociationPermissionFlag.EDIT_PROFILE) === 0) {
+    logger.debug(
+      `[LEGACY] ${where}: mask ${permissions} is a pre-EDIT_PROFILE admin preset, but the granter does not hold EDIT_PROFILE - left as sent`
+    );
+    return permissions;
+  }
   logger.debug(
     `[LEGACY] ${where}: mask ${permissions} is a pre-EDIT_PROFILE admin preset - EDIT_PROFILE added (shim until ${LEGACY_EDIT_PROFILE_REMOVAL_DATE})`
   );

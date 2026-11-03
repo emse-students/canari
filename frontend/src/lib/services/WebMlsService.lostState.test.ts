@@ -47,6 +47,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     resolveDeviceId: proto.resolveDeviceId,
     reenrolLostState: proto.reenrolLostState,
     rotateDeviceIdentity: proto.rotateDeviceIdentity,
+    loadFreshStateReplacingUnopened: proto['loadFreshStateReplacingUnopened'],
     // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
     reopenGatewaySocketAfterRotation: vi.fn(),
     retireAbandonedIds: proto['retireAbandonedIds'],

@@ -16,6 +16,7 @@
     unmuteAssociationPush,
     hasPermissionFlag,
     getMyBdeReach,
+    leaveAssociation,
     type BdeReach,
     AssociationPermissionFlag,
     listAssociationProducts,
@@ -46,7 +47,11 @@
     Handshake,
     Download,
     Mail,
+    LogOut,
   } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { leaveRefusalMessage } from '$lib/associations/leaveRefusal';
   import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
@@ -331,6 +336,30 @@
     }
   }
 
+  let leaving = $state(false);
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): any member leaves from here without asking anyone,
+   * except the last holder of MANAGE_MEMBERS, whom the server refuses with a typed code.
+   */
+  async function leave() {
+    if (!asso || !myMembership || leaving) return;
+    const name = asso.name;
+    if (!(await showConfirm(m.asso_leave_confirm({ name }), { danger: true }))) return;
+    leaving = true;
+    try {
+      await leaveAssociation(asso.id);
+      Log.d('AssociationDetailView.leave done', { association: asso.id });
+      members = members.filter((member) => member.userId !== userId);
+      showToast(m.asso_leave_done({ name }), 'info');
+    } catch (err) {
+      Log.d('AssociationDetailView.leave failed', err);
+      showToast(leaveRefusalMessage(err) ?? m.common_generic_error_label());
+    } finally {
+      leaving = false;
+    }
+  }
+
   async function togglePushMute() {
     if (!asso || !userId) return;
     // Optimistic like the follow button above: back on a refused write.
@@ -480,6 +509,18 @@
                   <VolumeX size={16} />
                   {m.asso_push_mute_button()}
                 {/if}
+              </button>
+            {/if}
+            {#if myMembership}
+              <button
+                type="button"
+                onclick={() => leave()}
+                disabled={leaving}
+                data-testid="asso-leave"
+                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
+              >
+                <LogOut size={16} />
+                {m.asso_leave_button()}
               </button>
             {/if}
             {#if canManage}
