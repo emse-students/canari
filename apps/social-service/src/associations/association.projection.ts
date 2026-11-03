@@ -42,6 +42,7 @@ const ASSOCIATION_FIELDS = [
   'type',
   'promo',
   'parentAssociationId',
+  'displayParentAssociationId',
   'name2',
   'logoMediaId2',
   'archived',

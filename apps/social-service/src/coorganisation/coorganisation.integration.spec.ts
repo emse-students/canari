@@ -543,7 +543,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
           (error: unknown) => ({ error })
         );
         const decider = await nextWaiterOn([holder]);
-        removing = associations.remove(A5, 'org').then(
+        removing = associations.remove(A5, 'org', true).then(
           (value) => ({ value }),
           (error: unknown) => ({ error })
         );
@@ -653,7 +653,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
           }
         );
         expect(await nextWaiterOn([holder])).toBe(eraser);
-        removing = associations.remove(A6, 'org').then(
+        removing = associations.remove(A6, 'org', true).then(
           (value) => ({ value }),
           (error: unknown) => ({ error })
         );

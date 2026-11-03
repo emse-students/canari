@@ -49,6 +49,7 @@ describe('AssociationsController.quoteCashSale - the guards of the sale it quote
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     );
 

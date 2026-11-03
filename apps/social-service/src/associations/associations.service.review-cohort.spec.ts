@@ -133,6 +133,7 @@ describe('association profiles and rosters and the review cohort', () => {
       {} as FollowsService,
       {} as UserTagService,
       { listMemberships, listRoleHistory } as unknown as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, listMemberships, listRoleHistory };

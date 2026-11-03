@@ -55,6 +55,8 @@ const RAW_TABLES = [
   'payment_delegation_acceptances',
   // Migration 127's per-space pins (WP-PIN): who pinned.
   'post_space_pins',
+  // Migration 129's dependency journal: the platform admin who changed a parent or a governor.
+  'dependency_journal',
 ];
 
 const SRC = join(__dirname, '..');
