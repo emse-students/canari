@@ -575,3 +575,30 @@ describe('a lost MLS session during a login', () => {
     expect(s.shownErrors()).toEqual([]);
   });
 });
+
+/**
+ * Round 5 of the review of #2919, option (a), pinned at the LOGIN level: a login whose native sign-in
+ * was refused - here because another sign-in's manager is still loaded or loading in the process -
+ * ENDS the process's native session once it has failed, unclaimed (`mlsHolder` `client reset`). That
+ * is deliberate: it is what clears a manager an orphaned sign-in of a reloaded page installed, so the
+ * next attempt can take the slot; a sign-in whose session it ends writes nothing into the slot
+ * (`a_sign_in_ended_while_it_loaded_writes_nothing_into_the_slot`, `commands/mls.rs`). The SERVICE
+ * itself ends nothing after a failed attempt (`TauriMlsService.initQueue.test.ts`).
+ */
+describe('a login whose native sign-in is refused', () => {
+  it('ends the native session once the login has failed - the one end that clears an orphan', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const a = fakeClient();
+    a.known.init.mockImplementation(async () => {
+      throw new Error('a foreground MLS session is still open');
+    });
+    const s = session([a.client]);
+
+    await loginImpl(s.ctx, s.cb);
+    await s.holder.whenRetired();
+
+    expect(s.cb.onLoginFailed).toHaveBeenCalled();
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expect(s.endNative).toHaveBeenCalledWith('client reset');
+  });
+});

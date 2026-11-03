@@ -208,7 +208,11 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
 
   it('the page states it at its socket setter, and a new document voids it', () => {
     expect(libRs).toContain('page_ring::set_page_gateway_socket,');
-    expect(libRs).toMatch(/PageLoadEvent::Started \{\s*page_ring::forget_on_page_load\(\);/);
+    // A new document voids it by CLAIMING its generation (`page_ring_document`, its first native
+    // call), never on the page-load event, which on Android can run after that call (round 10 of
+    // the review of #2919).
+    expect(libRs).toContain('page_ring::page_ring_document,');
+    expect(libRs).not.toContain('forget_on_page_load');
     // A dead WKWebView content process: cleared, then reloaded (Tauri's default reload, kept).
     const terminate = between(
       libRs,
