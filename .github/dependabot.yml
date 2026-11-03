@@ -269,7 +269,8 @@ updates:
   # THE CEILING JUDGES THESE BY THE `compile-android-app` JOB OF `ci.yml` (2026-10-30). It
   # generates the file above with the app crate's build script, stands a committed stub in for
   # the `google-services.json` secret, and runs `:app:checkArm64DebugAarMetadata`,
-  # `:app:processArm64DebugMainManifest` and `:app:compileArm64DebugKotlin`. That is evidence about
+  # `:app:processArm64DebugMainManifest`, `:app:compileArm64DebugKotlin` and
+  # `:app:mergeArm64DebugResources`. That is evidence about
   # the Kotlin and the dependency metadata, not about a signed release build; `android.yml` still
   # alone builds that. `ceiling_gate_for_ref` in `.github/scripts/lib/ceiling.sh` allows only the
   # direct `gen/android/<branch>` shape. One block per directory, never `directories:`, so the
