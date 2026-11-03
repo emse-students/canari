@@ -9,6 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { assertKindMaySell, writablePermissions } from './selling-kinds';
+import { LEGACY_ADMIN_PRESETS, withLegacyEditProfile } from './legacy-admin-presets';
 import {
   assertInstitutionMemberWrite,
   assertWithinGrantCeiling,
@@ -1518,7 +1519,7 @@ export class AssociationsService {
     const saved = await this.insertMembership(
       this.memberRepo.manager,
       target,
-      dto,
+      { ...dto, permissions: await this.legacyAddMask(dto.permissions, granter, associationId) },
       sortOrder,
       granter,
       'addMember'
@@ -1721,6 +1722,36 @@ export class AssociationsService {
     });
   }
 
+  /** The three facts a granter's ceiling is computed from (`grantCeiling`). */
+  private async granterStanding(
+    granter: MemberGranter,
+    associationId: string
+  ): Promise<GranterStanding> {
+    if (granter.isGlobalAdmin) {
+      return { isGlobalAdmin: true, isSuperAdminOf: false, ownPermissions: 0 };
+    }
+    const [own, isSuperAdminOf] = await Promise.all([
+      this.memberRepo.findOne({ where: { associationId, userId: granter.userId } }),
+      this.isAssociationSuperAdminOf(granter.userId, associationId),
+    ]);
+    return { isGlobalAdmin: false, isSuperAdminOf, ownPermissions: own?.permissions ?? 0 };
+  }
+
+  /**
+   * LEGACY SHIM until 2027-05-03 (`legacy-admin-presets.ts`): a member ADD posting exactly a
+   * pre-`EDIT_PROFILE` admin preset gets the bit, when the granter's ceiling covers it. The
+   * standing is read only for such a mask; the write itself is judged by `insertMembership`.
+   */
+  private async legacyAddMask(
+    permissions: number,
+    granter: MemberGranter,
+    associationId: string
+  ): Promise<number> {
+    if (!LEGACY_ADMIN_PRESETS.has(permissions)) return permissions;
+    const ceiling = grantCeiling(await this.granterStanding(granter, associationId));
+    return withLegacyEditProfile(this.logger, permissions, ceiling, 'addMember');
+  }
+
   /**
    * Judges a member bitmask write from `before` to `after` against `granter`'s ceiling
    * (`grantCeiling`) and returns the standing it read, so the caller can write the audit line once
@@ -1734,18 +1765,7 @@ export class AssociationsService {
     after: number,
     what: string
   ): Promise<GranterStanding> {
-    let standing: GranterStanding = {
-      isGlobalAdmin: true,
-      isSuperAdminOf: false,
-      ownPermissions: 0,
-    };
-    if (!granter.isGlobalAdmin) {
-      const [own, isSuperAdminOf] = await Promise.all([
-        this.memberRepo.findOne({ where: { associationId, userId: granter.userId } }),
-        this.isAssociationSuperAdminOf(granter.userId, associationId),
-      ]);
-      standing = { isGlobalAdmin: false, isSuperAdminOf, ownPermissions: own?.permissions ?? 0 };
-    }
+    const standing = await this.granterStanding(granter, associationId);
     const ceiling = grantCeiling(standing);
     this.logger.debug(
       `[MEMBER-CEILING] ${what} association=${associationId.slice(0, 8)} admin=${standing.isGlobalAdmin} superAdmin=${standing.isSuperAdminOf} ceiling=${ceiling}`

@@ -156,8 +156,9 @@
    * stricter of the two hid the other one from everybody entitled to it.
    *
    * Archiving is `PATCH :id { archived }`, which the server admits through
-   * `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so an association's own admin holds
-   * it, and so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
+   * `GlobalAdminOrAssociationRoleGuard` and then asks `MANAGE_MEMBERS` of the `archived` field
+   * (`UPDATE_FIELD_RIGHTS`, read as `rights.archive`) - so an association's own admin holds it, and
+   * so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
    * `SUPER_ADMIN_EXCLUDED_FLAGS`. Deleting is `DELETE :id` behind a bare `GlobalAdminGuard` and is
    * the platform administrator's alone. Both were behind `isGlobalAdminUser` here, which is how a
    * BDE member holding the power to administer associations found the section absent (reported
@@ -165,7 +166,7 @@
    *
    * The tab therefore opens on the right to ARCHIVE, and the delete card carries its own tier.
    */
-  let canArchiveAssociation = $derived(canManageMembers);
+  let canArchiveAssociation = $derived(rights.archive);
   /**
    * The delete card's own tier, and it is NOT the platform administrator's any more.
    *
@@ -357,7 +358,12 @@
       {/if}
 
       {#if editSection === 'profile'}
-        <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
+        <EditProfileTab
+          {asso}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
+          onUpdated={(a) => (asso = a)}
+        />
       {/if}
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso}
