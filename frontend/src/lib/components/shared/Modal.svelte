@@ -7,7 +7,7 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
-  import { insideViewerLayer } from '$lib/utils/viewerLayer';
+  import { insideViewerLayer, markViewerLayer } from '$lib/utils/viewerLayer';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -113,6 +113,9 @@
 
   /** Opened from inside a full-screen viewer, the modal rung is under it (`utils/viewerLayer.ts`). */
   const inViewer = insideViewerLayer();
+  // Read BEFORE marking: this modal sits on its own rung, and only what it opens clears it (the
+  // GIF picker of a comment box in a post's comments dialog sat UNDER it, on `--z-sheet`).
+  markViewerLayer();
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen

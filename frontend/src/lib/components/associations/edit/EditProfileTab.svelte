@@ -28,13 +28,19 @@
 
   interface Props {
     asso: Association;
-    /** Whether the caller may edit the profile and logo (MANAGE_MEMBERS / global admin). */
+    /** Whether the caller may edit the profile and logo (`EDIT_PROFILE`, `editRights().profile`). */
     canEdit: boolean;
+    /**
+     * Whether the caller may change a list's parent association: the platform administrator alone
+     * (`UPDATE_FIELD_RIGHTS.parentAssociationId`, `editRights().parent`). Anyone else is never
+     * shown the picker, and the save never sends the field.
+     */
+    canEditParent?: boolean;
     /** Called with the refreshed association after any successful mutation. */
     onUpdated: (a: Association) => void;
   }
 
-  let { asso, canEdit, onUpdated }: Props = $props();
+  let { asso, canEdit, canEditParent = false, onUpdated }: Props = $props();
 
   // Editable copies seeded once from the association passed at mount.
   const initial = untrack(() => asso);
@@ -50,11 +56,16 @@
   /** Managed thematic categories, loaded once for the picker. */
   let categoryOptions = $state<AssociationCategory[]>([]);
 
-  // ── List-only fields (campaign year, parent association, optional 2nd theme) ──
+  // ── List-only fields (campaign year, optional 2nd theme; the parent for the platform admin) ──
   const isList = initial.type === 'list';
   let editPromo = $state<number | ''>(initial.promo ?? '');
-  let editParentId = $state(initial.parentAssociationId ?? '');
   let editName2 = $state(initial.name2 ?? '');
+  /**
+   * The parent association is platform-admin only (`UPDATE_FIELD_RIGHTS`): drawn and sent for
+   * that reader alone, so a profile editor's save never carries a field the server refuses them.
+   */
+  const showParent = $derived(isList && canEditParent);
+  let editParentId = $state(initial.parentAssociationId ?? '');
   /** Candidate parent associations (regular associations only), for the select. */
   let parentOptions = $state<Association[]>([]);
   const parentPickerOptions = $derived<PickerOption[]>([
@@ -67,19 +78,22 @@
   ]);
 
   onMount(async () => {
-    // Load the thematic categories for regular associations (used by the poster generator).
-    if (!isList) {
+    if (isList) {
+      if (!untrack(() => canEditParent)) return;
       try {
-        categoryOptions = await listAssociationCategories();
-      } catch {
-        categoryOptions = [];
+        parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
+      } catch (err) {
+        console.warn('[ASSO] parent candidates unavailable for the profile picker', err);
+        parentOptions = [];
       }
       return;
     }
+    // Load the thematic categories for regular associations (used by the poster generator).
     try {
-      parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
-    } catch {
-      parentOptions = [];
+      categoryOptions = await listAssociationCategories();
+    } catch (err) {
+      console.warn('[ASSO] categories unavailable for the profile picker', err);
+      categoryOptions = [];
     }
   });
 
@@ -126,8 +140,8 @@
         ...(isList
           ? {
               promo: editPromo === '' ? null : Number(editPromo),
-              parentAssociationId: editParentId || null,
               name2: editName2.trim() || null,
+              ...(showParent ? { parentAssociationId: editParentId || null } : {}),
             }
           : { categoryId: editCategoryId || null }),
       });
@@ -137,8 +151,8 @@
       editContactEmail = updated.contactEmail ?? '';
       editCategoryId = updated.categoryId ?? '';
       editPromo = updated.promo ?? '';
-      editParentId = updated.parentAssociationId ?? '';
       editName2 = updated.name2 ?? '';
+      editParentId = updated.parentAssociationId ?? '';
       onUpdated(updated);
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
@@ -249,19 +263,21 @@
       bind:value={editPromo}
       placeholder="2027"
     />
-    <div>
-      <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
-        {m.list_new_parent_label()}
-      </label>
-      <Picker
-        id="edit-list-parent"
-        value={editParentId}
-        options={parentPickerOptions}
-        onValueChange={(v) => (editParentId = v)}
-        label={m.list_new_parent_label()}
-        variant="field"
-      />
-    </div>
+    {#if showParent}
+      <div>
+        <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
+          {m.list_new_parent_label()}
+        </label>
+        <Picker
+          id="edit-list-parent"
+          value={editParentId}
+          options={parentPickerOptions}
+          onValueChange={(v) => (editParentId = v)}
+          label={m.list_new_parent_label()}
+          variant="field"
+        />
+      </div>
+    {/if}
   {/if}
 
   <Input

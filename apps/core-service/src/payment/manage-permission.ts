@@ -39,12 +39,20 @@ export async function assertCanManageAssociation(
   if (typeof internalToken === 'string') fwd['X-Internal-Token'] = internalToken;
 
   try {
-    const res = await axios.get<{ ok: boolean }>(
+    const res = await axios.get<{ ok: boolean; code?: string }>(
       socialUrl(`associations/${encodeURIComponent(associationId)}/manage-permission`),
       { headers: fwd, validateStatus: () => true, timeout: timeoutMs }
     );
     if (res.status >= 400 || !res.data?.ok) {
-      throw new ForbiddenException('You cannot manage payments for this association');
+      // A kind that holds no Lydia account of its own (a list: `LIST_NO_OWN_LYDIA_ACCOUNT`) is
+      // refused with social-service's typed code, so no Business is created and the client says why.
+      const code = typeof res.data?.code === 'string' ? res.data.code : undefined;
+      if (code) logger.warn(`manage-permission refused on ${associationId}: ${code}`);
+      throw new ForbiddenException(
+        code
+          ? { code, message: 'This entity holds no payment account of its own' }
+          : 'You cannot manage payments for this association'
+      );
     }
   } catch (e) {
     if (e instanceof ForbiddenException || e instanceof UnauthorizedException) throw e;

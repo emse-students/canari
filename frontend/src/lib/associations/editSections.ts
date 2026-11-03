@@ -13,9 +13,11 @@
 import {
   ASSOCIATION_ADMIN_PRESET,
   AssociationPermissionFlag,
+  TYPE_EXCLUDED_FLAGS,
   mayActOnAssociation,
   type Association,
 } from '$lib/associations/api';
+import { mayWriteFields, PROFILE_FORM_FIELDS } from '$lib/associations/updateFields';
 
 /** The section keys, in hub order. `republications` keeps its name: old notifications link to it. */
 export const EDIT_SECTIONS = [
@@ -50,7 +52,15 @@ export function parseEditSection(value: string | null | undefined): EditSection 
 
 /** The rights the sections gate on, gathered once. */
 export interface EditRights {
-  /** `MANAGE_MEMBERS`: archiving (`danger`) and the cotisations panel read it. */
+  /**
+   * Whether the profile section's controls are editable: every field the form sends is writable
+   * (`UPDATE_FIELD_RIGHTS`, all `EDIT_PROFILE`). The section itself opens for everyone, read-only
+   * without it.
+   */
+  profile: boolean;
+  /** A list's parent association: the platform admin's alone (`UPDATE_FIELD_RIGHTS`). */
+  parent: boolean;
+  /** `MANAGE_MEMBERS`: the cotisations panel reads it; archiving is `archive`. */
   members: boolean;
   /**
    * Writing the roster (the `members` section): `members`, except on an institution, whose members
@@ -66,15 +76,18 @@ export interface EditRights {
   proposals: boolean;
   payoutAccount: boolean;
   audience: boolean;
-  /** The delete card inside `danger`; archiving is `members`. */
+  /** Archiving, the `danger` section's reversible card: the `archived` field's right. */
+  archive: boolean;
+  /** The delete card inside `danger`. */
   delete: boolean;
 }
 
 /**
- * Every right the management sections read, from one context. `assoType` matters for an
- * institution, which no BDE MANAGES (owner, 2026-11-02 - the server's `holdsBdeFlagOverSql` never
- * grants the tier over one; its events stay on the BDE's agenda, which these sections do not
- * draw): the super-admin tier is dropped whatever the context says, and
+ * Every right the management sections read, from one context. `assoType` matters in two ways. A
+ * flag its kind excludes is held by nobody (`TYPE_EXCLUDED_FLAGS` - a list's payout account, an
+ * institution's shop). And an institution is one no BDE MANAGES (owner, 2026-11-02 - the server's
+ * `holdsBdeFlagOverSql` never grants the tier over one; its events stay on the BDE's agenda, which
+ * these sections do not draw): the super-admin tier is dropped whatever the context says, and
  * its roster and audience are the platform admin's alone (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
  * `AUDIENCE_INSTITUTION_ADMIN_ONLY`), and so is its deletion (`INSTITUTION_DELETE_ADMIN_ONLY`) - a
  * BDE star still deletes the associations and lists it governs. Its own members keep their flags.
@@ -84,9 +97,11 @@ export function editRights(
   assoType: Association['type'] = 'association'
 ): EditRights {
   const ctx = assoType === 'institution' ? { ...given, isSuperAdmin: false } : given;
-  const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, ctx);
+  const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, { ...ctx, assoType });
   const members = may(AssociationPermissionFlag.MANAGE_MEMBERS);
   return {
+    profile: mayWriteFields(PROFILE_FORM_FIELDS, ctx),
+    parent: mayWriteFields(['parentAssociationId'], ctx),
     members,
     memberRoster: assoType === 'institution' ? ctx.isGlobalAdmin : members,
     documents: may(AssociationPermissionFlag.MANAGE_DOCUMENTS),
@@ -98,12 +113,30 @@ export function editRights(
     proposals:
       may(AssociationPermissionFlag.POST_AS_ASSO) || may(AssociationPermissionFlag.PROPOSE_EVENT),
     payoutAccount: may(AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT),
+    archive: mayWriteFields(['archived'], ctx),
     audience: ctx.isGlobalAdmin || ctx.isSuperAdmin,
     delete: ctx.isGlobalAdmin || ctx.isSuperAdmin,
   };
 }
 
-/** Whether `section` may be drawn for a reader holding `rights`. `profile` is the one open to all. */
+/**
+ * Whether a reader may enter an entity's management area at all: a global admin, the super-admin
+ * OF THIS entity (a BDE governing it - which may delete its lists, owner 2026-11-02), or one of its
+ * own members holding any right. The ONE rule both edit pages redirect on; the BDE tier must be
+ * KNOWN (awaited) before it is asked, or the redirect races it (F2).
+ */
+export function mayEnterEditArea(ctx: {
+  isGlobalAdmin: boolean;
+  isSuperAdmin: boolean;
+  isMemberAdmin: boolean;
+}): boolean {
+  return ctx.isGlobalAdmin || ctx.isSuperAdmin || ctx.isMemberAdmin;
+}
+
+/**
+ * Whether `section` may be drawn for a reader holding `rights`. `profile` is the one open to all:
+ * drawn read-only, and editable on `rights.profile`.
+ */
 export function mayOpenEditSection(section: EditSection, rights: EditRights): boolean {
   switch (section) {
     case 'profile':
@@ -130,22 +163,26 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
     case 'audience':
       return rights.audience;
     case 'danger':
-      return rights.members;
+      return rights.archive;
   }
 }
 
 /**
- * THE ONE TABLE OF WHICH SECTIONS EACH KIND OF ENTITY HAS (owner, 2026-10-31).
+ * THE ONE TABLE OF WHICH SECTIONS EACH KIND OF ENTITY HAS (owner, 2026-10-31, widened 2026-11-02).
  *
- * An association has every section. A LIST and an INSTITUTION sell nothing - no shop, cotisations,
- * purchases, delegation or payments - but both keep documents, forms, bookable spaces,
- * partnerships and the republication/co-organisation queue. An institution alone has an audience
- * (a global admin's, `AUDIENCE_INSTITUTION_ADMIN_ONLY`; a list's audience stays the BDE's, written
- * from the association edit tooling, not a section of its own). The rights are the SAME
+ * An association has every section. A LIST keeps the shop, its cotisation, its purchases and every
+ * paid feature, but holds no Lydia account of its own and collects through a payment DELEGATION to
+ * an association that accepts it: it has `payments` (the boutique alone - the page draws no Lydia
+ * enrolment, its kind excluding the payout right), `achats`, `cotisations` and `delegation`. An
+ * INSTITUTION collects nothing - no shop, cotisations, purchases, delegation or payments. Both
+ * keep documents, forms, bookable spaces, partnerships and the republication/co-organisation
+ * queue. An institution alone has an audience (a global admin's, `AUDIENCE_INSTITUTION_ADMIN_ONLY`;
+ * a list's audience stays the BDE's and is not a section of its own). The rights are the SAME
  * `mayOpenEditSection` answers; only the roster of keys differs.
  *
- * The permission editor's offered flags are derived from THIS table (`permissionFlagsFor`), so a
- * kind is never offered a right whose section it does not have.
+ * The permission editor's offered flags are derived from THIS table AND the kind's excluded flags
+ * (`permissionMaskFor`), so a kind is never offered a right it cannot hold - a list is offered the
+ * shop and never the bank account.
  */
 const SELLING_FREE_SECTIONS: readonly EditSection[] = [
   'profile',
@@ -158,9 +195,19 @@ const SELLING_FREE_SECTIONS: readonly EditSection[] = [
   'danger',
 ];
 
+/** The money sections a list keeps: it collects through a delegate (owner, 2026-11-02). */
+const LIST_MONEY_SECTIONS: readonly EditSection[] = [
+  'payments',
+  'achats',
+  'cotisations',
+  'delegation',
+];
+
 export const EDIT_SECTIONS_BY_KIND: Record<Association['type'], readonly EditSection[]> = {
   association: EDIT_SECTIONS,
-  list: SELLING_FREE_SECTIONS,
+  list: EDIT_SECTIONS.filter(
+    (s) => SELLING_FREE_SECTIONS.includes(s) || LIST_MONEY_SECTIONS.includes(s)
+  ),
   institution: EDIT_SECTIONS.filter((s) => SELLING_FREE_SECTIONS.includes(s) || s === 'audience'),
 };
 
@@ -169,7 +216,7 @@ export const LIST_EDIT_SECTIONS: readonly EditSection[] = EDIT_SECTIONS_BY_KIND.
 
 /** The association rights each section is gated on, mirroring `mayOpenEditSection`. */
 const SECTION_FLAGS: Record<EditSection, readonly AssociationPermissionFlag[]> = {
-  profile: [],
+  profile: [AssociationPermissionFlag.EDIT_PROFILE],
   members: [AssociationPermissionFlag.MANAGE_MEMBERS],
   payments: [
     AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
@@ -191,15 +238,17 @@ const SECTION_FLAGS: Record<EditSection, readonly AssociationPermissionFlag[]> =
 };
 
 /**
- * The permission bits a kind's role editor offers: the union of the flags of its sections. The BDE
- * flags are not here - `AssociationMemberRow` adds them for a BDE association on top.
+ * The permission bits a kind's role editor offers: the union of the flags of its sections, minus
+ * the flags its kind excludes (`TYPE_EXCLUDED_FLAGS`: a list's `payments` section carries the shop,
+ * never the bank account). The BDE flags are not here - `AssociationMemberRow` adds them for a BDE
+ * association on top.
  */
 export function permissionMaskFor(kind: Association['type']): number {
   let mask = 0;
   for (const section of EDIT_SECTIONS_BY_KIND[kind]) {
     for (const flag of SECTION_FLAGS[section]) mask |= flag;
   }
-  return mask;
+  return mask & ~TYPE_EXCLUDED_FLAGS[kind];
 }
 
 /**

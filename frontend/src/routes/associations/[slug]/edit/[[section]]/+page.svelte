@@ -9,7 +9,8 @@
   import {
     getAssociationBySlug,
     listMembers,
-    isPaymentAccountReady,
+    canTakePayments,
+    keepPaymentsReady,
     getMyBdeReach,
     grantableFlags,
     type Association,
@@ -41,6 +42,7 @@
     editTrail,
     kindHasSection,
     editSectionHref,
+    mayEnterEditArea,
     mayOpenEditSection,
     parseEditSection,
     visibleEditSections,
@@ -101,7 +103,7 @@
    * card for a deep link straight onto the payments tab.
    */
   let onlinePaymentsReady = $derived(
-    !!asso && isPaymentAccountReady(asso, activePaymentProvider.current)
+    !!asso && canTakePayments(asso, activePaymentProvider.current)
   );
 
   // The tab title names what is edited; the path alone cannot tell an institution from a club.
@@ -156,8 +158,9 @@
    * stricter of the two hid the other one from everybody entitled to it.
    *
    * Archiving is `PATCH :id { archived }`, which the server admits through
-   * `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so an association's own admin holds
-   * it, and so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
+   * `GlobalAdminOrAssociationRoleGuard` and then asks `MANAGE_MEMBERS` of the `archived` field
+   * (`UPDATE_FIELD_RIGHTS`, read as `rights.archive`) - so an association's own admin holds it, and
+   * so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
    * `SUPER_ADMIN_EXCLUDED_FLAGS`. Deleting is `DELETE :id` behind a bare `GlobalAdminGuard` and is
    * the platform administrator's alone. Both were behind `isGlobalAdminUser` here, which is how a
    * BDE member holding the power to administer associations found the section absent (reported
@@ -165,7 +168,7 @@
    *
    * The tab therefore opens on the right to ARCHIVE, and the delete card carries its own tier.
    */
-  let canArchiveAssociation = $derived(canManageMembers);
+  let canArchiveAssociation = $derived(rights.archive);
   /**
    * The delete card's own tier, and it is NOT the platform administrator's any more.
    *
@@ -267,7 +270,13 @@
   // replaced by the hub. `loading` guards the moment `rights` is still the empty default.
   // Only for someone admitted to the area at all: a reader `loadData` is sending to the public page
   // must not be raced by a second redirect.
-  let mayEnterArea = $derived(isGlobalAdminUser || isSuperAdminUser || !!myMembership?.isAdmin);
+  let mayEnterArea = $derived(
+    mayEnterEditArea({
+      isGlobalAdmin: isGlobalAdminUser,
+      isSuperAdmin: isSuperAdminUser,
+      isMemberAdmin: !!myMembership?.isAdmin,
+    })
+  );
   $effect(() => {
     if (loading || !asso || !editSection || !mayEnterArea) return;
     if (!kindHasSection(asso.type, editSection) || !mayOpenEditSection(editSection, rights)) {
@@ -275,6 +284,19 @@
       void goto(resolve(internalPath(editSectionHref(slug))), { replace: true });
     }
   });
+
+  /**
+   * `paymentsReady` is the SERVER's resolution (own account or an approved delegate), so after the
+   * account changes here it is read back, never guessed on the client.
+   */
+  async function rereadPaymentsReady() {
+    try {
+      const fresh = await getAssociationBySlug(slug);
+      if (asso && fresh.id === asso.id) asso = { ...asso, paymentsReady: fresh.paymentsReady };
+    } catch (err) {
+      console.warn('[associations/edit] payments readiness re-read failed', err);
+    }
+  }
 
   onMount(async () => {
     // Fetched on arrival, not on the first click of the payments tab: a deep link
@@ -318,7 +340,11 @@
       // Await the BDE reach so the access decision is deterministic. It is THIS association's
       // super-admin tier (WP6c step 2): MANAGE_ASSO in the BDE of a space it reaches.
       superAdminOf = (await getMyBdeReach()).manageAsso;
-      const canEdit = isGlobalAdmin() || isSuperAdminUser || (!!mine && mine.isAdmin);
+      const canEdit = mayEnterEditArea({
+        isGlobalAdmin: isGlobalAdmin(),
+        isSuperAdmin: isSuperAdminUser,
+        isMemberAdmin: !!mine?.isAdmin,
+      });
       if (!canEdit) {
         await goto(resolve(`associations/${encodeURIComponent(slug)}`));
         return;
@@ -357,7 +383,12 @@
       {/if}
 
       {#if editSection === 'profile'}
-        <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
+        <EditProfileTab
+          {asso}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
+          onUpdated={(a) => (asso = keepPaymentsReady(a, asso))}
+        />
       {/if}
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso}
@@ -387,9 +418,11 @@
               {asso}
               onValidated={() => {
                 if (asso) asso = { ...asso, lydiaOnboardingComplete: true };
+                void rereadPaymentsReady();
               }}
               onDisconnected={() => {
                 if (asso) asso = { ...asso, lydiaOnboardingComplete: false };
+                void rereadPaymentsReady();
               }}
             />
           {:else if canManagePayoutAccount && activePaymentProvider.current === 'disabled'}
@@ -476,7 +509,7 @@
           {asso}
           kind={asso.type}
           canDelete={canDeleteAssociation}
-          onUpdated={(a) => (asso = a)}
+          onUpdated={(a) => (asso = keepPaymentsReady(a, asso))}
           onDeleted={() => goto(resolve(words.directoryHref))}
         />
       {/if}

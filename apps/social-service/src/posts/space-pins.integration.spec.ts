@@ -52,6 +52,7 @@ const A = {
   club: '00000000-0000-4000-8000-0000000000c1', // rule (ISMIN, saint-etienne)
   clubGa: '00000000-0000-4000-8000-0000000000c2', // rule (NULL, gardanne): no BDE governs there
   inst: '00000000-0000-4000-8000-0000000000d1', // institution, rule (NULL, saint-etienne)
+  clubArch: '00000000-0000-4000-8000-0000000000c3', // ARCHIVED, rule (ICM, saint-etienne)
 } as const;
 
 const P = {
@@ -128,7 +129,8 @@ maybe('pins per space against PostgreSQL', () => {
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
+        archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
@@ -158,6 +160,7 @@ maybe('pins per space against PostgreSQL', () => {
       [A.club, 'ISMIN', 'saint-etienne'],
       [A.clubGa, null, 'gardanne'],
       [A.inst, null, 'saint-etienne'],
+      [A.clubArch, 'ICM', 'saint-etienne'],
     ];
     for (const [asso, formation, campus] of rules) {
       await q(
@@ -224,6 +227,12 @@ maybe('pins per space against PostgreSQL', () => {
       `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'o')`,
       [P.ga, A.club]
     );
+    // An archived carrier reaches nobody: its republication of `ga` opens no ICM space.
+    await q(`UPDATE associations SET archived = true WHERE id = $1`, [A.clubArch]);
+    await q(
+      `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'o')`,
+      [P.ga, A.clubArch]
+    );
     const redis = { deleteByPattern: jest.fn(() => Promise.resolve(0)) };
     service = new SpacePinsService(
       { manager: ds.manager } as unknown as Repository<Post>,
@@ -260,6 +269,7 @@ maybe('pins per space against PostgreSQL', () => {
     expect(reaches(P.isminStudent, 'ISMIN:saint-etienne')).toBe(true);
     expect(reaches(P.isminStudent, 'ICM:saint-etienne')).toBe(false);
     expect(reaches(P.ga, 'ISMIN:saint-etienne')).toBe(true); // through club's republication
+    expect(reaches(P.ga, 'ICM:saint-etienne')).toBe(false); // clubArch's: archived, reaches nobody
     expect(reaches(P.gaOnly, 'ISMIN:saint-etienne')).toBe(false);
   });
 

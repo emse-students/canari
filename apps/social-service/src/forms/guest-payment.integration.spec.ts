@@ -124,7 +124,6 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
       getPaymentAccountId: async () => 'vendor',
-      getLydiaPayeeAccountId: async () => 'vendor',
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
     };

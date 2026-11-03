@@ -215,9 +215,16 @@ export function eventReachesSpaceMatchingSql(
  * An association that REPUBLISHED post row `post` (D38, `post_republications`) is visible to user
  * row `user` - the same predicate as the original's association, applied to the republisher: a
  * member of it (D21) or a reader its rules reach.
+ *
+ * AN ARCHIVED CARRIER REACHES NOBODY (review of #2965, 2026-11-02): it no longer speaks, so what
+ * it carries stops reaching its audience, read from state - un-archiving it brings the reach back,
+ * and no row is deleted. `NEWLY_REACHED_BY_REPUBLICATION_SQL` says the same of the carrier it is
+ * asked about, so its count stays exact.
  */
 function republicationReachesUserSql(post: string, user: string, opts: ReadOpts = {}): string {
-  return `EXISTS (SELECT 1 FROM post_republications vis_rep WHERE vis_rep."postId" = ${post}.id
+  return `EXISTS (SELECT 1 FROM post_republications vis_rep
+      JOIN associations vis_rep_asso ON vis_rep_asso.id = vis_rep."associationId"
+      WHERE vis_rep."postId" = ${post}.id AND NOT COALESCE(vis_rep_asso.archived, false)
       AND ${associationVisibleToUserSql('vis_rep."associationId"', user, opts)})`;
 }
 
@@ -265,11 +272,15 @@ function acceptedFollowerOfAuthorSql(author: string, user: string): string {
     AND ${sameSideOfReviewCohortSql(author, `${user}.id`)})`;
 }
 
-/** What a reposter must still hold for their repost to reach anyone: first-hand sight, no grant. */
+/**
+ * What a reposter must still hold for their repost to reach anyone: first-hand sight, no grant, and
+ * - for a personal post - not through a carrier the author accepted (no second hop, 2026-11-02).
+ */
 const REPOSTER_FIRST_HAND = {
   adminSeesAll: false,
   readGrants: false,
   memberReposts: false,
+  personalRepublications: false,
 } as const;
 
 /**
@@ -316,22 +327,42 @@ export function memberRepostReachesUserSql(post: string, user: string): string {
 }
 
 /**
+ * THE KINDS OF ENTITY WHOSE POSTS A MEMBER REPOST MAY CARRY (WP-F6). An ALLOWLIST over
+ * `CHK_associations_type` (migration 075), so a type added later stays refused until someone lists
+ * it here. Every type of today is on it: an association and an institution since WP-F6, a LIST since
+ * the owner's decision of 2026-11-02 ("Oui partout sans exception"), which lifted the refusal of
+ * lists taken the same morning. The allowlist shape is kept on purpose rather than "any entity":
+ * the next type is a decision, never an accident.
+ */
+export const MEMBER_REPOSTABLE_ASSOCIATION_TYPES: readonly string[] = [
+  'association',
+  'list',
+  'institution',
+];
+
+/** `MEMBER_REPOSTABLE_ASSOCIATION_TYPES` as an SQL list of literals (constants, never user input). */
+const MEMBER_REPOSTABLE_TYPES_SQL = MEMBER_REPOSTABLE_ASSOCIATION_TYPES.map((t) => `'${t}'`).join(
+  ', '
+);
+
+/**
  * Post row `post` is one a member repost may carry at all (owner, 2026-11-02): a personal post, or
- * the post of an ASSOCIATION or an INSTITUTION that addresses at least one space (an
- * `association_audiences` rule). An ALLOWLIST of types (`CHK_associations_type`, migration 075:
- * 'association', 'list', 'institution'), so a type added later stays refused until someone lists
- * it: never the post of a LIST, and never that of an entity with no rule - one read by its MEMBERS
- * ONLY: what such an entity publishes is meant for that circle, and a member's repost would carry
- * it past it.
+ * the post of an entity of a LISTED type (`MEMBER_REPOSTABLE_ASSOCIATION_TYPES`) that addresses at
+ * least one space (an `association_audiences` rule) and is not ARCHIVED - never that of an entity
+ * with no rule, one read by its MEMBERS ONLY: what such an entity publishes is meant for that
+ * circle, and a member's repost would carry it past it; and never an archived entity's, which no
+ * longer speaks (review of #2965, 2026-11-02).
  *
  * Read by the write (refused with the 404 of a post not seen), by the card's offer, and inside
- * `memberRepostCarriesSql` - so a repost written before the decision, or before the association lost
- * its last rule, reaches, names and dates nothing, with no row deleted. Read from state at every
- * query: an association that gains a rule makes its posts repostable again.
+ * `memberRepostCarriesSql` - so a repost written before its entity lost its last rule, was
+ * archived, or before its type left the list, reaches, names and dates nothing, with no row
+ * deleted. Read from state at every query: an entity that gains a rule, or is un-archived, makes
+ * its posts repostable again.
  */
 export function memberRepostablePostSql(post: string): string {
   return `(${post}."associationId" IS NULL OR EXISTS (SELECT 1 FROM associations vis_mrep_asso
-      WHERE vis_mrep_asso.id = ${post}."associationId" AND vis_mrep_asso.type IN ('association', 'institution')
+      WHERE vis_mrep_asso.id = ${post}."associationId" AND vis_mrep_asso.type IN (${MEMBER_REPOSTABLE_TYPES_SQL})
+        AND NOT COALESCE(vis_mrep_asso.archived, false)
         AND EXISTS (SELECT 1 FROM association_audiences vis_mrep_arule
           WHERE vis_mrep_arule."associationId" = vis_mrep_asso.id)))`;
 }
@@ -378,6 +409,14 @@ export interface FollowerOpts {
    * author's consent covers one step of reach).
    */
   memberReposts?: boolean;
+  /**
+   * Whether a PERSONAL post is opened by an association that CARRIES it (D38b), on by default. OFF
+   * for the member-repost first-hand test only (`REPOSTER_FIRST_HAND`, `FIRST_HAND`): the author
+   * consented to ONE carrier's audience, so a reader who reaches the post only through that carrier
+   * may not repost it to their own followers - the second hop of the review of #2965 (2026-11-02).
+   * An entity post keeps its republications: no person consented to anything there.
+   */
+  personalRepublications?: boolean;
 }
 
 /**
@@ -427,10 +466,15 @@ export function postVisibleToUserSql(
       ? ''
       : `
       OR ${memberRepostReachesUserSql(post, user)}`;
+  // D38b: a carrier the author accepted - left out only to ask who may repost it (no second hop).
+  const personalCarrierClause =
+    opts.personalRepublications === false
+      ? ''
+      : `
+      OR ${republicationReachesUserSql(post, user)}`;
   return `(${adminClause}${post}."authorId" = ${user}.id
     OR (${post}."associationId" IS NULL AND (
-      ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}
-      OR ${republicationReachesUserSql(post, user)}${followerClause}${repostClause}))
+      ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
       OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })}${repostClause})))`;
@@ -445,6 +489,8 @@ export function postVisibleToUserSql(
 export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users nr_user
   JOIN posts nr_post ON nr_post.id = $1
   WHERE nr_user.id <> nr_post."authorId"
+    AND EXISTS (SELECT 1 FROM associations nr_carrier
+      WHERE nr_carrier.id = $2::uuid AND NOT COALESCE(nr_carrier.archived, false))
     AND ${associationVisibleToUserSql('$2::uuid', 'nr_user')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
@@ -521,15 +567,18 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
  *   person's door, never a space's);
  * - a personal post: its author belongs to the space (`isReaderSpaceSql`, so a review account's post
  *   reaches no real space);
- * - either: an association that REPUBLISHED it has a rule reaching the space (D38, D38b).
+ * - either: an association that REPUBLISHED it, and is not archived, has a rule reaching the space
+ *   (D38, D38b; an archived carrier reaches nobody, as in `republicationReachesUserSql`).
  * Never a follow, a member repost or a read grant: each opens a post to chosen people, not to a
  * space. `space-pins.integration.spec.ts` holds it to `postVisibleToUserSql` for a reader whose
  * only door is that one space.
  */
 export function postReachesSpaceSql(post: string, space: string): string {
   const republished = `EXISTS (SELECT 1 FROM post_republications sp_rep
+        JOIN associations sp_rep_asso ON sp_rep_asso.id = sp_rep."associationId"
         JOIN association_audiences sp_rep_rule ON sp_rep_rule."associationId" = sp_rep."associationId"
-        WHERE sp_rep."postId" = ${post}.id AND ${ruleReachesSpaceSql('sp_rep_rule', space)})`;
+        WHERE sp_rep."postId" = ${post}.id AND NOT COALESCE(sp_rep_asso.archived, false)
+          AND ${ruleReachesSpaceSql('sp_rep_rule', space)})`;
   return `((${post}."associationId" IS NULL AND (
       EXISTS (SELECT 1 FROM users sp_author
         WHERE sp_author.id = ${post}."authorId" AND ${isReaderSpaceSql(space, 'sp_author')})

@@ -6,7 +6,12 @@
  * (`libs/contracts/help-ids.json`) and `help-ids.spec.ts` asserts this copy equals it: a help
  * declared on the client and missing here would be recorded locally and refused on every device.
  */
-export const HELP_IDS = ['welcome-tour'] as const;
+export const HELP_IDS = [
+  'welcome-tour',
+  'hint-create-post',
+  'hint-create-event',
+  'hint-create-form',
+] as const;
 
 /**
  * The `code` of the 400 refusing an id outside {@link HELP_IDS} - the one answer a client treats

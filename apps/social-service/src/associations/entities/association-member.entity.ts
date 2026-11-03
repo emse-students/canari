@@ -34,6 +34,13 @@ export enum AssociationPermissionFlag {
   MANAGE_PARTNERSHIPS = 1 << 10,
   /** Create, edit and delete bookable spaces (rooms, slots) and manage their bookings. */
   MANAGE_BOOKINGS = 1 << 11,
+  /**
+   * Edit the association's public profile: name, description, bio, logos, colour, category,
+   * contact e-mail and, for a list, its promo and second theme (its fields of `PATCH :id` -
+   * `UPDATE_FIELD_RIGHTS` - and the logo routes). Split from `MANAGE_MEMBERS` on 2026-11-02 (owner): managing the roster is not
+   * editing the page; migration 124 gave it to every member who held `MANAGE_MEMBERS` then.
+   */
+  EDIT_PROFILE = 1 << 12,
 }
 
 /**
@@ -75,11 +82,50 @@ export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
 export const SUPER_ADMIN_EXCLUDED_FLAGS =
   AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT | AssociationPermissionFlag.POST_AS_ASSO;
 
+/** The three kinds of entity an `associations` row can be (`Association.type`). */
+export type AssociationKind = 'association' | 'list' | 'institution';
+
+/**
+ * FLAGS NO TIER HOLDS ON AN ENTITY OF A GIVEN KIND - the platform administrator included (owner,
+ * 2026-11-02). Read by `mayAct` / `mayActOnAny` (so every route a flag guards refuses with no edit
+ * of its own) and by `writablePermissions` (so a member row is never written with them).
+ *
+ * - A LIST keeps its shop, its cotisation and every paid feature, but holds NO Lydia account of its
+ *   own: it collects only through a payment delegation to an association that accepted
+ *   (`collection-policy.ts`). So it never holds `MANAGE_PAYOUT_ACCOUNT`.
+ * - An INSTITUTION collects nothing at all (owner, 2026-10-31, confirmed 2026-11-02): neither the
+ *   shop nor the payout account.
+ *
+ * Exhaustive over `AssociationKind`, so a new kind does not compile until it is placed here. This is
+ * the ONLY place the per-kind exclusion is written; `collection-policy.ts` derives each kind's way
+ * of collecting from it, and the client mirrors it (`TYPE_EXCLUDED_FLAGS` in
+ * `frontend/src/lib/associations/api.ts`, asserted by `permissions.test.ts`).
+ */
+export const TYPE_EXCLUDED_FLAGS: Readonly<Record<AssociationKind, number>> = {
+  association: 0,
+  list: AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+  institution:
+    AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+};
+
+/** Every flag some kind excludes: a flag outside it never needs the entity's kind to be read. */
+export const ANY_TYPE_EXCLUDED_FLAGS = Object.values(TYPE_EXCLUDED_FLAGS).reduce(
+  (mask, flags) => mask | flags,
+  0
+);
+
+/** The flags `kind` excludes; an unknown kind (a row nobody listed) excludes every one of them. */
+export function typeExcludedFlags(kind: string): number {
+  return Object.prototype.hasOwnProperty.call(TYPE_EXCLUDED_FLAGS, kind)
+    ? TYPE_EXCLUDED_FLAGS[kind as AssociationKind]
+    : ANY_TYPE_EXCLUDED_FLAGS;
+}
+
 /**
  * Base admin flags granted to association admins.
  * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS |
- *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS | MANAGE_BOOKINGS
- * = 3359
+ *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS | MANAGE_BOOKINGS | EDIT_PROFILE
+ * = 7455
  *
  * Intentionally excludes:
  * - MANAGE_PAYOUT_ACCOUNT (1 << 9): sensitive financial flag, granted separately via
@@ -97,7 +143,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_FORMS |
   AssociationPermissionFlag.MANAGE_PRODUCTS |
   AssociationPermissionFlag.MANAGE_PARTNERSHIPS |
-  AssociationPermissionFlag.MANAGE_BOOKINGS; // = 3359
+  AssociationPermissionFlag.MANAGE_BOOKINGS |
+  AssociationPermissionFlag.EDIT_PROFILE; // = 7455
 
 /** TypeORM entity representing a user's membership in an association. */
 @Entity('association_members')

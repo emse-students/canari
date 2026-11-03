@@ -53,6 +53,27 @@ describe('payment-delegation util', () => {
       });
     });
 
+    // Owner review of #2967: a LIST holds no Lydia account of its own - not delegating, it is never
+    // ready, whatever account id and onboarding flag a row from before the decision carries.
+    it('never resolves a non-delegating list ready on an account of its own', () => {
+      const stale = { lydiaAccountId: 'vendor_stale', lydiaOnboardingComplete: true };
+      const t = resolvePaymentTarget(asso({ type: 'list', ...stale }), null, 'lydia');
+      expect(t).toMatchObject({ ready: false, connectAccountId: null, delegated: false });
+      expect(
+        resolvePaymentTarget(asso({ type: 'institution', ...stale }), null, 'lydia').ready
+      ).toBe(false);
+      expect(
+        resolvePaymentTarget(asso({ type: 'association', ...stale }), null, 'lydia').ready
+      ).toBe(true);
+      const parent = asso({ id: 'p', lydiaAccountId: 'vendor_p', lydiaOnboardingComplete: true });
+      const delegating = asso({
+        type: 'list',
+        paymentParentAssociationId: 'p',
+        paymentDelegationStatus: 'approved',
+      });
+      expect(resolvePaymentTarget(delegating, parent, 'lydia').ready).toBe(true);
+    });
+
     it('is not ready when the Lydia onboarding is not complete, an account id notwithstanding', () => {
       const t = resolvePaymentTarget(
         asso({ lydiaAccountId: 'vendor_club', lydiaOnboardingComplete: false }),

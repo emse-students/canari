@@ -153,13 +153,120 @@ Two dedicated fields on the association entity, kept distinct from the lists-onl
 
 Constraints (enforced server-side in `associations.service.ts`):
 
-- **Parent must approve.** A request lands as `pending`; the parent approves/rejects it.
+- **Parent must approve - and only ITS OWN managers may** (owner, 2026-11-02). A request lands as
+  `pending`; it is accepted only by a holder of `MANAGE_PRODUCTS` ON THE RECEIVER (read with
+  `mayAct(..., { withoutGoverningBde: true })`, so a BDE governing the receiver does not count) or by
+  the platform administrator. Anyone else gets `403 DELEGATION_ACCEPT_RECEIVER_ONLY`. **Rejecting
+  and revoking follow the same rule** (owner review of #2967, 2026-11-03):
+  `403 DELEGATION_REVOKE_RECEIVER_ONLY` for anyone else, a governing BDE included. The child itself
+  still CANCELS its own delegation (`DELETE :id/payment-delegation`) through its own managers.
+- **Every acceptance is recorded.** The same transaction that writes `approved` inserts a row in
+  `payment_delegation_acceptances` (migration 125: child, receiver, `acceptedByUserId`, `acceptedAs`
+  = `member` | `platform-admin`, `acceptedAt` from the database clock, and
+  `accepterGoverningSuperAdmin`), append-only, logged `[AUDIT]`. The accepting account id is
+  anonymised at account erasure (Art. 30 register, C8).
+- **A governing BDE that granted itself the shop right is recorded, not refused.** A BDE super-admin
+  may give itself `MANAGE_PRODUCTS` in the receiver's own roster and accept as a `member`. A member
+  row keeps no provenance of who granted its bits (if #2949 adds one, the record should read it
+  instead), so the acceptance records whether the accepter governed the receiver at that moment
+  (`isAssociationSuperAdminOf`), and a WARN says so. Decided on review, reversible: the grants
+  themselves are audited separately.
+- **A list collects ONLY this way.** A list holds no Lydia account of its own
+  (`LIST_NO_OWN_LYDIA_ACCOUNT`) and may sell only while its delegation is APPROVED
+  (`mayCollect`, `LIST_DELEGATE_REQUIRED` otherwise). The receiver may be ANY association whose Lydia
+  is ready - not necessarily the list's BDE. A list or an institution can never be a receiver, and an
+  institution never delegates (it sells nothing). See [associations](associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31).
+- **On the CHILD side, a governing BDE acts for the list - intended** (owner, 2026-11-03).
+  Requesting, re-pointing and cancelling a list's delegation read `MANAGE_PRODUCTS` on the list
+  through `mayAct` WITH the BDE tier, so the BDE super-admin governing the list may do all three.
+  Only the RECEIVER side (accept, reject, revoke) excludes the governing BDE, because the account
+  is the receiver's, not the list's.
+- **A list with no shop manager: the BDE grants the right, no backfill** (owner, 2026-11-03).
+  Measured on production that day: 32 of 44 lists have no member holding `MANAGE_PRODUCTS` (bit
+  256). The owner says those lists are empty, so no migration grants it. When such a list wants to
+  collect, its governing BDE super-admin - or the platform admin - grants `MANAGE_PRODUCTS` to one
+  of its members (or requests the delegation itself, above). The list's own managers CANNOT grant
+  it: the grant ceiling (#2949) lets an ordinary `MANAGE_MEMBERS` holder write only the flags its
+  own row holds ([association-permissions](../../association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 - **Explicit + always to parent.** Once `approved`, every payment routes to the parent even if the
   child also has its own payment account.
 - **One level only.** A parent that itself delegates cannot be chosen as a parent (no chains), and
-  an association that already receives delegated payments cannot delegate its own.
+  an association that already receives delegated payments cannot delegate its own. **The request
+  checks this before any lock**, so two crossed requests (A asks B while B asks C) both pass; **the
+  acceptance checks it again, inside its transaction and under its locks** (review of #2967): a
+  receiver with any link of its own (pending or approved), or a requester already receiving an
+  APPROVED delegation, is refused `409 DELEGATION_CHAIN_REFUSED`, logged `[DELEGATION] acceptance
+  refused, it would make a chain`. Two crossed acceptances meet on B's row (FOR SHARE as the
+  receiver, FOR UPDATE as the requester), so the later one reads the earlier's commit
+  (`payment-delegation.integration.spec.ts`, both orders).
 - **Fails closed.** If a delegating child's parent can't be loaded, or the parent has not finished
   payment onboarding, payments are treated as *not ready* rather than falling back to the child.
+
+### Pause and resume, when the receiver stops collecting (owner, 2026-11-02)
+
+When the receiver REVOKES an approved delegation (`rejectPaymentDelegation`), when the child CANCELS
+one, or when the receiver LOSES its Lydia (`setLydiaReadiness` to not-ready, or `clearLydiaAccount`
+by the platform admin), the stranded child's on-sale products are withheld in the SAME transaction
+(`isActive = false, activationWithheld = true`; a product a manager had already taken off sale is
+left alone). A child whose own account is ready is not stranded and is not touched - and a LIST is
+never such a child: `resolvePaymentTarget` resolves a non-delegating list NOT ready whatever
+`lydiaAccountId` an old row carries (`holdsOwnAccount`, read from `TYPE_EXCLUDED_FLAGS`), and the
+release reads the same answer. Paid forms need no write: `paymentsPaused` is DERIVED on every read
+(`forms.service`: the form charges by `chargesMoney` - the ONE predicate, which counts a choice
+option's supplement - and `collectsNow` is false), and the respondent page holds an online submit
+with `form_view_payments_paused_note`. A paused list may still EDIT its products: only putting one on
+sale or changing what it charges is refused (`productUpdateCollects`).
+
+**The managers are told by their OWN notices** (owner review of #2967, 2026-11-03), NOT behind
+`LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`: `delegation_revoked` (the receiver ended it),
+`delegation_receiver_not_ready` (the receiver's Lydia was reverted or unlinked) and
+`delegation_resumed`, written by `LydiaPaymentsNotifier.tellDelegation` to the child's own
+`MANAGE_PRODUCTS` holders, with a push (`delegationNoticeContent`, the native strings of both
+platforms) and a row that opens the child's delegation section. **An entity is told exactly when
+its COLLECTING changes**, never on a product count (a list selling through paid forms only has none
+to withhold, and stops all the same): `collectsThrough` before and after a revoke or an acceptance,
+and every approved delegate on the receiver's readiness TRANSITION (a replay changes nobody) or on
+the unlink of a Business that was ready. Rejecting a pending request, or a child that collects on its
+own ready account, tells nobody. A client older than the release carrying them draws the neutral
+unknown-type row ([legacy-compatibility](../../legacy-compatibility.md)).
+
+Everything RESUMES **in the same transaction** as what made it possible: a new acceptance releases
+the child's products inside `approvePaymentDelegation`, and a receiver ready again releases its own
+and its approved delegates' inside `setLydiaReadiness` (replays included), so a commit never leaves a
+product withheld and no release after it is owed. **The delegates are read SHARE-locked**
+(`approvedDelegateIds`, `FOR SHARE` in id order): a revoke, a cancel or a move locks the child FOR
+UPDATE, so it either commits before the read - and the child is no longer a delegate - or waits for
+the readiness to commit and then withholds what was released. Without it a revoke committing between
+the read and the release re-opened a paused list's products for good; an integration row interleaves
+the two on two connections and fails without the lock. Every caller holds the receiver's lock
+first, as the approval does, so the lock order is the same everywhere. After an unlink the link stays `approved`: the
+products wait withheld until the receiver is ready, or until the child picks another receiver.
+
+Proven against PostgreSQL in `associations/payment-delegation.integration.spec.ts` (accept refused to
+a BDE, revoke refused to a BDE, recorded for the treasurer, the admin and a governing member,
+purchase routed to the receiver, revoke and unlink pausing, resume in the acceptance's and the
+readiness's own transaction, a stale list account never ready) and
+`refunds/refunds.integration.spec.ts` (below).
+
+### Who refunds a delegate's payment: the account that TOOK it (owner review of #2967, 2026-11-03)
+
+A refund belongs to the association whose Lydia Business TOOK the payment - the paid checkout's
+`vendorToken`, or the form answer's `lydiaVendorToken`, compared with the refunder's own
+`lydiaAccountId` - never to whoever the delegation points at NOW. After a revoke the former receiver
+still holds the money and still refunds it; a new receiver, which never took it, gets the 404 any
+stranger gets. The spec approves, pays, moves the delegation to a new receiver, then refunds from the
+former one and is refused from the new one - a boutique payment and a form answer alike.
+
+**A form request in flight follows the same fact.** Every read, cancel and callback check of an
+issued form request uses the Business it was ISSUED to (`requestAccountOf`, the row's
+`lydiaVendorToken`), never the form's payee resolved now: the verified callback (`isCallbackPayee`),
+the payer's return (`confirmPayment`), the retry's cancel (`settleOpenRequest`) and the sweep
+(`LydiaReconciliationService.reconcileSubmission`). Reading the payee now lost the payment of a list
+whose delegation was revoked or moved within the request's lifetime: the money at A, A's callback
+refused, the answer expired unpaid with no purchase record. A row with request ids and no account
+predates migration 120 and is not read with another Business's key - it is said at WARN and left.
+`forms/form-order-ref.integration.spec.ts` issues on A, revokes (and, separately, moves to B), then
+records A's callback and refuses B's.
 
 ### Routing decision point
 
@@ -177,18 +284,19 @@ accounting source of truth even though the money lands in the parent's account.
 
 Approving a child grants the parent read access to that child's accounting (purchase records + paid
 form payments), including an `.xlsx` export. These are **parent-scoped** endpoints: the route id is
-the parent (so the existing `MANAGE_PRODUCTS` guard proves parent-admin), then the service verifies
-the approved link via `assertIsApprovedParentOf`. The parent does **not** get the child's payment
-dashboard or balance.
+the parent (so the existing `MANAGE_PRODUCTS` guard proves parent-admin), then
+`childAccountingScope` says what it may read: everything while the delegation to it is approved, and
+once it ended, **the payments its own Business took** (`purchaseIdsTakenBy`) - the ones it still
+holds and refunds. The parent does **not** get the child's payment dashboard or balance.
 
 ### UI
 
-`/associations/[slug]/edit` -> **Delegation** tab (`edit/EditDelegationTab.svelte`, gated on
+`/associations/[slug]/edit` and `/lists/[slug]/edit` -> **Delegation** tab (`edit/EditDelegationTab.svelte`, gated on
 `MANAGE_PRODUCTS`). One component, two sections:
 
 - **Club-side** - pick a parent association, request delegation, and see status (`pending` /
   `approved`, with a warning if the parent isn't payment-ready) or cancel.
-- **Parent-side** - incoming request queue: approve/reject pending requests, revoke approved ones,
+- **Parent-side** (never drawn for a list, which cannot receive) - incoming request queue: approve/reject pending requests, revoke approved ones,
   and expand an approved child to view its accounting table + export button (reuses the "Achats"
   purchase-row layout).
 
@@ -200,7 +308,7 @@ dashboard or balance.
 | POST | `/api/associations/:id/payment-delegation` | Request delegation to `{ parentAssociationId }` |
 | DELETE | `/api/associations/:id/payment-delegation` | Cancel own delegation (pending or approved) |
 | GET | `/api/associations/:id/payment-delegation/children` | Parent's request queue (pending + approved) |
-| POST | `/api/associations/:id/payment-delegation/children/:childId/approve` | Approve a child (parent must be payment-ready) |
+| POST | `/api/associations/:id/payment-delegation/children/:childId/approve` | Approve a child (parent must be payment-ready; the receiver's own `MANAGE_PRODUCTS` holder or the platform admin only; recorded) |
 | POST | `/api/associations/:id/payment-delegation/children/:childId/reject` | Reject/revoke a child |
 | GET | `/api/associations/:id/payment-delegation/children/:childId/purchases` | Read a delegated child's purchases |
 | GET | `/api/associations/:id/payment-delegation/children/:childId/purchases/export` | Child's purchases as `.xlsx` |
@@ -729,13 +837,12 @@ updates nothing, logs a debug line and notifies nobody. Every write records why 
 `lydiaReadinessAt`). No holder, or two, writes nothing. A second refusal naming ANOTHER cause (2701
 after error 5) updates the cause and its date, with no transition and no second notice.
 
-- **Ready** (`ProductsService.markLydiaReady`, the webhook and the admin route): then the withheld
-  products of the holder and of its APPROVED delegates are released - on EVERY call, replays included,
-  so a crash between the commit and the release heals at the next one (`activationWithheld` is the
-  allowlist, so a second release finds nothing). The release RE-READS readiness in its own
-  transaction, the association and its delegation parent share-locked, the revert locking that holder
-  FOR UPDATE: a release running after a revert undid the "ready" releases nothing (an integration
-  spec races the two).
+- **Ready** (`ProductsService.markLydiaReady`, the webhook and the admin route): the SAME
+  transaction releases the withheld products of the holder (when it collects on its own account) and
+  of its APPROVED delegates, on every call, replays included (owner review of #2967): a commit never
+  leaves one withheld, so nothing has to heal afterwards (`activationWithheld` is the allowlist, so a
+  second release finds nothing). The holder row is locked FOR UPDATE by both the readiness and the
+  revert, so the two serialise (an integration spec races them).
 - **Reverted** when `request/do` answers **error 5** (not validated; core's typed
   `LYDIA_BUSINESS_NOT_VALIDATED`) or **2701** (blocked; `LYDIA_BUSINESS_BLOCKED`), from the shop and
   from a form (member or guest): the unissued attempt is released, then the HOLDER of the vendor token

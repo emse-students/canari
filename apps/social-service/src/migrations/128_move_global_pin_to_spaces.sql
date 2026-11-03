@@ -21,7 +21,7 @@
 -- - published (not scheduled for later), not hidden by moderation, not a dead reel;
 -- - an association's post: one of its audience rules reaches the space;
 -- - a personal post: its author belongs to the space (campus, and a cursus entry of that formation);
--- - either: an association that republished it has a rule reaching the space.
+-- - either: an association that republished it, and is not archived, has a rule reaching the space.
 -- The review cohort (`review-cohort.ts`) is configuration, not data, and is not read here: a review
 -- account's post was never the pinned one.
 --
@@ -65,8 +65,9 @@ WITH flagged AS (
                    AND (r.campus IS NULL OR r.campus = s.campus)))
          OR EXISTS (
                 SELECT 1 FROM post_republications rep
+                  JOIN associations rep_asso ON rep_asso.id = rep."associationId"
                   JOIN association_audiences rr ON rr."associationId" = rep."associationId"
-                 WHERE rep."postId" = f.id
+                 WHERE rep."postId" = f.id AND NOT COALESCE(rep_asso.archived, false)
                    AND (rr.formation IS NULL OR rr.formation = s.formation)
                    AND (rr.campus IS NULL OR rr.campus = s.campus)))
 )

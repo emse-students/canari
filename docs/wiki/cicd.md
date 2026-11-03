@@ -2085,7 +2085,7 @@ what is deliberately not:
 
 | Tree | Dependabot | What gates an update |
 | --- | --- | --- |
-| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which runs `:app:checkArm64DebugAarMetadata`, `:app:processArm64DebugMainManifest` and `:app:compileArm64DebugKotlin`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which runs `:app:checkArm64DebugAarMetadata`, `:app:processArm64DebugMainManifest`, `:app:compileArm64DebugKotlin` and (since 2026-11-03) `:app:mergeArm64DebugResources`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
 | `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. With `gen/android` above, one of the two Gradle directories the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
 | `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
 | `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |

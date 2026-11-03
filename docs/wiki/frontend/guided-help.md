@@ -13,6 +13,39 @@ lively first visit. His decisions, binding:
   follow in batches: create (post, event, form); chats and CanaReels; associations and spaces;
   booking a room. Each one is a few lines of declaration (below).
 
+## Owner decisions of 2026-11-03
+
+Binding, on top of the ones above.
+
+1. **A first-time hint never points INSIDE a modal.** For a control that opens a modal (the post
+   composer, the event form) the hint points at the OPENING control, and its text names what a
+   first-timer would miss once the modal is open. No engine change. Batch 1 (draft PR #2982)
+   follows this.
+2. **The feed tabs' (i) button moves into guided help.** The explanation shipped in #2857
+   (`posts_tabs_info_*` strings) becomes a guided hint on the tab bar: shown once per account,
+   replayable from Settings like the others. The permanent (i) button is then removed. Scheduled
+   in batch 2 below; the existing strings are reused where they fit.
+3. **A "what's new" help after an update**, besides the full welcome tour (built, #2952): on the
+   first open after an update, 2 to 5 steps on the real interface pointing ONLY at what changed in
+   that version, once per version per account, skippable, and never shown to a brand-new account in
+   the same visit as the welcome tour. Designed AFTER the four batches. Open design points: how a
+   version's steps are declared (one declaration file per version listing its steps, or a `since`
+   field on each help), and how the per-version "seen" keys fit the existing allowlisted help-ids
+   contract (`libs/contracts/help-ids.json`: one bounded id per version, or a version marker with
+   its own allowlist rule), without letting the table grow unbounded.
+4. **Pace: one batch per pre-release**, each read on the Mi 9T and the iPhone 12 before the next
+   batch starts.
+
+### The batch plan
+
+| Batch | Content | State |
+| --- | --- | --- |
+| 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
+| 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2) | after batch 1 is read on both phones |
+| 3 | Associations and spaces | after batch 2 |
+| 4 | Booking a room | after batch 3 |
+| 5 | The "what's new" help (decision 3) | designed after batch 4 |
+
 ## The pieces
 
 | File | Role |
@@ -146,6 +179,15 @@ quiet. The same predicate SUSPENDS a help on screen (a call rings, a sheet opens
 history entry released, and it comes back on the same step when the app is quiet again. A suspension
 is never an end.
 
+## At most one help per visit (lead, 2026-11-03, reversible)
+
+Without a cap, the welcome tour ends on `/posts`, the app turns quiet and `hint-create-post` starts at
+once: two helps back to back on a first visit (and after a Settings replay). `GuideEngine#pick` now
+offers nothing once a help has SHOWN a step in this visit - a visit being the engine's lifetime, one
+app open or reload (in-memory flag, no timer, no stored state; a sign-out resets it, the next account's visit is its own). A help
+declined as not-rendered shows nothing and does not count, so another may run. A replay from Settings
+is exempt from the cap and sets it: it is the visit's help. Pinned in `guideEngine.test.ts`.
+
 ## Seen, ended, replayed
 
 **Who sees the welcome tour (owner, 2026-11-02): every account that has never seen it, ONCE - new and
@@ -162,6 +204,25 @@ it points at is drawn). A replay ignores the seen set and still waits for the qu
 **An unseen help starts only once the server has answered** (`seenHelps.ready`): starting on the
 local copy alone would replay on a new device a tour the account finished on another one. A device
 that cannot reach the server shows no new help; the next opening asks again.
+
+## The first-time hints, batch 1 - create
+
+Built 2026-11-03, `kind: 'hint'` each, once per account, listed after the welcome tour (so a hint
+never precedes it on `/posts`). **A help never runs over a modal** (the quiet state), and the post
+composer and the event form ARE modals - so those two hints point at the control that OPENS them, and
+say what a first-timer would miss (publishing as an association, scheduling, validation) in the body.
+The form builder is a page, so its hint points inside it.
+
+| Id | Route | Anchor(s) | Steps (fr) |
+| --- | --- | --- | --- |
+| `hint-create-post` | `/posts` | `posts.compose`: the phone header's "+" (`MobileHeader`) and the desktop "Publier" button (both marked, the drawn one wins) | "Publier un message" - texte, photos, sondage ou formulaire, en son nom ou celui d'une association, envoi programmable |
+| `hint-create-event` | `/calendar` | `calendar.deposit`: the "Deposer un evenement" button, drawn only for an account that may post on an association (else the step is left out, not-rendered) | "Déposer un événement" - association, date, lieu; visible dans l'agenda une fois validé |
+| `hint-create-form` | `/forms/create` | `forms.create.general`, `.questions`, `.settings`: wrappers of the page's three blocks | "Le formulaire" (titre, association, choix définitif), "Les questions", "Réglages avancés" |
+
+Pinned by `guides/createHints.test.ts` (kind, route, registered, every step kept on phone and desktop,
+left out when not drawn, and the anchors really marked in the page sources). Owed: the three read on a
+phone and a desktop with a signed-in account; the next batches (chats and CanaReels, associations and
+spaces, booking a room) follow.
 
 ## Back, focus, motion
 

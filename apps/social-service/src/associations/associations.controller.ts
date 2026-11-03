@@ -1,5 +1,5 @@
 import { Throttle } from '@nestjs/throttler';
-import { kindMaySell } from './selling-kinds';
+import { mayCollect } from './collection-policy';
 import {
   BadRequestException,
   Body,
@@ -76,6 +76,12 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import {
+  ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+  ASSOCIATION_FIELD_RIGHT_MISSING,
+  dropUnchangedPlatformFields,
+  rightsAskedBy,
+} from './association-update-rights';
 import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
@@ -210,11 +216,13 @@ export class AssociationsController {
   ) {
     const query = parseDirectoryQuery({ type, scope, campus, formation });
     return (
-      await this.service.list(query.type, {
-        viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
-        campus: query.campus,
-        formation: query.formation,
-      })
+      await this.service
+        .list(query.type, {
+          viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
+          campus: query.campus,
+          formation: query.formation,
+        })
+        .then((rows) => this.service.withPaymentsReady(rows))
     ).map((row) => toAssociationView(row));
   }
 
@@ -222,14 +230,17 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get('slug/:slug')
   async findBySlug(@Param('slug') slug: string) {
-    return toAssociationView(await this.service.findBySlug(slug));
+    const [row] = await this.service.withPaymentsReady([await this.service.findBySlug(slug)]);
+    return toAssociationView(row);
   }
 
   /** Returns all associations the calling user is a member of, with the caller's own permissions. */
   @UseGuards(NginxAuthGuard)
   @Get('me/list')
   async myAssociations(@Headers('x-user-id') userId: string) {
-    return (await this.service.listByUser(userId)).map((row) => toAssociationView(row));
+    return (await this.service.withPaymentsReady(await this.service.listByUser(userId))).map(
+      (row) => toAssociationView(row)
+    );
   }
 
   /**
@@ -572,7 +583,12 @@ export class AssociationsController {
     const ok = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
     });
-    return { ok };
+    if (ok) return { ok };
+    // A list or an institution holds no Lydia account of its own (G5): refused with a typed code
+    // BEFORE core-service calls Lydia's `business/create`, never after the link fails.
+    const code = await this.service.payoutAccountRefusal(id);
+    if (code) this.logger.warn(`[PERM] payout account refused on ${sanitizeLog(id)}: ${code}`);
+    return code ? { ok, code } : { ok };
   }
 
   /**
@@ -701,7 +717,8 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(@Param('id') id: string) {
-    return toAssociationView(await this.service.findById(id));
+    const [row] = await this.service.withPaymentsReady([await this.service.findById(id)]);
+    return toAssociationView(row);
   }
 
   // ── Authenticated ─────────────────────────────────────────────────────────
@@ -761,7 +778,7 @@ export class AssociationsController {
    * hide the whole Danger panel behind the stricter of its two controls, so a BDE administrator
    * saw neither this nor the archive beside it.
    *
-   * Archiving stays the reversible answer and is a `PATCH` at `MANAGE_MEMBERS`; this is the one
+   * Archiving stays the reversible answer and is a `PATCH { archived }` at `MANAGE_MEMBERS`; this is the one
    * that does not come back, which is why the caller reaches `remove` rather than the service
    * being trusted to identify them.
    *
@@ -802,16 +819,18 @@ export class AssociationsController {
     return this.service.remove(id, userId);
   }
 
-  // ── Global Admin OR Association Admin (MANAGE_MEMBERS) ───────────────────
+  // ── Association details: each field asks its own right (UPDATE_FIELD_RIGHTS) ──
 
   /**
-   * Updates association details.
-   * `documentQuotaBytes` is silently ignored unless the caller is a global admin.
-   * Cotisation config fields (`cotisationEnabled`/`cotisationMode`/`cotisationExpiresAt`) require
-   * MANAGE_PRODUCTS (D5), stricter than this endpoint's baseline MANAGE_MEMBERS. When enabling,
-   * the canonical cotisation product is provisioned/synced (see `provisionCotisationProduct`).
+   * Updates association details. NOT ONE FLAG (owner, 2026-11-02): the guard admits a member, the
+   * association's super-admin or the platform admin, and each field then asks the right
+   * `UPDATE_FIELD_RIGHTS` names for it - `EDIT_PROFILE` for the profile, `MANAGE_MEMBERS` for
+   * `archived`, `MANAGE_PRODUCTS` for the cotisation settings (D5), the platform admin alone for
+   * `documentQuotaBytes` and a list's `parentAssociationId`. A body asks every right its fields
+   * ask; one missing refuses the whole write (403, typed, naming the fields), so nothing is half
+   * saved. When enabling a cotisation, the canonical product is provisioned/synced
+   * (`provisionCotisationProduct`).
    */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
   async update(
@@ -820,35 +839,70 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: UpdateAssociationDto
   ) {
-    const patch = { ...dto };
+    let patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin) {
-      // Only global admins may adjust document quota
-      delete patch.documentQuotaBytes;
-    }
-
-    const touchesCotisation =
-      patch.cotisationEnabled !== undefined ||
-      patch.cotisationMode !== undefined ||
-      patch.cotisationExpiresAt !== undefined;
-    if (touchesCotisation) {
-      const canManageProducts = await this.service.mayAct(
-        userId,
-        id,
-        AssociationPermissionFlag.MANAGE_PRODUCTS,
-        { isGlobalAdmin }
-      );
-      if (!canManageProducts) {
-        throw new ForbiddenException(
-          'MANAGE_PRODUCTS permission required to edit cotisation settings'
+    if (!isGlobalAdmin && rightsAskedBy(patch).platformAdmin.length > 0) {
+      // LEGACY SHIM until 2027-05-03: an old list form resends its parent unchanged on every save.
+      const stored = (await this.service.findById(id)) as unknown as Record<string, unknown>;
+      const unchanged = dropUnchangedPlatformFields(patch, stored);
+      patch = unchanged.patch;
+      if (unchanged.dropped.length > 0) {
+        this.logger.log(
+          `[LEGACY] update ${sanitizeLog(id)}: unchanged ${unchanged.dropped.join(',')} dropped (old client resend)`
         );
       }
     }
+    const asked = rightsAskedBy(patch);
+    this.logger.debug(
+      `[ASSO] update ${sanitizeLog(id)} fields=${Object.keys(patch).join(',') || '(none)'}`
+    );
+    if (asked.unknown.length > 0) {
+      // The whitelisting ValidationPipe strips undeclared keys, so this is a DTO field nobody
+      // placed in the table - a defect here, never a client's.
+      this.logger.error(
+        `[PERM] update ${sanitizeLog(id)}: no right for ${asked.unknown.join(',')}`
+      );
+      throw new ForbiddenException({
+        code: ASSOCIATION_FIELD_RIGHT_MISSING,
+        message: `No right is defined for ${asked.unknown.join(', ')}`,
+      });
+    }
+    if (asked.platformAdmin.length > 0 && !isGlobalAdmin) {
+      // No screen sends these to anyone but a platform administrator: a request that does is a
+      // client defect or a hand-made call, and both are worth an accusing line.
+      this.logger.error(
+        `[PERM] update ${sanitizeLog(id)} refused for ${sanitizeLog(userId)}: ${asked.platformAdmin.join(',')} is platform-admin only`
+      );
+      throw new ForbiddenException({
+        code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+        message: `${asked.platformAdmin.join(', ')} may be changed by a platform administrator only`,
+        fields: asked.platformAdmin,
+      });
+    }
+    for (const [flag, fields] of asked.flags) {
+      if (!(await this.service.mayAct(userId, id, flag, { isGlobalAdmin }))) {
+        const name = AssociationPermissionFlag[flag];
+        this.logger.warn(
+          `[PERM] update ${sanitizeLog(id)} refused for ${sanitizeLog(userId)}: ${fields.join(',')} asks ${name}`
+        );
+        throw new ForbiddenException({
+          code: ASSOCIATION_FIELD_RIGHT_MISSING,
+          message: `${name} permission required to change ${fields.join(', ')}`,
+          right: name,
+          fields,
+        });
+      }
+    }
+    if (asked.flags.size === 0 && asked.platformAdmin.length === 0) {
+      throw new BadRequestException('Nothing to update');
+    }
+    const touchesCotisation = asked.flags.has(AssociationPermissionFlag.MANAGE_PRODUCTS);
 
     const updated = await this.service.update(id, patch);
-    // A cotisation already enabled on a list or an institution (stored before the rule) stays as it
-    // is: its product is not (re)provisioned, so the save above is never followed by a refusal.
-    if (touchesCotisation && updated.cotisationEnabled && kindMaySell(updated.type)) {
+    // A cotisation stored enabled on an entity that may not collect NOW (an institution, a list
+    // whose delegation was revoked) stays as it is: its product is not (re)provisioned, so the save
+    // above is never followed by a refusal.
+    if (touchesCotisation && updated.cotisationEnabled && mayCollect(updated)) {
       await this.productsService.provisionCotisationProduct(updated);
     }
     return toAssociationView(updated);
@@ -864,7 +918,7 @@ export class AssociationsController {
    * the literal `second` is the primary slot: an unknown value must not silently write the other
    * one.
    */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
   @Post(':id/logo')
@@ -888,7 +942,7 @@ export class AssociationsController {
   }
 
   /** Removes a stored logo from an association; `?slot=second` clears the second theme's. */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
   async deleteLogo(
@@ -1867,15 +1921,16 @@ export class AssociationsController {
 
   /**
    * Parent accounting access: lists a delegated child's completed purchases (boutique + paid
-   * forms). `:id` is the parent; the guard proves parent-admin, then the service verifies the
-   * approved link. Requires MANAGE_PRODUCTS.
+   * forms). `:id` is the parent; the guard proves parent-admin, then `childAccountingScope` reads
+   * what it may see: everything while approved, the payments its Business took once the delegation
+   * ended. Requires MANAGE_PRODUCTS.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Get(':id/payment-delegation/children/:childId/purchases')
   async listChildPurchases(@Param('id') id: string, @Param('childId') childId: string) {
-    await this.service.assertIsApprovedParentOf(id, childId);
-    return this.productsService.listAssociationPurchases(childId);
+    const { onlyRecordIds } = await this.service.childAccountingScope(id, childId);
+    return this.productsService.listAssociationPurchases(childId, onlyRecordIds);
   }
 
   /** Parent accounting access: XLSX export of a delegated child's purchases. `:id` is the parent. Requires MANAGE_PRODUCTS. */
@@ -1887,35 +1942,57 @@ export class AssociationsController {
     @Param('childId') childId: string,
     @Res() res: Response
   ) {
-    await this.service.assertIsApprovedParentOf(id, childId);
-    const { buffer, title } = await this.productsService.exportAssociationPurchases(childId);
+    const { onlyRecordIds } = await this.service.childAccountingScope(id, childId);
+    const { buffer, title } = await this.productsService.exportAssociationPurchases(
+      childId,
+      onlyRecordIds
+    );
     this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
   /**
-   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS.
+   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS,
+   * and the service narrows it: only the receiver's OWN shop managers or the platform administrator
+   * accept, never a BDE governing it, and the acceptance is recorded (owner, 2026-11-02).
    *
    * The child can now take payments through the parent's account, so the products it had to leave
-   * off sale for want of one go on sale - see `releaseWithheldProducts`. Composed here rather than
-   * inside `approvePaymentDelegation` for the same reason `provisionCotisationProduct` is: the
-   * products service already depends on the associations service, and the reverse edge would be a
-   * cycle.
+   * off sale for want of one go back on sale IN THE SAME TRANSACTION as the approval
+   * (`approvePaymentDelegation`, owner review of #2967): a commit never leaves one withheld.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/approve')
-  async approvePaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    const result = await this.service.approvePaymentDelegation(id, childId);
-    await this.productsService.releaseWithheldProducts(childId);
-    return result;
+  async approvePaymentDelegation(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.approvePaymentDelegation(id, childId, {
+      userId,
+      isGlobalAdmin: ga === 'true',
+    });
   }
 
-  /** Rejects a pending request or revokes an approved child's delegation. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  /**
+   * Rejects a pending request or revokes an approved child's delegation. `:id` is the parent.
+   * Requires MANAGE_PRODUCTS, and the service narrows it as for acceptance: the receiver's OWN shop
+   * managers or the platform administrator, never a BDE governing it
+   * (`DELEGATION_REVOKE_RECEIVER_ONLY`).
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/reject')
-  rejectPaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    return this.service.rejectPaymentDelegation(id, childId);
+  rejectPaymentDelegation(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.rejectPaymentDelegation(id, childId, {
+      userId,
+      isGlobalAdmin: ga === 'true',
+    });
   }
 
   // ── Internal (called by core-service) ───────────────────────────────────────

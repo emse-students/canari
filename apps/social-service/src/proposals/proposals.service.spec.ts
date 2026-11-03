@@ -194,6 +194,7 @@ describe('ProposalsService, a user-addressed kind', () => {
       withdrawn: fns.withdrawn,
       describe: jest.fn(() => Promise.resolve(new Map())),
       describeRequests: jest.fn(() => Promise.resolve(new Map())),
+      assertConsentCurrent: jest.fn(() => Promise.resolve()),
     };
     const service = new ProposalsService(
       repo as unknown as Repository<Proposal>,
@@ -299,6 +300,7 @@ describe('ProposalsService, a user-addressed kind - after review', () => {
       decided: jest.fn(() => Promise.resolve()),
       describe: jest.fn(() => Promise.resolve(new Map())),
       describeRequests: jest.fn(() => Promise.resolve(new Map())),
+      assertConsentCurrent: jest.fn(() => Promise.resolve()),
     };
     const service = new ProposalsService(
       repo as unknown as Repository<Proposal>,

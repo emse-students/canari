@@ -255,6 +255,12 @@
     booking_changed: m.notif_booking_changed_text,
     booking_removed: m.notif_booking_removed_text,
   };
+  /** A delegate (a list) paused or resumed by its receiver: the same whole-sentence row. */
+  const isDelegationNotif = $derived(
+    notif.type === 'delegation_revoked' ||
+      notif.type === 'delegation_receiver_not_ready' ||
+      notif.type === 'delegation_resumed'
+  );
   /**
    * An association's Lydia payments became active or were paused (system actor): a whole sentence
    * naming the association, so the row carries no actor name before it.
@@ -262,15 +268,22 @@
   const isLydiaPaymentsNotif = $derived(
     notif.type === 'lydia_payments_active' ||
       notif.type === 'lydia_payments_paused' ||
-      notif.type === 'lydia_cashier_added'
+      notif.type === 'lydia_cashier_added' ||
+      isDelegationNotif
   );
-  /** The whole sentence of a Lydia notice, naming the association the row stores. */
+  /** The whole sentence of a Lydia or delegation notice, naming the entity the row stores. */
   const lydiaNoticeText = $derived(
     notif.type === 'lydia_payments_active'
       ? m.notif_lydia_payments_active_text({ name: notif.text })
       : notif.type === 'lydia_payments_paused'
         ? m.notif_lydia_payments_paused_text({ name: notif.text })
-        : m.notif_lydia_cashier_added_text({ name: notif.text })
+        : notif.type === 'delegation_revoked'
+          ? m.notif_delegation_revoked_text({ name: notif.text })
+          : notif.type === 'delegation_receiver_not_ready'
+            ? m.notif_delegation_receiver_not_ready_text({ name: notif.text })
+            : notif.type === 'delegation_resumed'
+              ? m.notif_delegation_resumed_text({ name: notif.text })
+              : m.notif_lydia_cashier_added_text({ name: notif.text })
   );
   /** An association refunded the reader (system actor): a whole sentence naming the association. */
   const isLydiaRefundNotif = $derived(notif.type === 'lydia_refund_issued');
@@ -308,7 +321,10 @@
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
-            : notif.type === 'form_paid_over_capacity' || notif.type === 'lydia_payments_paused'
+            : notif.type === 'form_paid_over_capacity' ||
+                notif.type === 'lydia_payments_paused' ||
+                notif.type === 'delegation_revoked' ||
+                notif.type === 'delegation_receiver_not_ready'
               ? 'bg-amber-500 text-cn-ink'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
@@ -386,9 +402,9 @@
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_paid_over_capacity'}
         <TriangleAlert size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'lydia_payments_active'}
+      {:else if notif.type === 'lydia_payments_active' || notif.type === 'delegation_resumed'}
         <CircleCheck size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'lydia_payments_paused'}
+      {:else if notif.type === 'lydia_payments_paused' || notif.type === 'delegation_revoked' || notif.type === 'delegation_receiver_not_ready'}
         <CirclePause size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_cashier_added'}
         <Store size={glyph} strokeWidth={2.75} />

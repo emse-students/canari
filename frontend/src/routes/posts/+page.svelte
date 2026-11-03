@@ -43,6 +43,7 @@
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
   import { feedHeldForLanding } from '$lib/posts/feedLandingHold';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
@@ -886,10 +887,12 @@
   <div class="hidden md:block">
     <PageHeader title={m.posts_page_title()}>
       {#snippet actions()}
-        <Button onclick={() => (showCreateModal = true)} class="rounded-xl! px-4! py-2! text-sm!">
-          <SquarePen size={16} class="mr-1" />
-          {m.posts_publish_button()}
-        </Button>
+        <span class="inline-flex" use:guideAnchor={'posts.compose'}>
+          <Button onclick={() => (showCreateModal = true)} class="rounded-xl! px-4! py-2! text-sm!">
+            <SquarePen size={16} class="mr-1" />
+            {m.posts_publish_button()}
+          </Button>
+        </span>
       {/snippet}
     </PageHeader>
   </div>

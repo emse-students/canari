@@ -207,7 +207,7 @@ export interface PostEntity {
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
   canUnrepublishAs?: string[];
   /**
-   * "Republier au nom d'une association" (D38b): a personal post its author may be ASKED about, by
+   * "Demander a republier" (D38b): a personal post its author may be ASKED about, by
    * an association of the reader's that has not asked yet. The author decides; nothing is shown
    * before they accept.
    */

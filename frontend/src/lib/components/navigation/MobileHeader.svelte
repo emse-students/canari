@@ -84,6 +84,7 @@
       {#if onPosts}
         <a
           href={resolve('/posts?compose=1')}
+          use:guideAnchor={'posts.compose'}
           title={m.posts_publish_button()}
           aria-label={m.posts_publish_button()}
           class="ui-icon-button text-text-muted hover:text-text-main hover:bg-text-main/10 rounded-full"

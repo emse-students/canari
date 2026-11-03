@@ -7,7 +7,12 @@
  * help appends its id to the JSON and to both lists in the same pull request - the guide's own
  * declaration then names it, and TypeScript refuses a declaration under any other id.
  */
-export const HELP_IDS = ['welcome-tour'] as const;
+export const HELP_IDS = [
+  'welcome-tour',
+  'hint-create-post',
+  'hint-create-event',
+  'hint-create-form',
+] as const;
 
 /**
  * The `code` of the server's 400 for an id outside its list - the ONE refusal that is permanent:

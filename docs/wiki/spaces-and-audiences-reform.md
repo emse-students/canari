@@ -802,7 +802,7 @@ F4, question 3 is F5, question 4 is F6 (section 0).
   excludes institutions and other BDEs, which pinning must not (decision 1, G9).
 - **`postReachesSpaceSql`** ("visible to the readers of a space") is `postVisibleToUserSql` minus the
   personal doors (membership, follows, member reposts, read grants): an association's rules, a
-  personal post's author's spaces, a republisher's rules. `space-pins.integration.spec.ts` holds the
+  personal post's author's spaces, a republisher's rules unless it is archived (an archived carrier reaches nobody, as in the reader's predicate since #2965). `space-pins.integration.spec.ts` holds the
   two equal for a probe reader per space on every post.
 - **Writes**: `SpacePinsService` (`space-pins.service.ts`) behind `SpacePinsController`:
   `PATCH /api/posts/:postId/pin|unpin` with `{ spaceId }`, and the governor's list

@@ -8,6 +8,7 @@ import {
   AssociationPermissionFlag,
   BDE_ONLY_FLAGS,
   SUPER_ADMIN_EXCLUDED_FLAGS,
+  TYPE_EXCLUDED_FLAGS,
   ALL_PERMISSION_FLAGS,
   MEMBER_FLAGS_BEYOND_GRANTER,
   grantableFlags,
@@ -106,9 +107,36 @@ describe('the constants the server also defines', () => {
     expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO);
   });
 
+  // Owner, 2026-11-02: nobody holds a list's payout account, nor an institution's shop. The server's
+  // table is read from its source, so a change on one side alone fails here.
+  it('mirrors the backend TYPE_EXCLUDED_FLAGS, and holds a list payout account for nobody', () => {
+    expect(TYPE_EXCLUDED_FLAGS).toEqual({
+      association: 0,
+      list: MANAGE_PAYOUT_ACCOUNT,
+      institution: AssociationPermissionFlag.MANAGE_PRODUCTS | MANAGE_PAYOUT_ACCOUNT,
+    });
+    const server = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../apps/social-service/src/associations/entities/association-member.entity.ts'
+      ),
+      'utf8'
+    );
+    const table = server.slice(server.indexOf('export const TYPE_EXCLUDED_FLAGS'));
+    const body = table.slice(table.indexOf('{'), table.indexOf('};'));
+    expect(body).toMatch(/association: 0,/);
+    expect(body).toMatch(/list: AssociationPermissionFlag\.MANAGE_PAYOUT_ACCOUNT,/);
+    expect(body.replace(/\s+/g, ' ')).toContain(
+      'institution: AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT'
+    );
+    const ctx = { isGlobalAdmin: true, isSuperAdmin: false, assoType: 'list' as const };
+    expect(mayActOnAssociation(MANAGE_PAYOUT_ACCOUNT, ctx)).toBe(false);
+    expect(mayActOnAssociation(AssociationPermissionFlag.MANAGE_PRODUCTS, ctx)).toBe(true);
+  });
+
   it('mirrors the backend ALL_CORE_FLAGS value', () => {
-    expect(ALL_CORE_FLAGS).toBe(3359);
-    expect(ASSOCIATION_ADMIN_PRESET).toBe(3359 | MANAGE_PAYOUT_ACCOUNT);
+    expect(ALL_CORE_FLAGS).toBe(7455);
+    expect(ASSOCIATION_ADMIN_PRESET).toBe(7455 | MANAGE_PAYOUT_ACCOUNT);
   });
 
   it('lists exactly the three flags the server gates on a.isBDE', () => {
@@ -149,7 +177,7 @@ describe('the role editor', () => {
       'utf8'
     );
     const names = Object.keys(AssociationPermissionFlag).filter((k) => Number.isNaN(Number(k)));
-    expect(names).toContain('MANAGE_BOOKINGS');
+    expect(names).toContain('EDIT_PROFILE');
     for (const name of names) {
       expect(source, `no FLAG_LABELS row for ${name}`).toMatch(
         new RegExp(String.raw`flag:\s*AssociationPermissionFlag\.${name}\b`)
