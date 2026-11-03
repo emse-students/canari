@@ -118,6 +118,7 @@ REST: those rows need a count, then a migration.
 | `canari_admission_frozen` removed at session setup (`forgetLegacyAdmissionFreeze`, `setupMessageHandler.ts`; review of #2817) | every device that ran a dev build of #2815 has opened a session on a later build | not a version question (dev/alphas) | one device-global `localStorage` key, read by nothing | 1 function + 1 call + 1 test | remove 2027-02-01 ([mls-protocol](protocols/mls-protocol.md)) |
 | `internal/reel-purge` with NO `reason` read as the pre-RC-14 delete (`purgeReels`, `media.service.ts`; review of #2898) | BOTH estates run the social-service carrying RC-14, which always names one | not a client version question: a deploy-order WINDOW (media-service may be replaced before social-service, or rolled back past it) | none | the `undefined` arm, its warn and the controller's absent-reason branch | remove once both estates deploy RC-14: then a missing reason is a `400`. Until then the old caller gets the old delete for a file no LIVE chat hold keeps; for a file a live chat hold keeps, the post hold is RELEASED and the answer is `refused` (the old caller drops its post row on any answer, and an older reel worker counts outcomes by name, so `released` would read as NaN), since that caller cannot say moderator from post end and the release is the safe reading - each call logs `Reel purge ... with NO reason - an older social-service` ([media-service](services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
+| An institution's republication request accepted with NO `audienceFingerprint` is REFUSED, 409 `REPOST_PERSONAL_AUDIENCE_CHANGED` (`assertConsentCurrent`, `personal-republications.service.ts`; review of #2965) | `minClientVersion` >= the first stable carrying the consent screen's warning and fingerprint (#2965), raised once BOTH stores serve it | NO (unreleased) | none | nothing to remove - the refusal IS the rule, not a shim | waits for the floor. Deliberate: the warning is the consent, and an older build never drew it. Until the floor, an older build lists the institution's request, and its Accept is refused and read as "Cette proposition n'est plus en attente" while the list re-reads with the request STILL there - stuck on that device until the app updates; Refuse works ([diary](#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -382,6 +383,29 @@ French legacy sentence, the `forms` push category, the native tables (Android, t
 notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the destination (the payer's
 `/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
 contract file (`refund.notificationTypes`).
+
+### No date yet - an institution's republication request accepted by a build that never showed its audience
+
+**Site:** `PersonalRepublicationsService.assertConsentCurrent`
+(`apps/social-service/src/posts/personal-republications.service.ts`), reached from
+`POST /api/proposals/:id/accept` (`proposals.service.ts`).
+**What an older build sees.** Since #2965 an institution may ask a person to republish their post,
+and the author's inbox carries `details.institutionAudience` - who the institution reaches, its staff
+included - with a `fingerprint` the acceptance must send back. A build older than the first stable
+carrying #2965 lists the request (the inbox route is the same) but draws no warning and sends no
+fingerprint, so its Accept is refused 409 `REPOST_PERSONAL_AUDIENCE_CHANGED`. Its 409 handler knows
+only `PROPOSAL_SENDER_GONE`, so it says "Cette proposition n'est plus en attente" and re-reads the
+list - where the request is still waiting. **The request is stuck on that device until the app
+updates**; Refuse is not compared and works, and the same account accepts from an updated device or
+the web.
+**Why it is not shimmed.** Accepting without a fingerprint would be consent to an audience the author
+was never shown - the staff side among it - which is exactly what the warning exists to prevent. A
+fallback that accepts there is the defect, not its cure. No association's or list's request is
+affected: those carry no warning and compare nothing.
+**Removal condition:** none to remove. The floor (`minClientVersion` >= the first stable carrying
+#2965, raised once BOTH stores serve it) is what makes the stuck case impossible; the entry goes with
+it. Measure before: `[REPOST-P] ... accept refused: audience changed (carried none, ...)` in
+social-service logs counts the older builds that met it.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 

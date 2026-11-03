@@ -1543,6 +1543,11 @@ reaches the personnel side"), the latter **for this consented path only**.
   (`assertConsentCurrent`). A mismatch, or none carried for an institution, is a 409
   `REPOST_PERSONAL_AUDIENCE_CHANGED`: nothing is decided, the client re-reads the inbox, draws the
   new warning, says why, and the author answers again.
+  **An older build is refused, deliberately**: it draws no warning and sends no fingerprint, so its
+  Accept of an institution's request is that same 409, read there as "no longer pending", and the
+  request stays stuck on that device until the app updates (Refuse works). No fallback accepts
+  without a fingerprint; the floor retires the case
+  ([legacy-compatibility](legacy-compatibility.md#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)).
 - **After acceptance, the audience is LIVE**: who sees the post follows the carrier's CURRENT
   audience rules and membership, never the snapshot the author accepted. A rule added later, or a
   member who joins, reads it; a member who leaves stops. The author's remedy is to withdraw the
