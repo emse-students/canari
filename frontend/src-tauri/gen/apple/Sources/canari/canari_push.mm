@@ -551,9 +551,19 @@ void CanariMirrorPushStateToAppGroup(void) {
   // The Notification Service Extension reads these three inputs to decrypt a push in its
   // own process. Write atomically (temp + rename) so the cross-process reader never sees a
   // torn file, and keep the same at-rest protection class as the source.
+  //
+  // mls.bin IS RUST'S TO COPY, UNDER THE STATE FILES' LOCK (re-review of #2919, one state per
+  // account): an account switch moves the slot and refreshes this copy inside that lock, so a copy
+  // made here without it could read the previous account's state before the switch and write it
+  // after - and the extension would decrypt the new account's pushes with it. Rust copies the slot
+  // as it stands, or removes the copy when the slot holds no state.
+  int mirrored = canari_ios_mirror_mls_bin_to_app_group(src.UTF8String);
+  if (mirrored != CANARI_MLS_MIRROR_OK) {
+    NSLog(@"[CanariPush] mirror %@ failed: code %d", kMlsBinFileName, mirrored);
+  }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
-  for (NSString *name in @[ kMlsBinFileName, kPushContextFileName, kGraineSeedsFileName ]) {
+  for (NSString *name in @[ kPushContextFileName, kGraineSeedsFileName ]) {
     NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
     if (data == nil) {
       continue;

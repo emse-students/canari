@@ -164,8 +164,13 @@ describe('the push key-group join ledger is sealed by Rust alone', () => {
     for (const fn of [/pub fn claim\(/, /pub fn settle\(/, /pub fn take_all\(/]) {
       expect(between(keyGroupJoinRs, fn, /\) -> /)).toContain('key: &CacheKey');
     }
-    expect(firebaseKt).toContain('nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId)');
-    expect(firebaseKt).toMatch(/nativeKeyGroupJoinSettle\(filesDir, cacheKey, groupId,/);
+    // And the push's account, which binds every ledger write to its own slot (re-review of #2919).
+    expect(firebaseKt).toContain(
+      'nativeKeyGroupJoinClaim(filesDir, cacheKey, ctx.userId, groupId)'
+    );
+    expect(firebaseKt).toMatch(
+      /nativeKeyGroupJoinSettle\(filesDir, cacheKey, ctx\.userId, groupId,/
+    );
     expect(firebaseKt).not.toMatch(/File\([^)]*"key_group_push_joins\.json"\)/);
   });
 });
