@@ -90,8 +90,8 @@
 "notif.event.deleted.body" = "« %1$@ » a été supprimé par le BDE";
 "notif.event.pending.title" = "Événement à revalider";
 "notif.event.pending.body" = "« %1$@ » doit être revalidé : ses dates ont changé";
-"notif.event.pending.coorganiser.title" = "Événement à revalider";
-"notif.event.pending.coorganiser.body" = "« %1$@ » doit être revalidé : une association a accepté de co-organiser";
+"notif.event.pending_coorganiser.title" = "Événement à revalider";
+"notif.event.pending_coorganiser.body" = "« %1$@ » doit être revalidé : une association a accepté de co-organiser";
 
 /* A device was added to the user's own account, read from a signed MLS commit the extension
    merged in memory (2026-10-22). */

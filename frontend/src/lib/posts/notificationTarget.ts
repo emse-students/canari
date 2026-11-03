@@ -36,7 +36,9 @@ export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
  * validated. That is also why an event notification lands on a list rather than on the event: the
  * thing the reader has to do is act on it, and the queue is where acting happens.
  */
-export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): AppPath | null {
+export function notificationHref(
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>
+): AppPath | null {
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
@@ -216,7 +218,7 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
  * notification could not be opened, rather than sending the reader somewhere else.
  */
 export async function resolveNotificationHref(
-  notif: Pick<PostNotification, 'type' | 'postId'>,
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>,
   lookupSlug: (associationId: string) => Promise<string>
 ): Promise<AppPath | null> {
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];
