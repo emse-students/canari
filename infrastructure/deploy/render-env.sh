@@ -208,6 +208,17 @@ min_length() {
   esac
 }
 
+# ── Public values ─────────────────────────────────────────────────────────────
+# A value that is long enough and still no secret: the local stack's default, written in a PUBLIC
+# repository (infrastructure/local/docker-compose.yml). An estate holding it signs every agenda link
+# with a key anybody can read, so it is refused here, naming the secret. deploy-env.test.sh reads the
+# literal back from the compose file, so the two cannot drift. Prints the value, or nothing.
+public_default() {
+  case "$1" in
+  AGENDA_SIGNING_KEY) printf 'dev-agenda-signing-key-change-me-0123456789abcdef' ;;
+  esac
+}
+
 # ── Whole numbers ─────────────────────────────────────────────────────────────
 # A value the service reads as a NUMBER, refused here when it is not one, whatever its disposition:
 # chat-delivery reads an unreadable TURN budget as 0 and turns TURN off on every call, which the
@@ -300,6 +311,14 @@ while IFS=$'\t' read -r key prod dev source note; do
   if [ -n "$minimum" ] && [ "${#value}" -lt "$minimum" ] && [ "$disposition" = "required" ]; then
     printf '::error::%s is set for the %s environment but is only %s characters, %s needs at least %s - %s
 '       "$key" "$ENVIRONMENT" "${#value}" "$key" "$minimum" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  public="$(public_default "$key")"
+  if [ -n "$public" ] && [ "$value" = "$public" ]; then
+    printf '::error::%s is set for the %s environment to the local stack'"'"'s PUBLIC default (infrastructure/local/docker-compose.yml) - generate one with openssl rand -hex 32 - %s
+'       "$key" "$ENVIRONMENT" "$note" >&2
     MISSING=1
     continue
   fi

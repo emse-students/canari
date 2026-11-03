@@ -290,7 +290,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     await q(
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
     );
-    await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar)`);
+    await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar,
+      type varchar NOT NULL DEFAULT 'association')`);
     // And the ones a live's VISIBILITY reads (`liveVisibleToUserSql`, the rule of a post), in the
     // columns `reader-spaces.ts` reads. ALICE..EVE share Saint-Etienne ICM; FRANK is in Gardanne
     // ISMIN and shares no space with any of them.
@@ -306,9 +307,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
          "reviewedBy" varchar, "reviewedAt" timestamptz, "reportedUserId" varchar,
          "createdAt" timestamp NOT NULL DEFAULT now())`
     );
-    await q(`CREATE TABLE spaces (formation varchar, campus varchar)`);
+    // `bdeAssociationId` and `permissions`: what a BDE moderator's SCOPE reads (`viewerModerates`,
+    // owner 2026-11-02) - no BDE governs here, so every live answers false.
+    await q(`CREATE TABLE spaces (formation varchar, campus varchar, "bdeAssociationId" uuid)`);
     await q(`INSERT INTO spaces (formation, campus) VALUES ('ICM', ${SE}), ('ISMIN', ${GA})`);
-    await q(`CREATE TABLE association_members ("associationId" uuid, "userId" varchar(255))`);
+    await q(
+      `CREATE TABLE association_members ("associationId" uuid, "userId" varchar(255),
+         permissions integer NOT NULL DEFAULT 0)`
+    );
     await q(
       `CREATE TABLE association_audiences ("associationId" uuid, formation varchar, campus varchar)`
     );
@@ -1695,7 +1701,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, DAVE]);
       expect((await refusal(report(DAVE, live.id))).code).toBe('LIVE_NOT_FOUND');
 
-      const [row] = await reports().listAllReports();
+      const [row] = await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true });
       expect(row).toMatchObject({
         contentType: 'live',
         contentPreview: 'Alice',
@@ -1761,7 +1767,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           pushData: { target: 'notifications' },
         },
       ]);
-      const [listed] = await reports().listAllReports();
+      const [listed] = await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true });
       expect(listed.live).toMatchObject({
         state: 'cut',
         cutReason: 'harassment',
@@ -2778,7 +2784,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         contentId: live.id,
         reason: 'spam',
       });
-      const [row] = await reports().listAllReports();
+      const [row] = await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true });
       expect(row.live).toMatchObject({
         broadcasterCuts: 1,
         broadcasterStanding: { cutsOnRecord: 1, suspendedUntil: null, withdrawalDue: false },
@@ -2887,7 +2893,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect(await kept()).toEqual([
         { reportId: report.id, authorId: BOB, text: 'une insulte 🐤', seq: line.seq },
       ]);
-      const [row] = await reports().listAllReports();
+      const [row] = await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true });
       expect(row).toMatchObject({
         contentPreview: 'une insulte 🐤',
         liveChat: {
@@ -2914,7 +2920,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         contentType: 'live_chat',
       });
       expect((await kept())[0].text).toBe(withNul);
-      const [row] = await reports().listAllReports();
+      const [row] = await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true });
       expect(row.liveChat).toMatchObject({
         text: withNul,
         integrity: { content: 'verified', author: 'verified', reporter: 'verified' },
@@ -3096,7 +3102,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       await reports().reviewReport(report.id, MOD, 'dismissed');
       await expect(sweeper.sweepOnce()).resolves.toMatchObject({ chatLinesErased: 1 });
       expect(await kept()).toEqual([]);
-      const [row] = await reports().listAllReports();
+      const [row] = await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true });
       expect(row).toMatchObject({ status: 'dismissed', contentPreview: null, liveChat: null });
     });
 
@@ -3126,7 +3132,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       const live = await start();
       const line = await say(BOB, live.id, 'texte');
       await reportLine(CAROL, line.id, 'texte');
-      const integrity = async () => (await reports().listAllReports())[0].liveChat?.integrity;
+      const integrity = async () =>
+        (await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true }))[0].liveChat
+          ?.integrity;
       expect(await integrity()).toEqual({
         content: 'verified',
         author: 'verified',
@@ -3181,7 +3189,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect(await kept()).toEqual([
         expect.objectContaining({ authorId: DELETED_ACCOUNT, text: 'texte' }),
       ]);
-      expect((await reports().listAllReports())[0].liveChat?.integrity).toEqual({
+      expect(
+        (await reports().listAllReports({ userId: 'admin', isGlobalAdmin: true }))[0].liveChat
+          ?.integrity
+      ).toEqual({
         content: 'verified',
         author: 'erased',
         reporter: 'verified',

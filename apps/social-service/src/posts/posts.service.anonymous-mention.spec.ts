@@ -40,6 +40,8 @@ describe('PostsService: a post write stores its mentions and tells nobody', () =
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
     };
     const notifications = {
       resolveMentionedUserIds: () => [RECIPIENT],

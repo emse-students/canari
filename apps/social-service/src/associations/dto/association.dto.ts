@@ -230,7 +230,7 @@ export class AddMemberDto {
   @Max(ALL_PERMISSION_FLAGS) // derived from the enum - never a literal, see the entity
   // Note: BDE-only flags (VALIDATE_EVENTS=32, MANAGE_ASSO=64, MODERATE=128) are silently
   // inert unless the association is the BDE of a space (`spaces/bde.ts`), and then reach only
-  // the associations that space governs (MODERATE excepted: global).
+  // what that space governs (MODERATE too since 2026-11-02, `spaces/bde-moderation.ts`).
   permissions: number;
 }
 

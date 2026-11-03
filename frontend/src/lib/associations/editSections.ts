@@ -76,7 +76,8 @@ export interface EditRights {
  * grants the tier over one; its events stay on the BDE's agenda, which these sections do not
  * draw): the super-admin tier is dropped whatever the context says, and
  * its roster and audience are the platform admin's alone (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
- * `AUDIENCE_INSTITUTION_ADMIN_ONLY`). Its own members keep their flags.
+ * `AUDIENCE_INSTITUTION_ADMIN_ONLY`), and so is its deletion (`INSTITUTION_DELETE_ADMIN_ONLY`) - a
+ * BDE star still deletes the associations and lists it governs. Its own members keep their flags.
  */
 export function editRights(
   given: EditPermissionContext,

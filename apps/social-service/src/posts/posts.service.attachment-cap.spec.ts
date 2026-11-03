@@ -38,6 +38,8 @@ function makeService(existing?: Partial<Post>) {
     {} as FollowsService,
     {
       isContentModerator: () => Promise.resolve(true),
+      moderatedPostIds: (_u: string, ids: string[]) => Promise.resolve(new Set(ids)),
+      mayModeratePost: () => Promise.resolve(true),
       mayActOnAny: () => Promise.resolve(new Set()),
     } as unknown as AssociationsService,
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
