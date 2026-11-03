@@ -258,7 +258,11 @@ rotation_write() {
 
 # Run INSIDE a proxy container (busybox sh, as root). Shared by the three scripts below: the
 # configuration file the running master was started with (`-c`, read from its own command line),
-# and the workers, as "<pid>:<start time>" so a recycled pid is never taken for the same worker.
+# and the workers, as "<pid>:<start time>:<uid>" so a recycled pid is never taken for the same worker.
+# A worker an earlier reload retired exits on its own clock, between the listing of /proc and ANY
+# later read of it, so every read of one worker happens in `workers` itself, together, and a worker
+# gone before they are done is not listed: it is not one (the uid was once read afterwards, from the
+# first worker listed - a retiring one, under load - and came back empty: "had no worker to read").
 # shellcheck disable=SC2016 # runs in the proxy's shell, not this one
 ROTATION_PROXY_PRELUDE='
 workers() {
@@ -266,8 +270,12 @@ workers() {
     s="$(cat "$d/stat" 2>/dev/null)" || continue
     set -- $s
     [ "$4" = 1 ] || continue
-    case "$(tr "\0" " " <"$d/cmdline" 2>/dev/null)" in
-    "nginx: worker process"*) echo "$1:${22}" ;;
+    c="$(tr "\0" " " 2>/dev/null <"$d/cmdline")" || continue
+    case "$c" in
+    "nginx: worker process"*)
+      u="$(awk "/^Uid:/ { print \$2 }" 2>/dev/null <"$d/status")" || continue
+      [ -n "$u" ] && echo "$1:${22}:$u"
+      ;;
     esac
   done
 }
@@ -291,9 +299,8 @@ exec nginx ${conf:+-c "$conf"} -T -q
 ROTATION_RELOAD_SCRIPT="$ROTATION_PROXY_PRELUDE"'
 before=" $(workers | tr "\n" " ")"
 w="${before# }"
-w="${w%%:*}"
-uid=""
-[ -n "$w" ] && uid="$(awk "/^Uid:/ { print \$2 }" "/proc/$w/status")"
+w="${w%% *}"
+uid="${w##*:}"
 nginx ${conf:+-c "$conf"} -s reload || exit 2
 printf "%s|%s\n" "$uid" "$before"
 '

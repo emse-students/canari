@@ -37,6 +37,7 @@ const CORE_TABLES = [
   'profile_correction_requests',
   'platform_announcement_seen',
   'platform_announcements',
+  'help_seen',
   'auth_sessions',
   'restore_credentials',
   'session_push_endings',
@@ -100,6 +101,10 @@ maybe('account erasure queue against PostgreSQL', () => {
         [`key-${id}`, id]
       );
     }
+    // The first-time helps both accounts have seen (migration 019).
+    for (const id of [SUBJECT, OTHER]) {
+      await ds.query(`INSERT INTO help_seen (user_id, help_id) VALUES ($1, 'welcome-tour')`, [id]);
+    }
     await ds.query(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [
       OTHER,
       SUBJECT,
@@ -129,6 +134,8 @@ maybe('account erasure queue against PostgreSQL', () => {
     expect(await count(`restore_credentials WHERE "userId" = $1`, [OTHER])).toBe(1);
     expect(await count(`profile_changes WHERE "userId" = $1 OR "actorId" = $1`, [SUBJECT])).toBe(0);
     expect(await count(`user_blocks`)).toBe(0);
+    expect(await count(`help_seen WHERE user_id = $1`, [SUBJECT])).toBe(0);
+    expect(await count(`help_seen WHERE user_id = $1`, [OTHER])).toBe(1);
     // ...and the other account untouched, its history kept without the erased admin's id.
     expect(await count(`users WHERE id = $1`, [OTHER])).toBe(1);
     expect(

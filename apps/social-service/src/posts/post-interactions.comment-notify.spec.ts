@@ -23,6 +23,10 @@ describe('PostInteractionsService.addComment notifications', () => {
       renderMentionsForPush: jest.fn((t: string) => Promise.resolve(t)),
       resolveActorName: jest.fn(() => Promise.resolve('Actor')),
       resolveMentionedUserIds: jest.fn(() => [] as string[]),
+      // The read's gate on mentions, proven in `post-notifications.mention-gate.spec.ts`: open here.
+      mentionRecipientsOf: jest.fn((_post: unknown, _writer: string, ids: string[]) =>
+        Promise.resolve(ids)
+      ),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const postRepo = {
@@ -97,6 +101,24 @@ describe('PostInteractionsService.addComment notifications', () => {
     for (const [, , data] of sent) {
       expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
     }
+  });
+
+  it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
+    const post = { id: 'p1', authorId: 'author', associationId: null, comments: [] };
+    const { service, push, notifications } = makeService(post);
+    notifications.resolveMentionedUserIds.mockReturnValue(['author', 'kept', 'dropped']);
+    notifications.mentionRecipientsOf.mockImplementation((_p, _w, ids: string[]) =>
+      Promise.resolve(ids.filter((id) => id !== 'dropped'))
+    );
+    await service.addComment('p1', { userId: 'reader', text: 'hello' });
+    await flush();
+    // The post author was told as such already, so the gate is asked only about the others.
+    expect(notifications.mentionRecipientsOf).toHaveBeenCalledWith(post, 'reader', [
+      'kept',
+      'dropped',
+    ]);
+    const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
+    expect(sent.map(([to]) => to).sort()).toEqual(['author', 'kept']);
   });
 
   /** The review cohort (review-cohort.ts): no comment notice crosses it, in either direction. */

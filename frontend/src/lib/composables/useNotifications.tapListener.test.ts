@@ -41,6 +41,16 @@ describe('the notification tap listener is armed once and routed by a table', ()
     expect(post).not.toMatch(/onAction as unknown as/);
   });
 
+  it('registers through armPageTapListener, whose outcomes arm the resume hold', () => {
+    // `armPageTapListener` (`pageNotificationTap.ts`) owns every registration outcome and is driven
+    // by `resumeOpening.pageTapListener.svelte.test.ts`; the plugin's `onAction` must reach it, and
+    // nothing here may call it directly.
+    expect(code).toMatch(
+      /armPageTapListener\(\s*typeof onAction === 'function' \? \(onAction as unknown as RegisterPageTap\) : undefined,/
+    );
+    expect(code).not.toMatch(/\bonAction\(/);
+  });
+
   it('latches, so a second post does not add a second listener', () => {
     const fn = /function armNotificationTapListener\(\)[\s\S]*?\n {2}\}/.exec(source);
     expect(fn).not.toBeNull();
