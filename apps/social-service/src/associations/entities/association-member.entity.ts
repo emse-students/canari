@@ -36,8 +36,8 @@ export enum AssociationPermissionFlag {
   MANAGE_BOOKINGS = 1 << 11,
   /**
    * Edit the association's public profile: name, description, bio, logos, colour, category,
-   * contact e-mail and, for a list, its promo, parent and second theme (`PATCH :id`, the logo
-   * routes). Split from `MANAGE_MEMBERS` on 2026-11-02 (owner): managing the roster is not
+   * contact e-mail and, for a list, its promo and second theme (its fields of `PATCH :id` -
+   * `UPDATE_FIELD_RIGHTS` - and the logo routes). Split from `MANAGE_MEMBERS` on 2026-11-02 (owner): managing the roster is not
    * editing the page; migration 124 gave it to every member who held `MANAGE_MEMBERS` then.
    */
   EDIT_PROFILE = 1 << 12,

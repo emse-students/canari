@@ -33,6 +33,7 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
   const F = AssociationPermissionFlag;
   const proto = AssociationsController.prototype as unknown as Record<string, object>;
   const LOGO_ROUTES = ['uploadLogo', 'deleteLogo'] as const;
+  const STORED_PARENT = '00000000-0000-4000-8000-0000000000cc';
 
   /** The real guard and controller over a service granting exactly `bitmask` to `member`. */
   function harness(bitmask: number) {
@@ -42,6 +43,15 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
       ),
       isMember: jest.fn(() => Promise.resolve(true)),
       isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(false)),
+      // The stored row: a list under STORED_PARENT, with the default quota.
+      findById: jest.fn(() =>
+        Promise.resolve({
+          id: ASSO,
+          type: 'list',
+          parentAssociationId: STORED_PARENT,
+          documentQuotaBytes: '524288000',
+        })
+      ),
       update: jest.fn((_id: string, patch: unknown) =>
         Promise.resolve({ id: ASSO, type: 'association', ...(patch as object) })
       ),
@@ -173,4 +183,54 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
       expect(service.update).toHaveBeenCalledWith(ASSO, dto);
     }
   );
+
+  /**
+   * LEGACY until 2027-05-03: a store build up to 1.6.2 resends `parentAssociationId: editParentId ||
+   * null` on every list save. An unchanged value is dropped before the rights are asked; a changed
+   * one is still refused.
+   */
+  it.each([
+    ['the stored parent', STORED_PARENT],
+    ['null, for a list that has none', null],
+  ])('saves a profile resent with %s, without writing the parent', async (_label, sent) => {
+    const { controller, service } = harness(F.EDIT_PROFILE);
+    if (sent === null) {
+      service.findById.mockResolvedValueOnce({
+        id: ASSO,
+        type: 'list',
+        parentAssociationId: null as unknown as string,
+        documentQuotaBytes: '524288000',
+      });
+    }
+    await controller.update(ASSO, 'member', undefined, {
+      name: 'Liste',
+      parentAssociationId: sent,
+    });
+    expect(service.update).toHaveBeenCalledWith(ASSO, { name: 'Liste' });
+  });
+
+  it('still refuses a CHANGED parent from that holder', async () => {
+    const { controller, service } = harness(F.EDIT_PROFILE);
+    const body = await refusal(
+      controller.update(ASSO, 'member', undefined, {
+        name: 'Liste',
+        parentAssociationId: '00000000-0000-4000-8000-0000000000dd',
+      })
+    );
+    expect(body).toMatchObject({ code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY });
+    expect(service.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mixed body whose second right is missing, and saves nothing of it', async () => {
+    const { controller, service } = harness(F.EDIT_PROFILE);
+    const body = await refusal(
+      controller.update(ASSO, 'member', undefined, { name: 'x', cotisationEnabled: true })
+    );
+    expect(body).toMatchObject({
+      code: ASSOCIATION_FIELD_RIGHT_MISSING,
+      right: 'MANAGE_PRODUCTS',
+      fields: ['cotisationEnabled'],
+    });
+    expect(service.update).not.toHaveBeenCalled();
+  });
 });

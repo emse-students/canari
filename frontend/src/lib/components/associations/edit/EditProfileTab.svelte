@@ -6,6 +6,7 @@
     uploadAssociationLogo,
     deleteAssociationLogo,
     associationSecondLogoSrc,
+    listAssociations,
     listAssociationCategories,
     type Association,
     type AssociationCategory,
@@ -18,6 +19,7 @@
   import { wordingFor } from '$lib/associations/kindWording';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
+  import { associationPickerOptions } from '$lib/associations/selectGroups';
   import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -28,11 +30,17 @@
     asso: Association;
     /** Whether the caller may edit the profile and logo (`EDIT_PROFILE`, `editRights().profile`). */
     canEdit: boolean;
+    /**
+     * Whether the caller may change a list's parent association: the platform administrator alone
+     * (`UPDATE_FIELD_RIGHTS.parentAssociationId`, `editRights().parent`). Anyone else is never
+     * shown the picker, and the save never sends the field.
+     */
+    canEditParent?: boolean;
     /** Called with the refreshed association after any successful mutation. */
     onUpdated: (a: Association) => void;
   }
 
-  let { asso, canEdit, onUpdated }: Props = $props();
+  let { asso, canEdit, canEditParent = false, onUpdated }: Props = $props();
 
   // Editable copies seeded once from the association passed at mount.
   const initial = untrack(() => asso);
@@ -48,20 +56,39 @@
   /** Managed thematic categories, loaded once for the picker. */
   let categoryOptions = $state<AssociationCategory[]>([]);
 
-  // ── List-only fields (campaign year, optional 2nd theme) ──
-  // The parent association is NOT here: it is platform-admin only (`UPDATE_FIELD_RIGHTS`), chosen at
-  // creation, so a form any profile editor submits never carries it.
+  // ── List-only fields (campaign year, optional 2nd theme; the parent for the platform admin) ──
   const isList = initial.type === 'list';
   let editPromo = $state<number | ''>(initial.promo ?? '');
   let editName2 = $state(initial.name2 ?? '');
+  /**
+   * The parent association is platform-admin only (`UPDATE_FIELD_RIGHTS`): drawn and sent for
+   * that reader alone, so a profile editor's save never carries a field the server refuses them.
+   */
+  const showParent = $derived(isList && canEditParent);
+  let editParentId = $state(initial.parentAssociationId ?? '');
+  /** Candidate parent associations (regular associations only), for the select. */
+  let parentOptions = $state<Association[]>([]);
+  const parentPickerOptions = $derived<PickerOption[]>([
+    { value: '', label: m.list_new_parent_none() },
+    ...associationPickerOptions(parentOptions),
+  ]);
   const categoryPickerOptions = $derived<PickerOption[]>([
     { value: '', label: m.asso_edit_category_none() },
     ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
   ]);
 
   onMount(async () => {
+    if (isList) {
+      if (!untrack(() => canEditParent)) return;
+      try {
+        parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
+      } catch (err) {
+        console.warn('[ASSO] parent candidates unavailable for the profile picker', err);
+        parentOptions = [];
+      }
+      return;
+    }
     // Load the thematic categories for regular associations (used by the poster generator).
-    if (isList) return;
     try {
       categoryOptions = await listAssociationCategories();
     } catch (err) {
@@ -114,6 +141,7 @@
           ? {
               promo: editPromo === '' ? null : Number(editPromo),
               name2: editName2.trim() || null,
+              ...(showParent ? { parentAssociationId: editParentId || null } : {}),
             }
           : { categoryId: editCategoryId || null }),
       });
@@ -124,6 +152,7 @@
       editCategoryId = updated.categoryId ?? '';
       editPromo = updated.promo ?? '';
       editName2 = updated.name2 ?? '';
+      editParentId = updated.parentAssociationId ?? '';
       onUpdated(updated);
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
@@ -234,6 +263,21 @@
       bind:value={editPromo}
       placeholder="2027"
     />
+    {#if showParent}
+      <div>
+        <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
+          {m.list_new_parent_label()}
+        </label>
+        <Picker
+          id="edit-list-parent"
+          value={editParentId}
+          options={parentPickerOptions}
+          onValueChange={(v) => (editParentId = v)}
+          label={m.list_new_parent_label()}
+          variant="field"
+        />
+      </div>
+    {/if}
   {/if}
 
   <Input

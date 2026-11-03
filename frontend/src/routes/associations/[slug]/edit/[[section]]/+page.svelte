@@ -352,7 +352,12 @@
       {/if}
 
       {#if editSection === 'profile'}
-        <EditProfileTab {asso} canEdit={rights.profile} onUpdated={(a) => (asso = a)} />
+        <EditProfileTab
+          {asso}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
+          onUpdated={(a) => (asso = a)}
+        />
       {/if}
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso}

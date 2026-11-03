@@ -9,6 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { assertKindMaySell, writablePermissions } from './selling-kinds';
+import { withLegacyEditProfile } from './legacy-admin-presets';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -1411,7 +1412,12 @@ export class AssociationsService {
       .getRawOne<{ max: number | null }>();
     const sortOrder = (maxRow?.max ?? -1) + 1;
 
-    const saved = await this.insertMembership(this.memberRepo.manager, target, dto, sortOrder);
+    const saved = await this.insertMembership(
+      this.memberRepo.manager,
+      target,
+      { ...dto, permissions: withLegacyEditProfile(this.logger, dto.permissions, 'addMember') },
+      sortOrder
+    );
     // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
     // every cached feed page of that reader depends on.
     await this.invalidatePostListCaches();
@@ -1444,6 +1450,7 @@ export class AssociationsService {
       throw new NotFoundException('Member not found');
     }
     if (permissions !== undefined) {
+      permissions = withLegacyEditProfile(this.logger, permissions, 'updateMemberRole');
       const kind = await this.kindOf(associationId);
       if (kind) permissions = writablePermissions(kind, permissions);
     }

@@ -153,7 +153,7 @@ of its fields' rights; one missing refuses the whole write with a typed 403
 | `archived` | `MANAGE_MEMBERS` - ending the active life is the administrator's act, the Danger panel's, not a profile edit |
 | `cotisationEnabled`, `cotisationMode`, `cotisationExpiresAt` | `MANAGE_PRODUCTS` (D5) - alone now: a holder of it was offered the settings and then refused at the old `MANAGE_MEMBERS` guard |
 | `documentQuotaBytes` | the platform administrator alone - a typed refusal, logged at ERROR, where it used to be dropped silently |
-| `parentAssociationId` (a list's parent) | the platform administrator alone: it is a statement about ANOTHER association, set at creation. Any member manager could rewrite it before; the list profile form no longer sends it |
+| `parentAssociationId` (a list's parent) | the platform administrator alone: it is a statement about ANOTHER association, set at creation. Any member manager could rewrite it before; the list profile form draws its picker, and sends it, for the platform admin only (`editRights().parent`). An UNCHANGED value resent by an old build is dropped, not refused ([legacy](legacy-compatibility.md#2027-05-03---a-list-profile-save-that-resends-its-unchanged-parent-2026-11-03)) |
 
 The client draws from the same table (`frontend/src/lib/associations/updateFields.ts`:
 `editRights().profile` is `mayWriteFields(PROFILE_FORM_FIELDS)`, `archive` is `['archived']`), and
@@ -176,12 +176,14 @@ admin with the new preset, and nothing else (the profile it saves carries no new
 sees a bit it does not know ignores it, and keeps it**: `mayActOnAssociation` tests one flag at a
 time, the role editor counts only the flags it has a label for, and a checkbox writes `permissions ^
 flag`, so an old app toggling another right sends bit 12 back untouched (and `updateFields.test.ts`
-asserts an unknown bit grants and blocks nothing). Two old-app residues: an OLD app adding an admin
-sends the old preset (no bit 4096), so that admin manages members and cannot edit the profile until
-someone ticks *Modifier le profil* from a current app; and an old app's profile tab draws its
-controls on `MANAGE_MEMBERS`, and a list's form still sends `parentAssociationId`, which is now
-refused - its save answers 403 for anyone but the platform admin until the store update. Neither is
-backfilled again: a second backfill would undo a deliberate untick.
+asserts an unknown bit grants and blocks nothing). Two old-app residues, each with a
+dated shim in [legacy-compatibility](legacy-compatibility.md): an OLD app adding an admin posts the
+old preset (no bit 4096), and a member write whose mask EQUALS an old preset gets `EDIT_PROFILE`
+ORed in until 2027-05-03 (`legacy-admin-presets.ts`, derived from today's constants); and an old
+list form resends `parentAssociationId` on every save, which is dropped when unchanged. An old app's
+profile tab still draws its controls on `MANAGE_MEMBERS`, so a member holding that without
+`EDIT_PROFILE` meets a 403 there - possible only after a deliberate untick. **Until #2949 (the
+member-flag ceiling) lands, a `MANAGE_MEMBERS` holder can grant itself `EDIT_PROFILE`.**
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references

@@ -873,6 +873,43 @@ over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---deci
 and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
 `LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
 
+### 2027-05-03 - a list profile save that resends its unchanged parent (2026-11-03)
+
+**Site:** `dropUnchangedPlatformFields` in
+[`apps/social-service/src/associations/association-update-rights.ts`](../../apps/social-service/src/associations/association-update-rights.ts),
+called first in `AssociationsController.update`.
+**What it humours:** since 2026-11-02 a list's `parentAssociationId` is the platform admin's alone
+([association-permissions](association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02)),
+and the current form sends it only to that reader. Every store build up to `1.6.2` EMBEDS the old
+form, which sends `parentAssociationId: editParentId || null` on EVERY list profile save. Without the
+shim each such save by a profile editor would be a `403` and an ERROR line for a field it did not
+touch. A platform-admin field whose value equals the stored one (`''`, `null` and absent count as
+equal) is dropped before the rights are asked; a CHANGED value is still refused. Measured by its debug
+line, `[LEGACY] update ...: unchanged parentAssociationId dropped (old client resend)`.
+**Cost while it stands:** one extra read of the association row on a body naming a platform-admin
+field, from a non-admin.
+**Removal** (the date, or earlier once `minClientVersion` is a build that stopped resending it): delete
+`dropUnchangedPlatformFields`, its call and its two spec cases; an old build's resend is then refused
+like any other platform-admin field.
+
+### 2027-05-03 - an admin preset without EDIT_PROFILE, posted by a build older than the flag (2026-11-03)
+
+**Site:** `withLegacyEditProfile` in
+[`apps/social-service/src/associations/legacy-admin-presets.ts`](../../apps/social-service/src/associations/legacy-admin-presets.ts),
+called by `AssociationsService.addMember` and `updateMemberRole`.
+**What it humours:** a store build up to `1.6.2` offers its "Administrateur" preset without bit 12
+(`EDIT_PROFILE`, 2026-11-02), so an admin it adds would manage the roster and could not edit the
+profile. A member write whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is
+derived from today's constants with bit 12 removed, narrowed per kind as the old `adminPresetFor` did
+(3871 and 3359 for an association, 3103 for a list or an institution - pinned by
+`legacy-admin-presets.spec.ts`). Measured by its debug line, `[LEGACY] addMember|updateMemberRole:
+mask N is a pre-EDIT_PROFILE admin preset`.
+**Cost while it stands:** a CURRENT client cannot leave a member at exactly an old preset: unticking
+*Modifier le profil* on a full admin (or ticking everything else) lands on 3871 / 3103 and the bit
+comes back on save. Any other combination is untouched.
+**Removal** (the date, or earlier once `minClientVersion` is a build carrying the flag on both stores):
+delete `legacy-admin-presets.ts`, its two calls and its spec.
+
 ### 2027-04-25 - a salon access rewrite with no `baseAccessRevision`
 
 **Site:** `ChannelService.updateChannelAccess` (`ignoredDrops`) in

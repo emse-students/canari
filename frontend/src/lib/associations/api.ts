@@ -34,7 +34,10 @@ export enum AssociationPermissionFlag {
   MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
   MANAGE_BOOKINGS = 1 << 11,
-  /** The public profile: name, texts, logos, colour, category, contact (`PATCH :id`, the logo routes). */
+  /**
+   * The public profile: name, texts, logos, colour, category, contact; a list's promo and second
+   * theme - never its parent (`updateFields.ts`), plus the logo routes.
+   */
   EDIT_PROFILE = 1 << 12,
 }
 

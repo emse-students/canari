@@ -57,6 +57,8 @@ export interface EditRights {
    * without it.
    */
   profile: boolean;
+  /** A list's parent association: the platform admin's alone (`UPDATE_FIELD_RIGHTS`). */
+  parent: boolean;
   members: boolean;
   documents: boolean;
   products: boolean;
@@ -84,6 +86,7 @@ export function editRights(
   const may = (flag: AssociationPermissionFlag) => mayActOnAssociation(flag, ctx);
   return {
     profile: mayWriteFields(PROFILE_FORM_FIELDS, ctx),
+    parent: mayWriteFields(['parentAssociationId'], ctx),
     members: may(AssociationPermissionFlag.MANAGE_MEMBERS),
     documents: may(AssociationPermissionFlag.MANAGE_DOCUMENTS),
     products: may(AssociationPermissionFlag.MANAGE_PRODUCTS),

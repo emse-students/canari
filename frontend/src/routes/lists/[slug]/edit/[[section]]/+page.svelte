@@ -236,7 +236,12 @@
       {/if}
 
       {#if editSection === 'profile'}
-        <EditProfileTab asso={list} canEdit={rights.profile} onUpdated={(a) => (list = a)} />
+        <EditProfileTab
+          asso={list}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
+          onUpdated={(a) => (list = a)}
+        />
       {/if}
 
       {#if editSection === 'members' && canManageMembers}

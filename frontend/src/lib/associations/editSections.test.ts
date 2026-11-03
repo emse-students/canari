@@ -66,6 +66,12 @@ describe('which sections a reader may open', () => {
     expect(mayOpenEditSection('members', members)).toBe(true);
   });
 
+  it("gives a list's parent to the platform admin alone, whatever the flags", () => {
+    expect(editRights({ ...none, isGlobalAdmin: true }).parent).toBe(true);
+    expect(editRights({ ...none, isSuperAdmin: true }).parent).toBe(false);
+    expect(editRights(withFlags(AssociationPermissionFlag.EDIT_PROFILE)).parent).toBe(false);
+  });
+
   it('lets a BDE super-admin edit the profile, as the server grants it', () => {
     expect(editRights({ ...none, isSuperAdmin: true }).profile).toBe(true);
     expect(editRights({ ...none, isGlobalAdmin: true }).profile).toBe(true);
