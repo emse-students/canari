@@ -236,7 +236,8 @@ export class AssociationsController {
   @Get('me/bde-reach')
   async myBdeReach(@Headers('x-user-id') userId: string) {
     const [validateEvents, manageAsso] = await Promise.all([
-      this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.VALIDATE_EVENTS),
+      // The agenda rule (owner, 2026-11-03): an institution's events are in it, its management is not.
+      this.service.associationsUnderBdeAgendaRight(userId),
       this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO),
     ]);
     return { validateEvents, manageAsso };
@@ -888,7 +889,15 @@ export class AssociationsController {
     @Body() dto: UpdateMemberRoleDto
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
       granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,
@@ -906,7 +915,15 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
     return this.service.removeMember(id, targetUserId, {
       granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,

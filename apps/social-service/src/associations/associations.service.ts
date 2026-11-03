@@ -127,10 +127,12 @@ import { RedisService } from '../common/redis/redis.service';
 import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import {
+  ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
-  holdsBdeFlagOverSql,
+  holdsBdeAgendaRightOverSql,
   isBdeAssociationSql,
 } from '../spaces/bde';
 import {
@@ -2161,9 +2163,23 @@ export class AssociationsService {
   }
 
   /**
+   * The ids of every association whose events `userId` holds the BDE agenda right over
+   * (`holdsBdeAgendaRightOverSql`) - an institution's included, unlike `associationsUnderBdeFlag`.
+   */
+  async associationsUnderBdeAgendaRight(userId: string): Promise<string[]> {
+    if (!userId) return [];
+    const rows: { id: string }[] = await this.memberRepo.query(
+      ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
+      [userId]
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * May `userId` validate (and, through it, write, reject, deposit on, declare a break for) the
    * events of association `associationId`? A global admin always; otherwise VALIDATE_EVENTS in the
-   * BDE of a space that association reaches (user, 2026-10-04, D23).
+   * BDE of a space those events target (user, 2026-10-04, D23) - THE AGENDA RULE, which reaches an
+   * institution's events although no BDE manages the institution (owner, 2026-11-03).
    */
   async mayValidateEventsOf(
     userId: string,
@@ -2171,7 +2187,16 @@ export class AssociationsService {
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
-    return this.holdsBdeFlagOver(userId, associationId, AssociationPermissionFlag.VALIDATE_EVENTS);
+    if (!userId || !associationId) return false;
+    const rows: { holds: boolean }[] = await this.memberRepo.query(
+      HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
+      [userId, associationId]
+    );
+    const holds = rows[0]?.holds === true;
+    this.logger.debug(
+      `[PERM] bde agenda scope assoc=${sanitizeLog(associationId.slice(0, 8))} -> ${holds}`
+    );
+    return holds;
   }
 
   /**
@@ -2439,7 +2464,7 @@ export class AssociationsService {
       .where('e.status = :pending', { pending: AssociationCalendarEventStatus.Pending })
       .orderBy('e.startsAt', 'ASC');
 
-    const governs = holdsBdeFlagOverSql(':pendingViewer', 'e."associationId"', ':validateFlag');
+    const governs = holdsBdeAgendaRightOverSql(':pendingViewer', 'e."associationId"');
     if (!opts?.isGlobalAdmin) {
       const myMemberships = await this.memberRepo.find({
         where: { userId },
@@ -2448,10 +2473,7 @@ export class AssociationsService {
       const adminAssoIds = myMemberships
         .filter((m) => m.permissions > 0)
         .map((m) => m.associationId);
-      qb.setParameters({
-        pendingViewer: userId,
-        validateFlag: AssociationPermissionFlag.VALIDATE_EVENTS,
-      });
+      qb.setParameters({ pendingViewer: userId });
       qb.andWhere(
         adminAssoIds.length > 0 ? `(e.associationId IN (:...adminAssoIds) OR ${governs})` : governs,
         { adminAssoIds }
@@ -2737,7 +2759,7 @@ ${rejectionReason}`
    * 2026-09-09; testing it found it absent.
    *
    * Recipients are the holders of `VALIDATE_EVENTS` in the BDE of a space the event association
-   * reaches - the same predicate (`holdsBdeFlagOverSql`) `mayValidateEvent` uses to decide who MAY
+   * targets - the same predicate (`holdsBdeAgendaRightOverSql`) `mayValidateEvent` uses to decide who MAY
    * validate it, so the people told are exactly the people who can act on it (WP6c step 2). A BDE
    * of another space is not told: telling it would be noise about something it cannot touch. An
    * association reaching no space has no BDE validator, and the warning below says so.
@@ -2748,8 +2770,8 @@ ${rejectionReason}`
     eventTitle: string
   ): Promise<void> {
     const validators: { userId: string }[] = await this.memberRepo.query(
-      BDE_FLAG_HOLDERS_OVER_SQL,
-      [associationId, AssociationPermissionFlag.VALIDATE_EVENTS]
+      BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+      [associationId]
     );
 
     const written = await this.notifications.createNotifications({

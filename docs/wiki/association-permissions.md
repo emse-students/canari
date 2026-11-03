@@ -252,13 +252,26 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   the association's OWN managers, the standing that accepts a list's payment delegation - so a
   super-admin seating itself with it is a visible act. Auditing changes nothing about who may grant
   it.
-- **An institution has no governing BDE** (owner, 2026-11-02): `holdsBdeFlagOverSql` never holds
-  over an association of type `institution`, so neither the super-admin tier (`mayAct`,
-  `mayActOnAny`, `DELETE :id`, the archive at `MANAGE_MEMBERS`) nor event validation reaches one,
-  whatever spaces its audience reaches. One condition in the predicate, every caller inherits it;
-  `editRights` drops the tier for an institution on the client. Proven against real SQL in
-  `bde.integration.spec.ts` and through the real route guard in
-  `audience-takeover.integration.spec.ts`.
+- **No BDE MANAGES an institution, but the agenda is the BDE's** (owner, 2026-11-02, corrected
+  2026-11-03: *"Aucun BDE n'a les droits de gestion sur une institution, mais c'est le BDE qui a tous
+  les droits sur l'agenda des formations dont il est le BDE"*). Two predicates in `spaces/bde.ts`,
+  one space rule:
+  - **management** - `holdsBdeFlagOverSql` never holds over an association of type `institution`,
+    so the super-admin tier (`mayAct`, `mayActOnAny`, `DELETE :id`, the archive and profile at
+    `MANAGE_MEMBERS`, members, audience) reaches none, whatever spaces its audience reaches; the
+    last-admin bypass of the member routes reads this one too. `editRights` drops the tier for an
+    institution on the client.
+  - **agenda** - `holdsBdeAgendaRightOverSql` (`VALIDATE_EVENTS`, fixed in the predicate) follows
+    the spaces an event TARGETS, whoever organises it: the BDE of those spaces validates, rejects,
+    edits, deposits on and declares a break for an institution's event like any other. Until
+    per-event targeting (WP-E) an event targets its organiser's audience rules, so an institution's
+    event is validated by a BDE governing the spaces it targets, or by the platform admin.
+    `mayValidateEventsOf`, the pending queue, the proposal notification and `me/bde-reach`
+    (`validateEvents`) read it.
+  Proven against real SQL in `bde.integration.spec.ts` (the agenda matrix with two institutions)
+  and through the real route guard in `audience-takeover.integration.spec.ts` (a BDE validates an
+  institution's event targeting its space, not one targeting only another BDE's, and still cannot
+  touch the institution's members or profile).
 - **Institutions are the platform admin's alone** (D20), ONE rule with ONE code,
   `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY` (`assertInstitutionMemberWrite`): add,
   update and remove answer 403 to anyone else, and a write that HANDS an institution's member

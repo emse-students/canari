@@ -158,11 +158,17 @@ application computed from the same profile, so no application keeps a hard-coded
   `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY` for anyone else, its own members and a BDE
   super-admin included, and handing one of its members `MANAGE_MEMBERS` is a 400 of the same code
   ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
-  **An institution has no governing BDE, ever** (owner, 2026-11-02: "une institution n'a personne au
-  dessus"): its audience reaching a BDE's space confers nothing - no super-admin tier (archive,
-  members, profile, audience, delete) and no event validation. `holdsBdeFlagOverSql` carries the
-  condition once, so every caller inherits it; only its own members, within their flags, and the
-  platform admin act on it.
+  **No BDE manages an institution, ever** (owner, 2026-11-02: "une institution n'a personne au
+  dessus"): its audience reaching a BDE's space confers no super-admin tier (archive, members,
+  profile, audience, delete). `holdsBdeFlagOverSql` carries the condition once, so every management
+  caller inherits it; only its own members, within their flags, and the platform admin manage it.
+  **But the agenda is the BDE's** (owner, 2026-11-03: *"Aucun BDE n'a les droits de gestion sur une
+  institution, mais c'est le BDE qui a tous les droits sur l'agenda des formations dont il est le
+  BDE"*): event validation follows the spaces an event TARGETS, not who governs its organiser, so the
+  BDE of those spaces validates, rejects and holds every agenda right over an institution's event
+  (`holdsBdeAgendaRightOverSql`). Until WP-E brings per-slice validation, an institution's event is
+  validated by a BDE governing the spaces it targets, or by the platform admin
+  ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 - **D21 - Joining an association of another space opens its content** to that member.
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces

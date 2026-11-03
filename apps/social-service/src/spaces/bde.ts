@@ -1,4 +1,5 @@
 import { ruleReachesSpaceSql } from './rule-sql';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 
 /**
  * Is association `alias` the BDE of at least one space?
@@ -29,22 +30,62 @@ export function isBdeAssociationSql(alias: string): string {
  * which leaves it to a global admin. A BDE always reaches the spaces it governs (the spaces page
  * holds that), so a BDE governs its own association.
  *
- * Decided by the user (profiles-and-access, 6c): VALIDATE_EVENTS and MANAGE_ASSO are read through
- * this; MODERATE stays global and does not.
+ * Decided by the user (profiles-and-access, 6c): MANAGE_ASSO is read through this, and VALIDATE_EVENTS
+ * through its agenda twin below; MODERATE stays global and does neither.
  *
  * AN INSTITUTION HAS NO GOVERNING BDE, EVER (owner, 2026-11-02: "une institution n'a personne au
- * dessus"). Its audience may reach a BDE's space, and that must confer nothing: no super-admin tier
- * (archive, members, profile, audience, delete), no event validation. Only its own members, within
- * their flags, and the platform admin act on it. Written HERE, once, so every caller of the BDE
- * tier - `mayAct`, `mayActOnAny`, the delete route, the validators - inherits it.
+ * dessus"; 2026-11-03: "Aucun BDE n'a les droits de gestion sur une institution"). Its audience may
+ * reach a BDE's space, and that must confer no MANAGEMENT: no super-admin tier (archive, members,
+ * profile, audience, delete). Only its own members, within their flags, and the platform admin
+ * manage it. Written HERE, once, so every management caller - `mayAct`, `mayActOnAny`, the delete
+ * route - inherits it.
+ *
+ * THE AGENDA IS NOT MANAGEMENT. "c'est le BDE qui a tous les droits sur l'agenda des formations dont
+ * il est le BDE" (owner, 2026-11-03): validating, rejecting and every other agenda right follow the
+ * spaces an event TARGETS, whoever organises it - an institution's event included. That is
+ * `holdsBdeAgendaRightOverSql`, the same space rule without the institution exclusion.
  */
 export function holdsBdeFlagOverSql(user: string, association: string, flag: string): string {
+  return bdeFlagOverReachSql(user, association, flag, true);
+}
+
+/**
+ * THE AGENDA PREDICATE (owner, 2026-11-03): user `user` holds `VALIDATE_EVENTS` in the BDE of a
+ * space the events of association `association` target - and so validates, rejects, edits, deposits
+ * on and declares a break for them. Until per-event targeting (WP-E) an event targets the spaces its
+ * organiser's audience rules reach, so this is the scoped rule of `holdsBdeFlagOverSql` read for
+ * the agenda: an INSTITUTION's event is validated by the BDE of the spaces it targets (or the
+ * platform admin), even though no BDE manages the institution itself. The flag is fixed here, so
+ * no caller can lift the institution exclusion for a management right through this door.
+ */
+export function holdsBdeAgendaRightOverSql(user: string, association: string): string {
+  return bdeFlagOverReachSql(
+    user,
+    association,
+    String(AssociationPermissionFlag.VALIDATE_EVENTS),
+    false
+  );
+}
+
+/** The space rule both predicates share; `excludeInstitution` is the only difference. */
+function bdeFlagOverReachSql(
+  user: string,
+  association: string,
+  flag: string,
+  excludeInstitution: boolean
+): string {
+  const target = excludeInstitution
+    ? `
+    JOIN associations bde_target ON bde_target.id = ${association}`
+    : '';
+  const notInstitution = excludeInstitution
+    ? `
+      AND bde_target.type <> 'institution'`
+    : '';
   return `EXISTS (SELECT 1 FROM association_members bde_member
     JOIN spaces bde_governed ON bde_governed."bdeAssociationId" = bde_member."associationId"
-    JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}
-    JOIN associations bde_target ON bde_target.id = ${association}
-    WHERE bde_member."userId" = ${user} AND (bde_member.permissions & ${flag}) <> 0
-      AND bde_target.type <> 'institution'
+    JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}${target}
+    WHERE bde_member."userId" = ${user} AND (bde_member.permissions & ${flag}) <> 0${notInstitution}
       AND ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
 }
 
@@ -75,6 +116,13 @@ export const HOLDS_BDE_FLAG_OVER_SQL = `SELECT ${holdsBdeFlagOverSql('$1', '$2',
 export const ASSOCIATIONS_UNDER_BDE_FLAG_SQL = `SELECT gov_asso.id FROM associations gov_asso
   WHERE ${holdsBdeFlagOverSql('$1', 'gov_asso.id', '$2')} ORDER BY gov_asso.id`;
 
-/** Every user holding flag `$2` in a BDE governing association `$1` - who is told, and who may act. */
-export const BDE_FLAG_HOLDERS_OVER_SQL = `SELECT DISTINCT bde_holder."userId" FROM association_members bde_holder
-  WHERE ${holdsBdeFlagOverSql('bde_holder."userId"', '$1', '$2')} ORDER BY bde_holder."userId"`;
+/** Does user `$1` hold the agenda right over the events of association `$2`? Answers `holds`. */
+export const HOLDS_BDE_AGENDA_RIGHT_OVER_SQL = `SELECT ${holdsBdeAgendaRightOverSql('$1', '$2')} AS "holds"`;
+
+/** The ids of every association whose events user `$1` holds the BDE agenda right over. */
+export const ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL = `SELECT agenda_asso.id FROM associations agenda_asso
+  WHERE ${holdsBdeAgendaRightOverSql('$1', 'agenda_asso.id')} ORDER BY agenda_asso.id`;
+
+/** Every user holding the BDE agenda right over the events of association `$1` - who is told. */
+export const BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL = `SELECT DISTINCT agenda_holder."userId" FROM association_members agenda_holder
+  WHERE ${holdsBdeAgendaRightOverSql('agenda_holder."userId"', '$1')} ORDER BY agenda_holder."userId"`;

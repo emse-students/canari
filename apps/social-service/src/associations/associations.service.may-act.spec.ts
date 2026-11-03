@@ -1,7 +1,8 @@
 import { AssociationsService } from './associations.service';
 import {
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
 } from '../spaces/bde';
 import {
@@ -301,7 +302,7 @@ describe('AssociationsService scoped event governance', () => {
   function makeGovernanceService(opts: { holds?: boolean; holders?: string[] }) {
     const query = jest.fn((sql: string) =>
       Promise.resolve(
-        sql === HOLDS_BDE_FLAG_OVER_SQL
+        sql === HOLDS_BDE_AGENDA_RIGHT_OVER_SQL
           ? [{ holds: opts.holds ?? false }]
           : (opts.holders ?? []).map((userId) => ({ userId }))
       )
@@ -334,11 +335,8 @@ describe('AssociationsService scoped event governance', () => {
   it("judges an event on its OWN association's BDE, read from the row", async () => {
     const { service, query } = makeGovernanceService({ holds: true });
     await expect(service.mayValidateEvent('bde1', 'ev1')).resolves.toBe(true);
-    expect(query).toHaveBeenCalledWith(HOLDS_BDE_FLAG_OVER_SQL, [
-      'bde1',
-      'owner-asso',
-      AssociationPermissionFlag.VALIDATE_EVENTS,
-    ]);
+    // The AGENDA predicate (owner, 2026-11-03), never the management one.
+    expect(query).toHaveBeenCalledWith(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['bde1', 'owner-asso']);
   });
 
   it('refuses when the BDE does not govern the event association', async () => {
@@ -371,10 +369,7 @@ describe('AssociationsService scoped event governance', () => {
       }
     ).notifyEventValidatorsOfProposal.bind(service);
     await notify('club', 'author', 'Gala');
-    expect(query).toHaveBeenCalledWith(BDE_FLAG_HOLDERS_OVER_SQL, [
-      'club',
-      AssociationPermissionFlag.VALIDATE_EVENTS,
-    ]);
+    expect(query).toHaveBeenCalledWith(BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL, ['club']);
     expect(notifications.createNotifications).toHaveBeenCalledWith(
       expect.objectContaining({ recipientIds: ['se1', 'ga1'], type: 'event_proposed' })
     );

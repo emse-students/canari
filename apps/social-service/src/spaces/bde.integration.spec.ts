@@ -18,10 +18,12 @@ import { join } from 'path';
 import { Client } from 'pg';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
+  ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
-  holdsBdeFlagOverSql,
+  holdsBdeAgendaRightOverSql,
   isBdeAssociationSql,
 } from './bde';
 
@@ -42,8 +44,10 @@ const A = {
   clubNone: '00000000-0000-4000-8000-0000000000c4', // no rule: reaches no space
   clubAll: '00000000-0000-4000-8000-0000000000c5', // rule (NULL, NULL): everyone
   clubFsssSe: '00000000-0000-4000-8000-0000000000c6', // (FSSS, saint-etienne): a space with no BDE
-  // An INSTITUTION reaching both BDEs' spaces: it has no governing BDE, ever (owner, 2026-11-02).
+  // An INSTITUTION reaching both BDEs' spaces: no BDE manages it (owner, 2026-11-02), but its
+  // events are on the agenda of the BDEs of the spaces they target (owner, 2026-11-03).
   school: '00000000-0000-4000-8000-0000000000c7',
+  schoolGa: '00000000-0000-4000-8000-0000000000c8', // an INSTITUTION reaching (ISMIN, gardanne) only
 } as const;
 type AssoKey = keyof typeof A;
 const NAME = Object.fromEntries(Object.entries(A).map(([k, v]) => [v, k])) as Record<
@@ -70,6 +74,7 @@ const RULES: Record<AssoKey, [string | null, string | null][]> = {
     ['ICM', 'saint-etienne'],
     ['ISMIN', 'gardanne'],
   ],
+  schoolGa: [['ISMIN', 'gardanne']],
 };
 
 /** Members: who holds which flag where. `clubVal` holds VALIDATE_EVENTS in a club - inert. */
@@ -84,7 +89,10 @@ const MEMBERS: { userId: string; asso: AssoKey; permissions: number }[] = [
 ];
 const USERS = [...new Set(MEMBERS.map((m) => m.userId))];
 
-/** Who may validate each association's events - the matrix the user decided (6c). */
+/**
+ * Who may validate each association's events - the matrix the user decided (6c). An institution's
+ * events included: the agenda follows the spaces an event targets (owner, 2026-11-03).
+ */
 const VALIDATORS: Record<AssoKey, string[]> = {
   bdeSe: ['bothVal', 'seVal'],
   bdeGa: ['bothVal', 'gaVal'],
@@ -94,7 +102,8 @@ const VALIDATORS: Record<AssoKey, string[]> = {
   clubNone: [],
   clubAll: ['bothVal', 'gaVal', 'seVal'],
   clubFsssSe: [],
-  school: [],
+  school: ['bothVal', 'gaVal', 'seVal'],
+  schoolGa: ['bothVal', 'gaVal'],
 };
 
 maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () => {
@@ -118,7 +127,7 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     for (const [key, id] of Object.entries(A)) {
       await client.query(
         `INSERT INTO associations (id, name, "isBDE", type) VALUES ($1, $2, $3, $4)`,
-        [id, key, key === 'bdeSe', key === 'school' ? 'institution' : 'association']
+        [id, key, key === 'bdeSe', key.startsWith('school') ? 'institution' : 'association']
       );
     }
     await client.query(migration('071_spaces.sql'));
@@ -169,15 +178,11 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
   });
 
   it.each(Object.keys(A) as AssoKey[])(
-    'VALIDATE_EVENTS over %s: exactly the BDE(s) of the spaces it reaches',
+    'the agenda of %s: exactly the VALIDATE_EVENTS holders of the BDE(s) of the spaces it targets',
     async (asso) => {
       const holders: string[] = [];
       for (const userId of USERS) {
-        const { rows } = await client.query(HOLDS_BDE_FLAG_OVER_SQL, [
-          userId,
-          A[asso],
-          VALIDATE_EVENTS,
-        ]);
+        const { rows } = await client.query(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, [userId, A[asso]]);
         if (rows[0].holds === true) holders.push(userId);
       }
       expect(holders.sort()).toEqual(VALIDATORS[asso]);
@@ -186,7 +191,7 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
 
   it('the notification recipients are the same people, association by association', async () => {
     for (const asso of Object.keys(A) as AssoKey[]) {
-      const { rows } = await client.query(BDE_FLAG_HOLDERS_OVER_SQL, [A[asso], VALIDATE_EVENTS]);
+      const { rows } = await client.query(BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL, [A[asso]]);
       expect({ asso, told: rows.map((r) => r.userId as string) }).toEqual({
         asso,
         told: VALIDATORS[asso],
@@ -216,13 +221,31 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
     expect(await reach('clubVal', VALIDATE_EVENTS)).toEqual([]);
     expect(await reach('clubVal', MANAGE_ASSO)).toEqual([]);
     expect(await reach('plain', VALIDATE_EVENTS)).toEqual([]);
+    // The AGENDA reach is the same space rule plus the institutions' events.
+    const agenda = async (userId: string) =>
+      (await client.query(ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL, [userId])).rows
+        .map((r) => NAME[r.id as string])
+        .sort();
+    expect(await agenda('gaVal')).toEqual([
+      'bdeGa',
+      'clubAll',
+      'clubBoth',
+      'clubGa',
+      'school',
+      'schoolGa',
+    ]);
+    expect(await agenda('seVal')).toEqual(['bdeSe', 'clubAll', 'clubBoth', 'clubSe', 'school']);
+    expect(await agenda('seManage')).toEqual([]);
+    expect(await agenda('clubVal')).toEqual([]);
   });
 
-  it('never governs an institution, whatever spaces its audience reaches', async () => {
+  it('never MANAGES an institution, whatever spaces its audience reaches', async () => {
     for (const userId of USERS) {
       for (const flag of [VALIDATE_EVENTS, MANAGE_ASSO]) {
-        const { rows } = await client.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, A.school, flag]);
-        expect({ userId, flag, holds: rows[0].holds }).toEqual({ userId, flag, holds: false });
+        for (const school of [A.school, A.schoolGa]) {
+          const { rows } = await client.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, school, flag]);
+          expect({ userId, flag, holds: rows[0].holds }).toEqual({ userId, flag, holds: false });
+        }
       }
     }
     const reach = await client.query(ASSOCIATIONS_UNDER_BDE_FLAG_SQL, ['seManage', MANAGE_ASSO]);
@@ -232,14 +255,15 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
   it('filters a list of events by their association, as the pending queue splices it', async () => {
     const { rows } = await client.query(
       `SELECT e."associationId" FROM association_calendar_events e
-        WHERE ${holdsBdeFlagOverSql('$1', 'e."associationId"', '$2')} ORDER BY e.id`,
-      ['seVal', VALIDATE_EVENTS]
+        WHERE ${holdsBdeAgendaRightOverSql('$1', 'e."associationId"')} ORDER BY e.id`,
+      ['seVal']
     );
     expect(rows.map((r) => NAME[r.associationId as string]).sort()).toEqual([
       'bdeSe',
       'clubAll',
       'clubBoth',
       'clubSe',
+      'school',
     ]);
   });
 

@@ -72,8 +72,9 @@ export interface EditRights {
 
 /**
  * Every right the management sections read, from one context. `assoType` matters for an
- * institution, which has NO governing BDE (owner, 2026-11-02 - the server's `holdsBdeFlagOverSql`
- * never grants the tier over one): the super-admin tier is dropped whatever the context says, and
+ * institution, which no BDE MANAGES (owner, 2026-11-02 - the server's `holdsBdeFlagOverSql` never
+ * grants the tier over one; its events stay on the BDE's agenda, which these sections do not
+ * draw): the super-admin tier is dropped whatever the context says, and
  * its roster and audience are the platform admin's alone (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
  * `AUDIENCE_INSTITUTION_ADMIN_ONLY`). Its own members keep their flags.
  */

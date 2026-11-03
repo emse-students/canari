@@ -77,8 +77,10 @@ Ces deux droits ne lui viennent pas de son role au BDE. Il peut en revanche **no
 membre qui les porte, et chaque attribution de ce genre est journalisee.
 
 Les membres d'une **institution** (l'Ecole, la ME...) ne sont ajoutes, modifies ou retires que par
-l'administrateur de la plateforme. Une institution n'a aucun BDE au-dessus d'elle : le BDE ne peut
-ni l'administrer, ni l'archiver, ni valider ses evenements.
+l'administrateur de la plateforme. Aucun BDE ne gere une institution : il ne peut ni l'administrer,
+ni l'archiver, ni toucher a ses membres ou a son profil. En revanche l'agenda reste celui du BDE : un
+evenement d'une institution est valide par le BDE des formations qu'il vise (ou par l'administrateur
+de la plateforme), comme n'importe quel autre evenement.
 
 Depuis le 10 septembre 2026, il peut aussi **supprimer** une association, comme il pouvait deja en
 creer une. Archiver et supprimer ne sont pas la meme chose et se trouvent dans le meme encadre

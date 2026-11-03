@@ -33,7 +33,7 @@ const maybe = URL ? describe : describe.skip;
 
 const migration = (name: string) => readFileSync(join(__dirname, '..', 'migrations', name), 'utf8');
 
-const { MANAGE_ASSO, MANAGE_MEMBERS, POST_AS_ASSO } = AssociationPermissionFlag;
+const { MANAGE_ASSO, MANAGE_MEMBERS, POST_AS_ASSO, VALIDATE_EVENTS } = AssociationPermissionFlag;
 
 const A = {
   bdeIcm: '00000000-0000-4000-8000-0000000000d1', // BDE of (ICM, saint-etienne)
@@ -41,6 +41,7 @@ const A = {
   clubIcm: '00000000-0000-4000-8000-0000000000e1', // reaches (ICM, saint-etienne) only
   clubIsmin: '00000000-0000-4000-8000-0000000000e2', // reaches (ISMIN, saint-etienne) only
   school: '00000000-0000-4000-8000-0000000000e3', // an INSTITUTION reaching (ICM, saint-etienne)
+  schoolIsmin: '00000000-0000-4000-8000-0000000000e4', // an INSTITUTION reaching (ISMIN, s-e) only
 } as const;
 
 /** The refusal's typed code, or null when the call passed. */
@@ -86,7 +87,7 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
       await client.query(`INSERT INTO associations (id, name, type) VALUES ($1, $2, $3)`, [
         id,
         key,
-        key === 'school' ? 'institution' : 'association',
+        key.startsWith('school') ? 'institution' : 'association',
       ]);
     }
     await client.query(migration('071_spaces.sql'));
@@ -98,6 +99,7 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
       [A.clubIcm, 'ICM', 'saint-etienne'],
       [A.clubIsmin, 'ISMIN', 'saint-etienne'],
       [A.school, 'ICM', 'saint-etienne'],
+      [A.schoolIsmin, 'ISMIN', 'saint-etienne'],
     ];
     for (const [id, formation, campus] of rules) {
       await client.query(
@@ -116,7 +118,7 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     await client.query(
       `INSERT INTO association_members ("associationId", "userId", permissions) VALUES
         ($1, 'icmOfficer', $3), ($2, 'isminOfficer', $3)`,
-      [A.bdeIcm, A.bdeIsmin, MANAGE_ASSO | MANAGE_MEMBERS]
+      [A.bdeIcm, A.bdeIsmin, MANAGE_ASSO | MANAGE_MEMBERS | VALIDATE_EVENTS]
     );
   });
 
@@ -240,6 +242,33 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     it('still admits the same BDE on an association of its space', async () => {
       const { guard } = guardFor();
       await expect(guard.canActivate(archiveAs('icmOfficer', A.clubIcm))).resolves.toBe(true);
+    });
+
+    /**
+     * "Aucun BDE n'a les droits de gestion sur une institution, mais c'est le BDE qui a tous les
+     * droits sur l'agenda des formations dont il est le BDE" (owner, 2026-11-03): the agenda follows
+     * the spaces an event targets, the management of the institution reaches no BDE.
+     */
+    it("lets a BDE validate an institution's event targeting its spaces, and still manage nothing of it", async () => {
+      const { guard, service } = guardFor();
+      expect(await service.mayValidateEventsOf('icmOfficer', A.school)).toBe(true);
+      expect(await service.associationsUnderBdeAgendaRight('icmOfficer')).toContain(A.school);
+      // The members and profile routes (`MANAGE_MEMBERS`, `PATCH :id`) stay shut to the same officer.
+      expect(await service.isAssociationSuperAdminOf('icmOfficer', A.school)).toBe(false);
+      expect(await service.mayAct('icmOfficer', A.school, MANAGE_MEMBERS)).toBe(false);
+      await expect(guard.canActivate(archiveAs('icmOfficer', A.school))).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+    });
+
+    it("refuses a BDE an institution's event targeting only another BDE's spaces", async () => {
+      const { service } = guardFor();
+      expect(await service.mayValidateEventsOf('icmOfficer', A.schoolIsmin)).toBe(false);
+      expect(await service.associationsUnderBdeAgendaRight('icmOfficer')).not.toContain(
+        A.schoolIsmin
+      );
+      // The BDE of the spaces it DOES target validates it.
+      expect(await service.mayValidateEventsOf('isminOfficer', A.schoolIsmin)).toBe(true);
     });
   });
 });
