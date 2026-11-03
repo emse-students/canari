@@ -788,3 +788,83 @@ F4, question 3 is F5, question 4 is F6 (section 0).
 4. **L'entité qui reçoit l'argent d'une liste doit-elle être le BDE dont dépend la liste ?** Aujourd'hui la liste peut choisir n'importe quelle association dont le compte Lydia est prêt.
    - (Recommandé) N'importe quelle association qui accepte, comme aujourd'hui : le BDE n'a pas forcément de compte Lydia.
    - Seulement le BDE dont dépend la liste.
+
+## 11. WP-PIN - a pin is a promotion per space, not a global flag (decided 2026-11-03)
+
+**Today.** `posts.pinned` is one global boolean, set by `PATCH /api/posts/:postId/pin|unpin` behind
+`assertContentModerator` (platform admin, or any BDE member holding `MODERATE`); feeds sort
+`posts.pinned DESC`. So any BDE pins any post to the top for every reader on every campus. Production
+holds exactly one pinned post (measured 2026-11-03).
+
+**Owner decisions (2026-11-03)** - *"ce serait bien que le BDE puisse epingler (= mettre en avant)
+n'importe quel post sur l'espace dont il est responsable"*:
+
+1. Pinning is a PROMOTION right, separate from moderation. G9 (no BDE moderates an institution's
+   content) must not remove it.
+2. A BDE's pin puts the post on top ONLY for readers of the spaces that BDE governs.
+3. Any post visible to the readers of those spaces can be pinned: associations, lists, institutions,
+   students' personal posts, republications.
+4. At most 3 pins per space. A 4th is refused with a typed error telling the client to unpin one first.
+5. A pin never expires; only a gesture removes it.
+
+**Coordinator addition (reversible).**
+
+- **Reader spaces include read grants.** A reader's spaces for pin ordering are the spaces they belong
+  to PLUS the spaces reached by their `read_grants` (formation NULL = the whole campus). A staff
+  account with no space but a campus-wide grant sees, first, the pins of every BDE governing a space
+  of that campus; a grant on another campus gives nothing.
+
+**Lead's reversible choices (mine, not the owner's - change them by editing this list).**
+
+- The platform admin may pin in any space, through the same per-space mechanism. There is no global
+  flag any more.
+- The right is held by a BDE member holding `MODERATE` in that BDE until a dedicated flag is decided;
+  reversible, nothing else keys on it.
+- **A pin whose post stops being visible in that space is kept, not shown, and not counted** toward
+  the 3. Deleting at every visibility change would need a hook on each path that can change
+  visibility (audience edit, unpublish, author leaving, soft delete) and a missed one leaves a
+  phantom; computing "visible" at read time needs no hook and cannot drift. The cap is checked on
+  the visible pins only. If the post becomes visible again its pin returns.
+- **Never more than 3 shown (rule added 2026-11-03 by the coordinator's review).** A returning pin
+  could make 4 visible. The deterministic rule: among a space's VISIBLE pins, order by `pinned_at`
+  DESC (ties broken by `post_id`) and SHOW only the first 3. The others stay stored, are not shown
+  to readers and are not counted as shown, and the governor's pin list for that space returns them
+  flagged "en attente" (Paraglide fr/en) so one can be unpinned or left. The cap check on a new
+  pin counts the SHOWN pins (at most 3), so a 4th is refused with `space_pin_limit` whether or not
+  "en attente" pins exist. One shared SQL rank (`ROW_NUMBER() OVER
+  (PARTITION BY space_id ORDER BY pinned_at DESC, post_id) <= 3`) serves the feed ordering, the
+  `pinned` field and the governor list, so the three cannot disagree. Test: pin 3, hide one post,
+  pin a new one (3 visible), make the hidden post visible again: the feed shows the 3 newest, the
+  returning older pin is listed "en attente", and unpinning one of the 3 promotes it.
+- **UX.** The pin routes take the space: `PATCH /api/posts/:postId/pin` with `{ spaceId }`, same for
+  `unpin`. The post menu lists the governed spaces where the post is visible; with exactly one it
+  pins directly. There is no "pin in every space" shortcut (it would burn a slot in each space
+  without the governor choosing it).
+- **Migration of the one global pin.** It goes to every governed space where the post is visible and
+  that has room (all empty today), and to none, with a `NOTICE` naming the post id, when no BDE
+  governs a space it is visible in. Deterministic, loses no pin that has a possible home, invents no
+  space. It is a data migration, so it carries the repo's hold marker and waits for the owner's
+  hand-merge.
+
+**Shape.**
+
+- Table `post_space_pins (post_id, space_id, pinned_by, pinned_at)`, unique `(post_id, space_id)`.
+- **The cap holds under concurrency by serialising on the space**: the pin transaction takes
+  `pg_advisory_xact_lock` keyed on the space id, counts the visible pins, then inserts. The typed
+  error is a 409 with a stable code (`space_pin_limit`), never matched by message.
+- **Feeds**: `ORDER BY (pinned in one of the reader's spaces) DESC, created_at DESC`. The reader's
+  space set (membership plus read grants) is part of the post-list cache key; never a global entry,
+  or one campus's pin leaks to another.
+- `canPin` per post is computed for the viewer (a governed space where the post is visible, and the
+  right held). `pinned` in the response means pinned in one of the viewer's spaces.
+- **Old clients.** They read `pinned` and send a body-less `pin`. `pinned` keeps the meaning above; a
+  body-less pin is accepted when exactly one governed space fits and is otherwise refused with a
+  typed `space_required` 409. `posts.pinned` stops being read at once; the column is dropped in a
+  later migration after the window recorded in [legacy-compatibility](legacy-compatibility.md).
+- Tests: unit; integration with two BDEs on one campus (an ISMIN pin is not on top for ICM readers);
+  the 4th pin refused; two concurrent pins at 2 of 3 leave exactly 3; an institution post pinnable
+  (G9 intact); unpin; a no-space account with a campus-wide read grant sees an ISMIN-space pin first,
+  an account with a grant on another campus does not.
+
+**Order.** Built on top of #2953 (moderation scoped per space, it touches the pin routes) and #2949
+(governed spaces, `holdsBdeFlagOverSql`). No code is branched from either while open.

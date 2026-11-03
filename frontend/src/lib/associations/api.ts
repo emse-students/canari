@@ -817,6 +817,24 @@ export async function listEventCoOrganisers(
   );
 }
 
+/**
+ * Which side the signed-in caller writes an event from (owner decision E2): `organiser`, or
+ * `partner` - an accepted co-organiser, who edits the text and the poster and may withdraw, but
+ * never changes the date or the partner list and never deletes. The SERVER's answer, from the rule
+ * it enforces on the write, so the form hides exactly what the write would refuse.
+ */
+export type EventWriteSide = 'organiser' | 'partner';
+
+/** `GET .../events/:eventId/write-side`: the side the caller writes the event from through `associationId`. */
+export async function getEventWriteSide(
+  associationId: string,
+  eventId: string
+): Promise<{ side: EventWriteSide }> {
+  return request<{ side: EventWriteSide }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/write-side`
+  );
+}
+
 export async function deleteAssociationCalendarEvent(
   associationId: string,
   eventId: string

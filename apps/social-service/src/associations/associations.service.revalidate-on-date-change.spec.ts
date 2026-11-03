@@ -86,6 +86,8 @@ function makeService(event: Overrides) {
   const notifiedAssoAdmins = jest.fn();
   Object.assign(service, {
     findById: jest.fn(async () => ({ id: 'asso-1' })),
+    // The event lock is a transaction in production; here the work simply runs on the stub repo.
+    withEventLock: async (_id: string, work: (repo: unknown) => unknown) => work(calendarRepo),
     findCalendarEventForAssociation: jest.fn(async () => row),
     batchLoadCoOwners: jest.fn(async () => new Map()),
     syncCoOwners: jest.fn(async () => []),

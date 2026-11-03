@@ -123,7 +123,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association through `POST /associations` (unscoped: there is none yet; never the platform admin's `POST /associations/admin`, [below](#creating-an-entity-two-routes-two-tiers)), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
-| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
+| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing and deleting any post (`assertMayManage` and the `canManage` field). **Pinning stops being moderation once WP-PIN ships (owner, 2026-11-03)**: it becomes a per-space promotion right ([section 11](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)); until then `pinPost`/`unpinPost` and `canPin` still ride `MODERATE` |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
 | `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
@@ -186,7 +186,7 @@ is what made the report button appear on a post the reader had published and the
 | Tier | How it is known | Edit / delete | Pin | Report |
 | --- | --- | --- | --- | --- |
 | Platform administrator | `X-Global-Admin: true` | yes | yes | yes |
-| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | yes | yes |
+| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | today yes, globally; WP-PIN: only in the spaces its BDE governs, institution posts included (G9 does not remove it) | yes |
 | The post's publisher | its author, or `POST_AS_ASSO` on the association it speaks for | yes, on its own | no | no - it would be reporting itself |
 | Any other logged-in reader | - | no | no | yes |
 
