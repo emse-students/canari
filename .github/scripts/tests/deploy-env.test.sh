@@ -527,7 +527,8 @@ fi
 # public repository): an estate holding it signs every agenda link with a key anybody can read. It
 # must fail the render, naming the secret. The literal is read from the compose file itself, so the
 # refusal and the default cannot drift apart.
-local_default="$(sed -n 's/^ *AGENDA_SIGNING_KEY: \${AGENDA_SIGNING_KEY:-\(.*\)}$/\1/p' infrastructure/local/docker-compose.yml)"
+# `[$]` rather than `\$`: the dollar is the compose file's literal, not a shell expansion.
+local_default="$(sed -n 's/^ *AGENDA_SIGNING_KEY: [$][{]AGENDA_SIGNING_KEY:-\(.*\)}$/\1/p' infrastructure/local/docker-compose.yml)"
 if [ -z "$local_default" ]; then
   fail "could not read the local AGENDA_SIGNING_KEY default from the compose file"
 else

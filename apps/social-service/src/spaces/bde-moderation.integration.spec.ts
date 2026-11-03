@@ -52,6 +52,10 @@ const P = {
   gaStudentPost: '10000000-0000-4000-8000-000000000005',
   staffPost: '10000000-0000-4000-8000-000000000006',
   instSePost: '10000000-0000-4000-8000-000000000007',
+  // In a BDE's own name. bdeGa's rules also reach bdeSe's space (below), so bdeGaPost is VISIBLE
+  // there - and still bdeSe's moderators' to leave alone (owner, 2026-11-03).
+  bdeSePost: '10000000-0000-4000-8000-000000000008',
+  bdeGaPost: '10000000-0000-4000-8000-000000000009',
 } as const;
 
 const L = {
@@ -105,6 +109,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     const rules: [string, string | null, string][] = [
       [A.bdeSe, 'ICM', 'saint-etienne'],
       [A.bdeGa, 'ICM', 'gardanne'],
+      [A.bdeGa, 'ICM', 'saint-etienne'], // bdeGa's posts are seen in bdeSe's space too
       [A.clubSe, 'ICM', 'saint-etienne'],
       [A.clubGa, null, 'gardanne'],
       [A.instSe, null, 'saint-etienne'],
@@ -153,6 +158,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [P.gaStudentPost, 'gaStudent', null, [{ id: 'cm-ga', userId: 'seStudent' }]],
       [P.staffPost, 'staff', null, []],
       [P.instSePost, 'seStudent', A.instSe, []],
+      [P.bdeSePost, 'seMod', A.bdeSe, []],
+      [P.bdeGaPost, 'gaMod', A.bdeGa, []],
     ];
     for (const [id, author, asso, comments] of postRows) {
       await client.query(
@@ -175,8 +182,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
   });
 
   it('a BDE moderates the posts of its governed spaces, association and personal alike', async () => {
-    expect(await posts('seMod')).toEqual([P.clubSePost, P.seStudentPost].sort());
-    expect(await posts('gaMod')).toEqual([P.clubGaPost, P.gaStudentPost].sort());
+    expect(await posts('seMod')).toEqual([P.clubSePost, P.seStudentPost, P.bdeSePost].sort());
+    expect(await posts('gaMod')).toEqual([P.clubGaPost, P.gaStudentPost, P.bdeGaPost].sort());
   });
 
   it('answers the same for a post id spelled in uppercase (`mayModeratePost`)', async () => {
@@ -218,6 +225,16 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     expect(await posts('seMod')).toContain(P.clubSePost);
     expect(await posts('seMod')).not.toContain(P.instSePost);
     expect(await posts('gaMod')).not.toContain(P.instSePost);
+  });
+
+  it("never lets a BDE moderate a post in ANOTHER BDE's name, though it is seen in its spaces (owner, 2026-11-03)", async () => {
+    // bdeGa's rules reach bdeSe's space, as clubSe's do; clubSe's post is seMod's, bdeGa's is not.
+    expect(await posts('seMod')).toContain(P.clubSePost);
+    expect(await posts('seMod')).not.toContain(P.bdeGaPost);
+    expect(await posts('gaMod')).not.toContain(P.bdeSePost);
+    // Each BDE's own post stays its own moderators'.
+    expect(await posts('seMod')).toContain(P.bdeSePost);
+    expect(await posts('gaMod')).toContain(P.bdeGaPost);
   });
 
   it('grants nothing to another BDE flag, nor to MODERATE held in a mere club', async () => {

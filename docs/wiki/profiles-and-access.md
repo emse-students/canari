@@ -1523,7 +1523,8 @@ standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
 
 | Target | In the BDE's scope when |
 | --- | --- |
-| an association's post or live | the association is reached by a space the BDE governs (`holdsBdeFlagOverSql`) - never an institution's, and another BDE's only by its own members |
+| an association's post or live | the association is reached by a space the BDE governs (`holdsBdeFlagOverSql`) - never an institution's |
+| a post or live in ANOTHER BDE's name | never, even when it is seen in the BDE's own spaces: only the platform admin, as for an institution (owner, 2026-11-03); a BDE's own content is its own members' |
 | a personal post or live | its author belongs to one of the spaces the BDE governs (`isReaderSpaceSql`) |
 | a comment | the post it sits under is in scope |
 | a live chat line | its live is in scope (read from the live, or from its cut once purged) |
