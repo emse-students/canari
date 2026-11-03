@@ -94,4 +94,4 @@
 "notif.event.pending.title" = "Event needs approval again";
 "notif.event.pending.body" = "“%1$@” needs approval again: its dates changed";
 "notif.event.pending.coorganiser.title" = "Event needs approval again";
-"notif.event.pending.coorganiser.body" = "“%1$@” needs approval again: a partner association was added";
+"notif.event.pending.coorganiser.body" = "“%1$@” needs approval again: an association accepted to co-organise";

@@ -35,6 +35,7 @@ use crate::commands::at_rest_key::{
     cle_au_repos_lire, cle_au_repos_marquer, cle_au_repos_oublier, cle_au_repos_preparer,
     cle_au_repos_schema, supprimer_cle_appareil,
 };
+use crate::commands::background_flush::{begin_background_flush, end_background_flush};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
@@ -1748,6 +1749,8 @@ pub fn run() {
             read_and_clear_pending_quick_replies,
             return_pending_quick_replies,
             acknowledge_quick_reply,
+            begin_background_flush,
+            end_background_flush,
             delete_user_quick_replies,
             read_and_clear_pending_share,
             advance_share_epoch,

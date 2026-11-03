@@ -503,7 +503,9 @@
                 : notif.type === 'event_pending'
                   ? m.notif_event_pending_text()
                   : notif.type === 'event_pending_coorganiser'
-                    ? m.notif_event_pending_coorganiser_text()
+                    ? notif.meta?.audience === 'validators'
+                      ? m.notif_event_pending_coorganiser_validators_text()
+                      : m.notif_event_pending_coorganiser_text()
                     : m.notif_event_deleted_text()}
         <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
             text={eventReason}

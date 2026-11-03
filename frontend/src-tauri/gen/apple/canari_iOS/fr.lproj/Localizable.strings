@@ -107,4 +107,4 @@
 "notif.event.pending.title" = "Événement à revalider";
 "notif.event.pending.body" = "« %1$@ » doit être revalidé : ses dates ont changé";
 "notif.event.pending.coorganiser.title" = "Événement à revalider";
-"notif.event.pending.coorganiser.body" = "« %1$@ » doit être revalidé : une association partenaire a été ajoutée";
+"notif.event.pending.coorganiser.body" = "« %1$@ » doit être revalidé : une association a accepté de co-organiser";

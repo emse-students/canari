@@ -33,8 +33,8 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
   resolveUserDisplayName: async () => null,
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() => Promise.resolve(new Response('[]', { status: 200 }))),

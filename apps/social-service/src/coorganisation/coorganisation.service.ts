@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,8 +9,13 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
-import type { CoOrganiserPort, CoOrganiserSyncRequest } from '../associations/co-organisers.port';
+import type {
+  CoOrganiserAfterCommit,
+  CoOrganiserPort,
+  CoOrganiserSyncRequest,
+} from '../associations/co-organisers.port';
 import { coOrganiserCapRefusal, MAX_CO_ORGANISERS } from '../associations/co-organiser-cap';
+import { partnerOrganiserOnlyRefusal, type EventWriteSide } from '../associations/event-write-side';
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
@@ -141,6 +145,33 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
   }
 
   /**
+   * The side the caller writes event `eventId` from through `associationId` (E2): the event form
+   * hides the date and the partner list from a `partner`, and this is what it reads - the server's
+   * own answer, from the same rule the write enforces, never a guess from the ids on the client.
+   * 404 when the event is not reachable through that association, like `listStatesFor`.
+   */
+  async writeSideFor(
+    associationId: string,
+    eventId: string,
+    actorId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ side: EventWriteSide }> {
+    const tier = await this.associations.assertMayWriteEvent(
+      actorId,
+      isGlobalAdmin,
+      associationId,
+      eventId
+    );
+    const ev = await this.associations.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      tier.isGlobalAdmin || tier.isBde
+    );
+    if (!ev) throw new NotFoundException('Event not found');
+    return { side: tier.side };
+  }
+
+  /**
    * THE FORM'S LIST, TURNED INTO PROPOSALS (`CoOrganiserPort`). Computed against the current state,
    * so a form resubmitted unchanged changes nothing:
    * - a name neither accepted, pending nor refused is PROPOSED;
@@ -151,14 +182,34 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
    * A caller writing through a CO-ORGANISER association may only remove that association itself
    * (leave); anything else is a 403 BEFORE any write.
    */
-  async sync(request: CoOrganiserSyncRequest): Promise<void> {
-    const { eventId, organiserId, actorId } = request;
-    const states = await this.listStates(eventId);
-    const byId = new Map(states.map((s) => [s.associationId, s]));
-    const desired = new Set(request.desiredIds.filter((id) => id && id !== organiserId));
-    const toPropose = [...desired].filter((id) => !byId.has(id));
-    const refusedAgain = [...desired].filter((id) => byId.get(id)?.status === 'refused');
-    const toEnd = states.filter((s) => s.status !== 'refused' && !desired.has(s.associationId));
+  async sync(
+    request: CoOrganiserSyncRequest,
+    manager?: EntityManager
+  ): Promise<CoOrganiserAfterCommit> {
+    if (manager) return this.syncWithin(request, manager);
+    // No caller transaction (an event CREATION): the list is still ONE unit, committed or not at all.
+    let announce: CoOrganiserAfterCommit = () => Promise.resolve();
+    await this.coOwnerRepo.manager.transaction(async (own) => {
+      announce = await this.syncWithin(request, own);
+    });
+    await announce();
+    return () => Promise.resolve();
+  }
+
+  /**
+   * `sync` on the CALLER'S connection: the endings and the k proposals are written in `manager`'s
+   * transaction, so a refusal or a failure at the k-th leaves none of them (and, in the event edit,
+   * none of the event's own writes either). The proposals are announced by the returned function,
+   * which the caller runs AFTER its commit - a rolled-back edit tells nobody.
+   */
+  private async syncWithin(
+    request: CoOrganiserSyncRequest,
+    manager: EntityManager
+  ): Promise<CoOrganiserAfterCommit> {
+    const { eventId, actorId } = request;
+    const { toPropose, toEnd, refusedAgain } = await this.plan(request, manager);
+    // Logged HERE and not in plan(): the form save runs check() and then sync(), and the same
+    // decision must not be written twice.
     this.logger.debug(
       `[COORG] sync ${eventId.slice(0, 8)} by ${actorId.slice(0, 8)} (organiserSide=${request.organiserSide}): ` +
         `propose=${toPropose.length} end=${toEnd.length} refusedAgain=${refusedAgain.length}`
@@ -168,6 +219,46 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         `[COORG] ${eventId.slice(0, 8)}: ${refusedAgain.length} refused co-organiser(s) not asked again`
       );
     }
+    for (const state of toEnd) {
+      await this.end(manager, eventId, state, actorId);
+    }
+    const announcements: AfterCommit[] = [];
+    for (const toAssociationId of toPropose) {
+      // The event write check already established that the actor speaks for the organiser.
+      const { announce } = await this.proposals.proposeWithin(
+        manager,
+        this.kind,
+        eventId,
+        toAssociationId,
+        actorId
+      );
+      announcements.push(announce);
+    }
+    return async () => {
+      for (const announce of announcements) await announce();
+    };
+  }
+
+  /** `CoOrganiserPort.check`: every refusal of `sync`, none of its writes. */
+  async check(request: CoOrganiserSyncRequest, manager?: EntityManager): Promise<void> {
+    await this.plan(request, manager);
+  }
+
+  /**
+   * What `sync` would do, and every refusal it would give - READ-ONLY. One implementation for
+   * `check` and `sync`, so the pre-write check and the write cannot disagree.
+   */
+  private async plan(
+    request: CoOrganiserSyncRequest,
+    manager?: EntityManager
+  ): Promise<{ toPropose: string[]; toEnd: CoOrganiserView[]; refusedAgain: string[] }> {
+    const { eventId, organiserId, actorId } = request;
+    const states = await this.listStates(eventId, manager);
+    const byId = new Map(states.map((s) => [s.associationId, s]));
+    const desired = new Set(request.desiredIds.filter((id) => id && id !== organiserId));
+    const toPropose = [...desired].filter((id) => !byId.has(id));
+    const refusedAgain = [...desired].filter((id) => byId.get(id)?.status === 'refused');
+    const toEnd = states.filter((s) => s.status !== 'refused' && !desired.has(s.associationId));
     // THE CAP (2026-10-10): accepted + pending after this save, a refused one holding nothing. Only
     // an ADDITION is refused, so an event already over the cap may still be edited and shrunk
     // (none exists on prod, measured 2026-10-10; the rule is cheap and never destroys).
@@ -187,27 +278,10 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         this.logger.debug(
           `[COORG] ${actorId.slice(0, 8)} via co-organiser ${request.viaAssociationId.slice(0, 8)} may only leave`
         );
-        throw new ForbiddenException('A co-organiser may only remove itself');
+        throw partnerOrganiserOnlyRefusal('coOwnerIds');
       }
     }
-    if (toEnd.length > 0) {
-      await this.coOwnerRepo.manager.transaction(async (manager) => {
-        for (const state of toEnd) {
-          await this.end(manager, eventId, state, actorId);
-        }
-      });
-    }
-    for (const toAssociationId of toPropose) {
-      // The event write check already established that the actor speaks for the organiser.
-      await this.proposals.propose(
-        this.kind,
-        eventId,
-        toAssociationId,
-        actorId,
-        request.isGlobalAdmin,
-        { senderVouched: true }
-      );
-    }
+    return { toPropose, toEnd, refusedAgain };
   }
 
   /** Withdraws a pending co-organiser, or ends an accepted one, inside `manager`'s transaction. */
@@ -254,8 +328,13 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
 
   // ── The `coorganise` proposal kind ─────────────────────────────────────────────────────────────
 
-  async resolveSender(eventId: string, toAssociationId: string): Promise<string> {
-    const ev = await this.loadEvent(eventId);
+  async resolveSender(
+    eventId: string,
+    toAssociationId: string,
+    manager?: EntityManager
+  ): Promise<string> {
+    const db = manager ?? this.coOwnerRepo.manager;
+    const ev = await this.loadEvent(eventId, manager);
     if (!ev) {
       this.logger.debug(`[COORG] ${eventId.slice(0, 8)} refused: no such event`);
       throw new NotFoundException('Event not found');
@@ -263,12 +342,11 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
     if (ev.associationId === toAssociationId) {
       throw new BadRequestException('An event is already organised by its own association');
     }
-    const target: unknown[] = await this.coOwnerRepo.manager.query(
-      `SELECT 1 FROM associations WHERE id = $1`,
-      [toAssociationId]
-    );
+    const target: unknown[] = await db.query(`SELECT 1 FROM associations WHERE id = $1`, [
+      toAssociationId,
+    ]);
     if (target.length === 0) throw new NotFoundException('Association not found');
-    const existing: unknown[] = await this.coOwnerRepo.manager.query(
+    const existing: unknown[] = await db.query(
       `SELECT 1 FROM association_calendar_event_co_owners WHERE event_id = $1 AND association_id = $2`,
       [eventId, toAssociationId]
     );
@@ -276,6 +354,19 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
       throw new ConflictException('This association already co-organises this event');
     }
     return ev.associationId;
+  }
+
+  /**
+   * The event row, `FOR NO KEY UPDATE`, taken by every decision on a `coorganise` proposal AFTER its
+   * associations and BEFORE the proposal itself: the order of an event edit (`withEventLock`), so an
+   * acceptance - which may return a validated event to pending - is serialised with an edit, a
+   * validation and a rejection of the same event instead of racing their status columns.
+   */
+  async lockSubject(manager: EntityManager, eventId: string): Promise<void> {
+    await manager.query(
+      `SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE`,
+      [eventId]
+    );
   }
 
   async apply(

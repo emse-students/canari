@@ -4777,13 +4777,14 @@ export function getOutbox(): OutboxController | null {
  * the per-conversation lanes coalescer. There is no second flusher to fuse this with. FIVE sites are
  * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
  * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
- * THREE are external moments nothing inside this module can observe:
+ * FOUR are external moments nothing inside this module can observe:
  *
  * | Site | The moment, and why nothing in here sees it |
  * | --- | --- |
  * | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
  * | `sessionAuth`'s `onGroupReady`, through {@link resumeOutboxGroup} | one GROUP became sendable; the network never changed |
  * | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+ * | `MainChatPage` leaving the screen, under `holdWhileLeaving` | the iOS background task must last until the owed read marks' send SETTLES; the enqueue hands nobody its end, and this coalesces with it |
  *
  * **THE FUSION THAT LOOKS OBVIOUS IS A REGRESSION, AND IT IS THE FIRST THING ANYONE WILL REACH
  * FOR.** `connectivity.onReconnect` binds a flush to `isOffline` clearing, so binding one to
@@ -4794,7 +4795,7 @@ export function getOutbox(): OutboxController | null {
  * and only the promotion knows the second.**
  *
  * `outbox.test.ts` drives all five internal triggers plus this one over a single table, and a
- * source check pins the three external sites, so a fourth has to be argued for rather than added.
+ * source check pins the four external sites, so a fifth has to be argued for rather than added.
  */
 export function flushOutbox(): void {
   void active?.flush();

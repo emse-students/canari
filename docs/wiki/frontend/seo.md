@@ -77,12 +77,10 @@ would be impersonation). One seam: `src/lib/seo/internalApi.ts`, shared with the
 | `/posts/{id}` | social-service `GET /api/public/posts/:id/preview` | `Article` + `BreadcrumbList` |
 | `/associations/{slug}` | social-service `GET /api/public/associations/slug/:slug` | `Organization` + `BreadcrumbList` |
 | `/forms/{id}` | social-service `GET /api/forms/:id` | — |
-| `/profile/{id}` | core-service internal public-profile | — |
 | `/c/join/{token}` | social-service internal invite preview | — (`noindex`) |
 | `/g/join/{token}` | chat-delivery internal invite preview | — (`noindex`) |
 | `/`, `/posts` | — | `Organization` + `WebSite` |
 | `/associations` | — | site nodes + `BreadcrumbList` |
-| `/calendar` | social-service `GET /api/associations/calendar/feed` | `ItemList` of `Event` |
 
 Each is best-effort behind a 1.5 s timeout, with a 60 s LRU in front (one shared link produces a
 burst of unfurler hits on one path). **A failure degrades the preview; it never fails the page** —
@@ -137,7 +135,6 @@ the payload at all — the cheapest way not to leak a field is not to select it.
 |---|---|
 | `GET /api/public/posts/:id/preview` | text, association, image dimensions — `Cache-Control: max-age=300` |
 | `GET /api/public/posts/:id/preview-image` | the post's CARD, always 1200x630 JPEG (see below) — `max-age=3600`, **ThrottlerGuard** |
-| `GET /api/public/posts?limit=` | ids + `updatedAt` for the sitemap, capped at 500 |
 
 **The card's text is cut to what the unfurler shows, between words (2026-10-18).** The title was
 the post's first 70 characters plus ` - Canari` (79), the description 200 (199 with the ellipsis):
@@ -320,30 +317,26 @@ every graph: `parentOrganization` on the site, `memberOf` on each association.
 - One `Organization` node is *referenced* by `@id`, never duplicated — two nodes with one name is
   how a graph ends up describing two organisations.
 - `WebSite.potentialAction` declares the search entry point a sitelinks search box is built from.
-- `Event` is the one type here with a real chance of a rich result (Google renders events with
-  their dates), and an agenda is exactly what a student searches for. Every event declares
-  `location`, because Google's event guidelines warn on a missing one.
 - `prune()` drops undefined values: a declared-but-empty property is reported as malformed.
+
+**No `Event`, no profile, since 2026-11-02.** The head is served to anybody, so it shows no more than
+the public showcase (portail-etu.emse.fr) does - the owner's rule, [anonymous-surface](../anonymous-surface.md).
+The agenda's `ItemList` of `Event` (25 upcoming events with their text, image and organiser) and a
+profile's head (a person's name, promo and formation) were removed that day: the showcase shows
+neither, so `/calendar` and `/profile/{id}` carry the generic head and ask no service anything.
 
 ## Sitemap and robots
 
 `/sitemap.xml` is **built per request** (`prerender = false`), because a static list of eight paths
-tells a crawler nothing about the content. It merges the static routes with:
+tells a crawler nothing about the content. It merges the static routes with every non-archived
+association, via the public projection.
 
-- every non-archived association, via the public projection;
-- recent **association** posts, via `GET /api/public/posts` — not every post. Submitting a URL to a
-  search engine is not the same act as not blocking it: an association's post is a communication
-  its authors want found, a student's personal post is not something to put in front of a search
-  engine on their behalf.
+**It lists no post since 2026-11-02.** It used to list the 500 newest association posts, read from
+`GET /api/public/posts`; that listing was a feed handed to anybody, and the owner closed it. A
+shared post is still previewed (the routes above, which the owner kept); it is no longer advertised.
 
-This read used to be `/api/posts?feed=associations`, and the docblock beside it asserted that feed
-was "readable without a session". **That sentence was true when it was written and false from
-2026-09-10**, and nothing re-read it — see the section above for what it cost. A claim about who may
-read something rots wherever it is not the code doing the enforcing, so the rule now lives in SQL on
-the service that owns posts and both consumers read that one surface.
-
-Both halves run in parallel and are allowed to come back empty — a short sitemap is worth serving,
-a 500 is not.
+A sitemap that comes back without its associations is still served - a short sitemap is worth
+serving, a 500 is not.
 
 `/robots.txt` stays prerendered (it has no data to fetch) and **writes its `Disallow:` block from
 `PRIVATE_PREFIXES`** rather than restating it - see the section above for what the second copy cost.
@@ -388,8 +381,10 @@ cost every head, so `X-Canari-Degraded: ssr-unavailable` in the access log is th
 ### THE PHOTO PATH, MEASURED ON PRODUCTION EITHER SIDE OF v0.18.19 (2026-09-22)
 
 The user reported it the way an unfurler shows it: a Messenger card with an empty image box. The
-probe is public and needs no credential - list `/api/public/posts`, ask each one's `/preview`
-whether it claims an image, then fetch `/preview-image` for those that do.
+probe was public and needed no credential - list `/api/public/posts`, ask each one's `/preview`
+whether it claims an image, then fetch `/preview-image` for those that do. (That listing was closed
+on 2026-11-02, [anonymous-surface](../anonymous-surface.md); a re-run takes post ids from a signed-in
+feed read instead.)
 
 | | posts claiming an image | image served | blank |
 |---|---|---|---|

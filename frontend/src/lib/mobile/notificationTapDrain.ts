@@ -15,6 +15,7 @@
  */
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { routerReady } from '$lib/navigation/routerReady';
+import { noteOpenRoutedNowhere } from '$lib/utils/chat/resumeOpening.svelte';
 import { describeDeepLink } from '$lib/utils/logSanitize';
 
 /** The event the native side dispatches when a tap waits in the file. */
@@ -76,6 +77,8 @@ export async function takeNativeNotificationTap(
   if (!raw) return null;
   const link = parseNativeNotificationTap(raw);
   if (link) console.log(`[NotifTap] native tap taken: ${describeDeepLink(link)}`);
+  // A tap that names nothing routable opens nothing: the resume it caused holds nothing either.
+  else noteOpenRoutedNowhere('a native tap record that is not a link');
   return link;
 }
 

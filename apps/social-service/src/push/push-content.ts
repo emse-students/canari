@@ -542,7 +542,7 @@ export function eventPendingCoorganiserContent(actorName: string, eventTitle: st
     actorName,
     arg: eventTitle,
     legacyTitle: 'Événement à revalider',
-    legacyBody: `« ${eventTitle} » doit être revalidé : une association partenaire a été ajoutée`,
+    legacyBody: `« ${eventTitle} » doit être revalidé : une association a accepté de co-organiser`,
   };
 }
 

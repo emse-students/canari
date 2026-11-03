@@ -135,6 +135,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 
 static void CanariPublishSafeAreaInsets(void);
 static void CanariPublishDynamicType(void);
+static void CanariPublishForeground(NSString *_Nullable opening);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -498,6 +499,7 @@ static void CanariObserveCallProximity(void) {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
+    CanariPublishForeground(nil);
   }
 }
 @end
@@ -538,6 +540,88 @@ static void CanariPublishSafeAreaInsets(void) {
     published = inset;
     NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt", inset, top);
   }
+}
+
+/// Whether the app is ON SCREEN: false from `didEnterBackground` until the resume completes. Not
+/// `g_isInForeground`, which is ACTIVE only and turns false for the Face ID sheet, Control Center or a
+/// permission alert - none of which takes the conversation off the screen, and every one of which
+/// would have re-run the page's "back in the foreground" work in the middle of an unlock.
+static volatile bool g_isOnScreen = true;
+
+/// True from `willEnterForeground` until the resume is PUBLISHED to the page - which is not at
+/// `didBecomeActive` itself but one round trip to the notification center later (see the observer).
+/// A tapped notification noted while this is true belongs to this resume: its link rides the edge,
+/// and the page does not read the conversation left on screen (owner, 2026-11-02;
+/// `resumeOpening.svelte.ts`). Main thread only.
+static bool g_resumePending = false;
+
+/// The link the resume in progress opens (a tapped notification), or nil. Main thread only.
+static NSString *_Nullable g_resumeOpening = nil;
+
+void CanariNoteResumeOpening(NSString *deepLink) {
+  void (^note)(void) = ^{
+    UIApplicationState state = [UIApplication sharedApplication].applicationState;
+    // A tap on an app that is active with NO resume in progress (a banner over the open app) is not
+    // a resume. Active WITH one in progress is: the delegate may run after `didBecomeActive`, and
+    // the edge is not published until the round trip below says it has had its chance.
+    if (state == UIApplicationStateActive && !g_resumePending) {
+      NSLog(@"[CanariIOS] notification tap on an active app - not a resume, nothing held");
+      return;
+    }
+    g_resumeOpening = [deepLink copy];
+    NSLog(@"[CanariIOS] notification tap during a resume (state=%ld, resumePending=%d): its link rides the foreground edge",
+          (long)state, g_resumePending ? 1 : 0);
+  };
+  // Synchronously on the main thread: the order against `didBecomeActive` is the whole point.
+  if ([NSThread isMainThread]) {
+    note();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), note);
+  }
+}
+
+/// Hands the page whether the app is on screen, in the contract the Android shell already speaks
+/// (`MainActivity.pushForeground`): `window.__canariForeground` for whoever asks later, and a
+/// `canari:foreground` event for whoever reacts at the edge. ONE implementation in the page
+/// (`appForeground.ts`, `appForegroundState.svelte.ts`) then serves both phones.
+///
+/// WHY: the page asked `isAppInForeground()`, which answers `true` where the global is absent - so on
+/// iOS it was always `true`, and a frame the page processed in the seconds before suspension, in the
+/// conversation left open, counted as read on arrival (owner, 2026-11-02;
+/// docs/wiki/frontend/modules/chat.md, "Read state between devices").
+///
+/// Sent on both edges and after every page load (a page that loads while backgrounded - a launch by
+/// a push - must not start believing it is on screen).
+static void CanariPublishForeground(NSString *_Nullable opening) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariIOS] foreground=%d not published: no WebView yet (the page load publishes it)",
+          g_isOnScreen ? 1 : 0);
+    return;
+  }
+  NSString *value = g_isOnScreen ? @"true" : @"false";
+  // The link as a JSON string literal: page data, never code.
+  NSString *openingJs = @"null";
+  if (opening.length > 0) {
+    NSData *json = [NSJSONSerialization dataWithJSONObject:opening
+                                                   options:NSJSONWritingFragmentsAllowed
+                                                     error:nil];
+    if (json != nil) openingJs = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+  }
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariForeground=%@;"
+                        "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:%@,opening:%@}}));",
+                       value, value, openingJs];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                // A page that cannot be told keeps its last value; said, because a silent failure
+                // here reads exactly like the defect this exists to fix.
+                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, error);
+              }
+            }];
+  NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
+        opening.length > 0 ? 1 : 0);
 }
 
 /// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
@@ -973,6 +1057,71 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariOnWillResignActive(note);
+              }];
+  // ON SCREEN OR NOT - the background/foreground pair, never the active pair (see g_isOnScreen).
+  [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                // A launch by a push or a background task starts off screen.
+                g_isOnScreen = [UIApplication sharedApplication].applicationState != UIApplicationStateBackground;
+              }];
+  [nc addObserverForName:UIApplicationDidEnterBackgroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_isOnScreen = false;
+                g_resumePending = false;
+                g_resumeOpening = nil;
+                CanariPublishForeground(nil);
+              }];
+  // The resume BEGINS here and is announced when it completes (`g_resumePending`): a tapped
+  // notification reaches the delegate in between, and its link rides the edge.
+  [nc addObserverForName:UIApplicationWillEnterForegroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_resumePending = true;
+              }];
+  // THE RESUME IS PUBLISHED WHEN A TAP THAT CAUSED IT HAS HAD ITS CHANCE TO BE NOTED, IN EITHER
+  // ORDER. UIKit does not promise whether `didReceiveNotificationResponse` runs before or after
+  // `didBecomeActive` (with scenes it can come after). So `didBecomeActive` does not publish: it asks
+  // the notification center a question and publishes from the ANSWER, on the main queue. A response
+  // that caused this activation either came with the activation itself (FrontBoard's scene action,
+  // handled before the activation completes) or on the notification center's own connection. That
+  // the connection delivers the response before the answer to a question asked AFTER it was sent is
+  // LIKELY BUT UNPROVEN: Apple documents no such ordering, so it is an ordering argument, not a
+  // delay, and it is what device-verification LA steps 5 and 8 measure (the two NSLogs below, read
+  // against `[RESUME-OPEN]`, show whether the tap was noted before the edge was published).
+  //
+  // Only the didBecomeActive that completes a resume publishes; one after Control Center or a Face
+  // ID sheet finds no resume pending, says nothing, and drops any link a cold launch left behind.
+  [nc addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                if (!g_resumePending) {
+                  g_resumeOpening = nil;
+                  return;
+                }
+                NSLog(@"[CanariIOS] didBecomeActive: awaiting the notification-center round trip "
+                      @"before publishing the edge (opening noted so far: %@)",
+                      g_resumeOpening ? @"yes" : @"no");
+                [[UNUserNotificationCenter currentNotificationCenter]
+                    getNotificationSettingsWithCompletionHandler:^(__unused UNNotificationSettings *s) {
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                        // Left again meanwhile (didEnterBackground cleared it): nothing to publish.
+                        if (!g_resumePending) return;
+                        g_resumePending = false;
+                        g_isOnScreen = true;
+                        NSString *opening = g_resumeOpening;
+                        g_resumeOpening = nil;
+                        NSLog(@"[CanariIOS] round trip answered: publishing the foreground edge "
+                              @"(opening: %@)",
+                              opening ? @"yes" : @"no");
+                        CanariPublishForeground(opening);
+                      });
+                    }];
               }];
   [nc addObserverForName:UIKeyboardWillChangeFrameNotification
                   object:nil
