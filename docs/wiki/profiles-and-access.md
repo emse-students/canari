@@ -200,9 +200,13 @@ built.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
   `.ics`, as today's single feed. **Amended 2026-10-06 (D40): the feed of a selection needs a link the
   server SIGNED for the reader's own spaces** ([D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
-- **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
-  cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
-  (user, 2026-10-05)**: through institutions they are a member of, nothing more.
+- **D31 - A personal post inherits its AUTHOR's spaces.** **Amended by the owner on 2026-11-02**:
+  someone with no space (a staff post only) MAY publish a personal post, and it is visible to their
+  ACCEPTED FOLLOWERS only (and to its author; a platform admin opening it by id) - the WP-F5
+  follower disjunct, no space rule reaching anyone. No code change: nothing refuses the write, and
+  the predicate already answered so. Pinned in `follower-visibility.integration.spec.ts` ("a person
+  with NO SPACE may publish a personal post"). Speaking for an institution stays MEMBERSHIP ONLY
+  (user, 2026-10-05): through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
@@ -700,8 +704,8 @@ the announce sweep's recipient counts.
 
 - ~~A post's own rules are held to the ceiling at read time~~ and ~~the share preview skips a post
   with rules of its own~~ - both went with the rules themselves (D38).
-- **A personal post by someone with no space** (staff, D31 not yet enforced at publish) is seen
-  only by its author, admins - and nobody else.
+- **A personal post by someone with no space** (staff; allowed, D31 as amended 2026-11-02) is seen
+  by its author, an admin opening it by id, and - since WP-F5 - the author's accepted followers.
 - ~~An association created after migration 071 has NO rule.~~ Superseded by D36 (below): it
   reaches its creator's spaces by default.
 - The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
@@ -1374,8 +1378,8 @@ An institution is an `associations` row of that type, so it reuses every mechani
   admin's own spaces are rarely the School's). D33's one mechanism is kept: the type decides the default, nothing else
   differs. `associations.service.create-default-audience.spec.ts` carries the control (an institution created by someone
   with spaces writes no rule).
-- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
-  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.
+- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes AS AN INSTITUTION through the institutions they
+  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to. (Amended 2026-11-02: they may also publish a personal post, seen by their accepted followers only - see D31.)
 
 ### Audiences policy as built (WP-A, 2026-10-08)
 
@@ -1460,8 +1464,11 @@ nobody else.
 - **Never a read grant**: the personal branch takes no `readGrants`, as before (WP7).
 - **Tout stays SPACES (decision 5)**: `postVisibleToUserSql` takes `followers: false`
   (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. Everything else - the
-  Suivis arm, the Associations arm (where it changes nothing: a personal post is there only through
-  a republication the reader sees), the search, a post by id, its comments, reactions and votes,
+  Suivis arm, the Associations arm (where the FOLLOWER disjunct changes nothing: a personal post is
+  there only through a republication the reader sees - but the arm DOES drop WP-F6's member-repost
+  door, `memberReposts: false`, owner 2026-11-02: an association post a reader reaches only through
+  a followed person's repost is in Suivis and never in Associations, as the privacy policy says;
+  proven against PostgreSQL in `member-reposts.integration.spec.ts`), the search, a post by id, its comments, reactions and votes,
   the D38b request menu, the announcement (`announceRecipientsSql`) and the newly-reached rules -
   counts the follower.
 - **Monotone in republications, unchanged**: the disjunct reads no republication, so

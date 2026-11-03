@@ -698,6 +698,7 @@
   "post_unable_to_delete_comment": "Could not delete comment",
   "post_comment_reported": "Comment reported. Thank you!",
   "post_comment_already_reported": "You have already reported this comment.",
+  "post_report_content_gone": "This post is no longer available.",
   "report_dialog_submit_button": "Report",
   "report_comment_dialog_title": "Report this comment",
   "report_user_dialog_title": "Report this person",

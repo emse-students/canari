@@ -433,9 +433,9 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
   }
 
   /**
-   * The pull path's "a post one's association already sees": the actor can open it - the same
-   * predicate as reading it by its id (`PostsService.assertVisible`), so a global admin acting in an
-   * association's name may republish what they can open.
+   * The pull path's "a post one's association already sees": the actor is in its audience - the
+   * audience term of reading it by its id (`readPostOpenVerdict`, `adminSeesAll` included), so a
+   * global admin acting in an association's name may republish what they can open.
    *
    * GRANT-FREE (`readGrants: false`): a nominative read grant opens a post to READ, never to
    * republish it - publishing goes through an institution (user, 2026-10-07).
