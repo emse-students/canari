@@ -242,9 +242,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     }
     expect(outcomes).toEqual(['transitioned', 'replay', 'replay', 'replay', 'replay']);
     expect(tellsTo(HOLDER)).toBe(1);
-    // The delegate had nothing withheld: nothing released for it, so it is told nothing.
+    // The delegate collects again with the transition - products or none - and is told ONCE; the
+    // replays change nobody's collecting.
     expect(tellsTo(CLUB)).toBe(0);
-    expect(delegationTells(CLUB)).toEqual([]);
+    expect(delegationTells(CLUB)).toEqual(['resumed']);
+    expect(delegationTells(PENDING_CLUB)).toEqual([]);
     expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
     expect(await flags(withheld.id)).toEqual({ isActive: true, activationWithheld: false });
   });
@@ -348,6 +350,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     it('N simultaneous VALIDATED: ONE transition and ONE notice', async () => {
       await reset(false, null);
       tell.mockClear();
+      tellDelegation.mockClear();
       const outcomes = await Promise.all(
         Array.from({ length: 8 }, () =>
           products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' })
@@ -357,6 +360,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       expect(outcomes.filter((o) => o.kind === 'replay')).toHaveLength(7);
       expect(tellsTo(HOLDER)).toBe(1);
       expect(tellsTo(CLUB)).toBe(0);
+      // ONE transition, so the delegate is told once, whatever the concurrency.
+      expect(delegationTells(CLUB)).toEqual(['resumed']);
       expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
     });
 

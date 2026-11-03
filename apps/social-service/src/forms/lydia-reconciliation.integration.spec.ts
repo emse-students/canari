@@ -162,20 +162,16 @@ RESET lock_timeout;`
       }
       return new WithRefusals(
         ds.getRepository(Submission),
-        ds.getRepository(Form),
         ds.getRepository(ProductCheckout),
         forms,
-        withProducts,
-        associationsService
+        withProducts
       );
     };
     sweep = new LydiaReconciliationService(
       ds.getRepository(Submission),
-      ds.getRepository(Form),
       ds.getRepository(ProductCheckout),
       forms,
-      products,
-      associationsService
+      products
     );
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
       if (!url.endsWith('payments/request-state')) throw new Error(`unexpected call to ${url}`);
@@ -242,6 +238,8 @@ RESET lock_timeout;`
         paymentStatus: 'pending',
         stripeSessionId: uuid(n),
         paymentRequestId: String(7000 + n),
+        // The Business the request was issued to: what the sweep reads it with.
+        lydiaVendorToken: VENDOR_WITH_KEY,
       })
     );
     await ds.query(

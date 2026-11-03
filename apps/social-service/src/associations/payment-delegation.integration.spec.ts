@@ -346,6 +346,107 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     ]);
   });
 
+  // Owner review of #2967 (F1): the readiness reads its delegates, then releases them. A revoke
+  // committing in between used to be invisible to the release, which re-opened the paused list's
+  // products for good. Interleaved deterministically: the revoke's row lock is taken and its write
+  // made on a connection of its own, the readiness started, and the revoke committed only once the
+  // readiness is seen WAITING on that lock.
+  it('a revoke committing while the receiver becomes ready again is never undone by the release', async () => {
+    const tee = await onSale(LIST, 'Tee (raced)');
+    await associations.setLydiaReadiness('vendor-receiver', false, 'request-refused', {
+      path: 'shop',
+    });
+    expect(await productState(tee.id)).toEqual({ isActive: false, activationWithheld: true });
+
+    const revoke = new Client({ connectionString: URL });
+    await revoke.connect();
+    await revoke.query(`SET search_path TO ${schema},public`);
+    await revoke.query('BEGIN');
+    await revoke.query(`SELECT id FROM associations WHERE id = $1 FOR UPDATE`, [LIST]);
+    await revoke.query(
+      `UPDATE associations SET "paymentParentAssociationId" = NULL, "paymentDelegationStatus" = NULL
+        WHERE id = $1`,
+      [LIST]
+    );
+    tellDelegation.mockClear();
+    let settled = false;
+    const readiness = associations
+      .setLydiaReadiness('vendor-receiver', true, 'admin', { path: 'admin' })
+      .finally(() => {
+        settled = true;
+      });
+    // Until the readiness waits on the revoke's lock - or finishes without waiting, which is the
+    // defect, and the assertions below then fail.
+    for (;;) {
+      const {
+        rows: [{ waiting }],
+      } = await admin.query(
+        `SELECT count(*)::int AS waiting FROM pg_stat_activity
+          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+        [schema]
+      );
+      if (waiting > 0 || settled) break;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await revoke.query('COMMIT');
+    await revoke.end();
+    await readiness;
+
+    expect(await productState(tee.id)).toEqual({ isActive: false, activationWithheld: true });
+    expect(tellDelegation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: LIST }),
+      'resumed',
+      expect.anything()
+    );
+    // Back to the delegation the next tests start from.
+    await associations.requestPaymentDelegation(LIST, RECEIVER);
+    await accept(RECEIVER, TREASURER);
+    await ds.query(`DELETE FROM association_products WHERE id = $1`, [tee.id]);
+  });
+
+  // Owner review of #2967 (F2): a list that sells through paid forms only has no product to
+  // withhold, and stops collecting all the same - it is told every time its collecting changes.
+  it('tells a forms-only list each time it stops or starts collecting, and nobody when nothing changed', async () => {
+    await ds.query(`DELETE FROM association_products WHERE "associationId" = $1`, [LIST]);
+    expect(await associations.collectsNow(LIST)).toBe(true);
+    const told = () =>
+      (tellDelegation.mock.calls as unknown as Array<[{ id: string }, string]>)
+        .filter(([asso]) => asso.id === LIST)
+        .map(([, notice]) => notice);
+
+    tellDelegation.mockClear();
+    await associations.setLydiaReadiness('vendor-receiver', false, 'request-refused', {
+      path: 'form',
+    });
+    await associations.setLydiaReadiness('vendor-receiver', false, 'request-refused', {
+      path: 'form',
+    });
+    await associations.setLydiaReadiness('vendor-receiver', true, 'admin', { path: 'admin' });
+    await associations.setLydiaReadiness('vendor-receiver', true, 'admin', { path: 'admin' });
+    expect(told()).toEqual(['receiver-not-ready', 'resumed']);
+
+    tellDelegation.mockClear();
+    await associations.rejectPaymentDelegation(RECEIVER, LIST, {
+      userId: TREASURER,
+      isGlobalAdmin: false,
+    });
+    expect(told()).toEqual(['revoked']);
+    expect(await associations.collectsNow(LIST)).toBe(false);
+
+    // A PENDING request refused: the list was not collecting through it, nothing to tell.
+    tellDelegation.mockClear();
+    await associations.requestPaymentDelegation(LIST, RECEIVER);
+    await associations.rejectPaymentDelegation(RECEIVER, LIST, {
+      userId: TREASURER,
+      isGlobalAdmin: false,
+    });
+    expect(told()).toEqual([]);
+
+    await associations.requestPaymentDelegation(LIST, RECEIVER);
+    await accept(RECEIVER, TREASURER);
+    expect(told()).toEqual(['resumed']);
+  });
+
   it('a list holds no Lydia account of its own, and cannot RECEIVE a delegation', async () => {
     expect(await associations.payoutAccountRefusal(LIST)).toBe('LIST_NO_OWN_LYDIA_ACCOUNT');
     expect(await associations.payoutAccountRefusal(RECEIVER)).toBeNull();

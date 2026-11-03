@@ -894,7 +894,7 @@ The delegation is accepted only by the receiver's own `MANAGE_PRODUCTS` holders 
 admin - never by a BDE governing the receiver - and every acceptance is recorded. A revoke, or the
 receiver losing its Lydia, pauses the list's products and paid forms and tells its managers; a new
 acceptance resumes them. The mechanism is in
-[associations](frontend/modules/associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31-lists-re-decided-2026-11-02)
+[associations](frontend/modules/associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31)
 and [payments](frontend/modules/payments.md#pause-and-resume-when-the-receiver-stops-collecting-owner-2026-11-02).
 
 ### D38 republication as built (2026-10-04)

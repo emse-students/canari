@@ -55,6 +55,7 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
 import { formOrderRef } from './form-order-ref';
+import { requestAccountOf } from './request-account';
 import {
   GUEST_RECEIPT_NOT_FOUND,
   guestReference,
@@ -1885,11 +1886,13 @@ export class FormsService {
     if (!requestId && !sessionId) {
       throw this.previousPaymentOpen(row.id, 'its request is being issued');
     }
+    // The Business the request was ISSUED to, not the form's payee now: a delegation revoked or
+    // moved meanwhile leaves the request payable on the first one (owner review of #2967).
     const connectAccountId = form.associationId
-      ? await this.associationsService.getPaymentAccountId(form.associationId)
+      ? await requestAccountOf(this.submissionRepo, row.id, 'settleOpenRequest')
       : null;
     if (!connectAccountId) {
-      throw this.previousPaymentOpen(row.id, 'the form has no payment account to cancel it with');
+      throw this.previousPaymentOpen(row.id, 'the row records no Business to cancel it with');
     }
     try {
       if (requestId) {
@@ -2270,12 +2273,13 @@ export class FormsService {
     let requestState: RequestState | undefined;
     if (sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+      // Read with the Business that issued the request (see `requestAccountOf`).
       const connectAccountId = form?.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
+        ? await requestAccountOf(this.submissionRepo, submissionId, 'confirmPayment')
         : null;
       if (!connectAccountId) {
         this.logger.warn(
-          `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
+          `[Forms] confirmPayment ${submissionId}: no issuing Business to read request ${sessionId} with`
         );
       } else {
         const outcome = await this.settleFromProvider(
@@ -2421,25 +2425,21 @@ export class FormsService {
   }
 
   /**
-   * Whether `vendorToken` - the Business whose key verified a callback - is the account this row's
-   * money is paid into. Logs the refusal at ERROR (see `confirmPaymentFromCallback`).
+   * Whether `vendorToken` - the Business whose key verified a callback - is the one this row's
+   * request was ISSUED to (`requestAccountOf`), so the money is there whatever the form's payee is
+   * now (a list's delegation revoked or moved meanwhile, owner review of #2967). Logs the refusal
+   * at ERROR (see `confirmPaymentFromCallback`).
    */
   private async isCallbackPayee(
     submission: Submission,
     vendorToken: string,
     what: string
   ): Promise<boolean> {
-    const form = await this.formRepo.findOne({
-      where: { id: submission.formId },
-      select: { id: true, associationId: true },
-    });
-    const payee = form?.associationId
-      ? await this.associationsService.getLydiaPayeeAccountId(form.associationId)
-      : null;
-    if (payee && payee === vendorToken) return true;
+    const issuer = await requestAccountOf(this.submissionRepo, submission.id, `${what} callback`);
+    if (issuer && issuer === vendorToken) return true;
     this.logger.error(
       `[Forms] ${what} callback for submission ${submission.id} REFUSED: verified for a Business ` +
-        `that is not the row's payee (${payee ? 'the form pays into another account' : 'the form has no Lydia payee'}) - nothing written`
+        `that is not the one its request was issued to (${issuer ? 'another account' : 'the row records none'}) - nothing written`
     );
     return false;
   }

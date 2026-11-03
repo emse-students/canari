@@ -331,21 +331,24 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(logs.warn.join('|')).toContain('no association holds the vendor token');
   });
 
-  it('with the switch OFF, a transition writes no notification row and says so', async () => {
+  it('with the switch OFF, a transition writes no Lydia notice and says so; the delegate is still told', async () => {
     const logs = captureLogs();
     const notifications = { createNotifications: jest.fn() };
     const push = { notifyContent: jest.fn() };
     const real = new LydiaPaymentsNotifier(notifications as never, push as never);
     expect(real.enabled()).toBe(false);
-    // Nothing of a delegate is withheld: the delegation notice is NOT behind this switch (owner
-    // review of #2967), so a released delegate would rightly be told even with it off.
     const { service } = makeReadiness({ id: HOLDER, ready: false, cause: null }, real as never, {
       withheld: [],
     });
     await service.setLydiaReadiness(VENDOR, true, 'admin', { path: 'admin', id: HOLDER });
-    expect(notifications.createNotifications).not.toHaveBeenCalled();
-    expect(push.notifyContent).not.toHaveBeenCalled();
+    // No Lydia notice for the holder's payout managers...
+    const types = notifications.createNotifications.mock.calls.map(([n]) => n.type);
+    expect(types.filter((t: string) => t.startsWith('lydia_'))).toEqual([]);
     expect(logs.warn.join('|')).toContain('LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off');
+    // ...but the delegate collects again, products or none: its OWN notice is not behind the
+    // switch (owner review of #2967).
+    expect(types).toEqual(['delegation_resumed']);
+    expect(push.notifyContent).toHaveBeenCalled();
   });
 
   it('a notice that cannot be written leaves the committed state and is an ERROR, not a throw', async () => {

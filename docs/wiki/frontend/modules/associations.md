@@ -141,7 +141,9 @@ association that runs it, surfaced on the read side as the denormalised `parentN
 it carries two names and two logos. Migration `015_list_second_theme.sql` added both columns; they
 are always optional and associations leave them NULL.
 
-### What a list and an institution manage (owner, 2026-10-31; lists re-decided 2026-11-02)
+### What a list and an institution manage (owner, 2026-10-31)
+
+*Lists re-decided by the owner on 2026-11-02 (below); the heading keeps its date so its links hold.*
 
 ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
 the hub, the route guard and the permission editor all read it. An association has every section.
@@ -182,7 +184,7 @@ of the list's shop and forms tabs link to its delegation section.
 `paymentsReady` (`withPaymentsReady`: its own Lydia, or its approved delegate's), and the client asks
 `canTakePayments` - which also fixed a delegating ASSOCIATION, told "payments not configured" while it
 collected through its parent. The delegation lifecycle (who may accept, the acceptance record, the
-pause and resume) is in [payments](payments.md#payment-delegation). The form editor draws its price
+pause and resume) is in [payments](payments.md#payment-delegation-parent-association-routing). The form editor draws its price
 section for every kind with a `payments` section; for an institution a priced form is shown frozen
 with a "make this form free" button (`FormPaymentSection`, `associationSells`).
 

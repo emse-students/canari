@@ -81,8 +81,15 @@ function accountFor(
  * APPROVED delegation to it, nothing else (a pending request, or one revoked meanwhile, is not).
  * The ONE definition the readiness writer (`AssociationsService.setLydiaReadiness`) withholds AND
  * releases with, in the same transaction as the readiness, and the unlink withholds with
- * (`clearLydiaAccount`), so the two are exact inverses. Reads through `manager`, so a caller inside a transaction reads its own
- * snapshot.
+ * (`clearLydiaAccount`), so the two are exact inverses. Reads through `manager`, inside the
+ * caller's transaction.
+ *
+ * The delegate rows are SHARE-locked (`FOR SHARE`, in id order): a revoke, a cancel or a move locks
+ * the child FOR UPDATE, so it either commits before this read - and the child is no longer read as a
+ * delegate - or waits for the caller's commit, after which it withholds what was released. Without
+ * the lock a revoke committing between this read and the release re-opened a paused list's
+ * products for good (owner review of #2967). Every caller holds the PARENT's lock first, as the
+ * approval does (parent FOR SHARE, then child FOR UPDATE), so the order is the same everywhere.
  */
 export async function approvedDelegateIds(
   manager: Pick<EntityManager, 'find'>,
@@ -91,6 +98,8 @@ export async function approvedDelegateIds(
   const children = await manager.find(AssociationEntity, {
     where: { paymentParentAssociationId: parentId, paymentDelegationStatus: 'approved' },
     select: { id: true },
+    order: { id: 'ASC' },
+    lock: { mode: 'pessimistic_read' },
   });
   return children.map((c) => c.id);
 }
@@ -170,6 +179,16 @@ export async function releaseWithheldProductsOf(
       [[...associationIds]]
     )
   );
+}
+
+/**
+ * Whether `asso` collects on Lydia: through `parent` when it delegates (approved), on its own
+ * account otherwise - the same answer `resolvePaymentTarget` gives, read on rows a caller holds.
+ * What a delegation notice is decided by, before and after a change (owner review of #2967): a
+ * list with paid forms only stops collecting like one with products.
+ */
+export function collectsThrough(asso: Association, parent: Association | null): boolean {
+  return resolvePaymentTarget(asso, parent, 'lydia').ready;
 }
 
 /**

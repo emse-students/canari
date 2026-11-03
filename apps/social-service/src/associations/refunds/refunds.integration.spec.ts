@@ -188,7 +188,13 @@ maybe('Lydia refunds against PostgreSQL', () => {
   }
 
   /** A paid form answer and its record; `grantsCotisation` adds the tier the answer granted. */
-  async function formPayment(grantsCotisation: boolean, amount = 800) {
+  async function formPayment(
+    grantsCotisation: boolean,
+    amount = 800,
+    associationId = ASSO,
+    /** The Business the answer's request was issued to: ASSO's by default. */
+    vendorToken = VENDOR
+  ) {
     const buyer = randomUUID().replace(/-/g, '').repeat(2);
     const formId = randomUUID();
     await ds.query(`INSERT INTO forms (id, "grantsCotisation") VALUES ($1, $2)`, [
@@ -206,7 +212,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     await ds.query(
       `UPDATE submissions SET "lydiaOrderRef" = $2, "lydiaVendorToken" = $3 WHERE id = $1`,
-      [submission.id, `form:${submission.id}:0a1b2c3d`, VENDOR]
+      [submission.id, `form:${submission.id}:0a1b2c3d`, vendorToken]
     );
     const record = await ds.getRepository(PurchaseRecord).save(
       ds.getRepository(PurchaseRecord).create({
@@ -217,7 +223,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         amountCents: amount,
         paymentMethod: 'online',
         status: 'paid',
-        associationId: ASSO,
+        associationId,
         productName: 'Gala',
       })
     );
@@ -728,6 +734,16 @@ maybe('Lydia refunds against PostgreSQL', () => {
       state: 'refunded',
     });
     expect(await service.statement(list)).toMatchObject({ receivedCents: 900, refundedCents: 300 });
+
+    // A FORM answer of the list, its request issued on ASSO before the move (its callback recorded
+    // it: `form-order-ref.integration.spec.ts`): the same rule, read from `lydiaVendorToken`.
+    const { record: answer } = await formPayment(false, 700, list, VENDOR);
+    await expect(service.refund(newReceiver, answer.id, MANAGER, total())).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(service.refund(ASSO, answer.id, MANAGER, total())).resolves.toMatchObject({
+      state: 'refunded',
+    });
   });
 
   it('a replay of a refused refund answers 200 with its state, never a refund', async () => {

@@ -71,6 +71,7 @@ import {
 } from './lydia-readiness';
 import {
   approvedDelegateIds,
+  collectsThrough,
   holdsOwnAccount,
   purchaseIdsTakenBy,
   releaseWithheldProductsOf,
@@ -3445,6 +3446,8 @@ ${rejectionReason}`
           causeRefreshed: boolean;
           withheld: number;
           admins: number;
+          /** The approved delegates, read share-locked in the readiness transaction. */
+          delegates: string[];
           /** Per approved delegate, what was withheld (going not ready) or released (ready). */
           delegatesWithheld: Map<string, number>;
           delegatesReleased: Map<string, number>;
@@ -3543,6 +3546,7 @@ ${rejectionReason}`
         causeRefreshed,
         withheld,
         admins,
+        delegates: delegateIds,
         delegatesWithheld,
         delegatesReleased,
       };
@@ -3561,11 +3565,21 @@ ${rejectionReason}`
       );
       return { kind: 'held-by-lydia', ...previous };
     }
-    const { transitioned, causeRefreshed, withheld, admins, delegatesWithheld, delegatesReleased } =
-      step;
-    // Those who collect THROUGH this holder (a list paid by delegation) are told only when
-    // something of theirs was actually released - a replay can release what an earlier crash left.
-    await this.tellDelegates(delegatesReleased, 'resumed', 'receiver ready');
+    const {
+      transitioned,
+      causeRefreshed,
+      withheld,
+      admins,
+      delegates,
+      delegatesWithheld,
+      delegatesReleased,
+    } = step;
+    // Those who collect THROUGH this holder (a list paid by delegation) collect again exactly when
+    // the holder TRANSITIONS to ready - they route through it - whatever products they have (a
+    // forms-only list included). A replay changes nobody's collecting, so it tells nobody.
+    if (transitioned && ready) {
+      await this.tellDelegates(delegates, 'resumed', 'receiver ready', delegatesReleased);
+    }
     if (!transitioned) {
       this.logger.debug(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} already ready=${ready} - replay ` +
@@ -3608,13 +3622,16 @@ ${rejectionReason}`
           `be written: ${err instanceof Error ? err.message : String(err)}`
       );
     }
-    // Those who collect THROUGH this holder are paused with it, and told when something of theirs
-    // was actually withheld (owner, 2026-11-02).
-    await this.tellDelegates(
-      delegatesWithheld,
-      'receiver-not-ready',
-      'receiver readiness reverted'
-    );
+    // Those who collect THROUGH this holder stop collecting with it (owner, 2026-11-02), products
+    // or none - their paid forms pause too.
+    if (!ready) {
+      await this.tellDelegates(
+        delegates,
+        'receiver-not-ready',
+        'receiver readiness reverted',
+        delegatesWithheld
+      );
+    }
     return { kind: 'transitioned', ...previous };
   }
 
@@ -4250,9 +4267,9 @@ ${rejectionReason}`
     // delegates' (a list paid through it among them) are withheld exactly as a readiness revert
     // withholds them (`setLydiaReadiness`), and the same release puts them back once a Business is
     // linked and validated again - or, for a delegate, once another receiver accepts it.
-    const { delegates, withheld, byId } = await this.assoRepo.manager.transaction(
+    const { delegates, withheld, byId, wasReady } = await this.assoRepo.manager.transaction(
       async (manager) => {
-        await this.lockAssociation(manager, id);
+        const holder = await this.lockAssociation(manager, id);
         await manager.update(Association, id, {
           lydiaAccountId: null,
           lydiaOnboardingComplete: false,
@@ -4264,6 +4281,8 @@ ${rejectionReason}`
           delegates: delegateIds,
           withheld: [...counts.values()].reduce((sum, n) => sum + n, 0),
           byId: counts,
+          // Its delegates collected through it only while its Business was validated.
+          wasReady: Boolean(holder.lydiaOnboardingComplete && holder.lydiaAccountId),
         };
       }
     );
@@ -4293,11 +4312,14 @@ ${rejectionReason}`
       [id]
     );
     await this.invalidatePostListCaches();
-    await this.tellDelegates(
-      new Map([...byId].filter(([key]) => key !== id)),
-      'receiver-not-ready',
-      'receiver Lydia unlinked'
-    );
+    if (wasReady) {
+      await this.tellDelegates(delegates, 'receiver-not-ready', 'receiver Lydia unlinked', byId);
+    } else {
+      this.logger.debug(
+        `[DELEGATION] receiver ${sanitizeLog(id)} unlinked while not ready: its delegates had ` +
+          `already stopped collecting, no notice`
+      );
+    }
   }
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
@@ -4699,7 +4721,7 @@ ${rejectionReason}`
           `${parentAssociationId.slice(0, 8)} who ALSO governs it as a BDE super-admin - recorded`
       );
     }
-    const released = await this.assoRepo.manager.transaction(async (manager) => {
+    const { released, resumed } = await this.assoRepo.manager.transaction(async (manager) => {
       const parent = await manager.findOne(Association, {
         where: { id: parentAssociationId },
         lock: { mode: 'pessimistic_read' },
@@ -4731,6 +4753,9 @@ ${rejectionReason}`
           'Complete your payment account onboarding before accepting delegated payments'
         );
       }
+      // A pending child collects only on an account of its own (never a list); approved, it
+      // collects through the receiver, proven ready above.
+      const collectedBefore = collectsThrough(child, null);
       await manager.update(Association, childId, { paymentDelegationStatus: 'approved' });
       await manager.query(
         `INSERT INTO payment_delegation_acceptances
@@ -4739,7 +4764,12 @@ ${rejectionReason}`
          VALUES ($1, $2, $3, $4, $5)`,
         [childId, parentAssociationId, actor.userId, acceptedAs, governing]
       );
-      return (await releaseWithheldProductsOf(manager, [childId])).get(childId) ?? 0;
+      return {
+        released: (await releaseWithheldProductsOf(manager, [childId])).get(childId) ?? 0,
+        resumed:
+          !collectedBefore &&
+          collectsThrough({ ...child, paymentDelegationStatus: 'approved' }, parent),
+      };
     });
     await this.invalidatePostListCaches();
     this.logger.log(
@@ -4747,7 +4777,14 @@ ${rejectionReason}`
         `child=${childId.slice(0, 8)} by user ${actor.userId.slice(0, 8)} as ${acceptedAs}` +
         `${governing ? ' (governing super-admin)' : ''}; ${released} withheld product(s) released`
     );
-    await this.tellDelegates(new Map([[childId, released]]), 'resumed', 'delegation accepted');
+    if (resumed) {
+      await this.tellDelegates(
+        [childId],
+        'resumed',
+        'delegation accepted',
+        new Map([[childId, released]])
+      );
+    }
     return { associationId: childId, status: 'approved' as const, released };
   }
 
@@ -4781,30 +4818,56 @@ ${rejectionReason}`
         message: "Only the receiving association's own managers may refuse or end a delegation",
       });
     }
-    const { wasApproved, withheld } = await this.assoRepo.manager.transaction(async (manager) => {
-      const child = await this.lockAssociation(manager, childId);
-      if (child.paymentParentAssociationId !== parentAssociationId) {
-        throw new BadRequestException('This association does not delegate payments to you');
+    const { wasApproved, withheld, stopped } = await this.assoRepo.manager.transaction(
+      async (manager) => {
+        const child = await this.lockAssociation(manager, childId);
+        if (child.paymentParentAssociationId !== parentAssociationId) {
+          throw new BadRequestException('This association does not delegate payments to you');
+        }
+        const approved = isDelegating(child);
+        const parent = approved
+          ? await manager.findOne(Association, { where: { id: parentAssociationId } })
+          : null;
+        // Whether it collected before (through the receiver) and still does after (on its own
+        // account only): the notice follows THAT, forms included, never a product count.
+        const collectedBefore = collectsThrough(child, parent);
+        const unlinked = {
+          ...child,
+          paymentParentAssociationId: null,
+          paymentDelegationStatus: null,
+        };
+        await manager.update(Association, childId, {
+          paymentParentAssociationId: null,
+          paymentDelegationStatus: null,
+        });
+        return {
+          wasApproved: approved,
+          withheld: approved
+            ? await this.withholdIfStranded(manager, child, 'delegation revoked')
+            : 0,
+          stopped: collectedBefore && !collectsThrough(unlinked as Association, null),
+        };
       }
-      const approved = isDelegating(child);
-      await manager.update(Association, childId, {
-        paymentParentAssociationId: null,
-        paymentDelegationStatus: null,
-      });
-      return {
-        wasApproved: approved,
-        withheld: approved
-          ? await this.withholdIfStranded(manager, child, 'delegation revoked')
-          : 0,
-      };
-    });
+    );
     await this.invalidatePostListCaches();
     this.logger.log(
       `[DELEGATION] ${wasApproved ? 'revoked' : 'rejected'} parent=${parentAssociationId.slice(0, 8)} ` +
         `child=${childId.slice(0, 8)} by ${actor.userId.slice(0, 8)} as ${role}, ` +
         `${withheld} product(s) withheld`
     );
-    await this.tellDelegates(new Map([[childId, withheld]]), 'revoked', 'delegation revoked');
+    if (stopped) {
+      await this.tellDelegates(
+        [childId],
+        'revoked',
+        'delegation revoked',
+        new Map([[childId, withheld]])
+      );
+    } else {
+      this.logger.debug(
+        `[DELEGATION] ${childId.slice(0, 8)} did not stop collecting (a pending request, its own ` +
+          `account, or a receiver already not ready) - no notice`
+      );
+    }
     return { associationId: childId, status: null };
   }
 
@@ -4864,26 +4927,23 @@ ${rejectionReason}`
   }
 
   /**
-   * Tells the shop managers (`MANAGE_PRODUCTS`, their OWN bitmask) of each entity in `counts` -
-   * an entity collecting through a delegation - that it stopped collecting or collects again
-   * (`LydiaPaymentsNotifier.tellDelegation`, its own types, not behind the Lydia switch). ONLY an
-   * entity whose count is above 0 is told: nothing withheld or released is nothing to say (an
-   * association keeping its own account after a revoke, a replay that found nothing). One `try`
+   * Tells the shop managers (`MANAGE_PRODUCTS`, their OWN bitmask) of each entity in `ids` that it
+   * STOPPED collecting, or collects again (`LydiaPaymentsNotifier.tellDelegation`, its own types,
+   * not behind the Lydia switch). The caller passes exactly the entities whose collecting changed -
+   * derived from the delegation and the receiver's readiness before and after, so a forms-only list
+   * is told like one with products (owner review of #2967), and an entity whose collecting did not
+   * change (its own account, a replay) is not passed. `products` only feeds the log line. One `try`
    * per entity: a notice that cannot be written is said at ERROR and never undoes the committed
    * state.
    */
   private async tellDelegates(
-    counts: ReadonlyMap<string, number>,
+    ids: readonly string[],
     notice: DelegationNotice,
-    why: string
+    why: string,
+    products: ReadonlyMap<string, number> = new Map()
   ): Promise<void> {
-    for (const [id, count] of counts) {
-      if (count <= 0) {
-        this.logger.debug(
-          `[DELEGATION] ${why}: ${id.slice(0, 8)} had nothing ${notice}, no notice`
-        );
-        continue;
-      }
+    for (const id of ids) {
+      const count = products.get(id) ?? 0;
       try {
         const asso = await this.assoRepo.findOne({
           where: { id },

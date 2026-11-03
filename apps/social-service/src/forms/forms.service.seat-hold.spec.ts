@@ -57,6 +57,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     organiserNotifiedAt?: Date | null;
     guestReceiptHash?: string | null;
     guestVisitorKey?: string | null;
+    /** The Business the row's request was issued to (written with the request ids). */
+    lydiaVendorToken?: string | null;
     answers?: Record<string, unknown>;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
@@ -77,7 +79,11 @@ describe('FormsService - the seat a pending payment holds', () => {
     grantsCotisation?: boolean;
   }) {
     let now = T0;
-    const rows: Row[] = opts.rows.map((row) => ({ ...row }));
+    // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
+    const rows: Row[] = opts.rows.map((row) => ({
+      lydiaVendorToken: row.stripeSessionId || row.paymentRequestId ? 'vendor' : null,
+      ...row,
+    }));
     let nextId = 0;
     const form = {
       id: 'f1',

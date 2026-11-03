@@ -39,6 +39,13 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
   /** What Lydia's `request/state` answers, per request uuid. */
   const states = new Map<string, string>();
   const RAW: Record<string, string> = { open: '0', paid: '1', declined: '5' };
+  /**
+   * The form's payee NOW, as the delegation resolves it: a list's receiver may change (or vanish) while
+   * a request issued to the previous one is in flight (owner review of #2967).
+   */
+  let payee: string | null = 'vendor';
+  /** The account every request-state read and cancel was sent with. */
+  const readWith: string[] = [];
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -54,8 +61,8 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     await ds.initialize();
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
-      getPaymentAccountId: async () => 'vendor',
-      getLydiaPayeeAccountId: async () => 'vendor',
+      getPaymentAccountId: async () => payee,
+      getLydiaPayeeAccountId: async () => payee,
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
     };
@@ -74,6 +81,9 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       { enabled: () => false } as any
     );
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
+      if (url.endsWith('payments/cancel-request') || url.endsWith('payments/request-state')) {
+        readWith.push(body.connectAccountId ?? body.vendorToken);
+      }
       if (url.endsWith('payments/cancel-request')) {
         // Lydia's error 2: the request was already processed (here, declined by the payer).
         return { data: { ok: true, outcome: 'already-settled' } };
@@ -194,4 +204,55 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     );
     expect(records).toEqual([{ amountCents: 1200 }]);
   });
+
+  // Owner review of #2967: a list's form request is issued on its receiver A; the delegation is then
+  // revoked (no payee) or moved to B within the request's lifetime. The money is at A, so A's verified
+  // callback records it, the payer's return reads with A, and a callback verified for B is refused.
+  it.each([
+    ['revoked', null],
+    ['moved to another receiver', 'vendor-b'],
+  ])(
+    'records a payment issued on the receiver after the delegation was %s, read with the issuing Business',
+    async (_case, payeeAfter) => {
+      payee = 'vendor-a';
+      const formId = await oneAnswerPaidForm();
+      await expect(submitAs(formId)).resolves.toHaveProperty('checkoutUrl');
+      const [{ id, paymentRequestId, stripeSessionId }] = await ds.query(
+        `SELECT id, "paymentRequestId", "stripeSessionId" FROM submissions WHERE "formId" = $1`,
+        [formId]
+      );
+      const [{ lydiaVendorToken }] = await ds.query(
+        `SELECT "lydiaVendorToken" FROM submissions WHERE id = $1`,
+        [id]
+      );
+      expect(lydiaVendorToken).toBe('vendor-a');
+
+      payee = payeeAfter;
+      states.set(stripeSessionId, 'paid');
+      readWith.length = 0;
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      // A callback verified for any other Business is not this row's money.
+      await expect(
+        service.confirmPaymentFromCallback(id, {
+          vendorToken: 'vendor-b',
+          requestId: paymentRequestId,
+        })
+      ).resolves.toEqual({ outcome: 'other-account' });
+      error.mockRestore();
+      await expect(
+        service.confirmPaymentFromCallback(id, {
+          vendorToken: 'vendor-a',
+          requestId: paymentRequestId,
+        })
+      ).resolves.toEqual({ outcome: 'paid' });
+      await service.confirmPayment(id);
+      expect(new Set(readWith)).toEqual(new Set(['vendor-a']));
+      const [row] = await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]);
+      expect(row.paymentStatus).toBe('paid');
+      expect(
+        await ds.query(`SELECT "amountCents" FROM purchase_records WHERE "formId" = $1`, [formId])
+      ).toEqual([{ amountCents: 1200 }]);
+      payee = 'vendor';
+    }
+  );
 });
