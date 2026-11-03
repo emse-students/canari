@@ -307,8 +307,8 @@ export class PostsController {
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
-    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    return this.interactions.addReaction(postId, xUserId, body.reactionType);
+    const { post } = await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
+    return this.interactions.addReaction(postId, xUserId, body.reactionType, post);
   }
 
   /** Removes the calling user's reaction from a post. */

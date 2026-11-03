@@ -22,6 +22,25 @@ import {
 const ANNOUNCE_BATCH = 25;
 
 /**
+ * THE CLAIM: stamps ONE post `$1` as announced at `$2`, only if it is STILL what the sweep's `find`
+ * selected - unstamped, not hidden, published by `$2` - and returns its id when it did.
+ *
+ * The publication predicate lives IN the conditional `UPDATE`, not only in the `find` before it
+ * (re-review of #2947): a post hidden or re-scheduled between the two is simply not claimed, and
+ * what is told is the row this statement locked, never the `find`'s snapshot. A `SELECT` over a
+ * data-modifying CTE so the driver hands back rows, not `[rows, count]`.
+ */
+export const CLAIM_POST_ANNOUNCEMENT_SQL = `WITH claimed AS (
+  UPDATE posts SET "feedNotifiedAt" = $2
+  WHERE id = $1
+    AND "feedNotifiedAt" IS NULL
+    AND "hiddenByModeration" = false
+    AND ("scheduledAt" IS NULL OR "scheduledAt" <= $2)
+  RETURNING id
+)
+SELECT id FROM claimed`;
+
+/**
  * NOBODY WAS TOLD ABOUT A POST. This is the thing that tells them.
  *
  * Reported by the user on 2026-09-10 as two asks in one breath - *"Les gens doivent avoir une
@@ -77,11 +96,14 @@ export class PostAnnounceScheduler {
 
     let announced = 0;
     let reached = 0;
-    for (const post of pending) {
+    for (const candidate of pending) {
       try {
-        // BEFORE the send. See the class docblock.
-        const recipientIds = await this.stampAndReadRecipients(post);
-        if (recipientIds === null) continue;
+        // BEFORE the send. See the class docblock. From here on the post is the row the claim
+        // locked, never `candidate` - the `find`'s snapshot may be stale by now.
+        const claim = await this.stampAndReadRecipients(candidate.id, now);
+        if (claim === null) continue;
+        const { post, recipientIds } = claim;
+        await this.notifyMentions(post);
         const count = post.associationId
           ? await this.announceAssociationPost(post, recipientIds)
           : await this.announcePersonalPost(post, recipientIds);
@@ -95,10 +117,28 @@ export class PostAnnounceScheduler {
         // Per post: one association whose name cannot be read must not silence the other posts in
         // the batch. The row is already stamped, so this post is not retried - which is the
         // deliberate half of the trade above, and why the loss is logged loudly enough to find.
-        this.logger.warn(`[ANNOUNCE] failed for post=${post.id}`, e);
+        this.logger.warn(`[ANNOUNCE] failed for post=${candidate.id}`, e);
       }
     }
     this.logger.log(`[ANNOUNCE] swept: posts=${announced}/${pending.length} recipients=${reached}`);
+  }
+
+  /**
+   * A POST'S MENTIONS ARE TOLD HERE AND NOWHERE ELSE, once, when the post is first published - this
+   * sweep is the only thing that sees a post become visible, at once or at its date, without a
+   * request. The stamp just taken (`feedNotifiedAt`, conditional, never reset) is what makes it
+   * once: no edit of the schedule or the text can tell them again, and no un-scheduling can skip
+   * them, because no other path tells them at all (review of #2947: two tellers overlapped). A post
+   * hidden before its sweep is not swept until it is unhidden - then it is told - and never if it
+   * stays hidden. Isolated: a failure here is logged and never costs the post its announcement.
+   */
+  private async notifyMentions(post: Post): Promise<void> {
+    if ((post.mentions ?? []).length === 0) return;
+    try {
+      await this.notifications.notifyPostMentions(post);
+    } catch (e: unknown) {
+      this.logger.warn(`[ANNOUNCE] mentions of post=${post.id.slice(0, 8)} not notified`, e);
+    }
   }
 
   /**
@@ -175,22 +215,29 @@ export class PostAnnounceScheduler {
    * announced twice to the same reader.
    *
    * An anonymous personal post is stamped and nobody is asked about: see `announcePersonalPost`.
+   *
+   * Null when the claim matched nothing: another run took it, or the post stopped being published
+   * (hidden, re-scheduled) since the `find`. Otherwise the CLAIMED row - read under the lock the
+   * claim holds until commit, so no write can slip between the stamp and what is told.
    */
-  private stampAndReadRecipients(post: Post): Promise<string[] | null> {
+  private stampAndReadRecipients(
+    postId: string,
+    now: Date
+  ): Promise<{ post: Post; recipientIds: string[] } | null> {
     return this.postRepo.manager.transaction(async (manager) => {
       // CONDITIONAL: the stamp is the claim. A second instance (a rolling deploy overlaps two for
       // a minute) that read the same pending row waits on this row lock, then matches nothing and
       // announces nothing - idempotence from durable state, not from there being one cron.
-      const claimed = await manager.update(
-        Post,
-        { id: post.id, feedNotifiedAt: IsNull() },
-        { feedNotifiedAt: new Date() }
-      );
-      if (!claimed.affected) {
-        this.logger.log(`[ANNOUNCE] post=${post.id.slice(0, 8)} already claimed by another run`);
+      const claimed: unknown = await manager.query(CLAIM_POST_ANNOUNCEMENT_SQL, [postId, now]);
+      if (!Array.isArray(claimed) || claimed.length === 0) {
+        this.logger.log(
+          `[ANNOUNCE] post=${postId.slice(0, 8)} not claimed: already announced, or no longer published`
+        );
         return null;
       }
-      if (!post.associationId && post.anonymous) return [];
+      const post = await manager.findOne(Post, { where: { id: postId } });
+      if (!post) throw new Error(`claimed post ${postId} unreadable in its own transaction`);
+      if (!post.associationId && post.anonymous) return { post, recipientIds: [] };
       // An ENTITY post: the recipients and the told-once ledger rows of the readers it reaches
       // through a member repost, in ONE statement - one snapshot, so a concurrent take-back cannot
       // leave a reader told here and missing from the ledger the repost path reads. A personal
@@ -201,7 +248,7 @@ export class PostAnnounceScheduler {
         [post.id]
       );
       // Logged by the caller, per post, with its kind and count.
-      return Array.isArray(rows) ? rows.map((r) => String(r.id)) : [];
+      return { post, recipientIds: Array.isArray(rows) ? rows.map((r) => String(r.id)) : [] };
     });
   }
 }
