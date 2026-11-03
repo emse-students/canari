@@ -1,0 +1,3 @@
+### Changed - lists and institutions may ask to carry a personal post, and a list's post may be reposted
+
+A list or an institution may now ask a student to republish their personal post, as an association could. An institution's request shows the author its potential audience before they answer, and an acceptance is refused if that audience changed meanwhile. An archived entity no longer carries anything, a post seen only through a carrier cannot be reposted further, and a bell row about a post disappears once its reader can no longer see the post. Members may repost a list's post like an association's ([profiles-and-access](docs/wiki/profiles-and-access.md#d38b-amended---every-kind-may-ask-and-an-institutions-request-shows-its-audience-owner-2026-11-02)).

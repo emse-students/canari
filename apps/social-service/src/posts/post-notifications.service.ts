@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
@@ -52,6 +52,31 @@ import { postVisibleToViewerSql, sameSideOfReviewCohortSql } from '../spaces/rea
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 
+/** The bell's page when the caller names none: what the bell dropdown asks. */
+export const BELL_PAGE_DEFAULT = 30;
+/** The largest bell page served: what `/notifications` asks, and what `bellPageQuery`'s plan is sized for. */
+export const BELL_PAGE_MAX = 50;
+/** The typed code of a `limit` that is not a whole number. */
+export const BELL_LIMIT_INVALID = 'NOTIFICATIONS_LIMIT_INVALID';
+
+/**
+ * The bell page size from the raw `?limit=` (review of #2965): absent is
+ * {@link BELL_PAGE_DEFAULT}, a whole number is held to 1..{@link BELL_PAGE_MAX}, and anything else
+ * - text, a fraction, an exponent - is a 400 typed {@link BELL_LIMIT_INVALID}. It used to be
+ * `Number(limit)` passed straight through, so `?limit=100000` read a reader's whole history and
+ * `?limit=abc` reached TypeORM as NaN.
+ */
+export function bellPageLimit(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return BELL_PAGE_DEFAULT;
+  if (!/^-?\d{1,9}$/.test(raw)) {
+    throw new BadRequestException({
+      code: BELL_LIMIT_INVALID,
+      message: 'limit must be a whole number',
+    });
+  }
+  return Math.min(BELL_PAGE_MAX, Math.max(1, Number(raw)));
+}
+
 /**
  * The notification type of a member repost reaching a reader for the first time (WP-F6). Declared
  * here, where the bell is read, because the read gates it (`getNotifications`).
@@ -59,17 +84,46 @@ import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 export const MEMBER_REPOST_NOTIFICATION = 'member_repost';
 
 /**
- * Bell row `n` may be shown: any type but a member repost, or a member repost whose post its
- * recipient still sees (`getNotifications` says why). The type is a constant of this module.
+ * THE BELL TYPES WHOSE `postId` IS A POST'S ID, and whose row shows that post's preview: each is
+ * shown only while its recipient still SEES the post (`bellRowShownSql`). An ALLOWLIST of what this
+ * module knows to name a post - a type whose `postId` carries something else (a proposal's
+ * association id, a live, an event) must never be listed, or its row would vanish for good. A new
+ * post-bound type is added here when it is written.
+ *
+ * Extended from `member_repost` alone to every post-bound type on 2026-11-02 (review of #2965): an
+ * `association_repost` told to an institution's staff member outlived the author's withdrawal, and
+ * kept the text of a post its reader no longer saw.
+ */
+export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
+  MEMBER_REPOST_NOTIFICATION,
+  'association_repost',
+  'association_post',
+  'followed_post',
+  'mention',
+  'comment',
+  'reply',
+  'reaction',
+  'repost_personal_requested',
+  'repost_personal_accepted',
+  'repost_personal_refused',
+];
+
+/**
+ * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
+ * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
+ * recipient still sees (`getNotifications` says why). The types are constants of this module.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
- * inside a CASE - evaluated for a member-repost row only, whose `postId` is always a post's - and
- * the lookup keeps the posts primary key.
+ * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
+ * malformed row is not shown rather than failing every reader's bell - and the lookup keeps the
+ * posts primary key.
  */
 export function bellRowShownSql(n: string): string {
-  const type = `'${MEMBER_REPOST_NOTIFICATION}'`;
-  return `(${n}.type <> ${type} OR EXISTS (SELECT 1 FROM posts notif_post
-    WHERE notif_post.id = (CASE WHEN ${n}.type = ${type} THEN ${n}."postId"::uuid END)
+  const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
+  return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
+    WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
+        AND ${n}."postId" ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      THEN ${n}."postId"::uuid END)
       AND NOT notif_post."hiddenByModeration"
       AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}))`;
 }
@@ -636,22 +690,35 @@ export class PostNotificationsService {
    * across the review cohort's boundary (`review-cohort.ts`): a row written before the rule is left
    * out, so nobody has to delete it.
    *
-   * A MEMBER REPOST row (WP-F6) is shown only while its recipient still sees the post: the row
-   * carries a text preview, and the access a repost opened ends without any write this service
-   * could hook - the reader unfollows, the author removes the reposter, the reposter leaves a
-   * members-only association or is muted, consent is withdrawn, the post is hidden. Gating at the
-   * read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01); the
-   * row itself is left to the 90-day sweep.
+   * A row about a POST (`POST_BOUND_NOTIFICATION_TYPES`) is shown only while its recipient still
+   * sees the post: the row carries a text preview, and access ends on paths no write here can hook
+   * - the reader unfollows or leaves an institution, the author withdraws a republication or
+   * removes a reposter, a carrier is archived, consent is withdrawn, the post is hidden. Gating at
+   * the read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01,
+   * for member reposts; every post-bound type since the review of #2965, 2026-11-02); the row
+   * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
    */
   async getNotifications(userId: string, limit = 30) {
+    return this.bellPageQuery(userId, limit).getMany();
+  }
+
+  /**
+   * The bell's page as ONE statement, shaped so its per-row visibility re-check (`bellRowShownSql`,
+   * a correlated subquery) runs on about one page of rows and not on the reader's whole history:
+   * the reader's rows, newest first, with the predicate and the LIMIT in the same SELECT and no join
+   * (so TypeORM's `take` is a plain LIMIT), which migration 126's ("recipientId", "createdAt" DESC)
+   * index walks in order and stops once the page is full - no sort. The plan is asserted on a seeded
+   * PostgreSQL (`bell-page.integration.spec.ts`); the production volumes it was sized for are in
+   * that migration and in the posts module's wiki page.
+   */
+  bellPageQuery(userId: string, limit: number) {
     return this.notifRepo
       .createQueryBuilder('n')
       .where('n."recipientId" = :userId', { userId })
       .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
       .andWhere(bellRowShownSql('n'))
       .orderBy('n.createdAt', 'DESC')
-      .take(limit)
-      .getMany();
+      .limit(limit);
   }
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */

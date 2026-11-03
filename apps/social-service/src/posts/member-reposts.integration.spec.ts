@@ -79,7 +79,9 @@ const A1 = '00000000-0000-4000-8000-0000000c0001'; // association, reaches ICM S
 // Created after 071 with ONE rule (ISMIN x saint-etienne) that reaches nobody in the cast: rp sees
 // its posts only as a member.
 const A2 = '00000000-0000-4000-8000-0000000c0002';
-// MEMBERS-ONLY (no rule) and a LIST: their posts are never repostable (owner, 2026-11-02).
+// MEMBERS-ONLY (no rule): its posts are never repostable (owner, 2026-11-02). A LIST's are, like an
+// association's (owner, the same day: "Oui partout sans exception"); renamed to a type nobody listed,
+// they are refused again.
 const A3 = '00000000-0000-4000-8000-0000000c0003';
 const A4 = '00000000-0000-4000-8000-0000000c0004'; // a list addressing ICM x saint-etienne
 
@@ -391,6 +393,8 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
         P(19),
         P(20),
         P(21),
+        // The list's post (owner, 2026-11-02); never the members-only association's, P(22).
+        P(23),
         P(24),
       ]);
       const forFo = await memberRepostContext(ds.manager, [P(1)], 'fo');
@@ -413,6 +417,25 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       // fa sees it first-hand (fa follows its author): the repost stays open to fa.
       const forFa = await memberRepostContext(ds.manager, [P(1)], 'fa');
       expect(forFa.repostable.has(P(1))).toBe(true);
+    });
+
+    it('NO SECOND HOP: a reader who sees a personal post only through a carrier may not repost it (review of #2965)', async () => {
+      // gx's P(4) reaches rp only because A1, whose audience rp is in, republished it (D38b).
+      await q(
+        `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'gx')`,
+        [P(4), A1]
+      );
+      try {
+        expect(await sees(P(4), 'rp')).toBe(true);
+        const err = await refusedWith(reposts.repost(P(4), 'rp'));
+        expect(err.getStatus()).toBe(404);
+        expect(codeOf(err)).toBeUndefined();
+        expect(await repostRows(P(4))).toEqual([]);
+        const forRp = await memberRepostContext(ds.manager, [P(4)], 'rp');
+        expect(forRp.repostable.has(P(4))).toBe(false);
+      } finally {
+        await q(`DELETE FROM post_republications WHERE "postId" = $1`, [P(4)]);
+      }
     });
 
     it('HIDING THE ORIGINAL REMOVES EVERY REPOST, and the followers lose it', async () => {
@@ -520,37 +543,75 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
     });
   });
 
-  describe('NEVER THE POST OF A LIST OR OF A MEMBERS-ONLY ASSOCIATION (owner, 2026-11-02)', () => {
+  describe('NEVER THE POST OF A MEMBERS-ONLY ENTITY OR OF AN UNLISTED TYPE; A LIST IS LISTED (owner, 2026-11-02)', () => {
+    /** Runs `body` with the list A4 renamed to a type nobody listed, then puts it back. */
+    async function asUnlistedType(body: () => Promise<void>): Promise<void> {
+      await q(`UPDATE associations SET type = 'club' WHERE id = $1`, [A4]);
+      try {
+        await body();
+      } finally {
+        await q(`UPDATE associations SET type = 'list' WHERE id = $1`, [A4]);
+      }
+    }
+
     it('the write refuses it with the 404 of a post not seen, and writes nothing', async () => {
       const unseen = await refusedWith(reposts.repost(P(4), 'rp'));
-      for (const id of [P(22), P(23)]) {
+      const refusedLikeUnseen = async (id: string) => {
         // rp sees it first-hand, as a member: only the rule refuses it.
         expect(await sees(id, 'rp')).toBe(true);
         const err = await refusedWith(reposts.repost(id, 'rp'));
         expect(err.getStatus()).toBe(404);
         expect(err.getResponse()).toEqual(unseen.getResponse());
         expect(await repostRows(id)).toEqual([]);
-      }
+      };
+      await refusedLikeUnseen(P(22));
+      await asUnlistedType(() => refusedLikeUnseen(P(23)));
       expect(told).toEqual([]);
     });
 
-    it('the card offers no repost of it', async () => {
-      const forRp = await memberRepostContext(ds.manager, [P(18), P(22), P(23)], 'rp');
-      expect([...forRp.repostable]).toEqual([P(18)]);
+    it("a LIST's post is reposted like an association's, and reaches the reposter's followers", async () => {
+      expect(await sees(P(23), 'fo')).toBe(false);
+      await expect(reposts.repost(P(23), 'rp')).resolves.toEqual({ postId: P(23) });
+      expect(await sees(P(23), 'fo')).toBe(true);
+      // Announced already: rp's accepted followers who could not see it - never sr (rp blocked
+      // them) nor fp (a pending request).
+      expect(told).toEqual([
+        expect.objectContaining({
+          type: 'member_repost',
+          postId: P(23),
+          recipientIds: ['fa', 'fo', 'sb'],
+        }),
+      ]);
+      await reposts.unrepost(P(23), 'rp');
+      expect(await sees(P(23), 'fo')).toBe(false);
+      expect(await repostRows(P(23))).toEqual([]);
     });
 
-    it('a row written before the decision carries nothing, names nobody, and is not deleted', async () => {
+    it('the card offers a repost of a list post, never of a members-only or an unlisted one', async () => {
+      const forRp = await memberRepostContext(ds.manager, [P(18), P(22), P(23)], 'rp');
+      expect([...forRp.repostable].sort()).toEqual([P(18), P(23)].sort());
+      await asUnlistedType(async () => {
+        const unlisted = await memberRepostContext(ds.manager, [P(18), P(22), P(23)], 'rp');
+        expect([...unlisted.repostable]).toEqual([P(18)]);
+      });
+    });
+
+    it('a row of a post a repost may not carry carries nothing, names nobody, and is not deleted', async () => {
       await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'rp'), ($2, 'rp')`, [
         P(22),
         P(23),
       ]);
-      for (const id of [P(22), P(23)]) {
+      const carriesNothing = async (id: string) => {
         expect(await sees(id, 'fo')).toBe(false);
         expect(
           (await memberRepostContext(ds.manager, [id], 'fo')).reposters.get(id)
         ).toBeUndefined();
         expect(await repostRows(id)).toEqual(['rp']);
-      }
+      };
+      await carriesNothing(P(22));
+      await asUnlistedType(() => carriesNothing(P(23)));
+      // Back on the list, the same row carries again: read from state, never stored.
+      expect(await sees(P(23), 'fo')).toBe(true);
       // Read from state: the members-only association addresses a space, and the row carries again.
       await q(
         `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
@@ -567,9 +628,13 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
         ((await q(NEWLY_REACHED_BY_MEMBER_REPOST_SQL, [postId, 'rp'])) as { id: string }[])
           .map((r) => r.id)
           .sort();
-      // The list, and the members-only association: nobody, though fo, fa and sb cannot see them.
+      // The members-only association, and the list renamed to an unlisted type: nobody, though
+      // fo, fa and sb cannot see them. The list itself reaches them.
       expect(await newly(P(22))).toEqual([]);
-      expect(await newly(P(23))).toEqual([]);
+      expect(await newly(P(23))).toEqual(['fa', 'fo', 'sb']);
+      await asUnlistedType(async () => {
+        expect(await newly(P(23))).toEqual([]);
+      });
       // Read from state in the SAME statement as the "before": with a rule, A3's post reaches them.
       await q(
         `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', 'saint-etienne')`,
@@ -814,16 +879,25 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       expect(await sees(P(19), 'fo')).toBe(true);
     });
 
-    it('the bell gate leaves every other notification type alone', async () => {
+    it('the bell gate holds every POST-BOUND type to the same sight, and leaves the others alone (review of #2965)', async () => {
       await q(
-        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES ('fo', 'comment', $1, 'gy')`,
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES
+           ('fo', 'comment', $1, 'gy'), ('fo', 'follow_request', '', 'gy')`,
         [P(16)]
       );
-      const rows: unknown[] = await q(
-        `SELECT 1 FROM post_notifications n WHERE n."recipientId" = 'fo' AND n.type = 'comment'
-            AND ${bellRowShownSql('n')}`
-      );
-      expect(rows).toHaveLength(1);
+      const shown = async (type: string): Promise<number> =>
+        (
+          (await q(
+            `SELECT 1 FROM post_notifications n WHERE n."recipientId" = 'fo' AND n.type = $1
+                AND ${bellRowShownSql('n')}`,
+            [type]
+          )) as unknown[]
+        ).length;
+      // fo no longer sees P(16): a comment about it is not served either.
+      expect(await sees(P(16), 'fo')).toBe(false);
+      expect(await shown('comment')).toBe(0);
+      // A row bound to no post is not the gate's to judge.
+      expect(await shown('follow_request')).toBe(1);
     });
   });
   describe('THE AUTHOR SEES WHO REPOSTED, AND REMOVES ONE REPOST (owner, 2026-11-02)', () => {

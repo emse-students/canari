@@ -74,14 +74,17 @@ export function repostShownToAuthorSql(post: string, mr: string, reposter: strin
 
 /**
  * What may be reposted: a post the reposter sees FIRST-HAND - its own audience, the author's
- * accepted followers, an association carrying it - never only through another member's repost
- * (decided 2026-11-01: no chain, the author's consent covers one step of reach). Grant-free and
- * without the administrator's by-id reach, as D38b's request.
+ * accepted followers, and for an ENTITY post an association carrying it - never only through
+ * another member's repost (decided 2026-11-01: no chain, the author's consent covers one step of
+ * reach), and never a PERSONAL post seen only through a carrier the author accepted (D38b): that
+ * consent covered the carrier's audience, not a second hop to a reader's followers (review of
+ * #2965, 2026-11-02). Grant-free and without the administrator's by-id reach, as D38b's request.
  */
 export const FIRST_HAND = {
   adminSeesAll: false,
   readGrants: false,
   memberReposts: false,
+  personalRepublications: false,
 } as const;
 
 export { MEMBER_REPOST_NOTIFICATION };
@@ -155,9 +158,10 @@ async function lockAuthorConsent(manager: EntityManager, authorId: string): Prom
  *
  * - a PERSONAL post with its author's consent - an account setting "Autoriser mes abonnes a republier
  *   mes posts", ON by default, and a per-post override either way;
- * - an ENTITY post (association, institution) without consent when it addresses at least one space,
- *   still reaching only the reposter's ACCEPTED followers (Q2); never the post of a list or of a
- *   members-only association (`memberRepostablePostSql`, owner 2026-11-02);
+ * - an ENTITY post (association, list, institution - an allowlist, `MEMBER_REPOSTABLE_ASSOCIATION_TYPES`)
+ *   without consent when it addresses at least one space, still reaching only the reposter's ACCEPTED
+ *   followers (Q2); never the post of a members-only entity (`memberRepostablePostSql`, owner
+ *   2026-11-02, lists admitted the same day: "Oui partout sans exception");
  * - never an anonymous post; never across a block, both ways;
  * - a post the reposter sees WITHOUT a read grant and without the administrator's by-id reach (the
  *   same predicate D38b's request passes).
@@ -183,8 +187,8 @@ export class MemberRepostsService {
   /**
    * `actorId` reposts `postId` to their accepted followers. Refusals, in this order, each with an
    * integration case: absent, hidden, scheduled or expired (404); not seen without a grant, or the
-   * post of a list or of a members-only association (`memberRepostablePostSql`, owner 2026-11-02)
-   * (404, nothing confirmed); anonymous (400); own post (400); a block with a personal post's author
+   * post of a members-only entity or of an unlisted type (`memberRepostablePostSql`, owner
+   * 2026-11-02) (404, nothing confirmed); anonymous (400); own post (400); a block with a personal post's author
    * (the SAME 404, so the answer does not reveal the block); no consent (403); already reposted
    * (409). A muted actor is refused at the route, and the route is throttled per caller.
    *
@@ -206,6 +210,7 @@ export class MemberRepostsService {
       }
       const personal = !post.associationId;
       if (personal && post.authorId === actorId) {
+        this.logger.debug(`[REPOST-M] ${postId.slice(0, 8)} refused: the reposter's own post`);
         throw refusal(BadRequestException, MEMBER_REPOST_CODES.ownPost, 'Your own post');
       }
       if (personal && (await isBlockedBetween(manager, actorId, post.authorId))) {

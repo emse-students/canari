@@ -31,6 +31,14 @@ function firstReturned(result: unknown): Proposal | null {
  */
 export const PROPOSAL_SENDER_GONE = 'PROPOSAL_SENDER_GONE';
 
+/**
+ * What a PERSON's acceptance carries of what they were shown (D38b): the fingerprint of an
+ * institution's audience (`audienceFingerprint`). Absent for an association's acceptance.
+ */
+export interface AcceptConsent {
+  audienceFingerprint?: string | null;
+}
+
 /** Work owed once the decision has COMMITTED - a notification, a cache sweep. Never inside it. */
 export type AfterCommit = () => Promise<void>;
 
@@ -179,6 +187,16 @@ export interface UserProposalKindHandler {
    * longer speaks is neither shown, nor counted, nor applied.
    */
   senderSpeaksSql(alias: string): string;
+  /**
+   * Refuses (with a typed HTTP error) an acceptance whose consent no longer matches the state it
+   * was given on - for D38b, the institution's audience the person was shown. Inside the
+   * acceptance's transaction, after its locks and before the decision, so a refusal decides nothing.
+   */
+  assertConsentCurrent(
+    manager: EntityManager,
+    proposal: UserProposal,
+    consent: AcceptConsent
+  ): Promise<void>;
   /** As `ProposalKindHandler.apply`: inside the acceptance's transaction. */
   apply(manager: EntityManager, proposal: UserProposal, actorId: string): Promise<AfterCommit>;
   /**
@@ -475,9 +493,15 @@ export class ProposalsService {
 
   /**
    * Accepts a pending proposal: the acceptor flag in the RECEIVING association - or, for a user
-   * kind, being the person it was addressed to, and nobody else.
+   * kind, being the person it was addressed to, and nobody else. A person's `consent` is what they
+   * were shown (`AcceptConsent`), checked by the handler before anything is decided.
    */
-  async accept(proposalId: string, actorId: string, isGlobalAdmin: boolean): Promise<Proposal> {
+  async accept(
+    proposalId: string,
+    actorId: string,
+    isGlobalAdmin: boolean,
+    consent: AcceptConsent = {}
+  ): Promise<Proposal> {
     const proposal = await this.load(proposalId);
     const handler = this.handler(proposal.kind);
     let after: AfterCommit = () => Promise.resolve();
@@ -496,6 +520,7 @@ export class ProposalsService {
           await handler.withdrawn(manager, voided);
           return { voided };
         }
+        await handler.assertConsentCurrent(manager, asked, consent);
         const row = await this.decide(manager, asked.id, 'accepted', actorId);
         after = await handler.apply(manager, row as UserProposal, actorId);
         return { decided: row as UserProposal };

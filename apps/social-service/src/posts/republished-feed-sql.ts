@@ -30,16 +30,21 @@ import { associationVisibleToUserSql, memberRepostCarriesSql } from '../spaces/r
 /**
  * The `FROM ... WHERE` of the republications of `posts` that count for the viewer whose id is the
  * placeholder `viewer`: by an association that viewer sees, and - with `among`, a `uuid[]`
- * placeholder - by one of those associations only.
+ * placeholder - by one of those associations only. Never by an ARCHIVED association: it carries
+ * the post to nobody (`republicationReachesUserSql`), so it neither admits nor dates a row (review
+ * of #2965).
  */
 function countedRepublicationsSql(alias: string, viewer: string, among?: string): string {
   const user = `${alias}_viewer`;
+  const carrier = `${alias}_carrier`;
   const narrowed = among
     ? `\n             AND ${alias}."associationId" = ANY(${among}::uuid[])`
     : '';
   return `FROM post_republications ${alias}
            JOIN users ${user} ON ${user}.id = ${viewer}
+           JOIN associations ${carrier} ON ${carrier}.id = ${alias}."associationId"
            WHERE ${alias}."postId" = posts.id
+             AND NOT COALESCE(${carrier}.archived, false)
              AND ${associationVisibleToUserSql(`${alias}."associationId"`, user, { readGrants: true })}${narrowed}`;
 }
 

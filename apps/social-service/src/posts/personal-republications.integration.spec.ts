@@ -37,15 +37,20 @@ import {
 import type { ModerationService } from '../moderation/moderation.service';
 import { Proposal, PROPOSAL_VOIDED_BY } from '../proposals/proposal.entity';
 import { PROPOSAL_SENDER_GONE, ProposalsService } from '../proposals/proposals.service';
-import { postVisibleToViewerSql } from '../spaces/reader-spaces';
+import {
+  memberRepostablePostSql,
+  newlyReachedByPersonalRepublicationSql,
+  postVisibleToViewerSql,
+} from '../spaces/reader-spaces';
 import { PostRepublication } from './entities/post-republication.entity';
 import {
   MAX_PENDING_REQUESTS_PER_ASSOCIATION,
   MAX_PENDING_REQUESTS_PER_AUTHOR,
   PERSONAL_REPOST_CODES,
   PersonalRepublicationsService,
+  type InstitutionAudience,
 } from './personal-republications.service';
-import type { PostNotificationsService } from './post-notifications.service';
+import { bellRowShownSql, type PostNotificationsService } from './post-notifications.service';
 import { PostsService } from './posts.service';
 import { dropRepublicationsOf } from './republication-sql';
 import { RepublicationsService } from './republications.service';
@@ -94,6 +99,12 @@ const USERS: Record<string, { campus: string | null; formation: string | null; n
   pr2: { campus: 'saint-etienne', formation: 'ICM', name: 'Pat Second' },
   // An officer of AG who asks, reacts to a post, and is then erased.
   er: { campus: 'saint-etienne', formation: 'ICM', name: 'Eve Erased' },
+  // A STUDENT author whose post an institution and a list ask to carry (owner, 2026-11-02).
+  sa: { campus: 'saint-etienne', formation: 'ICM', name: 'Sara Student' },
+  // STAFF: a campus and no cursus, so no space (D34-D36). st is a plain member of INST; gt holds a
+  // nominative read grant on ICM x saint-etienne and belongs to nothing.
+  st: { campus: 'saint-etienne', formation: null, name: 'Stan Staff' },
+  gt: { campus: 'saint-etienne', formation: null, name: 'Gwen Granted' },
 };
 
 const A = (n: number) => `00000000-0000-4000-8000-0000000b${String(n).padStart(4, '0')}`;
@@ -104,6 +115,7 @@ const LIST = A(4); // promo list
 const ARCH = A(5); // archived association
 const A1 = A(6); // association of an association post
 const AG3 = A(7); // association, deleted while a request of it is being accepted
+const CLUB = A(8); // a kind nobody listed: what a future type is until someone decides
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -133,6 +145,8 @@ const POSTS: {
   { id: P(17), authorId: 'au', announced: true }, // a silenced asker's request, asked again
   { id: P(18), authorId: 'au', announced: true }, // the caps leave a silenced asker out
   { id: P(19), authorId: 'au', announced: true }, // its association is deleted during acceptance
+  { id: P(20), authorId: 'sa', announced: true }, // an institution and a list ask (2026-11-02)
+  { id: P(21), authorId: 'pr', associationId: INST, announced: true }, // an institution's own post
 ];
 
 /** A refusal's stable code, read from the exception's body the way the client reads it. */
@@ -293,8 +307,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
          ($1, 'AG', 'ag', 'association', false), ($2, 'AG2', 'ag2', 'association', false),
          ($3, 'INST', 'inst', 'institution', false), ($4, 'LIST', 'list', 'list', false),
          ($5, 'ARCH', 'arch', 'association', true), ($6, 'A1', 'a1', 'association', false),
-         ($7, 'AG3', 'ag3', 'association', false)`,
-      [AG, AG2, INST, LIST, ARCH, A1, AG3]
+         ($7, 'AG3', 'ag3', 'association', false), ($8, 'CLUB', 'club', 'club', false)`,
+      [AG, AG2, INST, LIST, ARCH, A1, AG3, CLUB]
     );
     await q(migration('071_spaces.sql'));
     await q(migration('072_drop_is_bde.sql'));
@@ -323,7 +337,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         ]
       );
     }
-    for (const asso of [AG, AG2, INST, LIST, ARCH, AG3]) {
+    for (const asso of [AG, AG2, INST, LIST, ARCH, AG3, CLUB]) {
       await q(
         `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'pr', $2)`,
         [asso, POST_AS]
@@ -333,6 +347,13 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       `INSERT INTO association_members ("associationId", "userId", permissions) VALUES
          ($1, 'outsider', $2), ($3, 'au', $2), ($4, 'pr2', $2), ($1, 'er', $2), ($4, 'filler', $2)`,
       [AG, POST_AS, A1, AG2]
+    );
+    await q(
+      `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'st', 0)`,
+      [INST]
+    );
+    await q(
+      `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES ('gt', 'saint-etienne', 'ICM', 'admin')`
     );
     await q(`INSERT INTO user_moderation ("userId", "isMuted") VALUES ('mu', true)`);
     await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ('gb', 'au'), ('pr', 'bl')`);
@@ -428,9 +449,10 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       return posts.personalRequestContext(postIds, viewerId, memberships.personal);
     }
 
-    it('names only associations of the kind that may ask, and only the posts a request would pass', async () => {
+    it('names every listed kind that may ask - an institution and a list included - and only the posts a request would pass', async () => {
       const offer = await offerFor('pr', [P(1), P(2), P(3), P(5), P(11), P(12)]);
-      expect([...offer.personalRepublishAsIds].sort()).toEqual([AG, AG2, AG3].sort());
+      // Never the archived one, never a kind nobody listed.
+      expect([...offer.personalRepublishAsIds].sort()).toEqual([AG, AG2, AG3, INST, LIST].sort());
       // Anonymous (2), hidden (3), a block (5) and the proposer's own (11) are left out.
       expect([...offer.requestablePersonalIds].sort()).toEqual([P(1), P(12)].sort());
     });
@@ -522,8 +544,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       expect(await refusedWith(personal.request(P(3), AG, 'pr'))).toBeInstanceOf(NotFoundException);
     });
 
-    it('only an association, not archived, may ask - never an institution or a list', async () => {
-      for (const asso of [INST, LIST, ARCH]) {
+    it('an archived association, and a kind nobody listed, may not ask', async () => {
+      for (const asso of [ARCH, CLUB]) {
         expect(codeOf(await refusedWith(personal.request(P(1), asso, 'pr')))).toBe(
           PERSONAL_REPOST_CODES.associationType
         );
@@ -1089,6 +1111,231 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       } finally {
         await q(`DELETE FROM proposals WHERE "proposedBy" LIKE 'gone-%'`);
       }
+    });
+  });
+
+  /**
+   * EVERY KIND MAY ASK (owner, 2026-11-02: "Oui partout sans exception. Si un etudiant demande a
+   * l'institution de le republier, je ne vois pas le probleme ?"). It amends D38b, and D34-D36's
+   * "never a student's personal post reaches the personnel side" for THIS consented path only: a
+   * staff member of the institution reads the post once its author accepts, never before. A
+   * nominative read grant still opens no personal post (WP7, a rule of its own, kept).
+   */
+  describe('an institution and a list ask too, and the staff side reads only what the author accepted', () => {
+    it('an institution asks; before the author accepts, its staff member reads nothing', async () => {
+      expect(await sees(P(20), 'st')).toBe(false);
+      const proposal = await personal.request(P(20), INST, 'pr');
+      expect(proposal).toMatchObject({
+        kind: 'repost-personal',
+        status: 'pending',
+        fromAssociationId: INST,
+        toUserId: 'sa',
+      });
+      expect(told).toEqual([
+        expect.objectContaining({ type: 'repost_personal_requested', recipientIds: ['sa'] }),
+      ]);
+      expect(await sees(P(20), 'st')).toBe(false);
+    });
+
+    it("the author's request names the institution and counts the staff member it would reach", async () => {
+      const { incoming } = await personal.inbox('sa');
+      expect(incoming).toHaveLength(1);
+      // Every reader INST's rule reaches shares sa's space already; st, a member with no space, is
+      // the one newly reached. gt, a named reader, is not counted: a grant never opens a personal post.
+      expect(incoming[0]).toMatchObject({
+        subjectId: P(20),
+        from: { id: INST, name: 'INST' },
+        details: { newlyReached: 1 },
+      });
+    });
+
+    it("the request warns of the institution's potential audience, read from its CURRENT rules and members", async () => {
+      const audienceOf = async () =>
+        (await personal.inbox('sa')).incoming[0].details?.institutionAudience;
+      // INST's one rule (071's default, ICM x saint-etienne), and st - a member on the staff side.
+      expect(await audienceOf()).toEqual({
+        everyone: false,
+        spaces: [{ campus: 'saint-etienne', formation: 'ICM' }],
+        staffMembers: true,
+        fingerprint: expect.stringMatching(/^[0-9a-f]{32}$/),
+      });
+      const rules: { formation: string | null; campus: string | null }[] = await q(
+        `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
+        [INST]
+      );
+      try {
+        // An everyone rule: said plainly.
+        await q(
+          `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, NULL)`,
+          [INST]
+        );
+        expect(await audienceOf()).toMatchObject({ everyone: true, staffMembers: true });
+        // No staff member left: the warning says nothing of the staff side.
+        await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'st'`, [
+          INST,
+        ]);
+        expect(await audienceOf()).toMatchObject({ everyone: true, staffMembers: false });
+      } finally {
+        await q(
+          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'st', 0)`,
+          [INST]
+        );
+        await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [INST]);
+        for (const r of rules) {
+          await q(
+            `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, $2, $3)`,
+            [INST, r.formation, r.campus]
+          );
+        }
+      }
+    });
+
+    /** The fingerprint of the warning the author's inbox draws right now. */
+    async function shownFingerprint(): Promise<string> {
+      const { incoming } = await personal.inbox('sa');
+      const audience = incoming[0].details?.institutionAudience as InstitutionAudience | null;
+      const fingerprint = audience?.fingerprint;
+      expect(fingerprint).toEqual(expect.any(String));
+      return fingerprint!;
+    }
+
+    it('an acceptance carrying a stale or no fingerprint is refused, typed, and changes nothing (review of #2965)', async () => {
+      const proposal = await proposalOf(P(20), INST);
+      const shown = await shownFingerprint();
+      // The institution opens an everyone rule after the author read the warning.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, NULL)`,
+        [INST]
+      );
+      try {
+        for (const consent of [{ audienceFingerprint: shown }, {}]) {
+          const err = await refusedWith(proposals.accept(proposal.id, 'sa', false, consent));
+          expect(err).toBeInstanceOf(ConflictException);
+          expect(codeOf(err)).toBe(PERSONAL_REPOST_CODES.audienceChanged);
+        }
+        expect(await proposalOf(P(20), INST)).toMatchObject({ status: 'pending' });
+        expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(20)])).toEqual(
+          []
+        );
+        expect(await sees(P(20), 'st')).toBe(false);
+        // The inbox now draws the everyone warning, under a new fingerprint.
+        expect(await shownFingerprint()).not.toBe(shown);
+        // An archived carrier reaches nobody, so it newly reaches nobody: the count stays exact.
+        const newlyReached = async (): Promise<number> =>
+          ((await q(newlyReachedByPersonalRepublicationSql(true), [P(20), INST])) as unknown[])
+            .length;
+        expect(await newlyReached()).toBeGreaterThan(0);
+        await q(`UPDATE associations SET archived = true WHERE id = $1`, [INST]);
+        try {
+          expect(await newlyReached()).toBe(0);
+        } finally {
+          await q(`UPDATE associations SET archived = false WHERE id = $1`, [INST]);
+        }
+      } finally {
+        await q(
+          `DELETE FROM association_audiences WHERE "associationId" = $1 AND formation IS NULL AND campus IS NULL`,
+          [INST]
+        );
+      }
+    });
+
+    it('acceptance carries it to the staff side, and tells the staff member once', async () => {
+      const proposal = await proposalOf(P(20), INST);
+      await proposals.accept(proposal.id, 'sa', false, {
+        audienceFingerprint: await shownFingerprint(),
+      });
+      expect(await sees(P(20), 'st')).toBe(true);
+      expect(told).toEqual([
+        expect.objectContaining({
+          type: 'association_repost',
+          postId: P(20),
+          recipientIds: ['st'],
+        }),
+        expect.objectContaining({ type: 'repost_personal_accepted', recipientIds: ['pr'] }),
+      ]);
+    });
+
+    it('a nominative read grant still opens no personal post, the carried one included (WP7)', async () => {
+      // The grant is live: it opens the institution's OWN post...
+      expect(await sees(P(21), 'gt')).toBe(true);
+      // ...and never the student's post it carries.
+      expect(await sees(P(20), 'gt')).toBe(false);
+    });
+
+    /** Whether the bell would still serve recipient `st` its row about P(20). */
+    async function bellShowsStaff(): Promise<boolean> {
+      const rows: { shown: boolean }[] = await q(
+        `SELECT ${bellRowShownSql('n')} AS shown FROM post_notifications n
+          WHERE n."recipientId" = 'st' AND n."postId" = $1`,
+        [P(20)]
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0].shown === true;
+    }
+
+    it("the staff member's bell row follows the post's visibility: leaving the institution hides it (review of #2965)", async () => {
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId", "actorId")
+           VALUES ('st', 'association_repost', $1, $2, 'sa')`,
+        [P(20), INST]
+      );
+      expect(await bellShowsStaff()).toBe(true);
+      await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'st'`, [
+        INST,
+      ]);
+      try {
+        expect(await sees(P(20), 'st')).toBe(false);
+        expect(await bellShowsStaff()).toBe(false);
+      } finally {
+        await q(
+          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'st', 0)`,
+          [INST]
+        );
+      }
+      expect(await bellShowsStaff()).toBe(true);
+    });
+
+    it('an archived institution stops carrying it, and its own post is no longer member-repostable (review of #2965)', async () => {
+      const repostable = async (): Promise<boolean> => {
+        const rows: { ok: boolean }[] = await q(
+          `SELECT ${memberRepostablePostSql('posts')} AS ok FROM posts WHERE posts.id = $1`,
+          [P(21)]
+        );
+        return rows[0].ok === true;
+      };
+      expect(await repostable()).toBe(true);
+      await q(`UPDATE associations SET archived = true WHERE id = $1`, [INST]);
+      try {
+        expect(await sees(P(20), 'st')).toBe(false);
+        expect(await bellShowsStaff()).toBe(false);
+        expect(await repostable()).toBe(false);
+      } finally {
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [INST]);
+      }
+      expect(await sees(P(20), 'st')).toBe(true);
+      expect(await repostable()).toBe(true);
+    });
+
+    it('the author withdraws it, and the staff side reads nothing again - its bell row included', async () => {
+      await republications.unrepublish(P(20), INST, 'sa', false);
+      expect(await sees(P(20), 'st')).toBe(false);
+      expect(await bellShowsStaff()).toBe(false);
+      expect(await proposalOf(P(20), INST)).toMatchObject({ status: 'refused', decidedBy: 'sa' });
+    });
+
+    it('a list asks too, and the author may refuse it', async () => {
+      const proposal = await personal.request(P(20), LIST, 'pr');
+      expect(proposal).toMatchObject({
+        status: 'pending',
+        fromAssociationId: LIST,
+        toUserId: 'sa',
+      });
+      // The audience warning is an institution's: a list's request carries none.
+      const { incoming } = await personal.inbox('sa');
+      expect(incoming[0].details).toMatchObject({ institutionAudience: null });
+      await proposals.refuse(proposal.id, 'sa', false);
+      expect(await proposalOf(P(20), LIST)).toMatchObject({ status: 'refused', decidedBy: 'sa' });
+      expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(20)])).toEqual([]);
     });
   });
 });
