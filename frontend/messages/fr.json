@@ -2545,6 +2545,7 @@
   "list_delegate_required_link": "Choisir l'association qui reçoit les paiements",
   "list_no_own_lydia_account": "Une liste n'a pas de compte Lydia à elle : elle encaisse par la délégation de paiement à une association.",
   "delegation_accept_receiver_only": "Seuls les responsables de la boutique de l'association qui reçoit les paiements, ou l'administration de la plateforme, peuvent accepter cette délégation.",
+  "delegation_chain_refused": "Cette délégation ferait passer les paiements par plusieurs associations : l'association qui reçoit délègue elle-même ses paiements, ou celle qui demande reçoit déjà les paiements d'une autre.",
   "delegation_revoke_receiver_only": "Seuls les responsables de la boutique de l'association qui reçoit les paiements, ou l'administration de la plateforme, peuvent refuser ou arrêter cette délégation.",
   "form_view_payments_paused_title": "Paiement en pause",
   "form_view_payments_paused_note": "Les paiements en ligne de ce formulaire sont en pause : l'organisateur n'a plus de compte pour les recevoir.",

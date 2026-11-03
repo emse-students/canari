@@ -454,4 +454,86 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       response: { code: 'LIST_NO_OWN_LYDIA_ACCOUNT' },
     });
   });
+
+  // Review of #2967: the request checks "no chain" before any lock, so two CROSSED requests - A asks
+  // B while B asks C - both pass, and each writes its link whenever its own transaction runs. The
+  // acceptance is where a chain would be written; whichever of the two is accepted second must
+  // refuse, whichever order the writes and acceptances land in. B->C's write is the SQL below: the
+  // late write of a request whose checks already passed.
+  describe('no acceptance ever writes a chain', () => {
+    const [A, B, C] = [
+      '00000000-0000-4000-8000-0000000002c1',
+      '00000000-0000-4000-8000-0000000002c2',
+      '00000000-0000-4000-8000-0000000002c3',
+    ];
+    const status = async (id: string) =>
+      (
+        await ds.query(`SELECT "paymentDelegationStatus" AS s FROM associations WHERE id = $1`, [
+          id,
+        ])
+      )[0].s as string | null;
+    const accepted = async () =>
+      (
+        await ds.query(
+          `SELECT count(*)::int AS n FROM payment_delegation_acceptances
+            WHERE "childAssociationId" = ANY($1)`,
+          [[A, B]]
+        )
+      )[0].n as number;
+    const approve = (parent: string, child: string) =>
+      associations.approvePaymentDelegation(parent, child, {
+        userId: TREASURER,
+        isGlobalAdmin: false,
+      });
+
+    beforeEach(async () => {
+      await ds.query(
+        `DELETE FROM payment_delegation_acceptances WHERE "childAssociationId" = ANY($1)`,
+        [[A, B]]
+      );
+      await ds.query(`DELETE FROM associations WHERE id = ANY($1)`, [[A, B, C]]);
+      const repo = ds.getRepository(Association);
+      for (const id of [A, B, C]) {
+        await repo.save(
+          repo.create({
+            id,
+            type: 'association',
+            name: `Chain ${id.slice(-2)}`,
+            slug: `chain-${id.slice(-2)}`,
+            createdBy: 'it',
+            lydiaAccountId: `vendor-${id.slice(-2)}`,
+            lydiaOnboardingComplete: true,
+          } as Partial<Association>)
+        );
+      }
+      await associations.requestPaymentDelegation(A, B);
+    });
+    const bAsksC = () =>
+      ds.query(
+        `UPDATE associations SET "paymentParentAssociationId" = $2, "paymentDelegationStatus" = 'pending'
+          WHERE id = $1`,
+        [B, C]
+      );
+    const refused = { status: 409, response: { code: 'DELEGATION_CHAIN_REFUSED' } };
+
+    it('B asks C: A->B is refused while B->C is pending AND once it is approved', async () => {
+      await bAsksC();
+      await expect(approve(B, A)).rejects.toMatchObject(refused);
+      await approve(C, B);
+      await expect(approve(B, A)).rejects.toMatchObject(refused);
+      expect(await status(A)).toBe('pending');
+      expect(await accepted()).toBe(1);
+    });
+
+    it("A->B accepted before B's request lands: accepting B->C is refused, B already receives", async () => {
+      await approve(B, A);
+      await bAsksC();
+      await expect(approve(C, B)).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'DELEGATION_CHAIN_REFUSED' },
+      });
+      expect(await status(B)).toBe('pending');
+      expect(await accepted()).toBe(1);
+    });
+  });
 });

@@ -17,6 +17,12 @@ export const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY'
 /** The body `code` refusing a reject or revoke by anyone but the receiver's own managers or the admin. */
 export const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
 
+/**
+ * The body `code` of the 409 refusing an acceptance that would chain delegations: the receiver
+ * itself delegates, or the requester already receives one (review of #2967).
+ */
+export const DELEGATION_CHAIN_REFUSED = 'DELEGATION_CHAIN_REFUSED';
+
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 
@@ -47,6 +53,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   }
   if (err instanceof SocialApiError && err.code === DELEGATION_REVOKE_RECEIVER_ONLY) {
     return m.delegation_revoke_receiver_only();
+  }
+  if (err instanceof SocialApiError && err.code === DELEGATION_CHAIN_REFUSED) {
+    return m.delegation_chain_refused();
   }
   if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
     return m.form_previous_payment_open();

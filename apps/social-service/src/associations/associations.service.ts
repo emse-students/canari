@@ -488,6 +488,15 @@ export const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY'
  */
 export const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
 
+/**
+ * The typed 409 refusing a payment-delegation ACCEPTANCE that would make a chain (review of #2967,
+ * 2026-11-03): the receiver itself delegates its payments, or the requester already receives
+ * approved delegations of its own. The request checks the same two rules, but before any lock, so
+ * two crossed requests (A asks B while B asks C) both pass; the acceptance is where the chain would
+ * be written, so it is checked again there, under its locks.
+ */
+export const DELEGATION_CHAIN_REFUSED = 'DELEGATION_CHAIN_REFUSED';
+
 /** In which capacity a delegation was accepted - the `acceptedAs` of migration 125. */
 export type DelegationAcceptor = 'member' | 'platform-admin';
 
@@ -5506,11 +5515,6 @@ ${rejectionReason}`
   }
 
   /**
-   * Ensures payments can be taken (own account onboarded, or an approved parent's account ready)
-   * before accepting paid forms/purchases.
-   * @throws BadRequestException when neither the association nor its approved parent can receive payments
-   */
-  /**
    * What `mayCollect` reads of an association - its kind and its delegation - or `null` when it does
    * not exist: the forms' price guard.
    */
@@ -5535,6 +5539,11 @@ ${rejectionReason}`
     return row?.type ?? null;
   }
 
+  /**
+   * Ensures payments can be taken (own account onboarded, or an approved parent's account ready)
+   * before accepting paid forms/purchases.
+   * @throws BadRequestException when neither the association nor its approved parent can receive payments
+   */
   async assertPaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {
@@ -5711,6 +5720,13 @@ ${rejectionReason}`
    * The receiver row is share-locked while its readiness is read, so a Lydia revert
    * (`setLydiaReadiness`, which locks it FOR UPDATE) either precedes the read - and the approval is
    * refused - or follows the commit, and then withholds this new delegate too.
+   *
+   * NO CHAIN IS EVER APPROVED (`DELEGATION_CHAIN_REFUSED`, review of #2967): under the same locks,
+   * the receiver must not itself delegate, and the requester must hold no approved delegate of its
+   * own. The request's checks run before any lock, so crossed requests both pass them; these do
+   * not. Two crossed acceptances (A->B and B->C) meet on B's row - the first takes it FOR SHARE as
+   * the receiver, the second FOR UPDATE as the requester - so the later one reads what the earlier
+   * committed and refuses.
    */
   async approvePaymentDelegation(
     parentAssociationId: string,
@@ -5759,6 +5775,7 @@ ${rejectionReason}`
         );
         throw new BadRequestException('No pending delegation request from this association');
       }
+      await this.assertNoDelegationChain(manager, parent, childId);
       if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
         this.logger.debug(
           `[DELEGATION] approval refused: receiver ${parentAssociationId.slice(0, 8)} is not ready`
@@ -5905,6 +5922,40 @@ ${rejectionReason}`
   }
 
   /** Loads and locks (FOR UPDATE) one association row inside `manager`'s transaction; 404 when absent. */
+  /**
+   * Refuses an acceptance that would write a delegation chain: `parent` (read under the
+   * acceptance's lock) itself routes its payments elsewhere, pending or approved - the same rule
+   * the request applies - or `childId` (locked FOR UPDATE by the caller) already receives an
+   * APPROVED delegation. A pending request to the child is left alone: approving it later meets the
+   * first rule, since the child's own link is then set.
+   */
+  private async assertNoDelegationChain(
+    manager: EntityManager,
+    parent: Association,
+    childId: string
+  ): Promise<void> {
+    const parentDelegates = !!parent.paymentParentAssociationId;
+    const childReceives = parentDelegates
+      ? 0
+      : await manager.count(Association, {
+          where: { paymentParentAssociationId: childId, paymentDelegationStatus: 'approved' },
+        });
+    if (!parentDelegates && childReceives === 0) return;
+    this.logger.warn(
+      `[DELEGATION] acceptance refused, it would make a chain: receiver ${parent.id.slice(0, 8)} ` +
+        (parentDelegates
+          ? `itself delegates to ${parent.paymentParentAssociationId!.slice(0, 8)} ` +
+            `(${parent.paymentDelegationStatus ?? 'none'})`
+          : `- requester ${childId.slice(0, 8)} already receives ${childReceives} approved delegation(s)`)
+    );
+    throw new ConflictException({
+      code: DELEGATION_CHAIN_REFUSED,
+      message: parentDelegates
+        ? 'The receiving association itself delegates its payments and cannot receive a delegation'
+        : 'The requesting association already receives delegated payments and cannot delegate its own',
+    });
+  }
+
   private async lockAssociation(manager: EntityManager, id: string): Promise<Association> {
     const row = await manager.findOne(Association, {
       where: { id },

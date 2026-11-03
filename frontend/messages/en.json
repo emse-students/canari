@@ -2513,6 +2513,7 @@
   "list_delegate_required_link": "Choose the association that receives the payments",
   "list_no_own_lydia_account": "A list has no Lydia account of its own: it collects through a payment delegation to an association.",
   "delegation_accept_receiver_only": "Only the shop managers of the association receiving the payments, or the platform administration, may accept this delegation.",
+  "delegation_chain_refused": "This delegation would route payments through more than one association: the receiving association itself delegates its payments, or the requesting one already receives another's.",
   "delegation_revoke_receiver_only": "Only the shop managers of the association receiving the payments, or the platform administration, may refuse or end this delegation.",
   "form_view_payments_paused_title": "Payment paused",
   "form_view_payments_paused_note": "Online payments for this form are paused: the organiser no longer has an account to receive them.",

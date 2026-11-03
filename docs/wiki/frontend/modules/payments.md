@@ -176,10 +176,29 @@ Constraints (enforced server-side in `associations.service.ts`):
   (`mayCollect`, `LIST_DELEGATE_REQUIRED` otherwise). The receiver may be ANY association whose Lydia
   is ready - not necessarily the list's BDE. A list or an institution can never be a receiver, and an
   institution never delegates (it sells nothing). See [associations](associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31).
+- **On the CHILD side, a governing BDE acts for the list - intended** (owner, 2026-11-03).
+  Requesting, re-pointing and cancelling a list's delegation read `MANAGE_PRODUCTS` on the list
+  through `mayAct` WITH the BDE tier, so the BDE super-admin governing the list may do all three.
+  Only the RECEIVER side (accept, reject, revoke) excludes the governing BDE, because the account
+  is the receiver's, not the list's.
+- **A list with no shop manager: the BDE grants the right, no backfill** (owner, 2026-11-03).
+  Measured on production that day: 32 of 44 lists have no member holding `MANAGE_PRODUCTS` (bit
+  256). The owner says those lists are empty, so no migration grants it. When such a list wants to
+  collect, its governing BDE super-admin - or the platform admin - grants `MANAGE_PRODUCTS` to one
+  of its members (or requests the delegation itself, above). The list's own managers CANNOT grant
+  it: the grant ceiling (#2949) lets an ordinary `MANAGE_MEMBERS` holder write only the flags its
+  own row holds ([association-permissions](../../association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 - **Explicit + always to parent.** Once `approved`, every payment routes to the parent even if the
   child also has its own payment account.
 - **One level only.** A parent that itself delegates cannot be chosen as a parent (no chains), and
-  an association that already receives delegated payments cannot delegate its own.
+  an association that already receives delegated payments cannot delegate its own. **The request
+  checks this before any lock**, so two crossed requests (A asks B while B asks C) both pass; **the
+  acceptance checks it again, inside its transaction and under its locks** (review of #2967): a
+  receiver with any link of its own (pending or approved), or a requester already receiving an
+  APPROVED delegation, is refused `409 DELEGATION_CHAIN_REFUSED`, logged `[DELEGATION] acceptance
+  refused, it would make a chain`. Two crossed acceptances meet on B's row (FOR SHARE as the
+  receiver, FOR UPDATE as the requester), so the later one reads the earlier's commit
+  (`payment-delegation.integration.spec.ts`, both orders).
 - **Fails closed.** If a delegating child's parent can't be loaded, or the parent has not finished
   payment onboarding, payments are treated as *not ready* rather than falling back to the child.
 
