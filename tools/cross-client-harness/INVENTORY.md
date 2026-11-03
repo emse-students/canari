@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-116 scripts.
+115 scripts.
 
 | script | what it is |
 |---|---|
@@ -113,7 +113,6 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
 | `seed-bench.mjs` | Tops the LOCAL estate up with what the verification rows need to look at: a feed long enough to |
 | `seedargs.mjs` | The argument grammar of `seed-bench.mjs`, kept pure so `archive/seedargs-selftest.mjs` can hold it. |
-| `seenset.mjs` | WHAT A WEB CLIENT REMEMBERS HAVING ALREADY READ - the seen-ciphertext ledger, read off the client. |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
 | `sendtrace.mjs` | WHETHER THE SERVER TOOK ONE DEVICE'S SEND, read off chat-delivery's own trace - for a client whose |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
@@ -389,4 +388,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-328 scripts in total.
+327 scripts in total.

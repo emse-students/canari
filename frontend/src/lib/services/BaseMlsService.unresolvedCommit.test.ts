@@ -10,6 +10,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   scheduleOutboundMlsPersist: () => scheduleOutboundMlsPersist(),
 }));
 
+import 'fake-indexeddb/auto';
 import { BaseMlsService } from './BaseMlsService';
 import {
   COMMIT_LOCK_BUDGET_SPENT_REASON,

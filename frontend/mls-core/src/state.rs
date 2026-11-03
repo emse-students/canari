@@ -69,6 +69,12 @@ pub struct PersistedState {
     /// direction, since no run means rotate.
     #[serde(default)]
     pub graine_runs: HashMap<String, GraineRun>,
+    /// The app's ledgers that describe this state (`app_ledgers.rs`): opaque values by key, kept in
+    /// THIS blob so they reach disk with the ratchets they describe. `#[serde(default)]`: a state
+    /// written before the field reads as none, and the app migrates its old copies at the next load.
+    /// A build that predates the field ignores it on read and drops it on its next write.
+    #[serde(default)]
+    pub app_ledgers: HashMap<String, String>,
     /// How each classified group treats an external commit from a user who holds no leaf
     /// (`crate::admission`). `#[serde(default)]`: a state written before it has no classified group,
     /// and every group keeps the behaviour it had until a session classifies it. A build that
@@ -100,6 +106,7 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) device_pins_pruned: &'a [String],
     pub(crate) pending_external_joins: &'a [String],
     pub(crate) graine_runs: &'a HashMap<String, GraineRun>,
+    pub(crate) app_ledgers: &'a HashMap<String, String>,
     pub(crate) admission: &'a HashMap<String, crate::admission::AdmissionPolicy>,
 }
 
@@ -233,6 +240,8 @@ pub struct MlsManager {
     pub(crate) pending_external_joins: std::collections::HashSet<String>,
     /// Graine's departure tracker, persisted with the state (`graine_run.rs`).
     pub(crate) graine_runs: HashMap<String, GraineRun>,
+    /// The app's ledgers that describe this state, persisted with it (`app_ledgers.rs`).
+    pub(crate) app_ledgers: HashMap<String, String>,
     /// The admission policy of each classified group, persisted with the state (`crate::admission`).
     pub(crate) admission: HashMap<String, crate::admission::AdmissionPolicy>,
 
@@ -426,9 +435,10 @@ impl MlsManager {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
-                    "{total}B total; {head}; {}, {} legacy bare leaves",
+                    "{total}B total; {head}; {}, {} legacy bare leaves; app ledgers {}",
                     self.device_trust.pin_summary(),
-                    self.legacy_bare_leaves()
+                    self.legacy_bare_leaves(),
+                    self.app_ledgers_weight()
                 )
             }
             // NOT SWALLOWED INTO AN EMPTY STRING: a caller logging this would print a line that
@@ -867,6 +877,7 @@ impl MlsManager {
                 device_trust,
                 pending_external_joins,
                 graine_runs: state.graine_runs,
+                app_ledgers: state.app_ledgers,
                 admission: state.admission,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
@@ -994,6 +1005,7 @@ impl MlsManager {
                 device_trust,
                 pending_external_joins: Default::default(),
                 graine_runs: HashMap::new(),
+                app_ledgers: HashMap::new(),
                 admission: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
                 fork_findings: RefCell::default(),
@@ -1071,6 +1083,7 @@ impl MlsManager {
             device_pins_pruned: &device_pins_pruned,
             pending_external_joins: &pending_external_joins,
             graine_runs: &self.graine_runs,
+            app_ledgers: &self.app_ledgers,
             admission: &self.admission,
         };
 

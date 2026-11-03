@@ -94,6 +94,8 @@ describe('the per-account key list is the one list', () => {
     'lib/utils/chat/actions.ts:`canari-backup-${userId}':
       'the file name of a backup the user saves',
     'lib/calendar/ics.ts:`UID:${icsEscapeText(ev.uid)}': "an iCalendar event's UID line",
+    'lib/mls-client/sendRatchetLedger.ts:`send_ratchet_emitted:${userId}':
+      'a record in CanariDBMls_<id> - deleted with that database by accountIndexedDbNames',
   };
 
   it('rule 4 - no key-shaped literal interpolates a user id outside the list', () => {
