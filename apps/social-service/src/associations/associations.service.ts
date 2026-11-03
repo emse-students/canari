@@ -40,7 +40,11 @@ import {
   assertRosterStaysOnOneSide,
 } from './review-cohort-reach';
 import { isInReviewCohort } from '../review-cohort';
-import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
+import {
+  assertCotisationStemFree,
+  isCotisationStemCollision,
+  stemCollidesElsewhere,
+} from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
@@ -132,7 +136,23 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
+import {
+  assertAudienceAllowedForType,
+  assertCreatorCampusGoverned,
+  defaultCampusRules,
+} from '../spaces/audience-policy';
+import { normaliseRules } from '../spaces/spaces.service';
+import type { AudienceRuleDto } from '../spaces/dto/space.dto';
+import type { FirstAdminDto } from './dto/admin-association.dto';
+import { SEARCH_FOLD_PARAMS, foldSql } from './search-fold';
+import {
+  ADMIN_ASSOCIATION_ERROR,
+  ADMIN_CATALOGUE_DEFAULT_LIMIT,
+  assertFirstAdminAllowedForType,
+  decodeCatalogueCursor,
+  encodeCatalogueCursor,
+  platformAdminOnly,
+} from './admin-catalogue';
 import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
@@ -142,6 +162,16 @@ import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Where a new entity is put by the platform admin's create form (`POST associations/admin`): the
+ * spaces it reaches - EXPLICIT, possibly none, replacing the creator-campus default - and an
+ * optional first admin. Absent, `create` keeps its default placement.
+ */
+export interface AssociationPlacement {
+  audiences: AudienceRuleDto[];
+  firstAdmin?: FirstAdminDto;
+}
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 /**
@@ -465,8 +495,29 @@ export class AssociationsService {
    * admin ticks its audience afterwards. A NON-admin creator (a BDE star) is further refused
    * `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when that default campus is not one its BDE governs: it could
    * not edit what it made (decision 7).
+   *
+   * A PLACEMENT (the platform admin's form on `/admin/spaces`, owner 2026-11-02) replaces that
+   * default with the spaces the admin chose - possibly none - and may add ONE first admin, in the
+   * same transaction as the row. Without a first admin the entity has no member at all: the
+   * creating admin never becomes one. Only a platform admin may pass one.
    */
-  async create(dto: CreateAssociationDto, userId: string, isGlobalAdmin: boolean) {
+  async create(
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
+  ) {
+    if (placement && !isGlobalAdmin) {
+      this.logger.warn(`[create] placement refused: ${userId.slice(0, 8)} is not a platform admin`);
+      throw platformAdminOnly();
+    }
+    if (placement) {
+      // Refused before any write: an association or a list addresses a campus, never everyone.
+      assertAudienceAllowedForType(dto.type ?? 'association', normaliseRules(placement.audiences));
+      if (placement.firstAdmin) {
+        assertFirstAdminAllowedForType(dto.type ?? 'association', placement.firstAdmin.permissions);
+      }
+    }
     const explicitSlug = dto.slug?.trim() ? dto.slug : null;
     if (explicitSlug !== null && !SLUG_PATTERN.test(explicitSlug)) {
       throw new BadRequestException(
@@ -488,7 +539,14 @@ export class AssociationsService {
         throw new BadRequestException('An association with this slug already exists');
       }
       try {
-        return await this.insertAssociation(dto, explicitSlug, logoUrl, userId, isGlobalAdmin);
+        return await this.insertAssociation(
+          dto,
+          explicitSlug,
+          logoUrl,
+          userId,
+          isGlobalAdmin,
+          placement
+        );
       } catch (err) {
         if (!(await isSlugUniqueViolation(err, this.catalogQuery))) throw err;
         this.logger.warn(`[slug] explicit slug ${explicitSlug} was taken between check and insert`);
@@ -501,7 +559,14 @@ export class AssociationsService {
     // `-2` and `-3` instead of a check-then-insert that both pass.
     for (const candidate of slugCandidates(dto.name)) {
       try {
-        const saved = await this.insertAssociation(dto, candidate, logoUrl, userId, isGlobalAdmin);
+        const saved = await this.insertAssociation(
+          dto,
+          candidate,
+          logoUrl,
+          userId,
+          isGlobalAdmin,
+          placement
+        );
         this.logger.log(`[slug] derived ${candidate} from the name`);
         return saved;
       } catch (err) {
@@ -525,6 +590,91 @@ export class AssociationsService {
   }
 
   /**
+   * The slug a create of `name` would take NOW: the first of the SAME `slugCandidates` that is
+   * neither taken nor a cotisation-stem collision (`assertCotisationStemFree`, the check the create
+   * transaction runs). A PREVIEW for the admin form - the create stays the authority, and a
+   * concurrent create may still move it one suffix on. `null` when every candidate is taken.
+   */
+  async previewDerivedSlug(name: string): Promise<string | null> {
+    // ONE read of every stem (a slug is its own base stem, so a taken slug collides too), then the
+    // same predicate the create's `assertCotisationStemFree` applies - asked, never learned by
+    // catching its refusal, so a preview typed letter by letter logs no collision it did not make.
+    const collides = await stemCollidesElsewhere(this.assoRepo.manager, null);
+    const slug = slugCandidates(name).find((candidate) => !collides(candidate)) ?? null;
+    if (slug === null) this.logger.debug(`[slug] preview: no free candidate`);
+    return slug;
+  }
+
+  /**
+   * One page of the platform admin's catalogue (`/admin/spaces`): every entity of one kind, member
+   * or not, ordered by `(name, id)` and paged by KEYSET so a page costs the same at any depth and
+   * a row created meanwhile never shifts the next one. `q` keeps the names or slugs containing it,
+   * ignoring case and accents (`foldSql`; `strpos`, so `%` and `_` are plain characters). Each row carries its
+   * member count and its audience rules, so the grid needs no second whole-table read.
+   */
+  async adminCatalogue(query: {
+    type: 'association' | 'list' | 'institution';
+    q?: string;
+    after?: string;
+    limit?: number;
+  }) {
+    const limit = query.limit ?? ADMIN_CATALOGUE_DEFAULT_LIMIT;
+    const qb = this.assoRepo
+      .createQueryBuilder('a')
+      .where('a.type = :catalogueType', { catalogueType: query.type })
+      .orderBy('a.name', 'ASC')
+      .addOrderBy('a.id', 'ASC')
+      .take(limit + 1);
+    const search = query.q?.trim();
+    if (search) {
+      // Accent- and case-insensitive on both sides: "ecole" finds "Ecole" written with its accent.
+      const needle = foldSql(':catalogueQ');
+      qb.andWhere(
+        `(strpos(${foldSql('a.name')}, ${needle}) > 0 OR strpos(${foldSql('a.slug')}, ${needle}) > 0)`,
+        { catalogueQ: search, ...SEARCH_FOLD_PARAMS }
+      );
+    }
+    if (query.after) {
+      const position = decodeCatalogueCursor(query.after);
+      qb.andWhere('(a.name, a.id) > (:afterName, :afterId::uuid)', {
+        afterName: position.name,
+        afterId: position.id,
+      });
+    }
+    const fetched = await qb.getMany();
+    const rows = fetched.slice(0, limit);
+    const next =
+      fetched.length > limit
+        ? encodeCatalogueCursor({ name: rows[rows.length - 1].name, id: rows[rows.length - 1].id })
+        : null;
+    const ids = rows.map((a) => a.id);
+    const [counts, rules] = ids.length
+      ? await Promise.all([
+          this.assoRepo.query(
+            `SELECT "associationId", COUNT(*)::int AS n FROM association_members
+              WHERE "associationId" = ANY($1::uuid[]) GROUP BY "associationId"`,
+            [ids]
+          ) as Promise<{ associationId: string; n: number }[]>,
+          this.assoRepo.manager.find(AssociationAudience, { where: { associationId: In(ids) } }),
+        ])
+      : [[], []];
+    const countOf = new Map(counts.map((c) => [c.associationId, c.n]));
+    this.logger.debug(
+      `[ADMIN_CATALOGUE] ${query.type} q=${search ? 'yes' : 'no'} after=${query.after ? 'yes' : 'no'}: ${rows.length} row(s), more=${next !== null}`
+    );
+    return {
+      rows: rows.map((a) => ({
+        ...a,
+        memberCount: countOf.get(a.id) ?? 0,
+        audiences: rules
+          .filter((r) => r.associationId === a.id)
+          .map((r) => ({ formation: r.formation, campus: r.campus })),
+      })),
+      next,
+    };
+  }
+
+  /**
    * Reads the catalog OUTSIDE the create transaction a violation has just aborted - what tells a
    * slug collision from any other unique violation (`isSlugUniqueViolation`).
    */
@@ -537,7 +687,8 @@ export class AssociationsService {
     slug: string,
     logoUrl: string | null,
     userId: string,
-    isGlobalAdmin: boolean
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
   ) {
     const asso = this.assoRepo.create({
       ...dto,
@@ -550,6 +701,10 @@ export class AssociationsService {
       // Its base cotisation tag must never coincide with another association's tag names.
       await assertCotisationStemFree(manager, null, slug);
       const saved = await manager.save(asso);
+      if (placement) {
+        await this.placeNewAssociation(manager, saved, placement);
+        return saved;
+      }
       if (dto.type === 'institution') {
         // The type decides the default (D33's one mechanism): an institution addresses nobody until
         // an admin ticks the /admin/spaces grid - a global admin's own spaces are rarely the School's.
@@ -581,6 +736,67 @@ export class AssociationsService {
       );
       return saved;
     });
+  }
+
+  /**
+   * Writes a placement inside the create transaction: the chosen rules (none is allowed - it then
+   * reaches nobody), then the first admin when one was picked. A first admin naming no account is a
+   * typed 400 and rolls the row back with it, so a half-placed entity never exists.
+   */
+  private async placeNewAssociation(
+    manager: EntityManager,
+    saved: Association,
+    placement: AssociationPlacement
+  ): Promise<void> {
+    const rules = normaliseRules(placement.audiences);
+    if (rules.length > 0) {
+      await manager.insert(
+        AssociationAudience,
+        rules.map((r) => ({ associationId: saved.id, formation: r.formation, campus: r.campus }))
+      );
+    }
+    this.logger.log(`[spaces] ${saved.id} placed by a platform admin: ${rules.length} rule(s)`);
+    const firstAdmin = placement.firstAdmin;
+    if (!firstAdmin) {
+      this.logger.log(`[create] ${saved.id} has no member: none was asked for`);
+      return;
+    }
+    const known = (await manager.query(`SELECT 1 FROM users WHERE id::text = $1 LIMIT 1`, [
+      firstAdmin.userId,
+    ])) as unknown[];
+    if (known.length === 0) {
+      this.logger.warn(`[create] first admin ${firstAdmin.userId.slice(0, 8)} names no account`);
+      throw new BadRequestException({
+        code: ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN,
+        message: 'The first admin picked names no account.',
+      });
+    }
+    await this.insertMembership(manager, saved, firstAdmin, 0);
+    this.logger.log(`[create] ${saved.id} first admin ${firstAdmin.userId.slice(0, 8)}`);
+  }
+
+  /**
+   * Inserts ONE membership row: the ONE place a member is written, whether by `addMember` or by a
+   * placement's first admin. The bitmask is narrowed to what the kind may hold, and the roster never
+   * crosses the review cohort's boundary.
+   */
+  private async insertMembership(
+    manager: EntityManager,
+    association: Pick<Association, 'id' | 'type'>,
+    member: { userId: string; permissions: number; role?: string },
+    sortOrder: number
+  ): Promise<AssociationMember> {
+    await assertRosterStaysOnOneSide(manager, association.id, member.userId);
+    return manager.save(
+      manager.create(AssociationMember, {
+        associationId: association.id,
+        userId: member.userId,
+        // No role given: the column's default, never a label this code types.
+        ...(member.role === undefined ? {} : { role: member.role }),
+        permissions: writablePermissions(association.type, member.permissions),
+        sortOrder,
+      })
+    );
   }
 
   /**
@@ -1177,16 +1393,13 @@ export class AssociationsService {
 
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
   async addMember(dto: AddMemberDto & { associationId: string }) {
-    const { associationId, userId, role } = dto;
+    const { associationId, userId } = dto;
     const target = await this.findById(associationId);
-    const permissions = writablePermissions(target.type, dto.permissions);
 
     const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
       throw new BadRequestException('User is already a member');
     }
-    // Never across the review cohort's boundary (review-cohort-reach.ts).
-    await assertRosterStaysOnOneSide(this.memberRepo.manager, associationId, userId);
 
     // Append new members at the END of the ordered list (not the top): take the current
     // max sortOrder + 1. `listMembers` orders by sortOrder ASC, so without this a new
@@ -1198,14 +1411,7 @@ export class AssociationsService {
       .getRawOne<{ max: number | null }>();
     const sortOrder = (maxRow?.max ?? -1) + 1;
 
-    const membership = this.memberRepo.create({
-      associationId,
-      userId,
-      role,
-      permissions,
-      sortOrder,
-    });
-    const saved = await this.memberRepo.save(membership);
+    const saved = await this.insertMembership(this.memberRepo.manager, target, dto, sortOrder);
     // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
     // every cached feed page of that reader depends on.
     await this.invalidatePostListCaches();

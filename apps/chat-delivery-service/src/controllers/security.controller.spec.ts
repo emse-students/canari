@@ -70,8 +70,7 @@ describe('SecurityController - checkPinVerifier', () => {
 
     const result = await controller.checkPinVerifier(
       { userId: 'u1', verifier: 'a'.repeat(64) },
-      'u1',
-      'false'
+      'u1'
     );
 
     // Must NOT call create — we're updating, not inserting
@@ -97,8 +96,7 @@ describe('SecurityController - checkPinVerifier', () => {
 
     const result = await controller.checkPinVerifier(
       { userId: 'u1', verifier: 'a'.repeat(64) },
-      'u1',
-      'false'
+      'u1'
     );
 
     expect(pinVerifierRepo.create).toHaveBeenCalledWith({
@@ -123,7 +121,7 @@ describe('SecurityController - checkPinVerifier', () => {
       verifier,
     });
 
-    const result = await controller.checkPinVerifier({ userId: 'u1', verifier }, 'u1', 'false');
+    const result = await controller.checkPinVerifier({ userId: 'u1', verifier }, 'u1');
 
     expect(result).toEqual({ status: 'ok', resetRequired: false });
   });
@@ -143,8 +141,7 @@ describe('SecurityController - checkPinVerifier', () => {
 
     const result = await controller.checkPinVerifier(
       { userId: 'u1', verifier: 'b'.repeat(64) },
-      'u1',
-      'false'
+      'u1'
     );
 
     expect(result).toEqual({ status: 'mismatch', resetRequired: false });
@@ -167,8 +164,7 @@ describe('SecurityController - checkPinVerifier', () => {
 
     const result = await controller.checkPinVerifier(
       { userId: 'u1', verifier: 'a'.repeat(64), salt: 'old-salt' },
-      'u1',
-      'false'
+      'u1'
     );
 
     expect(result).toEqual({ status: 'stale-salt', resetRequired: false });
@@ -181,8 +177,7 @@ describe('SecurityController - checkPinVerifier', () => {
 
     const result = await controller.checkPinVerifier(
       { userId: 'u1', verifier: 'a'.repeat(64), salt: 'old-salt' },
-      'u1',
-      'false'
+      'u1'
     );
 
     expect(result).toEqual({ status: 'stale-salt', resetRequired: false });
@@ -201,8 +196,7 @@ describe('SecurityController - checkPinVerifier', () => {
 
     const result = await controller.checkPinVerifier(
       { userId: 'u1', verifier, salt: 'the-salt' },
-      'u1',
-      'false'
+      'u1'
     );
 
     expect(result).toEqual({ status: 'ok', resetRequired: false });
@@ -218,7 +212,7 @@ describe('SecurityController - checkPinVerifier', () => {
       pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
 
       await expect(
-        controller.changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        controller.changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
       ).resolves.toEqual({ ok: true });
 
       expect(pinVerifierRepo.update).toHaveBeenCalledWith(
@@ -234,7 +228,7 @@ describe('SecurityController - checkPinVerifier', () => {
       pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
 
       await expect(
-        controller.changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        controller.changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
       ).rejects.toThrow('current PIN is incorrect');
     });
 
@@ -242,7 +236,7 @@ describe('SecurityController - checkPinVerifier', () => {
       pinVerifierRepo.findOne.mockResolvedValue(row());
 
       await expect(
-        controller.changePin({ userId: 'u1', oldVerifier: NEW, newVerifier: OLD }, 'u1', 'false')
+        controller.changePin({ userId: 'u1', oldVerifier: NEW, newVerifier: OLD }, 'u1')
       ).rejects.toThrow('current PIN is incorrect');
       expect(pinVerifierRepo.update).not.toHaveBeenCalled();
     });

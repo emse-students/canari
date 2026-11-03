@@ -112,6 +112,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { routeTabReadEvent, tabEventIsAddressedHere } from '$lib/utils/chat/tabReadRelay';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
@@ -131,6 +132,7 @@
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { noteOpenNavigated } from '$lib/utils/chat/resumeOpening.svelte';
   import {
     openNotificationTarget,
     resolveConversationKey,
@@ -1591,6 +1593,22 @@
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */
   function applyTabMessageEvent(event: import('$lib/mls-client/tabMessageSync').TabMessageEvent) {
+    const me = globalSession.userId || currentUserId() || '';
+    // A tab of ANOTHER account in this browser hears the same channel: dropped here, once.
+    if (!tabEventIsAddressedHere(event, me)) return;
+    // THE READ HALF OF THE CHANNEL, whatever this tab's role: `routeTabReadEvent` applies a read from
+    // any tab, and what the leader relays (marks, salon counts) only in a follower.
+    if (
+      routeTabReadEvent(event, {
+        conversations: globalConvs.conversations,
+        me,
+        isLeader: globalSession.isTabLeader,
+        isReading: (key) => isReadingConversationNow(key, globalConvs.selectedContact),
+      })
+    ) {
+      return;
+    }
+
     // A COMPOSED MESSAGE IS HANDLED BEFORE THE ROLE IS EVEN READ, because it is the one event on
     // this channel a FOLLOWER sends and the LEADER needs. Everything below it is the leader
     // relaying what it alone receives, which a leader must not apply to itself.
@@ -1609,19 +1627,6 @@
         // `unreadCount` is deliberately untouched: an own message is never unread, and the sender
         // has nothing to say about what this tab has read.
       });
-      return;
-    }
-
-    // A READ IS THE OTHER FACT A FOLLOWER MAY KNOW THAT A LEADER DOES NOT, and the leader must
-    // apply it too: reading happens in whichever tab is open on the conversation, either role.
-    // Applied only up to the watermark the reading tab saw, so a message that arrived in the gap
-    // between the read and this broadcast keeps its unread state instead of being swallowed.
-    if (event.type === 'conversation_read') {
-      const target = globalConvs.conversations.get(event.conversationId);
-      if (!target) return;
-      if ((target.lastMessageAt ?? 0) <= event.readAt) {
-        globalConvs.conversations.set(event.conversationId, { ...target, unreadCount: 0 });
-      }
       return;
     }
 
@@ -2329,6 +2334,8 @@
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // A resume that opened a page link holds the conversation left on screen until it navigates.
+    noteOpenNavigated();
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
       path === '/login' ||
