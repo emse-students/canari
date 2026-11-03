@@ -716,6 +716,21 @@ shows hundreds of failures. A minute-boundary cron firing in both replicas was t
 race found: the form reminder now claims its row with a conditional `UPDATE`
 (`forms-reminder.scheduler.spec.ts` fails without it).
 
+**The reload's own read of the workers was a race, and it was a deploy defect** (found as a CI flake
+on PR #2939, 2026-11-02: `the reloads could not all be made (failed, 299 made)`, with ZERO failed
+POSTs, so no request was lost). `rotation_reload` learns the workers' uid, and the list of workers it
+will compare against, from the proxy BEFORE it signals the reload. It listed `/proc` and read the
+uid afterwards from the FIRST worker listed - and under load the first one can be a worker the
+previous reload retired, which exits on its own clock between the listing and that read. The read came
+back empty and the deploy stopped with `had no worker to read before the reload`
+(`awk: /proc/<pid>/status: No such file or directory` is its trace in the log). Production runs two
+reloads per replaced service, so a deploy with traffic on it could stop the same way, before stopping
+the old replica (safe: nothing was retired, a re-run passes). `workers` now reads a worker's stat,
+command line and uid together and lists it only if all three read: a worker that is gone is not one.
+Measured against a bare nginx under six looping clients, 30 runs of 300 back-to-back reloads: before,
+283 of 9000 reloads failed (15 of 30 runs); after, 0 of 9000. The same race printed `can't open /proc/<pid>/cmdline` into the
+log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
+
 **What is NOT zero, said rather than hidden:**
 
 - **The first deploy carrying the target lists** still runs the OLD frontend image (1.6.2's, on its
