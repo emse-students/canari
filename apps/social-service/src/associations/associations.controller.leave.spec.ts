@@ -35,6 +35,7 @@ describe('AssociationsController.leaveAssociation - the self-leave route', () =>
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     );
     // Two parameters, the path's association and the vouched identity: there is no third one

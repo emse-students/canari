@@ -38,6 +38,7 @@ import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-su
 import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { toAssociationView } from './association.projection';
+import { SpacesService } from '../spaces/spaces.service';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
@@ -124,7 +125,8 @@ export class AssociationsController {
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService,
     private readonly userProfileService: UserProfileService,
-    private readonly pushMutes: AssociationPushMutesService
+    private readonly pushMutes: AssociationPushMutesService,
+    private readonly spaces: SpacesService
   ) {}
 
   // ── Document reviewers & cross-association review ────────────────────────────
@@ -816,7 +818,7 @@ export class AssociationsController {
         });
       }
     }
-    return this.service.remove(id, userId);
+    return this.service.remove(id, userId, ga === 'true');
   }
 
   // ── Association details: each field asks its own right (UPDATE_FIELD_RIGHTS) ──
@@ -897,6 +899,18 @@ export class AssociationsController {
       throw new BadRequestException('Nothing to update');
     }
     const touchesCotisation = asked.flags.has(AssociationPermissionFlag.MANAGE_PRODUCTS);
+
+    if ('parentAssociationId' in patch) {
+      // Only a platform admin reaches here with it (refused above otherwise). The governing parent
+      // is a DEPENDENCY (reform 2.7): its rules and its journal live in ONE place, so a change made
+      // from the profile form is judged and recorded exactly as one made on the Dependencies panel.
+      const { parentAssociationId, ...rest } = patch;
+      await this.spaces.setParent(id, parentAssociationId ?? null, { userId });
+      patch = rest;
+      if (Object.keys(patch).length === 0) {
+        return toAssociationView(await this.service.findById(id));
+      }
+    }
 
     const updated = await this.service.update(id, patch);
     // A cotisation stored enabled on an entity that may not collect NOW (an institution, a list

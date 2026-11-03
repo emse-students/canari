@@ -187,9 +187,23 @@ export class Association {
   @Column({ type: 'int', nullable: true })
   promo: number | null;
 
-  /** Lists only: optional parent association (e.g. the owning BDE). Null otherwise. */
+  /**
+   * THE GOVERNING PARENT (WP-D1, reform 2.2): the BDE this association or list depends on, or null
+   * (the platform admin's). A BDE and an institution never have one, and a parent is always an
+   * association governing at least one space - asked by `SpacesService.setParent` and enforced by
+   * migration 131's triggers. Written by the platform admin only, journaled (`dependency_journal`).
+   * ADDITIVE in WP-D1: nothing reads it for governance until WP-D2.
+   */
   @Column({ type: 'uuid', nullable: true })
   parentAssociationId: string | null;
+
+  /**
+   * A DISPLAY-ONLY label (G3, migration 129): the body a list was made "for" when that body governs
+   * no space (the BDS, the BDA) - shown as "liste pour le BDS" and granting no right. Distinct from
+   * the governing parent above, which never names a body that governs nothing.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  displayParentAssociationId: string | null;
 
   /**
    * Lists only: optional second theme name. Some lists run two themes at once

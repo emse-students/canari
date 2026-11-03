@@ -35,6 +35,7 @@ describe('the routes that serve an event serve its .ics signature', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     );
   }

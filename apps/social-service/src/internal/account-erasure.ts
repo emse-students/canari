@@ -137,6 +137,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'post_space_pins.pinned_by': { action: 'anonymise' },
   'read_grant_journal.user_id': { action: 'anonymise' },
   'read_grant_journal.actor': { action: 'anonymise' },
+  // The dependency journal (migration 129) keeps WHAT changed; WHO did it is anonymised.
+  'dependency_journal.actor': { action: 'anonymise' },
   'association_calendar_events.createdBy': { action: 'anonymise' },
   'association_calendar_events.validatedBy': { action: 'anonymise' },
   'association_calendar_events.rejectedBy': { action: 'anonymise' },
@@ -610,6 +612,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'read_grant_journal_actor',
     sql: `UPDATE read_grant_journal SET actor = $2 WHERE actor = $1`,
+  },
+  {
+    label: 'dependency_journal_actor',
+    sql: `UPDATE dependency_journal SET actor = $2 WHERE actor = $1`,
   },
   {
     label: 'calendar_created',

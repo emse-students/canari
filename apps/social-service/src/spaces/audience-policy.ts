@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SPACE_CAMPUSES } from './space.entity';
-import type { SpaceCampus, SpaceFormation } from './space.entity';
+import type { SpaceCampus } from './space.entity';
 
 /** The pure shape of a rule, kept apart from `spaces.service.ts` so this file imports nothing of it. */
 interface RuleLike {
@@ -189,30 +189,4 @@ function outsideBdeCampus(): ForbiddenException {
     code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
     message: 'A BDE sets the audience of the associations and lists it governs only.',
   });
-}
-
-/**
- * The default audience a NON-ADMIN creator's entity starts with: one it may EDIT afterwards (owner,
- * 2026-11-03, "modifier dans ses espaces"). The spaces of the creator's profile campus its BDE
- * governs - the whole campus when it governs every opened space of it, otherwise one rule per
- * governed formation. A creator with no campus is `AUDIENCE_CREATOR_CAMPUS_REQUIRED`; one governing
- * no space of its campus is `AUDIENCE_OUTSIDE_BDE_CAMPUS`. A global admin never reaches this: it
- * gets `defaultCampusRules`.
- */
-export function creatorDefaultRules(
-  campus: string | null,
-  spaces: readonly SpaceStanding[]
-): { formation: SpaceFormation | null; campus: SpaceCampus }[] {
-  const [whole] = defaultCampusRules(campus);
-  const ofCampus = spaces.filter((s) => s.campus === whole.campus);
-  const governed = ofCampus.filter((s) => s.governed);
-  if (governed.length === 0) {
-    throw new ForbiddenException({
-      code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
-      message: 'A BDE creates the associations and lists of its own spaces only.',
-    });
-  }
-  if (governed.length === ofCampus.length) return [whole];
-  // `formation` is read from `spaces`, whose column only ever holds a `SpaceFormation`.
-  return governed.map((s) => ({ formation: s.formation as SpaceFormation, campus: whole.campus }));
 }

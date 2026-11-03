@@ -181,7 +181,10 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D21 - Joining an association of another space opens its content** to that member.
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces
-  is validated by the BDE of the ORIGIN association, once.
+  is validated by the BDE of the ORIGIN association, once. **AMENDED by WP-D1 (2026-11-03): a space's
+  governor may be an institution (it answers for the agenda and manages nothing), designating one no
+  longer writes an audience rule, and every change is journaled**
+  ([reform 2.8](spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner)).
 - **D23 - Moderation stays GLOBAL** (reports, hide, mute), as today. **AMENDED 2026-11-02 (owner):
   a BDE's `MODERATE` is SCOPED to the spaces it governs, and editing another person's post is nobody's
   power** - read [D23 amended](#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).

@@ -1,3 +1,4 @@
+import type { SpacesService } from '../spaces/spaces.service';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
@@ -57,6 +58,8 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
       ),
     };
     const productsService = { provisionCotisationProduct: jest.fn(() => Promise.resolve()) };
+    // The governing parent is a dependency (WP-D1): a platform admin's change goes through it.
+    const spaces = { setParent: jest.fn(() => Promise.resolve()) };
     const guard = new GlobalAdminOrAssociationRoleGuard(
       new Reflector(),
       service as unknown as AssociationsService
@@ -75,9 +78,10 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
-      {} as never
+      {} as never,
+      spaces as unknown as SpacesService
     );
-    return { guard, context, controller, service };
+    return { guard, context, controller, service, spaces };
   }
 
   /** The typed body of a refusal, so a test asserts the code, never the prose. */
@@ -165,24 +169,51 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
     expect(service.update).toHaveBeenCalled();
   });
 
-  it.each([
-    ['documentQuotaBytes', { documentQuotaBytes: 1 }],
-    ['parentAssociationId', { parentAssociationId: '00000000-0000-4000-8000-0000000000bb' }],
-  ])(
-    'refuses %s to every member, with a typed code, and lets the platform admin write it',
-    async (field, dto) => {
-      const all = Object.values(F)
-        .filter((v): v is number => typeof v === 'number')
-        .reduce((a, b) => a | b, 0);
-      const { controller, service } = harness(all);
-      const body = await refusal(controller.update(ASSO, 'member', undefined, dto));
-      expect(body).toMatchObject({ code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY, fields: [field] });
-      expect(service.update).not.toHaveBeenCalled();
+  /** Every flag a member could hold, so a refusal is about the field and never a missing flag. */
+  const ALL = Object.values(F)
+    .filter((v): v is number => typeof v === 'number')
+    .reduce((a, b) => a | b, 0);
 
-      await controller.update(ASSO, 'admin', 'true', dto);
-      expect(service.update).toHaveBeenCalledWith(ASSO, dto);
-    }
-  );
+  it('refuses documentQuotaBytes to every member, with a typed code, and lets the platform admin write it', async () => {
+    const dto = { documentQuotaBytes: 1 };
+    const { controller, service } = harness(ALL);
+    const body = await refusal(controller.update(ASSO, 'member', undefined, dto));
+    expect(body).toMatchObject({
+      code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+      fields: ['documentQuotaBytes'],
+    });
+    expect(service.update).not.toHaveBeenCalled();
+
+    await controller.update(ASSO, 'admin', 'true', dto);
+    expect(service.update).toHaveBeenCalledWith(ASSO, dto);
+  });
+
+  it('refuses parentAssociationId to every member, and sends a platform admin change to the dependency (2.7)', async () => {
+    const dto = { parentAssociationId: '00000000-0000-4000-8000-0000000000bb' };
+    const { controller, service, spaces } = harness(ALL);
+    const body = await refusal(controller.update(ASSO, 'member', undefined, dto));
+    expect(body).toMatchObject({
+      code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+      fields: ['parentAssociationId'],
+    });
+    expect(spaces.setParent).not.toHaveBeenCalled();
+
+    // Judged and journaled as a dependency, never written by the profile update.
+    await controller.update(ASSO, 'admin', 'true', dto);
+    expect(spaces.setParent).toHaveBeenCalledWith(ASSO, dto.parentAssociationId, {
+      userId: 'admin',
+    });
+    expect(service.update).not.toHaveBeenCalled();
+  });
+
+  it('splits a platform admin body: the parent to the dependency, the rest to the profile', async () => {
+    const { controller, service, spaces } = harness(0);
+    // mayAct answers true for every flag to a platform admin.
+    service.mayAct.mockResolvedValue(true);
+    await controller.update(ASSO, 'admin', 'true', { name: 'Liste', parentAssociationId: null });
+    expect(spaces.setParent).toHaveBeenCalledWith(ASSO, null, { userId: 'admin' });
+    expect(service.update).toHaveBeenCalledWith(ASSO, { name: 'Liste' });
+  });
 
   /**
    * LEGACY until 2027-05-03: a store build up to 1.6.2 resends `parentAssociationId: editParentId ||

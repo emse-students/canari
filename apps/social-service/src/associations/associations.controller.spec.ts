@@ -46,6 +46,7 @@ describe('AssociationsController cotisation config gating (D5)', () => {
       followsService as FollowsService,
       userTagService as UserTagService,
       userProfileService as UserProfileService,
+      {} as never,
       {} as never
     );
 
@@ -152,6 +153,7 @@ describe('AssociationsController cotisation options capability', () => {
       {} as FollowsService,
       userTagService as unknown as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
 
@@ -207,6 +209,7 @@ describe('AssociationsController response shape', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
   }
@@ -334,6 +337,7 @@ describe('AssociationsController payout account read', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -386,6 +390,7 @@ describe('AssociationsController directory scope (D37)', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -475,6 +480,7 @@ describe('AssociationsController delete tier', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -500,7 +506,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'user-42', undefined);
 
     expect(service.isAssociationSuperAdminOf).toHaveBeenCalledWith('user-42', 'asso1');
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42', false);
   });
 
   it('refuses MANAGE_ASSO in the BDE of a space the association does not reach', async () => {
@@ -518,7 +524,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin', true);
   });
 
   // Owner, 2026-11-02: an institution is the global admin's to delete, as it is theirs to create.
@@ -539,7 +545,7 @@ describe('AssociationsController delete tier', () => {
 
     await controller.remove('asso1', 'user-42', undefined);
 
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42', false);
   });
 
   it('lets a global admin delete an institution', async () => {
@@ -548,7 +554,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.findById).not.toHaveBeenCalled();
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin', true);
   });
 });
 
@@ -586,6 +592,7 @@ describe('AssociationsController calendar event writes', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -682,6 +689,7 @@ describe('AssociationsController event verdicts and deposits (WP6c step 2)', () 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -784,6 +792,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
   }
@@ -1000,6 +1009,7 @@ describe('AssociationsController POST calendar/feed-signature (2026-10-06)', () 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     await expect(
@@ -1031,6 +1041,7 @@ describe('AssociationsController POST products/:productId/checkout - the free am
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     const warn = jest.spyOn((controller as any).logger, 'warn').mockImplementation(() => undefined);
@@ -1105,6 +1116,7 @@ describe('AssociationsController.listMembers and the review cohort', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };

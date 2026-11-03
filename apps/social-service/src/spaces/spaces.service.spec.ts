@@ -1,14 +1,28 @@
-import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
 import { HOLDS_BDE_FLAG_OVER_SQL } from './bde';
+import {
+  DEPENDENCY_CHILD_IS_A_BDE,
+  DEPENDENCY_INSTITUTION,
+  DEPENDENCY_LABEL_INVALID,
+  DEPENDENCY_PARENT_NOT_A_BDE,
+  SPACE_GOVERNOR_TYPE,
+} from './dependency-rules';
 
 const space = { formation: 'ICM', campus: 'saint-etienne' } as const;
 const ADMIN = { userId: 'admin-1', isGlobalAdmin: true };
 const STAR = { userId: 'star-1', isGlobalAdmin: false };
+const ACTOR = { userId: 'admin-1' };
 
 describe('ruleReachesSpace', () => {
   it('matches a pair exactly', () => {
@@ -88,18 +102,32 @@ describe('SpacesService', () => {
     governed?: Partial<Space>[];
     /** The campuses whose every space a BDE where the caller holds MANAGE_ASSO governs. */
     bdeCampuses?: string[];
+    /** Associations by id, when a test needs more than one (`setParent`). */
+    byId?: Record<string, Partial<Association>>;
+    /** What `spaces.count` answers: the spaces a former governor still governs. */
+    governedCount?: number;
+    /** What `associations.count` answers: the entities depending on a former governor. */
+    children?: number;
+    /** A failure of the write transaction (a trigger refusal). */
+    writeFails?: unknown;
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
     const save = jest.fn().mockImplementation(async (s: Partial<Space>) => s);
     const spaces = {
       findOne: jest.fn().mockResolvedValue(opts.space ?? null),
+      count: jest.fn().mockResolvedValue(opts.governedCount ?? 0),
       update,
       create: jest.fn().mockImplementation((s: Partial<Space>) => s),
       save,
       find: jest.fn().mockResolvedValue(opts.spaceRows ?? []),
     } as unknown as Repository<Space>;
     const associations = {
-      findOne: jest.fn().mockResolvedValue(opts.association ?? null),
+      findOne: jest
+        .fn()
+        .mockImplementation(async ({ where }: { where: { id: string } }) =>
+          opts.byId ? (opts.byId[where.id] ?? null) : (opts.association ?? null)
+        ),
+      count: jest.fn().mockResolvedValue(opts.children ?? 0),
       exists: jest.fn().mockResolvedValue(!!opts.association),
       find: jest.fn().mockResolvedValue([]),
     } as unknown as Repository<Association>;
@@ -110,6 +138,7 @@ describe('SpacesService', () => {
       delete: jest.fn(),
       insert: jest.fn(),
       update: jest.fn(),
+      query: jest.fn(),
       find: jest
         .fn()
         .mockImplementation(async (entity: unknown) =>
@@ -117,7 +146,10 @@ describe('SpacesService', () => {
         ),
     };
     const dataSource = {
-      transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => cb(manager)),
+      transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => {
+        if (opts.writeFails) throw opts.writeFails;
+        return cb(manager);
+      }),
       // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`. The
       // management predicate (does the star govern THIS entity) answers from the same campuses: a
       // rule of the entity on one of them reaches a governed space.
@@ -148,58 +180,289 @@ describe('SpacesService', () => {
     };
   }
 
-  it('refuses a list as a BDE and an unknown space or association', async () => {
-    await expect(make({}).service.setBde('s', null)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(make({ space: { id: 's' } }).service.setBde('s', 'a')).rejects.toBeInstanceOf(
+  /** The typed `code` a refused promise carries, or null when it resolved. */
+  const codeOf = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return (e as { getResponse: () => { code: string } }).getResponse().code;
+    }
+    return null;
+  };
+
+  it('refuses a list as a governor and an unknown space or association', async () => {
+    await expect(make({}).service.setBde('s', null, ACTOR)).rejects.toBeInstanceOf(
       NotFoundException
     );
     await expect(
-      make({ space: { id: 's' }, association: { id: 'a', type: 'list' } }).service.setBde('s', 'a')
-    ).rejects.toBeInstanceOf(BadRequestException);
+      make({ space: { id: 's' } }).service.setBde('s', 'a', ACTOR)
+    ).rejects.toBeInstanceOf(NotFoundException);
+    const list = make({ space: { id: 's' }, association: { id: 'a', type: 'list' } });
+    await expect(list.service.setBde('s', 'a', ACTOR)).rejects.toBeInstanceOf(BadRequestException);
+    expect(await codeOf(list.service.setBde('s', 'a', ACTOR))).toBe(SPACE_GOVERNOR_TYPE);
   });
 
-  it('designates and clears a BDE', async () => {
+  it('designates and clears a governor, journaling each change with its admin (2.7)', async () => {
     const { service, manager } = make({
-      space: { id: 's', formation: 'ICM', campus: 'saint-etienne' },
-      association: { id: 'a', type: 'association' },
+      space: { id: 's', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
+    });
+    await service.setBde('s', 'a', ACTOR);
+    expect(manager.update).toHaveBeenCalledWith(Space, { id: 's' }, { bdeAssociationId: 'a' });
+    expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('dependency_journal'), [
+      'space',
+      's',
+      null,
+      'a',
+      'admin-1',
+      'admin',
+    ]);
+    const cleared = make({ space: { id: 's', bdeAssociationId: 'a' } });
+    await cleared.service.setBde('s', null, ACTOR);
+    expect(cleared.manager.update).toHaveBeenCalledWith(
+      Space,
+      { id: 's' },
+      { bdeAssociationId: null }
+    );
+  });
+
+  it('lets an INSTITUTION govern a space (D3, closes P10)', async () => {
+    const { service, manager } = make({
+      space: { id: 's', formation: 'PDIS', campus: 'gardanne', bdeAssociationId: null },
+      association: { id: 'school', type: 'institution', parentAssociationId: null },
+    });
+    await service.setBde('s', 'school', ACTOR);
+    expect(manager.update).toHaveBeenCalledWith(Space, { id: 's' }, { bdeAssociationId: 'school' });
+  });
+
+  it('refuses a governor that depends on a BDE (DEPENDENCY_CHILD_IS_A_BDE)', async () => {
+    const { service, manager } = make({
+      space: { id: 's', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: 'bde' },
+    });
+    expect(await codeOf(service.setBde('s', 'a', ACTOR))).toBe(DEPENDENCY_CHILD_IS_A_BDE);
+    expect(manager.update).not.toHaveBeenCalled();
+  });
+
+  it('writes no rule when designating: governance and audience are decoupled (2.5)', async () => {
+    const { service, manager } = make({
+      space: { id: 's', formation: 'ICM', campus: 'gardanne', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
       rules: [{ associationId: 'a', formation: 'ICM', campus: 'saint-etienne' }],
     });
-    await service.setBde('s', 'a');
-    expect(manager.update).toHaveBeenCalledWith(Space, { id: 's' }, { bdeAssociationId: 'a' });
-    await service.setBde('s', null);
-    expect(manager.update).toHaveBeenLastCalledWith(Space, { id: 's' }, { bdeAssociationId: null });
+    await service.setBde('s', 'a', ACTOR);
+    expect(manager.insert).not.toHaveBeenCalled();
   });
 
-  it('lets one association be the BDE of several spaces', async () => {
+  it('writes nothing, journal included, when the governor is unchanged', async () => {
     const { service, manager } = make({
-      space: { id: 's' },
-      association: { id: 'a', type: 'association' },
-      rules: [{ associationId: 'a', formation: null, campus: null }],
+      space: { id: 's', bdeAssociationId: 'a' },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
     });
-    await service.setBde('s1', 'a');
-    await service.setBde('s2', 'a');
+    await service.setBde('s', 'a', ACTOR);
+    expect(manager.update).not.toHaveBeenCalled();
+    expect(manager.query).not.toHaveBeenCalled();
+  });
+
+  it('allows removing the last space of a BDE with children, and accuses it at WARN', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, manager } = make({
+      space: { id: 's', formation: 'ICM', campus: 'gardanne', bdeAssociationId: 'old' },
+      governedCount: 0,
+      children: 3,
+    });
+    await service.setBde('s', null, ACTOR);
+    expect(manager.update).toHaveBeenCalledWith(Space, { id: 's' }, { bdeAssociationId: null });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('governs no space any more'));
+    warn.mockRestore();
+  });
+
+  it('turns a trigger refusal into the same typed 409, and lets any other error through', async () => {
+    const raced = make({
+      space: { id: 's', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
+      writeFails: { code: '23514', constraint: DEPENDENCY_CHILD_IS_A_BDE },
+    });
+    const refused = raced.service.setBde('s', 'a', ACTOR);
+    await expect(refused).rejects.toBeInstanceOf(ConflictException);
+    expect(await codeOf(raced.service.setBde('s', 'a', ACTOR))).toBe(DEPENDENCY_CHILD_IS_A_BDE);
+    const other = make({
+      space: { id: 's', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
+      writeFails: new Error('connection reset'),
+    });
+    await expect(other.service.setBde('s', 'a', ACTOR)).rejects.toThrow('connection reset');
+  });
+
+  it('lets one association be the governor of several spaces', async () => {
+    const { service, manager } = make({
+      space: { id: 's', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
+    });
+    await service.setBde('s1', 'a', ACTOR);
+    await service.setBde('s2', 'a', ACTOR);
     expect(manager.update).toHaveBeenCalledTimes(2);
   });
 
-  it('adds the reach when the new BDE did not cover its space, and only then', async () => {
-    const uncovered = make({
-      space: { id: 's', formation: 'ICM', campus: 'gardanne' },
-      association: { id: 'a', type: 'association' },
-      rules: [{ associationId: 'a', formation: 'ICM', campus: 'saint-etienne' }],
+  describe('setParent - the governing parent (2.2, 2.7)', () => {
+    const BDE = { id: 'bde', type: 'association' as const, parentAssociationId: null };
+    const CLUB = {
+      id: 'club',
+      type: 'association' as const,
+      parentAssociationId: null,
+      displayParentAssociationId: null,
+    };
+    /** `governing`: the ids the spaces table names as governors. */
+    const withParents = (
+      byId: Record<string, Partial<Association>>,
+      governing: string[],
+      extra: Parameters<typeof make>[0] = {}
+    ) => {
+      const made = make({ byId, ...extra });
+      (made.service as unknown as { spaces: { find: jest.Mock } }).spaces.find = jest
+        .fn()
+        .mockResolvedValue(governing.map((id) => ({ bdeAssociationId: id })));
+      return made;
+    };
+
+    it('sets a BDE as parent and journals it with the admin', async () => {
+      const { service, manager } = withParents({ bde: BDE, club: CLUB }, ['bde']);
+      await service.setParent('club', 'bde', ACTOR);
+      expect(manager.update).toHaveBeenCalledWith(
+        expect.anything(),
+        { id: 'club' },
+        { parentAssociationId: 'bde' }
+      );
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('dependency_journal'), [
+        'entity',
+        'club',
+        null,
+        'bde',
+        'admin-1',
+        'admin',
+      ]);
     });
-    await uncovered.service.setBde('s', 'a');
-    expect(uncovered.manager.insert).toHaveBeenCalledWith(AssociationAudience, {
-      associationId: 'a',
-      formation: 'ICM',
-      campus: 'gardanne',
+
+    it.each([
+      [
+        'an institution as child',
+        { club: { ...CLUB, type: 'institution' as const } },
+        ['bde'],
+        DEPENDENCY_INSTITUTION,
+      ],
+      ['a BDE as child', {}, ['bde', 'club'], DEPENDENCY_CHILD_IS_A_BDE],
+      ['a parent governing nothing', {}, [], DEPENDENCY_PARENT_NOT_A_BDE],
+      [
+        'an institution governing a space as parent',
+        { bde: { ...BDE, type: 'institution' as const } },
+        ['bde'],
+        DEPENDENCY_PARENT_NOT_A_BDE,
+      ],
+    ])('refuses %s, typed, before any write', async (_label, over, governing, code) => {
+      const { service, manager } = withParents({ bde: BDE, club: CLUB, ...over }, governing);
+      expect(await codeOf(service.setParent('club', 'bde', ACTOR))).toBe(code);
+      expect(manager.update).not.toHaveBeenCalled();
     });
-    const covered = make({
-      space: { id: 's', formation: 'ICM', campus: 'gardanne' },
-      association: { id: 'a', type: 'association' },
-      rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
+
+    // F4: an older client resending the parent it read, or a label-only edit, must not be judged on
+    // a state it did not create - a row the triggers would refuse today (here: a parent governing
+    // nothing) is left as it is, with no 409.
+    it('judges only a change: an unchanged parent is never refused, a label-only edit goes through', async () => {
+      const stale = { ...CLUB, parentAssociationId: 'bds' };
+      const bds = { id: 'bds', type: 'association' as const, parentAssociationId: null };
+      const same = withParents({ bds, club: stale }, []);
+      await expect(same.service.setParent('club', 'bds', ACTOR)).resolves.toBeUndefined();
+      expect(same.manager.update).not.toHaveBeenCalled();
+
+      const label = withParents({ bds, club: stale }, []);
+      await label.service.setParent('club', 'bds', ACTOR, 'bds');
+      expect(label.manager.update).toHaveBeenCalledWith(
+        expect.anything(),
+        { id: 'club' },
+        { displayParentAssociationId: 'bds' }
+      );
+
+      const moved = withParents({ bds, club: stale }, []);
+      expect(await codeOf(moved.service.setParent('club', null, ACTOR))).toBeNull();
+      const toNothing = withParents({ bds, club: { ...CLUB } }, []);
+      expect(await codeOf(toNothing.service.setParent('club', 'bds', ACTOR))).toBe(
+        DEPENDENCY_PARENT_NOT_A_BDE
+      );
     });
-    await covered.service.setBde('s', 'a');
-    expect(covered.manager.insert).not.toHaveBeenCalled();
+
+    it('clears a parent, and writes nothing when nothing changes', async () => {
+      const set = withParents({ club: { ...CLUB, parentAssociationId: 'bde' } }, ['bde']);
+      await set.service.setParent('club', null, ACTOR);
+      expect(set.manager.update).toHaveBeenCalledWith(
+        expect.anything(),
+        { id: 'club' },
+        { parentAssociationId: null }
+      );
+      const same = withParents({ bde: BDE, club: { ...CLUB, parentAssociationId: 'bde' } }, [
+        'bde',
+      ]);
+      await same.service.setParent('club', 'bde', ACTOR);
+      expect(same.manager.update).not.toHaveBeenCalled();
+      expect(same.manager.query).not.toHaveBeenCalled();
+    });
+
+    it('sets the G3 label, journaled as a label line, and refuses an invalid one', async () => {
+      const bds = { id: 'bds', type: 'association' as const, parentAssociationId: 'bde' };
+      const { service, manager } = withParents(
+        { bde: BDE, bds, club: { ...CLUB, parentAssociationId: 'bde' } },
+        ['bde']
+      );
+      await service.setParent('club', 'bde', ACTOR, 'bds');
+      expect(manager.update).toHaveBeenCalledWith(
+        expect.anything(),
+        { id: 'club' },
+        { displayParentAssociationId: 'bds' }
+      );
+      expect(manager.query).toHaveBeenCalledTimes(1);
+      expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('dependency_journal'), [
+        'label',
+        'club',
+        null,
+        'bds',
+        'admin-1',
+        'admin',
+      ]);
+      expect(await codeOf(service.setParent('club', 'bde', ACTOR, 'club'))).toBe(
+        DEPENDENCY_LABEL_INVALID
+      );
+      expect(await codeOf(service.setParent('club', 'bde', ACTOR, 'nobody'))).toBe(
+        DEPENDENCY_LABEL_INVALID
+      );
+    });
+  });
+
+  it('lists every entity with its parent and its mismatches (2.5)', async () => {
+    const { service } = make({
+      spaceRows: [
+        { id: 'se-icm', formation: 'ICM', campus: 'saint-etienne', bdeAssociationId: 'bde' },
+        { id: 'se-fsss', formation: 'FSSS', campus: 'saint-etienne', bdeAssociationId: 'fsss' },
+      ],
+      rules: [
+        { associationId: 'inside', formation: 'ICM', campus: 'saint-etienne' },
+        { associationId: 'wide', formation: null, campus: 'saint-etienne' },
+      ],
+    });
+    (service as unknown as { associations: { find: jest.Mock } }).associations.find = jest
+      .fn()
+      .mockResolvedValue([
+        { id: 'bde', name: 'BDE', type: 'association', parentAssociationId: null },
+        { id: 'fsss', name: 'FSSS', type: 'association', parentAssociationId: null },
+        { id: 'inside', name: 'In', type: 'association', parentAssociationId: 'bde' },
+        { id: 'wide', name: 'Wide', type: 'association', parentAssociationId: 'bde' },
+        { id: 'orphan', name: 'Orphan', type: 'list', parentAssociationId: 'gone' },
+        { id: 'free', name: 'Free', type: 'list', parentAssociationId: null },
+      ]);
+    const views = new Map((await service.listDependencies()).map((v) => [v.id, v]));
+    expect(views.get('bde')).toMatchObject({ governs: true, mismatches: [] });
+    expect(views.get('inside')?.mismatches).toEqual([]);
+    expect(views.get('wide')?.mismatches).toEqual(['reaches_outside_parent']);
+    expect(views.get('orphan')?.mismatches).toEqual(['parent_missing']);
+    expect(views.get('free')).toMatchObject({ governs: false, mismatches: [] });
   });
 
   it('lists every space with its BDE', async () => {
@@ -248,17 +511,16 @@ describe('SpacesService', () => {
     expect(manager.insert).not.toHaveBeenCalled();
   });
 
-  it('puts back the pair an association governs as BDE, whatever is submitted', async () => {
+  it('stores what is submitted, never adding back the spaces it governs (2.5, WP-D1)', async () => {
     const { service, manager } = make({
       association: { id: 'a' },
       governed: [{ id: 's', formation: 'ICM', campus: 'gardanne' }],
     });
     const saved = await service.setAudiences('a', [{ campus: 'saint-etienne' }], ADMIN);
-    expect(saved).toEqual([
-      { formation: null, campus: 'saint-etienne', editable: true },
-      { formation: 'ICM', campus: 'gardanne', editable: true },
+    expect(saved).toEqual([{ formation: null, campus: 'saint-etienne', editable: true }]);
+    expect(manager.insert).toHaveBeenCalledWith(expect.anything(), [
+      { associationId: 'a', formation: null, campus: 'saint-etienne' },
     ]);
-    expect(manager.insert).toHaveBeenCalled();
   });
 
   it('drops every cached feed page when who an association reaches changes (WP6b)', async () => {
@@ -269,10 +531,10 @@ describe('SpacesService', () => {
     expect(rules.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
 
     const bde = make({
-      space: { id: 's', formation: 'ICM', campus: 'gardanne' },
-      association: { id: 'a', type: 'association' },
+      space: { id: 's', formation: 'ICM', campus: 'gardanne', bdeAssociationId: null },
+      association: { id: 'a', type: 'association', parentAssociationId: null },
     });
-    await bde.service.setBde('s', 'a');
+    await bde.service.setBde('s', 'a', ACTOR);
     expect(bde.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
   });
 

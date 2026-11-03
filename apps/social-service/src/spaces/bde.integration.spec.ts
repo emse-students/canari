@@ -19,6 +19,7 @@ import { Client } from 'pg';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
   ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
+  BDE_SPACE_STANDINGS_SQL,
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
   BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
   HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
@@ -278,6 +279,48 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
       'clubSe',
       'school',
     ]);
+  });
+
+  it('an INSTITUTION governing a space (WP-D1, D3) answers for its agenda and manages nothing', async () => {
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FSSS'`,
+        [A.school]
+      );
+      await client.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'schoolStaff', $2)`,
+        [A.school, VALIDATE_EVENTS | MANAGE_ASSO]
+      );
+      const holds = async (sql: string, params: unknown[]) =>
+        (await client.query(sql, params)).rows[0].holds as boolean;
+      const fsssGoverned = async () =>
+        (
+          (await client.query(BDE_SPACE_STANDINGS_SQL, ['schoolStaff', MANAGE_ASSO])).rows as {
+            formation: string;
+            campus: string;
+            governed: boolean;
+          }[]
+        ).find((r) => r.formation === 'FSSS' && r.campus === 'saint-etienne')?.governed;
+
+      expect(await holds(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['schoolStaff', A.clubFsssSe])).toBe(
+        true
+      );
+      expect(await holds(HOLDS_BDE_FLAG_OVER_SQL, ['schoolStaff', A.clubFsssSe, MANAGE_ASSO])).toBe(
+        false
+      );
+      expect(await fsssGoverned()).toBe(false);
+
+      // The control: the SAME governor typed as an association manages it - the exclusion is the
+      // governor's type and nothing else.
+      await client.query(`UPDATE associations SET type = 'association' WHERE id = $1`, [A.school]);
+      expect(await holds(HOLDS_BDE_FLAG_OVER_SQL, ['schoolStaff', A.clubFsssSe, MANAGE_ASSO])).toBe(
+        true
+      );
+      expect(await fsssGoverned()).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   it('a space losing its BDE takes the power with it', async () => {

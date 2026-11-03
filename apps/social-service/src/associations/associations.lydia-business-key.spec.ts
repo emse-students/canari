@@ -275,6 +275,7 @@ describe('AssociationsController - the retired paste route and the status route'
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
