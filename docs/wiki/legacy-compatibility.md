@@ -345,6 +345,16 @@ tables (Android, the iOS app and its notification extension), the client row, `K
 host): no deep-link host exists for an association's edit section. The type names are shared through
 `libs/contracts/lydia-refusal-codes.json`.
 
+**Shipped UNSWITCHED, accepted on review (2026-11-03): `delegation_revoked`,
+`delegation_receiver_not_ready`, `delegation_resumed`**, the notices telling a list's `MANAGE_PRODUCTS`
+holders that its payment delegation paused or resumed its collection (owner review of #2967: "pause +
+notify", so they are not behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`). The floor rule's step 1 is met
+(`1.2.9`); steps 2-4 are done in the same pull request (the push opens the `notifications` host, the
+three native tables, the `forms` push category, the row opening the list's delegation section). A
+client older than the release carrying them draws the neutral unknown-type row and the push's French
+legacy sentence - the same degraded display accepted for the bookings' four
+([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
+
 **Built and waiting on its floor (2026-10-31): `lydia_cashier_added`**, the bell row telling a member
 they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It ships behind
 `LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);

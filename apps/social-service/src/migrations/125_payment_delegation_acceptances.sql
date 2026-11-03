@@ -1,4 +1,4 @@
--- Migration 124: payment_delegation_acceptances - who accepted each payment delegation, and when
+-- Migration 125: payment_delegation_acceptances - who accepted each payment delegation, and when
 -- (owner, 2026-11-02; docs/wiki/frontend/modules/payments.md "Payment delegation").
 --
 -- A list collects only through a payment delegation to an association that ACCEPTS it, and only the
@@ -10,6 +10,10 @@
 --
 -- `acceptedAs`: `member` (the receiver's own MANAGE_PRODUCTS holder) or `platform-admin`.
 -- `acceptedAt`: the database clock.
+-- `accepterGoverningSuperAdmin`: whether the accepter ALSO governed the receiver as a BDE
+-- super-admin at that moment. A super-admin may grant itself `MANAGE_PRODUCTS` on the receiver and
+-- then accept as a `member`; a member row keeps no provenance of who granted its bits, so the
+-- acceptance records the standing instead (owner review of #2967, 2026-11-03).
 --
 -- Personal data: the accepting manager's account id. Art. 30 register entry C8 (associations, cotisations, forms,
 -- payments), kept as long as the delegation's accounting; anonymised at account erasure
@@ -34,7 +38,8 @@ CREATE TABLE IF NOT EXISTS payment_delegation_acceptances (
     "acceptedByUserId"    varchar(255) NOT NULL,
     "acceptedAs"          varchar(20) NOT NULL
         CHECK ("acceptedAs" IN ('member', 'platform-admin')),
-    "acceptedAt"          timestamptz NOT NULL DEFAULT now()
+    "acceptedAt"          timestamptz NOT NULL DEFAULT now(),
+    "accepterGoverningSuperAdmin" boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX IF NOT EXISTS "IDX_payment_delegation_acceptances_child"

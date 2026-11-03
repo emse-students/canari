@@ -75,6 +75,9 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'coorganise_proposed':
     case 'lydia_payments_active':
     case 'lydia_payments_paused':
+    case 'delegation_revoked':
+    case 'delegation_receiver_not_ready':
+    case 'delegation_resumed':
       return null;
     // D38b: the author was asked to let an association carry a personal post. Their inbox is where
     // the answer is given; `postId` is the post, which the inbox row links to.
@@ -167,6 +170,9 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'lydia_payments_paused',
   'lydia_cashier_added',
   'lydia_refund_issued',
+  'delegation_revoked',
+  'delegation_receiver_not_ready',
+  'delegation_resumed',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */
@@ -200,6 +206,12 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   // An association's Lydia payments became active / were paused: its payments section.
   lydia_payments_active: 'payments',
   lydia_payments_paused: 'payments',
+  // An entity collecting through a payment delegation (a list) was paused or resumed: its
+  // delegation section, where it picks a receiver (`/associations/<slug>/edit` of a list forwards
+  // to the list route, section kept).
+  delegation_revoked: 'delegation',
+  delegation_receiver_not_ready: 'delegation',
+  delegation_resumed: 'delegation',
 };
 
 /**

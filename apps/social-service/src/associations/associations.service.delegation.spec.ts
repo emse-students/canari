@@ -228,30 +228,48 @@ describe('AssociationsService payment delegation', () => {
   // Approve, reject, revoke and cancel run in a transaction with row locks, the product pause and
   // the acceptance record: proven against PostgreSQL in `payment-delegation.integration.spec.ts`.
 
-  describe('assertIsApprovedParentOf', () => {
-    it('returns the child when it delegates to this parent and is approved', async () => {
+  // Owner review of #2967 (2026-11-03): a receiver reads a child's accounting while approved, and
+  // after the delegation ended the payments ITS Business took - never anything else.
+  describe('childAccountingScope', () => {
+    const withTaken = (service: AssociationsService, taken: string[]) => {
+      const repo = (service as unknown as { assoRepo: { manager: Record<string, unknown> } })
+        .assoRepo;
+      const query = jest.fn(async () => taken.map((id) => ({ id })));
+      repo.manager.query = query;
+      return query;
+    };
+
+    it('reads everything while the delegation to this parent is approved', async () => {
       const { service } = makeService({
+        parent: { lydiaAccountId: 'vendor-p' },
         club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' },
       });
-      await expect(service.assertIsApprovedParentOf('parent', 'club')).resolves.toMatchObject({
-        id: 'club',
+      const query = withTaken(service, []);
+      await expect(service.childAccountingScope('parent', 'club')).resolves.toEqual({
+        onlyRecordIds: null,
       });
+      expect(query).not.toHaveBeenCalled();
     });
 
-    it('rejects when the delegation is only pending', async () => {
+    it('after a revoke, reads only the payments its Business took', async () => {
       const { service } = makeService({
-        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
-      });
-      await expect(service.assertIsApprovedParentOf('parent', 'club')).rejects.toThrow(
-        ForbiddenException
-      );
-    });
-
-    it('rejects when the child delegates to a different parent', async () => {
-      const { service } = makeService({
+        parent: { lydiaAccountId: 'vendor-p' },
         club: { paymentParentAssociationId: 'other', paymentDelegationStatus: 'approved' },
       });
-      await expect(service.assertIsApprovedParentOf('parent', 'club')).rejects.toThrow(
+      const query = withTaken(service, ['p1', 'p2']);
+      await expect(service.childAccountingScope('parent', 'club')).resolves.toEqual({
+        onlyRecordIds: ['p1', 'p2'],
+      });
+      expect(query.mock.calls[0]).toEqual([expect.any(String), ['club', 'vendor-p']]);
+    });
+
+    it('refuses a parent that is not approved and took nothing (a pending request included)', async () => {
+      const { service } = makeService({
+        parent: { lydiaAccountId: 'vendor-p' },
+        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
+      });
+      withTaken(service, []);
+      await expect(service.childAccountingScope('parent', 'club')).rejects.toThrow(
         ForbiddenException
       );
     });

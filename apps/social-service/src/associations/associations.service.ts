@@ -69,8 +69,15 @@ import {
   paymentsNotReady,
   type LydiaReadinessCause,
 } from './lydia-readiness';
-import { approvedDelegateIds } from './payment-delegation.util';
 import {
+  approvedDelegateIds,
+  holdsOwnAccount,
+  purchaseIdsTakenBy,
+  releaseWithheldProductsOf,
+  withholdOnSaleProductsOf,
+} from './payment-delegation.util';
+import {
+  type DelegationNotice,
   LYDIA_PAYMENTS_PAUSED_TYPE,
   LydiaPaymentsNotifier,
 } from './lydia-payments-notifier.service';
@@ -403,7 +410,14 @@ function lydiaBusinessKeyContext(associationId: string, vendorToken: string): st
  */
 export const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY';
 
-/** In which capacity a delegation was accepted - the `acceptedAs` of migration 124. */
+/**
+ * The typed 403 refusing a payment-delegation REJECT or REVOKE on the receiver's side by anyone but
+ * its own shop managers or the platform administrator - the same rule as acceptance (owner review
+ * of #2967, 2026-11-03). The list itself still cancels its own delegation through its own managers.
+ */
+export const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
+
+/** In which capacity a delegation was accepted - the `acceptedAs` of migration 125. */
 export type DelegationAcceptor = 'member' | 'platform-admin';
 
 @Injectable()
@@ -3394,7 +3408,9 @@ ${rejectionReason}`
    * An UNSIGNED `webhook-validated` never clears a holder Lydia itself reported (`request-refused`,
    * `request-blocked`): that is the global admin's `admin` call alone (`held-by-lydia`, a WARN).
    *
-   * Going to true, releasing is the CALLER's (`ProductsService.markLydiaReady`). Only a transition
+   * Going to true, the SAME transaction releases the withheld products of the holder (when it
+   * collects on its own account) and of its approved delegates (`releaseWithheldProductsOf`), a
+   * replay included, so a commit never leaves one withheld. Only a transition
    * logs loudly and notifies the payout managers; a replay is a debug line. No holder, or two
    * (refused, never guessed), writes nothing; no holder for the token a pending `business/create` answered (`lydiaEnrolmentVendorToken`) is
    * `no-holder-enrolment-in-flight`, which the webhook route answers 503 so Lydia retries.
@@ -3415,6 +3431,9 @@ ${rejectionReason}`
       ready: boolean;
       cause: LydiaReadinessCause | null;
       at: Date | string | null;
+      type: Association['type'];
+      paymentDelegationStatus: Association['paymentDelegationStatus'];
+      paymentParentAssociationId: string | null;
     };
     type Step =
       | { kind: 'none'; inFlight: boolean }
@@ -3426,11 +3445,15 @@ ${rejectionReason}`
           causeRefreshed: boolean;
           withheld: number;
           admins: number;
+          /** Per approved delegate, what was withheld (going not ready) or released (ready). */
+          delegatesWithheld: Map<string, number>;
+          delegatesReleased: Map<string, number>;
         };
     const step: Step = await this.assoRepo.manager.transaction(async (manager): Promise<Step> => {
       const holders: Holder[] = await manager.query(
         `SELECT id, name, "lydiaOnboardingComplete" AS ready, "lydiaReadinessCause" AS cause,
-                "lydiaReadinessAt" AS at
+                "lydiaReadinessAt" AS at, type, "paymentDelegationStatus",
+                "paymentParentAssociationId"
            FROM associations WHERE "lydiaAccountId" = $1 FOR UPDATE`,
         [vendorToken]
       );
@@ -3486,17 +3509,43 @@ ${rejectionReason}`
       }
       let withheld = 0;
       let admins = 0;
+      let delegatesWithheld = new Map<string, number>();
+      let delegatesReleased = new Map<string, number>();
+      const delegateIds = await approvedDelegateIds(manager, holder.id);
       if (transitioned && !ready) {
-        const ids = [holder.id, ...(await approvedDelegateIds(manager, holder.id))];
-        const res = await manager.update(
-          AssociationProduct,
-          { associationId: In(ids), isActive: true },
-          { isActive: false, activationWithheld: true }
-        );
-        withheld = res.affected ?? 0;
+        const byId = await withholdOnSaleProductsOf(manager, [holder.id, ...delegateIds]);
+        withheld = [...byId.values()].reduce((sum, n) => sum + n, 0);
+        delegatesWithheld = new Map([...byId].filter(([id]) => id !== holder.id));
         admins = await this.reportRevertToGlobalAdmins(manager, holder, cause, where);
       }
-      return { kind: 'done', holder, transitioned, causeRefreshed, withheld, admins };
+      if (ready) {
+        // The release is the SAME transaction as the readiness (owner review of #2967): a commit
+        // never leaves a product withheld. The holder's own products only when it collects on its
+        // own account (it does not itself delegate); every approved delegate's, which route here.
+        const selfRouted = holdsOwnAccount(holder.type) && !isDelegating(holder);
+        const byId = await releaseWithheldProductsOf(manager, [
+          ...(selfRouted ? [holder.id] : []),
+          ...delegateIds,
+        ]);
+        delegatesReleased = new Map([...byId].filter(([id]) => id !== holder.id));
+        const released = [...byId.values()].reduce((sum, n) => sum + n, 0);
+        if (released > 0) {
+          this.logger.log(
+            `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} ready: ${released} ` +
+              `withheld product(s) released with it (${delegatesReleased.size} delegate(s))`
+          );
+        }
+      }
+      return {
+        kind: 'done',
+        holder,
+        transitioned,
+        causeRefreshed,
+        withheld,
+        admins,
+        delegatesWithheld,
+        delegatesReleased,
+      };
     });
     if (step.kind === 'none') {
       return { kind: step.inFlight ? 'no-holder-enrolment-in-flight' : 'no-holder' };
@@ -3512,7 +3561,11 @@ ${rejectionReason}`
       );
       return { kind: 'held-by-lydia', ...previous };
     }
-    const { transitioned, causeRefreshed, withheld, admins } = step;
+    const { transitioned, causeRefreshed, withheld, admins, delegatesWithheld, delegatesReleased } =
+      step;
+    // Those who collect THROUGH this holder (a list paid by delegation) are told only when
+    // something of theirs was actually released - a replay can release what an earlier crash left.
+    await this.tellDelegates(delegatesReleased, 'resumed', 'receiver ready');
     if (!transitioned) {
       this.logger.debug(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} already ready=${ready} - replay ` +
@@ -3555,12 +3608,12 @@ ${rejectionReason}`
           `be written: ${err instanceof Error ? err.message : String(err)}`
       );
     }
-    // Those who collect THROUGH this holder (a list paid by delegation) are paused or resumed with
-    // it, so their own shop managers are told too (owner, 2026-11-02).
-    await this.tellDelegatesOf(
-      holder.id,
-      ready ? 'active' : 'paused',
-      `receiver readiness ${ready ? 'restored' : 'reverted'}`
+    // Those who collect THROUGH this holder are paused with it, and told when something of theirs
+    // was actually withheld (owner, 2026-11-02).
+    await this.tellDelegates(
+      delegatesWithheld,
+      'receiver-not-ready',
+      'receiver readiness reverted'
     );
     return { kind: 'transitioned', ...previous };
   }
@@ -4197,21 +4250,23 @@ ${rejectionReason}`
     // delegates' (a list paid through it among them) are withheld exactly as a readiness revert
     // withholds them (`setLydiaReadiness`), and the same release puts them back once a Business is
     // linked and validated again - or, for a delegate, once another receiver accepts it.
-    const { delegates, withheld } = await this.assoRepo.manager.transaction(async (manager) => {
-      await this.lockAssociation(manager, id);
-      await manager.update(Association, id, {
-        lydiaAccountId: null,
-        lydiaOnboardingComplete: false,
-        lydiaDashboardUrl: null,
-      });
-      const delegateIds = await approvedDelegateIds(manager, id);
-      const res = await manager.update(
-        AssociationProduct,
-        { associationId: In([id, ...delegateIds]), isActive: true },
-        { isActive: false, activationWithheld: true }
-      );
-      return { delegates: delegateIds, withheld: res.affected ?? 0 };
-    });
+    const { delegates, withheld, byId } = await this.assoRepo.manager.transaction(
+      async (manager) => {
+        await this.lockAssociation(manager, id);
+        await manager.update(Association, id, {
+          lydiaAccountId: null,
+          lydiaOnboardingComplete: false,
+          lydiaDashboardUrl: null,
+        });
+        const delegateIds = await approvedDelegateIds(manager, id);
+        const counts = await withholdOnSaleProductsOf(manager, [id, ...delegateIds]);
+        return {
+          delegates: delegateIds,
+          withheld: [...counts.values()].reduce((sum, n) => sum + n, 0),
+          byId: counts,
+        };
+      }
+    );
     this.logger.warn(
       `[AUDIT] Lydia Business unlinked from association ${sanitizeLog(id)}: ${withheld} on-sale ` +
         `product(s) of it and its ${delegates.length} approved delegate(s) withheld`
@@ -4238,9 +4293,11 @@ ${rejectionReason}`
       [id]
     );
     await this.invalidatePostListCaches();
-    if (delegates.length > 0) {
-      await this.tellCollectionManagers(delegates, 'paused', 'receiver Lydia unlinked');
-    }
+    await this.tellDelegates(
+      new Map([...byId].filter(([key]) => key !== id)),
+      'receiver-not-ready',
+      'receiver Lydia unlinked'
+    );
   }
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
@@ -4605,7 +4662,15 @@ ${rejectionReason}`
    * platform administrator - never a BDE governing the receiver, whose Lydia account it is not
    * (`mayAct(..., { withoutGoverningBde: true })`); anyone else is `DELEGATION_ACCEPT_RECEIVER_ONLY`.
    * The acceptance is RECORDED in the same transaction that writes `approved`
-   * (`payment_delegation_acceptances`, migration 124): who, in which capacity, and when.
+   * (`payment_delegation_acceptances`, migration 125): who, in which capacity, when - and whether
+   * the accepter governed the receiver as a BDE super-admin at that moment
+   * (`accepterGoverningSuperAdmin`): a super-admin may grant itself `MANAGE_PRODUCTS` on the
+   * receiver and accept as a `member`, and the member row keeps no provenance of that grant, so the
+   * record carries the standing instead (owner review of #2967, 2026-11-03).
+   *
+   * The child's withheld products go back on sale in the SAME transaction
+   * (`releaseWithheldProductsOf`): the receiver is proven ready under its lock, so a commit never
+   * leaves them withheld; its shop managers are told when something was released.
    *
    * The receiver row is share-locked while its readiness is read, so a Lydia revert
    * (`setLydiaReadiness`, which locks it FOR UPDATE) either precedes the read - and the approval is
@@ -4616,17 +4681,7 @@ ${rejectionReason}`
     childId: string,
     actor: { userId: string; isGlobalAdmin: boolean }
   ) {
-    const asMember = await this.mayAct(
-      actor.userId,
-      parentAssociationId,
-      AssociationPermissionFlag.MANAGE_PRODUCTS,
-      { withoutGoverningBde: true }
-    );
-    const acceptedAs: DelegationAcceptor | null = asMember
-      ? 'member'
-      : actor.isGlobalAdmin
-        ? 'platform-admin'
-        : null;
+    const acceptedAs = await this.receiverActorRole(actor, parentAssociationId);
     if (!acceptedAs) {
       this.logger.warn(
         `[DELEGATION] acceptance refused: user ${actor.userId.slice(0, 8)} is neither a shop manager ` +
@@ -4637,7 +4692,14 @@ ${rejectionReason}`
         message: "Only the receiving association's own managers may accept a payment delegation",
       });
     }
-    await this.assoRepo.manager.transaction(async (manager) => {
+    const governing = await this.isAssociationSuperAdminOf(actor.userId, parentAssociationId);
+    if (governing && acceptedAs === 'member') {
+      this.logger.warn(
+        `[DELEGATION] acceptance by ${actor.userId.slice(0, 8)} as a member of receiver ` +
+          `${parentAssociationId.slice(0, 8)} who ALSO governs it as a BDE super-admin - recorded`
+      );
+    }
+    const released = await this.assoRepo.manager.transaction(async (manager) => {
       const parent = await manager.findOne(Association, {
         where: { id: parentAssociationId },
         lock: { mode: 'pessimistic_read' },
@@ -4672,17 +4734,21 @@ ${rejectionReason}`
       await manager.update(Association, childId, { paymentDelegationStatus: 'approved' });
       await manager.query(
         `INSERT INTO payment_delegation_acceptances
-           ("childAssociationId", "parentAssociationId", "acceptedByUserId", "acceptedAs")
-         VALUES ($1, $2, $3, $4)`,
-        [childId, parentAssociationId, actor.userId, acceptedAs]
+           ("childAssociationId", "parentAssociationId", "acceptedByUserId", "acceptedAs",
+            "accepterGoverningSuperAdmin")
+         VALUES ($1, $2, $3, $4, $5)`,
+        [childId, parentAssociationId, actor.userId, acceptedAs, governing]
       );
+      return (await releaseWithheldProductsOf(manager, [childId])).get(childId) ?? 0;
     });
     await this.invalidatePostListCaches();
     this.logger.log(
       `[AUDIT] payment delegation ACCEPTED: receiver=${parentAssociationId.slice(0, 8)} ` +
-        `child=${childId.slice(0, 8)} by user ${actor.userId.slice(0, 8)} as ${acceptedAs}`
+        `child=${childId.slice(0, 8)} by user ${actor.userId.slice(0, 8)} as ${acceptedAs}` +
+        `${governing ? ' (governing super-admin)' : ''}; ${released} withheld product(s) released`
     );
-    return { associationId: childId, status: 'approved' as const };
+    await this.tellDelegates(new Map([[childId, released]]), 'resumed', 'delegation accepted');
+    return { associationId: childId, status: 'approved' as const, released };
   }
 
   /**
@@ -4691,9 +4757,30 @@ ${rejectionReason}`
    * Revoking an APPROVED one PAUSES the child's collecting (owner, 2026-11-02): its on-sale
    * products are withheld in the same transaction (`activationWithheld`, the flag the release reads
    * back) when its own account cannot take over - always for a list - and its shop managers are
-   * told (`tellCollectionManagers`). A new accepted delegation releases them.
+   * told (`tellDelegates`) when something was actually withheld. A new accepted delegation
+   * releases them.
+   *
+   * WHO MAY (owner review of #2967, 2026-11-03): the same as acceptance - the receiver's OWN shop
+   * managers and the platform administrator, never a BDE governing the receiver; anyone else is
+   * `DELEGATION_REVOKE_RECEIVER_ONLY`. The child cancels its own link through
+   * `cancelPaymentDelegation`, behind its own managers.
    */
-  async rejectPaymentDelegation(parentAssociationId: string, childId: string) {
+  async rejectPaymentDelegation(
+    parentAssociationId: string,
+    childId: string,
+    actor: { userId: string; isGlobalAdmin: boolean }
+  ) {
+    const role = await this.receiverActorRole(actor, parentAssociationId);
+    if (!role) {
+      this.logger.warn(
+        `[DELEGATION] reject/revoke refused: user ${actor.userId.slice(0, 8)} is neither a shop ` +
+          `manager of receiver ${parentAssociationId.slice(0, 8)} nor the platform administrator`
+      );
+      throw new ForbiddenException({
+        code: DELEGATION_REVOKE_RECEIVER_ONLY,
+        message: "Only the receiving association's own managers may refuse or end a delegation",
+      });
+    }
     const { wasApproved, withheld } = await this.assoRepo.manager.transaction(async (manager) => {
       const child = await this.lockAssociation(manager, childId);
       if (child.paymentParentAssociationId !== parentAssociationId) {
@@ -4714,22 +4801,30 @@ ${rejectionReason}`
     await this.invalidatePostListCaches();
     this.logger.log(
       `[DELEGATION] ${wasApproved ? 'revoked' : 'rejected'} parent=${parentAssociationId.slice(0, 8)} ` +
-        `child=${childId.slice(0, 8)}, ${withheld} product(s) withheld`
+        `child=${childId.slice(0, 8)} by ${actor.userId.slice(0, 8)} as ${role}, ` +
+        `${withheld} product(s) withheld`
     );
-    if (wasApproved) await this.tellCollectionManagers([childId], 'paused', 'delegation revoked');
+    await this.tellDelegates(new Map([[childId, withheld]]), 'revoked', 'delegation revoked');
     return { associationId: childId, status: null };
   }
 
   /**
-   * After an acceptance and the release that follows it (composed by the controller: the products
-   * service depends on this one), tells the child's shop managers that it collects again. Logged
-   * either way, with what the release put back on sale.
+   * In which capacity `actor` acts for the RECEIVER of a delegation: `member` when its OWN bitmask
+   * holds `MANAGE_PRODUCTS` there (the governing BDE's tier dropped), `platform-admin`, or null.
+   * The one rule acceptance, reject and revoke share.
    */
-  async tellDelegationResumed(childId: string, released: number): Promise<void> {
-    this.logger.log(
-      `[DELEGATION] ${childId.slice(0, 8)} collects again: ${released} product(s) released`
+  private async receiverActorRole(
+    actor: { userId: string; isGlobalAdmin: boolean },
+    receiverId: string
+  ): Promise<DelegationAcceptor | null> {
+    const asMember = await this.mayAct(
+      actor.userId,
+      receiverId,
+      AssociationPermissionFlag.MANAGE_PRODUCTS,
+      { withoutGoverningBde: true }
     );
-    await this.tellCollectionManagers([childId], 'active', 'delegation accepted');
+    if (asMember) return 'member';
+    return actor.isGlobalAdmin ? 'platform-admin' : null;
   }
 
   /** Loads and locks (FOR UPDATE) one association row inside `manager`'s transaction; 404 when absent. */
@@ -4754,18 +4849,13 @@ ${rejectionReason}`
     child: Association,
     why: string
   ): Promise<number> {
-    if (child.lydiaOnboardingComplete && child.lydiaAccountId) {
+    if (holdsOwnAccount(child.type) && child.lydiaOnboardingComplete && child.lydiaAccountId) {
       this.logger.debug(
         `[DELEGATION] ${why}: ${child.id.slice(0, 8)} keeps selling on its own Lydia account`
       );
       return 0;
     }
-    const res = await manager.update(
-      AssociationProduct,
-      { associationId: child.id, isActive: true },
-      { isActive: false, activationWithheld: true }
-    );
-    const withheld = res.affected ?? 0;
+    const withheld = (await withholdOnSaleProductsOf(manager, [child.id])).get(child.id) ?? 0;
     this.logger.warn(
       `[DELEGATION] ${why}: ${child.type} ${child.id.slice(0, 8)} can no longer collect - ` +
         `${withheld} on-sale product(s) withheld`
@@ -4774,18 +4864,26 @@ ${rejectionReason}`
   }
 
   /**
-   * Tells the shop managers (`MANAGE_PRODUCTS`, their OWN bitmask) of each of `associationIds` that
-   * their payments were paused or became active again - the entities that collect through a
-   * delegation whose receiver revoked it, lost its Lydia account or got it back. Rides the managers'
-   * Lydia notice (`LydiaPaymentsNotifier`, and its switch). One `try` per entity: a notice that
-   * cannot be written is said at ERROR and never undoes the committed state.
+   * Tells the shop managers (`MANAGE_PRODUCTS`, their OWN bitmask) of each entity in `counts` -
+   * an entity collecting through a delegation - that it stopped collecting or collects again
+   * (`LydiaPaymentsNotifier.tellDelegation`, its own types, not behind the Lydia switch). ONLY an
+   * entity whose count is above 0 is told: nothing withheld or released is nothing to say (an
+   * association keeping its own account after a revoke, a replay that found nothing). One `try`
+   * per entity: a notice that cannot be written is said at ERROR and never undoes the committed
+   * state.
    */
-  private async tellCollectionManagers(
-    associationIds: readonly string[],
-    kind: 'active' | 'paused',
+  private async tellDelegates(
+    counts: ReadonlyMap<string, number>,
+    notice: DelegationNotice,
     why: string
   ): Promise<void> {
-    for (const id of associationIds) {
+    for (const [id, count] of counts) {
+      if (count <= 0) {
+        this.logger.debug(
+          `[DELEGATION] ${why}: ${id.slice(0, 8)} had nothing ${notice}, no notice`
+        );
+        continue;
+      }
       try {
         const asso = await this.assoRepo.findOne({
           where: { id },
@@ -4799,10 +4897,10 @@ ${rejectionReason}`
           id,
           AssociationPermissionFlag.MANAGE_PRODUCTS
         );
-        const told = await this.lydiaNotifier.tell(asso, kind, recipients);
+        const told = await this.lydiaNotifier.tellDelegation(asso, notice, recipients);
         this.logger.log(
-          `[DELEGATION] ${why}: ${id.slice(0, 8)} payments ${kind}, ${told}/${recipients.length} ` +
-            `manager(s) told`
+          `[DELEGATION] ${why}: ${id.slice(0, 8)} ${notice} (${count} product(s)), ` +
+            `${told}/${recipients.length} manager(s) told`
         );
       } catch (err: unknown) {
         this.logger.error(
@@ -4814,40 +4912,40 @@ ${rejectionReason}`
   }
 
   /**
-   * Tells the shop managers of every APPROVED delegate of `holderId` (`approvedDelegateIds`) - the
-   * readiness transition and the unlink of the receiver's Lydia account reach them too.
+   * What of `childId`'s accounting `parentId` may read: ALL of it while the delegation to it is
+   * approved (`onlyRecordIds: null`), and after it ended - revoked, cancelled, moved to another
+   * receiver - the payments ITS Business took (`purchaseIdsTakenBy`), which it still holds and
+   * still refunds (owner review of #2967, 2026-11-03). 403 when it holds none of them.
    */
-  private async tellDelegatesOf(
-    holderId: string,
-    kind: 'active' | 'paused',
-    why: string
-  ): Promise<void> {
-    try {
-      const ids = await approvedDelegateIds(this.assoRepo.manager, holderId);
-      if (ids.length > 0) await this.tellCollectionManagers(ids, kind, why);
-    } catch (err: unknown) {
-      this.logger.error(
-        `[DELEGATION] ${why}: the delegates of ${holderId.slice(0, 8)} could not be read: ` +
-          `${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-
-  /**
-   * Ensures `parentId` is the approved payment-delegation parent of `childId`, gating a parent's
-   * read access to a delegated child's accounting. Returns the child association.
-   * @throws ForbiddenException when there is no approved delegation from the child to this parent
-   */
-  async assertIsApprovedParentOf(parentId: string, childId: string): Promise<Association> {
+  async childAccountingScope(
+    parentId: string,
+    childId: string
+  ): Promise<{ onlyRecordIds: string[] | null }> {
     const child = await this.assoRepo.findOne({ where: { id: childId } });
     if (!child) throw new NotFoundException('Association not found');
-    if (
-      child.paymentParentAssociationId !== parentId ||
-      child.paymentDelegationStatus !== 'approved'
-    ) {
+    if (child.paymentParentAssociationId === parentId && isDelegating(child)) {
+      return { onlyRecordIds: null };
+    }
+    const parent = await this.assoRepo.findOne({
+      where: { id: parentId },
+      select: { id: true, lydiaAccountId: true },
+    });
+    const business = parent?.lydiaAccountId?.trim();
+    const taken = business
+      ? await purchaseIdsTakenBy(this.assoRepo.manager, childId, business)
+      : [];
+    if (taken.length === 0) {
+      this.logger.debug(
+        `[DELEGATION] accounting of ${childId.slice(0, 8)} refused to ${parentId.slice(0, 8)}: ` +
+          'no approved delegation and no payment its Business took'
+      );
       throw new ForbiddenException('This association does not delegate its payments to you');
     }
-    return child;
+    this.logger.debug(
+      `[DELEGATION] accounting of ${childId.slice(0, 8)} read by former receiver ` +
+        `${parentId.slice(0, 8)}: the ${taken.length} payment(s) its Business took`
+    );
+    return { onlyRecordIds: taken };
   }
 
   // ── Post authorship check ─────────────────────────────────────────────────

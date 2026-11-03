@@ -4,6 +4,7 @@ import { firstValueFrom } from 'rxjs';
 import type { EntityManager } from 'typeorm';
 import { Association as AssociationEntity, type Association } from './entities/association.entity';
 import type { LydiaReadinessCause } from './lydia-readiness';
+import { AssociationPermissionFlag, typeExcludedFlags } from './entities/association-member.entity';
 import { coreUrl } from '../internal/service-urls';
 
 /** Mirrors core-service's PaymentProviderId - no shared lib crosses this service boundary. */
@@ -47,6 +48,19 @@ export function isDelegating(
   return asso.paymentDelegationStatus === 'approved' && !!asso.paymentParentAssociationId;
 }
 
+/**
+ * Whether an entity of this kind may hold a Lydia account of its own: the kind table
+ * (`TYPE_EXCLUDED_FLAGS`) does not exclude `MANAGE_PAYOUT_ACCOUNT` for it. An association does; a
+ * list and an institution do not. A row with no kind loaded reads as an association, the column's
+ * default.
+ */
+export function holdsOwnAccount(type: Association['type'] | undefined): boolean {
+  return (
+    (typeExcludedFlags(type ?? 'association') & AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT) ===
+    0
+  );
+}
+
 /** Reads the Lydia account id, onboarding flag and readiness cause off an association row. */
 function accountFor(
   asso: Pick<Association, 'lydiaAccountId' | 'lydiaOnboardingComplete' | 'lydiaReadinessCause'>
@@ -65,10 +79,9 @@ function accountFor(
 /**
  * THE DELEGATE PREDICATE: the associations whose payments `parentId`'s Business serves - an
  * APPROVED delegation to it, nothing else (a pending request, or one revoked meanwhile, is not).
- * The ONE definition shared by the release of withheld products
- * (`ProductsService.releaseWithheldForAssociationAndDelegates`) and the withhold of a readiness
- * revert (`AssociationsService.setLydiaReadiness`), so the two are exact inverses: a spec asserts
- * both call this function. Reads through `manager`, so a caller inside a transaction reads its own
+ * The ONE definition the readiness writer (`AssociationsService.setLydiaReadiness`) withholds AND
+ * releases with, in the same transaction as the readiness, and the unlink withholds with
+ * (`clearLydiaAccount`), so the two are exact inverses. Reads through `manager`, so a caller inside a transaction reads its own
  * snapshot.
  */
 export async function approvedDelegateIds(
@@ -80,6 +93,83 @@ export async function approvedDelegateIds(
     select: { id: true },
   });
   return children.map((c) => c.id);
+}
+
+/**
+ * The purchase records of `childId` that the Business `vendorToken` TOOK: a boutique payment
+ * through its paid checkout, a form payment through its answer. The fact that decides who owns a
+ * delegate's payment once the delegation has ended - the account that holds the money, never the
+ * delegation's current state (owner review of #2967, 2026-11-03).
+ */
+export async function purchaseIdsTakenBy(
+  manager: Pick<EntityManager, 'query'>,
+  childId: string,
+  vendorToken: string
+): Promise<string[]> {
+  const rows = (await manager.query(
+    `SELECT pr.id FROM purchase_records pr
+      WHERE pr."associationId" = $1
+        AND (EXISTS (SELECT 1 FROM product_checkouts c
+                      WHERE c."purchaseRecordId" = pr.id AND c.status = 'paid'
+                        AND c."vendorToken" = $2)
+             OR EXISTS (SELECT 1 FROM submissions s
+                         WHERE s.id = pr."submissionId" AND s."lydiaVendorToken" = $2))`,
+    [childId, vendorToken]
+  )) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/** Counts the `associationId` of each row an `UPDATE ... RETURNING "associationId"` touched. */
+function countByAssociation(result: unknown): Map<string, number> {
+  // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+  const rows = (
+    Array.isArray(result) && Array.isArray(result[0]) ? result[0] : (result as unknown[])
+  ) as { associationId: string }[];
+  const out = new Map<string, number>();
+  for (const row of rows) out.set(row.associationId, (out.get(row.associationId) ?? 0) + 1);
+  return out;
+}
+
+/**
+ * WITHHOLDS the on-sale products of `associationIds` - `isActive=false, activationWithheld=true`,
+ * the exact inverse of {@link releaseWithheldProductsOf} - inside the caller's transaction, and says
+ * how many per entity, so a notice goes only to an entity something was actually withheld from. A
+ * product a manager had taken off sale is not touched, so it is never released later either.
+ */
+export async function withholdOnSaleProductsOf(
+  manager: Pick<EntityManager, 'query'>,
+  associationIds: readonly string[]
+): Promise<Map<string, number>> {
+  if (associationIds.length === 0) return new Map();
+  return countByAssociation(
+    await manager.query(
+      `UPDATE association_products SET "isActive" = false, "activationWithheld" = true
+        WHERE "associationId" = ANY($1::uuid[]) AND "isActive" = true
+        RETURNING "associationId"`,
+      [[...associationIds]]
+    )
+  );
+}
+
+/**
+ * RELEASES the withheld products of `associationIds` back on sale, inside the caller's transaction
+ * - the one that made them able to collect (an acceptance, a receiver ready again), so a commit
+ * never leaves them withheld. The caller has proven, under its locks, that each of them collects
+ * now. Says how many per entity, for the notice.
+ */
+export async function releaseWithheldProductsOf(
+  manager: Pick<EntityManager, 'query'>,
+  associationIds: readonly string[]
+): Promise<Map<string, number>> {
+  if (associationIds.length === 0) return new Map();
+  return countByAssociation(
+    await manager.query(
+      `UPDATE association_products SET "isActive" = true, "activationWithheld" = false
+        WHERE "associationId" = ANY($1::uuid[]) AND "activationWithheld" = true
+        RETURNING "associationId"`,
+      [[...associationIds]]
+    )
+  );
 }
 
 /**
@@ -128,6 +218,23 @@ export function resolvePaymentTarget(
       ready: !!complete && !!accountId,
       delegated: true,
       readinessCause: cause,
+    };
+  }
+  if (!holdsOwnAccount(asso.type)) {
+    // A LIST holds no Lydia account of its own and collects ONLY through an approved delegation
+    // (owner, 2026-11-02): not delegating, it is not ready, whatever `lydiaAccountId` a row from
+    // before that decision still carries. The withheld-product release reads this same answer.
+    logger.debug(
+      `resolvePaymentTarget: ${asso.type} ${asso.id} holds no account of its own and does not ` +
+        'delegate - not ready'
+    );
+    return {
+      targetAssociationId: asso.id,
+      provider,
+      connectAccountId: null,
+      ready: false,
+      delegated: false,
+      readinessCause: null,
     };
   }
   const { accountId, complete, cause } = accountFor(asso);

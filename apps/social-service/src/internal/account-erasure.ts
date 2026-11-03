@@ -158,7 +158,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // accounting record kept as long as the payment it refunds, its authors anonymised.
   'lydia_refunds.requestedByUserId': { action: 'anonymise' },
   'lydia_refunds.resolvedByUserId': { action: 'anonymise' },
-  // Who accepted a payment delegation on the receiver's behalf (migration 124): the delegation's
+  // Who accepted a payment delegation on the receiver's behalf (migration 125): the delegation's
   // accounting trail, kept, its author anonymised.
   'payment_delegation_acceptances.acceptedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },

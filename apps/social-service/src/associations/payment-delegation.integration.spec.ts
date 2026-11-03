@@ -1,11 +1,11 @@
 /**
- * A LIST COLLECTS THROUGH A DELEGATE, AGAINST A REAL POSTGRESQL (owner, 2026-11-02; migration 124).
+ * A LIST COLLECTS THROUGH A DELEGATE, AGAINST A REAL POSTGRESQL (owner, 2026-11-02; migration 125).
  *
  * What a mocked repository cannot prove: that the approval writes `approved` AND its record in one
  * transaction, that a revoke and an unlink withhold exactly the list's on-sale products in the same
- * transaction as the write that stranded it, that the release after a NEW acceptance puts back
- * exactly those, that a paid form of the list reads paused and resumes with the same facts, and
- * that a purchase of the list routes to the RECEIVER's Lydia Business. Migration 124 runs twice.
+ * transaction as the write that stranded it, that a NEW acceptance puts back exactly those in its
+ * own transaction, that a paid form of the list reads paused and resumes with the same facts, and
+ * that a purchase of the list routes to the RECEIVER's Lydia Business. Migration 125 runs twice.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
@@ -21,6 +21,7 @@ import { AssociationProduct } from './entities/association-product.entity';
 import { Association } from './entities/association.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
+import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 
@@ -32,6 +33,8 @@ const OTHER_RECEIVER = '00000000-0000-4000-8000-0000000002a2';
 const LIST = '00000000-0000-4000-8000-0000000002b1';
 const TREASURER = 'treasurer-of-the-receiver';
 const BDE_STAR = 'bde-governing-the-receiver';
+/** Governs the receiver as a BDE super-admin AND holds `MANAGE_PRODUCTS` in its own member row. */
+const BDE_MEMBER = 'bde-star-who-granted-itself-the-shop';
 const migration = (name: string) => readFileSync(join(__dirname, '../migrations', name), 'utf8');
 
 maybe('a list collects through an accepted payment delegation (PostgreSQL)', () => {
@@ -41,11 +44,12 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
   let associations: AssociationsService;
   let products: ProductsService;
   const tell = jest.fn(async () => 1);
+  const tellDelegation = jest.fn(async () => 1);
 
   const options = (synchronize: boolean) => ({
     type: 'postgres' as const,
     url: URL,
-    entities: [AssociationProduct, Association, AssociationAudience, Space],
+    entities: [AssociationProduct, Association, AssociationAudience, Space, PostNotification],
     synchronize,
     uuidExtension: 'pgcrypto' as const,
     installExtensions: false,
@@ -66,12 +70,17 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     ds = new DataSource(options(false));
     await ds.initialize();
     // TWICE: CD may replay it, and every statement is IF NOT EXISTS.
-    await admin.query(migration('124_payment_delegation_acceptances.sql'));
-    await admin.query(migration('124_payment_delegation_acceptances.sql'));
+    await admin.query(migration('125_payment_delegation_acceptances.sql'));
+    await admin.query(migration('125_payment_delegation_acceptances.sql'));
     // `clearLydiaAccount` closes the cashiers of the unlinked Business.
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
     await admin.query('RESET lock_timeout');
+    // A readiness revert reports to the platform admins, read from core's `users` (a stand-in here).
+    await admin.query(
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false)`
+    );
+    await admin.query(`INSERT INTO users (id, admin) VALUES ('global-admin', true)`);
 
     const assoRepo = ds.getRepository(Association);
     for (const [id, type, extra] of [
@@ -103,7 +112,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       assoRepo,
       logger: new Logger('AssociationsService'),
       redis: { deleteByPattern: async () => 0 },
-      lydiaNotifier: { enabled: () => true, tell },
+      lydiaNotifier: { enabled: () => true, tell, tellDelegation },
       listFlagHolders: async (id: string) => [`shop-manager-of-${id.slice(-2)}`],
       // The receiver's OWN shop manager holds MANAGE_PRODUCTS on it; the BDE star only through the
       // governing tier, which `withoutGoverningBde` drops. The tiers themselves are proven in
@@ -113,7 +122,12 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
         _id: string,
         _flag: number,
         opts?: { withoutGoverningBde?: boolean }
-      ) => userId === TREASURER || (userId === BDE_STAR && !opts?.withoutGoverningBde),
+      ) =>
+        userId === TREASURER ||
+        userId === BDE_MEMBER ||
+        (userId === BDE_STAR && !opts?.withoutGoverningBde),
+      isAssociationSuperAdminOf: async (userId: string) =>
+        userId === BDE_STAR || userId === BDE_MEMBER,
       getActivePaymentProvider: async () => 'lydia',
     }) as unknown as AssociationsService;
     products = Object.assign(Object.create(ProductsService.prototype) as object, {
@@ -153,7 +167,8 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
   };
   const acceptances = () =>
     ds.query(
-      `SELECT "childAssociationId", "parentAssociationId", "acceptedByUserId", "acceptedAs"
+      `SELECT "childAssociationId", "parentAssociationId", "acceptedByUserId", "acceptedAs",
+              "accepterGoverningSuperAdmin"
          FROM payment_delegation_acceptances ORDER BY "acceptedAt", id`
     );
   const accept = (parent: string, userId: string, isGlobalAdmin = false) =>
@@ -181,6 +196,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
         parentAssociationId: RECEIVER,
         acceptedByUserId: TREASURER,
         acceptedAs: 'member',
+        accepterGoverningSuperAdmin: false,
       },
     ]);
     expect(await associations.collectsNow(LIST)).toBe(true);
@@ -203,20 +219,33 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     });
   });
 
+  it('a BDE governing the receiver may NOT revoke for it: typed 403, nothing changes', async () => {
+    await expect(
+      associations.rejectPaymentDelegation(RECEIVER, LIST, {
+        userId: BDE_STAR,
+        isGlobalAdmin: false,
+      })
+    ).rejects.toMatchObject({ response: { code: 'DELEGATION_REVOKE_RECEIVER_ONLY' } });
+    expect(await associations.collectsNow(LIST)).toBe(true);
+  });
+
   it('a revoke by the receiver PAUSES the list: products withheld, managers told, form paused', async () => {
     const sweat = await onSale(LIST, 'Sweat');
     const offSale = await onSale(LIST, 'Retired');
     await ds.query(`UPDATE association_products SET "isActive" = false WHERE id = $1`, [
       offSale.id,
     ]);
-    tell.mockClear();
+    tellDelegation.mockClear();
 
-    await associations.rejectPaymentDelegation(RECEIVER, LIST);
+    await associations.rejectPaymentDelegation(RECEIVER, LIST, {
+      userId: TREASURER,
+      isGlobalAdmin: false,
+    });
 
     expect(await productState(sweat.id)).toEqual({ isActive: false, activationWithheld: true });
     // A product a manager took off sale is not the platform's to release later.
     expect(await productState(offSale.id)).toEqual({ isActive: false, activationWithheld: false });
-    expect(tell).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'paused', [
+    expect(tellDelegation).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'revoked', [
       `shop-manager-of-${LIST.slice(-2)}`,
     ]);
     expect(await associations.collectsNow(LIST)).toBe(false);
@@ -228,15 +257,14 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       [LIST]
     );
     await associations.requestPaymentDelegation(LIST, OTHER_RECEIVER);
-    await accept(OTHER_RECEIVER, 'platform-admin-1', true);
-    tell.mockClear();
-    // The route composes the release and the notice after the acceptance (controller).
-    const released = await products.releaseWithheldProducts(LIST);
-    await associations.tellDelegationResumed(LIST, released);
+    tellDelegation.mockClear();
+    // The release is the acceptance's OWN transaction: committed, nothing is left withheld.
+    await expect(accept(OTHER_RECEIVER, 'platform-admin-1', true)).resolves.toMatchObject({
+      released: 1,
+    });
 
-    expect(released).toBe(1);
     expect(await productState(sweatId)).toEqual({ isActive: true, activationWithheld: false });
-    expect(tell).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'active', [
+    expect(tellDelegation).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'resumed', [
       `shop-manager-of-${LIST.slice(-2)}`,
     ]);
     expect((await acceptances()).map((r: { acceptedAs: string }) => r.acceptedAs)).toEqual([
@@ -252,7 +280,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       [LIST]
     );
     const ownProduct = await onSale(OTHER_RECEIVER, 'Gala');
-    tell.mockClear();
+    tellDelegation.mockClear();
 
     await associations.clearLydiaAccount(OTHER_RECEIVER);
 
@@ -261,12 +289,61 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       isActive: false,
       activationWithheld: true,
     });
-    expect(tell).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'paused', [
-      `shop-manager-of-${LIST.slice(-2)}`,
-    ]);
+    expect(tellDelegation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: LIST }),
+      'receiver-not-ready',
+      [`shop-manager-of-${LIST.slice(-2)}`]
+    );
+    // Only an entity something was withheld from is told: the receiver's own managers get the
+    // Lydia notice, never this one.
+    expect(tellDelegation).toHaveBeenCalledTimes(1);
     expect(await associations.collectsNow(LIST)).toBe(false);
     // The release finds the receiver not ready: nothing goes back on sale.
     expect(await products.releaseWithheldProducts(LIST)).toBe(0);
+  });
+
+  // Owner review of #2967: a list that does not delegate resolves NOT ready whatever Lydia account
+  // id a row from before the decision still carries - and the release reads the same answer.
+  it('a non-delegating list with a stale own Lydia account id is never ready, and releases nothing', async () => {
+    await ds.query(
+      `UPDATE associations SET "paymentParentAssociationId" = NULL, "paymentDelegationStatus" = NULL,
+              "lydiaAccountId" = 'stale-vendor', "lydiaOnboardingComplete" = true WHERE id = $1`,
+      [LIST]
+    );
+    expect(await associations.collectsNow(LIST)).toBe(false);
+    expect(await products.releaseWithheldProducts(LIST)).toBe(0);
+    await ds.query(
+      `UPDATE associations SET "lydiaAccountId" = NULL, "lydiaOnboardingComplete" = false WHERE id = $1`,
+      [LIST]
+    );
+  });
+
+  // Owner review of #2967: a governing BDE super-admin may grant itself MANAGE_PRODUCTS on the
+  // receiver and accept as a member; the member row keeps no provenance, so the record carries it.
+  it('records that a member accepter ALSO governed the receiver as a BDE super-admin', async () => {
+    await associations.requestPaymentDelegation(LIST, RECEIVER);
+    await accept(RECEIVER, BDE_MEMBER);
+    const rows = await acceptances();
+    expect(rows[rows.length - 1]).toMatchObject({
+      acceptedByUserId: BDE_MEMBER,
+      acceptedAs: 'member',
+      accepterGoverningSuperAdmin: true,
+    });
+  });
+
+  // A receiver whose account is ready again releases its delegates IN the readiness transaction.
+  it("the receiver's readiness returning releases the list's products in the same transaction", async () => {
+    const tee = await onSale(LIST, 'Tee');
+    await associations.setLydiaReadiness('vendor-receiver', false, 'request-refused', {
+      path: 'shop',
+    });
+    expect(await productState(tee.id)).toEqual({ isActive: false, activationWithheld: true });
+    tellDelegation.mockClear();
+    await associations.setLydiaReadiness('vendor-receiver', true, 'admin', { path: 'admin' });
+    expect(await productState(tee.id)).toEqual({ isActive: true, activationWithheld: false });
+    expect(tellDelegation).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'resumed', [
+      `shop-manager-of-${LIST.slice(-2)}`,
+    ]);
   });
 
   it('a list holds no Lydia account of its own, and cannot RECEIVE a delegation', async () => {

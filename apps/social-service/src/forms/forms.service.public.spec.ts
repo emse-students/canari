@@ -139,6 +139,28 @@ describe('FormsService - public forms', () => {
       expect((await free.service.getPublic('f1')).paymentsPaused).toBe(false);
     });
 
+    // Owner review of #2967: the pause reads the ONE charge predicate (`chargesMoney`), which counts
+    // a choice option's supplement - a form priced by a supplement alone pauses too.
+    it('pauses a form priced only by a choice supplement, and never by a text question', async () => {
+      const choice = {
+        id: 'q1',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [{ id: 'o1', label: 'Grand', priceModifier: 500 }],
+      };
+      const supplement = makeService({
+        form: baseForm({ basePrice: 0, items: [choice] }),
+        collectsNow: false,
+      });
+      expect((await supplement.service.getPublic('f1')).paymentsPaused).toBe(true);
+      const text = makeService({
+        form: baseForm({ basePrice: 0, items: [{ ...choice, type: 'short_text' }] }),
+        collectsNow: false,
+      });
+      expect((await text.service.getPublic('f1')).paymentsPaused).toBe(false);
+    });
+
     it("serves a grid on answers as the guest's whole slice", async () => {
       const { service } = makeService({
         form: baseForm({

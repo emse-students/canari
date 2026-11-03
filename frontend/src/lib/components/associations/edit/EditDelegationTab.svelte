@@ -151,7 +151,8 @@
       children = await listDelegatedChildren(asso.id);
       if (expandedChildId === childId) expandedChildId = null;
     } catch (e) {
-      error = m.common_load_error();
+      // A BDE governing the receiver may not refuse or end it for it either: said by its code.
+      error = providerRefusalMessage(e) ?? m.common_load_error();
     } finally {
       setChildBusy(childId, false);
     }

@@ -315,6 +315,22 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.lydia_refund_issued.title", locale: locale),
         Self.localizedFormat("notif.lydia_refund_issued.body", arg, locale: locale)
       )
+    // A delegate (a list) paused or resumed by its receiver: `arg` is the delegate's name only.
+    case "delegation_revoked":
+      composed = (
+        Self.localized("notif.delegation_revoked.title", locale: locale),
+        Self.localizedFormat("notif.delegation_revoked.body", arg, locale: locale)
+      )
+    case "delegation_receiver_not_ready":
+      composed = (
+        Self.localized("notif.delegation_receiver_not_ready.title", locale: locale),
+        Self.localizedFormat("notif.delegation_receiver_not_ready.body", arg, locale: locale)
+      )
+    case "delegation_resumed":
+      composed = (
+        Self.localized("notif.delegation_resumed.title", locale: locale),
+        Self.localizedFormat("notif.delegation_resumed.body", arg, locale: locale)
+      )
     // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
     case "event_proposed":
       composed = (

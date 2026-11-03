@@ -435,10 +435,33 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(productRepo.save).toHaveBeenCalled();
     });
 
+    // Owner review of #2967: a paused list is refused only what COLLECTS - going on sale, a price
+    // change. Its description, name and limits stay editable, and re-sending the SAME price is not
+    // a change.
+    it('lets a paused list edit a description and resend its price, never put it on sale or reprice it', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product({ isActive: false }));
+      await expect(
+        service.update(
+          'asso1',
+          'prod1',
+          { description: 'Nouveau texte', name: 'Sweat 2027', amountCents: 1000 } as any,
+          false
+        )
+      ).resolves.toBeDefined();
+      await expect(
+        service.update('asso1', 'prod1', { amountCents: 1200 } as any, false)
+      ).rejects.toMatchObject({ response: { code: 'LIST_DELEGATE_REQUIRED' } });
+      await expect(
+        service.update('asso1', 'prod1', { isActive: true } as any, false)
+      ).rejects.toMatchObject({ response: { code: 'LIST_DELEGATE_REQUIRED' } });
+    });
+
     it('lets an existing product of a list be taken OFF sale, never put back on or repriced', async () => {
       const { service, assoRepo, productRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
-      productRepo.findOne.mockResolvedValue(product());
+      productRepo.findOne.mockResolvedValue(product({ isActive: false }));
       await expect(
         service.update('asso1', 'prod1', { isActive: true } as any, false)
       ).rejects.toBeInstanceOf(ForbiddenException);
@@ -3902,31 +3925,6 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       expect(await service.releaseWithheldProducts('asso1')).toBe(0);
       expect(productRepo.update).not.toHaveBeenCalled();
-    });
-
-    it("releases a delegating club's products when its PARENT completes onboarding", async () => {
-      const { service, assoRepo, productRepo } = makeService();
-      const parent = asso({ id: 'parent1' });
-      const club = asso({
-        id: 'club1',
-        lydiaOnboardingComplete: false,
-        lydiaAccountId: null,
-        paymentParentAssociationId: 'parent1',
-        paymentDelegationStatus: 'approved',
-      });
-      assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
-        Promise.resolve(id === 'parent1' ? parent : club)
-      );
-      // The delegating children of parent1 - the association whose row just changed is not the
-      // only one whose payments just became possible.
-      assoRepo.find.mockResolvedValue([{ id: 'club1' }]);
-      productRepo.update.mockResolvedValue({ affected: 1 });
-
-      expect(await service.releaseWithheldForAssociationAndDelegates('parent1')).toBe(2);
-      expect(productRepo.update).toHaveBeenCalledWith(
-        { associationId: 'club1', activationWithheld: true },
-        { isActive: true, activationWithheld: false }
-      );
     });
 
     describe('provider activation sweep (payments switched on platform-wide)', () => {

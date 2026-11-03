@@ -39,9 +39,10 @@ those entities from the batch; `writablePermissions` strips the bits on write; t
 typed code (`LIST_NO_OWN_LYDIA_ACCOUNT`, `ASSOCIATION_KIND_DOES_NOT_SELL`), which core-service
 forwards in its 403, so a list's Lydia Business creation is refused up front.
 
-**`mayAct(..., { withoutGoverningBde: true })` skips the middle tier.** One call uses it: accepting a
-payment delegation for the receiver, which the owner reserved to the receiver's OWN `MANAGE_PRODUCTS`
-holders and the platform admin - a BDE governing the receiver does not accept for it
+**`mayAct(..., { withoutGoverningBde: true })` skips the middle tier.** One rule uses it: accepting,
+rejecting or revoking a payment delegation for the receiver (`receiverActorRole`), which the owner
+reserved to the receiver's OWN `MANAGE_PRODUCTS` holders and the platform admin - a BDE governing the
+receiver does not act for it
 ([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
 
 The client mirrors it with `mayActOnAssociation(flag, { isGlobalAdmin, isSuperAdmin,

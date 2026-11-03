@@ -57,12 +57,15 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
   let associations: AssociationsService;
   let products: ProductsService;
   const tell = jest.fn(async (_asso: { id: string }, _kind: string, _to: string[]) => 1);
-  /**
-   * The notices written for one association: the holder's payout managers, and - since lists collect
-   * through a delegate (owner, 2026-11-02) - each approved delegate's shop managers, once per
-   * transition too.
-   */
+  /** A delegate's OWN notice (owner review of #2967): only when its products were withheld or released. */
+  const tellDelegation = jest.fn(
+    async (_asso: { id: string }, _notice: string, _to: string[]) => 1
+  );
+  /** The Lydia notices written for one association: the holder's payout managers, once per transition. */
   const tellsTo = (id: string) => tell.mock.calls.filter(([asso]) => asso.id === id).length;
+  /** The delegation notices written for one delegate, by notice. */
+  const delegationTells = (id: string) =>
+    tellDelegation.mock.calls.filter(([asso]) => asso.id === id).map(([, notice]) => notice);
   let savedSecret: string | undefined;
   const requests: unknown[] = [];
 
@@ -139,7 +142,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       assoRepo,
       logger: new Logger('AssociationsService'),
       redis: { deleteByPattern: async () => 0 },
-      lydiaNotifier: { enabled: () => true, tell },
+      lydiaNotifier: { enabled: () => true, tell, tellDelegation },
       listFlagHolders: async () => ['manager-1'],
       isMember: async () => true,
     }) as unknown as AssociationsService;
@@ -230,6 +233,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       activationWithheld: true,
     });
     tell.mockClear();
+    tellDelegation.mockClear();
     const outcomes = [];
     for (let i = 0; i < 5; i++) {
       outcomes.push(
@@ -238,7 +242,9 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     }
     expect(outcomes).toEqual(['transitioned', 'replay', 'replay', 'replay', 'replay']);
     expect(tellsTo(HOLDER)).toBe(1);
-    expect(tellsTo(CLUB)).toBe(1);
+    // The delegate had nothing withheld: nothing released for it, so it is told nothing.
+    expect(tellsTo(CLUB)).toBe(0);
+    expect(delegationTells(CLUB)).toEqual([]);
     expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
     expect(await flags(withheld.id)).toEqual({ isActive: true, activationWithheld: false });
   });
@@ -250,6 +256,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     const pending = await product(PENDING_CLUB, 'pending-club');
     const offSale = await product(HOLDER, 'taken off sale', { isActive: false });
     tell.mockClear();
+    tellDelegation.mockClear();
 
     await associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-refused', {
       path: 'shop',
@@ -274,7 +281,10 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       path: 'form',
     });
     expect(tellsTo(HOLDER)).toBe(1);
-    expect(tellsTo(CLUB)).toBe(1);
+    // The delegate is told by its OWN notice, once: its product was withheld.
+    expect(tellsTo(CLUB)).toBe(0);
+    expect(delegationTells(CLUB)).toEqual(['receiver-not-ready']);
+    expect(delegationTells(PENDING_CLUB)).toEqual([]);
 
     // An unsigned VALIDATED does not clear Lydia's own refusal: nothing released.
     await expect(
@@ -287,6 +297,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(await flags(own.id)).toEqual({ isActive: true, activationWithheld: false });
     expect(await flags(delegate.id)).toEqual({ isActive: true, activationWithheld: false });
     expect(await flags(offSale.id)).toEqual({ isActive: false, activationWithheld: false });
+    // Released in the readiness transaction, and told so.
+    expect(delegationTells(CLUB)).toEqual(['receiver-not-ready', 'resumed']);
   });
 
   it('a revert committed while the purchase is prepared: the typed 409 under the lock, and NO request/do', async () => {
@@ -344,7 +356,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       expect(outcomes.filter((o) => o.kind === 'transitioned')).toHaveLength(1);
       expect(outcomes.filter((o) => o.kind === 'replay')).toHaveLength(7);
       expect(tellsTo(HOLDER)).toBe(1);
-      expect(tellsTo(CLUB)).toBe(1);
+      expect(tellsTo(CLUB)).toBe(0);
       expect(await stateOf(HOLDER)).toEqual({ ready: true, cause: 'webhook-validated' });
     });
 
@@ -401,7 +413,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       await associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-refused', {
         path: 'shop',
       });
-      await expect(products.releaseWithheldForAssociationAndDelegates(HOLDER)).resolves.toBe(0);
+      await expect(products.releaseWithheldProducts(HOLDER)).resolves.toBe(0);
       expect(await flags(item.id)).toEqual({ isActive: false, activationWithheld: true });
     });
 

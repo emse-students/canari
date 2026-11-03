@@ -51,7 +51,7 @@ const RAW_TABLES = [
   'association_logo_url_rewrites',
   // Migration 118's Lydia cashiers: the person, who added them, a sealed phone.
   'lydia_cashiers',
-  // Migration 124's delegation acceptances: two association ids, who accepted, when.
+  // Migration 125's delegation acceptances: two association ids, who accepted, when.
   'payment_delegation_acceptances',
 ];
 

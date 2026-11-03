@@ -79,6 +79,12 @@
 "notif.lydia_payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
 "notif.lydia_refund_issued.title" = "Refund";
 "notif.lydia_refund_issued.body" = "%1$@ refunded one of your payments.";
+"notif.delegation_revoked.title" = "Payments paused";
+"notif.delegation_revoked.body" = "The association receiving %1$@'s payments ended the delegation: its payments are paused.";
+"notif.delegation_receiver_not_ready.title" = "Payments paused";
+"notif.delegation_receiver_not_ready.body" = "The association receiving %1$@'s payments can no longer collect them: its payments are paused.";
+"notif.delegation_resumed.title" = "Payments back on";
+"notif.delegation_resumed.body" = "%1$@'s payments are back on.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";

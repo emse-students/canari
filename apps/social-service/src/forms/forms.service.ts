@@ -121,19 +121,20 @@ function makeId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(6).toString('base64url')}`;
 }
 
-/** True when the form is configured to collect money for an association recipient. */
-function formRequiresStripeReadyAssociation(input: {
-  associationId?: string;
-  basePrice?: number;
-  priceMatrix?: unknown;
-  requiresPayment?: boolean;
-}): boolean {
+/**
+ * True when the form collects money for an association recipient: it names one AND it charges, by
+ * the ONE predicate that counts every price source - a choice option's supplement included
+ * (`chargesMoney`). It used to count the base price, the switch and the grid only, so a form priced
+ * by a supplement alone read "free" here: never paused, never asked for a ready association
+ * (owner review of #2967, 2026-11-03).
+ */
+function formRequiresStripeReadyAssociation(
+  input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
+    associationId?: string;
+  }
+): boolean {
   if (!input.associationId?.trim()) return false;
-  if ((input.basePrice ?? 0) > 0 || input.requiresPayment) return true;
-  // A grid can charge while `basePrice` is 0 - that is the whole point of a cell. Any non-zero cell
-  // makes this a paid form, so the beneficiary has to be able to receive the money.
-  const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
-  return !!cells && Object.values(cells).some((c) => (c ?? 0) > 0);
+  return chargesMoney(input as CreateFormDto);
 }
 
 /**
@@ -267,13 +268,11 @@ export class FormsService {
    * Paid forms linked to an association require its payment onboarding to be complete.
    * @throws BadRequestException when the association cannot receive payments yet
    */
-  private async assertPaidFormAssociationReady(input: {
-    associationId?: string;
-    basePrice?: number;
-    /** A grid can charge while `basePrice` is 0, so it counts towards "this form takes money". */
-    priceMatrix?: unknown;
-    requiresPayment?: boolean;
-  }): Promise<void> {
+  private async assertPaidFormAssociationReady(
+    input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
+      associationId?: string;
+    }
+  ): Promise<void> {
     if (!formRequiresStripeReadyAssociation(input)) return;
     await this.associationsService.assertPaymentsReady(input.associationId!.trim());
   }
@@ -692,7 +691,7 @@ export class FormsService {
    * online submit is refused by the same readiness (`assertPaymentsReady`). A free form never is.
    */
   private async paymentsPaused(form: Form): Promise<boolean> {
-    if (!formRequiresStripeReadyAssociation(form)) return false;
+    if (!formRequiresStripeReadyAssociation(form as unknown as CreateFormDto)) return false;
     const paused = !(await this.associationsService.collectsNow(form.associationId));
     if (paused) this.logger.debug(`[Forms] form ${form.id.slice(0, 8)} served paused: payments`);
     return paused;
