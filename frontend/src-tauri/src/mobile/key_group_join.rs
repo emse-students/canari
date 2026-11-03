@@ -25,6 +25,14 @@
 //!   was built from, and never in a warm process (a compare-and-swap,
 //!   [`background_write_mls_bin_if_unchanged_and_cold`]).
 //!
+//! **EVERY WRITE IS BOUND TO THE ACCOUNT THE PUSH IS FOR** (re-review of #2919): one install keeps one
+//! MLS state per account (`mls_account_state.rs`), and the ledger and the stage are files of the
+//! state in the slot. No compare-and-swap covers them, so each claim, settlement, stage, finish and
+//! abandon checks - under [`crate::concurrency::mls_bin_write_lock`], where a switch moves them - that
+//! the slot's owner record names that account ([`slot_is_accounts_held`]), and refuses otherwise: a
+//! join in flight across a switch never settles into the next account's ledger, a push for an
+//! account deleted since never recreates its ledger, and nobody's stage is deleted by another's.
+//!
 //! Android only today: the iOS notification extension reads a MIRROR of `mls.bin` in the App Group
 //! and never writes the app's state, so a join made there would put a leaf in the tree whose secrets
 //! no process keeps. The extension shows the generic banner and the app joins at its next foreground.
@@ -55,6 +63,34 @@ pub const STAGED_STATE_FILE: &str = crate::commands::storage::STAGED_KEY_GROUP_J
 /// until the app takes it, and says so.
 pub const LEDGER_CAPACITY: usize = 64;
 
+/// Whether the state in the slot is `account`'s - its owner record names it. **THE CALLER HOLDS
+/// [`crate::concurrency::mls_bin_write_lock`]**, the lock an account switch moves the slot under, so
+/// the answer holds for the write that follows it. A slot with no record is nobody's: written before
+/// the record existed and not opened since, or swept by a deleted account's wipe.
+fn slot_is_accounts_held(data_dir: &Path, account: &str) -> bool {
+    let owner = match crate::commands::storage::read_mls_state_owner(data_dir) {
+        Ok(owner) => owner,
+        Err(e) => {
+            log::error!(
+                "[KG_PUSH_JOIN] the slot's owner record could not be read ({e}) - nothing of the join is written"
+            );
+            return false;
+        }
+    };
+    let is = !account.is_empty() && owner.as_deref() == Some(account);
+    if !is {
+        log::warn!(
+            "[KG_PUSH_JOIN] the slot's state is not the push's account ({}) - nothing of the join is written",
+            if owner.is_some() {
+                "another account's"
+            } else {
+                "no owner record"
+            }
+        );
+    }
+    is
+}
+
 /// What a claim answered.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Claim {
@@ -67,6 +103,9 @@ pub enum Claim {
     AlreadyAttempted(String),
     /// The ledger names [`LEDGER_CAPACITY`] groups already.
     LedgerFull,
+    /// The slot holds another account's state, or none recorded: the push's account has no ledger
+    /// here to claim in ([`slot_is_accounts_held`]).
+    NotTheAccountsSlot,
 }
 
 /// How an attempt ended, as the ledger records it.
@@ -96,11 +135,16 @@ pub enum Settlement {
 /// `edit` says it changed. An absent ledger reads as empty; one that does not open under `key`, or
 /// does not parse, reads as empty too and is said at error level - it can only be damage, since the
 /// key never rotates and no build ever wrote this file in the clear.
+///
+/// With `account`, the ledger is the PUSH's account's or it is not touched: `Ok(None)` - nothing read,
+/// nothing written - when the slot's owner record does not name it ([`slot_is_accounts_held`]).
+/// `None` is the app's own take, made in the session the slot was selected for.
 fn with_ledger<R>(
     data_dir: &Path,
     key: &CacheKey,
+    account: Option<&str>,
     edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> (R, bool),
-) -> Result<R, String> {
+) -> Result<Option<R>, String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -111,6 +155,18 @@ fn with_ledger<R>(
     // Released when `lock` is dropped, on every return path.
     crate::commands::push::lock_exclusive(&lock)
         .map_err(|e| format!("lock {LEDGER_LOCK_FILE}: {e}"))?;
+    // AND THE STATE FILES' LOCK, taken second (review of #2919): the ledger is one of the files an
+    // account switch parks with its state (`mls_account_state.rs`), and a write landing between a
+    // park and its unpark put one account's ledger into the other's slot. Held across the read and
+    // the rename, so a switch sees the ledger before or after this edit, never during.
+    let _state_files = crate::concurrency::mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    if let Some(account) = account {
+        if !slot_is_accounts_held(data_dir, account) {
+            return Ok(None);
+        }
+    }
     let path = data_dir.join(LEDGER_FILE);
     let mut map = match std::fs::read(&path) {
         Ok(bytes) => read_ledger(key, &bytes).unwrap_or_else(|why| {
@@ -130,7 +186,7 @@ fn with_ledger<R>(
         // A new inode: the backup exclusion does not travel with the name.
         exclude_from_backup(&path);
     }
-    Ok(result)
+    Ok(Some(result))
 }
 
 /// Opens and parses the ledger's bytes. Only the sealed envelope is a ledger: this file never
@@ -151,10 +207,16 @@ fn read_ledger(
     }
 }
 
-/// Claims one attempt at `group_id`: [`Claim::Granted`] writes it `attempting` BEFORE anything is
-/// fetched, so a process that dies inside the attempt leaves a claim no later push will repeat.
-pub fn claim(data_dir: &Path, key: &CacheKey, group_id: &str) -> Result<Claim, String> {
-    with_ledger(data_dir, key, |map| {
+/// Claims one attempt at `group_id` for `account`, the push's: [`Claim::Granted`] writes it
+/// `attempting` BEFORE anything is fetched, so a process that dies inside the attempt leaves a claim
+/// no later push will repeat. [`Claim::NotTheAccountsSlot`] when the slot is not `account`'s.
+pub fn claim(
+    data_dir: &Path,
+    key: &CacheKey,
+    account: &str,
+    group_id: &str,
+) -> Result<Claim, String> {
+    let claimed = with_ledger(data_dir, key, Some(account), |map| {
         if let Some(entry) = map.get(group_id) {
             let state = entry
                 .get("state")
@@ -181,17 +243,22 @@ pub fn claim(data_dir: &Path, key: &CacheKey, group_id: &str) -> Result<Claim, S
             serde_json::json!({ "state": "attempting" }),
         );
         (Claim::Granted, true)
-    })
+    })?;
+    Ok(claimed.unwrap_or(Claim::NotTheAccountsSlot))
 }
 
-/// Records how the attempt at `group_id` ended - see [`Settlement`].
+/// Records how `account`'s attempt at `group_id` ended - see [`Settlement`]. `Ok(false)`, nothing
+/// written, when the slot is no longer `account`'s: the attempt's own ledger was parked with its
+/// state by a switch (its claim stays `attempting`, which no push repeats and the account's next
+/// start takes), or swept with it by a deletion.
 pub fn settle(
     data_dir: &Path,
     key: &CacheKey,
+    account: &str,
     group_id: &str,
     settlement: &Settlement,
-) -> Result<(), String> {
-    with_ledger(data_dir, key, |map| {
+) -> Result<bool, String> {
+    let settled = with_ledger(data_dir, key, Some(account), |map| {
         let entry = match settlement {
             Settlement::Joined {
                 scope_kind,
@@ -213,7 +280,8 @@ pub fn settle(
         };
         map.insert(group_id.to_string(), entry);
         ((), true)
-    })
+    })?;
+    Ok(settled.is_some())
 }
 
 /// One ledger entry as the app takes it.
@@ -228,9 +296,14 @@ pub struct TakenJoin {
 }
 
 /// Takes the whole ledger and deletes it: from now on the app's own join owns every group in it.
-/// Called by the app at start-up, before the drain (`take_key_group_push_joins`).
+/// Called by the app at start-up, before the drain (`take_key_group_push_joins`), in the session the
+/// slot was selected for - so the ledger in the slot is the signed-in account's.
+///
+/// A staged state outliving its attempt is deleted IN THE SAME HOLD as the ledger's take (re-review
+/// of #2919): both are files a switch parks with the state, and a deletion outside the state files'
+/// lock could land after a switch, on the next account's stage.
 pub fn take_all(data_dir: &Path, key: &CacheKey) -> Result<Vec<TakenJoin>, String> {
-    let taken = with_ledger(data_dir, key, |map| {
+    let taken = with_ledger(data_dir, key, None, |map| {
         let mut out = Vec::with_capacity(map.len());
         for (group_id, entry) in map.iter() {
             let field = |k: &str| entry.get(k).and_then(|v| v.as_str()).map(str::to_string);
@@ -244,17 +317,19 @@ pub fn take_all(data_dir: &Path, key: &CacheKey) -> Result<Vec<TakenJoin>, Strin
         }
         let had = !map.is_empty();
         map.clear();
+        // A staged state outliving its attempt is a join that never finished: it is never
+        // installed. Under the locks `with_ledger` holds.
+        match std::fs::remove_file(data_dir.join(STAGED_STATE_FILE)) {
+            Ok(()) => log::warn!(
+                "[KG_PUSH_JOIN] a staged join state was left behind by an attempt that never settled - deleted, never installed"
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("[KG_PUSH_JOIN] staged join state not deleted: {e}"),
+        }
         (out, had)
     })?;
-    // A staged state outliving its attempt is a join that never finished: it is never installed.
-    match std::fs::remove_file(data_dir.join(STAGED_STATE_FILE)) {
-        Ok(()) => log::warn!(
-            "[KG_PUSH_JOIN] a staged join state was left behind by an attempt that never settled - deleted, never installed"
-        ),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => log::warn!("[KG_PUSH_JOIN] staged join state not deleted: {e}"),
-    }
-    Ok(taken)
+    // `None` only for an account-bound edit; the take is bound to none.
+    Ok(taken.unwrap_or_default())
 }
 
 /// What a prepare refusal does to the ledger.
@@ -422,11 +497,23 @@ pub fn prepare_key_group_join(
     staged.extend_from_slice(&sealed);
     let staged_path = data_dir.join(STAGED_STATE_FILE);
     let staged_tmp = data_dir.join(format!("{STAGED_STATE_FILE}.tmp"));
-    let written = std::fs::write(&staged_tmp, &staged)
-        .and_then(|()| std::fs::rename(&staged_tmp, &staged_path));
-    if let Err(e) = written {
-        log::error!("[KG_PUSH_JOIN] post-join state not staged for group={short}: {e}");
-        return refusal("stage-failed", Refusal::Defer);
+    // Under the state files' lock, like every file an account switch parks with the state, and only
+    // into the push's account's slot: the state was loaded before this hold, and a switch since
+    // would stage one account's post-join state beside another's.
+    let written = match crate::concurrency::mls_bin_write_lock().lock() {
+        Ok(_state_files) if !slot_is_accounts_held(data_dir, user_id) => Ok(false),
+        Ok(_state_files) => std::fs::write(&staged_tmp, &staged)
+            .and_then(|()| std::fs::rename(&staged_tmp, &staged_path))
+            .map(|()| true),
+        Err(_) => Err(std::io::Error::other("mls_bin write lock poisoned")),
+    };
+    match written {
+        Ok(true) => {}
+        Ok(false) => return refusal("slot-not-the-account", Refusal::Retry),
+        Err(e) => {
+            log::error!("[KG_PUSH_JOIN] post-join state not staged for group={short}: {e}");
+            return refusal("stage-failed", Refusal::Defer);
+        }
     }
     log::info!(
         "[KG_PUSH_JOIN] prepared group={short} commit={}B nextBase={}B staged={}B",
@@ -441,16 +528,29 @@ pub fn prepare_key_group_join(
     })
 }
 
-/// Installs the state [`prepare_key_group_join`] staged, once the server ACCEPTED its commit - and
-/// only over the `mls.bin` it was built from. The stage is deleted whatever happens.
+/// Installs the state [`prepare_key_group_join`] staged for `account`, once the server ACCEPTED its
+/// commit - and only over the `mls.bin` it was built from. The stage is deleted whatever happens,
+/// unless the slot is no longer `account`'s: the stage in it is then another account's, and is left.
 ///
 /// An error here is a [`Settlement::Lost`]: the server holds a leaf this device has no secrets for.
-pub fn finish_key_group_join(data_dir: &Path) -> Result<usize, String> {
+pub fn finish_key_group_join(data_dir: &Path, account: &str) -> Result<usize, String> {
     let staged_path = data_dir.join(STAGED_STATE_FILE);
-    let staged = std::fs::read(&staged_path).map_err(|e| format!("read staged state: {e}"));
-    if let Err(e) = std::fs::remove_file(&staged_path) {
-        log::warn!("[KG_PUSH_JOIN] staged state not deleted after the finish: {e}");
-    }
+    // Read and removed under the state files' lock: a switch parks the stage with its state, so
+    // these two steps must see one slot. The install below takes the lock again for its own swap,
+    // and its compare-and-swap refuses a slot switched in between (`mls.bin` moved).
+    let staged = {
+        let _state_files = crate::concurrency::mls_bin_write_lock()
+            .lock()
+            .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        if !slot_is_accounts_held(data_dir, account) {
+            return Err("the slot is no longer the push's account's - nothing installed".into());
+        }
+        let staged = std::fs::read(&staged_path).map_err(|e| format!("read staged state: {e}"));
+        if let Err(e) = std::fs::remove_file(&staged_path) {
+            log::warn!("[KG_PUSH_JOIN] staged state not deleted after the finish: {e}");
+        }
+        staged
+    };
     let staged = staged?;
     if staged.len() <= 32 {
         return Err("staged state is truncated".into());
@@ -465,9 +565,20 @@ pub fn finish_key_group_join(data_dir: &Path) -> Result<usize, String> {
     Ok(sealed.len())
 }
 
-/// Deletes a staged state whose commit was NOT accepted - an external commit cannot be cleared,
-/// so the built group must leave no trace.
-pub fn abandon_key_group_join(data_dir: &Path) {
+/// Deletes the staged state of `account`'s join whose commit was NOT accepted - an external commit
+/// cannot be cleared, so the built group must leave no trace. Under the state files' lock, and only
+/// while the slot is `account`'s: after a switch the stage in the slot is another account's, and
+/// this join's own was parked with its state (taken at that account's next start).
+pub fn abandon_key_group_join(data_dir: &Path, account: &str) {
+    let Ok(_state_files) = crate::concurrency::mls_bin_write_lock().lock() else {
+        log::error!(
+            "[KG_PUSH_JOIN] staged state not abandoned: the mls_bin write lock is poisoned"
+        );
+        return;
+    };
+    if !slot_is_accounts_held(data_dir, account) {
+        return;
+    }
     match std::fs::remove_file(data_dir.join(STAGED_STATE_FILE)) {
         Ok(()) => log::info!("[KG_PUSH_JOIN] staged state abandoned - mls.bin untouched"),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -486,10 +597,19 @@ mod tests {
         forget_live_manager_for_test();
     }
 
+    /// The account every join test's push is for, and whose state the slot holds.
+    const USER: &str = "phone-user";
+
+    /// A slot whose owner record names [`USER`] - what a sign-in of that account leaves.
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("canari-kgjoin-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp dir");
+        std::fs::write(
+            dir.join(crate::commands::storage::MLS_STATE_OWNER_FILE),
+            USER,
+        )
+        .expect("write the owner record");
         dir
     }
 
@@ -571,7 +691,7 @@ mod tests {
         f.alice
             .process_incoming_message(&gid, &commit)
             .expect("alice applies the external commit");
-        finish_key_group_join(&f.dir).expect("finish");
+        finish_key_group_join(&f.dir, USER).expect("finish");
         assert!(!f.dir.join(STAGED_STATE_FILE).exists());
 
         let installed = std::fs::read(f.dir.join("mls.bin")).unwrap();
@@ -647,7 +767,7 @@ mod tests {
         // The app is opened during the round trip, and then backgrounded again before the answer.
         crate::concurrency::foreground_load_mls_bin(&f.dir.join("mls.bin")).unwrap();
         crate::concurrency::mark_foreground_inactive();
-        let err = finish_key_group_join(&f.dir).unwrap_err();
+        let err = finish_key_group_join(&f.dir, USER).unwrap_err();
         assert!(err.contains("foreground manager is loaded"), "{err}");
         assert_eq!(std::fs::read(f.dir.join("mls.bin")).unwrap(), f.state);
 
@@ -668,7 +788,7 @@ mod tests {
         let f = fixture("login");
         let gid = "kg-login".to_string();
         assert_eq!(prepare(&f, &inputs(&f, &gid, &f.sender))["ok"], true);
-        finish_key_group_join(&f.dir).expect("cold process installs");
+        finish_key_group_join(&f.dir, USER).expect("cold process installs");
         let read = crate::concurrency::foreground_load_mls_bin(&f.dir.join("mls.bin"))
             .unwrap()
             .unwrap();
@@ -687,7 +807,7 @@ mod tests {
             .unwrap();
         // Even with the heartbeat lapsed, the warm mark holds.
         crate::concurrency::mark_foreground_inactive();
-        assert!(finish_key_group_join(&g.dir).is_err());
+        assert!(finish_key_group_join(&g.dir, USER).is_err());
         assert_eq!(std::fs::read(g.dir.join("mls.bin")).unwrap(), before);
         mark_foreground_inactive();
     }
@@ -713,7 +833,7 @@ mod tests {
         assert_eq!(prepare(&f, &inputs(&f, &gid, &f.sender))["ok"], true);
         // Another writer (the foreground, between two heartbeats) moved the file.
         std::fs::write(f.dir.join("mls.bin"), b"a newer state").unwrap();
-        let err = finish_key_group_join(&f.dir).unwrap_err();
+        let err = finish_key_group_join(&f.dir, USER).unwrap_err();
         assert!(err.contains("changed since it was loaded"), "{err}");
         assert_eq!(
             std::fs::read(f.dir.join("mls.bin")).unwrap(),
@@ -729,26 +849,81 @@ mod tests {
         let f = fixture("abandon");
         let gid = "kg-abandon".to_string();
         assert_eq!(prepare(&f, &inputs(&f, &gid, &f.sender))["ok"], true);
-        abandon_key_group_join(&f.dir);
+        abandon_key_group_join(&f.dir, USER);
         assert!(!f.dir.join(STAGED_STATE_FILE).exists());
         assert_eq!(std::fs::read(f.dir.join("mls.bin")).unwrap(), f.state);
+    }
+
+    /// F6 of the re-review of #2919: EVERY WRITE OF A JOIN IS BOUND TO THE PUSH'S ACCOUNT. With the
+    /// slot switched to another account - or swept by a deletion, which leaves no owner record - the
+    /// claim is refused, a settlement writes nothing, no stage is written, and neither the finish nor
+    /// the abandon touches the stage that is there (another account's).
+    #[test]
+    fn a_join_writes_nothing_into_a_slot_that_is_not_its_accounts() {
+        let _g = serialise();
+        mark_foreground_inactive();
+        let f = fixture("not-mine");
+        let gid = "kg-not-mine".to_string();
+        let i = inputs(&f, &gid, &f.sender);
+        // A switch since the push's state was loaded: the slot is another account's.
+        let owner = f.dir.join(crate::commands::storage::MLS_STATE_OWNER_FILE);
+        std::fs::write(&owner, "someone-else").unwrap();
+        assert_eq!(
+            claim(&f.dir, &K, USER, &gid).unwrap(),
+            Claim::NotTheAccountsSlot
+        );
+        assert!(!settle(&f.dir, &K, USER, &gid, &Settlement::Lost("x".into())).unwrap());
+        assert!(
+            !f.dir.join(LEDGER_FILE).exists(),
+            "a ledger written into another account's slot"
+        );
+        let refused = prepare(&f, &i);
+        assert_eq!(refused["ok"], false);
+        assert_eq!(refused["reason"], "slot-not-the-account");
+        assert!(!f.dir.join(STAGED_STATE_FILE).exists());
+
+        // The other account's own stage is never deleted by this account's finish or abandon.
+        std::fs::write(f.dir.join(STAGED_STATE_FILE), b"another account's stage").unwrap();
+        assert!(finish_key_group_join(&f.dir, USER).is_err());
+        abandon_key_group_join(&f.dir, USER);
+        assert_eq!(
+            std::fs::read(f.dir.join(STAGED_STATE_FILE)).unwrap(),
+            b"another account's stage"
+        );
+        assert_eq!(std::fs::read(f.dir.join("mls.bin")).unwrap(), f.state);
+
+        // A deleted account's sweep left no record: a push for it recreates nothing.
+        std::fs::remove_file(&owner).unwrap();
+        assert_eq!(
+            claim(&f.dir, &K, USER, &gid).unwrap(),
+            Claim::NotTheAccountsSlot
+        );
+        assert!(!f.dir.join(LEDGER_FILE).exists());
     }
 
     #[test]
     fn the_ledger_grants_one_attempt_per_group_and_the_app_takes_it_whole() {
         let dir = temp_dir("ledger");
-        assert_eq!(claim(&dir, &K, "g1").unwrap(), Claim::Granted);
+        assert_eq!(claim(&dir, &K, USER, "g1").unwrap(), Claim::Granted);
         // A second push for the same group while the first is unsettled - or after the process died.
         assert_eq!(
-            claim(&dir, &K, "g1").unwrap(),
+            claim(&dir, &K, USER, "g1").unwrap(),
             Claim::AlreadyAttempted("attempting".into())
         );
         // A retryable outcome removes the claim; a later push may try again.
-        settle(&dir, &K, "g1", &Settlement::Retryable("no-base".into())).unwrap();
-        assert_eq!(claim(&dir, &K, "g1").unwrap(), Claim::Granted);
         settle(
             &dir,
             &K,
+            USER,
+            "g1",
+            &Settlement::Retryable("no-base".into()),
+        )
+        .unwrap();
+        assert_eq!(claim(&dir, &K, USER, "g1").unwrap(), Claim::Granted);
+        settle(
+            &dir,
+            &K,
+            USER,
             "g1",
             &Settlement::Joined {
                 scope_kind: "workspace".into(),
@@ -756,13 +931,21 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(claim(&dir, &K, "g2").unwrap(), Claim::Granted);
-        settle(&dir, &K, "g2", &Settlement::Refused("not-entitled".into())).unwrap();
-        // A prepare failed on the base at epoch 4: claimed again, with the epoch to skip.
-        assert_eq!(claim(&dir, &K, "g3").unwrap(), Claim::Granted);
+        assert_eq!(claim(&dir, &K, USER, "g2").unwrap(), Claim::Granted);
         settle(
             &dir,
             &K,
+            USER,
+            "g2",
+            &Settlement::Refused("not-entitled".into()),
+        )
+        .unwrap();
+        // A prepare failed on the base at epoch 4: claimed again, with the epoch to skip.
+        assert_eq!(claim(&dir, &K, USER, "g3").unwrap(), Claim::Granted);
+        settle(
+            &dir,
+            &K,
+            USER,
             "g3",
             &Settlement::Deferred {
                 reason: "epoch-mismatch".into(),
@@ -771,17 +954,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            claim(&dir, &K, "g3").unwrap(),
+            claim(&dir, &K, USER, "g3").unwrap(),
             Claim::GrantedUnlessBaseAt(4)
         );
         // That claim is an attempt like any other: a second push meanwhile is not granted.
         assert_eq!(
-            claim(&dir, &K, "g3").unwrap(),
+            claim(&dir, &K, USER, "g3").unwrap(),
             Claim::AlreadyAttempted("attempting".into())
         );
         settle(
             &dir,
             &K,
+            USER,
             "g3",
             &Settlement::Deferred {
                 reason: "base-unchanged".into(),
@@ -790,7 +974,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            claim(&dir, &K, "g2").unwrap(),
+            claim(&dir, &K, USER, "g2").unwrap(),
             Claim::AlreadyAttempted("refused".into())
         );
 
@@ -824,7 +1008,7 @@ mod tests {
         );
         // Taken means gone: the app's own join owns these groups now.
         assert!(take_all(&dir, &K).unwrap().is_empty());
-        assert_eq!(claim(&dir, &K, "g2").unwrap(), Claim::Granted);
+        assert_eq!(claim(&dir, &K, USER, "g2").unwrap(), Claim::Granted);
     }
 
     /// THE LEDGER IS SEALED AT REST: its group ids and salon scopes never reach the disk in the
@@ -833,10 +1017,14 @@ mod tests {
     #[test]
     fn the_ledger_is_sealed_at_rest_and_opens_under_its_key_only() {
         let dir = temp_dir("sealed");
-        assert_eq!(claim(&dir, &K, "kg-secret-group").unwrap(), Claim::Granted);
+        assert_eq!(
+            claim(&dir, &K, USER, "kg-secret-group").unwrap(),
+            Claim::Granted
+        );
         settle(
             &dir,
             &K,
+            USER,
             "kg-secret-group",
             &Settlement::Joined {
                 scope_kind: "workspace".into(),
@@ -851,13 +1039,13 @@ mod tests {
 
         // Under another key it reads as empty - never as a ledger that granted nothing.
         assert_eq!(
-            claim(&dir, &[9u8; 32], "kg-secret-group").unwrap(),
+            claim(&dir, &[9u8; 32], USER, "kg-secret-group").unwrap(),
             Claim::Granted
         );
 
         // A plaintext ledger was never written by a shipped build: it is not read as one.
         std::fs::write(dir.join(LEDGER_FILE), r#"{"kg-plain":{"state":"refused"}}"#).unwrap();
-        assert_eq!(claim(&dir, &K, "kg-plain").unwrap(), Claim::Granted);
+        assert_eq!(claim(&dir, &K, USER, "kg-plain").unwrap(), Claim::Granted);
         assert!(crate::native_cache::is_sealed_file(
             &std::fs::read(dir.join(LEDGER_FILE)).unwrap()
         ));
@@ -868,11 +1056,17 @@ mod tests {
     fn a_full_ledger_refuses_a_new_group_and_keeps_answering_for_the_old_ones() {
         let dir = temp_dir("full");
         for i in 0..LEDGER_CAPACITY {
-            assert_eq!(claim(&dir, &K, &format!("g{i}")).unwrap(), Claim::Granted);
+            assert_eq!(
+                claim(&dir, &K, USER, &format!("g{i}")).unwrap(),
+                Claim::Granted
+            );
         }
-        assert_eq!(claim(&dir, &K, "one-more").unwrap(), Claim::LedgerFull);
         assert_eq!(
-            claim(&dir, &K, "g0").unwrap(),
+            claim(&dir, &K, USER, "one-more").unwrap(),
+            Claim::LedgerFull
+        );
+        assert_eq!(
+            claim(&dir, &K, USER, "g0").unwrap(),
             Claim::AlreadyAttempted("attempting".into())
         );
     }

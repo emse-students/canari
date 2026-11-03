@@ -99,3 +99,5 @@
 "notif.event.deleted.body" = "“%1$@” was removed by the BDE";
 "notif.event.pending.title" = "Event needs approval again";
 "notif.event.pending.body" = "“%1$@” needs approval again: its dates changed";
+"notif.event.pending_coorganiser.title" = "Event needs approval again";
+"notif.event.pending_coorganiser.body" = "“%1$@” needs approval again: an association accepted to co-organise";

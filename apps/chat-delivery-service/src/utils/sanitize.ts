@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { cutLeafIdentity, cutUserId } from './log-repeat';
 
@@ -249,22 +249,24 @@ export function sanitizeStringIdList(value: unknown): string[] {
 }
 
 /**
- * When the edge proxy forwards `x-user-id`, reject mismatched path/body user ids
- * unless the caller is a global admin. If `x-user-id` is absent, behavior is
- * unchanged from older deployments (HeaderAuthGuard still requires login).
+ * Rejects a path/body user id that is not the caller's own (403), and a request that names no
+ * caller at all (401). `HeaderAuthGuard` already refuses a missing `x-user-id` on every route that
+ * calls this; the check refuses it too rather than reading an unidentified caller as a pass - a
+ * check named strict that lets "nobody" through is the next route's hole (review of #2950).
+ *
+ * **NO PLATFORM-ADMIN BYPASS** (owner, 2026-11-02): a global admin is a user like any other on a
+ * person's conversations - their groups, rosters, invitations, queued messages, history and the
+ * device enrolment that would route a conversation to them. See
+ * `docs/wiki/services/chat-delivery.md#no-platform-admin-bypass-on-conversation-data-owner-2026-11-02`.
  */
 export function assertCallerOwnsUserId(
   headerUserId: string | undefined,
-  headerGlobalAdmin: string | undefined,
   targetUserId: string,
   message: string
 ): void {
-  if (headerGlobalAdmin === 'true') {
-    return;
-  }
   const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
   if (!caller) {
-    return;
+    throw new UnauthorizedException('Missing X-User-Id header');
   }
   if (caller !== targetUserId) {
     throw new ForbiddenException(message);

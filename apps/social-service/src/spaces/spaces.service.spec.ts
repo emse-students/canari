@@ -1,9 +1,10 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
+import { HOLDS_BDE_FLAG_OVER_SQL } from './bde';
 
 const space = { formation: 'ICM', campus: 'saint-etienne' } as const;
 const ADMIN = { userId: 'admin-1', isGlobalAdmin: true };
@@ -85,7 +86,7 @@ describe('SpacesService', () => {
     rules?: Partial<AssociationAudience>[];
     /** The spaces the association governs, as the transaction reads them. */
     governed?: Partial<Space>[];
-    /** The campuses whose BDE the caller holds MANAGE_ASSO in (the BDE star's borders). */
+    /** The campuses whose every space a BDE where the caller holds MANAGE_ASSO governs. */
     bdeCampuses?: string[];
   }) {
     const update = jest.fn().mockResolvedValue(undefined);
@@ -117,7 +118,26 @@ describe('SpacesService', () => {
     };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => unknown) => cb(manager)),
-      query: jest.fn().mockResolvedValue((opts.bdeCampuses ?? []).map((campus) => ({ campus }))),
+      // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`. The
+      // management predicate (does the star govern THIS entity) answers from the same campuses: a
+      // rule of the entity on one of them reaches a governed space.
+      query: jest.fn().mockImplementation(async (sql: string) =>
+        sql === HOLDS_BDE_FLAG_OVER_SQL
+          ? [
+              {
+                holds: (opts.rules ?? []).some(
+                  (r) => r.campus != null && (opts.bdeCampuses ?? []).includes(r.campus)
+                ),
+              },
+            ]
+          : SPACE_CAMPUSES.flatMap((campus) =>
+              SPACE_FORMATIONS.map((formation) => ({
+                formation,
+                campus,
+                governed: (opts.bdeCampuses ?? []).includes(campus),
+              }))
+            )
+      ),
     } as unknown as DataSource;
     const redis = { deleteByPattern: jest.fn().mockResolvedValue(3) };
     return {
@@ -235,8 +255,8 @@ describe('SpacesService', () => {
     });
     const saved = await service.setAudiences('a', [{ campus: 'saint-etienne' }], ADMIN);
     expect(saved).toEqual([
-      { formation: null, campus: 'saint-etienne' },
-      { formation: 'ICM', campus: 'gardanne' },
+      { formation: null, campus: 'saint-etienne', editable: true },
+      { formation: 'ICM', campus: 'gardanne', editable: true },
     ]);
     expect(manager.insert).toHaveBeenCalled();
   });
@@ -291,7 +311,7 @@ describe('SpacesService', () => {
     it('lets an institution address everyone', async () => {
       const { service } = make({ association: { id: 'i', type: 'institution' } });
       await expect(service.setAudiences('i', [{ campus: null }], ADMIN)).resolves.toEqual([
-        { formation: null, campus: null },
+        { formation: null, campus: null, editable: true },
       ]);
     });
 
@@ -301,7 +321,10 @@ describe('SpacesService', () => {
         rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
         bdeCampuses: ['gardanne'],
       });
-      await service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR);
+      // The write answers in the read's shape, so the editor renders it with no second read.
+      await expect(
+        service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR)
+      ).resolves.toEqual([{ formation: 'ICM', campus: 'gardanne', editable: true }]);
       expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
         { associationId: 'a', formation: 'ICM', campus: 'gardanne' },
       ]);
@@ -324,9 +347,10 @@ describe('SpacesService', () => {
         rules: own,
         bdeCampuses: ['gardanne'],
       });
+      // Governed, but the added rule leaves its spaces: the platform admin's to widen.
       expect(
         await code(beyond.service.setAudiences('a', [{ campus: 'saint-etienne' }], STAR))
-      ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+      ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
       expect(await code(beyond.service.setAudiences('a', [{ campus: null }], STAR))).toBe(
         'AUDIENCE_EVERYONE_INSTITUTION_ONLY'
       );
@@ -352,6 +376,25 @@ describe('SpacesService', () => {
       }
     });
 
+    it('logs every refusal at WARN with its typed code, like the member ceiling', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        const beyond = make({
+          association: { id: 'a', type: 'association' },
+          rules: [{ associationId: 'a', formation: null, campus: 'gardanne' }],
+          bdeCampuses: ['gardanne'],
+        });
+        await code(beyond.service.setAudiences('a', [{ campus: 'saint-etienne' }], STAR));
+        await code(beyond.service.setAudiences('a', [{ campus: null }], ADMIN));
+        expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+          '[AUDIENCE] write refused: association=a code=AUDIENCE_RULE_BEYOND_BDE_SPACES',
+          '[AUDIENCE] write refused: association=a code=AUDIENCE_EVERYONE_INSTITUTION_ONLY',
+        ]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     describe('reading the rules (user, 2026-10-08: the star reads its own campus only)', () => {
       const read = (o: Opts, actor = STAR) => make(o).service.getAudiencesFor('a', actor);
       type Opts = Parameters<typeof make>[0];
@@ -365,8 +408,29 @@ describe('SpacesService', () => {
           rules: gardanne,
           bdeCampuses: ['gardanne'],
         };
-        await expect(read(o)).resolves.toEqual([{ formation: null, campus: 'gardanne' }]);
-        await expect(read({ ...o, bdeCampuses: [] }, ADMIN)).resolves.toHaveLength(1);
+        await expect(read(o)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: true },
+        ]);
+        await expect(read({ ...o, bdeCampuses: [] }, ADMIN)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: true },
+        ]);
+      });
+
+      it("marks a rule beyond the star's spaces read-only, and still returns it", async () => {
+        // A two-campus entity: the star governs gardanne only, so the saint-etienne rule is read,
+        // never editable ("Lire tout, modifier dans ses espaces", owner 2026-11-03).
+        const o: Opts = {
+          association: { id: 'a', type: 'association' },
+          rules: [
+            { associationId: 'a', formation: null, campus: 'gardanne' },
+            { associationId: 'a', formation: null, campus: 'saint-etienne' },
+          ],
+          bdeCampuses: ['gardanne'],
+        };
+        await expect(read(o)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: true },
+          { formation: null, campus: 'saint-etienne', editable: false },
+        ]);
       });
 
       it('refuses another campus, an institution and a caller who is not a star', async () => {

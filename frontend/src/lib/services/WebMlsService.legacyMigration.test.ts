@@ -73,6 +73,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.
     rotateDeviceIdentity: WebMlsService.prototype['rotateDeviceIdentity'],
+    loadFreshStateReplacingUnopened: WebMlsService.prototype['loadFreshStateReplacingUnopened'],
     // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
     reopenGatewaySocketAfterRotation: vi.fn(),
     retireAbandonedIds: WebMlsService.prototype['retireAbandonedIds'],

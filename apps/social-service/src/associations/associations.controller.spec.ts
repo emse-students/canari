@@ -530,6 +530,10 @@ describe('AssociationsController calendar event writes', () => {
       deleteCalendarEvent: jest.fn(() => Promise.resolve({ ok: true })),
       setEventImageFromUpload: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       clearEventImage: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      // The event's row, for the side (E2): its organiser is the association every case routes through.
+      calendarRepo: {
+        findOne: jest.fn(() => Promise.resolve({ id: 'ev1', associationId: 'asso1' })),
+      },
       logger: { debug: jest.fn() },
     });
     const controller = new AssociationsController(
@@ -568,6 +572,7 @@ describe('AssociationsController calendar event writes', () => {
     expect(service.setEventImageFromUpload).toHaveBeenCalledWith('asso1', 'ev1', file, 'Bearer t', {
       isGlobalAdmin: false,
       isBde: false,
+      side: 'organiser',
     });
   });
 
@@ -578,6 +583,7 @@ describe('AssociationsController calendar event writes', () => {
     expect(service.clearEventImage).toHaveBeenCalledWith('asso1', 'ev1', 'Bearer t', {
       isGlobalAdmin: true,
       isBde: false,
+      side: 'organiser',
     });
   });
 

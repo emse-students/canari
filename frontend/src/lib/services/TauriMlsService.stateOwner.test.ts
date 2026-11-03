@@ -15,7 +15,11 @@ import {
   SavedStateUnopenedError,
 } from '$lib/mls-client';
 import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
-import { KeystoreKeyUnavailableError } from '$lib/mls-client/mlsStateLoadError';
+import {
+  KeystoreKeyUnavailableError,
+  MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
+} from '$lib/mls-client/mlsStateLoadError';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -104,6 +108,29 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     // ONE load: a second would be the legacy re-seal, which PERSISTS a rewritten mls.bin.
     expect(calls('initialiser_mls')).toBe(1);
     expect(calls('sauvegarder_mls_et_persister')).toBe(0);
+  });
+
+  it('answers an unfinished move between two accounts with nothing - no owner read, no re-seal, no rotation', async () => {
+    disk({ code: 'SLOT_MOVE_UNFINISHED', message: 'a cut park' }, 'alice');
+    const { svc, rotate } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, { stateOnDisk: true }));
+
+    expect(err).toBeInstanceOf(MlsSlotMoveUnfinishedError);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(calls('initialiser_mls')).toBe(1);
+    expect(calls('mls_state_owner')).toBe(0);
+  });
+
+  it('answers an owner record that could not be written with nothing either', async () => {
+    disk({ code: 'SLOT_OWNER_UNRECORDED', message: 'disk full' }, 'alice');
+    const { svc, rotate } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, { stateOnDisk: true }));
+
+    expect(err).toBeInstanceOf(MlsSlotOwnerUnrecordedError);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(calls('mls_state_owner')).toBe(0);
   });
 
   it('refuses it whatever the cause - even an ALTERED one, which would otherwise rotate', async () => {
@@ -212,12 +239,13 @@ describe('TauriMlsService init - a cause that proves nothing destroys nothing', 
 });
 
 /**
- * A FAILED INSTALL LEAVES NO SESSION BEHIND. The native slot is process-wide and was only ever
- * written on success, so account B's refused sign-in left account A's manager and key installed.
- * The native install guard empties it by construction; the service ends it through the one helper
- * too, before the refusal reaches the gate - and the install's own error is what propagates.
+ * A FAILED INSTALL LEAVES NO SESSION BEHIND, AND THE PAGE DOES NOT END ONE. The native install guard
+ * ends exactly the session its selection claimed, on every exit that did not install (round 4 of the
+ * review of #2919). The page used to end the native session after a failed `initialiser_mls` too,
+ * UNCLAIMED - and after a reload that ended a previous page's sign-in still loading natively. The
+ * install's own error is what propagates.
  */
-describe('TauriMlsService init - a refused initialiser_mls ends the native session', () => {
+describe('TauriMlsService init - a refused initialiser_mls is not followed by a page teardown', () => {
   beforeEach(() => {
     invoke.mockReset();
     localStorage.clear();
@@ -230,19 +258,14 @@ describe('TauriMlsService init - a refused initialiser_mls ends the native sessi
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
-  it("ends it, keeping the state files, and rethrows the install's own error", async () => {
+  it("ends nothing from the page, and rethrows the install's own error", async () => {
     disk(UNDECRYPTABLE, 'alice');
     const { svc } = makeService();
 
     const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
 
     expect(err).toBeInstanceOf(SavedStateOfAnotherAccountError);
-    const ends = invoke.mock.calls.filter((c) => c[0] === 'terminer_session_mls');
-    expect(ends.length).toBeGreaterThanOrEqual(1);
-    expect(ends[0][1]).toMatchObject({ reason: 'failed initialiser_mls', sweepState: false });
-    // Ended BEFORE the gate reads whose state it is: nothing of the failed install is left to read it.
-    const order = invoke.mock.calls.map((c) => c[0]);
-    expect(order.indexOf('terminer_session_mls')).toBeLessThan(order.indexOf('mls_state_owner'));
+    expect(invoke.mock.calls.map((c) => c[0])).not.toContain('terminer_session_mls');
   });
 });
 

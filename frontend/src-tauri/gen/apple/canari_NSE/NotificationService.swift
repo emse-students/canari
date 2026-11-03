@@ -362,6 +362,11 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.event.pending.title", locale: locale),
         Self.localizedFormat("notif.event.pending.body", arg, locale: locale)
       )
+    case "event_pending_coorganiser":
+      composed = (
+        Self.localized("notif.event.pending_coorganiser.title", locale: locale),
+        Self.localizedFormat("notif.event.pending_coorganiser.body", arg, locale: locale)
+      )
     default:
       NSLog("[CanariNSE] unknown contentKey=\(key) - keeping the server's own wording")
       composed = nil

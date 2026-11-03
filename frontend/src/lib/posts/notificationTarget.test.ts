@@ -45,9 +45,33 @@ describe('notificationHref', () => {
   });
 
   it('sends the proposer to the agenda, where the answer is already applied', () => {
-    for (const type of ['event_validated', 'event_rejected', 'event_updated', 'event_deleted']) {
+    for (const type of [
+      'event_validated',
+      'event_rejected',
+      'event_updated',
+      'event_deleted',
+      'event_pending',
+      'event_pending_coorganiser',
+    ]) {
       expect(notificationHref({ type, postId: 'assoc-1' }), type).toBe('/calendar');
     }
+  });
+
+  it('sends the validators of a co-organisation acceptance to the validation queue, like a proposal', () => {
+    const validators = {
+      type: 'event_pending_coorganiser',
+      postId: 'assoc-1',
+      meta: { reason: 'coorganiser_joined', audience: 'validators' },
+    };
+    expect(notificationHref(validators)).toBe('/admin/agenda');
+    // The organiser and the partners (no audience) keep the agenda.
+    expect(
+      notificationHref({
+        type: 'event_pending_coorganiser',
+        postId: 'assoc-1',
+        meta: { reason: 'coorganiser_joined' },
+      })
+    ).toBe('/calendar');
   });
 
   it('sends the answer to a profile correction request to the profile, never to a post of that id', () => {
@@ -59,7 +83,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(41);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(42);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];

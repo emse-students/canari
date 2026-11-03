@@ -59,7 +59,8 @@ export type PushContentKey =
   | 'event_rejected'
   | 'event_updated'
   | 'event_deleted'
-  | 'event_pending';
+  | 'event_pending'
+  | 'event_pending_coorganiser';
 
 /**
  * WHERE THE NOTIFICATION'S PICTURE COMES FROM - never a URL, always an id.
@@ -567,6 +568,21 @@ export function eventPendingContent(actorName: string, eventTitle: string): Push
     arg: eventTitle,
     legacyTitle: 'Événement à revalider',
     legacyBody: `« ${eventTitle} » doit être revalidé : ses dates ont changé`,
+  };
+}
+
+/**
+ * The same return to the queue for the OTHER reason (WP-Q2, F7): a partner association accepted to
+ * co-organise a validated event, which widens its reach with no validation behind the new part. Its
+ * own key, so the reason is the sentence - never a sentence parsed out of a title.
+ */
+export function eventPendingCoorganiserContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_pending_coorganiser',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement à revalider',
+    legacyBody: `« ${eventTitle} » doit être revalidé : une association a accepté de co-organiser`,
   };
 }
 

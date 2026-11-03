@@ -15,9 +15,12 @@ import {
   SESSION_META_STORE,
 } from '$lib/utils/accountLocalKeys';
 import {
+  type AccountWipeReason,
   clearDeletedAccountWipePending,
   noteDeletedAccountWipeStarted,
   pendingDeletedAccountWipes,
+  wipeLogTag,
+  wipeReasonOf,
 } from '$lib/utils/deletedAccountMarker';
 
 // The marker's writers, where the deletion's callers already import the wipe from.
@@ -149,6 +152,8 @@ export async function resumePendingDeletedAccountWipes(live: AccountLiveness): P
     const failures = await wipeDeletedAccountLocalData(id, {
       closeThisRunsHandles: false,
       expectNativeDatabase: false,
+      // The revoked device's account still exists: the resume says so, as the live wipe did.
+      accountStillExists: wipeReasonOf(id) === 'revoked',
       stopIf: resumeStopFor(id, live),
     });
     if (failures.includes(STOPPED_BY_SIGN_IN)) {
@@ -195,6 +200,12 @@ export interface WipeDeletedAccountOptions {
    * running for an account the server has just refused.
    */
   stopIf?: () => WipeStop | null;
+  /**
+   * The account STILL EXISTS - a device its owner revoked, wiped of that one account because another
+   * account uses the install (`wipeAccountOfRevokedDevice`). It is then not noted as deleted here:
+   * the account may sign in on this device again.
+   */
+  accountStillExists?: boolean;
 }
 
 /** The ids whose case collision this start already reported - see {@link wipeDeletedAccountLocalData}. */
@@ -213,8 +224,9 @@ export const REFUSED_CASE_COLLISION = 'the account id (it differs from another o
  * Removes what ONE deleted account left on this device: its local message database, its slot of the
  * device-key vault, its platform-keystore entry and its per-account `localStorage` keys. NOT a device
  * reset - another account signed in on the same install keeps its database, its vault slot, the
- * in-app log, the preferences and `mls.bin` (one file per install, which may hold another account's
- * state, so it is deliberately left alone).
+ * in-app log, the preferences and the `mls.bin` slot when it is theirs. On a native install every
+ * MLS state of the deleted account goes (`delete_user_mls_state`): its parked one, and the slot
+ * when the slot's owner record names it and no session is loaded.
  *
  * A sign-out keeps all of this on purpose ("keep the state"); a DELETION is the one exit after which
  * nobody can ever open it again, so leaving it is only a cost: every message row stays under the
@@ -230,7 +242,9 @@ export async function wipeDeletedAccountLocalData(
   userId: string,
   options: WipeDeletedAccountOptions
 ): Promise<string[]> {
-  const tag = `[DEL-LOCAL] ${userId.slice(0, 8)}`;
+  // A revoked device's account still exists: its lines say so (round 8 of the review of #2919).
+  const reason: AccountWipeReason = options.accountStillExists ? 'revoked' : 'deleted';
+  const tag = `${wipeLogTag(reason)} ${userId.slice(0, 8)}`;
   if (!isWipeableAccountId(userId)) {
     console.error(`${tag} refusing to wipe an account id outside the allowlist`);
     return ['the account id'];
@@ -240,7 +254,7 @@ export async function wipeDeletedAccountLocalData(
   // the resume: a stale marker resumed in two web tabs would leave the flag in tab A after the user
   // signed in again from tab B, whose `forgetDeletedAccountOnSignIn` clears only its own process -
   // and tab A would refuse the new account. The resume's own guard is the marker, which tab B drops.
-  if (!options.stopIf) noteDeletedAccountWipeStarted(userId);
+  if (!options.stopIf && !options.accountStillExists) noteDeletedAccountWipeStarted(userId);
   const twins = caseCollidingAccountIdsIn(localStorage, userId);
   if (twins.length > 0) {
     // Kept as owed on purpose: reported at ERROR once per start (the resume and the live wipe may
@@ -284,7 +298,7 @@ export async function wipeDeletedAccountLocalData(
   // outbox blobs are IndexedDB), and are named by the account, so no other account is reachable.
   await step('the local IndexedDB databases', async () => {
     const results = await Promise.all(
-      accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, '[DEL-LOCAL]'))
+      accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, wipeLogTag(reason)))
     );
     if (results.includes(false)) throw new Error('an IndexedDB delete failed or is deferred');
   });
@@ -297,6 +311,13 @@ export async function wipeDeletedAccountLocalData(
         expectDatabase: expectNativeDatabase,
       });
       console.log(`${tag} native database: ${removed} file(s) removed`);
+    });
+    // Every MLS state of the account (`mls_account_state.rs`): its parked directory, and the slot
+    // ONLY when the slot's owner record names it - never another account's.
+    await step('the parked MLS state', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('delete_user_mls_state', { userId });
+      console.log(`${tag} parked MLS state: ${removed} file(s) removed`);
     });
     // The push side's plaintext (unsent protos, push-decrypted messages, the bearer push token),
     // removed natively ONLY when `push_context.json` names this account - see `push.rs`.

@@ -1,21 +1,12 @@
-import {
-  CORE_URL,
-  DELIVERY_URL,
-  SOCIAL_URL,
-  fetchJsonOrThrow,
-  internalHeaders,
-} from '$lib/seo/internalApi';
+import { DELIVERY_URL, SOCIAL_URL, fetchJsonOrThrow, internalHeaders } from '$lib/seo/internalApi';
 import {
   buildArticleJsonLd,
   buildAssociationJsonLd,
   buildBreadcrumbJsonLd,
-  buildEventJsonLd,
-  buildEventListJsonLd,
   buildSiteJsonLd,
   type JsonLdNode,
 } from '$lib/seo/jsonLd';
 import { m } from '$lib/paraglide/messages';
-import { CAMPUSES } from '$lib/profile/miconnectProfile';
 import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
 import {
   ASSOCIATION_EDIT_PATH,
@@ -313,29 +304,6 @@ const KIND_TYPES: Record<AssociationKind, true> = {
   institution: true,
 };
 
-interface ProfilePayload {
-  displayName?: string | null;
-  promo?: number | null;
-  formation?: string | null;
-}
-
-async function profileSeo(userId: string): Promise<Partial<SeoMeta> | null> {
-  const user = await fetchJsonOrThrow<ProfilePayload>(
-    `${CORE_URL()}/api/internal/users/${encodeURIComponent(userId)}/public-profile`,
-    internalHeaders()
-  );
-  if (!user?.displayName?.trim()) return null;
-
-  const details = [user.promo ? `Promo ${user.promo}` : null, user.formation]
-    .filter(Boolean)
-    .join(' - ');
-
-  return {
-    title: user.displayName.trim(),
-    description: details ? `${details}. Membre ${SITE.name}.` : `Membre ${SITE.name}.`,
-  };
-}
-
 interface WorkspaceInvitePayload {
   valid?: boolean;
   workspaceName?: string | null;
@@ -397,94 +365,28 @@ async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
  * The one enrichment table. Each entry owns a path shape and the single call that resolves it;
  * anything not listed falls through to `resolveSeoForPath` alone, which is a complete answer for
  * the static pages and a correct generic one for everything else.
+ *
+ * THE HEAD IS SERVED TO ANYBODY, SO IT SHOWS NO MORE THAN THE PUBLIC SHOWCASE (owner, 2026-11-02).
+ * A person's profile (`/profile/<id>`: their name, promo and formation) and the agenda's events
+ * (`/calendar`) were enriched here until that day and are not any more: portail-etu.emse.fr shows
+ * neither. What is left is the association page (the showcase's own fields), the single shared
+ * post the owner kept, and the invite links a member hands out. See docs/wiki/anonymous-surface.md.
  */
 const ENRICHERS: [RegExp, (id: string, path: string) => Promise<Partial<SeoMeta> | null>][] = [
   [/^\/posts\/([^/]+)\/?$/, postSeo],
   [/^\/forms\/([^/]+)\/?$/, formSeo],
   [/^\/associations\/([^/]+)\/?$/, associationSeo],
   [ASSOCIATION_EDIT_PATH, associationEditSeo],
-  [/^\/profile\/([^/]+)\/?$/, profileSeo],
   [/^\/c\/join\/([^/]+)\/?$/, communityInviteSeo],
   [/^\/g\/join\/([^/]+)\/?$/, groupInviteSeo],
 ];
 
-interface CalendarEventPayload {
-  id?: string;
-  title?: string;
-  description?: string | null;
-  startsAt?: string;
-  endsAt?: string | null;
-  imageUrl?: string | null;
-  associationName?: string | null;
-  associationSlug?: string | null;
-}
-
-/** How many upcoming events the agenda page describes. Beyond this the payload stops being read. */
-const AGENDA_JSONLD_MAX = 25;
-/** How far ahead the agenda looks. The feed refuses a range wider than ~18 months. */
-const AGENDA_WINDOW_DAYS = 180;
-
 /**
- * `Event` nodes for the agenda page.
- *
- * The one page whose content is genuinely searchable - "gala Mines Saint-Etienne", "soirée BDE" -
- * and the one schema.org type Google renders as a rich result with its dates attached. It reads
- * the same public feed the ICS export uses, so nothing pending or rejected can appear.
+ * Structured data for the pages that have no id in their path. Built from constants alone: the
+ * agenda's events were read here until 2026-11-02, and no page without an id shows data now.
  */
-async function agendaJsonLd(): Promise<JsonLdNode[] | null> {
-  const from = new Date();
-  const to = new Date(from.getTime() + AGENDA_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  // The public feed is one per selection and REFUSES a bare read (D40): the page describes the whole
-  // agenda, so it asks once per campus - every space is on one - and keeps each event once. A
-  // selection is SIGNED since 2026-10-06; this server-to-server read carries the internal secret
-  // instead, which the feed trusts without a signature (docs/wiki/profiles-and-access.md, D40 amended).
-  const headers = internalHeaders();
-  const perCampus = await Promise.all(
-    CAMPUSES.map((campus) =>
-      fetchJsonOrThrow<CalendarEventPayload[]>(
-        `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}&campus=${campus}`,
-        headers
-      )
-    )
-  );
-  const seen = new Set<string>();
-  const rows = perCampus
-    .flatMap((r) => (Array.isArray(r) ? r : []))
-    .filter((row) => {
-      if (!row.id) return true;
-      if (seen.has(row.id)) return false;
-      seen.add(row.id);
-      return true;
-    })
-    .sort((a, b) => new Date(a.startsAt ?? 0).getTime() - new Date(b.startsAt ?? 0).getTime());
-  if (rows.length === 0) return null;
-
-  const events = rows
-    .filter((row) => row.title?.trim() && row.startsAt)
-    .slice(0, AGENDA_JSONLD_MAX)
-    .map((row) =>
-      buildEventJsonLd({
-        name: row.title!.trim(),
-        description: row.description?.trim()
-          ? truncateForMeta(markdownToPlainText(row.description), 300)
-          : null,
-        startDate: new Date(row.startsAt!).toISOString(),
-        endDate: row.endsAt ? new Date(row.endsAt).toISOString() : null,
-        // No per-event page exists, so every event points at the agenda that lists it.
-        url: pageUrl('/calendar'),
-        image: publicMediaUrl(row.imageUrl),
-        organizerName: row.associationName,
-        organizerUrl: row.associationSlug ? pageUrl(`/associations/${row.associationSlug}`) : null,
-      })
-    );
-
-  return events.length > 0 ? [buildEventListJsonLd(events)] : null;
-}
-
-/** Structured data for the pages that have no id in their path. */
-async function staticPageJsonLd(path: string): Promise<JsonLdNode[] | null> {
+function staticPageJsonLd(path: string): JsonLdNode[] | null {
   if (path === '/' || path === '/posts') return buildSiteJsonLd();
-  if (path === '/calendar') return agendaJsonLd();
   if (path === '/associations') {
     return [
       ...buildSiteJsonLd(),
@@ -548,14 +450,6 @@ export async function resolveServerSeo(pathname: string): Promise<ServerSeoResul
   }
 
   // Structured data is pointless on a page that asks not to be indexed.
-  try {
-    const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
-    return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
-  } catch (err) {
-    if (!(err instanceof UpstreamUnavailableError)) throw err;
-    // The agenda's structured data is the one static-page enrichment: a timeout of its feed is the
-    // same absence of an answer, and must not be cached as an agenda without events.
-    console.warn(`[SEO] DEGRADED head for ${pathname}, enrichment unavailable: ${err.message}`);
-    return { meta: base, degraded: true };
-  }
+  const jsonLd = base.noindex ? null : staticPageJsonLd(normalizePath(pathname));
+  return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
 }

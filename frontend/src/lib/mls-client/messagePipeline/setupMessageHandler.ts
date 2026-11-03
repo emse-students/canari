@@ -14,7 +14,6 @@ import {
   normalizeMessageId,
 } from '$lib/utils/chat/messageUtils';
 import { receivedNoticeTime } from '$lib/utils/chat/visibleNotices';
-import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
   requestReAdd,
   cancelReAdd,
@@ -32,6 +31,7 @@ import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
+import type { StoredMessage } from '$lib/db';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import {
   answerAfterMailboxDrained,
@@ -55,6 +55,7 @@ import { createMlsStatePersister } from '../mlsStatePersister';
 import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
+import { applyReactionFrame } from './reactionFrame';
 import type { MessageHandlerDeps } from './deps';
 import {
   membershipIsDurablyLost,
@@ -1260,40 +1261,20 @@ async function handleKnownGroup({
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
     } else if (msg.reaction) {
-      const msgId = msg.reaction.messageId ?? '';
-      const emoji = msg.reaction.emoji ?? '';
-      const reactions = messageReactions.get(msgId) || [];
-      // Both legs arrive here: `removed` says which. A frame from before the field existed carries
-      // false, which is what it meant - it could only ever place a reaction.
-      // `at` is the sender's clock; an undated frame reads as 0 and loses to anything dated.
-      const updated = applyReaction(
-        reactions,
+      await applyReactionFrame(
+        {
+          storage,
+          deviceKey,
+          conversations,
+          messageReactions,
+          log,
+        },
+        convoKey,
         sender,
-        emoji,
-        Number(msg.reaction.at ?? 0),
-        msg.reaction.removed === true,
-        authorship
+        msg.reaction,
+        authorship,
+        deliveryMeta?.queuedCreatedAt
       );
-      if (updated) {
-        messageReactions.set(msgId, updated);
-        const c = conversations.get(convoKey);
-        if (c) {
-          const idx = c.messages.findIndex((m) => m.id === msgId);
-          if (idx !== -1) {
-            const next = [...c.messages];
-            next[idx] = { ...next[idx], reactions: updated };
-            conversations.set(convoKey, { ...c, messages: next });
-            if (storage) {
-              // A reaction changes the reactions. Writing the whole row here used to clear the
-              // delete/edit flags, so reacting to an edited message resurrected the original body
-              // on the next reload.
-              await storage
-                .updateMessage(next[idx].id, { reactions: updated }, deviceKey())
-                .catch(() => {});
-            }
-          }
-        }
-      }
     } else if (msg.call) {
       onCallSignal?.(
         sender,
@@ -1626,10 +1607,31 @@ async function upsertConversation(
       // Without this, loadHistoryForConversation (which reads from the new groupId's IndexedDB)
       // would overwrite the in-memory list with an empty array, making messages disappear
       // until the next login where mergeDirectConversationDuplicates migrates them properly.
-      const msgs = existing.messages ?? [];
+      const msgs = (existing.messages ?? []).filter((m) => m.id && m.status !== 'sending');
       if (deps.storage && msgs.length > 0) {
-        const toSave = msgs
-          .filter((m) => m.id && m.status !== 'sending')
+        // A MOVE, built from the STORED rows. A row the old conversation already stores is moved as
+        // stored - its sealed proofs, reactions, edit and deletion included, which the copy on screen
+        // does not carry and a write built from it erased. Only a row no store holds yet is written
+        // from memory, and only where none stands. A move changes the row's conversation, which the
+        // scoped compare-and-set (`mergeMessages`) refuses by design; what it cannot see is a write
+        // to the old conversation's row after this read, and the old conversation has just left
+        // memory (`conversations.delete` above), so no shown path writes to it.
+        const ids = msgs.map((m) => m.id);
+        const found = await deps.storage
+          .getMessagesByIds(existing.id, ids, deps.deviceKey())
+          .catch((e: unknown) => {
+            deps.log(
+              `[WELCOME] could not read the stored rows of ${existing.id.slice(0, 8)}… to re-key them: ${String(e)} - only rows no store holds are written`
+            );
+            return null;
+          });
+        const stored = found?.rows ?? new Map<string, StoredMessage>();
+        const movedRows = [...stored.values()].map((row) => ({
+          ...row,
+          conversationId: joinedGroupId,
+        }));
+        const fresh: StoredMessage[] = msgs
+          .filter((m) => !stored.has(m.id) && !found?.unreadable.has(m.id))
           .map((m) => ({
             id: m.id,
             conversationId: joinedGroupId,
@@ -1641,14 +1643,18 @@ async function upsertConversation(
             isEdited: m.isEdited,
             serverTimestamp: m.serverTimestamp,
           }));
+        const toSave = [...movedRows, ...fresh];
         if (toSave.length > 0) {
           // THE LINE BELOW USED TO PRINT WHETHER OR NOT THE WRITE HAPPENED. `.catch(() => {})`
           // swallowed the failure and the next statement announced `persisted` regardless, so a
           // store that refuses writes produced a log CLAIMING a durable write that did not occur.
           // That is worse than silence: it answers, wrongly, the exact question a reader chasing a
           // conversation empty after a reload would come here to ask.
-          const persisted = await deps.storage
-            .saveMessages(toSave, deps.deviceKey())
+          const storage = deps.storage;
+          const persisted = await Promise.all([
+            movedRows.length > 0 ? storage.saveMessages(movedRows, deps.deviceKey()) : null,
+            fresh.length > 0 ? storage.saveMessagesIfAbsent(fresh, deps.deviceKey()) : null,
+          ])
             .then(() => true)
             .catch((e: unknown) => {
               deps.log(

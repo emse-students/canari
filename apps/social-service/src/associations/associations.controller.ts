@@ -241,7 +241,8 @@ export class AssociationsController {
   @Get('me/bde-reach')
   async myBdeReach(@Headers('x-user-id') userId: string) {
     const [validateEvents, manageAsso] = await Promise.all([
-      this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.VALIDATE_EVENTS),
+      // The agenda rule (owner, 2026-11-03): an institution's events are in it, its management is not.
+      this.service.associationsUnderBdeAgendaRight(userId),
       this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO),
     ]);
     return { validateEvents, manageAsso };
@@ -262,23 +263,29 @@ export class AssociationsController {
   }
 
   /**
-   * Public - current association memberships for a user profile. Empty across the review cohort's
-   * boundary, and for a review account read with no session (`profileOpenAcrossCohort`).
+   * Current association memberships for a user profile. Empty across the review cohort's boundary
+   * (`profileOpenAcrossCohort`).
+   *
+   * SIGNED-IN ONLY SINCE 2026-11-02: a person's profile is not something the public showcase
+   * (portail-etu.emse.fr) shows, and nothing Canari serves without an account may go further than
+   * it does ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
    */
+  @UseGuards(NginxAuthGuard)
   @Get('users/:userId/memberships')
   async listUserMemberships(
     @Param('userId') userId: string,
-    @Headers('x-user-id') viewerId?: string
+    @Headers('x-user-id') viewerId: string
   ) {
     if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listMemberships(userId);
   }
 
-  /** Public - past/honorary association roles for a user profile, gated like the memberships. */
+  /** Past/honorary association roles for a user profile, gated like the memberships. */
+  @UseGuards(NginxAuthGuard)
   @Get('users/:userId/role-history')
   async listUserRoleHistory(
     @Param('userId') userId: string,
-    @Headers('x-user-id') viewerId?: string
+    @Headers('x-user-id') viewerId: string
   ) {
     if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listRoleHistory(userId);
@@ -876,8 +883,16 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
-  addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
-    return this.service.addMember({ associationId: id, ...dto });
+  addMember(
+    @Param('id') id: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: AddMemberDto
+  ) {
+    return this.service.addMember(
+      { associationId: id, ...dto },
+      { userId: callerId.trim(), isGlobalAdmin: ga === 'true' }
+    );
   }
 
   /** Updates the role or permission bitmask of an existing association member. */
@@ -892,10 +907,31 @@ export class AssociationsController {
     @Body() dto: UpdateMemberRoleDto
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,
     });
+  }
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): the caller leaves the association. Any member, no role
+   * guard - the only row it can touch is the caller's own, named by the vouched `x-user-id`, never by
+   * a parameter. Refused `ASSOCIATION_LAST_MEMBER_MANAGER` for its last holder of `MANAGE_MEMBERS`.
+   * Declared BEFORE `:id/members/:userId` so `me` is never read as a user id.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/members/me')
+  leaveAssociation(@Param('id') id: string, @Headers('x-user-id') callerId: string) {
+    return this.service.leaveAssociation(id, callerId.trim());
   }
 
   /** Removes a member from the association. */
@@ -909,8 +945,19 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
-    return this.service.removeMember(id, targetUserId, { bypassLastAdmin: isGlobalAdmin || isBde });
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
+    return this.service.removeMember(id, targetUserId, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
+      bypassLastAdmin: isGlobalAdmin || isBde,
+    });
   }
 
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────
@@ -1378,14 +1425,15 @@ export class AssociationsController {
   }
 
   /**
-   * Returns active products for this association (shown on the public association page).
+   * Returns active products for this association (its shop section).
    *
-   * `x-user-id` is optional - nginx sets it only for a signed-in caller, and this page is public.
-   * It is passed through so a gridded product quotes the price THIS person pays rather than the
-   * "everyone else" cell; a guest legitimately resolves to that cell.
+   * `x-user-id` is passed through so a gridded product quotes the price THIS person pays rather
+   * than the "everyone else" cell. Signed-in only since 2026-11-02: the public showcase shows no
+   * shop ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
    */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/products')
-  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId?: string) {
+  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId: string) {
     return this.productsService.listByAssoc(id, userId);
   }
 

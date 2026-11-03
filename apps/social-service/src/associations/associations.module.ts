@@ -19,6 +19,7 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Space } from '../spaces/space.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { SpacesController, AssociationAudiencesController } from '../spaces/spaces.controller';
+import { AdminAssociationsController } from './admin-associations.controller';
 import { SpacesService } from '../spaces/spaces.service';
 import { ReadGrantsController } from '../read-grants/read-grants.controller';
 import { ReadGrantsService } from '../read-grants/read-grants.service';
@@ -119,6 +120,7 @@ import { RefundsController } from './refunds/refunds.controller';
     SpacesController,
     ReadGrantsController,
     AssociationAudiencesController,
+    AdminAssociationsController,
     PosterController,
     AssociationsController,
     RefundsController,

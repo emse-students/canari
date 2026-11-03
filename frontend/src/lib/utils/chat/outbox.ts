@@ -3,6 +3,8 @@ import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
+import type { StoredMessagePatch } from '$lib/db/types';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import type {
   OutboxAdoptedUpload,
   OutboxReelTakeSend,
@@ -1195,7 +1197,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * not "it is on disk", and only the read-back answers that (re-review of #2874). Every way it can
    * fail is logged: a reload will then draw the file as never completed.
    */
-  async function persistUnsentReason(messageId: string, reason: UnsentReason): Promise<void> {
+  async function persistUnsentReason(
+    conversationId: string,
+    messageId: string,
+    reason: UnsentReason
+  ): Promise<void> {
     const lost = (why: string) =>
       log(
         `[OUTBOX] ${messageId.slice(0, 8)}… unsent reason ${reason} NOT persisted (${why}) - a reload will show the file as never completed`
@@ -1205,7 +1211,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     try {
-      await storage.updateMessage(messageId, { unsentReason: reason }, deviceKey());
+      await storage.updateMessage(conversationId, messageId, { unsentReason: reason }, deviceKey());
       const back = await storage.getMessage(messageId, deviceKey());
       if (!back) lost('its row is absent or undecryptable');
       else if (back.unsentReason !== reason) lost('the row read back does not carry it');
@@ -1333,37 +1339,68 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const found = findMessage(messageId);
     if (!found) return;
     const m = found.convo.messages[found.idx];
-    const proofs = await storedProofs(messageId);
-    let reactions = m.reactions;
+    // What THIS send adds to the row: this device's own signature, in the field the frame proves.
+    const own_: StoredMessagePatch = {};
+    let reactionSigned: ((list: StoredMessage['reactions']) => StoredMessage['reactions']) | null =
+      null;
     if (own) {
       const mine = recordOwnAuthorship(own.body, own.proof, liveConvId);
       if (!own.control) {
-        proofs.authorship = mine;
+        own_.authorship = mine;
       } else {
         const frame = decodeAppMessage(own.body);
         const event = frame?.system?.event;
-        if (event === 'edit_message') proofs.editProof = mine;
+        if (event === 'edit_message') own_.editProof = mine;
         else if (event === 'delete_message') {
           // The original bytes go with the message; only the author's signed tombstone stays.
-          proofs.deleteProof = mine;
-          proofs.authorship = undefined;
-          proofs.editProof = undefined;
+          own_.deleteProof = mine;
+          own_.authorship = null;
+          own_.editProof = null;
         } else if (frame?.reaction) {
           const r = frame.reaction;
-          reactions = reactions?.map((x) =>
-            canonicalUserId(x.userId) === canonicalUserId(deps.userId) &&
-            x.emoji === r.emoji &&
-            (x.at ?? 0) === Number(r.at ?? 0)
-              ? { ...x, proof: mine }
-              : x
-          );
+          reactionSigned = (list) =>
+            list?.map((x) =>
+              canonicalUserId(x.userId) === canonicalUserId(deps.userId) &&
+              x.emoji === r.emoji &&
+              (x.at ?? 0) === Number(r.at ?? 0)
+                ? { ...x, proof: mine }
+                : x
+            );
         }
       }
     }
-    // A full-row write, not a patch: `liveConvId` may differ from the key the optimistic row was
-    // written under (the group was re-keyed mid-send), and a patch cannot move a row. So every
-    // field the in-memory message still carries is written back rather than dropped - the proofs
-    // included, which live only in the stored row.
+    // THE ROW UNDER `liveConvId` TAKES THIS SEND BY COMPARE-AND-SET: the content the send settled
+    // (a queued attachment's real envelope) unless the row is a tombstone, the server's time, and
+    // the signature above - folded onto the row as it stands, so a reaction or a deletion stored
+    // since the send began is kept, never written over from the copy on screen.
+    let written: Set<string>;
+    try {
+      written = await storage.mergeMessages(
+        liveConvId,
+        [messageId],
+        (current) =>
+          mergeStoredMessage(current, {
+            ...(current.isDeleted ? {} : { content: m.content }),
+            ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
+            ...own_,
+            ...(reactionSigned ? { reactions: reactionSigned(current.reactions) } : {}),
+          }),
+        deviceKey()
+      );
+    } catch (e) {
+      log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`);
+      return;
+    }
+    if (written.has(messageId)) return;
+    // NO ROW UNDER `liveConvId`: the group was re-keyed mid-send, so the optimistic row stands under
+    // the key it was written with, and a scoped compare-and-set cannot move it. This is a MOVE, and
+    // the one whole-row write left here: built from the stored proofs and the copy on screen, which
+    // is all the sending device holds of its own message; said, because it is rare.
+    log(
+      `[OUTBOX] ${messageId.slice(0, 8)}… has no row under ${liveConvId.slice(0, 8)}… - written there whole (re-keyed mid-send)`
+    );
+    const proofs = { ...(await storedProofs(messageId)), ...own_ };
+    const reactions = reactionSigned ? reactionSigned(m.reactions) : m.reactions;
     await storage
       .saveMessage(
         {
@@ -1963,7 +2000,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             : undefined;
     if (unsentReason) {
       setUnsentReason(entry.id, unsentReason);
-      await persistUnsentReason(entry.id, unsentReason);
+      await persistUnsentReason(entry.conversationId, entry.id, unsentReason);
       publishOutboxEntryRetired(entry.id, unsentReason);
     }
     // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that
@@ -4777,13 +4814,14 @@ export function getOutbox(): OutboxController | null {
  * the per-conversation lanes coalescer. There is no second flusher to fuse this with. FIVE sites are
  * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
  * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
- * THREE are external moments nothing inside this module can observe:
+ * FOUR are external moments nothing inside this module can observe:
  *
  * | Site | The moment, and why nothing in here sees it |
  * | --- | --- |
  * | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
  * | `sessionAuth`'s `onGroupReady`, through {@link resumeOutboxGroup} | one GROUP became sendable; the network never changed |
  * | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+ * | `MainChatPage` leaving the screen, under `holdWhileLeaving` | the iOS background task must last until the owed read marks' send SETTLES; the enqueue hands nobody its end, and this coalesces with it |
  *
  * **THE FUSION THAT LOOKS OBVIOUS IS A REGRESSION, AND IT IS THE FIRST THING ANYONE WILL REACH
  * FOR.** `connectivity.onReconnect` binds a flush to `isOffline` clearing, so binding one to
@@ -4794,7 +4832,7 @@ export function getOutbox(): OutboxController | null {
  * and only the promotion knows the second.**
  *
  * `outbox.test.ts` drives all five internal triggers plus this one over a single table, and a
- * source check pins the three external sites, so a fourth has to be argued for rather than added.
+ * source check pins the four external sites, so a fifth has to be argued for rather than added.
  */
 export function flushOutbox(): void {
   void active?.flush();

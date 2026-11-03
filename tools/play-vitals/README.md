@@ -71,3 +71,37 @@ So the acknowledgement lives in `known-issues.json`, in the repo, beside the rea
 deliberately **not** a mute list. Each entry names the commit that fixed the defect and the first
 versionCode carrying it; an issue reappearing at or above that code is reported as a `REGRESSION`,
 not swallowed. Muting by issue id alone would silence exactly the report worth waking up for.
+
+## Platform issues
+
+**Some crashes are not ours, and the API cannot archive them either.** A defect inside Android or
+the WebView, with no Canari, wry or Tauri frame, cannot be fixed by a commit here, so it has no
+`fixedBy` and no `fixedInVersionCode` - and listing it as `NEW` forever teaches the reader to skip
+`NEW`. A `"kind": "PLATFORM"` record in `known-issues.json` says "not ours" and **names the evidence
+that made it so**, which `classify.mjs` (`judgePlatform`) re-checks on every run against the
+issue's reports, its report count per versionCode (`errorCountMetricSet` by `issueId` and
+`versionCode`) and Play's user count per versionCode (`crashRateMetricSet`). It is printed as
+`[PLATFORM]` and does not fail the run while all three facts hold; **one broken fact re-opens it as
+`NEW`, with the reason, and the run fails**:
+
+1. **A report carries an app frame** - a `#NN pc` or `at` line naming `fr.emse.canari` (every
+   native frame from the APK does, by its path), `wry`, `tao::`, `tauri` or `mines_app_lib`. The
+   report HEADER names the package too and is not a frame.
+2. **A report names a WebView major newer than `webViewMajors`.** A native crash's report carries no
+   WebView version and the API has no field for one, so an empty set is the honest record - and the
+   first report that does name one re-opens the issue.
+3. **A versionCode newer than `baseline.versionCode` reports it above `baseline.per1kUsers`**,
+   reports per 1,000 distinct users of that versionCode. The Reporting API has no session count, so
+   the denominator is users, not sessions. While Play withholds the user count (too few users, the
+   state of every rate here as of 2026-11), **any report on a newer versionCode re-opens it**: a rate
+   that cannot be measured is never read as a low one.
+
+The record also keeps the frame list it was judged on, the affected API levels and devices, and who
+decided it. `classify.test.mjs` proves each re-open rule and the control on fixtures, and that the
+recorded frames carry no app frame. **The kind was decided 2026-11-03 (#2974) and is reversible**:
+deleting the record makes the issue `NEW` again, which is the whole of the undo.
+
+The first record is `7bea93777c2eb50d5aa34cb55a62350f`: a SIGABRT in `libaaudio_internal`
+(`MyPlayerBase::playerTrackPause` on a destroyed mutex, on a binder thread), one report on
+`100100199` (v1.1.1), a Xiaomi 14T on API 36. At v1.1.1 the app opened no audio stream itself - calls
+shipped in v1.5.0 - so the only AAudio client in the process was the WebView.

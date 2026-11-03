@@ -784,8 +784,7 @@ describe('the INVITATION_STATUS door', () => {
   const promote = () =>
     controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'active' },
-      'u1',
-      'false'
+      'u1'
     );
 
   it('promotes through the one writer instead of writing the row itself', async () => {
@@ -811,8 +810,7 @@ describe('the INVITATION_STATUS door', () => {
   it('does NOT reach the promotion writer on a demotion - the two directions are separate', async () => {
     await controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
-      'u1',
-      'false'
+      'u1'
     );
 
     // What the demotion DOES is the sibling suite's subject: it was written locally here until

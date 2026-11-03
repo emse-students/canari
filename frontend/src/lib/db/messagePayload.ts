@@ -88,6 +88,9 @@ export function toMessagePayload(msg: StoredMessage): Record<string, unknown> {
   if (msg.restoredUnverified) payload.restoredUnverified = true;
   if (msg.unsentReason) payload.unsentReason = msg.unsentReason;
   if (msg.mediaPurgedAt) payload.mediaPurgedAt = msg.mediaPurgedAt;
+  // Sealed with the row since #2936: a mutation must know a preview from a body at rest (an edit of
+  // a caption waits for the body - `settleableNow`). A row an older build wrote reads as unflagged.
+  if (msg.isFcmPreview) payload.isFcmPreview = true;
   return payload;
 }
 
@@ -156,5 +159,6 @@ export function fromMessagePayload(
     restoredUnverified: payload.restoredUnverified === true ? true : undefined,
     unsentReason: unsentReason(payload.unsentReason),
     mediaPurgedAt: positiveNumber(payload.mediaPurgedAt),
+    isFcmPreview: payload.isFcmPreview === true ? true : undefined,
   };
 }

@@ -94,6 +94,7 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   event_updated: 'events',
   event_deleted: 'events',
   event_pending: 'events',
+  event_pending_coorganiser: 'events',
   // The bookings' four (WP-N): a category of their own (Q-R15), drawn by the settings screen.
   social_booking_cancelled: 'bookings',
   social_booking_withdrawn: 'bookings',

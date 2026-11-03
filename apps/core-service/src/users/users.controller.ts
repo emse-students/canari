@@ -39,6 +39,8 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { AccountErasureService } from '../account-erasure/account-erasure.service';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
 import { isInReviewCohort } from '../review-cohort';
+import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
+import { avatarAccessOf, type AvatarAccess } from './avatar-access';
 
 /**
  * The most ids one `GET /users/batch` may carry.
@@ -68,24 +70,66 @@ export function etagMatches(header: string | undefined, etag: string): boolean {
   return header.split(',').some((t) => t.trim() === '*' || opaque(t) === ours);
 }
 
+/**
+ * Where an unsigned avatar request came from, as the ` via=... origin=...` tail of its `[AVATAR]`
+ * line (see `UsersController.logAvatar`).
+ */
+function unsignedProvenance(req: Request): string {
+  const via = req.headers['x-real-ip'] ? 'nginx' : 'direct';
+  const origin = req.headers.origin;
+  const originClass = !origin
+    ? 'none'
+    : (TAURI_WEBVIEW_ORIGINS as readonly string[]).includes(origin)
+      ? 'native'
+      : 'web';
+  return ` via=${via} origin=${originClass}`;
+}
+
+/** The outcome word of an `[AVATAR]` line - the vocabulary `grep AVATAR` reads. */
+type AvatarLogOutcome =
+  | 'served'
+  | 'not-modified'
+  | 'absent'
+  | 'unavailable'
+  | 'disabled'
+  | 'rejected'
+  | 'refused';
+
 @Controller('users')
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);
 
   /**
-   * The single `[AVATAR]` line of an avatar request: outcome, status, duration and the target id
-   * TRUNCATED to 8 characters (never the full id or the image). `served`/`absent` log at info,
-   * every failure at warn, so `grep AVATAR | grep -v outcome=served` finds a failed fetch.
+   * The single `[AVATAR]` line of an avatar request: outcome, status, duration, the target id
+   * TRUNCATED to 8 characters (never the full id, the image or the token), and who asked
+   * (`access=internal|signed|unsigned|refused`, with the refusal's `reason`). `served`/`absent` log
+   * at info, every failure at warn, so `grep AVATAR | grep -v outcome=served` finds a failed fetch.
+   *
+   * PHASE 1 OF THE SIGNED AVATAR URL: a request carrying no token is ANSWERED, and its line says
+   * `access=unsigned` - its rate against every `[AVATAR]` line is the population of builds (or
+   * callers) that do not send one yet. Phase 2 refuses them once that rate says the old builds are
+   * gone (docs/wiki/backlog.d/p2-avatar-urls-refuse-unsigned-requests.md). An unsigned line carries
+   * what separates its causes, since it cannot tell them apart itself:
+   * - `via=nginx` (nginx always writes `X-Real-IP`) is a client - an old build, or a page that
+   *   builds the URL by hand; `via=direct` is a service on the Docker network that forgot its
+   *   `x-internal-secret`, which no client upgrade will ever fix;
+   * - `origin=native|web|none`: a cache `fetch` from the app shell, from a browser, or an `<img>`
+   *   (which sends no `Origin`) - the last is a builder that bypasses the helper, or an old build.
    */
   private logAvatar(
-    outcome: 'served' | 'not-modified' | 'absent' | 'unavailable' | 'disabled' | 'rejected',
+    outcome: AvatarLogOutcome,
     status: number,
     startedAt: number,
-    userId: string
+    userId: string,
+    access: AvatarAccess,
+    req: Request
   ): void {
     const line =
       `[AVATAR] outcome=${outcome} status=${status} ms=${Date.now() - startedAt} ` +
-      `target=${String(userId).slice(0, 8)}`;
+      `target=${String(userId).slice(0, 8)}` +
+      ` access=${access.kind}` +
+      (access.kind === 'refused' ? ` reason=${access.reason}` : '') +
+      (access.kind === 'unsigned' ? unsignedProvenance(req) : '');
     if (outcome === 'served' || outcome === 'not-modified' || outcome === 'absent') {
       this.logger.log(line);
     } else this.logger.warn(line);
@@ -298,6 +342,11 @@ export class UsersController {
    *   next request tries again, and nothing downstream remembers a passing outage. Answering 404
    *   here would be a lie that gets cached, which is the defect this endpoint was fixed of.
    *
+   * WHO MAY ASK (docs/wiki/sessions.md, "The avatar token"): a service proving `x-internal-secret`,
+   * or a viewer whose `?t=` avatar token verifies against a LIVE session - see `avatar-access.ts`. A
+   * presented credential that is wrong is a bodyless `403`, never stored. A request with no token
+   * at all is still answered in PHASE 1, its line saying `access=unsigned` (see `logAvatar`).
+   *
    * EVERY RESPONSE IS BODYLESS EXCEPT THE IMAGE. A JSON error body on a request an `<img>` made is
    * what produced THREE console lines for one benign miss - 404, then `ERR_BLOCKED_BY_ORB` (Chrome
    * refusing to hand a JSON body to an image destination), then `ERR_ABORTED` - all naming the same
@@ -307,11 +356,37 @@ export class UsersController {
   async getAvatar(@Param('id') userId: string, @Req() req: Request, @Res() res: Response) {
     // ONE `[AVATAR]` LINE PER REQUEST, whatever the outcome - see `logAvatar`.
     const startedAt = Date.now();
+    // WHO IS ASKING, BEFORE ANY ANSWER ABOUT THE ID (`avatar-access.ts`): a wrong credential is
+    // refused whatever the id names, so a refusal never says whether there is a photo.
+    let access: AvatarAccess;
+    try {
+      access = await avatarAccessOf(req, this.sessions);
+    } catch (e) {
+      // THE SESSION STORE DID NOT ANSWER, which says nothing about the token: a bodyless, unstored
+      // 503 like `unavailable` below, never a refusal the client would read as a verdict.
+      this.logger.warn(
+        `[AVATAR] outcome=unavailable status=503 ms=${Date.now() - startedAt} ` +
+          `target=${String(userId).slice(0, 8)} access=unknown: ${e instanceof Error ? e.message : String(e)}`
+      );
+      res.set({ 'Cache-Control': 'no-store' });
+      res.status(503).end();
+      return;
+    }
+    if (access.kind === 'refused') {
+      // BODYLESS, like every other non-image answer here (see above), and never stored: a token
+      // refused today must not be remembered by anything between here and the `<img>`.
+      this.logAvatar('refused', 403, startedAt, userId, access, req);
+      res.set({ 'Cache-Control': 'no-store' });
+      res.status(403).end();
+      return;
+    }
+    const log = (outcome: AvatarLogOutcome, status: number) =>
+      this.logAvatar(outcome, status, startedAt, userId, access, req);
     // A review account has no public face (review-cohort.ts). An `<img>` carries no session, so the
     // viewer is unknown here: the answer is the same 404 for everybody, and never cached, so it is
     // not a fact an edge could keep about the id.
     if (isInReviewCohort(userId)) {
-      this.logAvatar('absent', 404, startedAt, userId);
+      log('absent', 404);
       res.set({ 'Cache-Control': 'no-store' });
       res.status(404).end();
       return;
@@ -320,23 +395,18 @@ export class UsersController {
     try {
       outcome = await this.avatarService.fetchUserAvatar(userId);
     } catch (e) {
-      this.logAvatar(
-        'rejected',
-        e instanceof HttpException ? e.getStatus() : 500,
-        startedAt,
-        userId
-      );
+      log('rejected', e instanceof HttpException ? e.getStatus() : 500);
       throw e;
     }
 
     if (outcome.kind === 'absent') {
-      this.logAvatar('absent', 404, startedAt, userId);
+      log('absent', 404);
       res.set({ 'Cache-Control': 'public, max-age=600' });
       res.status(404).end();
       return;
     }
     if (outcome.kind === 'unavailable') {
-      this.logAvatar('unavailable', 502, startedAt, userId);
+      log('unavailable', 502);
       res.set({ 'Cache-Control': 'no-store' });
       res.status(502).end();
       return;
@@ -347,7 +417,7 @@ export class UsersController {
     // have succeeded: the key is read once at startup. Ten minutes matches `absent`, so a key
     // actually being added recovers within one TTL rather than a day.
     if (outcome.kind === 'disabled') {
-      this.logAvatar('disabled', 404, startedAt, userId);
+      log('disabled', 404);
       res.set({ 'Cache-Control': 'public, max-age=600' });
       res.status(404).end();
       return;
@@ -377,12 +447,12 @@ export class UsersController {
       res.set({ ETag: outcome.etag });
       // The 304 is decided HERE rather than left to Express, so it is explicit and measurable.
       if (etagMatches(req.headers['if-none-match'], outcome.etag)) {
-        this.logAvatar('not-modified', 304, startedAt, userId);
+        log('not-modified', 304);
         res.status(304).end();
         return;
       }
     }
-    this.logAvatar('served', 200, startedAt, userId);
+    log('served', 200);
     res.set({ 'Content-Length': outcome.body.length });
     res.send(outcome.body);
   }

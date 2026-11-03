@@ -71,6 +71,11 @@ describe('sealedSwapStatement', () => {
     expect(order).toEqual(params.map((_, i) => i + 1));
   });
 
+  it('raises the revision of a re-sealed MESSAGE, so a compare-and-set that read it retries', () => {
+    expect(sealedSwapStatement('messages', [swap('x')]).sql).toContain(', rev = rev + 1 WHERE');
+    expect(sealedSwapStatement('graine', [swap('x')]).sql).not.toContain('rev');
+  });
+
   it('fits a full batch under the bound-parameter ceiling', () => {
     expect(SEALED_SWAP_ROWS_PER_STATEMENT * SEALED_SWAP_COLUMNS).toBeLessThanOrEqual(
       MAX_BOUND_PARAMETERS
@@ -89,8 +94,18 @@ describe('sealedSwapStatement', () => {
 describe('messageInsertSql', () => {
   it('numbers placeholders across the whole statement, not per tuple', () => {
     expect(messageInsertSql(2)).toBe(
-      'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
-        '($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)'
+      'INSERT INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
+        '($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)' +
+        ' ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, timestamp = excluded.timestamp, ' +
+        'iv = excluded.iv, cipher_text = excluded.cipher_text, order_at = excluded.order_at, ' +
+        'order_pending = excluded.order_pending, rev = messages.rev + 1'
+    );
+  });
+
+  it('raises the revision of a row it replaces, never resets it - and IGNORE stays an insert', () => {
+    expect(messageInsertSql(1)).not.toContain('OR REPLACE');
+    expect(messageInsertSql(1, 'ignore')).toBe(
+      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ($1, $2, $3, $4, $5, $6, $7)'
     );
   });
 

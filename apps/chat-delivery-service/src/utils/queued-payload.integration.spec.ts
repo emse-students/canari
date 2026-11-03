@@ -398,7 +398,6 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
       SEATS[0].userId,
       SEATS[0].deviceId,
       SEATS[0].userId,
-      undefined,
       1000
     );
 
@@ -438,8 +437,7 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
       (
         await service.acknowledgeMessages(
           { userId: SEATS[1].userId, deviceId: SEATS[1].deviceId, messageIds: [frame.id] },
-          SEATS[1].userId,
-          undefined
+          SEATS[1].userId
         )
       ).count
     ).toBe(0);
@@ -447,8 +445,7 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
       (
         await service.acknowledgeMessages(
           { userId: SEATS[0].userId, deviceId: SEATS[0].deviceId, messageIds: [frame.id] },
-          SEATS[0].userId,
-          undefined
+          SEATS[0].userId
         )
       ).count
     ).toBe(1);
@@ -475,8 +472,7 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
       const [frame] = await pull(seat);
       await service.acknowledgeMessages(
         { userId: seat.userId, deviceId: seat.deviceId, messageIds: [frame.id] },
-        seat.userId,
-        undefined
+        seat.userId
       );
       await collect();
       expect(await count('queued_payload')).toBe(i === SEATS.length - 1 ? 0 : 1);

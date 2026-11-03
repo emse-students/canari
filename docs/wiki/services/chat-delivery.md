@@ -1283,6 +1283,54 @@ guards, push-token and link-preview failures (no screen words them), calls (held
 Lydia payment errors (the paid half waits for WP-LYDIA-1), and anything in social-service, account
 erasure, lives or reels.
 
+## No platform-admin bypass on conversation data (owner, 2026-11-02)
+
+**A platform global admin (`X-Global-Admin: true`) is a user like any other on a person's
+conversations.** It cannot list someone's groups, read a roster it is not on, add or remove roster
+rows, mint or settle invitations on a group it is not in, read a group's history, fetch or
+acknowledge someone's queued messages, register a device or publish KeyPackages under someone
+else's account, administer someone else's devices, or touch someone else's PIN. An admin who is not a member gets exactly the refusal any non-member gets.
+
+**Why.** Each bypass was a door around the membership checks that protect the MLS tree. The sharpest
+one: the roster-mutation check exempted an admin, so an admin could insert itself into a populated
+group's roster, then pass the GroupInfo read and external-join - the self-join the check exists to
+block. A device registered under another account is fanned out into every one of that person's
+groups, and a KeyPackage published under it is the key that person's next Add uses. None of this
+needs an admin to operate the platform.
+
+**Nor another person's devices or PIN** (owner, the same day): each person manages their own
+devices - metadata, the revoked flag, the one-time KeyPackage pool, the deletion - and their own
+PIN - check, salt, status, change, reset - and an admin who is not that person is refused like
+anyone else.
+
+**The one handler that still reads the header** is `GET mls/admin/storage`, which answers aggregates
+alone (disk, table sizes, row counts, Redis, the media bucket), never a person.
+`src/controllers/no-admin-bypass.spec.ts` asserts it twice, against one allowlist: from the route
+metadata of every controller `AppModule` registers (walked from the module, never a hand-kept list;
+header names compared in any letter case), and from the SOURCE - the header named anywhere under
+`src/` outside `admin-storage.controller.ts` and the specs fails the suite, which also catches a
+`@Req()` read, a guard or a whole `@Headers()` object. A new reader fails until someone decides its
+side.
+
+**A missing caller is refused, never a pass** (review of #2950). `assertCallerOwnsUserId` and the
+roster checks `assertCallerIsGroupMember` / `assertCallerMayMutateMembership` used to return when
+`x-user-id` was absent - a leftover from deployments without the internal token. They now answer
+401. Nothing relied on that path: every route that calls them is behind `HeaderAuthGuard`, which
+refuses a missing `x-user-id` first, and no service code calls the handlers directly.
+
+Everything else reads no admin header: the owner check `assertCallerOwnsUserId(headerUserId, target,
+message)` has no admin parameter at all, nor do the member checks of `members.controller.ts`,
+`invitations.controller.ts`, `authorizeHistoryGroups`, or the PIN routes' `assertSelf`. No frontend
+page used a removed path - every client call names its own account. The gateway's
+`GET /api/admin/presence` is outside this service and not covered here.
+
+Pinned by `no-admin-bypass.spec.ts` (the allowlist, both readings; an admin who is not the owner
+refused on the five device routes and the five PIN routes before any dependency is reached; a
+request naming no caller refused 401),
+`members.controller.group-rosters.spec.ts` and `invitations.controller.vouch.spec.ts` (an admin
+non-member refused like a stranger), and `messaging.history-requester.spec.ts` (history refused,
+single and batch, the stream never read).
+
 ## Routes
 
 All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (injected by Nginx) unless noted.
@@ -1398,7 +1446,7 @@ series, 5.0 s, on the 2026-10-12 production console
 groupId[] }`, from ONE `dm_group_members ... WHERE groupId IN (...)` query. **The authorization is
 the single read's, per group**: a group the caller holds no roster row in - or that does not exist -
 is listed in `refused` instead of failing the request, so a refusal and a nonexistent group read
-alike; a global admin is answered for every group. **An absent `x-user-id` is NOT a wildcard here**,
+alike; a global admin is answered like anyone ([no admin bypass](#no-platform-admin-bypass-on-conversation-data-owner-2026-11-02)). **An absent `x-user-id` is NOT a wildcard here**,
 unlike `assertCallerIsGroupMember`: `HeaderAuthGuard` refuses it first anyway, and a route reading
 many rosters at once does not carry a branch that would hand every one of them to a caller nobody
 identified. No display names: nobody reading rosters in bulk asks for them.

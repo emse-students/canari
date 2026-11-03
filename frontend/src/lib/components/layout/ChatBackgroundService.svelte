@@ -32,11 +32,20 @@
   import { endExpiredSession } from '$lib/composables/session/endExpiredSession';
   import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
+  import {
+    oneSettlePerAccount,
+    PinResetRefusedError,
+    runPinReset,
+    serverPinSaltFingerprint,
+    settleUnsettledPinReset,
+  } from '$lib/composables/session/pinReset';
+  import { MlsResetRefusedError } from '$lib/utils/hex';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
     withholdsResetForUnreadKey,
     isVaultRefusal,
+    LoginFailure,
     type LoginErrorCode,
     provesLocalStateExists,
     provesOtherAccountState,
@@ -105,6 +114,7 @@
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
+  import { routeTabReadEvent, tabEventIsAddressedHere } from '$lib/utils/chat/tabReadRelay';
   import { forgetSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
   import {
     refreshAppVersionCheck,
@@ -124,6 +134,7 @@
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { noteOpenNavigated } from '$lib/utils/chat/resumeOpening.svelte';
   import {
     openNotificationTarget,
     resolveConversationKey,
@@ -474,7 +485,9 @@
     try {
       const { hasMlsState } = await import('$lib/utils/hex');
       canRecoverPin = await hasMlsState(uid);
-    } catch {
+    } catch (e) {
+      // Whether a saved state exists is not known: the old-PIN recovery is not offered on it.
+      console.warn('[MLS] the saved state could not be measured - no old-PIN recovery offered:', e);
       canRecoverPin = false;
     }
   }
@@ -494,12 +507,25 @@
    * implementation now, branching on the typed code and never on the message.
    */
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
-    if (code === 'account_deleted') {
-      // An account deleted from this device: nothing to retry and nothing to recover. No salt for a
-      // next try (the account exists nowhere to ask it of) and no state lookup - only the recovery
-      // a previous failure may have offered is withdrawn.
+    if (code === 'account_deleted' || code === 'revoked_device_wipe_owed') {
+      // An account deleted from this device, or a device its owner revoked whose wipe is still owed:
+      // nothing to retry and nothing to recover. No salt for a next try and no state lookup - only
+      // the recovery a previous failure may have offered is withdrawn. Each said as what it is: a
+      // revoked device's account still exists (round 9 of the review of #2919).
       canRecoverPin = false;
-      appendLog('[PIN] No salt and no recovery asked - this account was deleted from this device.');
+      appendLog(
+        code === 'account_deleted'
+          ? '[PIN] No salt and no recovery asked - this account was deleted from this device.'
+          : '[PIN] No salt and no recovery asked - this device was revoked and its wipe is still owed.'
+      );
+      return;
+    }
+    if (code === 'pin_reset_unsettled') {
+      // A "forgot PIN" reset of this account waits for the server's answer: nothing was opened, so
+      // there is no salt to ask and no recovery to evaluate. The retry IS the settle, asked again
+      // now - online, it settles the reset and the gate follows its outcome (round 10 of #2919).
+      appendLog('[PIN_RESET] the sign-in waits for an unsettled reset - its settle is asked again');
+      void settleUnsettledPinResetOf(uid);
       return;
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
@@ -580,6 +606,11 @@
       // dev prose and the declared line stands in its place.
       recoverError = localizedMessage(e, m.auth_pin_recovery_failed());
       appendLog(`[PIN_RECOVER] failed: ${String(e)}`);
+      // Read from the TYPE: a reset waiting for the server is settled again, as at the gate.
+      const uid = globalSession.userId || currentUserId();
+      if (e instanceof LoginFailure && e.code === 'pin_reset_unsettled' && uid) {
+        void settleUnsettledPinResetOf(uid);
+      }
     } finally {
       recoverLoading = false;
       recoverProgress = null;
@@ -1569,6 +1600,22 @@
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */
   function applyTabMessageEvent(event: import('$lib/mls-client/tabMessageSync').TabMessageEvent) {
+    const me = globalSession.userId || currentUserId() || '';
+    // A tab of ANOTHER account in this browser hears the same channel: dropped here, once.
+    if (!tabEventIsAddressedHere(event, me)) return;
+    // THE READ HALF OF THE CHANNEL, whatever this tab's role: `routeTabReadEvent` applies a read from
+    // any tab, and what the leader relays (marks, salon counts) only in a follower.
+    if (
+      routeTabReadEvent(event, {
+        conversations: globalConvs.conversations,
+        me,
+        isLeader: globalSession.isTabLeader,
+        isReading: (key) => isReadingConversationNow(key, globalConvs.selectedContact),
+      })
+    ) {
+      return;
+    }
+
     // A COMPOSED MESSAGE IS HANDLED BEFORE THE ROLE IS EVEN READ, because it is the one event on
     // this channel a FOLLOWER sends and the LEADER needs. Everything below it is the leader
     // relaying what it alone receives, which a leader must not apply to itself.
@@ -1587,19 +1634,6 @@
         // `unreadCount` is deliberately untouched: an own message is never unread, and the sender
         // has nothing to say about what this tab has read.
       });
-      return;
-    }
-
-    // A READ IS THE OTHER FACT A FOLLOWER MAY KNOW THAT A LEADER DOES NOT, and the leader must
-    // apply it too: reading happens in whichever tab is open on the conversation, either role.
-    // Applied only up to the watermark the reading tab saw, so a message that arrived in the gap
-    // between the read and this broadcast keeps its unread state instead of being swallowed.
-    if (event.type === 'conversation_read') {
-      const target = globalConvs.conversations.get(event.conversationId);
-      if (!target) return;
-      if ((target.lastMessageAt ?? 0) <= event.readAt) {
-        globalConvs.conversations.set(event.conversationId, { ...target, unreadCount: 0 });
-      }
       return;
     }
 
@@ -1677,6 +1711,13 @@
           return;
         }
         globalSession.userId = savedUser;
+        // BEFORE ANY UNLOCK: a reset a page that is gone left unsettled holds this account's state
+        // set apart, and only the server's answer settles it (round 9 of the review of #2919). A
+        // committed one leaves nothing to unlock: the gate it opened is the whole flow (round 10).
+        if (await settleUnsettledPinResetOf(savedUser)) {
+          globalSession.isLoginInProgress = false;
+          return;
+        }
 
         // Step 1: check whether biometrics are CONFIGURED (user flag) — P1-A
         // NEVER query the keystore if the user disabled biometrics, even if a leftover key exists.
@@ -2025,7 +2066,7 @@
           .then((n) => {
             if (n > 0) appendLog(`[GC] Deleted ${n} old message(s) from IndexedDB`);
           })
-          .catch(() => {});
+          .catch((e: unknown) => appendLog(`[GC] old-message pruning failed: ${String(e)}`));
       }
     }, GC_INTERVAL);
 
@@ -2176,6 +2217,52 @@
   }
 
   /**
+   * Settles a "forgot PIN" reset a page that is gone left unsettled, from the server's answer
+   * ({@link settleUnsettledPinReset}). A committed one ends as the live reset's commit does: no local
+   * state, and the gate shown at once - in first setup only when the server holds no PIN; one chosen
+   * since (another device) is unlocked, never set up again. A failure is accused and leaves the reset
+   * unsettled: the account's sign-in is then refused natively, never started fresh over its state.
+   *
+   * @returns whether the gate was shown here - the caller's sign-in flow ends there.
+   */
+  function settleUnsettledPinResetOf(uid: string): Promise<boolean> {
+    return settleOnce(uid, () => settleUnsettledPinResetNow(uid));
+  }
+
+  /** Never two settles of one account at once in this page ({@link oneSettlePerAccount}). */
+  const settleOnce = oneSettlePerAccount<boolean>(appendLog);
+
+  /** {@link settleUnsettledPinResetOf}'s body, run once at a time per account. */
+  async function settleUnsettledPinResetNow(uid: string): Promise<boolean> {
+    try {
+      const outcome = await settleUnsettledPinReset({
+        adopt: () => globalSession.adoptUnsettledDeviceReset(uid),
+        serverSaltFingerprint: async () =>
+          serverPinSaltFingerprint(uid, { baseUrl: deliveryUrl(), token: await getToken() }),
+        commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
+        rollback: () => globalSession.rollbackDeviceReset(uid),
+        log: appendLog,
+      });
+      if (outcome !== 'committed' && outcome !== 'committed_pin_chosen') return false;
+      globalSession.userId = uid;
+      isFirstPinSetup = outcome === 'committed';
+      if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
+      showPinGate('PIN reset settled');
+      return true;
+    } catch (e) {
+      if (e instanceof MlsResetRefusedError && e.code === 'RESET_NOT_STAGED_BY_THIS_PAGE') {
+        // Typed, never read from the message: a newer page holds the reset and settles it itself.
+        appendLog(
+          `[PIN_RESET] the unsettled reset belongs to a newer page - this one leaves it: ${String(e)}`
+        );
+      } else {
+        appendLog(`[PIN_RESET] ERROR: the unsettled reset could not be settled: ${String(e)}`);
+      }
+      return false;
+    }
+  }
+
+  /**
    * "Forgot PIN" reset: wipes the user's PIN-protected MLS state server-side (keeping
    * the account, posts and community), clears local MLS state, then re-opens the modal
    * in first-setup mode so the user chooses a new PIN. Past encrypted messages are lost.
@@ -2202,31 +2289,53 @@
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
     appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}…`);
-    // The reset deletes the account's salt; one asked before it can only be stale.
-    forgetPinSaltAhead('PIN reset', appendLog);
+    // Whether the server reset the PIN: from then on the old PIN opens nothing, so the gate stays in
+    // first setup whatever fails after.
+    let serverReset = false;
     try {
-      const token = await getToken();
-      const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userId: uid }),
+      await runPinReset({
+        // The server's salt NOW is journalled with the stage, so a page that is gone before it
+        // settled the reset is settled from the server's answer (round 9 of the review of #2919).
+        serverSaltFingerprint: async () =>
+          serverPinSaltFingerprint(uid, { baseUrl: deliveryUrl(), token: await getToken() }),
+        stage: (basis) => globalSession.stageDeviceReset(uid, basis),
+        askServer: async () => {
+          // The reset deletes the account's salt; one asked before it can only be stale.
+          forgetPinSaltAhead('PIN reset', appendLog);
+          const token = await getToken();
+          const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ userId: uid }),
+          });
+          // A 4xx is a definite refusal; a 5xx (and a rejected fetch) is no answer, decided by
+          // the salt (round 10 of the review of #2919: the server may have reset and then failed).
+          if (res.status >= 400 && res.status < 500) throw new PinResetRefusedError(res.status);
+          if (!res.ok) throw new Error(`Server-side PIN reset answered ${res.status}.`);
+        },
+        rollback: () => globalSession.rollbackDeviceReset(uid),
+        handOver: async () => {
+          await globalSession.adoptUnsettledDeviceReset(uid, true);
+        },
+        enterFirstSetup: () => {
+          serverReset = true;
+          globalSession.userId = uid;
+          isFirstPinSetup = true;
+        },
+        commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
+        log: appendLog,
       });
-      if (!res.ok) throw new Error('Server-side PIN reset failed.');
-      // Local MLS state is encrypted under the old PIN - wipe it so a new PIN starts fresh.
-      await globalSession.resetDeviceAsFresh(uid, sessionCb());
-      appendLog('[PIN_RESET] MLS state wiped - choose a new PIN.');
-      globalSession.userId = uid;
-      isFirstPinSetup = true;
-      // Deliberately NOT gated on `mayPromptForPin`: the POST above carried a live access token, so
-      // the credential is not dead, and the local MLS state is already wiped. Declining the keypad
-      // here would strand the user mid-reset with nothing to unlock and no way to finish.
+      // Deliberately NOT gated on `mayPromptForPin`: the POST carried a live access token, so the
+      // credential is not dead, and the local MLS state is gone. Declining the keypad here would
+      // strand the user mid-reset with nothing to unlock and no way to finish.
       showPinGate('PIN reset');
     } catch (e) {
-      // The `Server-side PIN reset failed.` thrown above is a DEV line and used to be shown as it
-      // stood - an English sentence on a French modal, and the only thing the reader was told.
-      // It stays exactly as it is, in the log, where it is correct.
+      // A DEV line, kept in the log where it is correct; the reader is told in their language.
       pinError = m.auth_pin_reset_failed();
       appendLog(`[PIN_RESET] Failed: ${String(e)}`);
+      // The server reset the PIN and only the local commit failed: the gate is already in first
+      // setup, so the keypad still opens to choose the new PIN.
+      if (serverReset) showPinGate('PIN reset');
     } finally {
       pinLoading = false;
       pinStep = '';
@@ -2240,6 +2349,8 @@
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // A resume that opened a page link holds the conversation left on screen until it navigates.
+    noteOpenNavigated();
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
       path === '/login' ||

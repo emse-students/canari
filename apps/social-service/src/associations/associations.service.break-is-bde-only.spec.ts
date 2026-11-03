@@ -45,6 +45,14 @@ function makeService(event?: Overrides) {
       return e;
     }),
   };
+  // The creation is ONE transaction in production; here it runs on the stub repository.
+  const manager = {
+    query: jest.fn(async () => []),
+    getRepository: () => calendarRepo,
+  };
+  Object.assign(calendarRepo, {
+    manager: { transaction: async (work: (m: unknown) => unknown) => work(manager) },
+  });
 
   // POSITIONAL, AND FOURTEEN LONG - keep these comments aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
@@ -83,13 +91,15 @@ function makeService(event?: Overrides) {
 
   Object.assign(service, {
     findById: jest.fn(async () => ({ id: 'asso-1' })),
+    // The event lock is a transaction in production; here the work simply runs on the stub repo.
+    withEventLock: async (_id: string, work: (repo: unknown) => unknown) => work(calendarRepo),
     findCalendarEventForAssociation: jest.fn(async () => row),
     assertFormBelongsToAssociation: jest.fn(async () => undefined),
     detachLinksBeforeCreate: jest.fn(async () => undefined),
     batchLoadCoOwners: jest.fn(async () => new Map()),
     syncCoOwners: jest.fn(async () => []),
     serializeCalendarEvent: jest.fn((e: Overrides) => e),
-    notifyEventValidatorsOfProposal: jest.fn(),
+    notifyEventValidatorsOfProposal: jest.fn().mockResolvedValue(undefined),
     notifyAssocAdminsOfEventAction: jest.fn(),
   });
 

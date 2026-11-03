@@ -134,4 +134,6 @@
     <string name="notif_event_deleted_body">“%1$s” was removed by the BDE</string>
     <string name="notif_event_pending_title">Event needs approval again</string>
     <string name="notif_event_pending_body">“%1$s” needs approval again: its dates changed</string>
+    <string name="notif_event_pending_coorganiser_title">Event needs approval again</string>
+    <string name="notif_event_pending_coorganiser_body">“%1$s” needs approval again: an association accepted to co-organise</string>
 </resources>

@@ -12,6 +12,7 @@
     getMyBdeReach,
     canTakePayments,
     keepPaymentsReady,
+    grantableFlags,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
@@ -299,8 +300,13 @@
         />
       {/if}
 
-      {#if editSection === 'members' && canManageMembers}
-        <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
+      {#if editSection === 'members' && rights.memberRoster}
+        <EditMembersTab
+          asso={list}
+          grantable={grantableFlags(permissionContext)}
+          bind:members
+          bind:resolvedMemberNames
+        />
       {/if}
 
       {#if editSection === 'documents' && rights.documents}

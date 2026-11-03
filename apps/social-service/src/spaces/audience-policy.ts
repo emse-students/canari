@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { SPACE_CAMPUSES } from './space.entity';
-import type { SpaceCampus } from './space.entity';
+import type { SpaceCampus, SpaceFormation } from './space.entity';
 
 /** The pure shape of a rule, kept apart from `spaces.service.ts` so this file imports nothing of it. */
 interface RuleLike {
@@ -19,8 +19,17 @@ export const AUDIENCE_ERROR = {
   CREATOR_CAMPUS_REQUIRED: 'AUDIENCE_CREATOR_CAMPUS_REQUIRED',
   /** A BDE star touching an institution (decision 7). */
   INSTITUTION_ADMIN_ONLY: 'AUDIENCE_INSTITUTION_ADMIN_ONLY',
-  /** A BDE star touching a campus it does not govern, on the entity's current rules or the new ones. */
+  /**
+   * A BDE star touching a space it does not govern, on the entity's current rules or the new ones.
+   * The name predates the per-space bound (2026-11-02) and is kept: clients read it.
+   */
   OUTSIDE_BDE_CAMPUS: 'AUDIENCE_OUTSIDE_BDE_CAMPUS',
+  /**
+   * A BDE star adding or removing a rule that exceeds the spaces it governs - a whole-campus rule
+   * over a campus it shares, say (owner, 2026-11-03: "Lire tout, modifier dans ses espaces"). Such
+   * a rule is the platform admin's to widen or remove; the star leaves it as it is.
+   */
+  RULE_BEYOND_BDE_SPACES: 'AUDIENCE_RULE_BEYOND_BDE_SPACES',
   /** Neither a global admin nor the holder of MANAGE_ASSO in any BDE. */
   ADMIN_OR_BDE_REQUIRED: 'AUDIENCE_ADMIN_OR_BDE_REQUIRED',
 } as const;
@@ -68,30 +77,94 @@ export function defaultCampusRules(
 }
 
 /**
- * The BDE star's bound (decision 7): it may write the audience of an association or list of ITS
- * campus(es) only. `governed` are the campuses of the spaces whose BDE the caller holds MANAGE_ASSO
- * in. Both what the entity addresses NOW and what is submitted must sit inside them, so a star can
- * neither take over an entity of another campus nor push its own beyond its borders. An entity with
- * no rule at all is governed by nobody and stays a global admin's.
+ * One opened space as a BDE star sees it: its pair, and whether a BDE in which the star holds
+ * MANAGE_ASSO governs it (`BDE_SPACE_STANDINGS_SQL`). Every opened space is listed, governed or
+ * not, because a whole-campus rule is judged against all of its campus.
  */
-export function assertBdeMayWriteAudience(
-  type: string,
-  governed: readonly string[],
-  current: readonly RuleLike[],
-  submitted: readonly RuleLike[]
-): void {
-  assertBdeMayReadAudience(type, governed, current);
-  if (!submitted.every((r) => ruleInsideCampuses(r, governed))) throw outsideBdeCampus();
+export interface SpaceStanding {
+  formation: string;
+  campus: string;
+  governed: boolean;
 }
 
 /**
- * The BDE star's READ bound (user, 2026-10-08: "campus de l'etoile seulement"): it may read the
- * rules of an entity whose CURRENT rules all lie within the campuses it governs - the same bound
- * and codes as the write path, so the editor can preselect what is in force.
+ * Does `r` stay inside the spaces the star governs? PER SPACE, the granularity governance has
+ * (`holdsBdeFlagOverSql`), never per campus (2026-11-02): a (formation, campus) rule is inside when
+ * that space is governed; a whole-campus rule only when EVERY opened space of the campus is (one
+ * campus may hold two BDEs); an `everyone` rule never. A campus with no opened space is outside.
+ */
+export function ruleInsideGovernedSpaces(r: RuleLike, spaces: readonly SpaceStanding[]): boolean {
+  if (r.campus === null) return false;
+  const ofCampus = spaces.filter((s) => s.campus === r.campus);
+  if (r.formation === null) return ofCampus.length > 0 && ofCampus.every((s) => s.governed);
+  return ofCampus.some((s) => s.formation === r.formation && s.governed);
+}
+
+/** One key per rule, so two rule sets can be compared as sets. */
+function ruleKey(r: RuleLike): string {
+  return `${r.formation ?? '*'}|${r.campus ?? '*'}`;
+}
+
+/** The rules a write ADDS or REMOVES: the symmetric difference of the two sets. */
+export function changedRules(
+  current: readonly RuleLike[],
+  submitted: readonly RuleLike[]
+): RuleLike[] {
+  const before = new Set(current.map(ruleKey));
+  const after = new Set(submitted.map(ruleKey));
+  return [
+    ...current.filter((r) => !after.has(ruleKey(r))),
+    ...submitted.filter((r) => !before.has(ruleKey(r))),
+  ];
+}
+
+/**
+ * THE BDE STAR'S BOUND: "LIRE TOUT, MODIFIER DANS SES ESPACES" (owner, 2026-11-03).
+ *
+ * - **Reading** (`assertBdeMayReadAudience`): a star reads the audience of any association or list
+ *   of its campus - one with a rule on a campus where it governs a space, or one with no rule.
+ * - **Writing** (here): the star must already GOVERN the entity (`governsEntity`, the management
+ *   predicate `holdsBdeFlagOverSql` at MANAGE_ASSO - never an institution, never another BDE), so it
+ *   cannot take an entity over by adding its own space to it. Then every rule the write ADDS or
+ *   REMOVES must lie inside the spaces it governs (`ruleInsideGovernedSpaces`). A rule already in
+ *   force that exceeds them - a whole-campus rule over a campus two BDEs share - is left as it is:
+ *   the star can neither remove nor widen it (`AUDIENCE_RULE_BEYOND_BDE_SPACES`); that is the
+ *   platform admin's.
+ */
+export function assertBdeMayWriteAudience(
+  type: string,
+  spaces: readonly SpaceStanding[],
+  governsEntity: boolean,
+  current: readonly RuleLike[],
+  submitted: readonly RuleLike[]
+): void {
+  assertBdeMayReadAudience(type, spaces, current);
+  if (!governsEntity) throw outsideBdeCampus();
+  const beyond = changedRules(current, submitted).filter(
+    (r) => !ruleInsideGovernedSpaces(r, spaces)
+  );
+  if (beyond.length > 0) {
+    throw new ForbiddenException({
+      code: AUDIENCE_ERROR.RULE_BEYOND_BDE_SPACES,
+      message:
+        "A BDE adds or removes rules inside its own spaces only; a wider rule is the platform admin's.",
+    });
+  }
+}
+
+/** Is `r` on a campus where the star governs at least one space? */
+function ruleOnGovernedCampus(r: RuleLike, spaces: readonly SpaceStanding[]): boolean {
+  return r.campus !== null && spaces.some((s) => s.governed && s.campus === r.campus);
+}
+
+/**
+ * The BDE star's READ bound ("Lire tout", owner 2026-11-03): any association or list of its campus,
+ * whether or not its rules exceed the star's spaces - the editor shows those rules read-only. An
+ * institution stays the platform admin's; a reader governing no space is no star.
  */
 export function assertBdeMayReadAudience(
   type: string,
-  governed: readonly string[],
+  spaces: readonly SpaceStanding[],
   current: readonly RuleLike[]
 ): void {
   if (type === 'institution') {
@@ -100,42 +173,46 @@ export function assertBdeMayReadAudience(
       message: 'Only a global admin sets the audience of an institution.',
     });
   }
-  if (governed.length === 0) {
+  if (!spaces.some((s) => s.governed)) {
     throw new ForbiddenException({
       code: AUDIENCE_ERROR.ADMIN_OR_BDE_REQUIRED,
       message: 'Global admin or MANAGE_ASSO in a BDE required.',
     });
   }
-  if (current.length === 0 || !current.every((r) => ruleInsideCampuses(r, governed))) {
+  if (current.length > 0 && !current.some((r) => ruleOnGovernedCampus(r, spaces))) {
     throw outsideBdeCampus();
   }
-}
-
-function ruleInsideCampuses(r: RuleLike, governed: readonly string[]): boolean {
-  return r.campus !== null && governed.includes(r.campus);
 }
 
 function outsideBdeCampus(): ForbiddenException {
   return new ForbiddenException({
     code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
-    message: 'A BDE sets the audience of the associations and lists of its own campus only.',
+    message: 'A BDE sets the audience of the associations and lists it governs only.',
   });
 }
 
 /**
- * A NON-ADMIN creator's default campus must be one their BDE star governs (WP-B, closing the open
- * point of WP-A): otherwise the creator would make an association it could not then edit (decision
- * 7). `governed` are the campuses of the spaces whose BDE the creator holds MANAGE_ASSO in. A global
- * admin never reaches this check.
+ * The default audience a NON-ADMIN creator's entity starts with: one it may EDIT afterwards (owner,
+ * 2026-11-03, "modifier dans ses espaces"). The spaces of the creator's profile campus its BDE
+ * governs - the whole campus when it governs every opened space of it, otherwise one rule per
+ * governed formation. A creator with no campus is `AUDIENCE_CREATOR_CAMPUS_REQUIRED`; one governing
+ * no space of its campus is `AUDIENCE_OUTSIDE_BDE_CAMPUS`. A global admin never reaches this: it
+ * gets `defaultCampusRules`.
  */
-export function assertCreatorCampusGoverned(
-  governed: readonly string[],
-  rules: readonly RuleLike[]
-): void {
-  if (!rules.every((r) => r.campus !== null && governed.includes(r.campus))) {
+export function creatorDefaultRules(
+  campus: string | null,
+  spaces: readonly SpaceStanding[]
+): { formation: SpaceFormation | null; campus: SpaceCampus }[] {
+  const [whole] = defaultCampusRules(campus);
+  const ofCampus = spaces.filter((s) => s.campus === whole.campus);
+  const governed = ofCampus.filter((s) => s.governed);
+  if (governed.length === 0) {
     throw new ForbiddenException({
       code: AUDIENCE_ERROR.OUTSIDE_BDE_CAMPUS,
-      message: 'A BDE creates the associations and lists of its own campus only.',
+      message: 'A BDE creates the associations and lists of its own spaces only.',
     });
   }
+  if (governed.length === ofCampus.length) return [whole];
+  // `formation` is read from `spaces`, whose column only ever holds a `SpaceFormation`.
+  return governed.map((s) => ({ formation: s.formation as SpaceFormation, campus: whole.campus }));
 }

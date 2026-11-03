@@ -78,6 +78,7 @@ async function replay(
   serverReadWatermarkUpdates: ReadWatermarks;
   historyFloorUpdate: { at: number };
   pushed: unknown[];
+  kept: unknown[];
 }> {
   let convo = conversation(messages);
   const sinks = {
@@ -91,6 +92,7 @@ async function replay(
     serverReadWatermarkUpdates: {} as ReadWatermarks,
     historyFloorUpdate: { at: 0 },
     pushed: [] as unknown[],
+    kept: [] as unknown[],
   };
   await applyReplaySystemEvent({
     parsed,
@@ -113,6 +115,9 @@ async function replay(
     serverReadWatermarkUpdates: sinks.serverReadWatermarkUpdates,
     historyFloorUpdate: sinks.historyFloorUpdate,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
+    keepPending: async (entry) => {
+      sinks.kept.push(entry);
+    },
     dropOwnExcluded,
     ...(authorship ? { authorship } : {}),
   });
@@ -193,12 +198,41 @@ describe('replaying a deletion', () => {
     expect(result.deletedMessages.size).toBe(0);
   });
 
-  it('carries the claimed author when the message is not in memory', async () => {
-    // Nothing here can check the claim - the row is read after the batch save, and that is where
-    // `history.ts` checks it. Recording WHO is what makes that possible.
+  it('KEEPS it with its claimed author when the message is not shown - the live seam settles it', async () => {
+    // Nothing here can check the claim: the message is stored, buffered in this page or not here
+    // yet. The store of mutations that came before their message settles it against the AUTHOR.
     const result = await replay(systemEvent('delete_message', { messageId: 'gone' }), OTHER, []);
 
-    expect(result.deletedMessages.get('gone')).toEqual({ by: OTHER });
+    expect(result.deletedMessages.size).toBe(0);
+    expect(result.kept).toEqual([
+      {
+        conversationId: GROUP,
+        messageId: 'gone',
+        sender: OTHER,
+        kind: 'delete',
+        slot: '',
+        rank: 0,
+      },
+    ]);
+  });
+
+  it('KEEPS an edit whose message is not shown, dated by its sender', async () => {
+    const result = await replay(
+      systemEvent('edit_message', { messageId: 'gone', newContent: 'x', editedAt: 7 }),
+      OTHER,
+      []
+    );
+
+    expect(result.editedMessages.size).toBe(0);
+    expect(result.kept).toEqual([
+      expect.objectContaining({
+        messageId: 'gone',
+        sender: OTHER,
+        kind: 'edit',
+        rank: 7,
+        text: 'x',
+      }),
+    ]);
   });
 });
 
