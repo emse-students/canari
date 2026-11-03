@@ -1738,6 +1738,10 @@ export class IndexedDbStorage implements IStorage {
       };
       tx.oncomplete = () => resolve(deleted);
       tx.onerror = () => reject(tx.error);
+      // A cursor delete that throws aborts the transaction WITHOUT an error event (the trap
+      // `guardedPut` documents): without this the promise never settled.
+      tx.onabort = () =>
+        reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
     });
   }
 

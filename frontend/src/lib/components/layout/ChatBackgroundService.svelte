@@ -2030,7 +2030,7 @@
           .then((n) => {
             if (n > 0) appendLog(`[GC] Deleted ${n} old message(s) from IndexedDB`);
           })
-          .catch(() => {});
+          .catch((e: unknown) => appendLog(`[GC] old-message pruning failed: ${String(e)}`));
       }
     }, GC_INTERVAL);
 

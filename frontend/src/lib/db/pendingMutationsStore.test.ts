@@ -666,6 +666,19 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
   });
 });
 
+describe('IndexedDbStorage - an aborted collection', () => {
+  it('rejects when a cursor delete throws and aborts the transaction, never hangs', async () => {
+    const { storage } = await idbRig();
+    await storage.saveConversation({ id: 'conv', name: 'a', lifecycle: 'active', updatedAt: 1 });
+    await storage.saveMessage(body('old'), KEY);
+    vi.spyOn(IDBCursor.prototype, 'delete').mockImplementation(() => {
+      throw new DOMException('refused', 'DataError');
+    });
+
+    await expect(storage.deleteOldMessages(1)).rejects.toBeTruthy();
+  });
+});
+
 describe('the upgrade of a database the previous build left', () => {
   it('IndexedDB v12 -> v13 adds the store and keeps every message', async () => {
     const userId = `v12-${Date.now()}-${n++}`;

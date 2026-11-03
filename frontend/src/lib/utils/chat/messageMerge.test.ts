@@ -34,6 +34,7 @@ describe('messageMerge', () => {
       },
       {
         content: incoming,
+        senderId: 'user-a',
         replyTo: { id: '1', senderId: 'a', content: 'q' },
       }
     );
@@ -142,7 +143,7 @@ describe('an edit the preview took is carried onto the body that upgrades it', (
         isEdited: true,
         editedAt: new Date(5_000),
       },
-      { content: BODY }
+      { content: BODY, senderId: 'alice' }
     );
     expect(JSON.parse(merged.content)).toMatchObject({ text: 'the edited text' });
     expect(merged.isEdited).toBe(true);
@@ -151,7 +152,7 @@ describe('an edit the preview took is carried onto the body that upgrades it', (
   it('an unedited preview takes the body as it is', () => {
     const merged = mergeMessageUpgrade(
       { id: 'm1', senderId: 'a', content: 'caption', timestamp: new Date(1), isOwn: false },
-      { content: BODY }
+      { content: BODY, senderId: 'a' }
     );
     expect(merged.content).toBe(BODY);
   });
@@ -163,5 +164,88 @@ describe('isPushPreview', () => {
     expect(isPushPreview({ content: '{"kind":"text","text":"x"}', isFcmPreview: true })).toBe(true);
     expect(isPushPreview({ content: '{"kind":"text","text":"x"}' })).toBe(false);
     expect(isPushPreview({ content: 'deleted', isDeleted: true })).toBe(false);
+  });
+});
+
+describe('the edit an upgrade keeps is decided by editSupersedes, and its proof goes with its text', () => {
+  const PROOF_ROW = { body: 'cm93', proof: 'cm93LXByb29m', group: 'c' };
+  const PROOF_BODY = { body: 'Ym9keQ==', proof: 'Ym9keS1wcm9vZg==', group: 'c' };
+  const editedPreview = (over: Partial<StoredMessage> = {}): StoredMessage => ({
+    id: 'm1',
+    conversationId: 'c',
+    senderId: 'alice',
+    content: '{"kind":"text","text":"row edit"}',
+    timestamp: 1,
+    isFcmPreview: true,
+    isEdited: true,
+    editedAt: 9_000,
+    editProof: PROOF_ROW,
+    ...over,
+  });
+  const editedBody = (over: Partial<StoredMessage> = {}): StoredMessage => ({
+    id: 'm1',
+    conversationId: 'c',
+    senderId: 'alice',
+    content: '{"kind":"text","text":"body edit"}',
+    timestamp: 1,
+    isEdited: true,
+    editedAt: 3_000,
+    editProof: PROOF_BODY,
+    ...over,
+  });
+  const text = (row: StoredMessage | null) => JSON.parse(row!.content).text;
+
+  it("a newer row edit beats the upgrade's older one - text, time and proof all the row's", () => {
+    const next = previewUpgradeOnto(editedPreview(), editedBody());
+    expect(text(next)).toBe('row edit');
+    expect(next).toMatchObject({ isEdited: true, editedAt: 9_000, editProof: PROOF_ROW });
+  });
+
+  it("an upgrade's newer edit beats the row's - text, time and proof all the upgrade's", () => {
+    const next = previewUpgradeOnto(editedPreview({ editedAt: 1_000 }), editedBody());
+    expect(text(next)).toBe('body edit');
+    expect(next).toMatchObject({ editedAt: 3_000, editProof: PROOF_BODY });
+  });
+
+  it('a tie goes to the greater text, by the one rule', () => {
+    // "row edit" > "body edit": the row's wins at equal times.
+    const tie = previewUpgradeOnto(editedPreview({ editedAt: 3_000 }), editedBody());
+    expect(text(tie)).toBe('row edit');
+    expect(tie).toMatchObject({ editProof: PROOF_ROW });
+    // And the other way round when the body's text is the greater.
+    const other = previewUpgradeOnto(
+      editedPreview({ editedAt: 3_000 }),
+      editedBody({ content: '{"kind":"text","text":"zz body edit"}' })
+    );
+    expect(text(other)).toBe('zz body edit');
+    expect(other).toMatchObject({ editProof: PROOF_BODY });
+  });
+
+  it("never carries the preview's edit onto another sender's body", () => {
+    const next = previewUpgradeOnto(editedPreview({ senderId: 'mallory' }), {
+      id: 'm1',
+      conversationId: 'c',
+      senderId: 'alice',
+      content: '{"kind":"text","text":"as sent"}',
+      timestamp: 1,
+    });
+    expect(text(next)).toBe('as sent');
+    expect(next?.isEdited).toBe(false);
+    expect(next?.editProof ?? null).toBeNull();
+    const shown = mergeMessageUpgrade(
+      {
+        id: 'm1',
+        senderId: 'mallory',
+        content: '{"kind":"text","text":"row edit"}',
+        timestamp: new Date(1),
+        isOwn: false,
+        isFcmPreview: true,
+        isEdited: true,
+        editedAt: new Date(9_000),
+      },
+      { content: '{"kind":"text","text":"as sent"}', senderId: 'alice' }
+    );
+    expect(JSON.parse(shown.content).text).toBe('as sent');
+    expect(shown.isEdited).toBe(false);
   });
 });

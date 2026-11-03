@@ -4,6 +4,8 @@ import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { compareMessageOrder } from './messageOrder';
 import { mergeReactions } from './messageReactions';
 import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { editSupersedes } from './editPrecedence';
 
 /** Returns true when `content` is a serialized MessageEnvelope JSON object. */
 export function isEnvelopeContent(content: string): boolean {
@@ -54,37 +56,59 @@ export function isPushPreview(row: {
   return row.isFcmPreview === true || isFcmPreviewContent(row.content);
 }
 
+/** The edit-carrying fields of a row, as memory and the store both hold them. */
+interface EditedSide {
+  senderId: string;
+  content: string;
+  isEdited?: boolean;
+  editedAt?: number | Date | null;
+}
+
 /**
- * The body an upgrade writes, with the edit the PREVIEW already took carried onto it. A signed edit
+ * Whether the edit a PREVIEW already took is carried onto the body that upgrades it. A signed edit
  * can reach a preview (a history bundle applies one), and the upgrade takes the body's content - so
- * without this the edit was laid under the body, and lost while `isEdited` stayed. The preview's
- * edited text is applied to the new body (`applyEditToBody`, which keeps the reply quote) unless
- * the upgrade carries an edit of its own at least as recent.
+ * without this the edit was laid under the body, and lost while `isEdited` stayed.
+ *
+ * Carried only when it is the SAME author's (the preview's sender and the body's, canonical) - an
+ * edit is only ever its author's - and when it supersedes the edit the body carries, by the one
+ * ordering rule (`editSupersedes`: later wins, a tie goes to the greater text, an edit with no time
+ * is always superseded). Never re-decided here with a comparison of its own.
  */
-function bodyWithPreviewEdit(
-  preview: { isEdited?: boolean; editedAt?: number | Date | null; content: string },
-  upgrade: { isEdited?: boolean; editedAt?: number | Date | null; content: string }
-): string {
-  if (!preview.isEdited) return upgrade.content;
-  const at = (v: number | Date | null | undefined) => (v instanceof Date ? v.getTime() : (v ?? 0));
-  if (upgrade.isEdited && at(upgrade.editedAt) >= at(preview.editedAt)) return upgrade.content;
+function previewEditWins(preview: EditedSide, upgrade: EditedSide): boolean {
+  if (!preview.isEdited) return false;
+  if (canonicalUserId(preview.senderId) !== canonicalUserId(upgrade.senderId)) return false;
+  const at = preview.editedAt instanceof Date ? preview.editedAt.getTime() : preview.editedAt;
+  return editSupersedes(
+    {
+      editedAt: typeof at === 'number' ? at : Number.NaN,
+      content: envelopeBodyText(preview.content),
+    },
+    upgrade.isEdited ? { editedAt: upgrade.editedAt, content: upgrade.content } : null
+  );
+}
+
+/** The upgrade's body with the preview's edited text applied (`applyEditToBody` keeps the quote). */
+function bodyEditedAsPreview(preview: EditedSide, upgrade: EditedSide): string {
   return applyEditToBody(upgrade.content, envelopeBodyText(preview.content));
 }
 
 /**
  * Merges incoming envelope fields into an existing message (FCM preview upgrade path), carrying an
- * edit the preview took onto the body ({@link bodyWithPreviewEdit}).
+ * edit the preview took onto the body when it wins ({@link previewEditWins}).
  */
 export function mergeMessageUpgrade(
   existing: ChatMessage,
   incoming: Pick<
     ChatMessage,
-    'content' | 'replyTo' | 'isSystem' | 'serverTimestamp' | 'isFcmPreview'
+    'content' | 'senderId' | 'replyTo' | 'isSystem' | 'serverTimestamp' | 'isFcmPreview'
   >
 ): ChatMessage {
+  const carried = previewEditWins(existing, incoming);
   return {
     ...existing,
-    content: bodyWithPreviewEdit(existing, incoming),
+    // An edit the preview took and that does not win (another sender's) goes with the caption.
+    ...(existing.isEdited && !carried ? { isEdited: false, editedAt: undefined } : {}),
+    content: carried ? bodyEditedAsPreview(existing, incoming) : incoming.content,
     replyTo: incoming.replyTo ?? existing.replyTo,
     isSystem: incoming.isSystem ?? existing.isSystem,
     isFcmPreview: false,
@@ -102,22 +126,40 @@ export function mergeMessageUpgrade(
  * write did, erasing a reaction merged onto the preview between the caller's read and its write:
  *
  *   - the reactions are the union of both, pair by pair (`mergeReactions`);
- *   - a deletion, an edit and a recorded media purge the upgrade does not carry stay as stored
- *     (`false` and absent alike say nothing, and a tombstone already refused the upgrade above).
+ *   - a deletion and a recorded media purge the upgrade does not carry stay as stored (`false` and
+ *     absent alike say nothing, and a tombstone already refused the upgrade above).
+ *
+ * The EDIT is one decision ({@link previewEditWins}), and the text, `editedAt` and `editProof` are
+ * all taken from the edit that wins - so the row's proof always signs the text it holds.
  */
 export function previewUpgradeOnto(
   current: StoredMessage,
   upgrade: StoredMessage
 ): StoredMessage | null {
   if (!shouldUpgradeMessage(current, upgrade.content)) return null;
-  const { reactions, isDeleted, isEdited, editedAt, mediaPurgedAt, ...rest } = upgrade;
+  const { reactions, isDeleted, isEdited, editedAt, editProof, mediaPurgedAt, ...rest } = upgrade;
+  const edit = previewEditWins(current, upgrade)
+    ? {
+        content: bodyEditedAsPreview(current, upgrade),
+        isEdited: true,
+        editedAt: current.editedAt ?? null,
+        editProof: current.editProof ?? null,
+      }
+    : isEdited
+      ? {
+          content: upgrade.content,
+          isEdited: true,
+          editedAt: editedAt ?? null,
+          editProof: editProof ?? null,
+        }
+      : // Neither edit stands (none, or the preview's is another sender's): the body as sent.
+        { content: upgrade.content, isEdited: false, editedAt: null, editProof: null };
   return mergeStoredMessage(current, {
     ...rest,
-    content: bodyWithPreviewEdit(current, upgrade),
+    ...edit,
     isFcmPreview: false,
     reactions: mergeReactions(current.reactions ?? [], reactions ?? []) ?? current.reactions,
     ...(isDeleted ? { isDeleted } : {}),
-    ...(isEdited ? { isEdited, ...(editedAt ? { editedAt } : {}) } : {}),
     ...(mediaPurgedAt ? { mediaPurgedAt } : {}),
   });
 }

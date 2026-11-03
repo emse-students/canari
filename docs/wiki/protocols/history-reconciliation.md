@@ -1659,8 +1659,10 @@ the review of #2936, whose first design wrote a tombstone MESSAGE ROW under the 
   (`applyEdit`), and no settlement hands it one (`settleableNow`): the upgrade settles it against
   the body. An edit that reached the preview another way - a signed edit a history bundle applies
   (`mergeVettedRow`) - is carried by the upgrade itself: `previewUpgradeOnto` and
-  `mergeMessageUpgrade` apply the preview's edited text to the new body unless the body carries an
-  edit at least as recent. A deletion
+  `mergeMessageUpgrade` apply the preview's edited text to the new body when the preview and the
+  body have the same (canonical) sender and the preview's edit wins by the one ordering rule
+  (`editSupersedes`); the text, `editedAt` and `editProof` all come from the winning edit, so the
+  row's proof always signs the text it holds. A deletion
   and reactions apply to a preview as to any row - and a push preview is never written over a
   tombstone (`fcmCache.ts`, `previewMayReplace`: a tombstone's content is plain text, so the
   envelope test alone took it for a preview);

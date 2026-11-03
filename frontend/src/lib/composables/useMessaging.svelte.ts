@@ -1705,6 +1705,7 @@ export function useMessaging() {
         const settled = settledWith(
           mergeMessageUpgrade(existingMsg, {
             content: pm.content,
+            senderId: pm.senderId,
             replyTo: pm.replyTo,
             isSystem,
             serverTimestamp: pm.serverTimestamp,
