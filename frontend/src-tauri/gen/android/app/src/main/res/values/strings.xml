@@ -134,8 +134,8 @@
     <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
     <string name="notif_social_booking_changed_title">%1$s a modifié votre réservation</string>
     <string name="notif_social_booking_changed_body">Retrouvez le nouvel horaire dans Réservations</string>
-    <string name="notif_social_booking_removed_title">%1$s vous a retiré d'une réservation</string>
-    <string name="notif_social_booking_removed_body">Vous n'en faites plus partie</string>
+    <string name="notif_social_booking_removed_title">%1$s vous a retiré d\'une réservation</string>
+    <string name="notif_social_booking_removed_body">Vous n\'en faites plus partie</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>
