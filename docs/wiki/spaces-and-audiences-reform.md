@@ -825,6 +825,17 @@ n'importe quel post sur l'espace dont il est responsable"*:
   visibility (audience edit, unpublish, author leaving, soft delete) and a missed one leaves a
   phantom; computing "visible" at read time needs no hook and cannot drift. The cap is checked on
   the visible pins only. If the post becomes visible again its pin returns.
+- **Never more than 3 shown (rule added 2026-11-03 by the coordinator's review).** A returning pin
+  could make 4 visible. The deterministic rule: among a space's VISIBLE pins, order by `pinned_at`
+  DESC (ties broken by `post_id`) and SHOW only the first 3. The others stay stored, are not shown
+  to readers and are not counted as shown, and the governor's pin list for that space returns them
+  flagged "en attente" (Paraglide fr/en) so one can be unpinned or left. The cap check on a new
+  pin counts the SHOWN pins (at most 3), so a 4th is refused with `space_pin_limit` whether or not
+  "en attente" pins exist. One shared SQL rank (`ROW_NUMBER() OVER
+  (PARTITION BY space_id ORDER BY pinned_at DESC, post_id) <= 3`) serves the feed ordering, the
+  `pinned` field and the governor list, so the three cannot disagree. Test: pin 3, hide one post,
+  pin a new one (3 visible), make the hidden post visible again: the feed shows the 3 newest, the
+  returning older pin is listed "en attente", and unpinning one of the 3 promotes it.
 - **UX.** The pin routes take the space: `PATCH /api/posts/:postId/pin` with `{ spaceId }`, same for
   `unpin`. The post menu lists the governed spaces where the post is visible; with exactly one it
   pins directly. There is no "pin in every space" shortcut (it would burn a slot in each space
