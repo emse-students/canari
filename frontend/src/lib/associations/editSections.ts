@@ -210,6 +210,17 @@ export function adminPresetFor(kind: Association['type']): number {
   return ASSOCIATION_ADMIN_PRESET & permissionMaskFor(kind);
 }
 
+/**
+ * The rights the admin create form hands a FIRST ADMIN: the kind's admin preset, except that an
+ * institution's members are managed by the platform admin only (owner, 2026-11-02) - so an
+ * institution's first admin never holds `MANAGE_MEMBERS`. The server refuses that bit on an
+ * institution (`ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`).
+ */
+export function firstAdminPresetFor(kind: Association['type']): number {
+  const preset = adminPresetFor(kind);
+  return kind === 'institution' ? preset & ~AssociationPermissionFlag.MANAGE_MEMBERS : preset;
+}
+
 /** Whether `kind` has `section` at all, whatever the reader's rights. */
 export function kindHasSection(kind: Association['type'], section: EditSection): boolean {
   return EDIT_SECTIONS_BY_KIND[kind].includes(section);
@@ -225,6 +236,11 @@ export function kindOffersFlag(
 
 /** Where a management area lives: associations and institutions under `/associations`, lists under `/lists`. */
 export type EditBase = '/associations' | '/lists';
+
+/** The base an entity's public and management pages live under, from its kind. */
+export function entityBase(kind: Association['type']): EditBase {
+  return kind === 'list' ? '/lists' : '/associations';
+}
 
 /** The sections the hub lists, in order; `among` narrows the keys for a kind with fewer. */
 export function visibleEditSections(
