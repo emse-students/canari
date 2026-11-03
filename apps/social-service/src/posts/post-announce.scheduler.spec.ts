@@ -5,6 +5,7 @@ import { PostAnnounceScheduler } from './post-announce.scheduler';
 import type { Post } from './entities/post.entity';
 import {
   ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL,
+  MENTIONED_READERS_SQL,
   announceRecipientsSql,
 } from '../spaces/reader-spaces';
 
@@ -59,6 +60,7 @@ describe('PostAnnounceScheduler', () => {
         batches.push(data);
         return Promise.resolve((data.recipientIds as string[]).length);
       },
+      resolveActorName: (id: string) => Promise.resolve(`Name of ${id}`),
     };
     return new PostAnnounceScheduler(postRepo as never, notifications as never);
   }
@@ -75,8 +77,11 @@ describe('PostAnnounceScheduler', () => {
       associationName?: string | null;
       associationLogoUrl?: string | null;
       associationLogoMediaId?: string | null;
+      /** The mentioned readers who see the post (`MENTIONED_READERS_SQL`). */
+      mentionedSeeing?: string[];
     }) =>
     (sql: string) => {
+      if (sql === MENTIONED_READERS_SQL) return (opts.mentionedSeeing ?? []).map((id) => ({ id }));
       if (sql === announceRecipientsSql(true)) return (opts.followers ?? []).map((id) => ({ id }));
       if (sql === ANNOUNCE_ENTITY_RECIPIENTS_RECORDING_REPOSTS_SQL)
         return (opts.audience ?? []).map((id) => ({ id }));
@@ -293,5 +298,64 @@ describe('PostAnnounceScheduler', () => {
     await scheduler([post], tables({ audience: ['u1'] })).announcePosts();
     expect(batches).toHaveLength(1);
     expect(batches[0].text).toBe('');
+  });
+
+  /**
+   * THE PEOPLE A POST MENTIONS ARE TOLD AT ITS ANNOUNCE (review of #2965): once, on the claim, and
+   * only those who see it - `createPost` no longer tells anyone, so a scheduled post tells nobody
+   * before its time. WHO sees it is `MENTIONED_READERS_SQL`, proven in reader-spaces' integration.
+   */
+  describe('mentions', () => {
+    const mentions = (batches: Record<string, unknown>[]) =>
+      batches.filter((b) => b.type === 'mention');
+
+    it('tells the mentioned readers who see the post, under the author name', async () => {
+      const post: Row = {
+        id: 'p1',
+        authorId: 'a1',
+        markdown: 'hi @x @y',
+        mentions: ['x', 'y'],
+      };
+      await scheduler([post], tables({ mentionedSeeing: ['x'] })).announcePosts();
+      const asked = queries.find((q) => q.sql === MENTIONED_READERS_SQL);
+      expect(asked?.params).toEqual(['p1', ['x', 'y']]);
+      expect(mentions(batches)).toEqual([
+        expect.objectContaining({
+          recipientIds: ['x'],
+          postId: 'p1',
+          actorId: 'a1',
+          actorName: 'Name of a1',
+        }),
+      ]);
+    });
+
+    it('masks the author of an anonymous post, and still tells them', async () => {
+      const post: Row = { id: 'p1', authorId: 'a1', anonymous: true, mentions: ['x'] };
+      await scheduler([post], tables({ mentionedSeeing: ['x'] })).announcePosts();
+      expect(mentions(batches)).toEqual([
+        expect.objectContaining({ recipientIds: ['x'], actorId: '', actorName: 'Anonyme' }),
+      ]);
+    });
+
+    it('asks nothing for a post that mentions nobody, and tells nobody a claim lost', async () => {
+      await scheduler(
+        [{ id: 'p1', authorId: 'a1', associationId: 'asso1', markdown: 'hi', mentions: [] }],
+        tables({ audience: ['u1'] })
+      ).announcePosts();
+      expect(queries.some((q) => q.sql === MENTIONED_READERS_SQL)).toBe(false);
+      claimAffected = 0;
+      batches = [];
+      await scheduler(
+        [{ id: 'p2', authorId: 'a1', mentions: ['x'] }],
+        tables({ mentionedSeeing: ['x'] })
+      ).announcePosts();
+      expect(batches).toEqual([]);
+    });
+
+    it('reads a mentions column handed back as text', async () => {
+      const post = { id: 'p1', authorId: 'a1', mentions: 'x,y' as unknown as string[] };
+      await scheduler([post], tables({ mentionedSeeing: ['x', 'y'] })).announcePosts();
+      expect(mentions(batches)[0]).toMatchObject({ recipientIds: ['x', 'y'] });
+    });
   });
 });

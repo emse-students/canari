@@ -560,14 +560,26 @@ export class PostNotificationsService {
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
    */
   async getNotifications(userId: string, limit = 30) {
+    return this.bellPageQuery(userId, limit).getMany();
+  }
+
+  /**
+   * The bell's page as ONE statement, shaped so its per-row visibility re-check (`bellRowShownSql`,
+   * a correlated subquery) runs on about one page of rows and not on the reader's whole history:
+   * the reader's rows, newest first, with the predicate and the LIMIT in the same SELECT and no join
+   * (so TypeORM's `take` is a plain LIMIT), which migration 126's ("recipientId", "createdAt" DESC)
+   * index walks in order and stops once the page is full - no sort. The plan is asserted on a seeded
+   * PostgreSQL (`bell-page.integration.spec.ts`); the production volumes it was sized for are in
+   * that migration and in the posts module's wiki page.
+   */
+  bellPageQuery(userId: string, limit: number) {
     return this.notifRepo
       .createQueryBuilder('n')
       .where('n."recipientId" = :userId', { userId })
       .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
       .andWhere(bellRowShownSql('n'))
       .orderBy('n.createdAt', 'DESC')
-      .take(limit)
-      .getMany();
+      .limit(limit);
   }
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */

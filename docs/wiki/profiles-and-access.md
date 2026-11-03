@@ -1395,8 +1395,10 @@ reaches the personnel side"), the latter **for this consented path only**.
   member who joins, reads it; a member who leaves stops. The author's remedy is to withdraw the
   republication, at any time.
 - **An archived carrier carries nothing**: `republicationReachesUserSql` and the newly-reached count
-  (`NEWLY_REACHED_BY_REPUBLICATION_SQL`) skip an archived association, so archiving an entity takes
-  its republications out of every feed it reached (un-archiving restores them, read from state);
+  (`NEWLY_REACHED_BY_REPUBLICATION_SQL`) skip an archived association, and so do the feeds' count
+  of republications (`countedRepublicationsSql`, the Associations and Suivis tabs) and the card's
+  "Republié par" (`republishersOf`), so archiving an entity takes its republications out of every
+  feed it reached and off every card (un-archiving restores them, read from state);
   `memberRepostablePostSql` refuses an archived entity's own post.
 - **No second hop**: a reader who sees a personal post only THROUGH a carrier may not member-repost
   it. The reposter's first-hand predicate (`REPOSTER_FIRST_HAND`, `FIRST_HAND`) drops the
@@ -1406,7 +1408,10 @@ reaches the personnel side"), the latter **for this consented path only**.
   type (`POST_BOUND_NOTIFICATION_TYPES`: reposts, republications, announces, mentions, comments,
   replies, reactions and the `repost_personal_*` rows), so a withdrawn republication, a member who
   left, or an archived carrier takes the row out of the bell on the next read. A push already
-  delivered to a device cannot be recalled.
+  delivered to a device cannot be recalled. A mention is held to it when written
+  (`MENTIONED_READERS_SQL`): only a mentioned reader who sees the post, once it is published - a
+  post's mentions are told at its announce, never at its creation. The bell's cost and query
+  shape are on [posts](frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03).
 - **The client**:
   - `personalRequestCandidates` offers the same three kinds;
   - `republishCandidates` and `proposalCandidates` now also offer a LIST, which the server has
@@ -1443,6 +1448,11 @@ reaches the personnel side"), the latter **for this consented path only**.
   renamed to an unlisted type, it is refused, offered nothing and carries nothing; a personal post
   seen only through a carrier is a 404 and offered nothing (no second hop); a post-bound bell row
   follows the post's visibility, a row bound to no post is left alone.
+- `posts/republished-feed-sql.integration.spec.ts`: an archived carrier neither admits nor dates a
+  post in the Associations tab, and its "Republié par" is gone.
+- `posts/bell-page.integration.spec.ts`: the bell's plan walks migration 126's index and stops with
+  the page. `MENTIONED_READERS_SQL` (in the personal-republications spec), the announce scheduler's
+  and the comment path's unit specs: a mention tells only who sees the post, once it is out.
 - `spaces/member-repostable.spec.ts` and `associations.controller.institution.spec.ts`: the two
   allowlists.
 - The client's `republication.test.ts` and `page.senderGone.svelte.test.ts`: the warning on the

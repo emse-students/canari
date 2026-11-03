@@ -411,6 +411,28 @@ A refused request is read by its typed `code` (`personalRequestRefusalMessage`),
 The author answers in `/notifications/requests`, reached from the notification, its push
 (`fr.emse.canari://republication-requests`) and a link on `/notifications` while one waits.
 
+## The bell re-checks the post (review of #2965, 2026-11-03)
+
+A bell row about a post is shown only while its recipient still SEES that post: `bellRowShownSql`
+(`post-notifications.service.ts`) re-checks `postVisibleToViewerSql` for every type in
+`POST_BOUND_NOTIFICATION_TYPES`, so a withdrawn republication, a member who left, an archived
+carrier or a hidden post takes the row out on the next read. A push already delivered to a device
+cannot be recalled. A row bound to no post is left alone.
+
+A mention is held to the same rule when it is WRITTEN: `MENTIONED_READERS_SQL` (`reader-spaces.ts`)
+keeps only the mentioned readers who see the post once it is published. A post's mentions are told
+by `PostAnnounceScheduler` at its announce (so a scheduled post tells nobody before its time, and
+the claim makes it once); a comment's, at the comment.
+
+**The cost, and the query shape.** The check is a correlated subquery per row. Measured on
+production, read-only, 2026-11-03: 24,136 rows over the 90-day retention, 517 recipients, per
+recipient p50 52, p90 55, p99 99, max 149 rows; by type association_post 22,927, reaction 580,
+event_validated 311. `bellPageQuery` keeps the predicate and the `LIMIT` in one SELECT with no join,
+ordered by `createdAt DESC`, and migration 126 adds ("recipientId", "createdAt" DESC), so the plan
+walks the reader's rows newest first and stops once the page is full: the check runs on about one
+page. `bell-page.integration.spec.ts` asserts that plan with `EXPLAIN ANALYZE` (the index, no sort,
+at most a page read) on a reader seeded with 600 rows among 6,000.
+
 ## The search stops where the feed stops (2026-10-04)
 
 `/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned

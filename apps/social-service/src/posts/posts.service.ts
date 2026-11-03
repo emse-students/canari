@@ -24,11 +24,7 @@ import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
-import {
-  PostNotificationsService,
-  ANONYMOUS_NOTIFICATION_ACTOR_ID,
-  ANONYMOUS_NOTIFICATION_ACTOR_NAME,
-} from './post-notifications.service';
+import { PostNotificationsService } from './post-notifications.service';
 import {
   PostMediaRetentionService,
   commentMediaIds,
@@ -51,7 +47,6 @@ import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
-import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
   inAssociationsFeedSql,
@@ -1022,32 +1017,13 @@ export class PostsService {
     }
     await this.invalidateListCache();
 
-    // Fire-and-forget mention notifications
-    if (mentionedIds.length > 0 && entity.id) {
-      void (async () => {
-        try {
-          // A mention notification never went through `mustHideAnonymousAuthor` at all - it is
-          // written once, at creation, onto a row nothing re-shapes per reader (see the constants'
-          // own docblock). An anonymous post that mentions someone stays anonymous to them too.
-          const actorId = data.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : authorId;
-          const actorName = data.anonymous
-            ? ANONYMOUS_NOTIFICATION_ACTOR_NAME
-            : await this.notifications.resolveActorName(authorId);
-          for (const recipientId of mentionedIds) {
-            // createNotification also sends the FCM push (type 'social').
-            await this.notifications.createNotification({
-              recipientId,
-              type: 'mention',
-              postId: entity.id,
-              actorId,
-              text: previewOf(markdown),
-              actorName,
-            });
-          }
-        } catch {
-          /* non-fatal */
-        }
-      })();
+    // The people the post MENTIONS are told by `PostAnnounceScheduler`, at the post's publication
+    // and only those who can see it (review of #2965): never from here, where a scheduled post is
+    // not out yet and nothing has asked whether its reader sees it.
+    if (mentionedIds.length > 0) {
+      this.logger.debug(
+        `[POSTS] post=${entity.id?.slice(0, 8)} mentions ${mentionedIds.length}: told at its announce`
+      );
     }
 
     // The response goes back to the publisher, so it is stamped for them - an association post is

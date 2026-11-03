@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { sameSideOfReviewCohort } from '../review-cohort';
+import { MENTIONED_READERS_SQL } from '../spaces/reader-spaces';
 import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
@@ -311,7 +312,26 @@ export class PostInteractionsService {
 
       // Mention notifications
       if (data.text) {
-        const mentionedIds = this.notifications.resolveMentionedUserIds(data.text);
+        const named = this.notifications.resolveMentionedUserIds(data.text);
+        // Only a mentioned reader who SEES the post, once it is published (review of #2965): the
+        // notice and its push carry a preview of the comment.
+        let mentionedIds: string[] = [];
+        if (named.length > 0) {
+          try {
+            const rows: { id: string }[] = await this.postRepo.manager.query(
+              MENTIONED_READERS_SQL,
+              [postId, named]
+            );
+            mentionedIds = rows.map((r) => String(r.id));
+          } catch (e) {
+            this.logger.warn(`[NOTIFY] mentioned readers of ${postId} unreadable, none told`, e);
+          }
+          if (mentionedIds.length < named.length) {
+            this.logger.log(
+              `[NOTIFY] ${named.length - mentionedIds.length} of ${named.length} mentioned cannot see post ${postId.slice(0, 8)}: not told`
+            );
+          }
+        }
         for (const recipientId of mentionedIds) {
           if (alreadyNotified.has(recipientId)) continue;
           alreadyNotified.add(recipientId);

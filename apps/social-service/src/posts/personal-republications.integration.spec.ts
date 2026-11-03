@@ -38,6 +38,7 @@ import type { ModerationService } from '../moderation/moderation.service';
 import { Proposal, PROPOSAL_VOIDED_BY } from '../proposals/proposal.entity';
 import { PROPOSAL_SENDER_GONE, ProposalsService } from '../proposals/proposals.service';
 import {
+  MENTIONED_READERS_SQL,
   memberRepostablePostSql,
   newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
@@ -1135,6 +1136,27 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         expect.objectContaining({ type: 'repost_personal_requested', recipientIds: ['sa'] }),
       ]);
       expect(await sees(P(20), 'st')).toBe(false);
+    });
+
+    it('a mention tells only who sees the post, once it is out (MENTIONED_READERS_SQL, review of #2965)', async () => {
+      const told = async (): Promise<string[]> =>
+        (
+          (await q(MENTIONED_READERS_SQL, [P(20), ['au', 'st', 'gt', 'gr', 'nobody']])) as {
+            id: string;
+          }[]
+        )
+          .map((r) => r.id)
+          .sort();
+      // au shares sa's space; st (staff, before acceptance), gt (a grant never opens a personal
+      // post), gr (Gardanne) and an unknown id are not told.
+      expect(await told()).toEqual(['au']);
+      // A post not out yet tells nobody, whoever sees it once it is.
+      await q(`UPDATE posts SET "publishedAt" = now() + interval '1 day' WHERE id = $1`, [P(20)]);
+      try {
+        expect(await told()).toEqual([]);
+      } finally {
+        await q(`UPDATE posts SET "publishedAt" = now() WHERE id = $1`, [P(20)]);
+      }
     });
 
     it("the author's request names the institution and counts the staff member it would reach", async () => {

@@ -5,6 +5,7 @@ import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { PostMediaRetentionService } from './post-media-retention.service';
+import { MENTIONED_READERS_SQL } from '../spaces/reader-spaces';
 
 /**
  * WHO IS TOLD ABOUT A COMMENT. The post author was skipped for any post carrying an
@@ -13,7 +14,7 @@ import { PostMediaRetentionService } from './post-media-retention.service';
  * is the author of the row either way.
  */
 describe('PostInteractionsService.addComment notifications', () => {
-  function makeService(post: Record<string, unknown>) {
+  function makeService(post: Record<string, unknown>, seeing?: string[]) {
     const created: Array<{ recipientId: string; type: string }> = [];
     const notifications = {
       createNotification: jest.fn((n: { recipientId: string; type: string }) => {
@@ -28,7 +29,18 @@ describe('PostInteractionsService.addComment notifications', () => {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn((p: unknown) => Promise.resolve(p)),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      // The mentioned readers who see the post: `seeing`, or every one the text names.
+      manager: {
+        query: jest.fn((sql: string, params?: unknown[]) =>
+          Promise.resolve(
+            sql === MENTIONED_READERS_SQL
+              ? ((params?.[1] as string[]) ?? [])
+                  .filter((id) => !seeing || seeing.includes(id))
+                  .map((id) => ({ id }))
+              : []
+          )
+        ),
+      },
     };
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,
@@ -97,6 +109,20 @@ describe('PostInteractionsService.addComment notifications', () => {
     for (const [, , data] of sent) {
       expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
     }
+  });
+
+  it('tells a mentioned reader only if they see the post (review of #2965)', async () => {
+    const { service, created, push, notifications } = makeService(
+      { id: 'p1', authorId: 'author', associationId: null, comments: [] },
+      ['seer']
+    );
+    notifications.resolveMentionedUserIds.mockReturnValue(['seer', 'stranger']);
+    await service.addComment('p1', { userId: 'reader', text: 'hello @seer @stranger' });
+    await flush();
+    const mentions = created.filter((n) => n.type === 'mention').map((n) => n.recipientId);
+    expect(mentions).toEqual(['seer']);
+    const pushedTo = (push.notifyContent.mock.calls as unknown as [string][]).map(([to]) => to);
+    expect(pushedTo).not.toContain('stranger');
   });
 
   /** The review cohort (review-cohort.ts): no comment notice crosses it, in either direction. */

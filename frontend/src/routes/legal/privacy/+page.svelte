@@ -114,12 +114,14 @@
           retirer ce relais à tout moment, c'est le recours si ce public change ; la demande est
           effacée avec la publication ou avec votre compte. Une notification sur une publication
           n'est affichée que tant que son destinataire peut encore la voir, mais une notification
-          déjà reçue sur un appareil ne peut pas être rappelée. Vous pouvez publier ou commenter de
-          façon anonyme, ou au nom d'une association dont vous avez le droit de parler : les autres
-          membres ne voient alors pas votre compte, mais la modération et les administrateurs de la
-          plateforme peuvent l'identifier (pour traiter un signalement, par exemple), et votre
-          compte reste responsable de ce que vous écrivez. Un commentaire écrit au nom d'une
-          association lui appartient : il reste si vous supprimez votre compte, détaché de celui-ci.
+          déjà reçue sur un appareil ne peut pas être rappelée. Une mention, dans une publication ou
+          un commentaire, ne prévient que la personne mentionnée qui peut voir la publication, et
+          seulement une fois celle-ci publiée. Vous pouvez publier ou commenter de façon anonyme, ou
+          au nom d'une association dont vous avez le droit de parler : les autres membres ne voient
+          alors pas votre compte, mais la modération et les administrateurs de la plateforme peuvent
+          l'identifier (pour traiter un signalement, par exemple), et votre compte reste responsable
+          de ce que vous écrivez. Un commentaire écrit au nom d'une association lui appartient : il
+          reste si vous supprimez votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>
@@ -168,9 +170,10 @@
           tout son public, qui comprend donc ces abonnés. Elle ne voit jamais ce que vous publiez de
           façon anonyme. La retirer de vos abonnés ou se désabonner lui retire aussitôt cet accès ;
           un blocage, dans un sens ou dans l'autre, le lui retire aussitôt et supprime l'abonnement,
-          qui ne revient pas quand le blocage est levé : il faut une nouvelle demande. Les aperçus
-          déjà reçus dans ses notifications restent visibles jusqu'à leur effacement, au bout de 90
-          jours. Pour ne jamais notifier deux fois la même personne et limiter le nombre de
+          qui ne revient pas quand le blocage est levé : il faut une nouvelle demande. Une
+          notification sur une de vos publications disparaît de ses notifications dès qu'elle ne
+          peut plus voir la publication ; une notification déjà reçue sur son appareil ne peut pas
+          être rappelée. Pour ne jamais notifier deux fois la même personne et limiter le nombre de
           nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande (ou son
           acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un retrait, un
           refus ou un blocage. Suivre une association ne demande rien à personne.

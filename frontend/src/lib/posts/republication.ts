@@ -153,7 +153,7 @@ export function personalRequestCandidates(
   );
 }
 
-/** One audience rule as words: "ICM · Saint-Etienne", a null side read as "every ...". */
+/** One audience rule as words: "ICM - Saint-Etienne", a null side read as "every ...". */
 function audienceSpaceLabel(space: InstitutionAudience['spaces'][number]): string {
   const campus =
     space.campus === null

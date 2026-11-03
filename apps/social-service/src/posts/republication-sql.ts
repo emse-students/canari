@@ -36,7 +36,8 @@ export interface Republisher {
 
 /**
  * The republishers of each post in `postIds`, oldest republication first - ONE query for a whole
- * page. A post nobody republished is absent from the map.
+ * page. A post nobody republished is absent from the map. An ARCHIVED republisher is left out: it
+ * carries the post to nobody (`republicationReachesUserSql`), so no card names it (review of #2965).
  */
 export async function republishersOf(
   manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
@@ -47,7 +48,7 @@ export async function republishersOf(
   const rows: unknown = await manager.query(
     `SELECT pr."postId", a.id, a.name, a.slug, a."logoUrl"
        FROM post_republications pr JOIN associations a ON a.id = pr."associationId"
-      WHERE pr."postId" = ANY($1::uuid[])
+      WHERE pr."postId" = ANY($1::uuid[]) AND NOT COALESCE(a.archived, false)
       ORDER BY pr."republishedAt" ASC, a.name ASC`,
     [postIds]
   );
