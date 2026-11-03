@@ -225,8 +225,6 @@
     onRemovePendingFile?: (index: number) => void;
     /** A picked video being re-encoded before it is staged - handed to the composer. */
     videoPreparation?: VideoPreparationState;
-    /** Whether a file upload is currently in progress. */
-    isUploading?: boolean;
     /** Callback to start an audio-only call. */
     onStartAudioCall?: () => void;
     /** Callback to start a video call. */
@@ -321,7 +319,6 @@
     pendingFiles = [],
     onRemovePendingFile,
     videoPreparation,
-    isUploading = false,
     onStartAudioCall,
     onStartVideoCall,
     imageMediaId = null,
@@ -1862,7 +1859,6 @@
           {pendingFiles}
           {onRemovePendingFile}
           {videoPreparation}
-          {isUploading}
           notice={sendError || heldNotice || waitingToBeAdded || waitingForAMember
             ? sendNotice
             : undefined}

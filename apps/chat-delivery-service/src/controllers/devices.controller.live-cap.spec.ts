@@ -100,7 +100,7 @@ describe('DevicesController - the cap counts live devices', () => {
   });
 
   /** Registration runs far enough to have asked the cap its question. */
-  const register = () => controller.registerDevice(BODY, 'u1', undefined);
+  const register = () => controller.registerDevice(BODY, 'u1');
 
   it('counts DEVICES, not key-package rows', async () => {
     await register();

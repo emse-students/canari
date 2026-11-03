@@ -1,5 +1,9 @@
 # MiConnect profiles and access - the reform (decided with the user, 2026-09-29)
 
+> **Without an account, see [What Canari serves without an account](anonymous-surface.md)** (owner,
+> 2026-11-02): nothing a signed-out visitor reads may go further than portail-etu.emse.fr shows. A
+> profile's memberships and past roles need a session since that day.
+
 **Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 is BUILT AND
 TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 is BUILT (backend, backfill, directory), WP4 to WP9 are PLANNED**. Every answer below was given by the user on
 2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
@@ -7,6 +11,11 @@ VALIDATED the same day. Sections 1 and 3 describe production as measured BEFORE 
 starting point, not as today's state. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
 Alumni SSO account), so who a person is, and what that opens, has to be modelled rather than
 inferred from one self-declared string.
+
+> **Proposed reform (2026-11-02, partly decided):** audience and dependencies as two independent axes -
+> an association or list under at most one BDE, one governor per space - amending D20, D22, D23,
+> D33 and D39. See
+> [spaces-and-audiences-reform](spaces-and-audiences-reform.md).
 
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
@@ -191,9 +200,13 @@ built.
 - **D30 - The agenda stays PUBLIC, per space**: each open space has its own anonymous feed and
   `.ics`, as today's single feed. **Amended 2026-10-06 (D40): the feed of a selection needs a link the
   server SIGNED for the reader's own spaces** ([D40 amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
-- **D31 - A personal post inherits its AUTHOR's spaces**; someone with no space (a staff post only)
-  cannot publish one, and publishes through an institution instead. **Closed as MEMBERSHIP ONLY
-  (user, 2026-10-05)**: through institutions they are a member of, nothing more.
+- **D31 - A personal post inherits its AUTHOR's spaces.** **Amended by the owner on 2026-11-02**:
+  someone with no space (a staff post only) MAY publish a personal post, and it is visible to their
+  ACCEPTED FOLLOWERS only (and to its author; a platform admin opening it by id) - the WP-F5
+  follower disjunct, no space rule reaching anyone. No code change: nothing refuses the write, and
+  the predicate already answered so. Pinned in `follower-visibility.integration.spec.ts` ("a person
+  with NO SPACE may publish a personal post"). Speaking for an institution stays MEMBERSHIP ONLY
+  (user, 2026-10-05): through institutions they are a member of, nothing more.
 - **D32 - Two cursus pay the MOST FAVOURABLE price**: the matrix is evaluated for each cursus and the
   cheapest cell wins. A question shown to, or a submission allowed for, any of their cursus is shown
   or allowed.
@@ -691,8 +704,8 @@ the announce sweep's recipient counts.
 
 - ~~A post's own rules are held to the ceiling at read time~~ and ~~the share preview skips a post
   with rules of its own~~ - both went with the rules themselves (D38).
-- **A personal post by someone with no space** (staff, D31 not yet enforced at publish) is seen
-  only by its author, admins - and nobody else.
+- **A personal post by someone with no space** (staff; allowed, D31 as amended 2026-11-02) is seen
+  by its author, an admin opening it by id, and - since WP-F5 - the author's accepted followers.
 - ~~An association created after migration 071 has NO rule.~~ Superseded by D36 (below): it
   reaches its creator's spaces by default.
 - The `custom` feed's promo/formation filters still read the legacy `users.promo`/`formation`
@@ -806,7 +819,7 @@ the grid. The creator is the caller, who need not become a member.
 | `scope` | Lists | Read by |
 | --- | --- | --- |
 | `directory` (default) | associations whose rules reach one of the caller's spaces, plus those the caller is a member of (any role) - `associationVisibleToViewerSql`, the agenda's predicate; a global admin is an ordinary reader | `/associations`, `/lists` (`listAssociationDirectory`) |
-| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/spaces`, `/admin/cercle`, `/admin/carte` |
+| `all` | the whole catalogue | every PICKER and admin screen (`listAssociations`): co-organiser, a list's parent, payment delegation, past roles, the shop's names, the people directory's filter, the agenda's filter and deposit target, the composer for an admin, `/admin/cercle`, `/admin/carte`. `/admin/spaces` reads its own paged, platform-admin catalogue instead (`GET associations/admin/catalogue`, [admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) |
 
 **`scope=all` is open to any signed-in caller, NOT admin-only, and that is deliberate**: half the
 pickers belong to non-admins (a co-organiser from the other campus, a past role in an association one
@@ -1365,8 +1378,8 @@ An institution is an `associations` row of that type, so it reuses every mechani
   admin's own spaces are rarely the School's). D33's one mechanism is kept: the type decides the default, nothing else
   differs. `associations.service.create-default-audience.spec.ts` carries the control (an institution created by someone
   with spaces writes no rule).
-- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes through the institutions they
-  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to.
+- **D31 closes as "membership only"** (user, 2026-10-05): a person with no space publishes AS AN INSTITUTION through the institutions they
+  are a MEMBER of, with `POST_AS_ASSO`. Nothing to build; no way to pick an institution one does not belong to. (Amended 2026-11-02: they may also publish a personal post, seen by their accepted followers only - see D31.)
 
 ### Audiences policy as built (WP-A, 2026-10-08)
 
@@ -1451,8 +1464,11 @@ nobody else.
 - **Never a read grant**: the personal branch takes no `readGrants`, as before (WP7).
 - **Tout stays SPACES (decision 5)**: `postVisibleToUserSql` takes `followers: false`
   (`FollowerOpts`), passed by the `all` and `custom` arms of `listPosts` only. Everything else - the
-  Suivis arm, the Associations arm (where it changes nothing: a personal post is there only through
-  a republication the reader sees), the search, a post by id, its comments, reactions and votes,
+  Suivis arm, the Associations arm (where the FOLLOWER disjunct changes nothing: a personal post is
+  there only through a republication the reader sees - but the arm DOES drop WP-F6's member-repost
+  door, `memberReposts: false`, owner 2026-11-02: an association post a reader reaches only through
+  a followed person's repost is in Suivis and never in Associations, as the privacy policy says;
+  proven against PostgreSQL in `member-reposts.integration.spec.ts`), the search, a post by id, its comments, reactions and votes,
   the D38b request menu, the announcement (`announceRecipientsSql`) and the newly-reached rules -
   counts the follower.
 - **Monotone in republications, unchanged**: the disjunct reads no republication, so
@@ -1636,17 +1652,59 @@ security review before arming.
   (`member_reposts`, `user_repost_settings`), a reader's (`member_repost_notices`) and
   the author's (their personal posts are deleted, the key cascades); a block
   (`severFollowsBetween` -> `severMemberRepostsBetween`, personal posts only; core-service's unblock
-  severs again before it lifts); a withdrawn consent; the reposter's own "Annuler".
+  severs again before it lifts); a withdrawn consent; the reposter's own "Annuler"; the AUTHOR's
+  "Retirer" on one reposter (below).
+- **The author sees who reposted, and removes ONE repost (owner, 2026-11-02)**. On their own
+  personal, non-anonymous post the author's card carries `repostCount`, and the post menu draws
+  "Republié par N personnes" above zero; it opens `PostRepostersSheet` (the follow lists' rows and
+  paging), each row with "Retirer". **Who is listed** is `repostShownToAuthorSql`
+  (`member-reposts.service.ts`): `memberRepostCarriesSql` asked with the AUTHOR as the reader - the
+  reposter on the author's side of the review cohort, no block either way between them, not muted,
+  still seeing the post first-hand. The author learns who reposted (the owner accepted that
+  disclosure), but never someone the app otherwise keeps out of their sight, and a stale row that
+  reaches nobody is neither listed nor counted. The list, the count and the removal read the SAME
+  fragment. **The removal** is a plain delete of one `member_reposts` row under the consent lock
+  then the post row (`member-repost:author:<id>`, then `FOR UPDATE`, the order `repost` and
+  `setPostConsent` take); a repost the list does not show - gone, or by someone a block or the
+  cohort hides - is ONE typed 404 `MEMBER_REPOST_NOT_LISTED`, so the removal probes nothing the list
+  does not show. **The removed reposter is NOT told** (no bell, no push): their card stops offering
+  "Annuler ma republication", as after a withdrawn consent, and they may repost again while the
+  author consents - no per-person refusal was asked; an author who wants no reposts at all withdraws
+  consent on the post. `member_repost_notices` is left as every removal leaves it: a reader told
+  once is never told again, whoever reposts later. Anyone but the author of a personal,
+  non-anonymous post gets the uncoded 404 of a post not seen, on both routes; an entity post has no
+  list (its `authorId` is the officer). Feed pages dropped: the author's, the removed reposter's,
+  and each one's accepted followers'. A reposter's own repost and take-back drop the AUTHOR's pages
+  too (a personal post only, `dropAuthorCountOf`; `unrepost` reads the author in its `DELETE ...
+  RETURNING`): without it the author's cached `repostCount` contradicted the list for up to a
+  page's TTL. The sheet removes several rows at once and puts back only the row whose removal was
+  refused, at its place (never a snapshot of the list). The DELETE route refuses a `reposterId` no
+  user could hold with a 400 `REPOSTER_ID_INVALID` before any query (`PERSON_KEY.accepts`: 1..255
+  characters, no control character - wider than today's mint rule on purpose, so an id minted
+  before it can still be listed, paged and removed; the cursor's length cap is computed from that
+  worst case, 4 UTF-8 bytes a character).
+- **"Republié par vous" (owner, 2026-11-02)**: the reader who reposted a post reads "vous" FIRST on
+  its "Republié par" line - "Republié par vous", "vous et Marie", "vous, Marie et 2 autres"
+  (`republishedByText`, `republication.ts`, post header and reel overlay). It reads the card's own
+  `repostedByMe`, which only that reader's card carries: no query was added, and nobody else is
+  shown it. **`repostedByMe` is the UNFILTERED `mine` set** (`member-repost-card.ts`: a row by the
+  reader exists, whatever `memberRepostCarriesSql` says of it), unlike the names in `repostedBy`.
+  So a reader whose repost carries nothing now - muted, blocked, no longer seeing the post
+  first-hand - still reads "Republié par vous", and that is kept on purpose: it is what keeps
+  "Annuler ma republication" offered, the reader's one way to delete a row they wrote.
 - **The card**: `canRepost`, `repostedByMe`, `repostedBy` (the people the READER follows who
   reposted it - a stranger is not told who reposted) and, on the reader's own personal post only,
-  `repostConsent { override, effective }`; an entity-loaded post no longer spreads
+  `repostConsent { override, effective }` and `repostCount`; an entity-loaded post no longer spreads
   `allowReposts`. Two queries a page (`member-repost-card.ts`), restating the write's refusals.
 - **Routes**: `POST|DELETE /api/posts/:id/reposts`, `GET|PUT /api/posts/me/repost-settings`,
   `PUT /api/posts/:id/repost-consent {allowReposts: boolean | null}` (the author of a personal
-  post; 404 to anyone else). **Every one is throttled per caller (2026-11-02)**,
+  post; 404 to anyone else); `GET /api/posts/:id/reposts?limit&after` (the author's list, keyset
+  on `(repostedAt, reposterId)`, the follow lists' cursor with a person's id as its key,
+  `follow-cursor.ts` `PERSON_KEY`) and `DELETE /api/posts/:id/reposts/:reposterId` (the author's
+  removal), both 404 to anyone else. **Every one is throttled per caller (2026-11-02)**,
   `UserResourceThrottlerGuard` (the routes name `:postId`, which it does not read, so the bucket is
-  the caller alone across every post): 20 reposts or take-backs a minute, 10 consent changes, 60
-  reads of the setting (`member-reposts.controller.ts`, asserted by its throttle spec). **Counted
+  the caller alone across every post): 20 reposts, take-backs or author removals a minute, 10
+  consent changes, 60 reads of the setting or of the reposter list (`member-reposts.controller.ts`, asserted by its throttle spec). **Counted
   PER REPLICA**: `ThrottlerModule.forRoot` names no storage, so the counts are one process's
   memory - N replicas allow up to N times each limit, and a restart forgets them. It bounds a loop,
   it is not a quota; the told-once ledger, not the throttle, is what keeps a reader from a second
@@ -1655,11 +1713,17 @@ security review before arming.
   AND (owner, 2026-11-02) in the post's "..." menu, just above the association republications, both
   through `toggleMyRepost` (posts and reels, `sharePost.ts`); the post menu's "Autoriser / Interdire les republications de
   ce post" for its author; the switch in Settings > Préférences (`RepostConsentSetting`); the
-  "Republié par" line names reposters after associations; the bell row `member_repost`.
-- **Not built**: no list of who reposted for the author; the author cannot remove ONE repost (they
-  withdraw consent on the post instead) - both accepted for `1.6.0` and owed
-  ([backlog](backlog.d/p3-member-reposts-the-author-sees-and-removes-one-repost.md)); a live is
-  never reposted (accepted); an officer may repost their own association's post (accepted: refusing
+  "Republié par" line names reposters after associations, "vous" first for the reader who
+  reposted; the author's "Republié par N personnes" menu row and its sheet; the bell row
+  `member_repost`.
+  **Read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02 (before WP-F6's sheet, which that build does not
+  carry):** on an association's post the menu lists Partager, "Republier pour mes abonnés", Signaler
+  ce post, each icon 16x16 (measured on the drawn `svg`); a tap posts the repost (`201 POST
+  /api/posts/<id>/reposts`, toast "Republié pour vos abonnés"), the menu then reads "Annuler ma
+  republication", whose tap takes it back (`200 DELETE`) and the label returns. On the member's own
+  post the row is absent and the author's "Interdire les republications de ce post" shows, its icon
+  16x16 too. PASS; the iPhone not read.
+- **Not built**: a live is never reposted (accepted); an officer may repost their own association's post (accepted: refusing
   it would name them).
 - **Proof**: `posts/member-reposts.integration.spec.ts` (PostgreSQL, 121 applied twice): the D38b
   refusal list re-run for a member reposter, no chain (a reader reached only by a repost is refused
@@ -1673,7 +1737,17 @@ security review before arming.
   keeps a reader told before it from being told again; a repost and a consent change drop exactly
   the expected readers' cached pages; the Suivis lateral admits and dates a carried repost and
   neither for a blocked reader or a muted reposter. `member-reposts.controller.throttle.spec.ts`,
-  `post-list-cache.spec.ts` and `posts.service.republished-feed.spec.ts` hold the rest.
+  `post-list-cache.spec.ts` and `posts.service.republished-feed.spec.ts` hold the rest. The
+  author's list and removal (same spec, "THE AUTHOR SEES WHO REPOSTED"): newest first minus a block
+  left behind either way (the reposter's, and the AUTHOR's), a muted reposter, one who lost
+  first-hand access and a review-cohort reposter - each also uncounted and unremovable (the typed
+  404, the row kept) - the card's count equal to the list, paging by cursor
+  and a forged cursor refused, the uncoded 404 to a reposter, a follower, an entity post's officer,
+  an anonymous post and a missing one; one removal leaves the other reposts and the reach they give,
+  tells nobody, keeps the notice ledger, drops exactly the expected pages and leaves the reposter
+  free to repost; a hidden or absent repost is the typed 404 with its row kept. Client:
+  `republication.test.ts` ("vous" alone, "vous et X", "vous, X et N autres") and
+  `PostRepostersSheet.svelte.test.ts`.
   `republications.integration.spec.ts` and `personal-republications.integration.spec.ts`: an
   officer who sees a post only through a repost cannot republish or ask, and is offered nothing.
   The six PostgreSQL specs that share the predicate apply 121. The post of a list or of a
@@ -1701,8 +1775,8 @@ review account. A READ across the boundary returns nothing, as for anything outs
 | --- | --- | --- |
 | Search and the people directory | a review account finds the cohort only; nobody but a global admin finds a review account | `applyReviewCohortVisibility`, core `users.service.ts` |
 | A profile (`GET /users/:id`, `POST /users/batch`) | refused across the boundary, both ways (a batch reads an id across it as unknown); a global admin opens every profile, a review account opens no admin's | `assertMayOpenProfile` / `profilesOpenTo`, core `users.service.ts` |
-| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles read with no session are empty for a review account | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
-| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - the member's name in the head, nothing more | core `users.controller.ts`, `internal-users.controller.ts` |
+| What a profile shows (memberships, roles, follow status, Minesweeper standing) | empty across the boundary, both ways; memberships and roles need a session since 2026-11-02 ([anonymous-surface](anonymous-surface.md)) | `profileOpenAcrossCohort`, `follow-requests.controller.ts`, `minesweeper.service.ts` |
+| A face and the shared-link preview (`GET /users/:id/avatar`, the SSR head of `/profile/<id>`) | a review account has none: the same 404 for everybody, never cached. Neither request carries the viewer (an `<img>`, the SSR process), so a review account opening `/profile/<member>` gets exactly what an anonymous visitor gets - since 2026-11-02 the generic head, never the member's name ([anonymous-surface](anonymous-surface.md)) | core `users.controller.ts`, `internal-users.controller.ts` |
 | Spaces | a review account has NO real space | `isReaderSpaceSql`, its pure twin `readerSpaces`, `spaces/reader-spaces.ts` |
 | Personal posts, member lives, their announcements and live pushes | two review accounts share the cohort space; a review account and a member never share one | `sharesSpaceWithAuthorSql` |
 | The feed gate | a review account is in the audience (its cohort is a space) | `IN_FEED_AUDIENCE_SQL` |

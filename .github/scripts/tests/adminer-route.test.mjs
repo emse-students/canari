@@ -123,7 +123,7 @@ if (gate !== null) {
 
 if (internal !== null) {
   if (!/^internal;$/m.test(internal)) fail('/internal/auth/adminer is not `internal`');
-  if (!/proxy_pass\s+http:\/\/\$upstream_auth\/api\/auth\/adminer-verify;/.test(internal)) {
+  if (!/proxy_pass\s+http:\/\/\$target_core_service\/api\/auth\/adminer-verify;/.test(internal)) {
     fail('/internal/auth/adminer must proxy to /api/auth/adminer-verify');
   }
   if (!/^proxy_set_header\s+Cookie\s+\$http_cookie;$/m.test(internal)) {

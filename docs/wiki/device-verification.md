@@ -81,7 +81,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 |---|---|---|---|
 | B | WP-VERIF-0 (background decrypt), WP-VERIF-2 | PASS v0.11.7 | owed |
 | B-bis | `G2` - a dismissed notification not coming back at launch, and a new one still arriving | **owed** | n/a (the record is Android's) |
-| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **owed** (needs a sender with the RC-4 writer switched on) | owed (same) |
+| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **PASS, French, DM + group, `1.6.3-alpha.2`, 2026-11-02**; English, salon (RC-8) and caption (no writer) owed | **PASS, French, DM + group, `1.6.3-alpha.2`, 2026-11-02** (and one finding, below); English, salon and caption owed |
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
@@ -96,6 +96,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
 | S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
+| T | The welcome tour ([guided-help](frontend/guided-help.md)): starts after the PIN on `/posts` of a fresh account, six steps light the real bottom-bar tabs and the avatar, Back closes it, it does not return after a reinstall (the account's `help_seen`), Settings replays it | owed | owed - and the native bar's band on iOS 26 (the halo is the bar's whole band, the bubble's icon names the tab) |
 
 **The `ios-release` artifact CANNOT be installed on a device, and this paragraph said to install it
 until 2026-09-07.** The export is `method: app-store-connect` signed *Apple Distribution*
@@ -338,6 +339,69 @@ one's), or any thumbnail.
 Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
+
+## The VoIP ring announces a video call as video - owed
+
+**Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).
+Needs a dev build (`CALLS_VIDEO_ENABLED`, `calls_mode = audio_video` on the dev server), the iPhone 12
+locked and the app killed, and a second device calling it with VIDEO.
+
+1. Place a video call from the other device. **Expect** the CallKit screen to read as a video call
+   (the video-call label and the video button on the lock screen), and the log
+   `[CanariCallKit] voip push type=call_ring call=... video=1` then `ringing call=... video=1`.
+2. Answer, unlock. **Expect** the camera on in the call (`pending accept hasVideo` true, the local
+   preview visible) and the caller seeing video.
+3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
+4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
+
+## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
+
+**Method.** The WebView's DevTools socket (`adb forward` to `webview_devtools_remote_<pid>`) read `location.pathname`, `<html>` classes and the console (`[reel-capture]`, `[historyOverlay]`) after each press; no personal data.
+
+| Attempt (about 12 presses) | Result |
+| --- | --- |
+| Idle camera, Back (x4, then swipe back to the camera each time) | `/posts`, chrome back (`fullscreen-place-open` removed), camera reopens by swipe: **PASS** |
+| Hold the shutter 3-4 s, release (review), Back | the "Abandonner cette capture ?" question; `[historyOverlay] Back closed 1 overlay(s), 0 left open` |
+| Back DURING the recording | the camera returns idle on `/camera`, chrome as designed; one more Back goes to `/posts`: **PASS** |
+| Review, Back (question up), Back again (x2, 100 % repeatable) | **the app leaves** (`Setting back callback null`, task closed, no `[historyOverlay]` line for that press) instead of the feed |
+
+**The stuck `/camera` without chrome of alpha.2 did NOT reproduce.** Signature to watch for if it returns: `location.pathname` still `/camera` with `<html class="fullscreen-place-open">` and `[reel-capture] leaving (navigation) ... the camera stays closed` with NO `a navigation ended on this screen` / `did not happen` line after it. That is the same-URL popstate hypothesis (a drain by `beforeNavigate` that no `afterNavigate` follows), still untested.
+
+**The double Back that left the app - cause found, fixed on the web side, the native half owed a build.** Review, Back (the question), Back again finished the activity: `finishing=true`, no `popstate`, no `[historyOverlay]` line. The chain, read on the phone: the question's overlay entry (`ConfirmDialog` -> `ModalOverlay` -> `bindHistoryOverlay`) IS on the stack and history (`history.length` 3, DevTools `Page.getNavigationHistory` shows it), but Wry's callback asks `WebView.canGoBack()` first and it answered false, so `MainActivity.onBackPressed` finished the app. What decides it: an entry pushed from a Back's own handler has no user activation behind it, and Chromium declines to step back from it until the page sees one - a TAP on the dialog text between the two Backs made the second Back close the question (3 of 3), the same question opened by the review's X (a tap) never failed, and `history.back()` from DevTools stepped it fine (a DevTools evaluation may itself count as a user gesture, so that line is weak evidence; the fresh-launch reading below is the real proof). Fix: the page PUBLISHES how many overlays a Back can still close (`window.canariBack.setOverlayDepth`, from the one place `historyOverlayStack` changes: the live overlays minus the Backs issued and not yet landed, as `settleArrival` will close them - a ghost between two live overlays still has one to close; zero on the router's own entry and where no entries are written), and `MainActivity.onBackPressed` reads that number SYNCHRONOUSLY: above zero it lowers it at once and calls `window.__canariBackFromNative()`, which steps the page's own history (the Back closes the question, "Keep"); zero leaves as before. Lowering the depth at the hand-over, not at `popstate`, is what makes two fast Backs close one overlay each. Pinned in `historyOverlayStack.test.ts` (two fast Backs; router entry, no-entry runtime and ghost promise nothing); the Kotlin compiles in CI ("Compile Android app") but HAS NEVER RUN. **Owed: a build with it, then on a fresh launch:**
+
+1. Film a take, Back (the question), Back again: the second Back closes the question, not the app; a third asks again.
+2. Two Backs pressed fast on a review: one overlay closes per press, the page below the camera is never reached.
+3. Back on an incoming call's full-screen overlay: it is minimised, not hung up.
+4. Back on a conversation opened from a notification: it closes to the list.
+5. Back at a root screen (no overlay open): it still leaves the app.
+
+**Untouched stages, read the same day.** The send sheet: Back closes the sheet and leaves the review; the next Back asks the question (a document that had taps: fine). The Android edge-swipe Back in a review asks the same question. The publish sheet was not reached.
+
+**Reading of 2026-11-02 (`1.6.3-alpha.2`, both phones, French; [reels-in-chat section 20](frontend/modules/reels-in-chat.md#20-the-bench-reading-of-163-alpha2-2026-11-02)).**
+The sender was the other bench phone with the dev writer on. No caption (the chat camera has no
+caption field), no salon (RC-8), English not run.
+
+| Phone | App state | Conversation | Lock screen | Verdict |
+| --- | --- | --- | --- | --- |
+| Mi 9T | killed (`HOME`, `am kill`, `pidof` empty), screen off | DM | title `<sender>`, text `🎬 CanaReel`; `decryptProto: success type=media chars=11`, `showNotification ... hasMedia=false` | **PASS** |
+| Mi 9T | same | group | title `<group> : <sender>`, text `🎬 CanaReel`; `hasMedia=false` | **PASS** |
+| iPhone 12 | backgrounded (Home), locked | group | `<group>, <sender>, 🎬 CanaReel` | **PASS** |
+| iPhone 12 | backgrounded, locked | DM | `<sender>, 🎬 CanaReel` | **PASS** |
+| iPhone 12 | killed (`ios.mjs terminate`), locked | DM | `<sender>, 🎬 CanaReel` | **PASS** |
+
+No picture of the reel on either platform. The iPhone's notifications carry one attachment on every
+message, text included (the sender's avatar, `Received replacement content ... attachments: 1`),
+so its "Piece jointe" is not a thumbnail.
+
+**One finding on the iPhone, not specific to reels (P1 iOS notifications):** in a DM created a few
+minutes earlier, while the app was open, and the app then killed with `terminate`, BOTH a reel and
+a control text read `Nouveau message de <sender>` - the generic line, so the extension did not
+decrypt. The same DM read its content once the app had been opened again and left by Home, and a
+DM killed afterwards read `🎬 CanaReel`. The group, older, read its content throughout. Read as:
+the state the extension decrypts with did not yet hold the new DM when the process was killed. The
+syslog shows the extension ran and delivered mutated content (`Service extension delivered mutated
+content`, `Delivered user visible push notification`); its `[NSE_OUTCOME]` line is not readable on a
+TestFlight build (its backlog entry was withdrawn by the owner on 2026-11-03).
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 
@@ -666,6 +730,22 @@ works, which only a screenshot caught. And a mounted `<img>` proves nothing on i
 picture keeps its `src` - so the assertion has to be `naturalWidth > 0`. Step 1 (a PDF in a POST) is
 still owed.
 
+
+## M-bis. Several documents in a post: compact rows, and the save that needs its own tap - owed on iPhone
+
+**Proves** the compact document rows of [posts](frontend/modules/posts.md#several-documents-compact-rows-and-a-cap-of-ten-attachments-owner-2026-11-02).
+A row fetches nothing until tapped, so a SAVE on an unfetched row is a download that finishes AFTER
+the tap; the code therefore never saves from there - the row turns "Pret - touchez pour enregistrer"
+and the save runs on a second tap, inside a gesture. Whether WKWebView (the iOS app) really accepts
+that second tap, and whether a save started from the first one would have been refused, only the
+iPhone 12 can say.
+
+1. Post with three PDFs: three rows, no preview, no network request for the files (the log shows no
+   `downloadAndDecrypt`).
+2. Tap a row: a spinner, then the in-app reader opens. Tap another row while the first loads: ignored.
+3. Tap a row's download button: spinner, then "Pret - touchez pour enregistrer"; tap it again: the
+   share/save sheet appears and the file is the right one.
+4. A post with one PDF still shows its first page and saves in one tap.
 ---
 
 ## N. Offline unlock and the promotion back - owed on BOTH platforms

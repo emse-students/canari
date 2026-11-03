@@ -35,9 +35,12 @@
 
   /**
    * "Republie par X, Y +N" (D38): one card per post, however many associations carry it - on the
-   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own.
+   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own. The reader
+   * who reposted it reads "vous" first - "Republie par vous et Marie" (WP-F6, owner 2026-11-02).
    */
-  const republished = $derived(republishedByText(post.republishedBy, post.repostedBy));
+  const republished = $derived(
+    republishedByText(post.republishedBy, post.repostedBy, post.repostedByMe === true)
+  );
 
   /**
    * "Demande envoyee au nom de X" (D38b): what the reader's associations asked the author of this

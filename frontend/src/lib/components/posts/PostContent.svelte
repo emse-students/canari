@@ -22,6 +22,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { postGalleryLayout } from '$lib/utils/posts/postGalleryLayout';
   import { Log } from '$lib/utils/Log';
+  import { usesCompactDocumentRows } from '$lib/utils/posts/documentRows';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -80,6 +81,8 @@
   const documentMedia = $derived<PostMediaRef[]>(
     postMedia.filter((media) => !isLightboxable(media))
   );
+  /** From two files on every file is a compact row (`usesCompactDocumentRows`, the one rule). */
+  const compactDocuments = $derived(usesCompactDocumentRows(documentMedia));
   /** Square cells and a "+N" past four (`postGalleryLayout`), for a post of two media or more. */
   const gallery = $derived(postGalleryLayout(lightboxMedia.length));
 
@@ -252,7 +255,7 @@
       {/if}
       {#each documentMedia as media, i (`${i}:${media.mediaId}`)}
         <div class={gallery.shape !== 'none' || i > 0 ? 'mt-2' : ''} data-gallery-document>
-          {@render singleMedia(media)}
+          {@render singleMedia(media, false, compactDocuments)}
         </div>
       {/each}
     {/if}
@@ -261,7 +264,7 @@
 
 <!-- One attachment drawn at its own shape: a single-attachment post, a lone picture beside files,
      and each file row under a gallery. -->
-{#snippet singleMedia(media: PostMediaRef, asReel = false)}
+{#snippet singleMedia(media: PostMediaRef, asReel = false, compact = false)}
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
   {@const isVideo = resolveMediaType(media) === 'video'}
   <div use:nearViewport={watchNear(media)}>
@@ -286,6 +289,7 @@
         {authToken}
         letterbox={reserved}
         deferred={!nearMedia.has(media.mediaId)}
+        compact={compact && resolveMediaType(media) === 'file'}
         onOpen={asReel ? () => (reelViewerOpen = true) : undefined}
         {postInfo}
       />

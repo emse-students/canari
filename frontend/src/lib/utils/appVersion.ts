@@ -415,6 +415,15 @@ function nativePlatform(): string | null {
   return platform();
 }
 
+/**
+ * The platform this build runs on, as the gateway's anonymous census counts it: `web` in a browser,
+ * else the native shell's own name (`android`, `ios`, `macos`, `windows`, `linux`). Sent on the
+ * socket URL beside {@link getClientAppVersion}, and attached to no identity.
+ */
+export function clientPlatform(): string {
+  return nativePlatform() ?? 'web';
+}
+
 /** True on Tauri Android builds (universal APK update flow). Phones and tablets alike. */
 export function isAndroidTauriRuntime(): boolean {
   return nativePlatform() === 'android';

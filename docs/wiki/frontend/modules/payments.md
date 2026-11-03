@@ -347,6 +347,10 @@ false (`POST /api/payments/complete-lydia-account/:associationId`, `NginxAuthGua
 `GlobalAdminGuard`, refused without a linked Lydia account). It calls social-service's existing
 `lydia-complete`, which also releases withheld products. Not open to the club's own managers: they
 would be declaring their own account ready. Removal of Lydia (`disconnect`) resets it.
+**Removal is the global admin's too** (owner, 2026-11-02): `POST /api/payments/disconnect-lydia-account/:associationId`
+runs `NginxAuthGuard` + `GlobalAdminGuard` (403 otherwise), and the screen draws "Retirer Lydia" only when
+`lydiaEnrolmentView(...).adminCanDisconnect` - no empty button row for a manager. A club that wants its
+Business unlinked asks a platform administrator.
 
 ## The platform can declare payments DISABLED (2026-10-05)
 

@@ -412,6 +412,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 | DELETE | `/api/users/admin/platform/announcement` | global admin | Retire the live one (keeps the row and its readership) |
 | GET | `/api/users/me/announcement?clientVersion=` | session | The announcement this account has not seen, or `null` |
 | POST | `/api/users/me/announcement/:id/seen` | session | Record that this account has read it |
+| GET | `/api/users/me/help-seen` | session, 30/min per account on this route | The first-time helps this account has seen (`{ seen }`) - [guided-help](../frontend/guided-help.md) |
+| POST | `/api/users/me/help-seen/:helpId` | session, 30/min per account on this route | Record one, idempotent; `400 HELP_ID_UNKNOWN` outside `HELP_IDS` |
 | GET | `/api/version` | none | Latest app version + platform gates, and `calls: { mode }` - the calls kill switch clients read to hide what chat-delivery-service would refuse ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)) |
 
 ### Payments (Stripe + Lydia)
@@ -470,7 +472,7 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 |---|---|---|---|
 | GET | `/api/payments/provider` | none | Active provider (`lydia` or `disabled`), for the frontend to render the matching onboarding UI |
 | POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
-| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
+| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT + global admin | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
 | POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). With `expectedAmountCents` the answer is VERIFIED - Lydia's signature checked with the Business key over that amount - and carries `verification` (`verified`, `mismatch`, `unsigned`, or `no-key` without asking Lydia); the reconciliation sweep's read ([lydia-api](../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) |
@@ -496,6 +498,7 @@ PostgreSQL (`auth_db`). Main tables:
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)) |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
 | `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
+| `help_seen` | `user_id` (varchar 255), `help_id` (one of `libs/contracts/help-ids.json`), `seen_at` — PK is the pair; migration 019, erased with the account |
 
 `auth_sessions` rows are swept hourly, and any row past `expiresAt` is refused before it is swept —
 the sweep is housekeeping, never a security boundary. `userAgent` and `lastIp` exist so the owner
