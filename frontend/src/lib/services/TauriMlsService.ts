@@ -39,7 +39,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import {
   GatewayOpenAbandonedError,
@@ -47,7 +47,7 @@ import {
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken } from '$lib/stores/auth';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
+import { toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import {
@@ -568,29 +568,8 @@ export class TauriMlsService extends BaseMlsService {
       return;
     }
     if (parsed.proto && this.messageCallback) {
-      const ciphertext = fromBase64(parsed.proto as string);
-      const ratchetTreeBytes =
-        typeof parsed.ratchetTree === 'string' && (parsed.ratchetTree as string).length > 0
-          ? fromBase64(parsed.ratchetTree as string)
-          : undefined;
-      if (ciphertext.length > 0) {
-        this.enqueueMessage(
-          {
-            senderId: (parsed.senderId as string) || 'unknown',
-            senderDeviceId: (parsed.senderDeviceId as string) || undefined,
-            ciphertext,
-            groupId: (parsed.groupId as string) || undefined,
-            isWelcome: !!parsed.isWelcome,
-            isCommit: !!parsed.isCommit,
-            ratchetTreeBytes,
-            queuedMessageId: (parsed.queuedMessageId as string) || undefined,
-            queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
-            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
-            addressed: parsed.addressed === true,
-          },
-          'live'
-        );
-      }
+      const queued = liveMlsFrameMessage(parsed);
+      if (queued) this.enqueueMessage(queued, 'live');
     } else if (parsed.proto && !this.messageCallback) {
       console.warn(
         `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`

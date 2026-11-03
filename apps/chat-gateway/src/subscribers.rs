@@ -18,8 +18,11 @@ fn base64_decode_to_string(input: &str) -> Option<String> {
 /// `serverTimestamp` a live message is ordered by, the server clock a mark may not pass. It was not
 /// forwarded, so only a PULLED frame carried it: every live read mark on the server's clock was
 /// refused ("the frame carries no server time to bound it") and a DM read between two online
-/// devices never showed (docs/wiki/frontend/modules/chat.md, "Read receipts"). Absent upstream, it
-/// is absent here - never invented.
+/// devices never showed (docs/wiki/frontend/modules/chat.md, "Conversations are ordered by the
+/// server's clock"). Forwarded as published when it is a string (chat-delivery's ISO instant) or a
+/// number (epoch ms) - the two shapes the client's `parseServerTimestampMs` reads. Absent upstream,
+/// it is absent here - never invented; present with any other type, it is dropped and said, since a
+/// producer writing it that way breaks every live read mark again.
 fn live_mls_frame(json: &serde_json::Value, proto_b64: &str) -> serde_json::Value {
     let mut frame = serde_json::json!({
         "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
@@ -35,8 +38,20 @@ fn live_mls_frame(json: &serde_json::Value, proto_b64: &str) -> serde_json::Valu
         // make every live addressed frame look like a broadcast.
         "addressed": json.get("addressed").and_then(|v| v.as_bool()).unwrap_or(false)
     });
-    if let Some(created_at) = json.get("createdAt").and_then(|v| v.as_str()) {
-        frame["createdAt"] = serde_json::Value::from(created_at);
+    match json.get("createdAt") {
+        None => {}
+        Some(created_at) if created_at.is_string() || created_at.is_number() => {
+            frame["createdAt"] = created_at.clone();
+        }
+        Some(_) => {
+            tracing::warn!(
+                "[PubSub] createdAt of an unexpected type DROPPED from a live frame (group={} queuedId={}) - the receiver gets no server time and refuses its read marks",
+                json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
+                json.get("queuedMessageId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            );
+        }
     }
     frame
 }
@@ -432,6 +447,28 @@ mod tests {
         assert_eq!(frame["createdAt"], "2026-11-03T21:28:44.123Z");
         assert_eq!(frame["queuedMessageId"], "q");
         assert_eq!(frame["addressed"], false);
+    }
+
+    #[test]
+    fn an_epoch_ms_created_at_is_forwarded_as_a_number() {
+        let published =
+            serde_json::json!({ "groupId": "g", "proto": "AAAA", "createdAt": 1793741324123u64 });
+        let frame = live_mls_frame(&published, "AAAA");
+        assert_eq!(frame["createdAt"], 1793741324123u64);
+    }
+
+    #[test]
+    fn a_created_at_of_another_type_is_dropped_and_none_invented() {
+        for odd in [
+            serde_json::json!(true),
+            serde_json::json!({ "at": 1 }),
+            serde_json::Value::Null,
+        ] {
+            let published =
+                serde_json::json!({ "groupId": "g", "proto": "AAAA", "createdAt": odd });
+            let frame = live_mls_frame(&published, "AAAA");
+            assert!(frame.get("createdAt").is_none(), "forwarded {odd}");
+        }
     }
 
     #[test]

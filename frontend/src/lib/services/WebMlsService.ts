@@ -47,7 +47,7 @@ import {
   isEphemeralFrame,
   isHeartbeatFrame,
 } from '$lib/mls-client/channelEventTypes';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import {
   loadMlsState,
   saveMlsState,
@@ -56,7 +56,6 @@ import {
   type MlsStateWriteLatch,
   toBase64,
   toHex,
-  fromBase64,
   tagMlsSnapshot,
   propagateMlsSnapshotVersion,
 } from '$lib/utils/hex';
@@ -680,37 +679,17 @@ export class WebMlsService extends BaseMlsService {
       return;
     }
     if (msg.proto && this.messageCallback) {
-      const ciphertext = fromBase64(msg.proto as string);
-      const ratchetTreeBytes =
-        typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-          ? fromBase64(msg.ratchetTree as string)
-          : undefined;
-
-      if (ciphertext.length > 0) {
+      const queued = liveMlsFrameMessage(msg);
+      if (queued) {
         // The payload frame's own fields, where they are known to exist - the half of the
         // entry line above that only this branch can honestly print.
         console.log(
-          `[WS RCV] payload: sender=${sanitizeForLog((msg.senderId as string) || 'unknown')},` +
-            ` welcome=${msg.isWelcome === true}, commit=${msg.isCommit === true},` +
-            ` bytes=${ciphertext.length}`
+          `[WS RCV] payload: sender=${sanitizeForLog(queued.senderId)},` +
+            ` welcome=${queued.isWelcome}, commit=${queued.isCommit},` +
+            ` bytes=${queued.ciphertext.length}`
         );
         // Queue the message for sequential processing
-        this.enqueueMessage(
-          {
-            senderId: (msg.senderId as string) || 'unknown',
-            senderDeviceId: (msg.senderDeviceId as string) || undefined,
-            ciphertext,
-            groupId: (msg.groupId as string) || undefined,
-            isWelcome: msg.isWelcome === true,
-            isCommit: msg.isCommit === true,
-            ratchetTreeBytes,
-            queuedMessageId: (msg.queuedMessageId as string) || undefined,
-            queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
-            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
-            addressed: msg.addressed === true,
-          },
-          'live'
-        );
+        this.enqueueMessage(queued, 'live');
       }
     } else if (msg.proto && !this.messageCallback) {
       console.warn(
