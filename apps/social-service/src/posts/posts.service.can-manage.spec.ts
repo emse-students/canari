@@ -1,4 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
+import { PIN_SPACES_FOR_VIEWER_SQL } from './space-pins';
 import { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
@@ -38,10 +39,26 @@ describe('PostsService post management rights', () => {
       save: jest.fn(() => Promise.resolve({ ...post } as Post)),
       remove: jest.fn(() => Promise.resolve(undefined)),
       // The one-row visibility read (WP6b) says yes: these are about rights, not audiences.
+      // WP-PIN: the governed spaces where the post is visible - one, for a platform admin and for a
+      // BDE moderator here (`moderators` doubles as the governors of the post's space).
       manager: {
-        query: jest.fn((sql: string) =>
-          Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : [])
-        ),
+        query: jest.fn((sql: string, params: unknown[] = []) => {
+          if (sql === PIN_SPACES_FOR_VIEWER_SQL) {
+            const governs = params[2] === true || moderators.includes(params[1] as string);
+            return Promise.resolve(
+              governs
+                ? (params[0] as string[]).map((postId) => ({
+                    postId,
+                    spaceId: 'space-1',
+                    formation: 'ICM',
+                    campus: 'saint-etienne',
+                    rank: null,
+                  }))
+                : []
+            );
+          }
+          return Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : []);
+        }),
       },
     };
 
@@ -362,7 +379,7 @@ describe('PostsService post management rights', () => {
   /**
    * Anonymous posts (user request, 2026-09-17): a regular reader never gets `authorId` on an
    * anonymous post, a content moderator/platform admin does, and only that same tier may clear the
-   * flag - `canUnmaskAnonymous` is drawn from the exact same predicate as `canPin`.
+   * flag - `canUnmaskAnonymous` is drawn from the moderation tier (`canPin` is a per-space promotion since WP-PIN).
    */
   describe('anonymous posts', () => {
     const anonPost = {

@@ -10,10 +10,12 @@
     setPostRepostConsent,
     type PostEntity,
     type PostComment,
+    type PinSpace,
     type PostMediaRef,
     type Poll,
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { withdrawProposal } from '$lib/proposals/api';
   import { pendingRequests } from '$lib/posts/republication';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
@@ -459,17 +461,32 @@
     })
   );
 
-  /** Pins or unpins the post (admin only) and updates the local pinned flag on success. */
-  async function togglePin() {
+  /**
+   * Pins the post in ONE space, or unpins it from it (WP-PIN), and takes that space's state from the
+   * answer. `pinned` (shown pinned in the READER's own spaces) is left to the next read: the server
+   * alone knows which spaces are the reader's, and the space acted on may not be one of them.
+   */
+  async function togglePin(space: PinSpace) {
+    const unpin = space.state !== null;
+    Log.d('PostCard.togglePin', `${unpin ? 'unpin' : 'pin'} ${localPost.id} in ${space.spaceId}`);
     try {
-      const fn = localPost.pinned ? unpinPostApi : pinPostApi;
-      const res = await fn(localPost.id);
-      ledger.answered(['pinned']);
-      localPost = { ...localPost, pinned: res.pinned };
+      const res = unpin
+        ? await unpinPostApi(localPost.id, space.spaceId)
+        : await pinPostApi(localPost.id, space.spaceId);
+      ledger.answered(['pinSpaces']);
+      localPost = {
+        ...localPost,
+        pinSpaces: (localPost.pinSpaces ?? []).map((s) =>
+          s.spaceId === res.spaceId ? { ...s, state: res.state } : s
+        ),
+      };
       actionMessage = res.pinned ? m.post_epingle() : m.post_unpinned();
     } catch (err) {
-      Log.d('togglePin failed', err);
-      errorMessage = m.post_unable_to_toggle_pin();
+      Log.d('PostCard.togglePin failed', err);
+      errorMessage =
+        refusalCode(err) === 'space_pin_limit'
+          ? m.post_pin_limit_reached()
+          : m.post_unable_to_toggle_pin();
     }
   }
 
@@ -656,7 +673,7 @@
     <div class="flex items-start">
       <PostHeader post={localPost} />
       <PostActionsMenu
-        pinned={localPost.pinned ?? false}
+        pinSpaces={localPost.pinSpaces ?? []}
         {canManage}
         {canEdit}
         {canPin}
