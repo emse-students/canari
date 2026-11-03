@@ -1,3 +1,0 @@
-### Fixed - accepting a co-organisation on a validated event sends it back to validation
-
-An acceptance widens the event's audience with nothing validated behind the new part, so the event returns to pending in the acceptance's own transaction. The acceptance takes the event lock (associations, event, proposal), so it cannot race an edit. The validators are told it is an acceptance, the organiser and the partners are told why (one notice per person, the validator's first), as they now are when a date moves ([profiles-and-access](docs/wiki/profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)).
