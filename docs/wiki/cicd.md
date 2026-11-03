@@ -716,6 +716,21 @@ shows hundreds of failures. A minute-boundary cron firing in both replicas was t
 race found: the form reminder now claims its row with a conditional `UPDATE`
 (`forms-reminder.scheduler.spec.ts` fails without it).
 
+**The reload's own read of the workers was a race, and it was a deploy defect** (found as a CI flake
+on PR #2939, 2026-11-02: `the reloads could not all be made (failed, 299 made)`, with ZERO failed
+POSTs, so no request was lost). `rotation_reload` learns the workers' uid, and the list of workers it
+will compare against, from the proxy BEFORE it signals the reload. It listed `/proc` and read the
+uid afterwards from the FIRST worker listed - and under load the first one can be a worker the
+previous reload retired, which exits on its own clock between the listing and that read. The read came
+back empty and the deploy stopped with `had no worker to read before the reload`
+(`awk: /proc/<pid>/status: No such file or directory` is its trace in the log). Production runs two
+reloads per replaced service, so a deploy with traffic on it could stop the same way, before stopping
+the old replica (safe: nothing was retired, a re-run passes). `workers` now reads a worker's stat,
+command line and uid together and lists it only if all three read: a worker that is gone is not one.
+Measured against a bare nginx under six looping clients, 30 runs of 300 back-to-back reloads: before,
+283 of 9000 reloads failed (15 of 30 runs); after, 0 of 9000. The same race printed `can't open /proc/<pid>/cmdline` into the
+log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
+
 **What is NOT zero, said rather than hidden:**
 
 - **The first deploy carrying the target lists** still runs the OLD frontend image (1.6.2's, on its
@@ -2753,6 +2768,7 @@ are builder stages and the local compose file, which reach no estate.
   half is reported, so the half that moved would never retire. **The retirement now also reads each
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
   parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
+- **2026-11-03, the image scan red on `CVE-2026-117610` and `CVE-2026-118370`**, libexpat 2.9.0-r0 (HIGH, fixed in Alpine's 2.10.0-r0), in `nginx:1.31.8-alpine` and `nginx:stable-alpine`. The pinned digest (built 2026-10-28) is still the newest plain `1.31-alpine`; the `-perl` rebuild of 2026-10-31 and the floating heads carry 2.9.0-r0 too, so there was no digest to move to: **allowlisted by purl** (`pkg:apk/alpine/libexpat@2.9.0-r0`), reached only through fontconfig (the optional `image_filter` module), retiring with the pins.
 - **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
 
 **2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).

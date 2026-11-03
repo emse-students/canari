@@ -67,6 +67,21 @@ nothing to show - `contentPreview` was hard-coded null for it. It was removed ra
 implemented. Reporting a message would mean the client attaching the decrypted excerpt, which is a
 privacy decision about what a reporter discloses, not a missing endpoint.
 
+### A report follows the read's predicate (2026-11-02)
+
+**A write or a notification on a post follows the read's predicate.** A report on a `post` or a
+`comment` is accepted only from a reporter who may OPEN that post through the same gate the read by
+id uses - `readPostOpenVerdict` (`apps/social-service/src/posts/post-openable.ts`): the post's
+audience, no block either way with a personal non-anonymous post's author, not hidden by
+moderation, not scheduled later, not an expired reel. A comment also has to be one the read shows
+that reporter (`commentShownDespiteBlocks`: not by a writer a block separates from them, unless
+anonymous or an association's). Every refusal is the same `404 { code: 'CONTENT_NOT_FOUND' }`, a
+hidden post's included, so the route is no oracle. Until this rule, a post or comment report
+checked nothing - and five reports hide a post (auto-hide, below), so a post its reporter could
+never read could still be hidden by them. Lives already had this rule (`reportableLive`). Proven
+against PostgreSQL in `post-openable.integration.spec.ts`; the same gate also decides who a mention
+may notify ([posts](frontend/modules/posts.md#a-write-or-a-notification-follows-the-reads-predicate-2026-11-02)).
+
 ### One reason list, everywhere
 
 `spam` / `harassment` / `inappropriate` / `other`, from `frontend/src/lib/moderation/reasons.ts`,
@@ -194,6 +209,9 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither is shown the other's **personal posts**, nor their **comments** under anybody's post -
   in the feed, in search, by id, and under an agenda event. **An association post and an anonymous
   post are exempt**, and the section below is why.
+- Neither can **react to, comment on, like a comment of or report** a personal post of the other,
+  and neither is **notified of a mention** by the other, on any post: a write or a notification
+  follows the read's predicate ([posts](frontend/modules/posts.md#a-write-or-a-notification-follows-the-reads-predicate-2026-11-02)).
 
 ### What a block does not do
 

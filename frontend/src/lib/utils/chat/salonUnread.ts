@@ -24,6 +24,7 @@
 import type { Conversation } from '$lib/types';
 import { salonMarksDeliveredCount } from '$lib/utils/chat/salonReadMarkQueue';
 import { Log } from '$lib/utils/Log';
+import { publishUnreadCounts } from '$lib/mls-client/tabMessageSync';
 import {
   countUnreadForUser,
   isUnreadForUser,
@@ -293,6 +294,22 @@ export async function reconcileSalonUnreadFromServer(opts: {
       token
     );
     lastAppliedAsOf = Math.max(lastAppliedAsOf, answer.asOf);
+    // A follower tab of this browser asks no server for these counts on a reconnect or a clear made
+    // on another device - it has no socket to learn of either - so the leader hands it what moved.
+    // Each count travels with this tab's OWN mark of the salon as it applied it: a follower that read
+    // the salon after this answer was counted holds a newer mark, and keeps its own count.
+    const me = opts.userId.toLowerCase();
+    publishUnreadCounts(
+      Object.fromEntries(
+        changed.map((key) => {
+          const convo = opts.conversations.get(key);
+          return [
+            key,
+            { count: convo?.unreadCount ?? 0, mark: watermarkFor(convo?.readWatermarks, me) },
+          ];
+        })
+      )
+    );
     opts.log(
       `[UNREAD] ${opts.reason}: ${Object.keys(answer.counts).length} salon(s) unread on the server, ${changed.length} count(s) moved here`
     );
