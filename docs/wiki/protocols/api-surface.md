@@ -98,7 +98,8 @@ deployment change and is deliberately not bundled with a correctness fix.**
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
 | POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000 per request) the caller shares a conversation or a community with ([audience](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
 | GET | `/api/presence?users=` | yes | LEGACY, same answer, for clients installed before the POST ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
-| GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
+| GET | `/api/admin/presence` | yes (global admin) | Counts of connected people and devices, by platform and app version - no id ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
+| GET | `/api/admin/presence/history` | yes (global admin) | The same counts, one sample a minute for the last 24 h |
 | GET | `/api/health` | no | Liveness probe |
 
 WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
