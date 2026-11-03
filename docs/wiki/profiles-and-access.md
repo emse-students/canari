@@ -1320,8 +1320,14 @@ Saint-Etienne event).
   (`ProposalsService.proposeWithin`, which hands back its announcement) and the event save are ONE
   transaction on ONE pooled connection: they commit or none does (a failing k-th proposal leaves no
   field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
-  The announcements and the other notices run after the commit. An event CREATION calls
-  `sync(request)` without a manager and gets its own transaction.
+  The announcements and the other notices run after the commit. An event CREATION is the same
+  unit (`createCalendarEvent`): associations `KEY SHARE` first, then the form ownership read, the
+  detach, the event insert and `sync(request, manager)` in ONE transaction, so a failing k-th proposal
+  leaves no event behind (it used to leave an event with no proposals and a 500, which the retry
+  duplicated). The manager-less `sync(request)` branch was deleted: creation was its only caller, and it now passes its manager.
+  The delete-versus-edit integration case bounds its deleter with `lock_timeout` (failure path only: a
+  lock-order regression fails with SQLSTATE 55P03 instead of hanging the suite) and its waiter matches
+  any lock wait under the suite's `application_name`, not statement text.
 - **A co-organisation ACCEPTANCE takes the same lock** (WP-Q2): `CoorganisationService.lockSubject`
   locks the event row in `lockInOrder`, so it runs `associations -> event row -> proposal` and is serialised
   with an edit, a validation and a rejection.

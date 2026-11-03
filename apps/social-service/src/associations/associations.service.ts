@@ -1649,6 +1649,26 @@ export class AssociationsService {
   }
 
   /**
+   * `FOR KEY SHARE` on the associations an event write names, in id order - the FIRST statement of
+   * every event write transaction (the global lock order). `eventOfOrganiser` adds the organiser of
+   * an existing event, read from its row; a creation names its organiser in `associationIds`.
+   */
+  private async keyShareAssociations(
+    manager: EntityManager,
+    associationIds: readonly string[],
+    eventOfOrganiser?: string
+  ): Promise<void> {
+    const named = associationIds.filter((id) => UUID_RE.test(id));
+    await manager.query(
+      `SELECT a.id FROM associations a
+        WHERE a.id = ANY($1::uuid[])
+           OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
+        ORDER BY a.id FOR KEY SHARE OF a`,
+      [named, eventOfOrganiser ?? null]
+    );
+  }
+
+  /**
    * Runs `work` in ONE transaction that starts by locking the event, so every read-check-write
    * an event goes through here (an edit with its partner list and its form link, a validation, a
    * rejection) is serialised: the second one starts from what the first committed, never from the
@@ -1676,15 +1696,8 @@ export class AssociationsService {
     work: (repo: Repository<AssociationCalendarEvent>, manager: EntityManager) => Promise<T>,
     associationIds: readonly string[] = []
   ): Promise<T> {
-    const named = associationIds.filter((id) => UUID_RE.test(id));
     return this.calendarRepo.manager.transaction(async (manager) => {
-      await manager.query(
-        `SELECT a.id FROM associations a
-          WHERE a.id = ANY($1::uuid[])
-             OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
-          ORDER BY a.id FOR KEY SHARE OF a`,
-        [named, eventId]
-      );
+      await this.keyShareAssociations(manager, associationIds, eventId);
       await manager.query(
         'SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE',
         [eventId]
@@ -1905,9 +1918,12 @@ export class AssociationsService {
     }
   }
 
-  private async detachLinksBeforeCreate(formId?: string | null) {
+  private async detachLinksBeforeCreate(
+    formId?: string | null,
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
+  ) {
     if (formId) {
-      await this.calendarRepo.update({ linkedFormId: formId }, { linkedFormId: null });
+      await repo.update({ linkedFormId: formId }, { linkedFormId: null });
     }
   }
 
@@ -2783,28 +2799,22 @@ ${rejectionReason}`
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
     // gets ONE notice, the validator's - the one that is actionable. A push that fails AFTER the
     // rows were saved still counts as told (typed, NotificationPushFailedError). DEGRADED CASE: when
-    // the validators' notice wrote NOTHING (logged below), nobody is excluded and that person is
-    // told once as a party instead - a notice with the reason, but not the actionable one.
-    let validatorIds: string[] = [];
-    try {
+    // the validators' notice wrote NOTHING (logged inside, the function never rejects), it returns
+    // nobody, so nobody is excluded and that person is told once as a party instead - a notice with
+    // the reason, but not the actionable one.
+    const validatorIds: string[] = await (async () => {
       // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
       // own typed notice; a date move keeps the proposal's.
-      validatorIds =
-        reason === 'coorganiser_joined'
-          ? await this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
-              type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
-              meta: { reason, audience: 'validators' },
-              // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
-              // on the validation queue, as for a proposal, never on the plain agenda.
-              pushData: { associationId: ev.associationId, action: 'proposed', reason },
-            })
-          : await this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
-    } catch (err) {
-      this.logger.warn(
-        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the validators were not told`,
-        err instanceof Error ? err.stack : String(err)
-      );
-    }
+      return reason === 'coorganiser_joined'
+        ? this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
+            type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
+            meta: { reason, audience: 'validators' },
+            // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
+            // on the validation queue, as for a proposal, never on the plain agenda.
+            pushData: { associationId: ev.associationId, action: 'proposed', reason },
+          })
+        : this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
+    })();
     try {
       await this.notifyEventReopenedParties(ev, reason, actorId, new Set(validatorIds));
     } catch (err) {
@@ -2871,6 +2881,28 @@ ${rejectionReason}`
    * association reaching no space has no BDE validator, and the warning below says so.
    */
   private async notifyEventValidatorsOfProposal(
+    associationId: string,
+    actorId: string,
+    eventTitle: string,
+    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+  ): Promise<string[]> {
+    // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
+    // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
+    // (social-service has no handler) and a notice's failure must never fail a committed write.
+    // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
+    try {
+      return await this.tellEventValidators(associationId, actorId, eventTitle, notice);
+    } catch (err) {
+      this.logger.warn(
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      return [];
+    }
+  }
+
+  /** The body of `notifyEventValidatorsOfProposal`: may throw, and is only called through it. */
+  private async tellEventValidators(
     associationId: string,
     actorId: string,
     eventTitle: string,
@@ -2958,48 +2990,61 @@ ${rejectionReason}`
 
     const kind = dto.kind ?? AssociationCalendarEventKind.Event;
     assertMayDecideKind(kind, AssociationCalendarEventKind.Event, isValidator);
-    // The cap is checked BEFORE the event is saved: `sync` runs after the save, and a refusal there
-    // would leave an event the caller was told failed.
+    // The cap is checked BEFORE the transaction opens: a refusal costs no connection and no lock.
     assertWithinCoOrganiserCap(
       new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size
     );
 
     const linkedFormId = dto.linkedFormId ?? null;
-    if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
-    await this.detachLinksBeforeCreate(linkedFormId);
-
-    const row = this.calendarRepo.create({
-      associationId: targetId,
-      title: dto.title.trim(),
-      description: dto.description?.trim() ? dto.description.trim() : null,
-      startsAt,
-      endsAt,
-      createdBy: userId,
-      kind,
-      linkedFormId,
-      // The three validation columns are written in ONE place, and this is not it. Spelling
-      // `null` here rather than leaving them to the entity default is deliberate: a default is
-      // what happens when nobody said, and this row says.
-      status: AssociationCalendarEventStatus.Pending,
-      validatedAt: null,
-      validatedBy: null,
-    });
-    const saved = await this.calendarRepo.save(row);
     // D39: every co-organiser named here is ASKED, so a new event has no co-owner row yet - its
     // reach and its rights stay the organiser's until one accepts. The creator writes as the
     // organiser (the guard, or the BDE / global admin tier for a deposit).
     const askedCount = new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size;
-    if (askedCount > 0) {
-      await this.coOrganiserPort().sync({
-        eventId: saved.id,
-        organiserId: targetId,
-        desiredIds: dto.coOwnerIds ?? [],
-        actorId: userId,
-        isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
-        organiserSide: true,
-        viaAssociationId: associationId,
+    // ONE TRANSACTION, ONE CONNECTION: the form-link detach, the event insert and the partners'
+    // proposals commit together or not at all. The event used to be saved BEFORE the sync, so a
+    // failing k-th proposal left an event with no proposals behind a 500, and the caller's retry
+    // created it twice. The announcements run after the commit.
+    const { saved, afterCommit } = await this.calendarRepo.manager.transaction(async (manager) => {
+      await this.keyShareAssociations(manager, [targetId, ...(dto.coOwnerIds ?? [])]);
+      if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId, manager);
+      const repo = manager.getRepository(AssociationCalendarEvent);
+      await this.detachLinksBeforeCreate(linkedFormId, repo);
+
+      const row = repo.create({
+        associationId: targetId,
+        title: dto.title.trim(),
+        description: dto.description?.trim() ? dto.description.trim() : null,
+        startsAt,
+        endsAt,
+        createdBy: userId,
+        kind,
+        linkedFormId,
+        // The three validation columns are written in ONE place, and this is not it. Spelling
+        // `null` here rather than leaving them to the entity default is deliberate: a default is
+        // what happens when nobody said, and this row says.
+        status: AssociationCalendarEventStatus.Pending,
+        validatedAt: null,
+        validatedBy: null,
       });
-    }
+      const saved = await repo.save(row);
+      const afterCommit: CoOrganiserAfterCommit =
+        askedCount > 0
+          ? await this.coOrganiserPort().sync(
+              {
+                eventId: saved.id,
+                organiserId: targetId,
+                desiredIds: dto.coOwnerIds ?? [],
+                actorId: userId,
+                isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
+                organiserSide: true,
+                viaAssociationId: associationId,
+              },
+              manager
+            )
+          : () => Promise.resolve();
+      return { saved, afterCommit };
+    });
+    await afterCommit();
     const coOwners: AssociationCalendarEventCoOwner[] = [];
     this.logger.debug(
       `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, co-organisers asked=${askedCount})`
