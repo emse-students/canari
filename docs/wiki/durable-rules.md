@@ -452,7 +452,7 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
   clearing, fires it three steps before the connection exists, because **a gate answers "may I send"
   and a trigger answers "now"** - only the offline promotion knows the second. Both comments that
   had reasoned about this were false, which is how a refutable claim survives:
-  [chat](frontend/modules/chat.md#eight-sites-raise-a-flush-and-there-is-one-flusher-r-d8-refuted-2026-09-13)
+  [chat](frontend/modules/chat.md#nine-sites-raise-a-flush-and-there-is-one-flusher-r-d8-refuted-2026-09-13)
 - **WHEN THE CALL IS ALREADY ONE, LOOK AT WHAT SURROUNDS IT - THE DUPLICATE IS THE PRECONDITION.**
   The corollary above answers "there is nothing to fuse" and stops, which is half an answer. Three
   moments entered a private salon's distribution group through ONE join function behind ONE
