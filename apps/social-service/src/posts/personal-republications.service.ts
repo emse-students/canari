@@ -8,6 +8,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { createHash } from 'crypto';
 import { Repository, type EntityManager } from 'typeorm';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { isBlockedBetween } from '../common/user-blocks';
@@ -60,7 +61,11 @@ export const PERSONAL_REPOST_CODES = {
   anonymous: 'REPOST_PERSONAL_ANONYMOUS',
   /** The proposer wrote the post: they would be asking themselves. */
   ownPost: 'REPOST_PERSONAL_OWN_POST',
-  /** The proposing association is not of a kind that may ask (a list, an institution, archived). */
+  /**
+   * The proposing association may not ask: a kind nobody listed in
+   * `PERSONAL_REPUBLISHING_ASSOCIATION_TYPES` (every kind of today is listed, 2026-11-02), or an
+   * archived one.
+   */
   associationType: 'REPOST_PERSONAL_ASSOCIATION_TYPE',
   /** A block stands between the proposer and the author, in either direction. */
   blocked: 'REPOST_PERSONAL_BLOCKED',
@@ -72,6 +77,13 @@ export const PERSONAL_REPOST_CODES = {
   associationCap: 'REPOST_PERSONAL_ASSOCIATION_CAP',
   /** The author's account is restricted (muted): accepting would widen what they published. */
   authorMuted: 'REPOST_PERSONAL_AUTHOR_MUTED',
+  /**
+   * The institution's potential audience changed since the author read it (review of #2965,
+   * 2026-11-02): the acceptance carried another fingerprint than the one computed now, so the
+   * author consented to a different reach. Nothing is decided; the client re-reads the warning and
+   * asks again.
+   */
+  audienceChanged: 'REPOST_PERSONAL_AUDIENCE_CHANGED',
 } as const;
 
 /** The proposing association, as a request needs it. */
@@ -351,10 +363,13 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
    *   institution carries; a nominative read grant never opens a personal post (WP7).
    *
    * Any other kind answers nothing: the owner asked the warning for institutions, whose audience is
-   * the one an author may not guess. ONE query for the whole inbox.
+   * the one an author may not guess. ONE query for the whole inbox. Each answer carries its
+   * `fingerprint` (`audienceFingerprint`), which the acceptance re-computes with THIS function, on
+   * the acceptance's own transaction (`assertConsentCurrent`).
    */
   private async institutionAudiencesOf(
-    associationIds: string[]
+    associationIds: string[],
+    manager: EntityManager = this.repo.manager
   ): Promise<Map<string, InstitutionAudience>> {
     const out = new Map<string, InstitutionAudience>();
     const ids = [...new Set(associationIds)];
@@ -363,7 +378,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
       id: string;
       rules: { campus: string | null; formation: string | null }[];
       staffMembers: boolean;
-    }[] = await this.repo.manager.query(
+    }[] = await manager.query(
       `SELECT a.id,
               COALESCE((SELECT json_agg(json_build_object('campus', r.campus, 'formation', r.formation)
                                 ORDER BY r.campus NULLS FIRST, r.formation NULLS FIRST)
@@ -378,12 +393,52 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
     );
     for (const row of rows) {
       const everyone = row.rules.some((r) => r.campus === null && r.formation === null);
-      out.set(row.id, { everyone, spaces: row.rules, staffMembers: row.staffMembers === true });
+      const audience = { everyone, spaces: row.rules, staffMembers: row.staffMembers === true };
+      const fingerprint = audienceFingerprint(audience);
+      out.set(row.id, { ...audience, fingerprint });
       this.logger.debug(
-        `[REPOST-P] institution ${row.id.slice(0, 8)} audience: everyone=${everyone} rules=${row.rules.length} staff=${row.staffMembers}`
+        `[REPOST-P] institution ${row.id.slice(0, 8)} audience: everyone=${everyone} rules=${row.rules.length} staff=${row.staffMembers} fp=${fingerprint.slice(0, 8)}`
       );
     }
     return out;
+  }
+
+  /**
+   * THE AUTHOR CONSENTED TO THE AUDIENCE THEY WERE SHOWN (review of #2965, 2026-11-02): inside the
+   * acceptance's transaction, after its locks, the institution's audience is computed again by the
+   * SAME function the inbox used, and its fingerprint compared with the one the acceptance carries.
+   * A mismatch - or none carried for an institution - is a 409 `REPOST_PERSONAL_AUDIENCE_CHANGED`,
+   * which rolls the acceptance back: nothing is decided, and the client re-reads the warning and
+   * asks again. A carrier that is not an institution shows no warning, so nothing is compared.
+   *
+   * What it does NOT promise: after acceptance, who sees the post follows the carrier's LIVE
+   * audience and membership, and the author's remedy is to withdraw the republication.
+   */
+  async assertConsentCurrent(
+    manager: EntityManager,
+    proposal: UserProposal,
+    consent: { audienceFingerprint?: string | null }
+  ): Promise<void> {
+    const audience = (await this.institutionAudiencesOf([proposal.fromAssociationId], manager)).get(
+      proposal.fromAssociationId
+    );
+    if (!audience) {
+      this.logger.debug(
+        `[REPOST-P] ${proposal.id.slice(0, 8)} accept: no institution audience to check`
+      );
+      return;
+    }
+    if (consent.audienceFingerprint !== audience.fingerprint) {
+      this.logger.log(
+        `[REPOST-P] ${proposal.id.slice(0, 8)} accept refused: audience changed (carried ${String(consent.audienceFingerprint ?? 'none').slice(0, 8)}, now ${audience.fingerprint.slice(0, 8)})`
+      );
+      throw refusal(
+        ConflictException,
+        PERSONAL_REPOST_CODES.audienceChanged,
+        "The institution's audience changed since the request was read"
+      );
+    }
+    this.logger.debug(`[REPOST-P] ${proposal.id.slice(0, 8)} accept: audience as shown`);
   }
 
   /** The post first, then the proposal: see `lockPostRow`. */
@@ -536,7 +591,6 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
   }
 }
 
-/** A post as a request's description needs it. */
 /** An institution's potential audience, as the author's request shows it (`institutionAudiencesOf`). */
 export interface InstitutionAudience {
   /** One of its rules addresses every campus and every formation. */
@@ -545,8 +599,28 @@ export interface InstitutionAudience {
   spaces: { campus: string | null; formation: string | null }[];
   /** At least one of its members is on the staff side (a campus, no cursus). */
   staffMembers: boolean;
+  /**
+   * A digest of the three fields above (`audienceFingerprint`): what the author was shown. The
+   * acceptance carries it back, and the server refuses it once the audience changed.
+   */
+  fingerprint: string;
 }
 
+/**
+ * The digest of what an author is shown of an institution's audience - the SAME function for the
+ * inbox and for the acceptance's check, so the two can only disagree when the audience did. The
+ * spaces come ordered by the query; their order is part of the digest.
+ */
+export function audienceFingerprint(audience: Omit<InstitutionAudience, 'fingerprint'>): string {
+  const canonical = JSON.stringify({
+    everyone: audience.everyone,
+    spaces: audience.spaces.map((s) => [s.campus, s.formation]),
+    staffMembers: audience.staffMembers,
+  });
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
+}
+
+/** A post as a request's description needs it. */
 interface SubjectRow {
   id: string;
   markdown: string | null;

@@ -74,14 +74,17 @@ export function repostShownToAuthorSql(post: string, mr: string, reposter: strin
 
 /**
  * What may be reposted: a post the reposter sees FIRST-HAND - its own audience, the author's
- * accepted followers, an association carrying it - never only through another member's repost
- * (decided 2026-11-01: no chain, the author's consent covers one step of reach). Grant-free and
- * without the administrator's by-id reach, as D38b's request.
+ * accepted followers, and for an ENTITY post an association carrying it - never only through
+ * another member's repost (decided 2026-11-01: no chain, the author's consent covers one step of
+ * reach), and never a PERSONAL post seen only through a carrier the author accepted (D38b): that
+ * consent covered the carrier's audience, not a second hop to a reader's followers (review of
+ * #2965, 2026-11-02). Grant-free and without the administrator's by-id reach, as D38b's request.
  */
 export const FIRST_HAND = {
   adminSeesAll: false,
   readGrants: false,
   memberReposts: false,
+  personalRepublications: false,
 } as const;
 
 export { MEMBER_REPOST_NOTIFICATION };

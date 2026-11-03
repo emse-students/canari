@@ -37,15 +37,20 @@ import {
 import type { ModerationService } from '../moderation/moderation.service';
 import { Proposal, PROPOSAL_VOIDED_BY } from '../proposals/proposal.entity';
 import { PROPOSAL_SENDER_GONE, ProposalsService } from '../proposals/proposals.service';
-import { postVisibleToViewerSql } from '../spaces/reader-spaces';
+import {
+  memberRepostablePostSql,
+  newlyReachedByPersonalRepublicationSql,
+  postVisibleToViewerSql,
+} from '../spaces/reader-spaces';
 import { PostRepublication } from './entities/post-republication.entity';
 import {
   MAX_PENDING_REQUESTS_PER_ASSOCIATION,
   MAX_PENDING_REQUESTS_PER_AUTHOR,
   PERSONAL_REPOST_CODES,
   PersonalRepublicationsService,
+  type InstitutionAudience,
 } from './personal-republications.service';
-import type { PostNotificationsService } from './post-notifications.service';
+import { bellRowShownSql, type PostNotificationsService } from './post-notifications.service';
 import { PostsService } from './posts.service';
 import { dropRepublicationsOf } from './republication-sql';
 import { RepublicationsService } from './republications.service';
@@ -1152,6 +1157,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         everyone: false,
         spaces: [{ campus: 'saint-etienne', formation: 'ICM' }],
         staffMembers: true,
+        fingerprint: expect.stringMatching(/^[0-9a-f]{32}$/),
       });
       const rules: { formation: string | null; campus: string | null }[] = await q(
         `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
@@ -1184,9 +1190,60 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       }
     });
 
+    /** The fingerprint of the warning the author's inbox draws right now. */
+    async function shownFingerprint(): Promise<string> {
+      const { incoming } = await personal.inbox('sa');
+      const audience = incoming[0].details?.institutionAudience as InstitutionAudience | null;
+      const fingerprint = audience?.fingerprint;
+      expect(fingerprint).toEqual(expect.any(String));
+      return fingerprint!;
+    }
+
+    it('an acceptance carrying a stale or no fingerprint is refused, typed, and changes nothing (review of #2965)', async () => {
+      const proposal = await proposalOf(P(20), INST);
+      const shown = await shownFingerprint();
+      // The institution opens an everyone rule after the author read the warning.
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, NULL)`,
+        [INST]
+      );
+      try {
+        for (const consent of [{ audienceFingerprint: shown }, {}]) {
+          const err = await refusedWith(proposals.accept(proposal.id, 'sa', false, consent));
+          expect(err).toBeInstanceOf(ConflictException);
+          expect(codeOf(err)).toBe(PERSONAL_REPOST_CODES.audienceChanged);
+        }
+        expect(await proposalOf(P(20), INST)).toMatchObject({ status: 'pending' });
+        expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(20)])).toEqual(
+          []
+        );
+        expect(await sees(P(20), 'st')).toBe(false);
+        // The inbox now draws the everyone warning, under a new fingerprint.
+        expect(await shownFingerprint()).not.toBe(shown);
+        // An archived carrier reaches nobody, so it newly reaches nobody: the count stays exact.
+        const newlyReached = async (): Promise<number> =>
+          ((await q(newlyReachedByPersonalRepublicationSql(true), [P(20), INST])) as unknown[])
+            .length;
+        expect(await newlyReached()).toBeGreaterThan(0);
+        await q(`UPDATE associations SET archived = true WHERE id = $1`, [INST]);
+        try {
+          expect(await newlyReached()).toBe(0);
+        } finally {
+          await q(`UPDATE associations SET archived = false WHERE id = $1`, [INST]);
+        }
+      } finally {
+        await q(
+          `DELETE FROM association_audiences WHERE "associationId" = $1 AND formation IS NULL AND campus IS NULL`,
+          [INST]
+        );
+      }
+    });
+
     it('acceptance carries it to the staff side, and tells the staff member once', async () => {
       const proposal = await proposalOf(P(20), INST);
-      await proposals.accept(proposal.id, 'sa', false);
+      await proposals.accept(proposal.id, 'sa', false, {
+        audienceFingerprint: await shownFingerprint(),
+      });
       expect(await sees(P(20), 'st')).toBe(true);
       expect(told).toEqual([
         expect.objectContaining({
@@ -1205,9 +1262,64 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       expect(await sees(P(20), 'gt')).toBe(false);
     });
 
-    it('the author withdraws it, and the staff side reads nothing again', async () => {
+    /** Whether the bell would still serve recipient `st` its row about P(20). */
+    async function bellShowsStaff(): Promise<boolean> {
+      const rows: { shown: boolean }[] = await q(
+        `SELECT ${bellRowShownSql('n')} AS shown FROM post_notifications n
+          WHERE n."recipientId" = 'st' AND n."postId" = $1`,
+        [P(20)]
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0].shown === true;
+    }
+
+    it("the staff member's bell row follows the post's visibility: leaving the institution hides it (review of #2965)", async () => {
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId", "actorId")
+           VALUES ('st', 'association_repost', $1, $2, 'sa')`,
+        [P(20), INST]
+      );
+      expect(await bellShowsStaff()).toBe(true);
+      await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'st'`, [
+        INST,
+      ]);
+      try {
+        expect(await sees(P(20), 'st')).toBe(false);
+        expect(await bellShowsStaff()).toBe(false);
+      } finally {
+        await q(
+          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'st', 0)`,
+          [INST]
+        );
+      }
+      expect(await bellShowsStaff()).toBe(true);
+    });
+
+    it('an archived institution stops carrying it, and its own post is no longer member-repostable (review of #2965)', async () => {
+      const repostable = async (): Promise<boolean> => {
+        const rows: { ok: boolean }[] = await q(
+          `SELECT ${memberRepostablePostSql('posts')} AS ok FROM posts WHERE posts.id = $1`,
+          [P(21)]
+        );
+        return rows[0].ok === true;
+      };
+      expect(await repostable()).toBe(true);
+      await q(`UPDATE associations SET archived = true WHERE id = $1`, [INST]);
+      try {
+        expect(await sees(P(20), 'st')).toBe(false);
+        expect(await bellShowsStaff()).toBe(false);
+        expect(await repostable()).toBe(false);
+      } finally {
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [INST]);
+      }
+      expect(await sees(P(20), 'st')).toBe(true);
+      expect(await repostable()).toBe(true);
+    });
+
+    it('the author withdraws it, and the staff side reads nothing again - its bell row included', async () => {
       await republications.unrepublish(P(20), INST, 'sa', false);
       expect(await sees(P(20), 'st')).toBe(false);
+      expect(await bellShowsStaff()).toBe(false);
       expect(await proposalOf(P(20), INST)).toMatchObject({ status: 'refused', decidedBy: 'sa' });
     });
 

@@ -152,6 +152,7 @@ describe("institutionAudienceWarning - an institution's potential audience (owne
       })
     ).toEqual([
       m.republication_requests_audience_everyone(),
+      m.republication_requests_audience_members(),
       m.republication_requests_audience_staff(),
     ]);
   });
@@ -178,13 +179,19 @@ describe("institutionAudienceWarning - an institution's potential audience (owne
           }),
         ].join(', '),
       }),
+      // Always said, also when it has rules (review of #2965).
+      m.republication_requests_audience_members(),
     ]);
     expect(lines.join(' ')).not.toContain(m.republication_requests_audience_staff());
   });
 
-  it('says only its members would see it when it addresses no space', () => {
+  it('says it addresses no space, and that its members see it, when it has no rule', () => {
     expect(institutionAudienceWarning({ everyone: false, spaces: [], staffMembers: true })).toEqual(
-      [m.republication_requests_audience_none(), m.republication_requests_audience_staff()]
+      [
+        m.republication_requests_audience_none(),
+        m.republication_requests_audience_members(),
+        m.republication_requests_audience_staff(),
+      ]
     );
   });
 });

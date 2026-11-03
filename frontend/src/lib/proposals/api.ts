@@ -106,7 +106,7 @@ export interface RepublicationRequest {
     | (PersonalRepostSubject & {
         newlyReached: number;
         /** Set when the asker is an INSTITUTION: its potential audience, the request's warning. */
-        institutionAudience?: InstitutionAudience | null;
+        institutionAudience?: (InstitutionAudience & { fingerprint: string }) | null;
       })
     | null;
   createdAt: string;
@@ -164,9 +164,26 @@ export async function listPendingProposals(associationId: string): Promise<Propo
   );
 }
 
-/** Accepts a proposal: the kind's effect (a republication, for `repost`) is applied with it. */
-export async function acceptProposal(proposalId: string): Promise<unknown> {
-  return socialRequest(`/api/associations/proposals/${proposalId}/accept`, { method: 'POST' });
+/**
+ * The refusal code of a person's acceptance whose institution audience changed since they read it
+ * (review of #2965, 2026-11-02): nothing was decided, and the inbox re-reads the warning and asks
+ * again.
+ */
+export const REPOST_PERSONAL_AUDIENCE_CHANGED = 'REPOST_PERSONAL_AUDIENCE_CHANGED';
+
+/**
+ * Accepts a proposal: the kind's effect (a republication, for `repost`) is applied with it. A
+ * person accepting an institution's request passes the `audienceFingerprint` of the warning they
+ * read, so the server can refuse a consent given on an audience that has since changed.
+ */
+export async function acceptProposal(
+  proposalId: string,
+  consent: { audienceFingerprint?: string } = {}
+): Promise<unknown> {
+  return socialRequest(`/api/associations/proposals/${proposalId}/accept`, {
+    method: 'POST',
+    body: JSON.stringify(consent),
+  });
 }
 
 /**

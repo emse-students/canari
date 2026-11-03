@@ -105,8 +105,16 @@
           première fois et, pour une institution, son public possible) vous est adressée, et rien
           n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
           d'une institution, votre publication est vue de son public, y compris de ses membres qui
-          font partie du personnel. Vous pouvez retirer ce relais à tout moment ; la demande est
-          effacée avec la publication ou avec votre compte. Vous pouvez publier ou commenter de
+          font partie du personnel ; si ce public a changé depuis que vous l'avez lu, votre
+          acceptation est refusée et le nouveau public vous est montré. Une fois le relais accepté,
+          ceux qui voient votre publication suivent le public et les membres ACTUELS de
+          l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
+          nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
+          la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
+          retirer ce relais à tout moment, c'est le recours si ce public change ; la demande est
+          effacée avec la publication ou avec votre compte. Une notification sur une publication
+          n'est affichée que tant que son destinataire peut encore la voir, mais une notification
+          déjà reçue sur un appareil ne peut pas être rappelée. Vous pouvez publier ou commenter de
           façon anonyme, ou au nom d'une association dont vous avez le droit de parler : les autres
           membres ne voient alors pas votre compte, mais la modération et les administrateurs de la
           plateforme peuvent l'identifier (pour traiter un signalement, par exemple), et votre

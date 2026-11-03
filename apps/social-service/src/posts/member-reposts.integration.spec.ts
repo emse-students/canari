@@ -418,6 +418,25 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       expect(forFa.repostable.has(P(1))).toBe(true);
     });
 
+    it('NO SECOND HOP: a reader who sees a personal post only through a carrier may not repost it (review of #2965)', async () => {
+      // gx's P(4) reaches rp only because A1, whose audience rp is in, republished it (D38b).
+      await q(
+        `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'gx')`,
+        [P(4), A1]
+      );
+      try {
+        expect(await sees(P(4), 'rp')).toBe(true);
+        const err = await refusedWith(reposts.repost(P(4), 'rp'));
+        expect(err.getStatus()).toBe(404);
+        expect(codeOf(err)).toBeUndefined();
+        expect(await repostRows(P(4))).toEqual([]);
+        const forRp = await memberRepostContext(ds.manager, [P(4)], 'rp');
+        expect(forRp.repostable.has(P(4))).toBe(false);
+      } finally {
+        await q(`DELETE FROM post_republications WHERE "postId" = $1`, [P(4)]);
+      }
+    });
+
     it('HIDING THE ORIGINAL REMOVES EVERY REPOST, and the followers lose it', async () => {
       await q(`INSERT INTO member_reposts ("postId", "reposterId") VALUES ($1, 'fa')`, [P(1)]);
       await q(`UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`, [P(1)]);
@@ -830,16 +849,25 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       expect(await sees(P(19), 'fo')).toBe(true);
     });
 
-    it('the bell gate leaves every other notification type alone', async () => {
+    it('the bell gate holds every POST-BOUND type to the same sight, and leaves the others alone (review of #2965)', async () => {
       await q(
-        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES ('fo', 'comment', $1, 'gy')`,
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId") VALUES
+           ('fo', 'comment', $1, 'gy'), ('fo', 'follow_request', '', 'gy')`,
         [P(16)]
       );
-      const rows: unknown[] = await q(
-        `SELECT 1 FROM post_notifications n WHERE n."recipientId" = 'fo' AND n.type = 'comment'
-            AND ${bellRowShownSql('n')}`
-      );
-      expect(rows).toHaveLength(1);
+      const shown = async (type: string): Promise<number> =>
+        (
+          (await q(
+            `SELECT 1 FROM post_notifications n WHERE n."recipientId" = 'fo' AND n.type = $1
+                AND ${bellRowShownSql('n')}`,
+            [type]
+          )) as unknown[]
+        ).length;
+      // fo no longer sees P(16): a comment about it is not served either.
+      expect(await sees(P(16), 'fo')).toBe(false);
+      expect(await shown('comment')).toBe(0);
+      // A row bound to no post is not the gate's to judge.
+      expect(await shown('follow_request')).toBe(1);
     });
   });
   describe('THE AUTHOR SEES WHO REPOSTED, AND REMOVES ONE REPOST (owner, 2026-11-02)', () => {

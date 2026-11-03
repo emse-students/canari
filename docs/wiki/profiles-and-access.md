@@ -1376,10 +1376,37 @@ reaches the personnel side"), the latter **for this consented path only**.
 
   `/notifications/requests` draws it (`institutionAudienceWarning`, `posts/republication.ts`):
   - "tout le monde" said plainly;
-  - otherwise the spaces it reaches, or that only its members would see the post;
+  - otherwise the spaces it reaches, or that it addresses none;
+  - ALWAYS that its members see the post too, also when it has rules;
   - and the staff side whenever staff belong to it.
 
-  Any other kind carries `null`.
+  Any other kind carries `null`. The warning is the owner's scope for institutions only: an
+  association or a list may also count staff among its members, and its request carries no
+  warning.
+- **The author consents to the audience they were shown** (review of #2965): the warning carries
+  a `fingerprint` (`audienceFingerprint`, a digest of the three fields), the acceptance sends it
+  back (`POST /api/proposals/:id/accept`, body `{ audienceFingerprint }`), and the server computes
+  it again with the SAME function, inside the acceptance's transaction after its locks
+  (`assertConsentCurrent`). A mismatch, or none carried for an institution, is a 409
+  `REPOST_PERSONAL_AUDIENCE_CHANGED`: nothing is decided, the client re-reads the inbox, draws the
+  new warning, says why, and the author answers again.
+- **After acceptance, the audience is LIVE**: who sees the post follows the carrier's CURRENT
+  audience rules and membership, never the snapshot the author accepted. A rule added later, or a
+  member who joins, reads it; a member who leaves stops. The author's remedy is to withdraw the
+  republication, at any time.
+- **An archived carrier carries nothing**: `republicationReachesUserSql` and the newly-reached count
+  (`NEWLY_REACHED_BY_REPUBLICATION_SQL`) skip an archived association, so archiving an entity takes
+  its republications out of every feed it reached (un-archiving restores them, read from state);
+  `memberRepostablePostSql` refuses an archived entity's own post.
+- **No second hop**: a reader who sees a personal post only THROUGH a carrier may not member-repost
+  it. The reposter's first-hand predicate (`REPOSTER_FIRST_HAND`, `FIRST_HAND`) drops the
+  republication disjunct for personal posts (`personalRepublications: false`), so the post reaches
+  no further than the audience its author accepted.
+- **The bell follows the post**: `bellRowShownSql` re-checks visibility for every POST-BOUND row
+  type (`POST_BOUND_NOTIFICATION_TYPES`: reposts, republications, announces, mentions, comments,
+  replies, reactions and the `repost_personal_*` rows), so a withdrawn republication, a member who
+  left, or an archived carrier takes the row out of the bell on the next read. A push already
+  delivered to a device cannot be recalled.
 - **The client**:
   - `personalRequestCandidates` offers the same three kinds;
   - `republishCandidates` and `proposalCandidates` now also offer a LIST, which the server has
@@ -1404,16 +1431,23 @@ reaches the personnel side"), the latter **for this consented path only**.
   - an institution asks;
   - its staff member reads nothing before acceptance and the post after it, and is told once;
   - a read-grant holder still reads nothing;
-  - the author's withdrawal ends it;
-  - a list asks and is refused;
+  - the author's withdrawal ends it, the staff member's bell row included;
+  - the staff member leaving the institution hides the post and its bell row;
+  - an acceptance carrying a stale or no fingerprint is a typed 409 that decides nothing;
+  - an archived institution carries nothing, newly reaches nobody, and its own post is not
+    member-repostable;
+  - a list asks, and the author refuses it;
   - an unlisted kind and an archived one are refused;
   - the warning follows the institution's rules and its staff membership.
 - `posts/member-reposts.integration.spec.ts`: a list's post is reposted and reaches the followers;
-  renamed to an unlisted type, it is refused, offered nothing and carries nothing.
+  renamed to an unlisted type, it is refused, offered nothing and carries nothing; a personal post
+  seen only through a carrier is a 404 and offered nothing (no second hop); a post-bound bell row
+  follows the post's visibility, a row bound to no post is left alone.
 - `spaces/member-repostable.spec.ts` and `associations.controller.institution.spec.ts`: the two
   allowlists.
 - The client's `republication.test.ts` and `page.senderGone.svelte.test.ts`: the warning on the
-  consent screen.
+  consent screen, its members line, and an acceptance refused for a changed audience re-reading
+  the warning.
 
 ### WP6e institutions as built (2026-10-05)
 

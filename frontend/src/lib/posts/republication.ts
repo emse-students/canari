@@ -174,8 +174,9 @@ function audienceSpaceLabel(space: InstitutionAudience['spaces'][number]): strin
  * THE WARNING AN AUTHOR READS BEFORE AN INSTITUTION CARRIES THEIR POST (owner, 2026-11-02), one
  * sentence a line, from the institution's audience as the server read it - never "the School", since
  * an institution is not necessarily it. Everyone is said plainly; otherwise the spaces it reaches,
- * or that only its members would; and the staff side whenever a staff member belongs to it. Empty
- * for a request that is not an institution's (`null`).
+ * or that it addresses none; then ALWAYS that its members see the post too (review of #2965,
+ * 2026-11-02: also when it has rules); and the staff side whenever a staff member belongs to it.
+ * Empty for a request that is not an institution's (`null`).
  */
 export function institutionAudienceWarning(
   audience: InstitutionAudience | null | undefined
@@ -188,6 +189,7 @@ export function institutionAudienceWarning(
     const spaces = audience.spaces.map(audienceSpaceLabel).join(', ');
     lines.push(m.republication_requests_audience_spaces({ spaces }));
   }
+  lines.push(m.republication_requests_audience_members());
   if (audience.staffMembers) lines.push(m.republication_requests_audience_staff());
   return lines;
 }
