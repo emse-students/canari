@@ -84,7 +84,7 @@ function makeService(event: Overrides) {
     ...event,
   };
 
-  const notifiedValidators = jest.fn();
+  const notifiedValidators = jest.fn().mockResolvedValue(undefined);
   const notifiedAssoAdmins = jest.fn();
   Object.assign(service, {
     findById: jest.fn(async () => ({ id: 'asso-1' })),

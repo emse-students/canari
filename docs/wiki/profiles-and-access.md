@@ -162,7 +162,22 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D20 - A new publishing entity type, "Institution"** (Ecole, ME, Alumni association), beside
   association and list, to publish in its own name and propose events. Its members are added
   NOMINATIVELY by an admin: declaring "personnel ME" proves nothing (D8) and only informs the
-  directory.
+  directory. Since 2026-11-02 the server holds "an admin" to the PLATFORM administrator: adding,
+  editing or removing an institution's member is a 403
+  `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY` for anyone else, its own members and a BDE
+  super-admin included, and handing one of its members `MANAGE_MEMBERS` is a 400 of the same code
+  ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+  **No BDE manages an institution, ever** (owner, 2026-11-02: "une institution n'a personne au
+  dessus"): its audience reaching a BDE's space confers no super-admin tier (archive, members,
+  profile, audience, delete). `holdsBdeFlagOverSql` carries the condition once, so every management
+  caller inherits it; only its own members, within their flags, and the platform admin manage it.
+  **But the agenda is the BDE's** (owner, 2026-11-03: *"Aucun BDE n'a les droits de gestion sur une
+  institution, mais c'est le BDE qui a tous les droits sur l'agenda des formations dont il est le
+  BDE"*): event validation follows the spaces an event TARGETS, not who governs its organiser, so the
+  BDE of those spaces validates, rejects and holds every agenda right over an institution's event
+  (`holdsBdeAgendaRightOverSql`). Until WP-E brings per-slice validation, an institution's event is
+  validated by a BDE governing the spaces it targets, or by the platform admin
+  ([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
 - **D21 - Joining an association of another space opens its content** to that member.
 - **D22 - One BDE per space**, designated in a rebuilt interface (the current way of choosing which
   association is the BDE is not good). It validates the agenda of its space; content crossing spaces
@@ -643,6 +658,17 @@ reviewers - WP7's question. Table, routes and proof:
 saint-etienne) rule, the one BDE governs all of them and nothing changes; the scoping bites the day
 the grid gives an association a reach outside its BDE's spaces.
 
+**The super-admin writing a member row (owner, 2026-11-02).** The tier EXERCISES every right on
+the associations it governs except `SUPER_ADMIN_EXCLUDED_FLAGS` (`POST_AS_ASSO`,
+`MANAGE_PAYOUT_ACCOUNT`), but it may WRITE any flag into a membership row, its own included: a BDE
+officer is often the president of another association and seats themself there with full rights.
+Only an explicit row carries the two excluded rights, and every super-admin write that grants one -
+or `MANAGE_PRODUCTS`, whose explicit row is what accepts a list's payment delegation - is logged at
+info with the association and the flag names. An ordinary member holding `MANAGE_MEMBERS`
+is capped at its own flags, granting, revoking and removing alike; any member leaves through the
+"Quitter" button, except the last holder of `MANAGE_MEMBERS` (`ASSOCIATION_LAST_MEMBER_MANAGER`)
+([association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02)).
+
 **WP6b as built (2026-10-04)**, branch `feat/spaces-6b-readers`, stacked on 6a/6d. Every server
 read that serves a post, an event or an announcement asks ONE module,
 `social-service/src/spaces/reader-spaces.ts`; `posts/feed-audience.ts` ("ICM plus global admins")
@@ -764,7 +790,7 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a list or of a members-only association (WP-F6, since `v1.6.1`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
+| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); the author's ACCEPTED followers whatever their space, never for an anonymous post, in Suivis and not in Tout ([WP-F5](#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)); never an institution; an admin only by id; a member's repost with the author's consent reaches the reposter's accepted followers the same way, never for the post of a list or of a members-only association (WP-F6, built in #2859, released in `v1.6.0`, [as built](#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01)) | built |
 | Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
@@ -1477,7 +1503,7 @@ An institution is an `associations` row of that type, so it reuses every mechani
 
 - **Created by a global admin only** (D20, D24): `POST /api/associations` with `type: 'institution'` is a 403 for a BDE
   member holding MANAGE_ASSO, before any write. Since 2026-10-07 the UI is `/institutions/new` (button "Créer une institution" on `/institutions`, global admin only; the checkbox of `/associations/new` is gone), see [associations](frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07).
-- **Members are added nominatively** by the existing member admin; **publishing in its name needs membership of it**
+- **Members are added nominatively** by the platform administrator alone (since 2026-11-02, D20 above; it was the existing member admin until then); **publishing in its name needs membership of it**
   with `POST_AS_ASSO`, exactly as for an association (being personnel gives no right, D34-D36). Events are proposed with
   `PROPOSE_EVENT` the same way; the post composer and the event picker are type-agnostic.
 - **Republishing**: `REPUBLISHING_ASSOCIATION_TYPES` is now `association, institution` (a list still does not); the
@@ -1501,9 +1527,9 @@ An institution is an `associations` row of that type, so it reuses every mechani
 
 Server half of the seven decisions of [the decisions](#the-audiences-chantier---the-decisions-user-2026-10-07-moved-from-the-backlog-2026-10-08); the client presets (WP-B) come after. One module, `spaces/audience-policy.ts`, holds the rules and the typed codes (classified at the throw: a client reads `code`, never the message).
 
-- **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, ONE rule `(formation NULL, campus = the creator's profile campus)` for an association AND a list. A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
+- **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, the creator's default for an association AND a list - a global admin's whole profile campus, a BDE star's governed spaces of it (`creatorDefaultRules`, aligned 2026-11-03, see WP-B below). A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
 - **`everyone` refused outside institutions** (decision 6): `setAudiences`, the one write path of the audience (the admin grid and the BDE both call it), refuses any rule with `campus` NULL - a formation across campuses included, which is the multi-campus audience decision 3 rules out - with `400 AUDIENCE_EVERYONE_INSTITUTION_ONLY`, for a global admin too. Creation writes only a campus rule, and `PATCH` cannot change an entity's type, so nothing else writes a rule. Existing everyone rules stay until someone edits that entity.
-- **The BDE star** (decision 7): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (`BDE_GOVERNED_CAMPUSES_SQL`: the campuses of the spaces that BDE governs). A star is refused `403` when it is not a star (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), when the target is an institution (`AUDIENCE_INSTITUTION_ADMIN_ONLY`), or when EITHER what the entity addresses now OR what is submitted leaves its campuses, or the entity has no rule at all (`AUDIENCE_OUTSIDE_BDE_CAMPUS`). `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. `GET .../audiences` is open to a star on the same bound since 2026-10-08 (see WP-B below).
+- **The BDE star** (decision 7; since 2026-11-03 "Lire tout, modifier dans ses espaces", owner, verbatim): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (the spaces that BDE governs, `BDE_SPACE_STANDINGS_SQL`); `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. A star is refused `AUDIENCE_ADMIN_OR_BDE_REQUIRED` when it governs no space and `AUDIENCE_INSTITUTION_ADMIN_ONLY` on an institution. Otherwise a star READS the audience of any association or list of its campus (`assertBdeMayReadAudience`: one rule on a campus where it governs a space, or no rule); it WRITES only an entity it already governs (`holdsBdeFlagOverSql` at MANAGE_ASSO - never an institution, never another BDE, `AUDIENCE_OUTSIDE_BDE_CAMPUS`), and every rule the write ADDS or REMOVES must lie inside the spaces it governs (`changedRules` + `ruleInsideGovernedSpaces`). A rule already in force that exceeds them - a whole-campus rule over a campus two BDEs share - is left as it is: the star can neither remove nor widen it (`403 AUDIENCE_RULE_BEYOND_BDE_SPACES`); widening beyond its spaces is the platform admin's alone. The read returns each rule with `editable`, and the editor lists the non-editable ones read-only and sends them back unchanged. This closes the two-granularity gap until the governance reform lands (WP-R1 of `spaces-and-audiences-reform.md`, draft PR #2948); see [association-permissions](association-permissions.md#the-grant-ceiling-who-may-write-which-bits-2026-11-02).
 - **A change applies to everything, past posts included** (decision 4): visibility is computed from the CURRENT rules at read time and nothing is stored on a post (D38). Proof: `reader-spaces.integration.spec.ts` moves an association's audience under a stored post and the post follows (gated on `SOCIAL_IT_DATABASE_URL`, which CI's `test-social-integration` sets).
 - **No back-fill migration.** `users` belongs to core-service, so a social migration reading `users.campus` would fail on a fresh database, and an entity D36 left rule-less (creator with no space) was left so on purpose. Measure first, read-only (never run by an agent against production), then decide with the user:
 
@@ -1516,7 +1542,7 @@ WHERE a.type IN ('association', 'list')
 GROUP BY a.type;
 ```
 
-Closed by WP-B (2026-10-08): `AssociationsService.create` refuses a NON-admin creator `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when the default campus is not one `BDE_GOVERNED_CAMPUSES_SQL` returns for them, inside the transaction (the row rolls back; `assertCreatorCampusGoverned` in `audience-policy.ts`). A global admin is unchanged and runs no governed-campus query. Cases in `associations.service.create-default-audience.spec.ts`.
+Closed by WP-B (2026-10-08), aligned 2026-11-03: a NON-admin creator's entity starts with an audience it may EDIT (`creatorDefaultRules` in `audience-policy.ts`, from `BDE_SPACE_STANDINGS_SQL`): the spaces of its profile campus its BDE governs - the whole campus when it governs every opened space of it, otherwise one rule per governed formation, never a whole campus it shares with another BDE. A creator governing no space of its campus is refused `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` inside the transaction (the row rolls back). A global admin is unchanged (its whole profile campus) and runs no standing query. Cases in `associations.service.create-default-audience.spec.ts`.
 
 ### Audiences client presets as built (WP-B, 2026-10-08)
 
@@ -1524,7 +1550,7 @@ Client half of the seven decisions. Files: `lib/associations/audiencePresets.ts`
 
 - **Three presets, and `everyone` only for an institution.** Decision 1 lists three presets but also says `everyone` is for institutions, so an association or a list is offered TWO (`campus`, `formations`) and an institution THREE. `presetToRules` maps them to `(null, campus)`, `(formation, campus)` per ticked formation, and `(null, null)`; a half-filled choice yields NO rule, never a wider one. The server stays the rule (`AUDIENCE_EVERYONE_INSTITUTION_ONLY`).
 - **Where.** An "Audience" tab on the association edit page, for a global admin, or a BDE star of THIS association (`me/bde-reach`) when it is not an institution. A member of the association alone does not see it: the server refuses them (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), so offering it would be a button that can only fail. The global admin keeps the campus picker and a link to the `/admin/spaces` grid.
-- **A star READS the current audience, inside its campus (user, 2026-10-08: "campus de l'etoile seulement").** `GET /api/associations/:id/audiences` is a global admin's, or a star's for an entity whose CURRENT rules all lie within the campuses it governs (`assertBdeMayReadAudience`, the read half of the write check: same codes `AUDIENCE_OUTSIDE_BDE_CAMPUS` / `AUDIENCE_INSTITUTION_ADMIN_ONLY` / `AUDIENCE_ADMIN_OR_BDE_REQUIRED`, an unruled entity refused). The editor reads it with `getAssociationAudiences` for both roles and preselects the matching preset (a custom, grid-edited audience is reported as custom); only when the read is refused does it open with no preset ticked and the "saving replaces what is in force" warning.
+- **A star READS the current audience of its campus ("Lire tout", owner 2026-11-03; it was "campus de l'etoile seulement", 2026-10-08, with every rule inside).** `GET /api/associations/:id/audiences` is a global admin's, or a star's for an entity with a rule on a campus where it governs a space, or with no rule (`assertBdeMayReadAudience`: codes `AUDIENCE_OUTSIDE_BDE_CAMPUS` / `AUDIENCE_INSTITUTION_ADMIN_ONLY` / `AUDIENCE_ADMIN_OR_BDE_REQUIRED`). Each rule carries `editable`; the ones beyond the star's spaces are listed read-only. The editor reads it with `getAssociationAudiences` for both roles and preselects the matching preset (a custom, grid-edited audience is reported as custom); only when the read is refused does it open with no preset ticked and the "saving replaces what is in force" warning.
 - **Typed refusals.** `audienceRefusalCode` reads `SocialApiError.code` (set by `request()` from the body), never the message; each of the five codes has a Paraglide sentence (`audience_err_*`).
 - **No campus: the profile prompt** (decision 5). `AssociationCreatePage` reads the own profile on mount and, for an association or a list with no valid campus, shows `ProfileCampusPrompt` instead of the form; a stale profile that the server still refuses (`AUDIENCE_CREATOR_CAMPUS_REQUIRED`) lands on the same prompt. The campus is MiConnect's and only an admin edits it, so "complete the profile" is the EXISTING correction request (`ProfileCorrectionRequest`) plus the link to `/profile`.
 - Tests: `audiencePresets.test.ts`, `audienceRefusal.test.ts`; server `associations.service.create-default-audience.spec.ts`.

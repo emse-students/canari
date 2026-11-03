@@ -181,8 +181,9 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
     typed by this code would be a locale string stored as data. This is
     the kind's admin preset, except for an institution. **An institution's members are managed by
     the platform admin only** (owner, 2026-11-02), so its first admin never holds `MANAGE_MEMBERS`.
-    The server refuses that bit on an institution with `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`,
-    before any write, and never strips it silently. `MANAGE_MEMBERS` also gates the profile, the logo
+    The server refuses that bit on an institution with `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`
+    (400, rolled back with the row), and never strips it silently - the same rule and code as every
+    member write, judged in `insertMembership`, the one member writer. `MANAGE_MEMBERS` also gates the profile, the logo
     and the tags (`PATCH :id`), so the platform admin keeps those as well.
 
   **The default is no member at all, and the creating admin never becomes one.** Logo, description and

@@ -117,13 +117,19 @@ describe('AssociationsService - the bitmask written for a member of a kind that 
   async function writeFor(type: 'list' | 'association') {
     const { service } = makeService({ camp: { type } });
     const update = jest.fn(() => Promise.resolve({ affected: 1 }));
-    Object.assign(service as object, {
-      memberRepo: {
-        findOne: jest.fn(() => Promise.resolve({ id: 'm1', permissions: MEMBERS })),
-        update,
+    const memberRepo = {
+      findOne: jest.fn(() => Promise.resolve({ id: 'm1', permissions: MEMBERS })),
+      update,
+      // The write runs under the association's lock; its repository is this one.
+      manager: {
+        transaction: (run: (m: unknown) => Promise<unknown>) =>
+          run({ query: () => Promise.resolve([]), getRepository: () => memberRepo }),
       },
+    };
+    Object.assign(service as object, { memberRepo });
+    await service.updateMemberRole('camp', 'user-1', undefined, MEMBERS | FORMS | SHOP | PAYOUT, {
+      granter: { userId: 'platform-admin', isGlobalAdmin: true },
     });
-    await service.updateMemberRole('camp', 'user-1', undefined, MEMBERS | FORMS | SHOP | PAYOUT);
     return (update.mock.calls[0] as unknown[])[1] as { permissions: number };
   }
 

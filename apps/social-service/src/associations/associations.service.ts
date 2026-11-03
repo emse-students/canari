@@ -9,6 +9,15 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { assertKindMaySell, writablePermissions } from './selling-kinds';
+import {
+  assertInstitutionMemberWrite,
+  assertWithinGrantCeiling,
+  grantCeiling,
+  LAST_MEMBER_MANAGER,
+  logSuperAdminExcludedGrant,
+  type GranterStanding,
+  type MemberGranter,
+} from './member-flag-ceiling';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -123,10 +132,14 @@ import {
 } from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import {
+  ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  PLATFORM_ADMINS_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
-  holdsBdeFlagOverSql,
+  holdsBdeAgendaRightOverSql,
   isBdeAssociationSql,
 } from '../spaces/bde';
 import {
@@ -142,8 +155,9 @@ import {
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import {
   assertAudienceAllowedForType,
-  assertCreatorCampusGoverned,
+  creatorDefaultRules,
   defaultCampusRules,
+  type SpaceStanding,
 } from '../spaces/audience-policy';
 import { normaliseRules } from '../spaces/spaces.service';
 import type { AudienceRuleDto } from '../spaces/dto/space.dto';
@@ -152,12 +166,11 @@ import { SEARCH_FOLD_PARAMS, foldSql } from './search-fold';
 import {
   ADMIN_ASSOCIATION_ERROR,
   ADMIN_CATALOGUE_DEFAULT_LIMIT,
-  assertFirstAdminAllowedForType,
   decodeCatalogueCursor,
   encodeCatalogueCursor,
   platformAdminOnly,
 } from './admin-catalogue';
-import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { BDE_SPACE_STANDINGS_SQL } from '../spaces/bde';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
 import { assertAssociationImageUrl } from './association-image-url';
@@ -535,9 +548,6 @@ export class AssociationsService {
     if (placement) {
       // Refused before any write: an association or a list addresses a campus, never everyone.
       assertAudienceAllowedForType(dto.type ?? 'association', normaliseRules(placement.audiences));
-      if (placement.firstAdmin) {
-        assertFirstAdminAllowedForType(dto.type ?? 'association', placement.firstAdmin.permissions);
-      }
     }
     const explicitSlug = dto.slug?.trim() ? dto.slug : null;
     if (explicitSlug !== null && !SLUG_PATTERN.test(explicitSlug)) {
@@ -723,7 +733,8 @@ export class AssociationsService {
       await assertCotisationStemFree(manager, null, slug);
       const saved = await manager.save(asso);
       if (placement) {
-        await this.placeNewAssociation(manager, saved, placement);
+        // Only a platform admin reaches a placement (refused above otherwise).
+        await this.placeNewAssociation(manager, saved, placement, { userId, isGlobalAdmin });
         return saved;
       }
       if (dto.type === 'institution') {
@@ -738,18 +749,19 @@ export class AssociationsService {
         campus: string | null;
       }[];
       // Thrown inside the transaction: the row saved above is rolled back with it.
-      const rules = defaultCampusRules(profile?.campus ?? null);
-      if (!isGlobalAdmin) {
-        const governed = (
-          (await manager.query(BDE_GOVERNED_CAMPUSES_SQL, [
-            userId,
-            AssociationPermissionFlag.MANAGE_ASSO,
-          ])) as { campus: string }[]
-        ).map((r) => r.campus);
-        assertCreatorCampusGoverned(governed, rules);
-      }
+      // A non-admin creator gets an audience it may EDIT afterwards: the spaces of its campus its
+      // BDE governs, never a whole campus it shares with another BDE (owner, 2026-11-03).
+      const rules = isGlobalAdmin
+        ? defaultCampusRules(profile?.campus ?? null)
+        : creatorDefaultRules(
+            profile?.campus ?? null,
+            (await manager.query(BDE_SPACE_STANDINGS_SQL, [
+              userId,
+              AssociationPermissionFlag.MANAGE_ASSO,
+            ])) as SpaceStanding[]
+          );
       this.logger.log(
-        `[spaces] ${saved.id} reaches its creator's campus: ${rules[0].campus} (every formation)`
+        `[spaces] ${saved.id} reaches its creator's spaces: ${rules.map((r) => `${r.formation ?? '*'}|${r.campus}`).join(', ')}`
       );
       await manager.insert(
         AssociationAudience,
@@ -767,7 +779,8 @@ export class AssociationsService {
   private async placeNewAssociation(
     manager: EntityManager,
     saved: Association,
-    placement: AssociationPlacement
+    placement: AssociationPlacement,
+    granter: MemberGranter
   ): Promise<void> {
     const rules = normaliseRules(placement.audiences);
     if (rules.length > 0) {
@@ -792,32 +805,43 @@ export class AssociationsService {
         message: 'The first admin picked names no account.',
       });
     }
-    await this.insertMembership(manager, saved, firstAdmin, 0);
+    await this.insertMembership(manager, saved, firstAdmin, 0, granter, 'create.firstAdmin');
     this.logger.log(`[create] ${saved.id} first admin ${firstAdmin.userId.slice(0, 8)}`);
   }
 
   /**
    * Inserts ONE membership row: the ONE place a member is written, whether by `addMember` or by a
-   * placement's first admin. The bitmask is narrowed to what the kind may hold, and the roster never
-   * crosses the review cohort's boundary.
+   * placement's first admin. The bitmask is narrowed to what the kind may hold; the GRANTER is judged
+   * here, so no caller can skip it - the institution rule (`assertInstitutionMemberWrite`) and the
+   * grant ceiling (`member-flag-ceiling.ts`), then the audit line of a super-admin's excluded grant.
+   * The placement passes its platform admin, whose ceiling is every flag but who is still held to
+   * the institution rule. The roster never crosses the review cohort's boundary.
    */
   private async insertMembership(
     manager: EntityManager,
     association: Pick<Association, 'id' | 'type'>,
     member: { userId: string; permissions: number; role?: string },
-    sortOrder: number
+    sortOrder: number,
+    granter: MemberGranter,
+    what: string
   ): Promise<AssociationMember> {
+    const permissions = writablePermissions(association.type, member.permissions);
+    const ctx = { associationId: association.id, what };
+    assertInstitutionMemberWrite(this.logger, association.type, granter, 0, permissions, ctx);
+    const standing = await this.judgeMemberFlags(granter, association.id, 0, permissions, what);
     await assertRosterStaysOnOneSide(manager, association.id, member.userId);
-    return manager.save(
+    const saved = await manager.save(
       manager.create(AssociationMember, {
         associationId: association.id,
         userId: member.userId,
         // No role given: the column's default, never a label this code types.
         ...(member.role === undefined ? {} : { role: member.role }),
-        permissions: writablePermissions(association.type, member.permissions),
+        permissions,
         sortOrder,
       })
     );
+    logSuperAdminExcludedGrant(this.logger, standing, 0, permissions, ctx);
+    return saved;
   }
 
   /**
@@ -1459,8 +1483,12 @@ export class AssociationsService {
     );
   }
 
-  /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
-  async addMember(dto: AddMemberDto & { associationId: string }) {
+  /**
+   * Adds a user to an association with the given role and permission bitmask. Throws if they are
+   * already a member; the rights a granter may hand out and the institution rule are judged in
+   * `insertMembership`, the one writer.
+   */
+  async addMember(dto: AddMemberDto & { associationId: string }, granter: MemberGranter) {
     const { associationId, userId } = dto;
     const target = await this.findById(associationId);
 
@@ -1479,7 +1507,14 @@ export class AssociationsService {
       .getRawOne<{ max: number | null }>();
     const sortOrder = (maxRow?.max ?? -1) + 1;
 
-    const saved = await this.insertMembership(this.memberRepo.manager, target, dto, sortOrder);
+    const saved = await this.insertMembership(
+      this.memberRepo.manager,
+      target,
+      dto,
+      sortOrder,
+      granter,
+      'addMember'
+    );
     // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
     // every cached feed page of that reader depends on.
     await this.invalidatePostListCaches();
@@ -1497,13 +1532,18 @@ export class AssociationsService {
     this.logger.debug(`reorderMembers: ${userIds.length} members reordered in ${associationId}`);
   }
 
-  /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  /**
+   * Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the
+   * last admin, unless bypassLastAdmin is true (global admin or BDE). Refuses an institution's
+   * member to anyone but the platform admin, and a bitmask that changes a flag `granter` does not
+   * hold - granted OR revoked (`member-flag-ceiling.ts` says why both).
+   */
   async updateMemberRole(
     associationId: string,
     targetUserId: string,
-    role?: string,
-    permissions?: number,
-    opts?: { bypassLastAdmin?: boolean }
+    role: string | undefined,
+    permissions: number | undefined,
+    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -1511,9 +1551,29 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
+    const kind = await this.kindOf(associationId);
+    // Judged against the stored bitmask seen through the same kind filter, so a right the SERVER
+    // strips from a kind that sells nothing is never counted as the granter's change.
+    const before = kind
+      ? writablePermissions(kind, membership.permissions)
+      : membership.permissions;
+    if (permissions !== undefined && kind) permissions = writablePermissions(kind, permissions);
+    assertInstitutionMemberWrite(this.logger, kind, opts.granter, before, permissions ?? before, {
+      associationId,
+      what: 'updateMemberRole',
+    });
+    let flagWrite: { before: number; standing: GranterStanding } | null = null;
     if (permissions !== undefined) {
-      const kind = await this.kindOf(associationId);
-      if (kind) permissions = writablePermissions(kind, permissions);
+      flagWrite = {
+        before,
+        standing: await this.judgeMemberFlags(
+          opts.granter,
+          associationId,
+          before,
+          permissions,
+          'updateMemberRole'
+        ),
+      };
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
@@ -1523,9 +1583,12 @@ export class AssociationsService {
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
     const willLoseManageMembers =
       permissions !== undefined && (permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0;
-    if (hadManageMembers && willLoseManageMembers && !opts?.bypassLastAdmin) {
-      await this.assertNotLastAdminDemotion(associationId);
-    }
+    // A member demoting ITSELF never takes the bypass, the same rule as a leaver in `removeMember`:
+    // the bypass is a BDE or the platform admin acting on someone else's row, and the last holder
+    // of a club it also validates as a BDE would otherwise strip its own right and leave nobody.
+    const selfDemotion = opts.granter.userId === targetUserId;
+    const guarded =
+      hadManageMembers && willLoseManageMembers && (selfDemotion || !opts.bypassLastAdmin);
     // ONE column update of the row judged above, never a save of it: a member write must never
     // insert a row, and a save of a stale entity re-inserts a deleted one and reverts what a
     // concurrent writer changed. CONDITIONED on the permissions the guard above judged, so 0 rows
@@ -1534,9 +1597,15 @@ export class AssociationsService {
     if (role !== undefined) changes.role = role;
     if (permissions !== undefined) changes.permissions = permissions;
     if (Object.keys(changes).length === 0) return membership;
-    const updated = await this.memberRepo.update(
-      { id: membership.id, permissions: membership.permissions },
-      changes
+    // The last-manager guard and the write it protects are ONE step under the association's lock:
+    // two managers demoting each other at once would otherwise both count two and leave none.
+    const updated = await this.underMemberLock(
+      associationId,
+      'updateMemberRole',
+      async (members) => {
+        if (guarded) await this.assertNotLastManagerLost(members, associationId, 'demotion');
+        return members.update({ id: membership.id, permissions: membership.permissions }, changes);
+      }
     );
     if (updated.affected !== 1) {
       this.logger.warn(
@@ -1550,14 +1619,29 @@ export class AssociationsService {
     this.logger.debug(
       `updateMemberRole: association=${associationId} target=${targetUserId.slice(0, 8)} fields=${Object.keys(changes).join(',')}`
     );
+    if (flagWrite && permissions !== undefined) {
+      logSuperAdminExcludedGrant(this.logger, flagWrite.standing, flagWrite.before, permissions, {
+        associationId,
+        what: 'updateMemberRole',
+      });
+    }
     return { ...membership, ...changes };
   }
 
-  /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  /**
+   * Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin
+   * is true (global admin or BDE), and an institution's member to anyone but the platform admin or
+   * the member itself. HELD TO THE GRANT CEILING like a revocation: removing a member takes away
+   * every flag it holds, and a remover that could part with a member above its own rights could
+   * re-add them with 0 and strip what it may not revoke. So a target holding a flag beyond the
+   * remover's ceiling needs a super-admin or the platform admin. Leaving (removing oneself, which
+   * `leaveAssociation` is) is judged by neither the institution rule nor the ceiling, an
+   * institution included; only the last-member-manager guard applies.
+   */
   async removeMember(
     associationId: string,
     targetUserId: string,
-    opts?: { bypassLastAdmin?: boolean }
+    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -1565,17 +1649,101 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag.
+    // LEAVING (the "Quitter" button, `leaveAssociation`), an institution included: the institution
+    // rule and the ceiling judge a write on SOMEONE ELSE; removing oneself writes no right onto
+    // anyone. Only the last-member-manager guard below can refuse it.
+    const leaving = opts.granter.userId === targetUserId;
+    if (!leaving) {
+      assertInstitutionMemberWrite(
+        this.logger,
+        await this.kindOf(associationId),
+        opts.granter,
+        membership.permissions,
+        0,
+        { associationId, what: 'removeMember' }
+      );
+      await this.judgeMemberFlags(
+        opts.granter,
+        associationId,
+        membership.permissions,
+        0,
+        'removeMember'
+      );
+    }
+    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag. A LEAVER never
+    // bypasses it, whatever it is elsewhere: the bypass is a BDE or the platform admin acting on
+    // SOMEONE ELSE's association, and the last manager walking out through `DELETE
+    // :id/members/<own id>` would otherwise leave nobody, exactly what the "Quitter" route refuses.
     const holdsManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
-    if (holdsManageMembers && !opts?.bypassLastAdmin) {
-      await this.assertNotLastAdminRemoval(associationId);
-    }
+    const guarded = holdsManageMembers && (leaving || !opts.bypassLastAdmin);
 
-    await this.memberRepo.delete(membership.id);
+    // CONDITIONED on the permissions judged above, as `updateMemberRole` is: a row granted more
+    // since its read is not the one the ceiling judged. The guard and the delete are ONE step under
+    // the association's lock: two managers leaving at once would otherwise both count two.
+    const deleted = await this.underMemberLock(associationId, 'removeMember', async (members) => {
+      if (guarded) await this.assertNotLastManagerLost(members, associationId, 'removal');
+      return members.delete({ id: membership.id, permissions: membership.permissions });
+    });
+    if (deleted.affected !== 1) {
+      this.logger.warn(
+        `removeMember: membership changed or gone since its read association=${associationId} affected=${deleted.affected ?? 'unknown'}`
+      );
+      throw new ConflictException({
+        code: MEMBER_CHANGED_MEANWHILE,
+        message: 'This member changed meanwhile, retry.',
+      });
+    }
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
     return { ok: true };
+  }
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): every member may leave an association from its page
+   * without asking anyone, except its last holder of `MANAGE_MEMBERS` (`LAST_MEMBER_MANAGER`). It
+   * acts on the caller's OWN row only - the target is the vouched identity, never a parameter - so
+   * it is `removeMember` with the caller as both remover and removed: no ceiling, no institution
+   * rule, and no BDE bypass of the last-manager guard (a leaver speaks for itself, not as a BDE).
+   */
+  async leaveAssociation(associationId: string, userId: string) {
+    this.logger.debug(`leaveAssociation: association=${associationId} user=${userId.slice(0, 8)}`);
+    return this.removeMember(associationId, userId, {
+      granter: { userId, isGlobalAdmin: false },
+    });
+  }
+
+  /**
+   * Judges a member bitmask write from `before` to `after` against `granter`'s ceiling
+   * (`grantCeiling`) and returns the standing it read, so the caller can write the audit line once
+   * the write has landed. The platform admin asks nothing; anyone else is read from their own row
+   * and the super-admin tier.
+   */
+  private async judgeMemberFlags(
+    granter: MemberGranter,
+    associationId: string,
+    before: number,
+    after: number,
+    what: string
+  ): Promise<GranterStanding> {
+    let standing: GranterStanding = {
+      isGlobalAdmin: true,
+      isSuperAdminOf: false,
+      ownPermissions: 0,
+    };
+    if (!granter.isGlobalAdmin) {
+      const [own, isSuperAdminOf] = await Promise.all([
+        this.memberRepo.findOne({ where: { associationId, userId: granter.userId } }),
+        this.isAssociationSuperAdminOf(granter.userId, associationId),
+      ]);
+      standing = { isGlobalAdmin: false, isSuperAdminOf, ownPermissions: own?.permissions ?? 0 };
+    }
+    const ceiling = grantCeiling(standing);
+    this.logger.debug(
+      `[MEMBER-CEILING] ${what} association=${associationId.slice(0, 8)} admin=${standing.isGlobalAdmin} superAdmin=${standing.isSuperAdminOf} ceiling=${ceiling}`
+    );
+    assertWithinGrantCeiling(this.logger, ceiling, before, after, { associationId, what });
+    return standing;
   }
 
   /**
@@ -1584,8 +1752,11 @@ export class AssociationsService {
    * Using `permissions > 0` was insufficient: a member with only MANAGE_PAYOUT_ACCOUNT
    * counts as non-zero but cannot unblock the association.
    */
-  private async manageMembersCount(associationId: string): Promise<number> {
-    return this.memberRepo
+  private async manageMembersCount(
+    members: Repository<AssociationMember>,
+    associationId: string
+  ): Promise<number> {
+    return members
       .createQueryBuilder('m')
       .where('m.associationId = :associationId', { associationId })
       .andWhere('(m.permissions & :flag) <> 0', {
@@ -1594,22 +1765,46 @@ export class AssociationsService {
       .getCount();
   }
 
-  /** Block removing the only member with MANAGE_MEMBERS. */
-  private async assertNotLastAdminRemoval(associationId: string): Promise<void> {
-    const n = await this.manageMembersCount(associationId);
-    if (n <= 1) {
-      throw new BadRequestException(
-        'Impossible de retirer le dernier administrateur de cette association'
-      );
-    }
+  /**
+   * Refuses a write that would leave the association with nobody holding MANAGE_MEMBERS - removing
+   * or demoting its last holder, by someone else or by leaving. Typed (`LAST_MEMBER_MANAGER`) on
+   * every path, so the "Quitter" button and the roster editor say why. Logged at INFO: it is an
+   * ordinary answer to an ordinary user, not a defect. MUST run inside `underMemberLock`, on the
+   * repository it hands out, or the count races the write it guards.
+   */
+  private async assertNotLastManagerLost(
+    members: Repository<AssociationMember>,
+    associationId: string,
+    what: 'removal' | 'demotion'
+  ): Promise<void> {
+    const n = await this.manageMembersCount(members, associationId);
+    if (n > 1) return;
+    this.logger.log(
+      `[MEMBER-CEILING] ${what} refused: association=${associationId} would lose its last member manager`
+    );
+    throw new BadRequestException({
+      code: LAST_MEMBER_MANAGER,
+      message: 'Impossible de retirer le dernier administrateur de cette association',
+    });
   }
 
-  /** Block demoting the only MANAGE_MEMBERS admin to a bitmask that loses that flag. */
-  private async assertNotLastAdminDemotion(associationId: string): Promise<void> {
-    const n = await this.manageMembersCount(associationId);
-    if (n <= 1) {
-      throw new BadRequestException('Cannot demote the last administrator of this association.');
-    }
+  /**
+   * Runs one member write in a transaction that first takes the association `FOR UPDATE` - the
+   * global lock order (`remove` takes it first too, see there) - so every guard that COUNTS the
+   * roster and the write it protects are serialised per association. Without it, the last-manager
+   * guard was a count and a delete apart: two managers leaving at once both saw two holders, and
+   * the association was left with none.
+   */
+  private async underMemberLock<T>(
+    associationId: string,
+    what: string,
+    write: (members: Repository<AssociationMember>) => Promise<T>
+  ): Promise<T> {
+    return this.memberRepo.manager.transaction(async (manager) => {
+      await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [associationId]);
+      this.logger.debug(`[MEMBER-LOCK] ${what}: association ${associationId} locked`);
+      return write(manager.getRepository(AssociationMember));
+    });
   }
 
   /** Returns all associations a user belongs to, with their role and permissions bitmask attached to each item. */
@@ -2165,9 +2360,23 @@ export class AssociationsService {
   }
 
   /**
+   * The ids of every association whose events `userId` holds the BDE agenda right over
+   * (`holdsBdeAgendaRightOverSql`) - an institution's included, unlike `associationsUnderBdeFlag`.
+   */
+  async associationsUnderBdeAgendaRight(userId: string): Promise<string[]> {
+    if (!userId) return [];
+    const rows: { id: string }[] = await this.memberRepo.query(
+      ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
+      [userId]
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * May `userId` validate (and, through it, write, reject, deposit on, declare a break for) the
    * events of association `associationId`? A global admin always; otherwise VALIDATE_EVENTS in the
-   * BDE of a space that association reaches (user, 2026-10-04, D23).
+   * BDE of a space those events target (user, 2026-10-04, D23) - THE AGENDA RULE, which reaches an
+   * institution's events although no BDE manages the institution (owner, 2026-11-03).
    */
   async mayValidateEventsOf(
     userId: string,
@@ -2175,7 +2384,16 @@ export class AssociationsService {
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
-    return this.holdsBdeFlagOver(userId, associationId, AssociationPermissionFlag.VALIDATE_EVENTS);
+    if (!userId || !associationId) return false;
+    const rows: { holds: boolean }[] = await this.memberRepo.query(
+      HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
+      [userId, associationId]
+    );
+    const holds = rows[0]?.holds === true;
+    this.logger.debug(
+      `[PERM] bde agenda scope assoc=${sanitizeLog(associationId.slice(0, 8))} -> ${holds}`
+    );
+    return holds;
   }
 
   /**
@@ -2467,7 +2685,7 @@ export class AssociationsService {
       .where('e.status = :pending', { pending: AssociationCalendarEventStatus.Pending })
       .orderBy('e.startsAt', 'ASC');
 
-    const governs = holdsBdeFlagOverSql(':pendingViewer', 'e."associationId"', ':validateFlag');
+    const governs = holdsBdeAgendaRightOverSql(':pendingViewer', 'e."associationId"');
     if (!opts?.isGlobalAdmin) {
       const myMemberships = await this.memberRepo.find({
         where: { userId },
@@ -2476,10 +2694,7 @@ export class AssociationsService {
       const adminAssoIds = myMemberships
         .filter((m) => m.permissions > 0)
         .map((m) => m.associationId);
-      qb.setParameters({
-        pendingViewer: userId,
-        validateFlag: AssociationPermissionFlag.VALIDATE_EVENTS,
-      });
+      qb.setParameters({ pendingViewer: userId });
       qb.andWhere(
         adminAssoIds.length > 0 ? `(e.associationId IN (:...adminAssoIds) OR ${governs})` : governs,
         { adminAssoIds }
@@ -2730,6 +2945,34 @@ export class AssociationsService {
     action: 'validated' | 'updated' | 'deleted' | 'rejected',
     rejectionReason?: string
   ): Promise<void> {
+    // NEVER REJECTS: every caller fires it with `void` after the write it reports has committed, and
+    // a rejection nobody awaits is an unhandled one - which ends the process under bun. A failure is
+    // caught here and logged at WARN with its stack and the association: the contract
+    // `notifyEventValidatorsOfProposal` gives the validators' notice.
+    try {
+      await this.notifyAssocAdminsOfEventActionOrThrow(
+        associationId,
+        actorId,
+        eventTitle,
+        action,
+        rejectionReason
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[notify] the proposers of asso ${sanitizeLog(associationId)} were not told an event was ${action}`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    }
+  }
+
+  /** The body of `notifyAssocAdminsOfEventAction`, which may reject; only that wrapper calls it. */
+  private async notifyAssocAdminsOfEventActionOrThrow(
+    associationId: string,
+    actorId: string,
+    eventTitle: string,
+    action: 'validated' | 'updated' | 'deleted' | 'rejected',
+    rejectionReason?: string
+  ): Promise<void> {
     const members = await this.memberRepo.find({
       where: { associationId },
       select: { userId: true, permissions: true },
@@ -2875,10 +3118,14 @@ ${rejectionReason}`
    * 2026-09-09; testing it found it absent.
    *
    * Recipients are the holders of `VALIDATE_EVENTS` in the BDE of a space the event association
-   * reaches - the same predicate (`holdsBdeFlagOverSql`) `mayValidateEvent` uses to decide who MAY
-   * validate it, so the people told are exactly the people who can act on it (WP6c step 2). A BDE
-   * of another space is not told: telling it would be noise about something it cannot touch. An
-   * association reaching no space has no BDE validator, and the warning below says so.
+   * targets - the same predicate (`holdsBdeAgendaRightOverSql`) `mayValidateEvent` uses to decide
+   * who MAY validate it, so the people told are exactly the people who can act on it (WP6c step 2),
+   * an institution's event included (owner, 2026-11-03). A BDE of another space is not told.
+   *
+   * AND THE PLATFORM ADMINS, when a targeted space has no BDE - or the association targets no space
+   * at all (`TARGETS_AN_UNGOVERNED_SPACE_SQL`): for that slice of the audience they are the only
+   * validators, and a proposal they are not told of waits on a page nobody opens. The warning stays
+   * for the one case where nobody at all could be told.
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
@@ -2891,7 +3138,12 @@ ${rejectionReason}`
     // (social-service has no handler) and a notice's failure must never fail a committed write.
     // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
     try {
-      return await this.tellEventValidators(associationId, actorId, eventTitle, notice);
+      return await this.notifyEventValidatorsOfProposalOrThrow(
+        associationId,
+        actorId,
+        eventTitle,
+        notice
+      );
     } catch (err) {
       this.logger.warn(
         `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
@@ -2902,21 +3154,30 @@ ${rejectionReason}`
   }
 
   /** The body of `notifyEventValidatorsOfProposal`: may throw, and is only called through it. */
-  private async tellEventValidators(
+  private async notifyEventValidatorsOfProposalOrThrow(
     associationId: string,
     actorId: string,
     eventTitle: string,
     notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
-      BDE_FLAG_HOLDERS_OVER_SQL,
-      [associationId, AssociationPermissionFlag.VALIDATE_EVENTS]
+      BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+      [associationId]
+    );
+    const [target] = (await this.memberRepo.query(TARGETS_AN_UNGOVERNED_SPACE_SQL, [
+      associationId,
+    ])) as { ungoverned: boolean }[];
+    const admins: { userId: string }[] =
+      target?.ungoverned === true ? await this.memberRepo.query(PLATFORM_ADMINS_SQL) : [];
+    const recipientIds = [...new Set([...validators, ...admins].map((r) => r.userId))];
+    this.logger.debug(
+      `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${validators.length} BDE validator(s), ${admins.length} platform admin(s) for an ungoverned space`
     );
 
     let written: number;
     try {
       written = await this.notifications.createNotifications({
-        recipientIds: validators.map((v) => v.userId),
+        recipientIds,
         type: notice?.type ?? 'event_proposed',
         postId: associationId,
         actorId,
@@ -2936,14 +3197,15 @@ ${rejectionReason}`
       written = err.recipientIds.length;
     }
     if (written === 0) {
-      // Not an error - a space can legitimately have no BDE yet, and an association may reach no
-      // space - but a proposal that told nobody is the exact shape of the defect this method was
-      // written for, so it says so: only a global admin can validate it now.
+      // Nobody at all could be told: no BDE governs a targeted space AND no platform admin exists,
+      // or the only one is the proposer. The exact shape of the defect this method was written for.
       this.logger.warn(
-        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}) and no VALIDATE_EVENTS holder in a BDE governing it was told`
+        `[notify] event proposed for asso ${sanitizeLog(associationId)} and nobody who may validate it was told`
       );
     }
-    return validators.map((v) => v.userId);
+    // EVERY id told, the platform admins of an ungoverned space included: the caller's dedupe set
+    // (`announceEventReopened`) must hold them, or an admin who is also a party is told twice.
+    return recipientIds;
   }
 
   /**

@@ -1,6 +1,5 @@
 import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { isUUID } from 'class-validator';
-import { AssociationPermissionFlag } from './entities/association-member.entity';
 
 /**
  * THE TYPED REFUSALS OF THE PLATFORM ADMINISTRATOR'S ENTITY ROUTES (`associations/admin/*`, owner
@@ -11,7 +10,10 @@ export const ADMIN_ASSOCIATION_ERROR = {
   PLATFORM_ADMIN_ONLY: 'ADMIN_ASSOCIATION_PLATFORM_ADMIN_ONLY',
   /** The first admin picked names no account. */
   FIRST_ADMIN_UNKNOWN: 'ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN',
-  /** An institution's first admin asked to manage its members: that is the platform admin's alone. */
+  /**
+   * An institution's member written by anyone but the platform admin, or handed `MANAGE_MEMBERS`:
+   * its members are the platform admin's alone (`assertInstitutionMemberWrite`, the one rule).
+   */
   INSTITUTION_MEMBERS_PLATFORM_ONLY: 'ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY',
   /** A catalogue cursor this server did not write. */
   BAD_CURSOR: 'ADMIN_ASSOCIATION_BAD_CURSOR',
@@ -71,20 +73,5 @@ export function platformAdminOnly(): ForbiddenException {
   return new ForbiddenException({
     code: ADMIN_ASSOCIATION_ERROR.PLATFORM_ADMIN_ONLY,
     message: 'Only a platform administrator places a new entity in its spaces.',
-  });
-}
-
-/**
- * AN INSTITUTION'S MEMBERS ARE MANAGED BY THE PLATFORM ADMIN ONLY (owner, 2026-11-02), so its first
- * admin may hold every right of the kind EXCEPT `MANAGE_MEMBERS`. Refused, never silently narrowed:
- * a mask the server rewrote would be a member who believes they hold a right they do not.
- */
-export function assertFirstAdminAllowedForType(type: string, permissions: number): void {
-  if (type !== 'institution') return;
-  if ((permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0) return;
-  logger.warn(`[create] institution first admin refused: MANAGE_MEMBERS is the platform admin's`);
-  throw new BadRequestException({
-    code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY,
-    message: "Only the platform administrator manages an institution's members.",
   });
 }
