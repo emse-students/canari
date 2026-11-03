@@ -159,9 +159,10 @@ export class CommentIdentityService {
     const isGlobalAdmin = who.isGlobalAdmin === true;
     const assocIds = comments.map((c) => c.associationId).filter((id): id is string => !!id);
     const [isModerator, managedAssociationIds] = await Promise.all([
+      // A platform admin moderates everywhere: nothing to ask of the post.
       who.isModerator !== undefined
         ? Promise.resolve(who.isModerator)
-        : who.viewerId && who.postId
+        : !isGlobalAdmin && who.viewerId && who.postId
           ? this.associations.mayModeratePost(who.viewerId, who.postId, { isGlobalAdmin })
           : Promise.resolve(isGlobalAdmin),
       // No admin tier: the pencil is the author's alone (owner, 2026-11-02).

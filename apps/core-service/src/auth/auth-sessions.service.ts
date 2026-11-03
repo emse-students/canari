@@ -283,10 +283,21 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
    * `RestoreCredentialsService.isLiveSessionOf`.
    */
   async isLive(sessionId: string, userId: string, now: Date = new Date()): Promise<boolean> {
-    const row = await this.sessions.findOne({
-      where: { id: sessionId, userId },
-      select: { id: true, expiresAt: true },
-    });
+    return this.liveRow({ id: sessionId, userId }, now);
+  }
+
+  /**
+   * Whether `sessionId` names a session that has neither ended nor expired, WHOSEVER it is - the
+   * question an avatar token asks (`avatar-token.ts`): the token names a session and no user, because
+   * an `<img>` request carries nothing else. Same row, same two conditions as {@link isLive}.
+   */
+  async isLiveSession(sessionId: string, now: Date = new Date()): Promise<boolean> {
+    return this.liveRow({ id: sessionId }, now);
+  }
+
+  /** The one read behind {@link isLive} and {@link isLiveSession}. */
+  private async liveRow(where: { id: string; userId?: string }, now: Date): Promise<boolean> {
+    const row = await this.sessions.findOne({ where, select: { id: true, expiresAt: true } });
     return row !== null && row.expiresAt.getTime() > now.getTime();
   }
 

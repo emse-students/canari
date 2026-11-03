@@ -111,4 +111,8 @@ pub struct AuthParams {
     pub device_id: Option<String>,
     pub token: Option<String>,
     pub caps: Option<String>,
+    /// The platform the client declares (`web`, `android`, ...), for the anonymous census only.
+    pub platform: Option<String>,
+    /// The app version the client declares, for the anonymous census only.
+    pub app_version: Option<String>,
 }

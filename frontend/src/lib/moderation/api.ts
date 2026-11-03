@@ -45,6 +45,15 @@ export class ModerationApiError extends Error {
   get isLiveNotFound(): boolean {
     return this.code === 'LIVE_NOT_FOUND';
   }
+
+  /**
+   * `404 CONTENT_NOT_FOUND`: the reported post or comment is one the reporter may no longer open
+   * (deleted, hidden by moderation, a block, out of their audience) - the server says which to
+   * nobody, so neither does the client: the content is gone, nothing was filed.
+   */
+  get isContentNotFound(): boolean {
+    return this.code === 'CONTENT_NOT_FOUND';
+  }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

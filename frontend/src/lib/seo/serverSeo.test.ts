@@ -137,13 +137,26 @@ describe('a transport failure of the enrichment is not a refusal, and is never r
   });
 });
 
-describe('the agenda page publishes no event (owner, 2026-11-02)', () => {
+/**
+ * THE HEAD IS SERVED TO ANYBODY, SO IT SHOWS NO MORE THAN THE PUBLIC SHOWCASE (owner, 2026-11-02).
+ * A person's profile and the agenda's events are not on portail-etu.emse.fr, so their pages carry
+ * the generic head and ask no service anything (docs/wiki/anonymous-surface.md).
+ */
+describe('a page the showcase does not show is not described to a visitor', () => {
   beforeEach(() => fetchJson.mockReset());
 
-  it('reads no feed and writes no Event into the JSON-LD an anonymous visitor reads', async () => {
-    const first = await resolveServerSeo('/calendar');
+  it("a person's profile names nobody: no service is asked", async () => {
+    fetchJson.mockResolvedValue({ displayName: 'Ada Lovelace', promo: 2027, formation: 'ICM' });
+    const { meta } = await resolveServerSeo('/profile/0123456789abcdef');
     expect(fetchJson).not.toHaveBeenCalled();
-    expect(JSON.stringify(first.meta.jsonLd ?? null)).not.toContain('Event');
-    expect(first.degraded).toBe(false);
+    expect(JSON.stringify(meta)).not.toContain('Ada');
+  });
+
+  it('the agenda lists no event: no service is asked and no Event node is written', async () => {
+    fetchJson.mockResolvedValue([{ id: 'e1', title: 'Gala', startsAt: '2026-12-01T18:00:00Z' }]);
+    const { meta, degraded } = await resolveServerSeo('/calendar');
+    expect(fetchJson).not.toHaveBeenCalled();
+    expect(degraded).toBe(false);
+    expect(JSON.stringify(meta)).not.toContain('Gala');
   });
 });

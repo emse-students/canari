@@ -290,7 +290,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     await q(
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
     );
-    await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar)`);
+    await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar,
+      type varchar NOT NULL DEFAULT 'association')`);
     // And the ones a live's VISIBILITY reads (`liveVisibleToUserSql`, the rule of a post), in the
     // columns `reader-spaces.ts` reads. ALICE..EVE share Saint-Etienne ICM; FRANK is in Gardanne
     // ISMIN and shares no space with any of them.

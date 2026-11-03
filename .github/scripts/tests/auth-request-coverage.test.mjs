@@ -48,23 +48,12 @@ const NGINX = join(REPO, 'infrastructure', 'local', 'Dockerfile.frontend');
  * alternative is an omission that looks exactly like this and says nothing. `route` is matched
  * against `VERB /full/path` exactly.
  */
+//
+// THE PUBLIC SHOWCASE IS THE CEILING (owner, 2026-11-02): without an account Canari shows nothing
+// portail-etu.emse.fr does not. A new entry here must name what of the showcase it serves, or be a
+// capability (a signed or unguessable link handed out by a member), a liveness probe, or a value
+// about nobody. The audit and the route-by-route table: docs/wiki/anonymous-surface.md.
 const PUBLIC_BY_INTENT = [
-  {
-    route: 'GET /associations/:id/products',
-    why: 'the association shop page renders for a signed-out visitor; x-user-id is optional and only picks the price band',
-  },
-  {
-    route: 'GET /associations/categories',
-    why: 'category list for the public associations directory',
-  },
-  {
-    route: 'GET /associations/users/:userId/memberships',
-    why: 'public profile - current association memberships',
-  },
-  {
-    route: 'GET /associations/users/:userId/role-history',
-    why: 'public profile - past and honorary roles',
-  },
   {
     route: 'GET /associations/:id/events',
     why: 'public association agenda; pending events need a signed-in caller and are filtered in the handler',
@@ -79,11 +68,11 @@ const PUBLIC_BY_INTENT = [
   },
   {
     route: 'GET /bookings/:bookingId/calendar.ics',
-    why: 'one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking\'s people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person\'s (D10), never answers, private texts or the holder\'s or participants\' names',
+    why: "one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking's people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person's (D10), never answers, private texts or the holder's or participants' names",
   },
   {
     route: 'GET /users/:id/avatar',
-    why: 'an <img> subresource on public pages; an <img> cannot carry a Bearer token',
+    why: 'an <img> subresource, which cannot carry a Bearer token: authorised instead by the viewer-bound avatar token in ?t= (checked against a live session) or the internal secret of a service (avatar-access.ts)',
   },
   {
     route: 'GET /media/public/:id',
@@ -275,7 +264,11 @@ function nestRoutes(dir) {
       // past a handler reads somebody else's authorization, and an over-credit here is a route
       // this gate reports as closed while it answers anybody.
       let end = k;
-      while (end < lines.length && !(ROUTE_DECORATOR.test(lines[end]) && !isCommentLine(lines[end]))) end++;
+      while (
+        end < lines.length &&
+        !(ROUTE_DECORATOR.test(lines[end]) && !isCommentLine(lines[end]))
+      )
+        end++;
       while (end > k && /^\s*(@|\*|\/\*\*|$)/.test(lines[end - 1])) end--;
       const body = lines.slice(k, end).join('\n');
       const authorized =
@@ -308,6 +301,11 @@ const RUST_AUTH = [
   'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
+  // `get_admin_presence` and `get_admin_presence_history` ask that claim through ONE helper,
+  // `presence.rs::is_global_admin`, which holds the literal above (2026-11-02). The handlers name
+  // the helper, not the header, and a helper that stopped reading the header would be a handler
+  // credited by a name - so the helper's own body is asserted below to still read it.
+  'is_global_admin',
   // Both WebSocket upgrades - the access-token JWT, which nginx never reads and `auth_request`
   // therefore cannot have checked. Each handler verifies it through `decode_access_claims`, which
   // also refuses a refresh token.
@@ -460,6 +458,47 @@ function rustFnBody(crateDir, name) {
   return null;
 }
 
+/**
+ * Whether a handler body names one of {@link RUST_AUTH}, matched as a WHOLE identifier (`caller_id`
+ * must not be credited by `not_caller_id_at_all`). The header literal is a string, matched as text.
+ *
+ * A handler credited by the NAME of the global-admin helper is credited only while that helper's own
+ * body still reads the header: a helper that stopped asking would otherwise keep every caller's
+ * handler "authorized" by a name. `helperBody(name)` answers a function's body or `null`.
+ */
+function isRustAuthorized(body, helperBody) {
+  const named = (text, id) => new RegExp(`(?<![A-Za-z0-9_])${id}(?![A-Za-z0-9_])`).test(text);
+  return RUST_AUTH.some((idiom) => {
+    if (idiom === 'x-global-admin') return body.includes(idiom);
+    if (!named(body, idiom)) return false;
+    if (idiom !== 'is_global_admin') return true;
+    const helper = helperBody('is_global_admin');
+    return helper !== null && helper.includes('x-global-admin');
+  });
+}
+
+// THE GATE'S OWN NEGATIVE TESTS: a helper that stops reading the header must FAIL the check, and a
+// near-miss identifier must not be credited. Run on every invocation, so a gate that was loosened
+// fails here before it can wave a handler through.
+{
+  const asks = () => '{ headers.get("x-global-admin").is_some() }';
+  const silent = () => '{ true }';
+  const handler = '{ if !is_global_admin(&headers) { return forbidden(); } }';
+  const checks = [
+    ['a handler asking through a helper that reads the header', isRustAuthorized(handler, asks), true],
+    ['a handler asking through a helper that stopped reading it', isRustAuthorized(handler, silent), false],
+    ['a handler naming a helper that does not exist', isRustAuthorized(handler, () => null), false],
+    ['a near-miss identifier', isRustAuthorized('{ my_is_global_admin_x(&h) }', asks), false],
+    ['the header read inline', isRustAuthorized('{ h.get("x-global-admin") }', () => null), true],
+  ];
+  for (const [what, got, want] of checks) {
+    if (got !== want) {
+      console.error(`FAIL: this gate's own self-test - ${what}: expected ${want}, got ${got}`);
+      process.exit(1);
+    }
+  }
+}
+
 // ── The assertions ───────────────────────────────────────────────────────────────────────────────
 
 const failures = [];
@@ -566,7 +605,7 @@ for (const loc of locations) {
       );
       continue;
     }
-    if (RUST_AUTH.some((idiom) => body.includes(idiom))) {
+    if (isRustAuthorized(body, (name) => rustFnBody(dir, name))) {
       rustAuthorized++;
       continue;
     }
@@ -599,6 +638,35 @@ for (const entry of PUBLIC_BY_INTENT) {
   );
 }
 
+// ROUTES CLOSED TO A SIGNED-OUT CALLER ON 2026-11-02, AND KEPT CLOSED. Each served data the public
+// showcase does not show; a PUBLIC_BY_INTENT entry for one of them would re-open it with a reason
+// that reads like every other, so the list is asserted by name: the route still exists, and it is
+// authorized (docs/wiki/anonymous-surface.md).
+const CLOSED_TO_ANONYMOUS = [
+  'GET /associations/:id/products',
+  'GET /associations/categories',
+  'GET /associations/users/:userId/memberships',
+  'GET /associations/users/:userId/role-history',
+  'GET /forms/:id/calendar-link',
+];
+for (const route of CLOSED_TO_ANONYMOUS) {
+  const hits = allRoutes.get(route);
+  if (!hits) {
+    failures.push(
+      `CLOSED_TO_ANONYMOUS names "${route}", which no controller declares any more - delete the entry`
+    );
+  } else if (!hits.every((h) => h.authorized)) {
+    failures.push(
+      `${route} was closed to a signed-out caller on 2026-11-02 and answers anybody again`
+    );
+  }
+  if (declared.has(route)) {
+    failures.push(
+      `${route} is closed to a signed-out caller and must not be declared PUBLIC_BY_INTENT`
+    );
+  }
+}
+
 // A CLIENT MAY SEND ANY HEADER IT LIKES, SO EVERY IDENTITY NAME IS EMPTIED AT SERVER LEVEL.
 // nginx forwards a request header nobody overrode, and it inherits a `proxy_set_header` set only
 // into a location that declares NONE of its own - so the server-level block is the net for a
@@ -611,10 +679,9 @@ for (const entry of PUBLIC_BY_INTENT) {
   const conf = readFileSync(NGINX, 'utf8');
   const serverLevel = conf.slice(0, conf.search(/^\s*location\s/m));
   for (const [, header] of IDENTITY) {
-    const cleared = new RegExp(
-      `proxy_set_header\\s+${header}\\s+"(?:|false)"`,
-      'i'
-    ).test(serverLevel);
+    const cleared = new RegExp(`proxy_set_header\\s+${header}\\s+"(?:|false)"`, 'i').test(
+      serverLevel
+    );
     if (!cleared) {
       failures.push(
         `the server-level block never clears ${header}, so a location that declares no ` +
@@ -622,6 +689,122 @@ for (const entry of PUBLIC_BY_INTENT) {
       );
     }
   }
+}
+
+// THE EDGE NEVER FORWARDS THE INTERNAL CREDENTIAL (2026-11-03). `X-Internal-Secret` is spoken only
+// between services on the Docker network, so every proxying location must hand the upstream an EMPTY
+// value. nginx INHERITS proxy_set_header from the ENCLOSING level - the enclosing location for a nested
+// one, the server for a top-level one - and only into a level that declares NONE of its own. So the
+// header set a proxy_pass uses is the nearest level, itself first, that declares any; that level must
+// empty the credential. Every location is read whatever its modifier (`=`, `^~`, a regex, a named
+// `@`); an `if` block is counted as part of its location.
+const INTERNAL_CREDENTIAL = 'X-Internal-Secret';
+
+/**
+ * Every way `conf` (the nginx config, one directive per line) forwards a client-sent internal
+ * credential, and how many proxying locations it read.
+ */
+function internalCredentialFailures(conf) {
+  const lines = conf.split('\n').map((l) => l.replace(/\\n\\\s*$/, '').trimEnd());
+  const clearedLine = new RegExp(`^\\s*proxy_set_header\\s+${INTERNAL_CREDENTIAL}\\s+"";`, 'i');
+  const server = { path: '(server)', parent: null, proxies: false, declares: false, clears: false };
+  const found = [];
+  // The stack holds the LEVEL each open brace belongs to: a location pushes itself, any other block
+  // (an `if`, the server itself) pushes the level it sits in.
+  const stack = [];
+  const blocks = [];
+  for (const line of lines) {
+    const level = stack.length ? stack[stack.length - 1] : server;
+    const loc = line.match(/^\s*location\s+(.*?)\s*\{\s*$/);
+    if (loc) {
+      const block = { path: loc[1], parent: level, proxies: false, declares: false, clears: false };
+      stack.push(block);
+      blocks.push(block);
+      continue;
+    }
+    if (/\{\s*$/.test(line)) {
+      stack.push(level);
+      continue;
+    }
+    if (/^\s*\}\s*$/.test(line)) {
+      stack.pop();
+      continue;
+    }
+    if (/^\s*proxy_pass\s/.test(line)) level.proxies = true;
+    if (/^\s*proxy_set_header\s/.test(line)) level.declares = true;
+    if (clearedLine.test(line)) level.clears = true;
+  }
+  const proxying = blocks.filter((b) => b.proxies);
+  for (const block of proxying) {
+    let effective = block;
+    while (effective && !effective.declares) effective = effective.parent;
+    // No level declares any header: the server's own check below names that.
+    if (!effective || effective === server) continue;
+    if (!effective.clears) {
+      found.push(
+        effective === block
+          ? `nginx location "${block.path}" declares its own proxy_set_header and never empties ${INTERNAL_CREDENTIAL}, so it forwards whatever the CLIENT sent under that name`
+          : `nginx location "${block.path}" proxies with the headers it inherits from the enclosing location "${effective.path}", which never empties ${INTERNAL_CREDENTIAL}, so it forwards whatever the CLIENT sent under that name`
+      );
+    }
+  }
+  if (!server.clears) {
+    found.push(
+      `the server-level block never clears ${INTERNAL_CREDENTIAL}: the edge must never forward the internal credential`
+    );
+  }
+  return { found, proxying: proxying.length };
+}
+
+// SELF-TEST: the shapes the rule must tell apart, so a parser that stopped modelling inheritance
+// fails here rather than passing the real config vacuously.
+{
+  const SERVER_CLEARS = 'server {\n  proxy_set_header X-Internal-Secret "";\n';
+  const cases = [
+    [
+      'a nested location that declares nothing inherits from its ENCLOSING location, which never clears',
+      `${SERVER_CLEARS}  location ^~ /a/ {\n    proxy_set_header Host $host;\n    location ~ /a/b {\n      proxy_pass http://x;\n    }\n  }\n}`,
+      false,
+    ],
+    [
+      'the same nesting, the enclosing location clearing',
+      `${SERVER_CLEARS}  location ^~ /a/ {\n    proxy_set_header X-Internal-Secret "";\n    location ~ /a/b {\n      proxy_pass http://x;\n    }\n  }\n}`,
+      true,
+    ],
+    [
+      'a location declaring its own headers without clearing',
+      `${SERVER_CLEARS}  location /a {\n    proxy_set_header Host $host;\n    proxy_pass http://x;\n  }\n}`,
+      false,
+    ],
+    [
+      'a location declaring nothing, under a server that clears',
+      `${SERVER_CLEARS}  location /a {\n    if ($x) {\n      return 204;\n    }\n    proxy_pass http://x;\n  }\n}`,
+      true,
+    ],
+    [
+      'a server that never clears',
+      'server {\n  proxy_set_header Host $host;\n  location /a {\n    proxy_pass http://x;\n  }\n}',
+      false,
+    ],
+  ];
+  for (const [label, conf, passes] of cases) {
+    const { found } = internalCredentialFailures(conf);
+    if ((found.length === 0) !== passes) {
+      failures.push(
+        `SELF-TEST: ${label} should ${passes ? 'pass' : 'fail'} the ${INTERNAL_CREDENTIAL} check, and ${passes ? `failed: ${found.join('; ')}` : 'passed'}`
+      );
+    }
+  }
+}
+
+{
+  const { found, proxying } = internalCredentialFailures(readFileSync(NGINX, 'utf8'));
+  if (proxying < 20) {
+    failures.push(
+      `the ${INTERNAL_CREDENTIAL} check found only ${proxying} proxying locations - the parser no longer reads the config`
+    );
+  }
+  failures.push(...found);
 }
 
 // THE IDENTITY A SERVICE RECEIVES MUST NOT DEPEND ON WHICH LOCATION IT CAME THROUGH. See IDENTITY

@@ -24,9 +24,9 @@ describe('FormsController - auth_request identifies, the guard refuses', () => {
   const GUARD_METADATA = '__guards__';
 
   /**
-   * EVERY HANDLER, WITH NO EXEMPTION. The last one, the form's agenda link, was guarded on
-   * 2026-11-02 (no event is published to an anonymous reader); a route meant to answer anybody now
-   * belongs on `PublicFormsController`, not here.
+   * Every handler on the controller. NONE IS EXEMPT since 2026-11-02: the one that was,
+   * `getFormCalendarLink`, served an agenda entry the public showcase never shows
+   * (docs/wiki/anonymous-surface.md). A guest answers a public form through `PublicFormsController`.
    */
   const mustBeGuarded = Object.getOwnPropertyNames(FormsController.prototype).filter(
     (name) => name !== 'constructor'
@@ -51,7 +51,7 @@ describe('FormsController - auth_request identifies, the guard refuses', () => {
     expect(guardsOn('get')).toContain(NginxAuthGuard);
   });
 
-  it("guards the form's agenda link: no event is published to an anonymous reader (2026-11-02)", () => {
+  it('guards the agenda link of a form, closed to a signed-out caller on 2026-11-02', () => {
     expect(guardsOn('getFormCalendarLink')).toContain(NginxAuthGuard);
   });
 

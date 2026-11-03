@@ -1,5 +1,5 @@
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { holdsBdeFlagOverSql } from './bde';
+import { bdeStandingInSpaceSql, holdsBdeFlagOverSql } from './bde';
 import { isReaderSpaceSql } from './reader-spaces';
 
 /**
@@ -13,8 +13,11 @@ import { isReaderSpaceSql } from './reader-spaces';
  * "In the governed spaces" means, for each kind of target:
  * - an ASSOCIATION's content (a post or a live in its name): the association is reached by a space
  *   the BDE governs - exactly `holdsBdeFlagOverSql`, so an association reaching no space is governed
- *   by nobody but the platform admin;
- * - a PERSON's content (a personal post or live): its author belongs to one of the BDE's spaces
+ *   by nobody but the platform admin, and so is an INSTITUTION: no BDE governs one (owner, 2026-11-02
+ *   and 2026-11-03), so no BDE moderates its content either. The same predicate leaves a BDE's own
+ *   content to its own members, as its management is;
+ * - a PERSON's content (a personal post or live): its author belongs to one of the spaces the BDE
+ *   governs - the same per-space standing (`bdeStandingInSpaceSql`) every BDE power reads
  *   (`isReaderSpaceSql`, the readers' own definition). Someone with no space - staff, a review
  *   account - is left to the platform admin, as an association with no audience rule is;
  * - a PERSON themselves (a mute, a broadcast withdrawal, a report on an account): the same "belongs to
@@ -49,10 +52,9 @@ export const COMMENT_DELETE_FORBIDDEN = 'COMMENT_DELETE_FORBIDDEN';
  */
 export function bdeModeratesUserSql(moderator: string, target: string): string {
   return `EXISTS (SELECT 1 FROM association_members mod_member
-    JOIN spaces mod_space ON mod_space."bdeAssociationId" = mod_member."associationId"
+    JOIN spaces mod_space ON ${bdeStandingInSpaceSql('mod_member', 'mod_space', moderator, MODERATE)}
     JOIN users mod_target ON mod_target.id = ${target}
-    WHERE mod_member."userId" = ${moderator} AND (mod_member.permissions & ${MODERATE}) <> 0
-      AND ${isReaderSpaceSql('mod_space', 'mod_target')})`;
+    WHERE ${isReaderSpaceSql('mod_space', 'mod_target')})`;
 }
 
 /**

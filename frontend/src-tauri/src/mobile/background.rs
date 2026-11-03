@@ -781,12 +781,12 @@ fn write_stage(
     )
     .map_err(|e| {
         log::error!("[BG_STATE] mls.bin NOT written: {e}");
-        // The warm mark is never cleared while the process lives, so reading it now says whether
-        // the write was refused for it - a fact, never the error's prose.
-        if crate::concurrency::live_manager_in_process() {
-            "warm-process"
-        } else {
-            "stage-failed"
+        // CLASSIFIED WHERE THE WRITE WAS REFUSED, never re-read here: the warm mark is cleared by a
+        // sign-out (`end_native_session`), so reading it after the refusal could answer for a
+        // process that is no longer the one the write was refused in.
+        match e {
+            crate::concurrency::BackgroundWriteRefused::WarmProcess => "warm-process",
+            crate::concurrency::BackgroundWriteRefused::Other(_) => "stage-failed",
         }
     })
 }

@@ -53,12 +53,129 @@ describe('ModerationService - reports', () => {
       reportRepo as unknown as Repository<ContentReport>,
       muteRepo as unknown as Repository<UserModeration>
     );
+    answerGate();
+  });
+
+  const POST_ID = '00000000-0000-4000-8000-0000000000a1';
+
+  /**
+   * Answers the open-a-post gate (`readPostOpenVerdict`) the way the database would: the post row
+   * (or the comment's, with its post), the audience term, and the reporter's blocks. Every other
+   * query answers nothing. The audience SQL itself is proven against PostgreSQL in
+   * `post-openable.integration.spec.ts`; here it is a switch.
+   */
+  function answerGate(
+    opts: {
+      post?: Record<string, unknown> | null;
+      visible?: boolean;
+      blocks?: string[];
+      comment?: Record<string, unknown> | null;
+    } = {}
+  ) {
+    const post =
+      opts.post === null
+        ? null
+        : {
+            id: POST_ID,
+            authorId: 'author',
+            associationId: null,
+            anonymous: false,
+            hiddenByModeration: false,
+            scheduledAt: null,
+            kind: 'post',
+            expiresAt: null,
+            ...opts.post,
+          };
+    reportRepo.manager.query.mockImplementation((sql: string) => {
+      if (sql.includes('elem AS comment')) {
+        return Promise.resolve(
+          post && opts.comment !== null
+            ? [{ ...post, comment: opts.comment ?? { id: 'c1', userId: 'real-writer' } }]
+            : []
+        );
+      }
+      if (sql.includes('FROM posts p WHERE p.id')) return Promise.resolve(post ? [post] : []);
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible: opts.visible ?? true }]);
+      if (sql.includes('FROM user_blocks')) {
+        return Promise.resolve((opts.blocks ?? []).map((otherId) => ({ otherId })));
+      }
+      return Promise.resolve([]);
+    });
+  }
+
+  /** A report on `contentType` `contentId` by alice. */
+  const report = (contentType: 'post' | 'comment', contentId: string) =>
+    service.createReport({ reporterId: 'alice', contentType, contentId, reason: 'spam' });
+
+  describe('a post or a comment is reported only by who may open it (the read gate)', () => {
+    it('files a report on a post the reporter may open', async () => {
+      await report('post', POST_ID);
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'post', contentId: POST_ID })
+      );
+    });
+
+    it.each([
+      ['outside its audience', { visible: false }],
+      ['hidden by moderation', { post: { hiddenByModeration: true } }],
+      ['whose author the reporter blocked, or was blocked by', { blocks: ['author'] }],
+      ['scheduled later', { post: { scheduledAt: new Date(Date.now() + 86_400_000) } }],
+      ['that does not exist', { post: null }],
+    ] as const)('refuses 404 CONTENT_NOT_FOUND on a post %s', async (_case, gate) => {
+      answerGate(gate as Parameters<typeof answerGate>[0]);
+      await expect(report('post', POST_ID)).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'CONTENT_NOT_FOUND' },
+      });
+      expect(reportRepo.save).not.toHaveBeenCalled();
+      expect(reportRepo.count).not.toHaveBeenCalled();
+    });
+
+    it('refuses a post id that is not one without asking the database', async () => {
+      await expect(report('post', 'not-a-uuid')).rejects.toMatchObject({ status: 404 });
+      expect(reportRepo.manager.query).not.toHaveBeenCalled();
+    });
+
+    it('keeps the block exemption of an anonymous post: a report is no oracle on its author', async () => {
+      answerGate({ post: { anonymous: true }, blocks: ['author'] });
+      await report('post', POST_ID);
+      expect(reportRepo.save).toHaveBeenCalled();
+    });
+
+    it('files a report on a comment the reporter is shown', async () => {
+      await report('comment', 'c1');
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'comment', contentId: 'c1' })
+      );
+    });
+
+    it.each([
+      ['under a post outside their audience', { visible: false }],
+      ['under a hidden post', { post: { hiddenByModeration: true } }],
+      ['under a post whose author a block separates from them', { blocks: ['author'] }],
+      ['by a writer a block separates from them', { blocks: ['real-writer'] }],
+      ['that does not exist', { comment: null }],
+    ] as const)('refuses 404 CONTENT_NOT_FOUND on a comment %s', async (_case, gate) => {
+      answerGate(gate as Parameters<typeof answerGate>[0]);
+      await expect(report('comment', 'c1')).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'CONTENT_NOT_FOUND' },
+      });
+      expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('files a report on an anonymous comment whose writer is blocked: the read shows it', async () => {
+      answerGate({
+        blocks: ['real-writer'],
+        comment: { id: 'c1', userId: 'real-writer', anonymous: true },
+      });
+      await report('comment', 'c1');
+      expect(reportRepo.save).toHaveBeenCalled();
+    });
   });
 
   describe('createReport', () => {
     it('takes the writer of a reported comment from the stored comment, never from the client', async () => {
-      reportRepo.manager.query.mockResolvedValue([{ user_id: 'real-writer' }]);
-
       await service.createReport({
         reporterId: 'alice',
         contentType: 'comment',
@@ -79,7 +196,7 @@ describe('ModerationService - reports', () => {
         service.createReport({
           reporterId: 'alice',
           contentType: 'post',
-          contentId: 'p1',
+          contentId: POST_ID,
           reason: 'spam',
         })
       ).rejects.toMatchObject({
@@ -94,7 +211,7 @@ describe('ModerationService - reports', () => {
         service.createReport({
           reporterId: 'alice',
           contentType: 'post',
-          contentId: 'p1',
+          contentId: POST_ID,
           reason: 'spam',
         })
       ).rejects.toBeInstanceOf(ConflictException);
@@ -109,13 +226,13 @@ describe('ModerationService - reports', () => {
         service.createReport({
           reporterId: 'alice',
           contentType: 'post',
-          contentId: 'p1',
+          contentId: POST_ID,
           reason: 'spam',
         })
       ).rejects.toBeInstanceOf(ConflictException);
 
       expect(reportRepo.findOne).toHaveBeenCalledWith({
-        where: { reporterId: 'alice', contentId: 'p1' },
+        where: { reporterId: 'alice', contentId: POST_ID },
       });
     });
 
@@ -139,21 +256,21 @@ describe('ModerationService - reports', () => {
       await service.createReport({
         reporterId: 'alice',
         contentType: 'post',
-        contentId: 'p1',
+        contentId: POST_ID,
         reason: 'spam',
       });
 
       expect(reportRepo.count).toHaveBeenCalledWith({
-        where: { contentId: 'p1', status: 'pending' },
+        where: { contentId: POST_ID, status: 'pending' },
       });
       expect(reportRepo.manager.query).toHaveBeenCalledWith(
         expect.stringContaining('hiddenByModeration'),
-        ['p1']
+        [POST_ID]
       );
       // D38: hiding the original removes every republication, in the same transaction.
       expect(reportRepo.manager.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM post_republications'),
-        ['p1']
+        [POST_ID]
       );
     });
 
@@ -163,11 +280,16 @@ describe('ModerationService - reports', () => {
       await service.createReport({
         reporterId: 'alice',
         contentType: 'post',
-        contentId: 'p1',
+        contentId: POST_ID,
         reason: 'spam',
       });
 
-      expect(reportRepo.manager.query).not.toHaveBeenCalled();
+      // Only the read gate asked the database: nothing was hidden.
+      expect(reportRepo.manager.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('hiddenByModeration" = true'),
+        expect.anything()
+      );
+      expect(reportRepo.manager.transaction).not.toHaveBeenCalled();
     });
 
     it('never auto-hides on a report that is not about a post', async () => {

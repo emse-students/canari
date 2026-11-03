@@ -18,6 +18,7 @@ import { DeviceRevokedSession } from './auth/entities/device-revoked-session.ent
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
 import { PlatformAnnouncementSeen } from './platform/entities/platform-announcement-seen.entity';
+import { HelpSeen } from './platform/entities/help-seen.entity';
 import { AccountErasureJob } from './account-erasure/account-erasure-job.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
@@ -60,6 +61,7 @@ import { typeormSynchronize } from './typeorm-synchronize';
           PlatformConfig,
           PlatformAnnouncement,
           PlatformAnnouncementSeen,
+          HelpSeen,
           AccountErasureJob,
         ],
         synchronize: typeormSynchronize(),

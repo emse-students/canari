@@ -76,7 +76,7 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
     // per-account keys after the wipe had removed them. The refusal must come before every line
     // that opens a store of the account - the landing preview's `getStorage`, the MLS state lookup -
     // and before `getToken`, whose failure is what turns a login into an offline unlock.
-    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(id))');
     expect(refusal).toBeGreaterThan(-1);
     for (const opener of [
       'storageOpen = getStorage(',
@@ -92,12 +92,17 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
 
   it('refuses with its own code and a localized message, inside the try its catch reports from', () => {
     const tryAt = loginImplBody.indexOf('  try {\n');
-    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(id))');
     expect(tryAt).toBeGreaterThan(-1);
     expect(tryAt).toBeLessThan(refusal);
     expect(loginImplBody).toContain(
-      "throw new LoginFailure('account_deleted', m.auth_account_deleted_here());"
+      "new LoginFailure('revoked_device_wipe_owed', m.auth_device_revoked_here())"
     );
+    expect(loginImplBody).toContain(
+      "new LoginFailure('account_deleted', m.auth_account_deleted_here())"
+    );
+    // Round 9 of the review of #2919: the reason is read for the id the guard matched.
+    expect(loginImplBody).toContain('wipeReasonOf(wipedHere)');
   });
 });
 
@@ -250,16 +255,6 @@ describe('a failed unlock keeps the identity unless the session is dead', () => 
  * revocation path had never run any of it. These pin the two halves that cannot drift again.
  */
 describe('what a revoked device stops before it deletes anything', () => {
-  it('stops the live session before the first delete', () => {
-    const wipe = wipeRevokedDeviceBody;
-    const stop = wipe.indexOf("tearDownLiveSession(ctx, cb, 'revoked');");
-    expect(stop).toBeGreaterThan(-1);
-    // Every erasure must come after it - one running timer is enough to undo all three.
-    for (const erase of ['resetDeviceAsFreshImpl(', 'clearAuth()', 'wipeDeviceToFactory()']) {
-      expect(wipe.indexOf(erase)).toBeGreaterThan(stop);
-    }
-  });
-
   it('stops the watchdog that re-created the state, and empties what it iterates', () => {
     // The timer AND its candidate set: the watchdog unions the live conversation map with the
     // not-ready registry, so clearing the timer alone would still leave a reactive path a source.

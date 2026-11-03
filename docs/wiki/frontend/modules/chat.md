@@ -1180,6 +1180,7 @@ needs `findMessage` to succeed, so it repairs only a row the receiver already sh
 | `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
 | `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
 | `conversation_read` | **either role** | reading happens in whichever tab is showing the conversation - see below |
+| `read_state`, `unread_counts` | the **leader** only | one moved read mark, or salon counts with the leader's own mark, that it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
 
 The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
 cannot speak for what the leader has read, and has nothing to say about it either, since an own
@@ -1246,23 +1247,24 @@ Two rules about *when* the queue is allowed to try, both learned from the offlin
   because step 1 OPENS that gate without being the moment to send - a token is not a socket. See the
   trigger table below.
 
-### Eight sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
+### Nine sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
 
 The MLS audit counted the call sites and read them as a duplicate path. They are not one, and the
 count is accurate - which is why the refutation is written down rather than deleted with the row.
-Whoever counts them next should find this before they find eight things to fuse.
+Whoever counts them next should find this before they find nine things to fuse.
 
 Every trigger reaches `runFlush`, and every gate lives there and nowhere else: the tab election, the
 leader gate, `connectivity.isOffline`, `canFlush`, and the per-conversation lane claim (below). There is no
 second flusher. **FIVE sites are internal wake-ups**, each bound to the one condition it is the seam
 for - `connectivity.onReconnect`, `visibilitychange`, a follower tab's `outbox_flush_request`, the
-backoff timer, and `enqueue`. **THREE are external moments nothing inside the module can observe:**
+backoff timer, and `enqueue`. **FOUR are external moments nothing inside the module can observe:**
 
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
 | `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+| `MainChatPage`'s off-screen handler, under `holdWhileLeaving` (2026-11-02) | the iOS background task must last until the owed read marks' send SETTLES; the enqueue raises a flush but hands nobody its end, and `flush()` coalesces with it, so it adds no send |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
 `isOffline` clearing, so binding one to `canFlush` opening reads as the same move. It would fire at
@@ -1279,7 +1281,7 @@ flush look redundant and the reconnect path look uncovered, which are wrong in o
 
 `outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
 `resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
-open, and a source check pins the three external sites so a fourth has to be argued for rather than
+open, and a source check pins the four external sites so a fifth has to be argued for rather than
 added.
 
 ### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
@@ -4310,6 +4312,191 @@ reading a leader's arrival for the conversation it has open counts it 0, the liv
 **Not changed, owed a reading:** OS notification banners on the other devices are cleared by the
 push-side receipt (`markChannelRead` for salons, the native `read_watermark` for DMs); nothing here
 touches them. The stuck count was reproduced as failing tests, not on two live devices.
+
+### Read state between devices - the census (2026-11-02)
+
+**Reported by the owner:** a conversation read on one device still showed as unread on another,
+possibly until that page reloaded, and receipts did not always seem to reach the other devices.
+Every path "read" travels by was mapped and each was given a test in
+`utils/chat/readSync.devices.test.ts`: three conversation stores driven through the REAL handlers
+(`handleSystemEvent`, `handleChannelEvent`, the tab channel), `A` and `B` two devices of one
+account, `P` the other party, `B2` a second tab of `B`'s browser. No clock is read; the server's
+time of a frame is the `queuedCreatedAt` the test hands in. Vitest, not the rig: the local estate
+was not up, and every one of these paths is decided in the client.
+
+| Path | Platform | Before | Why |
+| --- | --- | --- | --- |
+| DM/group read on A -> B, live (`read_watermark`, `withOwnReadAdvanced`) | all | works | the frame reaches every leaf, own devices included; the count follows the mark |
+| same, B offline then catching up (pending pull, frames in order) | all | works | a message newer than the read stays counted |
+| A's read -> P's "Vu" (`withReadMark`, `readersOf`) | all | works | |
+| salon read on A -> B, live (`channel.read`, audience includes the reader) | all | works | count falls whether or not B holds the rows |
+| salon, B reconnects (`unread-counts`) | all | works, **except the salon B has selected** | see below |
+| shade "Marquer comme lu" -> the phone's own badge (`read_watermarks.ndjson`) | Android | works | merged at login AND at resume |
+| **Android resumed on an open conversation** | Android | **FAILED** | the receipt effect read `isAppInForeground()`, a plain global; it returned while the app was in the background and nothing ran it again on the way back. What landed in the background stayed unread on the phone, and the mark never left, so on every other device too, until something else changed the conversation (a send, a new message, a reload) |
+| iOS resumed on an open conversation | iOS | works | WKWebView fires `visibilitychange`, which the effect follows |
+| **a frame arriving in the seconds before iOS suspends the app** | iOS | **FAILED** | `isAppInForeground()` was always `true` on iOS, so the arrival counted as read - fixed by the iOS follow-up ([below](#read-state-between-devices---the-census-2026-11-02)) |
+| **a read made inside the 2 s window before leaving the app** | iOS | **FAILED** (late, never lost) | the delivery was handed to the outbox and nothing held the process; it left at the next open - fixed by the iOS follow-up |
+| **resumed from a notification for Y with X left open** | Android (and iOS) | **FAILED** | the foreground edge re-ran the receipt effect on X before the tap's link selected Y, so X was marked read - a conversation nobody looked at. Owner, 2026-11-02: X must not be marked, the same on both platforms (below) |
+| web tab hidden, then shown / window refocused | web | works | `isTabVisible` / `isWindowFocused` are state |
+| **any read (own other device, or the peer's receipt) -> a FOLLOWER tab** | web, desktop | **FAILED** | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded |
+| **salon counts re-read by the leader (reconnect, a community cleared elsewhere) -> a follower tab** | web, desktop | **FAILED** | same: only the leader asks, and it relayed nothing |
+| **a read in one tab -> the other tab's thread** (`conversation_read`) | web, desktop | **FAILED (half)** | the badge fell, the watermark did not, so the list said read and the open thread's divider and scroll button still said unread |
+| **salon left selected but not read (another page, hidden tab, app in background), read on another device while this one was offline** | all | **FAILED** | `reconcileSalonUnread` skips the selected salon because the receipt effect owns its count - but it owns it only while the salon is READ. "Selected is not a screen" ([below](#a-selection-is-not-a-screen-2026-10-10)): the server's 0 was thrown away and the badge stayed until the reader came back to the salon |
+
+**The list badge and the open thread** read two things: `unreadCount` (list, nav dot, title,
+favicon) and the reader's own watermark (the thread's divider and scroll-button count). Every path
+above moves both together through `withOwnReadAdvanced`; the half-failure
+was the one that moved only the first.
+
+**What changed.** Each missing event, named and added - no polling, no reload on focus:
+
+- `appForegroundState.svelte.ts`: the Android foreground as STATE, following the
+  `canari:foreground` event the activity already dispatches; the receipt effect reads it, so the
+  transition itself re-runs the effect. Same guard, same door: nothing is marked that is not on
+  screen ([read-receipt-privacy](../../read-receipt-privacy.md), door 1, unchanged).
+- `read_state` on the tab channel (leader-gated): the leader publishes ONE moved mark
+  `{userId, at, clock}` whenever a RECEIVED event moved it (`read_watermark`, `channel.read`, each
+  entry a bundle restated); a follower merges it by `max`, and recounts its badge only when the mark
+  is its own (`withOwnReadAdvanced`) - a peer's moves the receipt and nothing else.
+- `unread_counts` on the tab channel (leader-gated): the salon counts a server answer moved, each
+  with the leader's OWN mark of that salon when it applied it. A follower skips the salon it is
+  reading and any whose own mark is newer than the leader's - it read that salon after the answer
+  was counted. Values that are not counts are refused and said.
+- `conversation_read` carries the reading tab's `mark`; the receiver advances its own watermark with
+  it. A selection still carries none and only zeroes the badge, as before. **For a salon it also
+  stamps the receiver's counts** (`noteSalonOpened`, `noteSalonMarkFromAnotherTab`): a counts request
+  the receiver had on the wire was counted before that read, so its answer neither applies to that
+  salon nor is joined by a later caller - otherwise a leader re-raised a salon a follower had just
+  read and relayed the stale count back (review of #2937; the re-raise is older than the relay).
+- Every conversation event of the tab channel is STAMPED with the publishing tab's account and the
+  receiver drops a mismatch first (`tabEventIsAddressedHere`): the channel and the leader lock are
+  per browser, and a `conversation_read` from a tab of another account would otherwise advance this
+  account's watermark. The lock stays global: an origin holds ONE refresh credential, so two accounts
+  never hold live sessions side by side ([sessions](../../sessions.md#a-token-that-names-another-account-than-the-local-identity-is-refused-2026-10-10)),
+  and the stamp covers the moments between a second sign-in and the first tab learning of it. An
+  UNSTAMPED event (`account` absent: a tab still on the bundle from before the stamp) is ACCEPTED -
+  dropping it cut a mixed-version browser's tabs off from each other; the window it leaves (an old tab
+  of another account) closes with that tab's next load. An empty stamp (a signed-out tab) is dropped.
+- `conversationBeingRead` (`arrivalRuntime.ts`): both callers of the server count hand it the salon
+  being READ, never the bare selection.
+- **A resume that opens something does not read what was left open** (`resumeOpening.svelte.ts`,
+  owner 2026-11-02). The shell knows, when it announces the foreground, that the resume is a
+  notification tap, so it sends the link WITH the edge (`canari:foreground`, `detail.opening`):
+  Android takes it in `onNewIntent`, which always precedes `onResume`. The page records, in that same
+  dispatch and before any effect re-runs, that the conversation on screen (X) is held. ONE wiring,
+  `createResumeReadGate`, is what `MainChatPage`'s receipt effect asks and what the tests drive;
+  `isReadingConversationNow` asks the same hold. A tap for X itself holds nothing; a plain resume
+  still marks X. The hold ends on an event, never a clock:
+  - the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
+    effect runs once);
+  - Y's landing ENDS, read from `notifNav`: released, or abandoned (`clear()`), whether it was
+    published before the edge or after - the baseline is the landing count at the LEAVE when it was
+    published before (review of #2937, F1: taken at the edge, an abandon left the count equal and X
+    held for good). A landing for ANOTHER conversation replacing Y's keeps X held - a `chat` hold
+    uses the `landing` hold's rule, held while a landing not for X is pending;
+  - a page link navigated (`noteOpenNavigated`, from `afterNavigate`);
+  - the open was routed NOWHERE (`noteOpenRoutedNowhere`): the router's every non-routing branch
+    (`mobile/appLinkRouter.ts`: an unclaimed `open?url=`, a link not ours, a callback with no code,
+    a checkout return to no known page, and every failure that leaves nothing shown - a chat
+    landing that could not be published, a `goto` that failed with no document-load fallback, a
+    claimed link whose in-app navigation failed, reported by `openClaimedAppLink`; the `catch`es that
+    fall back to a document load navigate, so they report nothing), a native tap record that is not
+    a link, a page notification's tap with no identity or not posted by this session;
+  - the app left again, or a resume carried no link.
+
+  On iOS a page-notification resume waits for its landing ONLY while this page's tap listener is
+  REGISTERED (`notePageTapsRoutable`, set by `armPageTapListener` when the plugin's `onAction`
+  registration RESOLVED - a positive signal). No `onAction`, a throw, a rejection, or simply no
+  notification posted since the page loaded (a WebView reload, then a tap on a notification posted
+  before it) leave it unset: that resume holds nothing and warns `page notification tap lost`.
+
+  **The router's outcomes, before or after the edge.** The link reaches the router (and its landing,
+  navigation or "nowhere") through its own channel, before OR after the edge, so each of those
+  outcomes is a SEQUENCE, snapshotted when the app LEAVES the screen (a module-level listener,
+  whatever page is mounted): at the edge an outcome counted since the leave is this open's, one
+  counted after ends the hold. A `false` while already away is not a leave (review F4): a repeated
+  signal would re-snapshot past an outcome the coming resume must count. The selection moving and
+  the app leaving are not router outcomes: they end the hold only after the edge.
+  **Keys, not ids:** a link and `notifNav.pending` carry a GROUP id, the selection a MAP key, and the
+  two differ for every DM and group; every comparison resolves through `resolveConversationKey`, as
+  the landing does (review of #2937 - compared raw, a tap on a DM's own notification held it for
+  good). **A reload drops the hold, and nothing it covered survives:** the selection lives in memory
+  only, and the one selection carried across a load (`canari_pending_contact`) is written only by an
+  explicit "open this conversation", never by a resume.
+
+  **A tap on a notification the PAGE raised** follows the same rule: on Android the page's message
+  notifications are built natively (`notifyMessageFromWebSocket`) and tap as an ordinary chat link,
+  so `onNewIntent` carries them; on iOS they are the notification plugin's, which carry no link, so
+  the shell sends the marker `PAGE_NOTIFICATION_OPENING` and the hold waits for the landing the page's
+  tap handler (`routePageNotificationTap`) publishes, or for it to say the tap routes nowhere. A cold
+  start needs nothing: no conversation is open, so nothing is held, and only Y is read. The chat link
+  is parsed in ONE place (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
+  `resumeOpening.svelte.test.ts` - keys that are not group ids, each router outcome (landing
+  published, landing abandoned, navigated, nowhere) before and after the edge, a repeated leave
+  signal, Y already selected before the edge, a DM's own notification, a non-navigating link driven
+  through the REAL `processAppLinks` and `listenForNativeNotificationTaps`, the page notification's
+  tap, a cold start, the arrival rule, another conversation's landing replacing Y's, a claimed link
+  whose navigation fails, a checkout return to no known page;
+  `resumeOpening.pageTapListener.svelte.test.ts` - every registration outcome of
+  `armPageTapListener`, each test on fresh modules (a page load), so each passes alone.
+
+**The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
+server answer that moved a count (one entry per moved salon). Neither grows with a conversation's
+length or the list's; a group of N members costs one event per member who reads.
+
+The router is ONE function (`routeTabReadEvent`, `tabReadRelay.ts`) that `ChatBackgroundService`
+calls once, after the account gate: a leader applies `conversation_read` and ignores the two events
+only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutation-checked),
+`arrivalRuntime.beingRead.test.ts` (both halves, in a document), `tabReadRelay.wiring.test.ts`.
+
+**iOS, fixed in the follow-up PR (which depends on #2937).** Two iOS paths were left after the census, and the rule is fix, never defer:
+
+- **The foreground is published, not assumed.** `canari_ios.mm` used to observe only the ACTIVE pair
+  (`didBecomeActive` / `willResignActive`) for its own `g_isInForeground` and published nothing to
+  the page. That meant `isAppInForeground()` was always `true` on iOS, so `arrivalContextNow` counted a frame
+  the JS processed in the seconds before suspension as read on arrival. The shell now writes
+  `window.__canariForeground` and dispatches `canari:foreground` on the **background/foreground
+  pair** and after every page load (`CanariPublishForeground`): leaving at `didEnterBackground`;
+  coming back when the resume COMPLETES - the resume begins at `willEnterForeground`
+  (`g_resumePending`) and is published one notification-center round trip AFTER the `didBecomeActive`
+  that ends it (`getNotificationSettingsWithCompletionHandler`, answered on the main queue). A
+  tapped notification is noted (`CanariNoteResumeOpening`, called before the tap is queued for the
+  page) whenever it runs while that resume is pending, so the edge carries the link it opens
+  (`detail.opening`), as Android's does - and the shared hold of
+  [the resume that opens something](#read-state-between-devices---the-census-2026-11-02) applies
+  unchanged. **Either order:** UIKit does not promise whether the delegate runs before or after
+  `didBecomeActive` (review of #2939); a response that caused the activation comes either with the
+  activation itself or on the notification center's own connection, and that the connection hands
+  the response to the main queue before the round trip's answer is LIKELY BUT UNPROVEN - Apple
+  documents no such ordering (re-review F3). It is an ordering argument, never a delay, and it is
+  read on hardware by check LA steps 5 and 8: the shell logs `didBecomeActive: awaiting the
+  notification-center round trip` and `round trip answered: publishing the foreground edge`, and the
+  ONE rule read there is that the tap's line comes BEFORE `round trip answered` (whatever its `state`
+  or `resumePending`, and before or after `awaiting`); a failure blocks the stable. A `didBecomeActive` with no resume pending (Control Centre, a Face ID sheet) publishes
+  nothing and drops a link a cold launch left; a tap on an app active with no resume pending (a
+  banner over the open app) is not a resume (step 10). This is the same contract as Android's `MainActivity.pushForeground`, asserted for
+  both shells by `utils/appForeground.contract.test.ts`. The ACTIVE pair was deliberately not chosen: Control
+  Centre, a Face ID sheet and the notification shade resign ACTIVE without leaving the screen, and
+  a read on screen must not stop counting because a system sheet passed over it. The page now hears
+  two signals for one transition (`visibilitychange` and `canari:foreground`), so `onAppScreenChange`
+  reports one edge per transition (it remembers the last state it reported). The listeners were
+  checked for idempotence anyway, in case one is ever wired to the raw events: the read-mark flush
+  (`take()` empties), connectivity (`probeOwedOnScreen`), the playback arbiter, and the call service
+  (`cameraHeadedOn()`, `videoPausedByBackground`).
+- **A read made in the 2 s window before leaving reaches the other devices now, not at the next
+  open.** The off-screen handler of `MainChatPage` runs its delivery (the debounced mark, the owed
+  salon and DM marks, the outbox flush) under `holdWhileLeaving` (`utils/backgroundFlush.ts`), which
+  asks the shell for a `canari-leave-flush` background task BEFORE the work
+  (`begin_background_flush`) and ends it when the work SETTLES, whichever way it ends
+  (`end_background_flush`, `commands/background_flush.rs`, `canari_push.mm`). There is no timer: the only other
+  end is iOS's own expiration, and the shell logs that as an ERROR. The mark is then still owed
+  (durable) and leaves with the next one. Off iOS the work runs as it did.
+- **The next step, gated on a reading.** The hold keeps the PROCESS alive, but whether iOS keeps
+  WKWebView's WebContent process running under it has not been read on hardware. If the iPhone
+  reading (check LF in [device-verification](../../device-verification.md#lf-a-read-reaches-the-other-devices-when-the-iphone-leaves-the-app---owed-on-the-iphone-12))
+  shows the hold beginning and expiring with no settle, the delivery moves native: the
+  shell drains the durable owed marks itself, under the same task, the way the quick reply sends
+  without the page. That variant is designed and not built, because only that reading tells us whether it is needed.
 
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 

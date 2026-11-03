@@ -49,9 +49,15 @@ const wipeDeviceToFactory = vi.fn(async (): Promise<string[]> => {
   if (factoryHeld) await factoryHeld;
   return [];
 });
+/** Whose data the wipe may erase - the whole install unless a case says another account lives here. */
+let wipeScope: 'install' | 'account' = 'install';
+const revokedWipeScope = vi.fn(async (_userId: string) => wipeScope);
+const wipeAccountOfRevokedDevice = vi.fn(async (_userId: string): Promise<string[]> => []);
 vi.mock('$lib/utils/deviceReset', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/deviceReset')>()),
   wipeDeviceToFactory: () => wipeDeviceToFactory(),
+  revokedWipeScope: (userId: string) => revokedWipeScope(userId),
+  wipeAccountOfRevokedDevice: (userId: string) => wipeAccountOfRevokedDevice(userId),
 }));
 
 const { refresh, getToken, setToken, setSessionExpiredHandler, clearAuth } =
@@ -164,6 +170,10 @@ beforeEach(() => {
   fetchMock.mockClear();
   wipeDeviceToFactory.mockClear();
   removeMlsState.mockClear();
+  removeMlsState.mockImplementation(async () => {});
+  revokedWipeScope.mockClear();
+  wipeAccountOfRevokedDevice.mockClear();
+  wipeScope = 'install';
   factoryHeld = null;
   currentUserId.mockReturnValue('alice');
   localDevice = `device-${++deviceSeq}`;
@@ -230,7 +240,75 @@ describe('a device revoked by its owner while offline (DEV-3)', () => {
 
     expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
     // The account reset is the refused credential's - never an empty one.
-    expect(removeMlsState).toHaveBeenCalledWith('alice');
+    expect(revokedWipeScope).toHaveBeenCalledWith('alice');
+  });
+});
+
+/**
+ * Round 6 of the review of #2919: account B removing "this phone" from another device must not cost
+ * account A, who still uses it - the whole-install wipe runs only when no other account lives here.
+ */
+describe('a revoked device another account still uses', () => {
+  it('wipes the revoked account alone - never the whole install', async () => {
+    wipeScope = 'account';
+    refreshAnswer = revokedRefusal;
+    const s = session();
+    await refresh().catch(() => {});
+    await expect(s.settled()).resolves.toBe(true);
+
+    expect(wipeAccountOfRevokedDevice).toHaveBeenCalledWith('alice');
+    expect(wipeDeviceToFactory).not.toHaveBeenCalled();
+  });
+
+  it('with nobody else here, the whole install goes - the account wipe is not run', async () => {
+    refreshAnswer = revokedRefusal;
+    const s = session();
+    await refresh().catch(() => {});
+    await expect(s.settled()).resolves.toBe(true);
+
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(wipeAccountOfRevokedDevice).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * WHAT A REVOKED DEVICE STOPS BEFORE IT DELETES ANYTHING, observed rather than read from the source
+ * (round 6 of the review of #2919 replaced a source-order assertion): the live session - its
+ * watchdog, its conversation map - is stopped before the first store is erased. Measured on prod
+ * 2026-08-28: a watchdog still ticking 1.25 s after a wipe rebuilt the MLS database it had deleted.
+ */
+describe('what a revoked device stops before it deletes anything', () => {
+  it('stops the live session before the first erasure', async () => {
+    refreshAnswer = revokedRefusal;
+    const s = session();
+    const order: string[] = [];
+    const watchdog = setInterval(() => {}, 60_000);
+    s.ctx.timers.syncWatchdog = watchdog;
+    const conversations = s.cb.conversations as Map<string, unknown>;
+    conversations.set('peer', {});
+    const clear = conversations.clear.bind(conversations);
+    conversations.clear = () => {
+      order.push(`stop (watchdog ${s.ctx.timers.syncWatchdog === null ? 'off' : 'on'})`);
+      clear();
+    };
+    const storageClear = (storage as unknown as { clear: ReturnType<typeof vi.fn> }).clear;
+    storageClear.mockImplementationOnce(async () => {
+      order.push('erase: the message store');
+    });
+    wipeDeviceToFactory.mockImplementationOnce(async () => {
+      order.push('erase: the factory wipe');
+      return [];
+    });
+
+    await refresh().catch(() => {});
+    await expect(s.settled()).resolves.toBe(true);
+    clearInterval(watchdog);
+
+    expect(order).toEqual([
+      'stop (watchdog off)',
+      'erase: the message store',
+      'erase: the factory wipe',
+    ]);
   });
 });
 
@@ -389,13 +467,23 @@ describe('the sign-out count of a session that died', () => {
     expect(logouts()).toHaveLength(1);
   });
 
-  it('a reset that throws BEFORE its clearAuth: still one logout, never zero', async () => {
+  it("the PIN reset's refusable removal cannot stop it: one logout, the wipe runs, device_revoked", async () => {
+    // Round 6 of the review of #2919: `removeMlsState` became the PIN reset's account-scoped commit,
+    // which can REFUSE - and the revoked path called it first, with no catch, so a refusal skipped
+    // `clearAuth` and the wipe: the phone stayed signed in and every PIN check ran the reset again.
     refreshAnswer = revokedRefusal;
-    removeMlsState.mockRejectedValueOnce(new Error('store locked'));
+    removeMlsState.mockRejectedValue(new Error('the slot holds a state of unproven owner'));
     const a = app();
     await refresh().catch(() => {});
     await a.settleAll();
     expect(logouts()).toHaveLength(1);
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(removeMlsState).not.toHaveBeenCalled();
+    // Recorded as done: a later discoverer of the same revocation erases nothing again.
+    localStorage.setItem(ACCOUNT_KEY.deviceId('alice'), localDevice);
+    await settleSessionEndByRevocationImpl(a.ctx, a.cb, 'alice');
+    expect(wipeDeviceToFactory).toHaveBeenCalledTimes(1);
+    expect(a.logs()).toContain('Revoked-device reset already done for this device');
   });
 
   it('a reset that throws AFTER its clearAuth: TWO logouts - the accepted case, a harmless write on a gone session', async () => {

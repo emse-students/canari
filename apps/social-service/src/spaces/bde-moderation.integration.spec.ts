@@ -39,6 +39,9 @@ const A = {
   clubSe: '00000000-0000-4000-8000-0000000000c1', // rule (ICM, saint-etienne)
   clubGa: '00000000-0000-4000-8000-0000000000c2', // rule (NULL, gardanne)
   clubNone: '00000000-0000-4000-8000-0000000000c4', // no rule: governed by nobody
+  // An INSTITUTION whose rule reaches bdeSe's space: no BDE governs an institution (owner,
+  // 2026-11-02/03), so no BDE moderates its content - the platform admin's alone.
+  instSe: '00000000-0000-4000-8000-0000000000d1', // institution, rule (NULL, saint-etienne)
 } as const;
 
 const P = {
@@ -48,6 +51,7 @@ const P = {
   seStudentPost: '10000000-0000-4000-8000-0000000000a4', // hex letters: its uppercase differs
   gaStudentPost: '10000000-0000-4000-8000-000000000005',
   staffPost: '10000000-0000-4000-8000-000000000006',
+  instSePost: '10000000-0000-4000-8000-000000000007',
 } as const;
 
 const L = {
@@ -71,7 +75,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     await client.query(`SET search_path TO ${schema}, public`);
     await client.query(`
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association');
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
       CREATE TABLE association_calendar_events (id serial PRIMARY KEY, "associationId" uuid NOT NULL);
@@ -90,11 +94,10 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       CREATE TABLE live_chat_reported_lines ("reportId" uuid PRIMARY KEY, "liveId" uuid NOT NULL);
     `);
     for (const [key, id] of Object.entries(A)) {
-      await client.query(`INSERT INTO associations (id, name, "isBDE") VALUES ($1, $2, $3)`, [
-        id,
-        key,
-        key === 'bdeSe',
-      ]);
+      await client.query(
+        `INSERT INTO associations (id, name, "isBDE", type) VALUES ($1, $2, $3, $4)`,
+        [id, key, key === 'bdeSe', key === 'instSe' ? 'institution' : 'association']
+      );
     }
     await client.query(migration('071_spaces.sql'));
     await client.query(migration('072_drop_is_bde.sql'));
@@ -104,6 +107,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [A.bdeGa, 'ICM', 'gardanne'],
       [A.clubSe, 'ICM', 'saint-etienne'],
       [A.clubGa, null, 'gardanne'],
+      [A.instSe, null, 'saint-etienne'],
     ];
     for (const [asso, formation, campus] of rules) {
       await client.query(
@@ -148,6 +152,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [P.seStudentPost, 'seStudent', null, []],
       [P.gaStudentPost, 'gaStudent', null, [{ id: 'cm-ga', userId: 'seStudent' }]],
       [P.staffPost, 'staff', null, []],
+      [P.instSePost, 'seStudent', A.instSe, []],
     ];
     for (const [id, author, asso, comments] of postRows) {
       await client.query(
@@ -205,6 +210,14 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       expect(mine).not.toContain(P.clubNonePost);
       expect(mine).not.toContain(P.staffPost);
     }
+  });
+
+  it("never lets a BDE moderate an institution's post, though its rule reaches the BDE's space", async () => {
+    // The institution's rule reaches bdeSe's space (ICM x saint-etienne), as clubSe's does - and
+    // clubSe's post IS seMod's. The institution's is nobody's but the platform admin's.
+    expect(await posts('seMod')).toContain(P.clubSePost);
+    expect(await posts('seMod')).not.toContain(P.instSePost);
+    expect(await posts('gaMod')).not.toContain(P.instSePost);
   });
 
   it('grants nothing to another BDE flag, nor to MODERATE held in a mere club', async () => {

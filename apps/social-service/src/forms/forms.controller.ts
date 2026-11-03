@@ -76,10 +76,12 @@ export class FormsController {
   /**
    * Association agenda entry linked to this form, if the reader may see it.
    *
-   * SIGNED IN, LIKE THE FORM ITSELF (2026-11-02): no event is published to an anonymous reader, and
-   * the only caller is the form page, which reads the guarded `GET :id` first. The event is filtered
-   * by the reader's audience (`findCalendarEventByLinkedForm`), so a reader outside it gets `null`,
-   * and it carries `icsSig` like every event this service lists.
+   * SIGNED IN, LIKE THE FORM ITSELF (2026-11-02): the app renders no association page for a
+   * signed-out visitor and the public showcase shows no agenda
+   * ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)); the only caller is the form
+   * page, which reads the guarded `GET :id` first. The event is filtered by the reader's audience
+   * (`findCalendarEventByLinkedForm`), so a reader outside it gets `null`, and it carries `icsSig`
+   * like every event this service lists.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/calendar-link')

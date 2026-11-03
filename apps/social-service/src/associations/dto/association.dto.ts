@@ -247,12 +247,6 @@ export class UpdateMemberRoleDto {
   permissions?: number;
 }
 
-export class AddMembersBatchDto {
-  @IsArray()
-  @IsString({ each: true })
-  userIds: string[];
-}
-
 export class CreateAssociationDocumentDto {
   @IsString()
   @IsNotEmpty()

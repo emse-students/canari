@@ -167,4 +167,6 @@
     <string name="notif_event_deleted_body">« %1$s » a été supprimé par le BDE</string>
     <string name="notif_event_pending_title">Événement à revalider</string>
     <string name="notif_event_pending_body">« %1$s » doit être revalidé : ses dates ont changé</string>
+    <string name="notif_event_pending_coorganiser_title">Événement à revalider</string>
+    <string name="notif_event_pending_coorganiser_body">« %1$s » doit être revalidé : une association a accepté de co-organiser</string>
 </resources>

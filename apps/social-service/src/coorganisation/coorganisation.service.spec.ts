@@ -29,7 +29,9 @@ function make(states: { associationId: string; status: CoOrganiserStatus }[]) {
     transaction: jest.fn(async (fn: (m: unknown) => Promise<void>) => fn(manager)),
   };
   const proposals = {
-    propose: jest.fn(() => Promise.resolve({})),
+    proposeWithin: jest.fn(() =>
+      Promise.resolve({ proposal: {}, announce: () => Promise.resolve() })
+    ),
     withdrawBySubject: jest.fn(() => Promise.resolve({ id: 'p' })),
     register: jest.fn(),
   };
@@ -39,7 +41,7 @@ function make(states: { associationId: string; status: CoOrganiserStatus }[]) {
     {} as PostNotificationsService,
     proposals as unknown as ProposalsService
   );
-  return { service, proposals, queries };
+  return { service, proposals, queries, manager };
 }
 
 const base = {
@@ -53,24 +55,29 @@ const base = {
 
 describe('CoorganisationService.sync', () => {
   it('proposes a new name with the sender right vouched, and never the organiser itself', async () => {
-    const { service, proposals } = make([]);
-    await service.sync({ ...base, desiredIds: ['a3', 'org'] });
-    expect(proposals.propose).toHaveBeenCalledTimes(1);
-    expect(proposals.propose).toHaveBeenCalledWith('coorganise', 'ev-1', 'a3', 'u1', false, {
-      senderVouched: true,
-    });
+    const { manager, service, proposals } = make([]);
+    await service.sync({ ...base, desiredIds: ['a3', 'org'] }, manager as never);
+    expect(proposals.proposeWithin).toHaveBeenCalledTimes(1);
+    // On the CALLER's connection (the transaction's manager), the sender right vouched by construction.
+    expect(proposals.proposeWithin).toHaveBeenCalledWith(
+      expect.anything(),
+      'coorganise',
+      'ev-1',
+      'a3',
+      'u1'
+    );
   });
 
   it('proposes three co-organisers (four associations in total) and refuses a fourth, typed', async () => {
     const three = make([]);
-    await three.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] });
-    expect(three.proposals.propose).toHaveBeenCalledTimes(3);
+    await three.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] }, three.manager as never);
+    expect(three.proposals.proposeWithin).toHaveBeenCalledTimes(3);
 
     const four = make([]);
     await expect(
-      four.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] })
+      four.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] }, four.manager as never)
     ).rejects.toMatchObject({ response: { code: 'CALENDAR_COORGANISER_CAP' } });
-    expect(four.proposals.propose).not.toHaveBeenCalled();
+    expect(four.proposals.proposeWithin).not.toHaveBeenCalled();
   });
 
   it('counts the pending seats too, never the refused one', async () => {
@@ -80,7 +87,7 @@ describe('CoorganisationService.sync', () => {
       { associationId: 'a3', status: 'pending' },
     ]);
     await expect(
-      held.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] })
+      held.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] }, held.manager as never)
     ).rejects.toMatchObject({ response: { code: 'CALENDAR_COORGANISER_CAP' } });
 
     const withRefused = make([
@@ -88,8 +95,11 @@ describe('CoorganisationService.sync', () => {
       { associationId: 'a2', status: 'pending' },
       { associationId: 'a3', status: 'refused' },
     ]);
-    await withRefused.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] });
-    expect(withRefused.proposals.propose).toHaveBeenCalledTimes(1);
+    await withRefused.service.sync(
+      { ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] },
+      withRefused.manager as never
+    );
+    expect(withRefused.proposals.proposeWithin).toHaveBeenCalledTimes(1);
   });
 
   it('lets an event already over the cap be edited without adding', async () => {
@@ -99,28 +109,31 @@ describe('CoorganisationService.sync', () => {
         status: 'accepted' as const,
       }))
     );
-    await legacy.service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] });
-    expect(legacy.proposals.propose).not.toHaveBeenCalled();
+    await legacy.service.sync(
+      { ...base, desiredIds: ['a1', 'a2', 'a3', 'a4'] },
+      legacy.manager as never
+    );
+    expect(legacy.proposals.proposeWithin).not.toHaveBeenCalled();
     expect(legacy.proposals.withdrawBySubject).toHaveBeenCalledTimes(1);
   });
 
   it('changes nothing for an unchanged list, and never asks a refused association again', async () => {
-    const { service, proposals } = make([
+    const { manager, service, proposals } = make([
       { associationId: 'a1', status: 'accepted' },
       { associationId: 'a2', status: 'pending' },
       { associationId: 'a3', status: 'refused' },
     ]);
-    await service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] });
-    expect(proposals.propose).not.toHaveBeenCalled();
+    await service.sync({ ...base, desiredIds: ['a1', 'a2', 'a3'] }, manager as never);
+    expect(proposals.proposeWithin).not.toHaveBeenCalled();
     expect(proposals.withdrawBySubject).not.toHaveBeenCalled();
   });
 
   it('withdraws a pending one and ENDS an accepted one (its row deleted) when left out', async () => {
-    const { service, proposals, queries } = make([
+    const { manager, service, proposals, queries } = make([
       { associationId: 'a1', status: 'accepted' },
       { associationId: 'a2', status: 'pending' },
     ]);
-    await service.sync({ ...base, desiredIds: [] });
+    await service.sync({ ...base, desiredIds: [] }, manager as never);
     expect(proposals.withdrawBySubject).toHaveBeenCalledWith(
       expect.anything(),
       'coorganise',
@@ -151,18 +164,18 @@ describe('CoorganisationService.sync', () => {
 
     const adding = make(states);
     await expect(
-      adding.service.sync({ ...coSide, desiredIds: ['a1', 'a2', 'a9'] })
+      adding.service.sync({ ...coSide, desiredIds: ['a1', 'a2', 'a9'] }, adding.manager as never)
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(adding.proposals.propose).not.toHaveBeenCalled();
+    expect(adding.proposals.proposeWithin).not.toHaveBeenCalled();
 
     const removingOther = make(states);
     await expect(
-      removingOther.service.sync({ ...coSide, desiredIds: ['a1'] })
+      removingOther.service.sync({ ...coSide, desiredIds: ['a1'] }, removingOther.manager as never)
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(removingOther.proposals.withdrawBySubject).not.toHaveBeenCalled();
 
     const leaving = make(states);
-    await leaving.service.sync({ ...coSide, desiredIds: ['a2'] });
+    await leaving.service.sync({ ...coSide, desiredIds: ['a2'] }, leaving.manager as never);
     expect(leaving.proposals.withdrawBySubject).toHaveBeenCalledTimes(1);
   });
 });

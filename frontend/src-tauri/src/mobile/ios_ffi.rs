@@ -659,6 +659,17 @@ pub extern "C" fn canari_ios_set_quick_reply_ack_listener(
     crate::commands::push::set_quick_reply_ack_listener(listener);
 }
 
+/// Registers the native shell's two leave-flush listeners (`commands::background_flush`): begin a
+/// background task for the page's last work before suspension, and end it when the page says so.
+/// Registered by `CanariPushSetup` rather than linked, like the quick reply's acknowledgement.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_background_flush_listeners(
+    begin: Option<crate::commands::background_flush::BeginListener>,
+    end: Option<crate::commands::background_flush::EndListener>,
+) {
+    crate::commands::background_flush::set_background_flush_listeners(begin.zip(end));
+}
+
 /// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -
 /// `page_ring`. The handover ends an UNANSWERED CallKit ring only when this is true: a page holding
 /// the socket may still have skipped that call's invite, and its CallKit ring is then the only one.

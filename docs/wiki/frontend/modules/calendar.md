@@ -213,6 +213,8 @@ accept. The form reads the states from `GET .../events/:eventId/co-organisers` a
 sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
 only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
 
+**Partner side (E2, 2026-11-03).** The form reads `GET .../events/:eventId/write-side` with the states; for a `partner` the date and the co-organiser list are neither drawn nor sent, and a "withdraw" button replaces the list ([profiles-and-access](../../profiles-and-access.md#e2-partner-rights-on-a-co-organised-event-wp-q1-2026-11-03)).
+
 **The detail modal and the picker (2026-10-10).** The modal lists every organiser as a pill chip
 (logo, name, link to its page) and, to whoever may edit the event, one quiet "n pending" line read
 from the states endpoint (a reader without the right gets none: the endpoint refuses, and the modal

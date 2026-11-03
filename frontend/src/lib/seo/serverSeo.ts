@@ -1,10 +1,4 @@
-import {
-  CORE_URL,
-  DELIVERY_URL,
-  SOCIAL_URL,
-  fetchJsonOrThrow,
-  internalHeaders,
-} from '$lib/seo/internalApi';
+import { DELIVERY_URL, SOCIAL_URL, fetchJsonOrThrow, internalHeaders } from '$lib/seo/internalApi';
 import {
   buildArticleJsonLd,
   buildAssociationJsonLd,
@@ -310,29 +304,6 @@ const KIND_TYPES: Record<AssociationKind, true> = {
   institution: true,
 };
 
-interface ProfilePayload {
-  displayName?: string | null;
-  promo?: number | null;
-  formation?: string | null;
-}
-
-async function profileSeo(userId: string): Promise<Partial<SeoMeta> | null> {
-  const user = await fetchJsonOrThrow<ProfilePayload>(
-    `${CORE_URL()}/api/internal/users/${encodeURIComponent(userId)}/public-profile`,
-    internalHeaders()
-  );
-  if (!user?.displayName?.trim()) return null;
-
-  const details = [user.promo ? `Promo ${user.promo}` : null, user.formation]
-    .filter(Boolean)
-    .join(' - ');
-
-  return {
-    title: user.displayName.trim(),
-    description: details ? `${details}. Membre ${SITE.name}.` : `Membre ${SITE.name}.`,
-  };
-}
-
 interface WorkspaceInvitePayload {
   valid?: boolean;
   workspaceName?: string | null;
@@ -394,22 +365,28 @@ async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
  * The one enrichment table. Each entry owns a path shape and the single call that resolves it;
  * anything not listed falls through to `resolveSeoForPath` alone, which is a complete answer for
  * the static pages and a correct generic one for everything else.
+ *
+ * THE HEAD IS SERVED TO ANYBODY, SO IT SHOWS NO MORE THAN THE PUBLIC SHOWCASE (owner, 2026-11-02).
+ * A person's profile (`/profile/<id>`: their name, promo and formation) and the agenda's events
+ * (`/calendar`) were enriched here until that day and are not any more: portail-etu.emse.fr shows
+ * neither. What is left is the association page (the showcase's own fields), the single shared
+ * post the owner kept, and the invite links a member hands out. See docs/wiki/anonymous-surface.md.
  */
 const ENRICHERS: [RegExp, (id: string, path: string) => Promise<Partial<SeoMeta> | null>][] = [
   [/^\/posts\/([^/]+)\/?$/, postSeo],
   [/^\/forms\/([^/]+)\/?$/, formSeo],
   [/^\/associations\/([^/]+)\/?$/, associationSeo],
   [ASSOCIATION_EDIT_PATH, associationEditSeo],
-  [/^\/profile\/([^/]+)\/?$/, profileSeo],
   [/^\/c\/join\/([^/]+)\/?$/, communityInviteSeo],
   [/^\/g\/join\/([^/]+)\/?$/, groupInviteSeo],
 ];
 
-/** Structured data for the pages that have no id in their path. */
-async function staticPageJsonLd(path: string): Promise<JsonLdNode[] | null> {
+/**
+ * Structured data for the pages that have no id in their path. Built from constants alone: the
+ * agenda's events were read here until 2026-11-02, and no page without an id shows data now.
+ */
+function staticPageJsonLd(path: string): JsonLdNode[] | null {
   if (path === '/' || path === '/posts') return buildSiteJsonLd();
-  // No `/calendar` here: no event is published to an anonymous reader (owner, 2026-11-02), and the
-  // JSON-LD of a page is read by every anonymous visitor and crawler.
   if (path === '/associations') {
     return [
       ...buildSiteJsonLd(),
@@ -473,14 +450,6 @@ export async function resolveServerSeo(pathname: string): Promise<ServerSeoResul
   }
 
   // Structured data is pointless on a page that asks not to be indexed.
-  try {
-    const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
-    return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
-  } catch (err) {
-    if (!(err instanceof UpstreamUnavailableError)) throw err;
-    // The agenda's structured data is the one static-page enrichment: a timeout of its feed is the
-    // same absence of an answer, and must not be cached as an agenda without events.
-    console.warn(`[SEO] DEGRADED head for ${pathname}, enrichment unavailable: ${err.message}`);
-    return { meta: base, degraded: true };
-  }
+  const jsonLd = base.noindex ? null : staticPageJsonLd(normalizePath(pathname));
+  return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
 }

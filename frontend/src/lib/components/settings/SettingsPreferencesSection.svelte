@@ -13,7 +13,11 @@
     Monitor,
     Languages,
     Share2,
+    Compass,
   } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
+  import { replayGuide } from '$lib/guidance/guidance.svelte';
   import { m } from '$lib/paraglide/messages';
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
@@ -26,6 +30,15 @@
   // Share suggestions (sharing lot S5) exist only in Android's share sheet: the toggle is hidden
   // wherever it would do nothing.
   let isAndroidApp = $state(false);
+  /**
+   * Replays the welcome tour: it runs on the feed, where every control it points at is drawn, so the
+   * request is recorded first and the feed opened - the tour starts there once the app is quiet.
+   */
+  function replayWelcomeTour() {
+    replayGuide('welcome-tour');
+    void goto(resolve('/posts'));
+  }
+
   onMount(() => {
     isTouchDevice = isCoarsePointerDevice();
     isAndroidApp = isAndroidTauriRuntime();
@@ -218,6 +231,27 @@
           </button>
         {/each}
       </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3.5">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+          <Compass size={20} strokeWidth={2.5} />
+        </div>
+        <div>
+          <p class="text-text-main text-sm font-bold">{m.guide_replay_label()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">{m.guide_replay_desc()}</p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onclick={replayWelcomeTour}
+        data-guide-replay="welcome-tour"
+        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-cn-yellow shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
+      >
+        {m.guide_replay_button()}
+      </button>
     </div>
   </div>
 </div>

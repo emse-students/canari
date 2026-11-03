@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { imageSrcOrNull } from '$lib/utils/imageSrc';
@@ -108,6 +109,31 @@ export function mayActOnAssociation(
   if (ctx.isGlobalAdmin) return true;
   if (ctx.isSuperAdmin && (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0) return true;
   return hasPermissionFlag(ctx.memberPermissions ?? 0, flag);
+}
+
+/** Every flag the enum defines, OR-ed together. Mirrors the backend `ALL_PERMISSION_FLAGS`. */
+export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
+  .filter((value): value is AssociationPermissionFlag => typeof value === 'number')
+  .reduce<number>((mask, flag) => mask | flag, 0);
+
+/** The refusal of a member write that changes a flag the writer does not hold itself. */
+export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
+
+/**
+ * The flags the viewer may grant OR revoke on a member of one association - the client mirror of
+ * the server's `grantCeiling` (`member-flag-ceiling.ts`), so the editor never offers a box the
+ * server would refuse. Every flag for the platform administrator AND for this association's BDE
+ * super-admin (owner, 2026-11-02: a BDE officer may seat themself with full rights in an association
+ * they also run - `SUPER_ADMIN_EXCLUDED_FLAGS` is about what the tier EXERCISES, not what it may
+ * write into a row); otherwise the viewer's own row.
+ */
+export function grantableFlags(ctx: {
+  isGlobalAdmin: boolean;
+  isSuperAdmin: boolean;
+  memberPermissions?: number;
+}): number {
+  if (ctx.isGlobalAdmin || ctx.isSuperAdmin) return ALL_PERMISSION_FLAGS;
+  return (ctx.memberPermissions ?? 0) & ALL_PERMISSION_FLAGS;
 }
 
 /**
@@ -796,6 +822,24 @@ export async function listEventCoOrganisers(
   );
 }
 
+/**
+ * Which side the signed-in caller writes an event from (owner decision E2): `organiser`, or
+ * `partner` - an accepted co-organiser, who edits the text and the poster and may withdraw, but
+ * never changes the date or the partner list and never deletes. The SERVER's answer, from the rule
+ * it enforces on the write, so the form hides exactly what the write would refuse.
+ */
+export type EventWriteSide = 'organiser' | 'partner';
+
+/** `GET .../events/:eventId/write-side`: the side the caller writes the event from through `associationId`. */
+export async function getEventWriteSide(
+  associationId: string,
+  eventId: string
+): Promise<{ side: EventWriteSide }> {
+  return request<{ side: EventWriteSide }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/write-side`
+  );
+}
+
 export async function deleteAssociationCalendarEvent(
   associationId: string,
   eventId: string
@@ -1273,6 +1317,25 @@ export async function removeMember(
   invalidateMyAssociations();
   return result;
 }
+
+/**
+ * THE "QUITTER" BUTTON (owner, 2026-11-03): the signed-in user leaves the association. Acts on the
+ * caller's own row only. Refused with `SocialApiError.code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER`
+ * for its last holder of `MANAGE_MEMBERS`.
+ */
+export async function leaveAssociation(associationId: string): Promise<void> {
+  Log.d('associations.leave', { associationId });
+  await request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/members/me`,
+    { method: 'DELETE' }
+  );
+  invalidateMyAssociations();
+}
+
+/** The typed refusals of {@link leaveAssociation}, read from `SocialApiError.code`. */
+export const LEAVE_REFUSAL = {
+  LAST_MEMBER_MANAGER: 'ASSOCIATION_LAST_MEMBER_MANAGER',
+} as const;
 
 /** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
 export async function reorderMembers(associationId: string, userIds: string[]): Promise<void> {
@@ -3284,15 +3347,19 @@ export interface SpaceRow {
   /** How many associations' audience rules reach this space. */
 }
 
-/** One audience rule of one association. */
-export interface AssociationRuleRow extends AudienceRule {
-  associationId: string;
-}
-
 /** One audience rule; `null` means "any" (every formation, or every campus). */
 export interface AudienceRule {
   formation: Formation | null;
   campus: Campus | null;
+}
+
+/**
+ * A rule as the server hands it to its reader: `editable` is false for a BDE star when the rule
+ * exceeds the spaces it governs ("Lire tout, modifier dans ses espaces", owner 2026-11-03). The
+ * editor shows such a rule read-only and sends it back unchanged.
+ */
+export interface AudienceRuleView extends AudienceRule {
+  editable: boolean;
 }
 
 /** Lists every formation x campus space with its BDE. Global admins only. */
@@ -3300,17 +3367,12 @@ export function listSpaces(): Promise<SpaceRow[]> {
   return request<SpaceRow[]>('/api/associations/spaces');
 }
 
-/** The audience rules of EVERY association, in one call: the admin grid draws itself from them. */
-export function listAllAudiences(): Promise<AssociationRuleRow[]> {
-  return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
-}
-
 /**
  * The audience rules of ONE association: a global admin's, or a BDE star's for an entity whose
  * rules lie within the campuses it governs (the server refuses the rest with a typed code).
  */
-export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
+export function getAssociationAudiences(associationId: string): Promise<AudienceRuleView[]> {
+  return request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`
   );
 }
@@ -3335,11 +3397,91 @@ export async function setSpaceBde(spaceId: string, associationId: string | null)
 export async function setAssociationAudiences(
   associationId: string,
   rules: AudienceRule[]
-): Promise<AudienceRule[]> {
-  const saved = await request<AudienceRule[]>(
+): Promise<AudienceRuleView[]> {
+  // The server answers in the read's shape (`editable` per rule), so a caller renders the write's
+  // own result and never needs a second read that could fail after the write has landed.
+  const saved = await request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`,
     { method: 'PUT', body: JSON.stringify({ rules }) }
   );
   invalidateAssociationDirectory();
   return saved;
+}
+
+// ── The platform admin's catalogue and create form (`/admin/spaces`, owner 2026-11-02) ──────────
+
+/** One entity of the admin catalogue: every field of the directory, plus its audience rules. */
+export interface AdminCatalogueRow extends Association {
+  audiences: AudienceRule[];
+}
+
+/** One keyset page; `next` is the opaque cursor of the following page, `null` on the last. */
+export interface AdminCataloguePage {
+  rows: AdminCatalogueRow[];
+  next: string | null;
+}
+
+/**
+ * The `code` of a create whose first admin names no account (social-service
+ * `ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN`). Read from `SocialApiError.code`.
+ */
+export const ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN = 'ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN';
+
+/**
+ * The ONE refusal of the institution rule (owner, 2026-11-02): an institution's members are the
+ * platform admin's alone, so a member write on one by anyone else (403) and a write handing one of
+ * its members `MANAGE_MEMBERS` (400, the create form's first admin included) carry this `code`.
+ */
+export const ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY =
+  'ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY';
+
+/**
+ * One page of one kind of the platform admin's catalogue - every entity, member or not, never the
+ * reader's directory. Platform admin only; the server pages by `(name, id)`.
+ */
+export function listAdminCatalogue(
+  type: Association['type'],
+  opts: { q?: string; after?: string | null; limit?: number } = {}
+): Promise<AdminCataloguePage> {
+  const params = new URLSearchParams({ type });
+  if (opts.q?.trim()) params.set('q', opts.q.trim());
+  if (opts.after) params.set('after', opts.after);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  return request<AdminCataloguePage>(`/api/associations/admin/catalogue?${params}`);
+}
+
+/**
+ * The slug the server would derive for `name` NOW - the same candidates and the same collision
+ * checks as the create, read from the server so the preview never re-implements them. `null`
+ * when no candidate is free. A preview: the create stays the authority.
+ */
+export async function previewAdminSlug(name: string): Promise<string | null> {
+  const params = new URLSearchParams({ name });
+  return (await request<{ slug: string | null }>(`/api/associations/admin/slug-preview?${params}`))
+    .slug;
+}
+
+/** The admin create form: exactly a name, a kind, its spaces and an optional first admin. */
+export interface AdminCreateAssociationPayload {
+  name: string;
+  type: Association['type'];
+  /** The spaces it reaches; empty reaches nobody. */
+  audiences: AudienceRule[];
+  /**
+   * Absent: the entity starts with no member at all. No role: a title is written by a person on
+   * the members tab, never a label this code would store as data.
+   */
+  firstAdmin?: { userId: string; permissions: number };
+}
+
+/** Creates an entity placed in its spaces, through the server's one creation path. */
+export async function adminCreateAssociation(
+  payload: AdminCreateAssociationPayload
+): Promise<Association> {
+  const created = await request<Association>('/api/associations/admin', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateAssociationDirectory();
+  return created;
 }

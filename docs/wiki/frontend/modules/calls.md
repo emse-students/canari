@@ -1010,12 +1010,16 @@ judged at its activation. The listener is REGISTERED by `CanariCallKitSetup`
 notification extension too, where `canari_push.mm` is not.
 
 **A statement from a previous document is ignored.** A `set_page_gateway_socket(.., true)` sent by
-the old document and still in flight across a navigation commit used to land after
-`forget_on_page_load` and leave a holder nobody would ever withdraw - a page at the PIN gate counted
-as ringing, #2785's no-ring again. Every page load (and a dead web content process) moves a document
-generation on; the page asks it AS ITS MODULE LOADS (`page_ring_document`, in Tauri), while that
-document is surely the current one - asked lazily, an old page's first ask could cross a reload and
-learn the new generation. Every statement names it and waits behind the ones before, so the order
+the old document and still in flight across a navigation commit used to land after the facts were
+cleared and leave a holder nobody would ever withdraw - a page at the PIN gate counted as ringing,
+#2785's no-ring again. **The page MINTS its generation** (round 9 of the review of #2919): its first
+native call, as its module loads (`page_ring_document`, in Tauri), moves the generation on, clears
+every statement and returns the new value - a dead web content process moves it on too. The
+page-load event used to move it, and on Android `onPageStarted` can run after the new page's first
+JavaBridge call, so the page could read a stale generation for its whole life. The cost, accepted: a
+document that never claims (not the app's page) leaves the last page's facts standing until the next
+app page claims. Owed: a reload reading on the Mi 9T, no stale-statement line for the new page.
+Asked lazily instead, an old page's first ask could cross a reload and steal the new generation. Every statement names it and waits behind the ones before, so the order
 holds while the ask is pending; a statement naming another generation is logged and ignored. A
 failed ask is said and asked again at the next statement: the module dies with its document, so any
 answer is this document's own.

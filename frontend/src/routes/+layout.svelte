@@ -33,6 +33,7 @@
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
+  import GuideOverlay from '$lib/components/guidance/GuideOverlay.svelte';
   import { page } from '$app/state';
   import {
     initHistoryOverlayStack,
@@ -802,4 +803,6 @@
   <ToastContainer />
   <ConfirmDialog />
   <AnnouncementModal />
+  <!-- The guided tours and first-time hints: it decides itself when the app is quiet enough. -->
+  <GuideOverlay chromeless={isLoginPage} />
 </div>

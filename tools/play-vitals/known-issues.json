@@ -8,7 +8,14 @@
     "",
     "`fixedInVersionCode` is the FIRST build carrying the fix. An issue reappearing at or above that",
     "code is NOT known - it is a regression, and `vitals.mjs` says so loudly. Muting by id alone",
-    "would silence exactly the report that matters."
+    "would silence exactly the report that matters.",
+    "",
+    "A record with `\"kind\": \"PLATFORM\"` is a defect in Android or the WebView with NO Canari frame,",
+    "which no change here can fix. It is not a mute: it stays PLATFORM only while three facts hold -",
+    "no report carries an app frame, no report names a WebView major newer than `webViewMajors`, and no",
+    "versionCode newer than `baseline.versionCode` reports it above `baseline.per1kUsers` (with Play",
+    "withholding the user count, ANY report on a newer versionCode re-opens it). One broken fact and",
+    "`vitals.mjs` reports it as NEW, with the reason. The rules are `judgePlatform` in classify.mjs."
   ],
   "issues": {
     "e2054d3a3a5e20908789ffd5e3ccdd47": {
@@ -18,6 +25,44 @@
       "fixedBy": "0cf9c3dd",
       "fixedInVersionCode": 14012,
       "note": "Diagnosed independently on a Pixel 6a on 2026-08-28 before Play surfaced it; the Play report on versionCode 14005 is the same defect seen in the field. Production carried 14011, which PREDATES the fix."
+    },
+    "7bea93777c2eb50d5aa34cb55a62350f": {
+      "kind": "PLATFORM",
+      "cause": "libc.so abort <- HandleUsingDestroyedMutex <- aaudio::AudioStream::MyPlayerBase::playerTrackPause",
+      "location": "a binder thread: the audio service asked a player to pause after its AAudio stream was destroyed",
+      "diagnosis": "A use-after-free inside Android's libaaudio_internal: AudioService paused (BnPlayer::onTransact -> PlayerBase::trackPause) a player whose AAudio stream had already been closed, so its mutex was destroyed. No frame is Canari's, wry's or Tauri's. At v1.1.1, where it first appeared, the app opened no audio stream itself (calls shipped in v1.5.0), so the only AAudio client in the process was the Chromium WebView.",
+      "frames": [
+        "#00 /apex/com.android.runtime/lib64/bionic/libc.so (abort+156)",
+        "#01 /apex/com.android.runtime/lib64/bionic/libc.so (__fortify_fatal(char const*, ...)+124)",
+        "#02 /apex/com.android.runtime/lib64/bionic/libc.so (HandleUsingDestroyedMutex(pthread_mutex_t*, char const*)+60)",
+        "#03 /apex/com.android.runtime/lib64/bionic/libc.so (pthread_mutex_lock+152)",
+        "#04 /system/lib64/libc++.so (std::__1::mutex::lock()+12)",
+        "#05 /system/lib64/libaaudio_internal.so (aaudio::AudioStream::MyPlayerBase::playerTrackPause()+52)",
+        "#06 /system/lib64/libaudioclient.so (android::PlayerBase::trackPause()+112)",
+        "#07 /system/lib64/libaudioclient.so (android::media::BnPlayer::onTransact(unsigned int, android::Parcel const&, android::Parcel*, unsigned int)+1164)",
+        "#08 /system/lib64/libbinder.so (android::IPCThreadState::executeCommand(int)+4124)",
+        "#09 /system/lib64/libbinder.so (android::IPCThreadState::joinThreadPool(bool)+460)",
+        "#10 /system/lib64/libbinder.so (android::PoolThread::threadLoop()+24)",
+        "#11 /system/lib64/libutils.so (android::Thread::_threadLoop(void*)+456)",
+        "#12 /system/lib64/libandroid_runtime.so (android::AndroidRuntime::javaThreadShell(void*)+140)",
+        "#13 /system/lib64/libutils.so (libutil_thread_trampoline(void*) (.__uniq.226528677032898775202282855395389835431)+20)",
+        "#14 /apex/com.android.runtime/lib64/bionic/libc.so (__pthread_start(void*)+236)",
+        "#15 /apex/com.android.runtime/lib64/bionic/libc.so (__start_thread+64)"
+      ],
+      "apiLevels": ["36"],
+      "devices": ["Xiaomi 14T (degas)"],
+      "webViewMajors": [],
+      "webViewNote": "Neither the report nor the Reporting API carries a WebView version for a native crash; the set is empty, so the first report that names one re-opens the issue.",
+      "baseline": {
+        "versionCode": 100100199,
+        "reports": 1,
+        "distinctUsers": 1,
+        "per1kUsers": null,
+        "measuredOn": "2026-11-03",
+        "denominatorNote": "Play withholds crashRateMetricSet distinctUsers per versionCode (too few users) and the Reporting API has no session count, so the baseline rate is unmeasured."
+      },
+      "decidedBy": "the coordinator's review of #2974, 2026-11-03 - reversible",
+      "note": "One report, 2026-10-07. Classified PLATFORM rather than muted: tools/play-vitals/README.md#platform-issues."
     }
   }
 }
