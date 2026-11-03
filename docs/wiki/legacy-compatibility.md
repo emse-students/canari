@@ -896,17 +896,19 @@ like any other platform-admin field.
 
 **Site:** `withLegacyEditProfile` in
 [`apps/social-service/src/associations/legacy-admin-presets.ts`](../../apps/social-service/src/associations/legacy-admin-presets.ts),
-called by `AssociationsService.addMember` and `updateMemberRole`.
+called by `AssociationsService.addMember` ONLY.
 **What it humours:** a store build up to `1.6.2` offers its "Administrateur" preset without bit 12
 (`EDIT_PROFILE`, 2026-11-02), so an admin it adds would manage the roster and could not edit the
-profile. A member write whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is
+profile. A member ADD whose mask EQUALS one of those old presets gets bit 12 ORed in. The set is
 derived from today's constants with bit 12 removed, narrowed per kind as the old `adminPresetFor` did
 (3871 and 3359 for an association, 3103 for a list or an institution - pinned by
-`legacy-admin-presets.spec.ts`). Measured by its debug line, `[LEGACY] addMember|updateMemberRole:
-mask N is a pre-EDIT_PROFILE admin preset`.
-**Cost while it stands:** a CURRENT client cannot leave a member at exactly an old preset: unticking
-*Modifier le profil* on a full admin (or ticking everything else) lands on 3871 / 3103 and the bit
-comes back on save. Any other combination is untouched.
+`legacy-admin-presets.spec.ts`). Measured by its debug line, `[LEGACY] addMember: mask N is a
+pre-EDIT_PROFILE admin preset`.
+**Why add only, never update (2026-11-03):** a current app unticking *Modifier le profil* on a full
+admin posts exactly an old preset through the update, and that untick must hold.
+**What it does not cover:** an old app re-applying its "Administrateur" preset to an EXISTING member
+writes the old mask and strips bit 12. That is visible in the role editor and reversible - a current
+app re-ticks it. The spec pins that `updateMemberRole` never calls the shim.
 **Removal** (the date, or earlier once `minClientVersion` is a build carrying the flag on both stores):
 delete `legacy-admin-presets.ts`, its two calls and its spec.
 

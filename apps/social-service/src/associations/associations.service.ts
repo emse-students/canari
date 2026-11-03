@@ -1450,7 +1450,6 @@ export class AssociationsService {
       throw new NotFoundException('Member not found');
     }
     if (permissions !== undefined) {
-      permissions = withLegacyEditProfile(this.logger, permissions, 'updateMemberRole');
       const kind = await this.kindOf(associationId);
       if (kind) permissions = writablePermissions(kind, permissions);
     }

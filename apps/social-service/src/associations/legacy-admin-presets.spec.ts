@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import {
   ALL_CORE_FLAGS,
@@ -33,7 +35,24 @@ describe('legacy admin presets (shim until 2027-05-03)', () => {
 
   it('leaves every other mask alone: a near-preset, a plain member, a current preset', () => {
     for (const mask of [0, 3871 & ~F.MANAGE_FORMS, 3871 | F.EDIT_PROFILE, F.MANAGE_MEMBERS]) {
-      expect(withLegacyEditProfile(logger, mask, 'updateMemberRole')).toBe(mask);
+      expect(withLegacyEditProfile(logger, mask, 'addMember')).toBe(mask);
     }
+  });
+
+  /**
+   * ADD ONLY, never UPDATE (coordinator, 2026-11-03): an old app adds a co-admin with its old
+   * preset, while a current app unticking "Modifier le profil" on a full admin posts exactly that
+   * mask through the update. Rewriting the update would make the untick impossible; an old app
+   * re-applying its preset to an existing member strips bit 12 visibly, and a current app re-ticks it.
+   */
+  it('is applied by addMember and never by updateMemberRole', () => {
+    const source = readFileSync(join(__dirname, 'associations.service.ts'), 'utf8');
+    const body = (name: string) => {
+      const start = source.indexOf(`  async ${name}(`);
+      expect(start).toBeGreaterThan(-1);
+      return source.slice(start, source.indexOf('\n  }\n', start));
+    };
+    expect(body('addMember')).toContain('withLegacyEditProfile(');
+    expect(body('updateMemberRole')).not.toContain('withLegacyEditProfile(');
   });
 });

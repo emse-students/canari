@@ -178,8 +178,8 @@ time, the role editor counts only the flags it has a label for, and a checkbox w
 flag`, so an old app toggling another right sends bit 12 back untouched (and `updateFields.test.ts`
 asserts an unknown bit grants and blocks nothing). Two old-app residues, each with a
 dated shim in [legacy-compatibility](legacy-compatibility.md): an OLD app adding an admin posts the
-old preset (no bit 4096), and a member write whose mask EQUALS an old preset gets `EDIT_PROFILE`
-ORed in until 2027-05-03 (`legacy-admin-presets.ts`, derived from today's constants); and an old
+old preset (no bit 4096), and a member ADD (never an update, so an untick holds) whose mask EQUALS
+an old preset gets `EDIT_PROFILE` ORed in until 2027-05-03 (`legacy-admin-presets.ts`, derived from today's constants); and an old
 list form resends `parentAssociationId` on every save, which is dropped when unchanged. An old app's
 profile tab still draws its controls on `MANAGE_MEMBERS`, so a member holding that without
 `EDIT_PROFILE` meets a 403 there - possible only after a deliberate untick. **Until #2949 (the

@@ -9,8 +9,10 @@ import { writablePermissions } from './selling-kinds';
  * An app built before `EDIT_PROFILE` (bit 12, 2026-11-02; every store build up to 1.6.2) still
  * offers its "Administrateur" preset, which lacks the bit: an admin it adds would manage the roster
  * and could not edit the profile they always could. Such a build cannot be told apart by anything
- * but the mask, so a member write whose mask EQUALS one of those old presets is read as that preset
- * and receives `EDIT_PROFILE`. The set is DERIVED from today's constants with bit 12 taken out, then
+ * but the mask, so a member ADD whose mask EQUALS one of those old presets is read as that preset
+ * and receives `EDIT_PROFILE`. Never an update: a current app unticking "Modifier le profil" on a
+ * full admin posts exactly such a mask, and that untick must hold; an old app re-applying its
+ * preset to an existing member strips the bit visibly, and a current app re-ticks it. The set is DERIVED from today's constants with bit 12 taken out, then
  * narrowed per kind exactly as the old client's `adminPresetFor` narrowed it (the shop and payout
  * rights out for a kind that sells nothing) - never typed as numbers.
  */
