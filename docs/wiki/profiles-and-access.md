@@ -1358,7 +1358,10 @@ A moderator of the post and the platform admin may still hide or delete it, neve
 edit by either is refused 403 `COMMENT_EDIT_AUTHOR_ONLY` (`PostInteractionsService.editComment`),
 and the served `canEdit` of `commentRights` - the ONE statement that both draws the pencil and
 enforces the write - is false for them. The admin tier does not count as holding `POST_AS_ASSO`
-there (`CommentIdentityService.viewerFor` asks `mayActOnAny` without it).
+there (`CommentIdentityService.viewerFor` asks `mayActOnAny` without it). **Deleting is MODERATE's
+within its scope**: the served `canDelete` is the author, the platform admin, or a moderator of the
+post the comment sits under, for a plain, an anonymous and an association's comment alike - the same
+answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree (2026-11-02).
 
 **THE BDE'S `MODERATE` IS SCOPED** like VALIDATE_EVENTS and MANAGE_ASSO, in `spaces/bde-moderation.ts`:
 

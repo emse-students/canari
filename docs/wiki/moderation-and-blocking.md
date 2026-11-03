@@ -126,7 +126,9 @@ another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served
 the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): its author alone edits
 it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
 `COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
-of `POST_AS_ASSO` in it (decided the same day).
+of `POST_AS_ASSO` in it (decided the same day). Deleting a comment is MODERATE's within its scope: a
+moderator of the post deletes any comment under it - plain, anonymous or an association's - which
+`commentRights.canDelete` serves and `POST /moderation/comments/:id/delete` enforces alike.
 
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or

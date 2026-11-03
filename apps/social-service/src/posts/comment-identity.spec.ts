@@ -109,7 +109,7 @@ describe('commentRights', () => {
     expect(commentRights(ANON, viewer())).toEqual({ canEdit: false, canDelete: false });
   });
 
-  it('keeps an ordinary comment as it was: the writer, or an admin to delete', () => {
+  it('lets the writer edit an ordinary comment, and the writer, an admin or a moderator delete it', () => {
     expect(commentRights(PLAIN, viewer({ viewerId: 'writer' }))).toEqual({
       canEdit: true,
       canDelete: true,
@@ -118,7 +118,12 @@ describe('commentRights', () => {
       canEdit: false,
       canDelete: true,
     });
-    expect(commentRights(PLAIN, viewer({ isModerator: true })).canDelete).toBe(false);
+    // MODERATE deletes within its scope, as `POST /moderation/comments/:id/delete` does (2026-11-02).
+    expect(commentRights(PLAIN, viewer({ isModerator: true }))).toEqual({
+      canEdit: false,
+      canDelete: true,
+    });
+    expect(commentRights(PLAIN, viewer())).toEqual({ canEdit: false, canDelete: false });
   });
 });
 

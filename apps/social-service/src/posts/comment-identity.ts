@@ -79,19 +79,15 @@ export function commentRights(
   c: StoredComment,
   v: CommentViewer
 ): { canEdit: boolean; canDelete: boolean } {
-  const own = !!v.viewerId && c.userId === v.viewerId;
   // A comment's integrity, as a post's (owner, 2026-11-02): only its author changes its text. The
-  // association is the author of its comment, so its POST_AS_ASSO holders edit it; a platform admin
-  // or a moderator deletes, never rewrites.
-  if (c.associationId) {
-    // A moderator of THIS post deletes it, as `POST /moderation/comments/:id/delete` lets them.
-    const holder = v.managedAssociationIds.has(c.associationId);
-    return { canEdit: holder, canDelete: holder || v.isGlobalAdmin || v.isModerator };
-  }
-  if (c.anonymous === true) {
-    return { canEdit: own, canDelete: own || v.isGlobalAdmin || v.isModerator };
-  }
-  return { canEdit: own, canDelete: own || v.isGlobalAdmin };
+  // association is the author of its comment, so its POST_AS_ASSO holders edit it.
+  const author = c.associationId
+    ? v.managedAssociationIds.has(c.associationId)
+    : !!v.viewerId && c.userId === v.viewerId;
+  // MODERATE deletes within its scope (owner, 2026-11-02): a platform admin or a moderator of THIS
+  // post deletes any comment under it - plain, anonymous or an association's - and never rewrites
+  // one. The same answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree.
+  return { canEdit: author, canDelete: author || v.isGlobalAdmin || v.isModerator };
 }
 
 /** Whether this reader may see the real account behind a masked comment. */
