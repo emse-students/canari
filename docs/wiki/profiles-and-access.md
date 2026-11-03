@@ -1322,9 +1322,9 @@ Saint-Etienne event).
   field, detach, ended partner or earlier proposal), and a few concurrent edits cannot starve the pool.
   The announcements and the other notices run after the commit. An event CREATION calls
   `sync(request)` without a manager and gets its own transaction.
-- **A co-organisation ACCEPTANCE is not under this lock.** It is a proposals transaction; WP-Q2's
-  acceptance, which returns a validated event to pending, must take `associations -> event row ->
-  proposal` in that order to be serialised with an edit.
+- **A co-organisation ACCEPTANCE takes the same lock** (WP-Q2): `CoorganisationService.lockSubject`
+  locks the event row in `lockInOrder`, so it runs `associations -> event row -> proposal` and is serialised
+  with an edit, a validation and a rejection.
 - **Tests.** `coorganisation.integration.spec.ts` gains the refusals (start, end, partner list,
   delete), the allowed text and poster (through `setEventImageFromUpload` / `clearEventImage`), the withdrawal, the form-link rows, a validator tier derived by `mayValidateEvent`, and a deterministic interleaving (a hook between the check and the save starts a validation and returns once Postgres reports it waiting on the lock, failing explicitly if it settles first), the organiser-delete versus partner-edit ordering (a held association lock, never a hang) and the rollback of a failing k-th proposal;
   `eventForm.test.ts` and `EventFormModal.coOwners.svelte.test.ts` pin the form.

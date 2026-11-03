@@ -56,8 +56,12 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'event_updated':
     case 'event_deleted':
     case 'event_pending':
-    case 'event_pending_coorganiser':
       return '/calendar';
+    // The same type reaches the organiser, the partners AND the validators; the validators' row
+    // (meta.audience, written with the push's 'proposed' action) opens the validation queue like
+    // an event proposal, everybody else the agenda.
+    case 'event_pending_coorganiser':
+      return notif.meta?.audience === 'validators' ? '/admin/agenda' : '/calendar';
     // The answer to a profile correction request: `postId` holds the REQUEST's id, which has no page
     // of its own - the profile is where the corrected data, or the request's state, is shown.
     case 'profile_correction_applied':

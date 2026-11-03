@@ -1228,6 +1228,8 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         postId: A1,
         text: 'Reopen 30',
         meta: { reason: 'coorganiser_joined', audience: 'validators' },
+        // The push deep link reads this action: 'proposed' is the validation queue.
+        pushData: { action: 'proposed' },
       });
       // The proposal is decided once: there is nothing left to accept, so nothing can fire twice.
       const [again] = (await proposals.listPending(A3, 'coPub', false)).incoming.filter(
@@ -1329,6 +1331,31 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(told).toEqual([]);
     });
 
+    it('an announcement NEVER rejects: a failing status re-read is logged at WARN and nothing is sent', async () => {
+      const repo = ds.getRepository(AssociationCalendarEvent);
+      const read = jest.spyOn(repo, 'findOne').mockRejectedValueOnce(new Error('db gone'));
+      const internals = associations as unknown as { logger: { warn: (...a: unknown[]) => void } };
+      const warn = jest.spyOn(internals.logger, 'warn').mockImplementation(() => undefined);
+      told.length = 0;
+      try {
+        await expect(
+          associations.announceEventReopened(
+            { id: E(35), associationId: A1, title: 'x' },
+            'date_moved',
+            'coPub'
+          )
+        ).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('could not be re-read'),
+          expect.stringContaining('db gone')
+        );
+      } finally {
+        read.mockRestore();
+        warn.mockRestore();
+      }
+      expect(told).toEqual([]);
+    });
+
     it('a failing notification is LOGGED and the committed acceptance stays', async () => {
       const FAIL = E(36);
       await q(
@@ -1426,6 +1453,49 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         validatedBy: null,
       });
       expect(await coOwnersOf(RACE)).toEqual([A3]);
+    }, 30_000);
+
+    it('the OPPOSITE order: an acceptance commits first, and the edit that waited re-reads the pending row', async () => {
+      const OPP = E(39);
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status, "validatedAt", "validatedBy")
+           VALUES ($1, $2, 'Reopen opposite', '2026-08-08T18:00:00Z', 'org', 'validated', now(), 'bde')`,
+        [OPP, A1]
+      );
+      const proposalId = await ask(OPP);
+      // The hook sits INSIDE the acceptance's transaction, after the demotion and before its commit:
+      // it starts an edit, which must WAIT for the event lock and then start from the pending row.
+      const hold: { editing?: Promise<unknown> } = {};
+      const realApply = coorg.apply.bind(coorg);
+      const apply = jest
+        .spyOn(coorg, 'apply')
+        .mockImplementation(async (manager, proposal, actor) => {
+          const after = await realApply(manager, proposal, actor);
+          hold.editing = associations.updateCalendarEvent(
+            A1,
+            OPP,
+            { title: 'Edited after the acceptance', coOwnerIds: [A3] },
+            { callerUserId: 'org' }
+          );
+          await lockWaiter('%FOR NO KEY UPDATE%', hold.editing);
+          return after;
+        });
+      try {
+        await proposals.accept(proposalId, 'coPub', false);
+      } finally {
+        apply.mockRestore();
+        await hold.editing?.catch(() => undefined);
+      }
+      await hold.editing;
+      const [row] = (await q(`SELECT title FROM association_calendar_events WHERE id = $1`, [
+        OPP,
+      ])) as {
+        title: string;
+      }[];
+      // The edit saw the demoted row: it neither wrote 'validated' back nor lost its own title.
+      expect(row.title).toBe('Edited after the acceptance');
+      expect(await stamp(OPP)).toEqual({ status: 'pending', validatedAt: null, validatedBy: null });
+      expect(await coOwnersOf(OPP)).toEqual([A3]);
     }, 30_000);
   });
 });

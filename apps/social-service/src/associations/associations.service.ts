@@ -1650,7 +1650,8 @@ export class AssociationsService {
    * rejection) is serialised: the second one starts from what the first committed, never from the
    * snapshot it took before waiting. Without it an edit and a validation both load the row, both
    * save, and the later save writes back the other's stale status columns. A co-organisation
-   * ACCEPTANCE is NOT serialised here: it is a proposals transaction (WP-Q2 gives it this lock).
+   * ACCEPTANCE is serialised with it too: it is a proposals transaction, whose handler
+   * (`CoorganisationService.lockSubject`) takes this same event lock in the same order.
    *
    * THE LOCK ORDER IS THE GLOBAL ONE - associations first, then the subject (`ProposalsService
    * .lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE` before it
@@ -2749,12 +2750,23 @@ ${rejectionReason}`
     reason: EventReopenReason,
     actorId: string
   ): Promise<void> {
-    // RE-READ, never trusted from the write: between the commit and this notice a validator may have
-    // said yes again, and "waiting for validation" would then be false.
-    const current = await this.calendarRepo.findOne({
-      where: { id: ev.id },
-      select: { id: true, status: true },
-    });
+    // NEVER REJECTS: every caller is fire-and-forget or runs after a commit that must stay a success
+    // (a rejection would turn a committed acceptance into a 500, or be an unhandled rejection).
+    let current: { status: AssociationCalendarEventStatus } | null;
+    try {
+      // RE-READ, never trusted from the write: between the commit and this notice a validator may
+      // have said yes again, and "waiting for validation" would then be false.
+      current = await this.calendarRepo.findOne({
+        where: { id: ev.id },
+        select: { id: true, status: true },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the status could not be re-read, not announced`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      return;
+    }
     if (current?.status !== AssociationCalendarEventStatus.Pending) {
       this.logger.log(
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): no longer pending (${current?.status ?? 'gone'}), not announced`
@@ -2765,7 +2777,9 @@ ${rejectionReason}`
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
     );
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
-    // gets ONE notice, the validator's - the one that is actionable.
+    // gets ONE notice, the validator's - the one that is actionable. DEGRADED CASE: when the
+    // validators' notice FAILS (logged below), nobody is excluded and that person is told once as a
+    // party instead - a notice with the reason, but not the actionable one.
     let validatorIds: string[] = [];
     try {
       // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
@@ -2775,7 +2789,9 @@ ${rejectionReason}`
           ? await this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
               type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
               meta: { reason, audience: 'validators' },
-              pushData: { associationId: ev.associationId, action: 'pending', reason },
+              // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
+              // on the validation queue, as for a proposal, never on the plain agenda.
+              pushData: { associationId: ev.associationId, action: 'proposed', reason },
             })
           : await this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
     } catch (err) {
@@ -2872,7 +2888,7 @@ ${rejectionReason}`
       // space - but a proposal that told nobody is the exact shape of the defect this method was
       // written for, so it says so: only a global admin can validate it now.
       this.logger.warn(
-        `[notify] event proposed for asso ${sanitizeLog(associationId)} and no VALIDATE_EVENTS holder in a BDE governing it was told`
+        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}) and no VALIDATE_EVENTS holder in a BDE governing it was told`
       );
     }
     return validators.map((v) => v.userId);

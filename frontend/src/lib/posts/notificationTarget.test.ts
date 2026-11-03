@@ -57,6 +57,23 @@ describe('notificationHref', () => {
     }
   });
 
+  it('sends the validators of a co-organisation acceptance to the validation queue, like a proposal', () => {
+    const validators = {
+      type: 'event_pending_coorganiser',
+      postId: 'assoc-1',
+      meta: { reason: 'coorganiser_joined', audience: 'validators' },
+    };
+    expect(notificationHref(validators)).toBe('/admin/agenda');
+    // The organiser and the partners (no audience) keep the agenda.
+    expect(
+      notificationHref({
+        type: 'event_pending_coorganiser',
+        postId: 'assoc-1',
+        meta: { reason: 'coorganiser_joined' },
+      })
+    ).toBe('/calendar');
+  });
+
   it('sends the answer to a profile correction request to the profile, never to a post of that id', () => {
     // `postId` is the REQUEST's id, which has no page: `/posts/<request id>` would be a 404.
     for (const type of ['profile_correction_applied', 'profile_correction_refused']) {
