@@ -322,6 +322,8 @@ a file edited after its approval is held again, and the refusal says so. Chosen 
 because `gh release create` carries none, and over an environment flag because a switch nobody reviews
 is no approval.
 
+**Who merges the approval line (owner, 2026-11-03: "Oui, après revue et dev").** The owner, or the lead agent under his delegation, on three conditions: an adversarial Opus review has passed, the migration has run on dev through a pre-release (which takes a backup right before it), and each such merge is reported on the owner's private tracking page ([decisions](backlog.d/owner-decisions-of-2026-11-03-evening.md)). Mechanics are unchanged: `arm-auto-merge.yml` still never arms such a pull request, and the lead merges it by hand with `gh pr merge --match-head-commit`.
+
 **A held migration on `main` BLOCKS EVERY RELEASE until it is approved or reverted.** The hold stops a
 migration at the release and at the deploy, never at the merge: the pull request that adds one is an
 ordinary pull request, armed and merged like any other (only the approvals file and what judges it
