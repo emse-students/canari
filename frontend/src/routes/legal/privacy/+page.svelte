@@ -380,6 +380,15 @@
         </dd>
       </div>
       <div>
+        <dt>Aides déjà vues</dt>
+        <dd>
+          Si vous avez déjà vu la visite guidée de bienvenue (son identifiant et la date),
+          enregistré sur votre compte pour qu'elle ne réapparaisse pas sur un autre appareil. Une
+          copie est gardée sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de
+          l'appareil.
+        </dd>
+      </div>
+      <div>
         <dt>Cotisations des anciennes bases (personnes sans compte)</dt>
         <dd>
           Pour permettre aux cotisants du BDE et du Cercle d'avant Canari de retrouver leur
@@ -621,6 +630,14 @@
             <td>
               Tant que le compte existe ; supprimés à la suppression du compte (une nouvelle
               connexion recrée un compte)
+            </td>
+          </tr>
+          <tr>
+            <td>Visite guidée de bienvenue déjà vue</td>
+            <td>
+              Tant que le compte existe ; supprimée à la suppression du compte. La copie sur
+              l'appareil y reste jusqu'à la suppression du compte ou la réinitialisation de
+              l'appareil
             </td>
           </tr>
           <tr>
@@ -873,7 +890,10 @@
           </tr>
           <tr>
             <td>Préférences et brouillons (stockage local)</td>
-            <td>Thème, émojis récents, brouillon de publication, identifiant de l'appareil</td>
+            <td>
+              Thème, émojis récents, brouillon de publication, identifiant de l'appareil, visite
+              guidée déjà vue
+            </td>
             <td>Jusqu'à leur effacement</td>
           </tr>
           <tr>

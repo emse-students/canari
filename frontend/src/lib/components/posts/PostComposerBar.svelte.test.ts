@@ -205,3 +205,10 @@ it('keeps the attach chips usable below the cap', () => {
   expect(fileInputs(target).some((i) => i.disabled)).toBe(false);
   expect(target.querySelector<HTMLButtonElement>('[data-post-camera]')!.disabled).toBe(false);
 });
+
+it('wraps the chip row instead of clipping it, so every chip is reachable at any width', () => {
+  const { target } = mountBar();
+  const row = target.querySelector<HTMLElement>('[data-chip-row]')!;
+  expect(row.className).toContain('flex-wrap');
+  expect(row.className).not.toMatch(/overflow-(x-)?(hidden|auto|scroll)/);
+});

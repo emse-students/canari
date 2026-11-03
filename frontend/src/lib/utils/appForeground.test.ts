@@ -82,3 +82,31 @@ describe('onAppForegroundChange', () => {
     off();
   });
 });
+
+describe('onAppScreenChange - one edge per transition', () => {
+  it('reports a trip to the background ONCE when both signals announce it (iOS)', async () => {
+    const { onAppScreenChange } = await import('./appForeground');
+    set(true);
+    const edges: boolean[] = [];
+    const off = onAppScreenChange((onScreen) => edges.push(onScreen));
+    const hidden = vi.spyOn(document, 'visibilityState', 'get');
+    try {
+      // The shell's event first, then the WebView's own visibilitychange: one transition.
+      set(false);
+      window.dispatchEvent(
+        new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: false } })
+      );
+      hidden.mockReturnValue('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      // And back, in the opposite order.
+      hidden.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      set(true);
+      window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: true } }));
+      expect(edges).toEqual([false, true]);
+    } finally {
+      off();
+      hidden.mockRestore();
+    }
+  });
+});

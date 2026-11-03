@@ -30,6 +30,7 @@ import {
   FOLLOWED_REPOST_AT,
   MEMBER_REPOSTED_BY_FOLLOWED_SQL,
   followedRepostLateralSql,
+  inAssociationsFeedSql,
 } from './republished-feed-sql';
 import { MemberRepost } from './entities/member-repost.entity';
 import { bellRowShownSql } from './post-notifications.service';
@@ -461,6 +462,35 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       // An entity post's author is no block's subject: sb blocked au, the officer, and still sees it.
       expect(await sees(P(11), 'sb')).toBe(true);
       expect(told[0]?.recipientIds).toEqual(['fa', 'fo', 'sb']);
+    });
+
+    it('a cross-space reader reached ONLY through the repost finds it in Suivis, never in Associations (owner, 2026-11-02)', async () => {
+      // The two feed arms as `listPosts` composes them: Associations admits what associations
+      // publish or republish and asks the predicate WITHOUT member reposts; Suivis admits what a
+      // followed person reposted and asks the whole predicate. fo (Gardanne) shares no space with
+      // A1 and follows rp, who reposted P(11) in the test above.
+      const inAssociations = async (reader: string): Promise<boolean> =>
+        (
+          await q(
+            `SELECT 1 FROM posts WHERE posts.id = $1 AND ${inAssociationsFeedSql('$2')}
+               AND ${postVisibleToViewerSql('posts', '$2', { memberReposts: false })}`,
+            [P(11), reader]
+          )
+        ).length === 1;
+      const inSuivis = async (reader: string): Promise<boolean> =>
+        (
+          await q(
+            `SELECT 1 FROM posts ${followedRepostLateralSql('$1', '$2')}
+              WHERE posts.id = $3 AND ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}
+                AND ${postVisibleToViewerSql('posts', '$2')}`,
+            [['rp'], reader, P(11)]
+          )
+        ).length === 1;
+      expect(await repostRows(P(11))).toContain('rp');
+      expect(await inSuivis('fo')).toBe(true);
+      expect(await inAssociations('fo')).toBe(false);
+      // A reader of A1's own space still finds it in Associations: the arm lost the repost door only.
+      expect(await inAssociations('rp')).toBe(true);
     });
 
     it('not yet announced: tells nobody now - the sweep will tell everyone who sees it', async () => {

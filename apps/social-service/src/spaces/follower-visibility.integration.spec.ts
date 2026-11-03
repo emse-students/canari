@@ -441,6 +441,36 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
     }
   });
 
+  it('a person with NO SPACE may publish a personal post: it reaches their accepted followers only (D31, owner 2026-11-02)', async () => {
+    // staffAlone has a campus and no cursus, so no space at all; farStranger follows them (accepted),
+    // farPending only asked. Nothing refuses the write (no space check at publish), and the post is
+    // the author's and their accepted followers', nobody else's - not a same-campus reader either.
+    const P_NO_SPACE = '00000000-0000-4000-8000-000000000521';
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status, "acceptedAt")
+           VALUES ('farStranger', 'staffAlone', 'accepted', now())`
+      );
+      await client.query(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ('farPending', 'staffAlone')`
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId", anonymous) VALUES ($1, 'staffAlone', NULL, false)`,
+        [P_NO_SPACE]
+      );
+      expect(await seersOfPost(P_NO_SPACE)).toEqual(['farStranger', 'staffAlone']);
+      // "Tout" is a feed of spaces: the author has none, so it reaches nobody there but themselves.
+      expect(await seersOfPost(P_NO_SPACE, { followers: false })).toEqual(['staffAlone']);
+      // And the announcement tells exactly the accepted follower.
+      expect(ids((await client.query(announceRecipientsSql(true), [P_NO_SPACE])).rows)).toEqual([
+        'farStranger',
+      ]);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
   it('a follow made before follow requests existed opens like an answered one (F1, owner 2026-11-01)', async () => {
     const { rows } = await client.query(
       `SELECT "acceptedAt" = "createdAt" AS grandfathered FROM user_follows

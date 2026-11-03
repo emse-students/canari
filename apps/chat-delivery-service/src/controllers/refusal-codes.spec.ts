@@ -88,18 +88,14 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
 
     it('NOT_A_MEMBER: a non-member cannot mint an invite link', async () => {
       groupMemberRepo.findOne.mockResolvedValue(null);
-      const e = await controller
-        .createGroupInvite('g1', 'alice', undefined, {})
-        .catch((x: unknown) => x);
+      const e = await controller.createGroupInvite('g1', 'alice', {}).catch((x: unknown) => x);
       expect(codeOf(e)).toBe('NOT_A_MEMBER');
     });
 
     it('INVITE_NOT_A_GROUP: a 1-to-1 has no invite link', async () => {
       groupMemberRepo.findOne.mockResolvedValue({ userId: 'alice' });
       groupRepo.findOne.mockResolvedValue({ id: 'g1', isGroup: false });
-      const e = await controller
-        .createGroupInvite('g1', 'alice', undefined, {})
-        .catch((x: unknown) => x);
+      const e = await controller.createGroupInvite('g1', 'alice', {}).catch((x: unknown) => x);
       expect(codeOf(e)).toBe('INVITE_NOT_A_GROUP');
     });
 
@@ -196,15 +192,13 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
 
     it('MEMBERSHIP_NOT_ALLOWED: a non-member cannot add somebody else', async () => {
       const e = await controller
-        .addGroupMember('g1', { userId: 'bob' }, 'alice', undefined)
+        .addGroupMember('g1', { userId: 'bob' }, 'alice')
         .catch((x: unknown) => x);
       expect(codeOf(e)).toBe('MEMBERSHIP_NOT_ALLOWED');
     });
 
     it('NOT_A_MEMBER: a non-member cannot read the roster', async () => {
-      const e = await controller
-        .getGroupUserMembers('g1', 'alice', undefined)
-        .catch((x: unknown) => x);
+      const e = await controller.getGroupUserMembers('g1', 'alice').catch((x: unknown) => x);
       expect(codeOf(e)).toBe('NOT_A_MEMBER');
     });
   });
@@ -258,7 +252,7 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
     it('PIN_NOT_SET: an account that never registered a PIN', async () => {
       pinRepo.findOne.mockResolvedValue(null);
       const e = await controller
-        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
         .catch((x: unknown) => x);
       expect(codeOf(e)).toBe('PIN_NOT_SET');
     });
@@ -266,14 +260,14 @@ describe('refusal codes - one stable name per refusal a user can act on', () => 
     it('PIN_INCORRECT: a wrong current PIN, and the lost compare-and-swap alike', async () => {
       pinRepo.findOne.mockResolvedValue({ userId: 'u1', verifier: NEW });
       const wrong = await controller
-        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
         .catch((x: unknown) => x);
       expect(codeOf(wrong)).toBe('PIN_INCORRECT');
 
       pinRepo.findOne.mockResolvedValue({ userId: 'u1', verifier: OLD });
       pinRepo.update.mockResolvedValue({ affected: 0 });
       const raced = await controller
-        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+        .changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1')
         .catch((x: unknown) => x);
       expect(codeOf(raced)).toBe('PIN_INCORRECT');
     });

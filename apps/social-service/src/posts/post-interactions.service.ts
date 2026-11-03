@@ -10,7 +10,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { sameSideOfReviewCohort } from '../review-cohort';
-import { MENTIONED_READERS_SQL } from '../spaces/reader-spaces';
 import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
   ANONYMOUS_NOTIFICATION_ACTOR_ID,
@@ -62,12 +61,17 @@ export class PostInteractionsService {
     return out;
   }
 
-  /** Sets or replaces the reaction emoji for a user on a post (one reaction per user). */
-  async addReaction(postId: string, userId: string, reactionType: string) {
+  /**
+   * Sets or replaces the reaction emoji for a user on a post (one reaction per user).
+   *
+   * @param opened the row the route's gate (`PostsService.assertVisible`) just loaded, so the post
+   *   is read once per reaction; read here when absent.
+   */
+  async addReaction(postId: string, userId: string, reactionType: string, opened?: Post) {
     if (isUnsafeObjectKey(userId)) {
       throw new BadRequestException('Invalid userId');
     }
-    const post = await this.postRepo.findOne({ where: { id: postId } });
+    const post = opened ?? (await this.postRepo.findOne({ where: { id: postId } }));
     // A reel past its expiry is dead to every reader until the worker removes it; a reaction on it
     // would be content nobody can ever see.
     if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
@@ -310,27 +314,20 @@ export class PostInteractionsService {
         }
       }
 
-      // Mention notifications
+      // Mention notifications - only to who may open the post, with no block with the writer: the
+      // read's gate (`mentionRecipientsOf`), so a mention never pushes this text past it.
       if (data.text) {
-        const named = this.notifications.resolveMentionedUserIds(data.text);
-        // Only a mentioned reader who SEES the post, once it is published (review of #2965): the
-        // notice and its push carry a preview of the comment.
         let mentionedIds: string[] = [];
-        if (named.length > 0) {
-          try {
-            const rows: { id: string }[] = await this.postRepo.manager.query(
-              MENTIONED_READERS_SQL,
-              [postId, named]
-            );
-            mentionedIds = rows.map((r) => String(r.id));
-          } catch (e) {
-            this.logger.warn(`[NOTIFY] mentioned readers of ${postId} unreadable, none told`, e);
-          }
-          if (mentionedIds.length < named.length) {
-            this.logger.log(
-              `[NOTIFY] ${named.length - mentionedIds.length} of ${named.length} mentioned cannot see post ${postId.slice(0, 8)}: not told`
-            );
-          }
+        try {
+          mentionedIds = await this.notifications.mentionRecipientsOf(
+            post,
+            data.userId,
+            this.notifications
+              .resolveMentionedUserIds(data.text)
+              .filter((id) => !alreadyNotified.has(id))
+          );
+        } catch (e) {
+          this.logger.warn(`[NOTIFY] mention recipients of post=${postId} unreadable`, e);
         }
         for (const recipientId of mentionedIds) {
           if (alreadyNotified.has(recipientId)) continue;

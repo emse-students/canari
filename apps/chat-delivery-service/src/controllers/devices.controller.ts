@@ -296,8 +296,7 @@ export class DevicesController {
       deviceOs?: string;
       deviceAppVersion?: string;
     },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     // IDENTITIES, not query values: this path creates a KeyPackage and a `pending` membership in
     // every group the user is in, so a placeholder accepted here becomes addressable and can then
@@ -306,13 +305,10 @@ export class DevicesController {
     const deviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
     // A device may only register under its own account (audit S2): binding to the HMAC-bound
     // x-user-id prevents an attacker from registering a device under a victim's userId, which
-    // would auto-provision pending memberships for the victim's groups and phish Welcomes.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      userId,
-      'Cannot register a device for another user'
-    );
+    // would auto-provision pending memberships for the victim's groups and phish Welcomes. NO
+    // PLATFORM-ADMIN EXEMPTION (owner, 2026-11-02): a device registered under somebody else is
+    // routed into every one of their conversations.
+    assertCallerOwnsUserId(headerUserId, userId, 'Cannot register a device for another user');
     // A deleted device is denylisted for good, and `resolveDeviceId` deliberately restores the
     // SAME id after a reinstall - so without this check the row is written, 200 is returned, and
     // the device is then filtered out of getUserDevices and resolves to a null KeyPackage
@@ -463,18 +459,13 @@ export class DevicesController {
   /** Bulk-uploads one-time prekeys for the current device. */
   async registerDevicePrekeys(
     @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    // Prekeys may only be uploaded for the caller's own account (audit S2).
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      userId,
-      'Cannot upload prekeys for another user'
-    );
+    // Prekeys may only be uploaded for the caller's own account (audit S2), a global admin included
+    // (owner, 2026-11-02): a package published under somebody else is the key their next Add uses.
+    assertCallerOwnsUserId(headerUserId, userId, 'Cannot upload prekeys for another user');
 
     // THE SAME REFUSAL AS `register-device`, for the same id: a banned device publishing a pool of
     // one-time packages would hand peers packages for a device no Welcome may reach.
@@ -546,20 +537,14 @@ export class DevicesController {
     @Param('deviceId') deviceId: string,
     @Body()
     body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // A device's metadata may only be edited by its owner (audit S4): the userId is a path
     // param, so without this binding any authenticated user could rewrite another user's
-    // device name/OS. Admins exempt; legacy no-op when x-user-id absent.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot update another user device metadata'
-    );
+    // device name/OS. No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot update another user device metadata');
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
@@ -721,17 +706,11 @@ export class DevicesController {
   async isDeviceRevoked(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot read another user devices'
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot read another user devices');
     const revoked = await this.revokedDeviceRepo.findOne({
       where: activeRevocationWhere({ userId: safeUserId, deviceId: safeDeviceId }),
     });
@@ -793,19 +772,13 @@ export class DevicesController {
   async purgeDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string; deleted: number; keyPackages: string[] }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // Prekeys may only be purged for the caller's own device (audit S4): purging a victim's
-    // one-time KeyPackages would degrade their invite availability. Admins exempt.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot purge another user device prekeys'
-    );
+    // one-time KeyPackages would degrade their invite availability. No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot purge another user device prekeys');
     const result = await this.oneTimeKeyPackageRepo
       .createQueryBuilder()
       .delete()
@@ -868,18 +841,12 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Body() body: { ids: unknown },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string; deleted: number }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    // Prekeys may only be pruned for the caller's own device (audit S4). Admins exempt.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot prune another user device prekeys'
-    );
+    // Prekeys may only be pruned for the caller's own device (audit S4). No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot prune another user device prekeys');
     if (!Array.isArray(body.ids) || body.ids.length === 0) {
       throw new BadRequestException('ids must be a non-empty array');
     }
@@ -910,7 +877,6 @@ export class DevicesController {
     @Param('deviceId') deviceId: string,
     @Query('reason') reasonRaw?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Headers('x-session-id') headerSessionId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -929,13 +895,8 @@ export class DevicesController {
     // A device may only be deleted by its owner (audit S4): this route purges the full
     // per-device footprint (memberships, KeyPackages, queued messages, push token) and
     // denylists re-registration, so without this binding any user could eject a victim from
-    // every conversation. Admins exempt; legacy no-op when x-user-id absent.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot delete another user device'
-    );
+    // every conversation. No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot delete another user device');
 
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
     //    key groups the device held: its rows were the binding the revoked-leaves question reads.

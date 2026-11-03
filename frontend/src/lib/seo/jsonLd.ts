@@ -169,69 +169,6 @@ export function buildAssociationJsonLd(input: AssociationJsonLdInput): JsonLdNod
   });
 }
 
-export interface EventJsonLdInput {
-  name: string;
-  description?: string | null;
-  startDate: string;
-  endDate?: string | null;
-  url: string;
-  image?: string;
-  organizerName?: string | null;
-  organizerUrl?: string | null;
-}
-
-/**
- * `Event`, the one schema on this site with a real chance of a rich result: Google surfaces events
- * with their dates directly in search, and an agenda is exactly the query a student types.
- *
- * `eventAttendanceMode` and `location` are declared because Google's event guidelines treat a
- * missing location as a warning; every association event happens at the school unless it says
- * otherwise, and the school address is public information.
- */
-export function buildEventJsonLd(input: EventJsonLdInput): JsonLdNode {
-  return prune({
-    '@type': 'Event',
-    name: input.name,
-    description: input.description ?? undefined,
-    startDate: input.startDate,
-    endDate: input.endDate ?? undefined,
-    url: input.url,
-    image: input.image,
-    eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
-    eventStatus: 'https://schema.org/EventScheduled',
-    location: {
-      '@type': 'Place',
-      name: SITE.institutionName,
-      address: {
-        '@type': 'PostalAddress',
-        streetAddress: SITE.institutionStreet,
-        postalCode: SITE.institutionPostalCode,
-        addressLocality: SITE.institutionCity,
-        addressCountry: 'FR',
-      },
-    },
-    organizer: input.organizerName
-      ? prune({
-          '@type': 'Organization',
-          name: input.organizerName,
-          url: input.organizerUrl ?? undefined,
-        })
-      : undefined,
-  });
-}
-
-/** `ItemList` wrapping the upcoming events, so the agenda page describes a list and not one event. */
-export function buildEventListJsonLd(events: JsonLdNode[]): JsonLdNode {
-  return {
-    '@type': 'ItemList',
-    itemListElement: events.map((event, index) => ({
-      '@type': 'ListItem',
-      position: index + 1,
-      item: event,
-    })),
-  };
-}
-
 /**
  * `BreadcrumbList` for a nested page.
  *

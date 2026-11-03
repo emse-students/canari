@@ -559,21 +559,6 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
- * Of the user ids `$2` (a `text[]`) MENTIONED in post `$1` or in a comment on it, those a mention
- * may notify (review of #2965): the post is PUBLISHED (`publishedAt` reached, so never a scheduled
- * post before its time) and the reader SEES it, by the very predicate the bell re-checks
- * (`postVisibleToViewerSql`, read grants included). A mention used to be written and pushed, with a
- * text preview, to anyone it named - a post its reader would get a 404 for, or one not out yet.
- * Excluding the writer is the caller's: for a comment it is not the post's author.
- */
-export const MENTIONED_READERS_SQL = `SELECT mn_user.id FROM users mn_user
-  JOIN posts mn_post ON mn_post.id = $1
-  WHERE mn_user.id = ANY($2::text[])
-    AND mn_post."publishedAt" <= now()
-    AND NOT mn_post."hiddenByModeration"
-    AND ${postVisibleToUserSql('mn_post', 'mn_user', { readGrants: true })}`;
-
-/**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM
  * `:name`). An absent viewer (NULL) matches no `users` row, so it sees nothing.
  */

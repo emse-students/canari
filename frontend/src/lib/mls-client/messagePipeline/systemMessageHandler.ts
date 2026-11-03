@@ -63,6 +63,7 @@ import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
+import { publishReadState } from '$lib/mls-client/tabMessageSync';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -787,6 +788,9 @@ export async function handleSystemEvent(
         selfRead && mark ? withOwnReadAdvanced(c, senderNorm, mark.at, mark.clock) : (merged ?? c);
       if (next !== c) {
         conversations.set(convoKey, next);
+        // Only this tab has the socket: a follower tab of the same browser learns the receipt, and
+        // this account's read on another device, from here or not at all (`read_state`).
+        if (mark) publishReadState(convoKey, senderNorm, mark.at, mark.clock);
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
         await saveConversation?.(convoKey).catch(() => {});
@@ -1043,12 +1047,23 @@ export async function handleSystemEvent(
         );
         const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
         if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
-          conversations.set(convoKey, {
+          const merged = {
             ...beforeMerge,
             ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
             ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
             ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
-          });
+          };
+          conversations.set(convoKey, merged);
+          // The marks restated reach the follower tabs too, each entry that moved (`read_state`);
+          // the floor is not theirs.
+          for (const [map, before, clock] of [
+            [mergedWatermarks, beforeMerge.readWatermarks, 'stamped'],
+            [mergedServerWatermarks, beforeMerge.serverReadWatermarks, 'server'],
+          ] as const) {
+            for (const [reader, at] of Object.entries(map ?? {})) {
+              if ((before?.[reader] ?? 0) < at) publishReadState(convoKey, reader, at, clock);
+            }
+          }
           await saveConversation?.(convoKey).catch((e: unknown) => {
             log(
               `[HISTORY_BUNDLE] conversation state of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
