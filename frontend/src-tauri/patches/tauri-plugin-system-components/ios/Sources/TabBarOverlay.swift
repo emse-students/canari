@@ -31,8 +31,44 @@ final class PassthroughView: UIView {
     }
 }
 
+/// CANARI PATCH: catches a tap on the iOS status bar and reports it instead of scrolling.
+///
+/// UIKit sends that tap to the ONE visible scroll view with `scrollsToTop` set. The WKWebView's own
+/// scroll view is that view by default, but Canari's pages scroll in an inner `overflow-y-auto` box
+/// (the document never moves), so the gesture did nothing. This 1 pt, near-transparent scroll view
+/// becomes the only candidate (the plugin turns the web view's off), refuses the scroll
+/// (`scrollViewShouldScrollToTop` returns false) and tells the page, which runs the same
+/// scroll-to-top as a re-tap of the Feed tab.
+final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
+    var onTap: (() -> Void)?
+
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        delegate = self
+        scrollsToTop = true
+        // Never `isHidden` nor alpha 0: UIKit skips a scroll view that is not on screen.
+        alpha = 0.01
+        contentInsetAdjustmentBehavior = .never
+        showsVerticalScrollIndicator = false
+        showsHorizontalScrollIndicator = false
+        contentSize = CGSize(width: 1, height: 4)
+        contentOffset = CGPoint(x: 0, y: 2)
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        onTap?()
+        return false
+    }
+}
+
 final class TabBarOverlayController: UIViewController, UITabBarDelegate {
     let tabBar = UITabBar()
+    /// CANARI PATCH: the status bar tap, see `StatusBarTapCatcher`.
+    let statusBarTapCatcher = StatusBarTapCatcher()
     private(set) var ids: [String] = []
     var onSelect: ((String) -> Void)?
 
@@ -97,6 +133,8 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         tabBar.delegate = self
+        // Top-left corner, under no hit-test (PassthroughView claims only the bar and the account button).
+        view.addSubview(statusBarTapCatcher)
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tabBar)
         trailingFull = tabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor)

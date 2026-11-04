@@ -5,6 +5,7 @@
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { handlePlaceTap } from '$lib/navigation/scrollToTop';
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
@@ -149,6 +150,9 @@
         href={place.href}
         use:preloadRouteOnView={place.href}
         use:guideAnchor={`nav.${place.id}`}
+        onclick={(e) => {
+          if (handlePlaceTap(place.href, pathname)) e.preventDefault();
+        }}
         title={isExpanded ? undefined : place.label()}
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
