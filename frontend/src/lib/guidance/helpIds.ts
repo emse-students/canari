@@ -15,6 +15,10 @@ export const HELP_IDS = [
   'hint-feed-tabs',
   'hint-reels',
   'hint-chats',
+  'hint-asso-shop',
+  'hint-asso-post-as',
+  'hint-asso-manage',
+  'hint-asso-manage-hub',
 ] as const;
 
 /**

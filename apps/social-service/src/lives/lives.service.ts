@@ -57,7 +57,7 @@ import {
   type LiveStanding,
   type LiveStrikeConsequence,
 } from './live-strikes';
-import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { liveChatWithheldFromViewerSql, liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { BDE_MODERATES_LIVE_SQL, bdeModeratesContentSql } from '../spaces/bde-moderation';
 import { short } from './live-log';
 import {
@@ -84,9 +84,19 @@ export interface LiveView {
 /**
  * One live as a VIEWER opens it: the view, and whether that viewer moderates it as a BDE (the same
  * `viewerModerates` the list carries), so a viewer opened from a link draws the staff hide button
- * exactly as one opened from the list - never from a client-side fallback.
+ * exactly as one opened from the list - never from a client-side fallback. `chatWithheld`: the
+ * viewer is a named reader who watches this live only through a read grant with "voit les
+ * commentaires" off (owner, 2026-11-04, `liveChatWithheldFromViewerSql`) - the screen draws no chat
+ * and no chat toggle from the first frame; every poll then says it again.
  */
-export type LiveViewerView = LiveView & { viewerModerates: boolean };
+export type LiveViewerView = LiveView & { viewerModerates: boolean; chatWithheld: boolean };
+
+/**
+ * The manifest as the service hands it to the controller: the served manifest, and whether the chat
+ * is withheld from this viewer - decided in the watch rule's own statement, so on the same snapshot
+ * as the visibility. The controller puts it on the chat block; it is not a manifest field.
+ */
+export type LiveManifestForViewer = LiveManifest & { chatWithheld: boolean };
 
 /** A live in the list of open lives - no key: the key is read by opening it. */
 export interface LiveListItem {
@@ -466,7 +476,11 @@ export class LivesService implements OnModuleDestroy {
       viewerId,
       row.id,
     ]);
-    return { ...toView(row, key), viewerModerates: scoped[0]?.moderates === true };
+    return {
+      ...toView(row, key),
+      viewerModerates: scoped[0]?.moderates === true,
+      chatWithheld: row.chatWithheld,
+    };
   }
 
   /**
@@ -474,7 +488,7 @@ export class LivesService implements OnModuleDestroy {
    * `from` on. Refused exactly as the key is - a removed viewer learns no new segment name - and
    * 410 from the moment the live has ended: the manifest stops at `endedAt`.
    */
-  async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
+  async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifestForViewer> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, WATCH_ONLY);
     const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
@@ -493,6 +507,7 @@ export class LivesService implements OnModuleDestroy {
       serverNow: row.serverNow,
       segments,
       viewers,
+      chatWithheld: row.chatWithheld,
     };
   }
 
@@ -1657,6 +1672,23 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * The watch rule, then the chat's own: a named reader the chat is withheld from
+   * (`liveChatWithheldFromViewerSql`, owner 2026-11-04) is refused 403 `LIVE_CHAT_WITHHELD`. A 403
+   * and not the 404 a withheld comment gets: the live is visible to them and they watch it, so a 404
+   * would tell the client the live is gone (`isLiveOverRefusal`). The floating reactions stay open,
+   * as a post's reactions do - they ask {@link mayWatch} only.
+   */
+  async mayChat(viewerId: string, liveId: string): Promise<void> {
+    const row = await this.assertMayWatch(this.db.manager, viewerId, liveId, {
+      adminSeesCohort: false,
+    });
+    if (row.chatWithheld) {
+      this.logger.debug(`[LIVE_CHAT] ${liveId} refused to ${short(viewerId)}: chat withheld`);
+      throw new ForbiddenException({ code: 'LIVE_CHAT_WITHHELD' });
+    }
+  }
+
+  /**
    * Who may read a live's key and manifest:
    *
    * - absent, NOT VISIBLE to the viewer (the rule of a post by the same broadcaster or association,
@@ -1671,21 +1703,27 @@ export class LivesService implements OnModuleDestroy {
     viewerId: string,
     liveId: string,
     opts: { adminSeesCohort: boolean }
-  ): Promise<LiveRow & { serverNow: Date }> {
+  ): Promise<LiveRow & { serverNow: Date; chatWithheld: boolean }> {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
-    const rows: (LiveRow & { serverNow: Date; visible: boolean })[] = await manager.query(
-      `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
-              ${liveVisibleToViewerSql('lives', '$2', opts)} AS visible
-         FROM lives WHERE id = $1`,
-      [liveId, viewerId]
-    );
+    // `chatWithheld` in the SAME statement as the visibility: one snapshot decides both, on every
+    // open and every poll - so a switch flipped in the read-access grid holds from the next poll on.
+    const rows: (LiveRow & { serverNow: Date; visible: boolean; chatWithheld: boolean })[] =
+      await manager.query(
+        `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
+                ${liveVisibleToViewerSql('lives', '$2', opts)} AS visible,
+                ${liveChatWithheldFromViewerSql('lives', '$2')} AS "chatWithheld"
+           FROM lives WHERE id = $1`,
+        [liveId, viewerId]
+      );
     const found = rows[0];
     if (!found) {
       // A live staff CUT and already purged is still a 410 that says so, to whom it was visible.
       await this.refuseIfCut(manager, liveId, viewerId, 'viewer');
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    const { visible, ...row } = found;
+    const { visible, chatWithheld, ...rest } = found;
+    // `=== true`, as `visible`: only an explicit true withholds.
+    const row = { ...rest, chatWithheld: chatWithheld === true };
     // `=== true` and nothing looser: a driver answering `'t'` must not widen the gate.
     if (visible !== true) {
       this.logger.debug(`[LIVE] ${liveId} hidden from ${short(viewerId)}: not in its audience`);

@@ -64,6 +64,7 @@ Canonical definitions for terms and acronyms used across Canari's documentation 
 |---|---|
 | **Cotisation** | Membership dues. Modelled as a time-bounded `user_tags` row granted by an association, not as a boolean. |
 | **Cotisant** | A user who holds an active (non-expired) cotisation tag for an association. |
+| **Association (English wording, owner, 2026-11-04)** | English says "association", never "club" (reversible; the owner's "no club" read broadly): "club" was the English word for BOTH a community and an association. A community is "community" everywhere, and it is not described as an association space (`nav_communities_desc` reads "Espaces et canaux" / "Spaces and channels"). French already said "association" and "communauté". |
 | **Workspace** | A community container holding multiple channels. Each workspace has a master secret from which per-channel keys are derived. |
 | **Channel** | An encrypted group chat inside a workspace. Uses HKDF-derived symmetric keys distributed via MLS. |
 | **Dismissed group** | A group the user has explicitly hidden. Stored server-side, synced across devices. |

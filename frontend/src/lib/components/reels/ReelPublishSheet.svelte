@@ -15,6 +15,9 @@
   import { ChevronLeft, CircleAlert, Clock } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
+  import StudentsOnlySwitch from '$lib/components/posts/StudentsOnlySwitch.svelte';
+  import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -45,15 +48,13 @@
    * old outcome: the video handed back to the composer, kept as an ordinary post.
    */
   interface ReelPublishFromComposer {
-    /** The composer's text, the caption's start. */
-    caption: string;
-    /** The composer's "who is publishing" choice, the picker's start. */
-    identity: string;
+    /** The composer's text, identity and "Entre étudiants": where the step starts. */
+    start: ComposerReelState;
     /**
-     * "Garder comme post": the video goes back to the composer as an attachment, with the caption
-     * and identity as the step holds them NOW - an edit made here is the member's, not lost.
+     * "Garder comme post": the video goes back to the composer as an attachment, with the state as
+     * the step holds it NOW - an edit made here is the member's, not lost.
      */
-    onkeep: (caption: string, identity: string) => void;
+    onkeep: (kept: ComposerReelState) => void;
     /** The reel was published, as `identity`: the composer closes behind it. */
     onpublished: (identity: string) => void;
   }
@@ -82,9 +83,17 @@
   let { clip, limits, onclose, deps, composer, chatTake = null }: Props = $props();
 
   // Read once: the step starts from the composer and is the member's to change from there.
-  let caption = $state(untrack(() => composer?.caption ?? ''));
-  let identity = $state(untrack(() => composer?.identity ?? ''));
+  let caption = $state(untrack(() => composer?.start.caption ?? ''));
+  let identity = $state(untrack(() => composer?.start.identity ?? ''));
   let associations = $state<Association[]>([]);
+  /** "Entre étudiants" (owner, 2026-11-04): OFF, offered while an association or a list publishes. */
+  let studentsOnly = $state(untrack(() => composer?.start.studentsOnly ?? false));
+  const studentsOnlyAssociation = $derived.by(() => {
+    const chosen = associations.find((a) => a.id === identity) ?? null;
+    return chosen && studentsOnlyOffered(chosen.type) ? chosen : null;
+  });
+  /** Sent only where offered: a switch left on before the identity changed is not a choice. */
+  const sendStudentsOnly = $derived(studentsOnly && studentsOnlyAssociation !== null);
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
   let errorMessage = $state('');
@@ -178,14 +187,26 @@
         // The re-encode is over once the upload starts: its line comes down, its cancel with it.
         if (next === 'mediaUpload') preparation.finish();
       };
+      if (studentsOnlyAssociation) {
+        console.debug(
+          `[reel-publish] publishing with "Entre étudiants" ${sendStudentsOnly ? 'ON' : 'off'}`
+        );
+      }
       if (clip.blob.type.startsWith('image/')) {
-        await publishCameraPhoto({ clip, caption, identity, onStage });
+        await publishCameraPhoto({
+          clip,
+          caption,
+          identity,
+          studentsOnly: sendStudentsOnly,
+          onStage,
+        });
       } else {
         await publishReel(
           {
             clip,
             caption,
             identity,
+            studentsOnly: sendStudentsOnly,
             maxDurationMs: limits.maxDurationMs,
             video: { onProgress: options.onProgress, signal: options.signal },
             onStage,
@@ -270,6 +291,14 @@
       </p>
     {/if}
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
+    {#if studentsOnlyAssociation}
+      <div class="mt-3">
+        <StudentsOnlySwitch
+          bind:checked={studentsOnly}
+          associationName={studentsOnlyAssociation.name}
+        />
+      </div>
+    {/if}
 
     <div class="mt-4 flex gap-3">
       <!-- The box is 9:16 from the first paint. The take is a local blob, so its first frame is a
@@ -353,7 +382,8 @@
           disabled={publishing}
           onclick={() => {
             console.debug('[reel-publish] kept as a post: the video goes back to the composer');
-            composer.onkeep(caption, identity);
+            // The switch goes back as the author left it: the composer sends it only where offered.
+            composer.onkeep({ caption, identity, studentsOnly });
           }}
           data-reel-keep-as-post
         >

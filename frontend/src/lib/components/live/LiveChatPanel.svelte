@@ -128,6 +128,10 @@
         return m.live_chat_failed_refused();
       case 'unreadable':
         return m.live_chat_failed_unreadable();
+      case 'withheld':
+        // Never drawn: a withheld send leaves no line, and the viewer mounts no panel while the
+        // chat is withheld (the comments rule: nothing hinting at a hidden discussion).
+        return m.live_chat_failed_refused();
     }
   }
 

@@ -110,6 +110,30 @@ export class RedisService implements OnModuleDestroy {
     return this.client.get(key);
   }
 
+  /** The values at `keys`, in order, null for a missing key - one round trip (`MGET`). */
+  async mget(...keys: string[]): Promise<(string | null)[]> {
+    if (keys.length === 0) return [];
+    return this.client.mget(...keys);
+  }
+
+  /** Increments the integer at `key` (0 when absent) and returns the new value (`INCR`). */
+  async incr(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
+  /**
+   * `INCR` on each of `keys`, in one round trip (a pipeline). Throws when any of them failed: the
+   * caller relies on every counter having moved.
+   */
+  async incrEach(keys: readonly string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const pipeline = this.client.pipeline();
+    for (const key of keys) pipeline.incr(key);
+    const results = (await pipeline.exec()) ?? [];
+    const failed = results.find(([err]) => err);
+    if (failed) throw failed[0];
+  }
+
   /** Stores a string value with an expiry (TTL in seconds). */
   async setex(key: string, ttlSeconds: number, value: string): Promise<void> {
     await this.client.setex(key, ttlSeconds, value);

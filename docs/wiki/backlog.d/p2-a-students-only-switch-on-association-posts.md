@@ -1,4 +1,4 @@
-## P2 - a "students only" switch on association and list posts (decided by the owner on 2026-11-04, not built)
+## P2 - a "students only" switch on association and list posts (decided by the owner on 2026-11-04, built the same day, readings owed)
 
 The owner wants one community life for everyone AND a barrier that keeps student-only content
 (jokes, student lore) away from staff and named readers, while staying as simple as possible to use.
@@ -36,5 +36,23 @@ Settled by the owner later the same day:
    blocked or warned**: the chip on the card is the whole signal, to the republisher as to everyone.
 
 Left to the build: its place in `postVisibleToUserSql` (ONE predicate every read path already goes
-through).
-Built after the named-reader comments change, which edits the same predicate.
+through). Built after the named-reader comments change, which edits the same predicate.
+
+**BUILT (2026-11-04, migration 133)**: the gate is `studentsOnlyAdmitsUserSql`, one conjunct of
+`postVisibleToUserSql`; every consumer, the test proving it, the five reversible decisions taken in
+the build and what happens to notifications already delivered are in
+[profiles-and-access](../profiles-and-access.md#the-students-only-switch-as-built-owner-2026-11-04).
+
+**Owed before this entry is deleted** (it ships with the first release carrying migration 133):
+
+1. On dev, on a pre-release: a list officer publishes with the switch ON, and the post is read by a
+   student account, by a member of the list without a cursus, and NOT by a staff account that is a
+   member of a carrier, nor by a named reader whose cell covers the list's space (feed, search, the
+   post by its link, its bell row); then the officer turns it OFF from the edit form and the staff
+   account and the named reader read it at once, with no wait.
+2. The chip read on both phones (Mi 9T, iPhone 12): on a card, on a republished card and in the
+   CanaReels viewer, in light and dark.
+3. The switch and its one line read on both phones in the composer, the reel publish step and the
+   edit form - the owner's "clair, propre, le plus user-friendly possible".
+4. After the stable: the count of posts carrying it (`SELECT count(*) FROM posts WHERE "studentsOnly"`)
+   a week in, to know whether it is used.

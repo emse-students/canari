@@ -204,15 +204,20 @@ export class LivesController {
               reactionsAfter === undefined ? undefined : seqOf(reactionsAfter, 'REACTIONS_AFTER'),
           }
         : null;
-    const manifest = await this.lives.manifest(
+    const { chatWithheld, ...manifest } = await this.lives.manifest(
       caller,
       id,
       from === undefined ? undefined : indexOf(from, 'FROM')
     );
     if (!cursors) return manifest;
     // THE CHAT RIDES THE POLL THE VIEWER ALREADY MAKES (WP-L6, C3): one request a tick, read after
-    // the manifest let this viewer watch.
-    return { ...manifest, chat: await this.chat.read(caller, id, cursors) };
+    // the manifest let this viewer watch. Whether it is WITHHELD from them (a named reader, owner
+    // 2026-11-04) was decided by that same watch statement, so it is asked again on every poll and a
+    // switch flipped in the read-access grid holds from the next one, without a reconnect.
+    return {
+      ...manifest,
+      chat: await this.chat.read(caller, id, cursors, { withheld: chatWithheld }),
+    };
   }
 
   /**

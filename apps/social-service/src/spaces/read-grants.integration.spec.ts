@@ -175,7 +175,7 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
@@ -508,7 +508,10 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
           transaction: (fn: (m: EntityManager) => Promise<unknown>) => fn(manager),
           query: (sql: string, params?: unknown[]) => manager.query(sql, params),
         } as unknown as DataSource,
-        { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService
+        {
+          incr: () => Promise.resolve(1),
+          deleteByPattern: () => Promise.resolve(0),
+        } as unknown as RedisService
       );
     });
 

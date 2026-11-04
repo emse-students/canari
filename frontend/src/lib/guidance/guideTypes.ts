@@ -78,6 +78,14 @@ export interface GuideDefinition {
   readonly appliesTo: (pathname: string) => boolean;
   readonly steps: readonly GuideStep[];
   /**
+   * Whether the signed-in account is one this help is FOR, read from the same source the interface
+   * draws by (a permission the page already checks) - never a second definition. Absent means "every
+   * account". It is read inside the scheduler's effect, so an answer that arrives later (a probe)
+   * re-asks the scheduler by itself; until it is `true` the help is simply not offered. A replay
+   * from Settings obeys it too, so a help with `eligible` declares no `replay`.
+   */
+  readonly eligible?: () => boolean;
+  /**
    * Marks the "what's new" help of a release: id `whats-new-<major>-<minor>-<patch>`, whose version
    * is the app's own (asserted by `guides/whatsNew.test.ts`). At most one is declared at a time. It
    * is offered only to an account that has already seen the welcome tour: one that has not is new

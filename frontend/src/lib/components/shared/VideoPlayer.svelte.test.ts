@@ -14,6 +14,7 @@ import { rememberVideoPosition } from '$lib/utils/videoResume';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
 import { m } from '$lib/paraglide/messages';
+import type { AutoplayBlockCause } from '$lib/utils/videoAutoplay';
 
 const mounted: (() => void)[] = [];
 
@@ -353,7 +354,7 @@ it('starts at 0 for a file that was not played inline', () => {
 function mountMinimal(
   safeBottom = true,
   poster: string | null = null,
-  onPlaybackBlocked?: (cause: 'refused' | 'unplayable') => void
+  onPlaybackBlocked?: (cause: AutoplayBlockCause | 'unplayable') => void
 ) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
@@ -456,42 +457,137 @@ async function settlePlay() {
 const playButton = (target: HTMLElement) =>
   target.querySelector(`button[aria-label="${m.video_play_label()}"]`);
 
-it('minimal: an interrupted autoplay is asked again at the next load event, and plays', async () => {
+it('minimal: an autoplay interrupted by a NEW SOURCE is asked again by its load, and plays', async () => {
   const blocked = vi.fn();
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
   const { target, video } = mountMinimal(true, null, blocked);
   const play = vi.mocked(HTMLMediaElement.prototype.play);
-  play.mockRejectedValueOnce(new DOMException('no', 'AbortError'));
-  video.dispatchEvent(new Event('loadeddata'));
+  let rejectFirst: (e: unknown) => void = () => {};
+  play.mockImplementationOnce(() => new Promise((_, reject) => (rejectFirst = reject)));
+  video.dispatchEvent(new Event('loadedmetadata'));
+  // THE ENGINE'S ORDER: the new `src` makes the load algorithm reject the pending ask at once, and
+  // only QUEUE its `loadstart` - the rejection lands first, and must read the source, not the event.
+  video.src = 'blob:reel-stream';
+  rejectFirst(new DOMException('no', 'AbortError'));
   await settlePlay();
   expect(play).toHaveBeenCalledTimes(1);
   expect(playButton(target)).toBeNull();
-  // The load that interrupted it reaches `canplay`: asked once more, and this time it plays.
-  video.dispatchEvent(new Event('canplay'));
+  expect(blocked).not.toHaveBeenCalled();
+  expect(String(debug.mock.calls.at(-1)?.[0])).toContain('interrupted by a new source');
+  // Then the new load starts, and its first event asks once more - this time it plays.
+  video.dispatchEvent(new Event('loadstart'));
+  video.dispatchEvent(new Event('loadedmetadata'));
   await settlePlay();
   expect(play).toHaveBeenCalledTimes(2);
   expect(playButton(target)).toBeNull();
   expect(blocked).not.toHaveBeenCalled();
-  // Answered: later load events ask nothing.
+  // Answered: later events of the same load ask nothing.
   video.dispatchEvent(new Event('canplay'));
   await settlePlay();
   expect(play).toHaveBeenCalledTimes(2);
+  debug.mockRestore();
 });
 
-it('minimal: an autoplay interrupted twice shows the button and says it is blocked', async () => {
+it('minimal: an autoplay interrupted by a PAUSE (same source) shows the button at once', async () => {
   const blocked = vi.fn();
   const { target, video } = mountMinimal(true, null, blocked);
-  const play = vi.mocked(HTMLMediaElement.prototype.play);
-  play.mockRejectedValueOnce(new DOMException('no', 'AbortError'));
-  play.mockRejectedValueOnce(new DOMException('no', 'AbortError'));
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(
+    new DOMException('no', 'AbortError')
+  );
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
   video.dispatchEvent(new Event('loadeddata'));
   await settlePlay();
-  video.dispatchEvent(new Event('canplay'));
+  // Before 2026-11-04 this waited for a load event that never came: a frozen reel, no button.
+  expect(playButton(target)).not.toBeNull();
+  expect(blocked).toHaveBeenCalledWith('interrupted');
+  expect(String(info.mock.calls[0][0])).toContain('interrupted by a pause');
+  info.mockRestore();
+});
+
+it('minimal: a refusal before the first frame draws the button over the black box', async () => {
+  const blocked = vi.fn();
+  const { target, video } = mountMinimal(true, null, blocked);
+  vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(
+    new DOMException('no', 'NotAllowedError')
+  );
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  // Only the metadata: a paused `preload="metadata"` element may never fetch a frame.
+  video.dispatchEvent(new Event('loadedmetadata'));
   await settlePlay();
+  expect(blocked).toHaveBeenCalledWith('refused');
+  expect(playButton(target)).not.toBeNull();
+  warn.mockRestore();
+});
+
+it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows the button', async () => {
+  // Lead decision 2026-11-04: the sound is the reader's explicit choice; a refusal never mutes.
+  videoSound.setMuted(false);
+  const blocked = vi.fn();
+  const { target, root, video } = mountMinimal(true, null, blocked);
+  expect(video.muted).toBe(false);
+  const play = vi.mocked(HTMLMediaElement.prototype.play);
+  play.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  video.dispatchEvent(new Event('loadedmetadata'));
+  await settlePlay();
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(false);
   expect(playButton(target)).not.toBeNull();
   expect(blocked).toHaveBeenCalledWith('refused');
-  expect(warn).toHaveBeenCalled();
+  expect(String(warn.mock.calls[0][0])).toContain('with sound');
+  // The reader's tap plays it as it is - with the sound they chose.
+  root.click();
+  flushSync();
+  expect(play).toHaveBeenCalledTimes(2);
+  expect(video.muted).toBe(false);
   warn.mockRestore();
+});
+
+it('minimal: the reel viewer is told ONCE that the video is blocked, whatever follows', async () => {
+  const blocked = vi.fn();
+  const { video } = mountMinimal(true, null, blocked);
+  vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(
+    new DOMException('no', 'AbortError')
+  );
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  video.dispatchEvent(new Event('loadedmetadata'));
+  await settlePlay();
+  video.dispatchEvent(new Event('error'));
+  flushSync();
+  expect(blocked).toHaveBeenCalledTimes(1);
+  expect(blocked).toHaveBeenCalledWith('interrupted');
+});
+
+it('minimal: the autoplay is asked at loadedmetadata, before any data is in', async () => {
+  const { video } = mountMinimal();
+  const play = vi.mocked(HTMLMediaElement.prototype.play);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  await settlePlay();
+  expect(play).toHaveBeenCalledTimes(1);
+});
+
+it('minimal: a slow network draws a spinner, never the play button, until it plays', () => {
+  const { target, video } = mountMinimal();
+  startPlaying(video);
+  video.dispatchEvent(new Event('waiting'));
+  flushSync();
+  expect(target.querySelector('[data-video-buffering]')).not.toBeNull();
+  expect(target.querySelector('[data-video-buffering]')!.getAttribute('aria-label')).toBe(
+    m.video_loading_label()
+  );
+  expect(playButton(target)).toBeNull();
+  video.dispatchEvent(new Event('playing'));
+  flushSync();
+  expect(target.querySelector('[data-video-buffering]')).toBeNull();
+});
+
+it('minimal: a paused element waiting for data draws no spinner', () => {
+  const { target, video } = mountMinimal();
+  video.dispatchEvent(new Event('waiting'));
+  flushSync();
+  expect(target.querySelector('[data-video-buffering]')).toBeNull();
 });
 
 it('minimal: any other autoplay failure shows the button at once, with a warning', async () => {

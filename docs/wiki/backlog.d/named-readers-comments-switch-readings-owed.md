@@ -3,7 +3,7 @@
 Built and proven against PostgreSQL ([profiles-and-access](../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
 What closes it:
 
-- **One dev reading after a pre-release**, with a throwaway grantee (no space) granted a campus
+- **One dev reading after a pre-release - READ, PASS, `1.6.4-alpha.2`, 2026-11-04 ([device-verification](../device-verification.md#where-the-pass-stands)).** With a throwaway grantee (no space) granted a campus
   whose association post carries a comment, a reaction and a named poll vote: switch OFF - the card
   shows no comment button or count, the reaction badge shows the total and opens no list,
   `GET /api/posts/:id/comments` and `POST /comments` answer 404, `POST /reactions` 201 with
@@ -38,6 +38,18 @@ What closes it:
   with `anonymous_actor` and `anonymous_post` both true. **Measured 2026-11-04, read-only: the
   query returns no row - three accounts hold a read grant and none of them holds a `mention` row,
   so the ambiguity touches nobody and this point is closed.**
-- **Live chat on an association live: the same rule, decided by the owner on 2026-11-04, not built.**
+- **Live chat on an association live: the same rule (owner, 2026-11-04), built, owed its dev reading.**
   A named reader who sees a live only through their grant sees the video but not its chat - no lines,
-  no sending - unless their switch in the read-access grid is on; the same switch, no second one.
+  no sending - unless their switch in the read-access grid is on; the same switch, no second one
+  ([as built](../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08), proven
+  against PostgreSQL). **The reading, after a pre-release, on dev**: the throwaway grantee above
+  (no space, a campus granted), an association of that campus going live from a member's phone, and
+  one line written in its chat by a native viewer. Switch OFF - the grantee opens the live: the video
+  plays, there is no chat area at all - no line, no composer, no explanation - and no chat toggle in
+  the top bar (the comments rule); the floating reactions arrive and the grantee's own taps are taken
+  (`POST .../reactions` 201); `GET /api/lives/:id/manifest?chat=1` answers `chat.withheld: true` with
+  `messages: []`, `POST .../messages` 403 `LIVE_CHAT_WITHHELD`; the browser console shows no error.
+  Switch ON in `/admin/read-access` WITHOUT closing the live: within one poll the lines appear (the
+  backlog included) and the composer with them; a line sent shows on the broadcaster's phone. Switch
+  OFF again: within one poll the lines go. The journal shows the changes; every fixture removed
+  afterwards.

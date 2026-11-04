@@ -198,7 +198,7 @@ const VISIBLE = `function (el) { if (!el) return false; var r = el.getBoundingCl
 /** The first VISIBLE match: the layout keeps collapsed 0x0 copies of the nav and of some buttons. */
 const firstVisible = (selector) =>
   `[].find.call(document.querySelectorAll(${JSON.stringify(selector)}), function (e) { return e.getBoundingClientRect().width > 0; })`;
-const ADD = 'button[aria-label="Ajouter une communauté"]';
+const ADD = 'button[aria-label="Nouvelle communauté"]';
 const PRED = {
   nav: `!!${firstVisible('a[href="/communities"]')}`,
   rail: `(function (v) { var add = ${firstVisible(ADD)}; return !!add && [].some.call(add.parentElement.querySelectorAll('button[title]'), function (b) { return b !== add && v(b); }); })(${VISIBLE})`,

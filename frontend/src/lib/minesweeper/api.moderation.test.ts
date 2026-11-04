@@ -15,6 +15,8 @@ vi.mock('$lib/utils/apiUrl', () => ({ socialUrl: () => '' }));
 import {
   banMinesweeperUser,
   fetchMinesweeperBans,
+  fetchMinesweeperLeaderboard,
+  fetchMinesweeperStats,
   MinesweeperBannedError,
   removeMinesweeperScore,
   startMinesweeperChallenge,
@@ -83,5 +85,27 @@ describe('minesweeper moderation client', () => {
     const err = await startMinesweeperChallenge().catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(MinesweeperBannedError);
+  });
+});
+
+describe('minesweeper leaderboard and stats client', () => {
+  it('asks for a page by limit and offset and returns the entries with the total', async () => {
+    apiFetch.mockResolvedValue(ok({ entries: [{ rank: 11 }], total: 42 }));
+    const page = await fetchMinesweeperLeaderboard(10, 10);
+    expect(apiFetch).toHaveBeenCalledWith('/api/minesweeper/leaderboard?limit=10&offset=10');
+    expect(page).toEqual({ entries: [{ rank: 11 }], total: 42 });
+  });
+
+  it('falls back to the entries it got when an older server sends no total', async () => {
+    apiFetch.mockResolvedValue(ok({ entries: [{ rank: 1 }, { rank: 2 }] }));
+    expect((await fetchMinesweeperLeaderboard()).total).toBe(2);
+  });
+
+  it('reads the stats, and a refusal is an error', async () => {
+    apiFetch.mockResolvedValue(ok({ played: 3, won: 1 }));
+    expect(await fetchMinesweeperStats()).toEqual({ played: 3, won: 1 });
+    expect(apiFetch).toHaveBeenCalledWith('/api/minesweeper/stats');
+    apiFetch.mockResolvedValue(refused(500));
+    await expect(fetchMinesweeperStats()).rejects.toBeInstanceOf(Error);
   });
 });

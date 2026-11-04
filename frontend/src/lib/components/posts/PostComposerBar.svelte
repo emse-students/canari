@@ -12,6 +12,7 @@
     X,
   } from '@lucide/svelte';
   import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
+  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import MarkdownComposerToolbar from '$lib/components/shared/MarkdownComposerToolbar.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { toDatetimeLocalValue } from '$lib/utils/dates';
@@ -85,15 +86,14 @@
     onLive?: () => void;
     /**
      * Set by the NEW-post composer only: a video filmed with the camera becomes a CanaReel starting
-     * from this text and identity, and `onpublished` closes the composer behind it. Absent (the post
-     * editor), every take is attached.
+     * from `start` (text, identity, "Entre étudiants"), and `onpublished` closes the composer behind
+     * it. Absent (the post editor), every take is attached.
      */
     reel?: {
-      caption: string;
-      identity: string;
+      start: ComposerReelState;
       onpublished: (identity: string) => void;
-      /** "Garder comme post": the publish step's caption and identity, as the member left them. */
-      onkept: (caption: string, identity: string) => void;
+      /** "Garder comme post": the publish step's state, as the member left it. */
+      onkept: (kept: ComposerReelState) => void;
     };
   }
 
@@ -196,8 +196,7 @@
       onFiles([file]);
     }}
     onclose={() => (cameraOpen = false)}
-    composerCaption={reel?.caption}
-    composerIdentity={reel?.identity}
+    composerStart={reel?.start}
     onpublished={reel?.onpublished}
     onkept={reel?.onkept}
   />

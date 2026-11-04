@@ -52,6 +52,7 @@ import {
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   sameSideOfReviewCohortSql,
+  studentsOnlyAdmitsViewerSql,
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
@@ -154,12 +155,49 @@ export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
   return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
-        AND ${n}."postId" ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
       AND NOT notif_post."hiddenByModeration"
       AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
       AND NOT (${commentBorneNotificationSql(n, 'notif_post')}
         AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
+}
+
+/** The shape of a uuid, which a varchar column must have before it is cast to one. */
+const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+/** `column` (a varchar) as a uuid, or NULL when it does not have the shape of one. */
+function asUuidSql(column: string): string {
+  return `(CASE WHEN ${column} ~* '${UUID_SHAPE}' THEN ${column}::uuid END)`;
+}
+
+/**
+ * A `repost_proposed` bell row whose TEXT its recipient may no longer read. Such a row is not
+ * post-bound - its `postId` names the receiving association's queue - so {@link bellRowShownSql}
+ * never re-asks the predicate, and a row written while the "Entre étudiants" switch was OFF would
+ * keep its preview once it is turned on. The row stays (the proposal is still theirs to decide);
+ * only its text is withheld at the read, as the queue's `describe` withholds it.
+ *
+ * The row does not name its post, so the post is found through the proposal the row announced: a
+ * `repost` proposal from the row's association (`associationId`) to its queue (`postId`), by its
+ * actor, whatever its status (a decided proposal's row is still in the bell). FAIL CLOSED (review
+ * of #3019): the text is shown only while such a proposal still leads to a post that exists, is not
+ * hidden by moderation, and admits the recipient (`studentsOnlyAdmitsViewerSql`), and NO such
+ * proposal leads to one that refuses them. So a proposal gone with its post (deleted, hidden - which
+ * drops its proposals - or its sending association deleted) takes the text with it, and one proposer
+ * who sent the same queue several posts is judged on the strictest.
+ */
+export function repostProposalTextWithheldSql(n: string): string {
+  const matches = (prop: string) => `${prop}.kind = 'repost'
+      AND ${prop}."toAssociationId" = ${asUuidSql(`${n}."postId"`)}
+      AND ${prop}."fromAssociationId" = ${asUuidSql(`${n}."associationId"`)}
+      AND ${prop}."proposedBy" = ${n}."actorId"`;
+  const admitted = (post: string) => studentsOnlyAdmitsViewerSql(post, `${n}."recipientId"`);
+  return `(${n}.type = 'repost_proposed' AND (
+    NOT EXISTS (SELECT 1 FROM proposals rpw_ok JOIN posts rpw_ok_post ON rpw_ok_post.id = rpw_ok."subjectId"
+      WHERE ${matches('rpw_ok')} AND NOT rpw_ok_post."hiddenByModeration" AND ${admitted('rpw_ok_post')})
+    OR EXISTS (SELECT 1 FROM proposals rpw_no JOIN posts rpw_no_post ON rpw_no_post.id = rpw_no."subjectId"
+      WHERE ${matches('rpw_no')} AND NOT ${admitted('rpw_no_post')})))`;
 }
 
 /**
@@ -740,7 +778,22 @@ export class PostNotificationsService {
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
    */
   async getNotifications(userId: string, limit = 30) {
-    return this.bellPageQuery(userId, limit).getMany();
+    const rows = await this.bellPageQuery(userId, limit).getMany();
+    const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
+    if (proposed.length === 0) return rows;
+    // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
+    const withheld: { id: string }[] = await this.notifRepo.manager.query(
+      `SELECT n.id FROM post_notifications n
+        WHERE n.id = ANY($1::uuid[]) AND ${repostProposalTextWithheldSql('n')}`,
+      [proposed.map((r) => r.id)]
+    );
+    if (withheld.length === 0) return rows;
+    const ids = new Set(withheld.map((r) => r.id));
+    this.logger.debug(
+      `[STUDENTS_ONLY] bell of ${userId.slice(0, 8)}: ${ids.size} repost proposal text(s) withheld`
+    );
+    for (const row of rows) if (ids.has(row.id)) row.text = '';
+    return rows;
   }
 
   /**

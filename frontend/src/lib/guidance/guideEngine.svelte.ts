@@ -182,7 +182,7 @@ export class GuideEngine {
   #pick(pathname: string): GuideDefinition | null {
     const situation = this.env.situation();
     const offered = (g: GuideDefinition) =>
-      g.appliesTo(pathname) && this.#declined.get(g.id) !== situation;
+      g.appliesTo(pathname) && this.#declined.get(g.id) !== situation && (g.eligible?.() ?? true);
     if (this.#requested) {
       const asked = this.guides.find((g) => g.id === this.#requested);
       return asked && offered(asked) ? asked : null;

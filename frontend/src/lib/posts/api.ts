@@ -149,6 +149,8 @@ export interface PostAssociationAuthor {
   name: string;
   slug: string;
   logoUrl: string | null;
+  /** The entity's type - what decides whether its posts may be marked "Entre étudiants". */
+  type?: 'association' | 'list' | 'institution';
 }
 
 /** Validated agenda event linked from a publication. */
@@ -278,6 +280,11 @@ export interface PostEntity {
    * generic icon even when it never received an `authorId` to draw a real avatar from.
    */
   anonymous?: boolean;
+  /**
+   * "Entre étudiants" (owner, 2026-11-04): read only by students and the publishing association's
+   * members, whatever the path. Served to every reader, so the card says so to all of them.
+   */
+  studentsOnly?: boolean;
   linkedCalendarEventId?: string | null;
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
@@ -406,6 +413,8 @@ export interface CreatePostPayload {
   associationId?: string;
   /** Mutually exclusive with `associationId` - the server ignores this whenever both are set. */
   anonymous?: boolean;
+  /** "Entre étudiants" - offered on an association's or a list's post only (`studentsOnly.ts`). */
+  studentsOnly?: boolean;
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
@@ -423,6 +432,8 @@ export interface UpdatePostPayload {
   attachedFormId?: string | null;
   linkedCalendarEventId?: string | null;
   scheduledAt?: string | null;
+  /** "Entre étudiants", changed after publication; absent leaves it as stored. */
+  studentsOnly?: boolean;
 }
 
 /**

@@ -581,13 +581,18 @@ iPhone until its deadline. To measure on the bench (K7) before anything is built
 remedy is a `PushSecret`-authenticated ring-state read by the ringing call, never a VoIP push for
 the end (each one would have to report a new call).
 
+**The in-app incoming ring obeys the iPhone's silent switch - deliberately (owner, 2026-11-04).**
+While a call rings IN, the page's audio session is `ambient` ([sounds](../sounds.md#the-silent-switch-and-the-ringer-who-owns-the-category-owner-2026-11-04)),
+so the ring of an open app is silent with the switch on, exactly as CallKit's ring is; answering
+holds the microphone (`play-and-record`) before `getUserMedia` asks.
+
 **Answering from the lock screen, and the audio hand-off.** CallKit's answer cannot start audio:
 the MLS keys are behind the app's PIN in the web view. The answer writes `pending_call_accept.json`
 and opens the conversation's plain link (navigation only); from the lock screen the user unlocks
 (Face ID), opens Canari from CallKit's button, enters the PIN; the web view drains the accept and
 joins once the session has caught up, with no invite awaited
 ([below](#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30)). On `didBecomeActive` the CallKit call is ended (`AnsweredElsewhere`), so
-WebKit owns the audio session from then on, and the `audio` background mode (`CALLS_COMPILED`)
+WebKit owns the audio session from then on (its category stated by the page, `play-and-record` while the call is placed or answered - [sounds](../sounds.md#the-silent-switch-and-the-ringer-who-owns-the-category-owner-2026-11-04)), and the `audio` background mode (`CALLS_COMPILED`)
 keeps the call alive when the phone locks again (WP-C-BG-I). Cost, accepted by this design: the
 caller hears it ring until the callee has unlocked, inside the 60 s window; Messenger connects at
 once because its keys are not behind a PIN. Keeping the CallKit call for the whole call (the green

@@ -1,5 +1,8 @@
 import type { GuideDefinition } from '../guideTypes';
+import { associationManageHint, associationManageHubHint } from './associationManageHint';
+import { associationShopHint } from './associationShopHint';
 import { chatsHint } from './chatsHint';
+import { postAsHint } from './postAsHint';
 import { createEventHint } from './createEventHint';
 import { createFormHint } from './createFormHint';
 import { createPostHint } from './createPostHint';
@@ -21,4 +24,8 @@ export const GUIDES: readonly GuideDefinition[] = [
   createEventHint,
   createFormHint,
   chatsHint,
+  postAsHint,
+  associationShopHint,
+  associationManageHint,
+  associationManageHubHint,
 ];

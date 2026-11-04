@@ -4335,6 +4335,29 @@ An iPhone user had no quick way back to the top of the feed. Two gestures, NO bu
 - **Re-tap of the tab the reader is on** (`handlePlaceTap` / `handlePlaceClick`; native iOS bar, `BottomNav` on web and Android, `AppSidebar` on desktop). A re-tap first closes any open history overlay and stops there (the same-URL navigation it replaces used to drain them). Otherwise the first re-tap scrolls the page to the top (smooth, instant under reduced motion); a re-tap while ALREADY at the top refreshes the feed, like Instagram, through the SAME function as pull-to-refresh (`refreshPosts`, registered by the feed with `registerRetapRefresh`), one refresh at a time, a failure warned. `scrollPageToTop` itself never refreshes. A tap from deeper in the place (`/posts/<id>`) still navigates back to it; ctrl/meta/shift/alt and non-primary clicks on the web links are left to the browser. The native bar delivers a re-tap because `UITabBarDelegate.didSelect` fires for the selected item too (owed one reading on an iPhone). Other places get the scroll where they scroll in the layout's box (communities, dashboard); the chat list scrolls in its own panel, so it is not covered, and only the feed registers a refresh.
 - **iOS status bar tap**: the app's pages scroll in ONE inner box (`.page-scroll-wrap`, `+layout.svelte`), the document never moves, and WKWebView only scrolls its own scroll view on that tap - so nothing happened. Rather than turn the document into the scroller (a redesign of the shell), the patched plugin mounts a `StatusBarTapCatcher` in the tab bar overlay - a full-width 1 pt strip along the top edge, because UIKit gives the tap to the scroll view under the tap point - and switches off the web view's `scrollsToTop`; the catcher refuses the native scroll and triggers the `statusBarTap` plugin event; the page runs `scrollPageToTop('status-bar')`. It never refreshes, and it is skipped while a history overlay is open (the page behind would move unseen). A full-screen modal that is NOT on the history overlay stack is not detected: the tap scrolls the page behind it. Compiled by `.github/workflows/ios.yml`; behaviour on a phone is owed.
 
+## A panel on a phone is the whole screen, and the status bar is padded ONCE (owner, 2026-11-04)
+
+Symptom (iPhone, English): the group's "Group management" panel opened with about 70 pt of blank
+above its header, below the clock. Cause: `SidePanel.svelte` left a chat panel IN the page (it had
+to be, for the `xl` column), and `.page-scroll-wrap` (`will-change: transform`) is the containing
+block of `position: fixed`, so `top: 0` meant "below the status bar" - `.app-shell` already pads
+`--safe-area-inset-top`. `.side-panel-header` then added the inset again. Two owners, one inset.
+
+Decided: below `xl` EVERY side panel is a drawer, portalled to `<body>` (`portalWhile`, driven by
+`OVERLAY_LAYOUT_QUERY`), laid out against the window, and `.side-panel-header` is the ONE owner of
+the top inset. Below 768 px the drawer has no `max-width`, so it is the whole screen; from 768 px it
+keeps its 28rem card. Only a column at `xl` stays in the page. Same shell, so it covers the group
+panel, the channel members, media and channel settings (`ConversationSidePanel`) and the community
+settings (`SidebarCommunityAdminPanel`, already portalled). Pinned by `SidePanel.portal.svelte.test.ts`.
+
+Two consequences, both intended. (1) The aside carries `use:coversScreen` as well as the scrim, because
+the minimised call bar redefines `--safe-area-inset-top` only UNDER a `data-covers-screen` node, and the
+header lives in the aside. (2) At 768-1279 px the drawer's `top: calc(var(--app-content-top) + 0.75rem)`
+now resolves against the window, as the sidebar's panels always did, instead of against
+`.page-scroll-wrap` (which already starts below the top bar, so it used to offset twice). The geometry
+there therefore CHANGED - it now sits where its own comment says, below the bar; read it once at iPad
+width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 px).
+
 ## See also
 
 - [`frontend/architecture.md`](../architecture.md) — SvelteKit architecture, stores, routing

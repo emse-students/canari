@@ -258,6 +258,14 @@
         href: editSectionHref(slug, section),
         label: sectionLabel(section),
         icon: SECTION_ICONS[section],
+        // The first-time help points at the rows the reader holds the right to open: the hub draws
+        // a row only then (`visibleEditSections`), so the anchor follows the right, not a copy of it.
+        guideAnchor:
+          section === 'members'
+            ? 'asso.edit.members'
+            : section === 'audience'
+              ? 'asso.edit.audience'
+              : undefined,
         summary:
           section === 'members'
             ? m.asso_edit_hub_members_summary({ count: members.length })

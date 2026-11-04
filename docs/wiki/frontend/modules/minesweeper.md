@@ -10,6 +10,8 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Screen | `frontend/src/lib/components/settings/MinesweeperModal.svelte` |
 | View geometry (fit, bounds, zoom, flick) | `frontend/src/lib/minesweeper/view.ts` |
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
+| Player settings (per device) | `frontend/src/lib/minesweeper/settings.ts` |
+| Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -44,6 +46,63 @@ Nothing here touches the engine or the move log, so the server replay and the ge
 unaffected. **Verified:** the geometry (`view.test.ts`), the chrome and the moderation sheet in jsdom.
 **NOT verified: how it feels** - no gate here sees a gesture; owed ONE look on the Mi 9T and the iPhone
 (fit, flick, double-tap, the ring, the vibration).
+
+## Stats, paging, settings and the cell diff (2026-11-04)
+
+*Asked:* a stats tab, relative dates and pages in the ranking, a settings panel, less lag on a big
+reveal or rapid taps. The engine (`game.ts` and its server twin) is untouched: open challenges are
+replayed on it.
+
+**What the server can know.** A casual game never opens a challenge, so it is never reported. The
+server holds the player's CHALLENGES (`minesweeper_challenges`) and every win (`minesweeper_scores`,
+all of them - `DISTINCT ON` only happens at leaderboard time). `GET /minesweeper/stats` therefore
+reports RANKED games only: `played` = challenges, `won` = scores, `lost` = the difference (lost,
+abandoned, rejected, expired), plus best / average / median (`percentile_cont`), the latest 10 wins and
+the current rank. No migration. The tab says so in a note. A win with no challenge row cannot happen,
+but `played` is floored at `won` so the rate never exceeds 100%.
+
+**Paging.** `GET /minesweeper/leaderboard?limit=&offset=` returns `{entries, total}`; ranks continue
+(`offset + i + 1`), the 50-per-page cap stands, a negative or fractional offset is clamped. The sheet
+loads 10, "Voir plus" appends the next page from where the loaded ones end, and the button goes when
+`entries.length >= total`. Any moderation action reloads page one. The server still builds the whole
+`DISTINCT ON` set per request - fine at this population, a cache is the lever if it grows. Each row
+shows `verifiedAt` through `formatRelative` (`utils/time.ts`), the exact date in the tooltip.
+
+**Settings** (`settings.ts`, `canari.minesweeper.settings`, per device, validated field by field):
+
+| Setting | Default | Reads |
+| --- | --- | --- |
+| Double-tap zoom | on | the double-tap branch of `handleGridClick` |
+| Long-press delay | 350 ms, 200-600 in steps of 50 | the long-press timer AND the ring's duration |
+| Vibrations | on | `buzz()` in front of every `haptic()` call |
+| Animation speed | normal; `off` when the system asks for reduced motion and nothing is stored | zoom transition, overlay fade/scale, win glow (CSS `--ms-anim`) |
+
+A setting changes how input is READ and how the screen MOVES, never what a move is.
+
+**The cell look: "flat tonal" (user's pick among four, 2026-11-04).** Flat `rounded-md` tiles, no
+border. A hidden cell is `--cn-bg` pulled 14% toward `--text-main` (22% on hover where one exists, 30%
+pressed), so one rule follows both themes; a revealed one is `--cn-surface` in light and `--cn-bg` in
+dark. Numbers are a deep shade in light and a bright one in dark (the old `-600/-700` ones were nearly
+unreadable on black), flags amber / gold, the mine `red-600`. The four candidates, light and dark, were
+compared as static mock-ups before the pick; the rejected ones (raised slate, gold-tinted, glow) are not
+kept. **The same look runs through the whole section** (user, 2026-11-04): no borders anywhere. A
+sheet row, card, the sparkline panel and the "show more" button are `.ms-tile` (the surface pulled 7%
+toward `--text-main`), the pills floating over the board are `.ms-chip` (9%, 92% opaque), gold stays
+for the primary action and the selected state. **NOT verified in the app:** the mock-up used the real token values, but no screenshot of the
+running modal was taken.
+
+**The lag.** `sync()` used to clone all 576 cells after every action, so Svelte re-proxied them and
+re-evaluated every button. Now the engine's board is `$state.raw` (it mutates in place, so it cannot be
+reactive anyway) and `commit()` replaces the board object for the HUD scalars. What a cell DRAWS lives in
+`cellViews`: one immutable view per cell, replaced only when its code (state | mine | adjacent) differs
+from the last drawn (`syncCellViews`, a compare of 576 integers and no cloning). The keyed list passes
+each view to `MinesweeperCell`, whose props are compared by reference, so a flood re-renders the cells it
+opened and none of the others. `moves` is a plain array. **Pinned:** `cellViews.test.ts` (a flag replaces
+exactly one view, a second sync is a no-op), `settings.test.ts`, the stats/paging/long-press modal tests.
+**Trap met on the way:** `startGame()` runs inside the open `$effect`; reading the raw `board` there made
+the effect depend on it, and every later move reset the game - the board is read untracked there.
+**NOT measured:** a before/after Performance profile on a phone, and how the gestures and the settings
+feel - owed on the Mi 9T and the iPhone (`device-verification.md`).
 
 ## Moderation: remove a score, ban a player (2026-10-02)
 

@@ -91,6 +91,16 @@ export class Post {
   @Column({ type: 'boolean', nullable: true, default: null })
   allowReposts: boolean | null;
 
+  /**
+   * "Entre étudiants" (owner, 2026-11-04; migration 133): read only by students (an account with a
+   * cursus) and the members of the publishing association, whatever the path - the gate is
+   * `studentsOnlyAdmitsUserSql`, one conjunct of `postVisibleToUserSql`. Offered on an association
+   * or list post only (`STUDENTS_ONLY_ASSOCIATION_TYPES`), set at publication and changed afterwards
+   * by whoever may edit the post, both ways. Served to every reader, so the card can say so.
+   */
+  @Column({ type: 'boolean', default: false })
+  studentsOnly: boolean;
+
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;
 

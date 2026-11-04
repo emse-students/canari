@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { isBlockedBetween } from '../common/user-blocks';
-import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { liveChatWithheldFromViewerSql, liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { bdeModeratesUserSql, reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { StoredComment as RemovableComment } from '../posts/comment-identity';
 import { idsOfRows, planCommentRemoval, rowsReleasedBy } from '../posts/comment-removal';
@@ -365,7 +365,7 @@ export class ModerationService {
     reporterId: string,
     liveId: string,
     lock = false
-  ): Promise<{ broadcasterId: string; storedKey: StoredLiveKey }> {
+  ): Promise<{ broadcasterId: string; storedKey: StoredLiveKey; chatWithheld: boolean }> {
     const refuse = (why: string): NotFoundException => {
       this.logger.debug(
         `[REPORT] live ${sanitizeLog(liveId)} not reportable by ${sanitizeLog(reporterId)}: ${why}`
@@ -373,13 +373,17 @@ export class ModerationService {
       return new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     };
     if (!UUID_RE.test(liveId)) throw refuse('not a live id');
-    const rows: (StoredLiveKey & { broadcasterId: string; visible: boolean })[] =
-      await manager.query(
-        `SELECT "broadcasterId", ${storedLiveKeyColumns()},
-                ${liveVisibleToViewerSql('lives', '$2')} AS visible
-           FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
-        [liveId.toLowerCase(), reporterId]
-      );
+    const rows: (StoredLiveKey & {
+      broadcasterId: string;
+      visible: boolean;
+      chatWithheld: boolean;
+    })[] = await manager.query(
+      `SELECT "broadcasterId", ${storedLiveKeyColumns()},
+              ${liveVisibleToViewerSql('lives', '$2')} AS visible,
+              ${liveChatWithheldFromViewerSql('lives', '$2')} AS "chatWithheld"
+         FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
+      [liveId.toLowerCase(), reporterId]
+    );
     const live = rows[0];
     if (!live) throw refuse('no such live');
     if (live.visible !== true) throw refuse('not visible to the reporter');
@@ -388,6 +392,7 @@ export class ModerationService {
     }
     return {
       broadcasterId: live.broadcasterId,
+      chatWithheld: live.chatWithheld === true,
       storedKey: {
         liveKeyCiphertext: live.liveKeyCiphertext,
         liveKeyVersion: live.liveKeyVersion,
@@ -467,6 +472,9 @@ export class ModerationService {
         throw notFound('another live named');
       }
       const live = await this.reportableLive(tx, data.reporterId, liveId, true);
+      // A named reader the chat is withheld from (owner, 2026-11-04) is served no line, so has none
+      // to report: the same 404 as a hidden line - as a withheld comment's report is refused.
+      if (live.chatWithheld) throw notFound('the chat is withheld from the reporter');
       const rows: {
         seq: number;
         authorId: string;

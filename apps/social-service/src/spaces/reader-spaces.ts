@@ -150,6 +150,12 @@ export function readGrantReachesAssociationSql(association: string, user: string
  */
 export interface ReadOpts {
   readGrants?: boolean;
+  /**
+   * A SQL boolean the grant door ALSO requires when `readGrants` is on. `postVisibleToUserSql`
+   * passes "the post is not students-only": a read grant never opens an "Entre étudiants" post
+   * (lead's decision, 2026-11-04), so the guard closes that one door and leaves the others alone.
+   */
+  grantGuard?: string;
 }
 
 /**
@@ -174,8 +180,9 @@ export function associationVisibleToUserSql(
   user: string,
   opts: ReadOpts = {}
 ): string {
+  const grantDoor = readGrantReachesAssociationSql(association, user);
   const grant = opts.readGrants
-    ? `\n    OR ${readGrantReachesAssociationSql(association, user)}`
+    ? `\n    OR ${opts.grantGuard ? `(${opts.grantGuard} AND ${grantDoor})` : grantDoor}`
     : '';
   return `(${isMemberSql(association, user)} OR ${associationRulesReachUserSql(association, user)}${grant})`;
 }
@@ -424,6 +431,43 @@ export interface FollowerOpts {
 }
 
 /**
+ * User row `user` is a STUDENT in the sense of the "Entre étudiants" switch (owner, 2026-11-04,
+ * decision 3): an account with a cursus - a campus and a formation from the identity provider - so
+ * at least one SPACE (`isReaderSpaceSql`). Staff (a campus and an empty cursus) have none, and a
+ * review account has none (`review-cohort.ts`).
+ */
+export function isStudentSql(user: string): string {
+  return `EXISTS (SELECT 1 FROM spaces so_space WHERE ${isReaderSpaceSql('so_space', user)})`;
+}
+
+/**
+ * THE "ENTRE ÉTUDIANTS" GATE (owner, 2026-11-04; migration 133): post row `post` is not marked
+ * `studentsOnly`, or user row `user` is a student ({@link isStudentSql}), or a member of the
+ * association that PUBLISHED it (its own members, never a republisher's). A conjunct of
+ * {@link postVisibleToUserSql} over every door but the author's own, so it holds whatever the path -
+ * a republication, a member repost, a pin, a read grant, a follow: the rule is on WHO READS, never on
+ * how the post travels (decision 2). A named reader without a cursus therefore sees nothing of such
+ * a post, which `commentsWithheldFromViewerSql` then never has to withhold.
+ *
+ * Read from the row at every query: turning the switch on withdraws the post from outside readers
+ * at once, turning it off gives it back (decision 5), with no row written anywhere else.
+ */
+export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
+  return `(NOT COALESCE(${post}."studentsOnly", false) OR ${isStudentSql(user)}
+    OR (${post}."associationId" IS NOT NULL AND ${isMemberSql(`${post}."associationId"`, user)}))`;
+}
+
+/**
+ * {@link studentsOnlyAdmitsUserSql} for the viewer whose id is the placeholder `viewer`: what a
+ * surface that copies a post's TEXT somewhere the predicate does not re-ask (a proposal queue, a
+ * notification that is not bound to the post) asks before copying it. An absent viewer is refused.
+ */
+export function studentsOnlyAdmitsViewerSql(post: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users so_viewer WHERE so_viewer.id = ${viewer}
+    AND ${studentsOnlyAdmitsUserSql(post, 'so_viewer')})`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
@@ -450,13 +494,29 @@ export interface FollowerOpts {
  * - ANY non-anonymous post, also: the accepted followers of a MEMBER who reposted it (WP-F6,
  *   `memberRepostReachesUserSql`), left out with `followers: false` like the author's followers.
  *   Monotone in reposts too, so a repost's newly-reached set is "after and not before".
+ *
+ * EVERY DOOR BUT THE AUTHOR'S AND THE MODERATING ADMIN'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
+ * ({@link studentsOnlyAdmitsUserSql}, owner 2026-11-04). It reads no republication and no repost, so
+ * the predicate stays monotone in both, and the newly-reached rules restate it on their "after" side.
+ * Two narrowings more on such a post (the lead's decisions, 2026-11-04, reversible):
+ * - A READ GRANT NEVER OPENS IT: the grant door carries `grantGuard` = "not students-only", so a
+ *   student who also holds a grant on another campus does not read that campus's post through it;
+ * - `adminSeesAll` opens it to a platform admin ONLY with `adminModerates` - the moderation read
+ *   (`allowHidden`: the post by id, its comments, a comment's moderation). Reacting, commenting,
+ *   voting and browsing it ask the gate of an admin like of anyone.
  */
 export function postVisibleToUserSql(
   post: string,
   user: string,
-  opts: { adminSeesAll?: boolean } & ReadOpts & FollowerOpts = {}
+  opts: { adminSeesAll?: boolean; adminModerates?: boolean } & ReadOpts & FollowerOpts = {}
 ): string {
-  const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
+  const notStudentsOnly = `NOT COALESCE(${post}."studentsOnly", false)`;
+  const adminClause = opts.adminSeesAll
+    ? opts.adminModerates
+      ? `${isAdminSql(user)}\n    OR `
+      : `(${isAdminSql(user)} AND ${notStudentsOnly})\n    OR `
+    : '';
+  const grantOpts: ReadOpts = { readGrants: opts.readGrants, grantGuard: notStudentsOnly };
   const followerClause =
     opts.followers === false
       ? ''
@@ -477,18 +537,21 @@ export function postVisibleToUserSql(
       : `
       OR ${republicationReachesUserSql(post, user)}`;
   return `(${adminClause}${post}."authorId" = ${user}.id
-    OR (${post}."associationId" IS NULL AND (
+    OR (${studentsOnlyAdmitsUserSql(post, user)} AND (
+    (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
     OR (${post}."associationId" IS NOT NULL AND (
-      ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
-      OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })}${repostClause})))`;
+      ${associationVisibleToUserSql(`${post}."associationId"`, user, grantOpts)}
+      OR ${republicationReachesUserSql(post, user, grantOpts)}${repostClause})))))`;
 }
 
 /**
  * Who would see post `$1` for the FIRST time if association `$2` republished it: the readers the
  * association reaches who cannot see the post NOW, minus its author. Asked inside the transaction
  * that writes the republication, BEFORE the row exists - with `postVisibleToUserSql` monotone, that
- * is exactly "visible after and not before", computed on state and never on a clock.
+ * is exactly "visible after and not before", computed on state and never on a clock. The "after"
+ * side restates the "Entre étudiants" gate (`studentsOnlyAdmitsUserSql`): a reader the carrier
+ * reaches but the gate refuses does not see the post after either, so is never told about it.
  */
 export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users nr_user
   JOIN posts nr_post ON nr_post.id = $1
@@ -496,6 +559,7 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
     AND EXISTS (SELECT 1 FROM associations nr_carrier
       WHERE nr_carrier.id = $2::uuid AND NOT COALESCE(nr_carrier.archived, false))
     AND ${associationVisibleToUserSql('$2::uuid', 'nr_user')}
+    AND ${studentsOnlyAdmitsUserSql('nr_post', 'nr_user')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
@@ -538,7 +602,8 @@ export function newlyReachedByPersonalRepublicationSql(announced: boolean): stri
  * set are read in ONE statement, on one snapshot: the write checked it before taking the post row's
  * lock, and an officer who removes the association's last audience rule meanwhile takes no lock the
  * write waits on - without the term, the repost would push `member_repost` for a post its row no
- * longer carries to anyone.
+ * longer carries to anyone. The "Entre étudiants" gate is restated on the "after" side for the same
+ * reason as in `NEWLY_REACHED_BY_REPUBLICATION_SQL`: a follower it refuses is never reached.
  *
  * The CALLER decides whether to tell them: an ENTITY post not yet announced will be announced to
  * everyone who sees it by then (`announceRecipientsSql(false)`), these readers included, so they
@@ -560,6 +625,7 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
               (nr_rblock."blockerId" = nr_user.id AND nr_rblock."blockedId" = nr_post."authorId")
            OR (nr_rblock."blockerId" = nr_post."authorId" AND nr_rblock."blockedId" = nr_user.id))))
     AND ${memberRepostablePostSql('nr_post')}
+    AND ${studentsOnlyAdmitsUserSql('nr_post', 'nr_user')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
@@ -614,7 +680,11 @@ export function isPinSpaceOfUserSql(space: string, user: string): string {
 export function postVisibleToViewerSql(
   post: string,
   viewer: string,
-  opts: { adminSeesAll?: boolean; readGrants?: boolean } & FollowerOpts = {}
+  opts: {
+    adminSeesAll?: boolean;
+    adminModerates?: boolean;
+    readGrants?: boolean;
+  } & FollowerOpts = {}
 ): string {
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.
@@ -624,7 +694,9 @@ export function postVisibleToViewerSql(
 /**
  * User row `user` has turned on "voit les commentaires" in the read-access grid (owner, 2026-11-04):
  * a row of `read_grant_readers` with `sees_comments` (migration 132). No row is OFF - the owner's
- * default for new and existing named readers alike.
+ * default for new and existing named readers alike. ONE switch per person, and it opens BOTH things a
+ * grant-only reader is otherwise withheld: a post's comments and an association live's chat (owner,
+ * 2026-11-04: the same switch, no second one).
  */
 export function readerSeesGrantCommentsSql(user: string): string {
   return `EXISTS (SELECT 1 FROM read_grant_readers sc_reader
@@ -632,27 +704,60 @@ export function readerSeesGrantCommentsSql(user: string): string {
 }
 
 /**
- * THE ONE PREDICATE OF THE 2026-11-04 AMENDMENT: post row `post` reaches the viewer whose id is the
- * placeholder `viewer` ONLY through a nominative read grant, and that named reader's switch "voit les
- * commentaires" is OFF. Such a reader still reads the post and reacts to it, but its COMMENTS - the
- * students' own expression, like their personal posts, which a grant never opens - and every list of
- * PEOPLE on it (who reacted, who voted what) are withheld: totals only.
+ * WHAT "WITHHELD" MEANS, STATED ONCE (owner, 2026-11-04): the viewer whose id is the placeholder
+ * `viewer` reaches a piece of content ONLY through a nominative read grant, and their switch "voit
+ * les commentaires" is OFF. `visibleTo(user, readGrants)` is the content's own visibility predicate
+ * on user row `user`, with and without the grants: the content is withheld when it is visible WITH
+ * them and NOT visible WITHOUT them - so a reader who also reaches it natively (their own space, a
+ * membership, a republication, an accepted follow, a member repost) keeps everything.
  *
- * Computed as the owner stated it - visible WITH grants and NOT visible WITHOUT them - so a reader who
- * also reaches the post natively (their own space, a membership, a republication, an accepted
- * follow, a member repost) keeps everything. Both arms take `adminSeesAll`, as the by-id gate does:
- * a global admin is never withheld. A reader with no grant at all answers `false` on the first
- * conjunct, before either visibility arm is asked.
+ * A global admin is never withheld. A reader with no grant at all answers `false` on the grant
+ * conjunct, before either visibility arm is asked. The two consumers are
+ * {@link commentsWithheldFromViewerSql} (a post's comments and people) and
+ * {@link liveChatWithheldFromViewerSql} (a live's chat); neither restates any of this.
+ */
+function withheldFromGrantOnlyReaderSql(
+  viewer: string,
+  visibleTo: (user: string, readGrants: boolean) => string
+): string {
+  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}
+    AND NOT ${isAdminSql('cw_viewer')}
+    AND EXISTS (SELECT 1 FROM read_grants cw_grant WHERE cw_grant.user_id = cw_viewer.id)
+    AND NOT ${readerSeesGrantCommentsSql('cw_viewer')}
+    AND ${visibleTo('cw_viewer', true)}
+    AND NOT ${visibleTo('cw_viewer', false)})`;
+}
+
+/**
+ * THE POSTS' HALF OF THE 2026-11-04 AMENDMENT: post row `post` is withheld from the viewer whose id
+ * is the placeholder `viewer` ({@link withheldFromGrantOnlyReaderSql}). Such a reader still reads the
+ * post and reacts to it, but its COMMENTS - the students' own expression, like their personal posts,
+ * which a grant never opens - and every list of PEOPLE on it (who reacted, who voted what) are
+ * withheld: totals only. Both arms take `adminSeesAll`, as the by-id gate does.
  *
  * Every consumer asks THIS - `commentsWithheldPostIds` (`posts/comments-withheld.ts`) for a page, the
  * `'COMMENT'` intent of the by-id gate, the bell - so none of them can drift from the others.
  */
 export function commentsWithheldFromViewerSql(post: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}
-    AND EXISTS (SELECT 1 FROM read_grants cw_grant WHERE cw_grant.user_id = cw_viewer.id)
-    AND NOT ${readerSeesGrantCommentsSql('cw_viewer')}
-    AND ${postVisibleToUserSql(post, 'cw_viewer', { adminSeesAll: true, readGrants: true })}
-    AND NOT ${postVisibleToUserSql(post, 'cw_viewer', { adminSeesAll: true, readGrants: false })})`;
+  return withheldFromGrantOnlyReaderSql(viewer, (user, readGrants) =>
+    postVisibleToUserSql(post, user, { adminSeesAll: true, readGrants })
+  );
+}
+
+/**
+ * THE LIVES' HALF OF THE 2026-11-04 AMENDMENT: live row `live` is withheld from the viewer whose id
+ * is the placeholder `viewer` ({@link withheldFromGrantOnlyReaderSql} on {@link liveVisibleToUserSql}).
+ * Such a reader watches the live - the video and the floating reactions, as they read a post and
+ * react to it - but its CHAT is withheld: no line served, none sent, none reported. In practice an
+ * association's live only, since a member's live never opens through a grant.
+ *
+ * Asked by the watch rule (`LivesService.assertMayWatch`, in the statement that asks the visibility,
+ * so on every open and every manifest poll) and by the report of a chat line (`ModerationService`).
+ */
+export function liveChatWithheldFromViewerSql(live: string, viewer: string): string {
+  return withheldFromGrantOnlyReaderSql(viewer, (user, readGrants) =>
+    liveVisibleToUserSql(live, user, { readGrants })
+  );
 }
 
 /**

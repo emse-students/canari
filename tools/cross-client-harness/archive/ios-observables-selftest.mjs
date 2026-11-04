@@ -51,7 +51,7 @@ const el = (label, type, rect, extra = {}) => ({ label, type: `XCUIElementType${
  * scrolls (their elements move up 400 pt). Records every ios.mjs call and every stdin text.
  */
 function device({ screens, start, state = 4, installed = true, pymd = () => '' } = {}) {
-  const s = { screens, screen: start, state, calls: [], stdin: [], clock: 0, installed, signInstalls: 0 };
+  const s = { screens, screen: start, state, calls: [], stdin: [], stdinOpts: [], clock: 0, installed, signInstalls: 0 };
   const visible = () =>
     (s.screens[s.screen] ?? []).map((e) => {
       const { go: _g, toggle: _t, stuck: _s, onTap: _o, ...rest } = e;
@@ -114,9 +114,10 @@ function device({ screens, start, state = 4, installed = true, pymd = () => '' }
           return '';
       }
     },
-    typeStdin: (text) => {
+    typeStdin: (text, opts = {}) => {
       s.stdin.push(text);
-      s.onType?.(s, text);
+      s.stdinOpts.push(opts);
+      s.onType?.(s, text, opts);
     },
     signInstall: () => {
       s.signInstalls++;
@@ -173,7 +174,8 @@ function device({ screens, start, state = 4, installed = true, pymd = () => '' }
   const r = ios.setLinkConditioner('3G');
   check('O3 throttle: Settings from its ROOT, scrolled to Developer, NLC enabled and read back', r.enable.after === true && r.profile === '3G', JSON.stringify(r));
   check('O3 throttle: Settings was ENDED first, so the path starts at the root', s.calls.indexOf('terminate com.apple.Preferences') < s.calls.indexOf('launch com.apple.Preferences'));
-  check('O3 throttle: the profile row was tapped', s.calls.includes('tap 195,422'));
+  check('O3 throttle: the profile row was tapped, with the Settings tap marked --no-guard=<reason> (a foreign process)', s.calls.includes('tap 195,422 --no-guard=settings-foreign-process'));
+  check('O3 throttle: EVERY tap inside Settings (the switch included) carries a no-guard reason', s.calls.filter((c) => c.startsWith('tap ')).every((c) => /--no-guard=[a-z-]+-foreign-process$/.test(c)));
   const off = ios.setLinkConditioner(null);
   check('O3 throttle off: the switch read back OFF', off.enable.after === false && off.profile === null);
   restore();
@@ -322,15 +324,16 @@ const notifScreens = (root) => ({
       app: [appField],
     },
   });
-  s.onType = (st, text) => {
-    if (st.screen === 'uid' && text.endsWith('\n')) st.screen = 'pwd';
-    else if (st.screen === 'pwd' && text.endsWith('\n')) st.screen = 'app';
+  s.onType = (st, text, opts) => {
+    if (st.screen === 'uid' && opts.submit) st.screen = 'pwd';
+    else if (st.screen === 'pwd' && opts.submit) st.screen = 'app';
   };
   const r = await ios.signInThroughSheet(creds, { hosts: HOSTS, settled: async () => s.screen === 'app' });
   check('O9 sign-in: consent, identifier, password - in that order', JSON.stringify(r.stages) === '["consent","identifier","password"]', JSON.stringify(r));
-  check('O9 sign-in: each stage ended with RETURN, never the form\'s button', s.stdin.every((t) => t.endsWith('\n')) && s.stdin.length === 2);
-  check('O9 sign-in: the field is cleared first (its placeholder deleted, harmless)', s.stdin[0].startsWith('\b'.repeat("Nom d'utilisateur".length)) && s.stdin[0].endsWith('canari-test-alpha\n'));
-  check('O9 sign-in: the PASSWORD never reached an argv', !s.calls.some((c) => c.includes(creds.password)) && s.stdin[1].endsWith('s3cr3t-Pw\n'));
+  check('O9 sign-in: each stage ended with RETURN as the explicit submit option, never the form button', s.stdinOpts.every((o) => o.submit === true) && s.stdin.length === 2);
+  check('O9 sign-in: the text carries NO control character (`ios.mjs type` clears the field itself and `--submit` presses Return)', s.stdin.every((t) => ![...t].some((c) => c.charCodeAt(0) < 32)) && s.stdin[0] === 'canari-test-alpha');
+  check('O9 sign-in: the PASSWORD never reached an argv', !s.calls.some((c) => c.includes(creds.password)) && s.stdin[1] === 's3cr3t-Pw');
+  check('O9 sign-in: the two field taps are marked --over-keyboard, the consent tap is not', s.calls.filter((c) => c.endsWith('--over-keyboard')).length === 2 && s.calls.filter((c) => c.startsWith('tap ')).length === 3);
   check('O9 sign-in: the app\'s own search field, once back, was left alone', s.stdin.length === 2);
   restore();
 }
@@ -399,6 +402,8 @@ const NOTE = { type: 'XCUIElementTypeButton', label: 'Canari, Paul Peer, hello N
   check('O11 reply: long press, Répondre, typed, Envoyer - and the action is gone', r.ok === true && r.found === true, JSON.stringify(r));
   check('O11: a LONG press on the notification, at its centre', s.calls.includes('long 195 260 900'));
   check('O11: the reply text went through stdin', JSON.stringify(s.stdin) === '["ok from the shade"]');
+  check('O11: the reply is typed as RAW KEYS, chosen explicitly (a SpringBoard field: no element/active, no read-back), never submit', s.stdinOpts.length === 1 && s.stdinOpts[0].keys === true && !s.stdinOpts[0].submit);
+  check('O11: every tap in the shade carries --no-guard=<reason> (a foreign process)', s.calls.filter((c) => c.startsWith('tap ')).length === 2 && s.calls.filter((c) => c.startsWith('tap ')).every((c) => c.endsWith('--no-guard=springboard-notification-foreign-process')));
   check('O11: the app was not launched to do it (it may be dead - NOTIF-6)', !s.calls.some((c) => c.startsWith('launch')) && s.state === 1);
   s.screen = 'centre';
   const m = await ios.notificationAction('N11-REPLY', 'mark_read');

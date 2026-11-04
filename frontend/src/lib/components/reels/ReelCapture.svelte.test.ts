@@ -23,6 +23,14 @@ import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-helper';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 giveMediaStreamGetTracks();
 
 // The publish step fades in, and a test closes it mid-fade.
@@ -1039,8 +1047,7 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
       oncapture,
       onpublished,
       onclose,
-      composerCaption: 'hello',
-      composerIdentity: '',
+      composerStart: { caption: 'hello', identity: '', studentsOnly: false },
     });
 
     expect(tab.sheet).not.toBeNull();

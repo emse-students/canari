@@ -255,15 +255,35 @@ describe('LivesController', () => {
       liveId: 'm',
       chat: { messages: [] },
     });
-    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
-      messagesAfter: undefined,
-      reactionsAfter: undefined,
-    });
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: undefined, reactionsAfter: undefined },
+      { withheld: undefined }
+    );
     await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
-    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
-      messagesAfter: 41,
-      reactionsAfter: 0,
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: 41, reactionsAfter: 0 },
+      { withheld: undefined }
+    );
+  });
+
+  it("hands the watch statement's chatWithheld to the chat read, and never serves it as a manifest field", async () => {
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
     });
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: undefined, reactionsAfter: undefined },
+      { withheld: true }
+    );
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
   });
 
   it('refuses a malformed chat cursor BEFORE the manifest renews a seat', async () => {

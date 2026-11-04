@@ -268,6 +268,7 @@ describe('writing', () => {
     [refusal('ended', 410, 'LIVE_ENDED'), 'ended'],
     [refusal('not-found', 404, 'LIVE_NOT_FOUND'), 'ended'],
     [refusal('refused', 403, 'LIVE_MUTED'), 'muted'],
+    [refusal('refused', 403, 'LIVE_CHAT_WITHHELD'), 'withheld'],
     [refusal('refused', 409, 'LIVE_MESSAGE_CONFLICT'), 'refused'],
     [refusal('unavailable', 502), 'network'],
     [new TransportFailureError('offline'), 'network'],
@@ -589,5 +590,130 @@ describe('a write answered "the live is over" (WP-L6)', () => {
     expect(await hiding).toBe(false);
     expect(over).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('the chat withheld from a named reader (owner, 2026-11-04)', () => {
+  function watched() {
+    const told: boolean[] = [];
+    const s = new LiveChatSession({
+      liveId: LIVE,
+      me: () => ME,
+      onChange: (l) => {
+        lines = l;
+      },
+      onFloat: (kind, n) => floats.push([kind, n]),
+      onWithheld: (w) => told.push(w),
+      deps,
+    });
+    return { s, told };
+  }
+
+  it('the open says it: no composer from the first frame, told once', () => {
+    const { s, told } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    expect(s.withheld).toBe(true);
+    expect(s.canWrite).toBe(false);
+    expect(told).toEqual([true]);
+    // An open that says nothing (an older server) is not withheld.
+    const other = watched();
+    other.s.onKey(KEY);
+    expect(other.s.withheld).toBe(false);
+    expect(other.s.canWrite).toBe(true);
+    expect(other.told).toEqual([]);
+  });
+
+  it('a withheld block draws no line, keeps no message cursor, and still floats the reactions', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s, told } = watched();
+    s.onKey(KEY);
+    await s.receive(block([wire(1, 'avant')], 1));
+    expect(texts()).toEqual(['avant']);
+    await s.receive(
+      block([wire(2, 'never drawn')], 9, {
+        withheld: true,
+        reactions: [{ window: 0, counts: { fire: 2 } }],
+        reactionsCursor: 4,
+      })
+    );
+    expect(lines).toEqual([]);
+    expect(floats).toEqual([['fire', 2]]);
+    expect(s.query()).toEqual({ messagesAfter: undefined, reactionsAfter: 4 });
+    expect(told).toEqual([true]);
+    info.mockRestore();
+  });
+
+  it('switched back ON, the next poll is a joiner: the backlog is drawn and writing comes back', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s, told } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    await s.receive(block([], 5, { withheld: true }));
+    expect(s.query().messagesAfter).toBeUndefined();
+    await s.receive(block([wire(4, 'backlog'), wire(5, 'newest')], 5));
+    expect(texts()).toEqual(['backlog', 'newest']);
+    expect(s.query().messagesAfter).toBe(5);
+    expect(s.canWrite).toBe(true);
+    expect(told).toEqual([true, false]);
+    info.mockRestore();
+  });
+
+  it('a send refused LIVE_CHAT_WITHHELD (the switch went off between two polls) withholds at once, with no failed line', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    deps.postMessage.mockRejectedValueOnce(refusal('refused', 403, 'LIVE_CHAT_WITHHELD'));
+    const { s, told } = watched();
+    s.onKey(KEY);
+    expect(await s.send('bonjour')).toBe('withheld');
+    expect(lines).toEqual([]);
+    expect(s.withheld).toBe(true);
+    expect(told).toEqual([true]);
+    info.mockRestore();
+  });
+
+  it('a send while already withheld is refused here: no pending line, no request, nothing kept for the way back', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    expect(await s.send('bonjour')).toBe('withheld');
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(lines).toEqual([]);
+    // Served again: the backlog alone is drawn, never the refused line.
+    await s.receive(block([wire(4, 'backlog')], 4));
+    expect(texts()).toEqual(['backlog']);
+    info.mockRestore();
+  });
+
+  it('a block still opening its rows when a withheld block arrives draws none of them, and its reactions still float', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    // The first row's open waits on a gate the test opens, so the withheld block lands MID-block:
+    // an ordering, never a duration.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let opening!: () => void;
+    const opened = new Promise<void>((r) => (opening = r));
+    deps.open = vi.fn(async (_k, _l, _c, _a, sealed: string) => {
+      if (sealed === 'S:gated') {
+        opening();
+        await gate;
+      }
+      return sealed.slice(2);
+    });
+    const { s } = watched();
+    s.onKey(KEY);
+    const first = s.receive(
+      block([wire(1, 'gated'), wire(2, 'after')], 2, {
+        reactions: [{ window: 0, counts: { clap: 1 } }],
+        reactionsCursor: 1,
+      })
+    );
+    await opened;
+    const second = s.receive(block([], 9, { withheld: true, reactionsCursor: 1 }));
+    release();
+    await first;
+    await second;
+    expect(deps.open).toHaveBeenCalledTimes(1);
+    expect(lines).toEqual([]);
+    expect(s.withheld).toBe(true);
+    expect(floats).toEqual([['clap', 1]]);
+    info.mockRestore();
   });
 });

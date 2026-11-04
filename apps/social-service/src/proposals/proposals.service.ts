@@ -146,8 +146,12 @@ export interface ProposalKindHandler {
   ): Promise<AfterCommit>;
   /** Tells the receiving association's acceptors a proposal is waiting. Best effort. */
   announce(proposal: AssociationProposal, acceptorIds: string[]): Promise<void>;
-  /** A short description of each subject, for the queue. A missing id is a subject gone. */
-  describe(subjectIds: string[]): Promise<Map<string, Record<string, unknown>>>;
+  /**
+   * A short description of each subject, for the queue, as `viewerId` may read it (a repost of an
+   * "Entre étudiants" post withholds its text from an officer the gate refuses). A missing id is a
+   * subject gone.
+   */
+  describe(subjectIds: string[], viewerId: string): Promise<Map<string, Record<string, unknown>>>;
 }
 
 /**
@@ -671,11 +675,10 @@ export class ProposalsService {
     for (const kind of new Set(rows.map((r) => r.kind))) {
       const handler = this.handler(kind);
       const ids = rows.filter((r) => r.kind === kind).map((r) => r.subjectId);
-      // A person-addressed kind describes only what THIS caller may see (D38b): an officer who
-      // cannot see the post learns neither its text nor whose it is.
-      const described = isUserHandler(handler)
-        ? await handler.describe(ids, actorId)
-        : await handler.describe(ids);
+      // Every kind describes only what THIS caller may see: a person-addressed one (D38b) withholds
+      // the text and its author from an officer who cannot see the post, a repost the text of an
+      // "Entre étudiants" post from an officer its gate refuses.
+      const described = await handler.describe(ids, actorId);
       for (const [id, subject] of described) subjects.set(`${kind}:${id}`, subject);
     }
     // The person asked is named only beside a subject the caller was allowed to see.

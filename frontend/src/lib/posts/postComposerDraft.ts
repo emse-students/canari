@@ -34,6 +34,11 @@ export interface PostComposerDraft {
   scheduledAt: string;
   selectedAssociationId: string;
   selectedLinkedCalendarEventId: string;
+  /**
+   * "Entre étudiants" was switched on (owner, 2026-11-04). Optional and written only when ON: OFF is
+   * the default, so a draft from before the switch, or one that never touched it, reads as OFF.
+   */
+  studentsOnly?: boolean;
 }
 
 /**
@@ -137,6 +142,7 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
             typeof parsed.selectedLinkedCalendarEventId === 'string'
               ? parsed.selectedLinkedCalendarEventId
               : '',
+          ...(parsed.studentsOnly === true ? { studentsOnly: true } : {}),
         });
         if (isPostComposerDraftWorthKeeping(draft)) return draft;
         console.log('[POST_COMPOSER] stored draft held only abandoned attachments - not restored');
