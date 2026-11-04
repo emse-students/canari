@@ -45,6 +45,7 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
 import { FOLLOW_CURSOR_INVALID } from './follow-cursor';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
 
@@ -148,11 +149,6 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, "firstName" varchar,
         "lastName" varchar, admin boolean NOT NULL DEFAULT false, campus varchar(32),
         cursus jsonb NOT NULL DEFAULT '[]');
-      CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
-        "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
-        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, read boolean NOT NULL DEFAULT false,
-        "createdAt" timestamp NOT NULL DEFAULT clock_timestamp());
       -- What the block severing (migration 121's member reposts) and the bell's member-repost gate
       -- (the post predicate) read since WP-F6: the visibility schema, through its migrations below.
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false,
@@ -165,6 +161,12 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false);
     `);
+    // The bell's table as the estates hold it - its columns' types from the migrations (#3019's 500).
+    await createPostNotificationsTable(q);
+    // Only the default differs: rows written in one transaction must still order by when.
+    await admin.query(
+      `ALTER TABLE post_notifications ALTER COLUMN "createdAt" SET DEFAULT clock_timestamp()`
+    );
     for (const name of [
       '071_spaces.sql',
       '072_drop_is_bde.sql',
