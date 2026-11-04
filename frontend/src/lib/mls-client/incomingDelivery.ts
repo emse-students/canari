@@ -11,6 +11,21 @@
  */
 export type DeliveryChannel = 'live' | 'pull';
 
+/**
+ * A copy's arrival as the deduplicating seam reads it: the channel and, for a pull, the serial of
+ * the ack flush that pull waited for (`BaseMlsService.fetchPendingMessages`). A pull is ordered after
+ * every ack up to that serial and after none issued later, so a repeat of a row acknowledged by a
+ * LATER ack is the server answering correctly, not overtaking an ack - and only the pull knows when
+ * it left.
+ */
+export type DeliveryArrival =
+  | { channel: 'live' }
+  | {
+      channel: 'pull';
+      /** Every ack with a serial up to this one settled before the pull's request was sent. */
+      listedAfterAck: number;
+    };
+
 /** Metadata for an MLS payload delivered via the offline queue (not live WebSocket). */
 export type IncomingDeliveryMeta = {
   /** Server `queued_message.createdAt` in ms - when the message was enqueued for this device. */

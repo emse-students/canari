@@ -35,8 +35,17 @@ const poke = (svc: BaseMlsService, patch: Record<string, unknown>): void => {
 const inner = (svc: BaseMlsService) =>
   svc as unknown as {
     messageScheduler: MlsPerGroupScheduler;
-    enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void;
+    ackSerial: number;
+    enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel, listedAfterAck?: number): void;
   };
+
+/**
+ * Hands one copy in as its channel would. A PULL carries the serial of the ack flush it waited for;
+ * here it is a pull issued NOW, after every ack this device has announced - the ordering
+ * `fetchPendingMessages` guarantees, and the one the accusing shape is reserved for.
+ */
+const enqueue = (svc: BaseMlsService, msg: MlsQueuedMessage, channel: DeliveryChannel): void =>
+  inner(svc).enqueueMessage(msg, channel, channel === 'pull' ? inner(svc).ackSerial : undefined);
 
 /** A delivery the server persisted, so it carries the row id both channels quote. */
 const row = (
@@ -90,7 +99,7 @@ describe('a delivery that arrives twice', () => {
     msg: MlsQueuedMessage,
     channel: DeliveryChannel = 'pull'
   ): Promise<void> => {
-    inner(svc).enqueueMessage(msg, channel);
+    enqueue(svc, msg, channel);
     await inner(svc).messageScheduler.waitUntilIdle();
   };
 
@@ -159,8 +168,8 @@ describe('a delivery that arrives twice', () => {
     // carrying one row, one of them always late - is what still exercises it.
     for (const id of ['d4ecf0fe', 'a1b2c3d4', 'beefcafe']) {
       // Both copies before the drain can finish, which is what leaves the first one `queued`.
-      inner(svc).enqueueMessage(row(id), 'pull');
-      inner(svc).enqueueMessage(row(id), 'pull');
+      enqueue(svc, row(id), 'pull');
+      enqueue(svc, row(id), 'pull');
       await inner(svc).messageScheduler.waitUntilIdle();
     }
 
@@ -273,7 +282,7 @@ describe('the route a delivery took reaches the pipeline', () => {
         pullPendingMessagesJson: vi.fn().mockResolvedValue(undefined),
       },
     });
-    inner(svc).enqueueMessage(row(`r-${channel}`), channel);
+    enqueue(svc, row(`r-${channel}`), channel);
     await inner(svc).messageScheduler.waitUntilIdle();
     log.mockRestore();
     return seen;

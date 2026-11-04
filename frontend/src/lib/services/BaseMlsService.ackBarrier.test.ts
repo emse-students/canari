@@ -276,26 +276,92 @@ describe('the ack barrier in front of a pull', () => {
     const said = (spy: ReturnType<typeof vi.spyOn>) =>
       (spy.mock.calls as unknown[][]).map((c) => String(c[0])).join(' | ');
 
+    const svcInner = svc as unknown as {
+      ackSerial: number;
+      rememberDelivery(id: string, state: 'queued' | 'done'): void;
+      admitDelivery(
+        id: string | undefined,
+        arrival: { channel: 'pull'; listedAfterAck: number } | { channel: 'live' }
+      ): boolean;
+    };
+    // A pull issued now: ordered after every ack announced so far, which is what a pull's flush gives.
+    const pulledNow = () => ({ channel: 'pull' as const, listedAfterAck: svcInner.ackSerial });
+
     // A row acknowledged by an ack that could NOT be delivered: the server really does still hold
     // it, so its repeat is the consequence of the `[ACK]` failure and must not be a second finding.
+    // Settled `done` first and acknowledged after, in the order the drain does both.
+    svcInner.rememberDelivery('row-1', 'done');
     await inner(svc)
       .announceAck(['row-1'])
       .catch(() => {});
-    const svcInner = svc as unknown as {
-      rememberDelivery(id: string, state: 'queued' | 'done'): void;
-      admitDelivery(id: string | undefined, channel: 'pull' | 'live'): boolean;
-    };
-    svcInner.rememberDelivery('row-1', 'done');
-    expect(svcInner.admitDelivery('row-1', 'pull')).toBe(false);
+    expect(svcInner.admitDelivery('row-1', pulledNow())).toBe(false);
     expect(said(note)).toContain('really is still owed');
     expect(said(grumble)).not.toContain('row-1');
 
     // And one whose ack LANDED. Nothing routine explains that any more, so it accuses.
     failing = false;
-    await inner(svc).announceAck(['row-2']);
     svcInner.rememberDelivery('row-2', 'done');
-    expect(svcInner.admitDelivery('row-2', 'pull')).toBe(false);
+    await inner(svc).announceAck(['row-2']);
+    expect(svcInner.admitDelivery('row-2', pulledNow())).toBe(false);
     expect(said(grumble)).toContain('nothing routine explains this');
+  });
+
+  /**
+   * TWO PULLS AT BOOT, AND THE SECOND LISTS WHAT THE FIRST'S DRAIN IS STILL APPLYING - the Mi 9T's
+   * two accused lines after each launch (`1.6.4-alpha.3`, dev, 2026-11-04), driven through the real
+   * pull and drain rather than through the seam.
+   *
+   * The reconnect's pull lists a row; while the drain applies it, the restore seeds its rows and
+   * `refetchFramesLeftBehind` starts a second pull. That pull's flush is numbered BEFORE the drain's
+   * ack, because the drain acknowledges only when it ends - so the server is right to list the row,
+   * and the drain merely finishes before the answer is read. `done` said the opposite and accused.
+   */
+  it('does not accuse a row whose ack left after the pull that lists it again', async () => {
+    const applying = deferred();
+    const secondAnswer = deferred();
+    let pulls = 0;
+    const acked: string[] = [];
+    poke(svc, {
+      messageCallback: vi.fn(async () => {
+        await applying.promise;
+        return true;
+      }),
+      delivery: {
+        ackMessages: vi.fn(async (ids: string[]) => {
+          acked.push(...ids);
+        }),
+        pullPendingMessagesJson: vi.fn(async (opts: { onPage: (rows: unknown[]) => void }) => {
+          const mine = ++pulls;
+          if (mine === 2) await secondAnswer.promise;
+          opts.onPage([{ id: 'row-boot', senderId: 'alice', groupId: 'g-1', proto: 'AQ==' }]);
+        }),
+      },
+    });
+    const grumble = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const note = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const lines = (spy: ReturnType<typeof vi.spyOn>) =>
+      (spy.mock.calls as unknown[][]).map((c) => String(c[0])).filter((l) => l.includes('row-boo'));
+
+    // The reconnect's pull: its row is handed in and the drain is now applying it.
+    const first = inner(svc).fetchPendingMessages();
+    await vi.waitFor(() => expect(pulls).toBe(1));
+    // The re-fetch for the seeded rows, issued while that drain has not ended - so before its ack.
+    const second = inner(svc).fetchPendingMessages();
+    await vi.waitFor(() => expect(pulls).toBe(2));
+
+    // The drain ends and acknowledges; only then is the second pull's answer read.
+    applying.settle();
+    await vi.waitFor(() => expect(acked).toContain('row-boot'));
+    secondAnswer.settle();
+    await Promise.all([first, second]);
+
+    expect(lines(grumble)).toEqual([]);
+    expect(lines(note).join(' | ')).toContain(
+      'the pull was issued before this device acknowledged'
+    );
+    expect(svc.deliveryRepeatStats()['pull:done']).toBe(1);
+    // Not decrypted twice, and acknowledged once more so the row cannot be left pending.
+    expect(acked.filter((id) => id === 'row-boot')).toHaveLength(2);
   });
 
   it('does not make a later pull wait on an ack that has already landed', async () => {

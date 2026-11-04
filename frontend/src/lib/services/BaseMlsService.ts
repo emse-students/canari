@@ -124,6 +124,7 @@ import { markEpochGap, clearEpochGap, isInEpochGap } from '$lib/utils/chat/epoch
 import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
 import {
   parseServerTimestampMs,
+  type DeliveryArrival,
   type DeliveryChannel,
   deliveryMetaOf,
   type DeliveryRepeatShape,
@@ -730,6 +731,29 @@ export abstract class BaseMlsService implements IMlsService {
    * decision says no.
    */
   private readonly deliveries = new Map<string, 'queued' | 'done'>();
+
+  /**
+   * WHICH ACKNOWLEDGEMENT CARRIED EACH `done` ROW, as the {@link ackSerial} of the request that sent
+   * it - the fact that separates a pull that overtook a landed ack from one that was simply issued
+   * first.
+   *
+   * `done` SAYS THIS DEVICE DECIDED TO ACKNOWLEDGE A ROW, NOT THAT THE SERVER WAS ASKED TO FORGET IT.
+   * The drain settles a row `done` the moment its handler returns, and the ack that names it leaves
+   * only when the WHOLE drain ends (`onDrainEnd`). A pull issued anywhere in between - the boot's
+   * re-fetch for the conversations the restore has just seeded, started while the first pull's drain
+   * is still applying its rows, or a pull already out when a live copy drains - is answered
+   * from a queue that really does still hold the row, and listing it is the server being right. An
+   * id is absent here until its ack is issued; bounded with {@link deliveries}, whose eviction and
+   * forgetting remove it too.
+   */
+  private readonly ackSerialOf = new Map<string, number>();
+
+  /**
+   * How many acknowledgement requests {@link announceAck} has issued. A pull records the serial of
+   * its own flush ({@link fetchPendingMessages}): every ack up to that one has settled before the
+   * pull's request leaves, and no later one has.
+   */
+  private ackSerial = 0;
 
   /** Persistence-only window: no UI buffering, no overlay (default for {@link withMlsBulkIngest}). */
   /** How many delivery ids {@link rememberDelivery} keeps. See its doc for why it is bounded. */
@@ -1642,6 +1666,12 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private announceAck(messageIds: string[]): Promise<void> {
     const previous = this.ackInFlight;
+    // NUMBERED IN THE TICK IT IS ASKED FOR, like the chaining below, so a pull's flush and the rows
+    // of a drain ack are ordered exactly as their requests will be.
+    const serial = ++this.ackSerial;
+    for (const id of messageIds) {
+      if (this.deliveries.has(id)) this.ackSerialOf.set(id, serial);
+    }
     // WHOSE IDS THESE ARE, CAPTURED WHEN THEY ARE HANDED OVER RATHER THAN WHEN THEY ARE SENT.
     // `MlsDeliveryApi.ackMessages` reads `userId`/`deviceId` and mints its auth header at CALL time,
     // which is now inside a continuation that may run several seconds later - and acknowledging one
@@ -2263,14 +2293,15 @@ export abstract class BaseMlsService implements IMlsService {
     pull: {
       queued: {
         say:
-          'the pull listed a row the socket had already handed in and this device has not drained' +
-          ' yet - the ordinary crossing, and nothing is wrong',
+          'the pull listed a row the socket or an earlier pull had already handed in and this device' +
+          ' has not drained yet - the ordinary crossing, and nothing is wrong',
         accuse: false,
       },
       done: {
         say:
           'the pull listed a row this device had already acknowledged, AND that acknowledgement had' +
-          ' landed before the pull was issued - `fetchPendingMessages` awaits `ackInFlight`, so' +
+          ' settled before the pull was issued (its serial is at most the pull flush serial;' +
+          ' `fetchPendingMessages` awaits `ackInFlight`), so' +
           ' nothing routine explains this: either a pull was started outside that barrier, or the' +
           ' server answered without recording an ack it had accepted',
         accuse: true,
@@ -2313,6 +2344,27 @@ export abstract class BaseMlsService implements IMlsService {
   };
 
   /**
+   * WHAT `pull:done` MEANS WHEN THE PULL WAS ISSUED BEFORE THE ROW'S ACK - the ordinary crossing,
+   * seen once the drain has overtaken the pull's answer.
+   *
+   * The `ackInFlight` barrier orders a pull after every ack ANNOUNCED before it, and only those. A
+   * row this device settled `done` after the pull left - its ack not yet sent, or sent after the
+   * pull's own flush - is still in the server's queue when the pull is answered, so the listing is
+   * correct, and it differs from `pull:queued` only in whether the drain or the answer came first.
+   * Reported on the Mi 9T (`1.6.4-alpha.3`, dev, 2026-11-04) as two accused lines after each launch:
+   * a boot pulls twice - the reconnect's pull, then the re-fetch for the conversations the restore
+   * seeded (`refetchFramesLeftBehind`), which nothing holds behind the first pull's drain - and the
+   * rows of the drain still running are exactly the rows the second pull lists. Carried from
+   * {@link ackSerialOf} and the pull's own flush serial, never inferred from the repeat.
+   */
+  private static readonly PULL_DONE_LISTED_BEFORE_ITS_ACK = {
+    say:
+      'the pull was issued before this device acknowledged the row (its ack left after the pull' +
+      ' did), so the server was right to list it - the ordinary crossing, the drain simply won',
+    accuse: false,
+  };
+
+  /**
    * The ids whose acknowledgement is known to have FAILED, so a repeat of one can be explained.
    *
    * Only ever holds the payload of the most recent unsuccessful ack: `ackMessagesWithRetry` merges
@@ -2332,7 +2384,8 @@ export abstract class BaseMlsService implements IMlsService {
    * measured 23/25 by FWD-2 on 2026-09-05. That measurement described a race that no longer exists
    * - the ack and the pull it was crossing are now ordered - so the shape has been re-read against
    * the population it will actually run on rather than kept on the reading that named the last
-   * incident. What is left of it accuses, unless the ack is known to have failed.
+   * incident. What is left of it accuses, unless the ack is known to have failed or to have left
+   * after the pull did.
    *
    * In the instance and not the module because two services can exist at once in a test.
    */
@@ -2368,11 +2421,13 @@ export abstract class BaseMlsService implements IMlsService {
    * copy to recognise. See {@link deliveries} for the race this closes and for why a repeat of an
    * acknowledged row is acknowledged again instead of dropped.
    *
-   * @param channel which side offered this copy - see {@link REPEAT_MEANS} for what each of the
-   *   four combinations of channel and prior state actually says.
+   * @param arrival which side offered this copy - see {@link REPEAT_MEANS} for what each of the
+   *   four combinations of channel and prior state actually says - and, for a pull, the serial of
+   *   the pull's own ack flush: what separates an ack that preceded it from one that did not.
    */
-  private admitDelivery(queuedMessageId: string | undefined, channel: DeliveryChannel): boolean {
+  private admitDelivery(queuedMessageId: string | undefined, arrival: DeliveryArrival): boolean {
     if (!queuedMessageId) return true;
+    const { channel } = arrival;
     const known = this.deliveries.get(queuedMessageId);
     if (!known) {
       this.rememberDelivery(queuedMessageId, 'queued');
@@ -2386,8 +2441,8 @@ export abstract class BaseMlsService implements IMlsService {
     // THE DISCRIMINATOR IS CARRIED, NOT GUESSED. Only this instance knows whether the ack for this
     // row got through, and that is exactly what separates a defect from a consequence.
     const meaning =
-      channel === 'pull' && known === 'done' && this.unacknowledged.has(queuedMessageId)
-        ? BaseMlsService.PULL_DONE_AFTER_A_FAILED_ACK
+      arrival.channel === 'pull' && known === 'done'
+        ? this.meaningOfPullDone(queuedMessageId, arrival.listedAfterAck)
         : BaseMlsService.REPEAT_MEANS[channel][known];
     const shape = `${channel}:${known}` as DeliveryRepeatShape;
     this.repeats[shape] += 1;
@@ -2423,6 +2478,26 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * What a pull listing a row this device already settled `done` says, from the facts this instance
+   * holds: whether the row's ack was issued before the pull's own flush, and whether it got through.
+   *
+   * @param listedAfterAck the serial of the pull's flush - every ack up to it settled before the
+   *   pull's request left.
+   */
+  private meaningOfPullDone(
+    queuedMessageId: string,
+    listedAfterAck: number
+  ): { say: string; accuse: boolean } {
+    const ackedBy = this.ackSerialOf.get(queuedMessageId);
+    if (ackedBy === undefined || ackedBy > listedAfterAck) {
+      return BaseMlsService.PULL_DONE_LISTED_BEFORE_ITS_ACK;
+    }
+    if (this.unacknowledged.has(queuedMessageId))
+      return BaseMlsService.PULL_DONE_AFTER_A_FAILED_ACK;
+    return BaseMlsService.REPEAT_MEANS.pull.done;
+  }
+
+  /**
    * Records what the drain decided about a delivery: acknowledged, or owed a re-delivery.
    *
    * @param acked whether this drain acknowledged the row. False FORGETS it, because an unacked row
@@ -2430,8 +2505,12 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private settleDelivery(queuedMessageId: string | undefined, acked: boolean): void {
     if (!queuedMessageId) return;
-    if (acked) this.rememberDelivery(queuedMessageId, 'done');
-    else this.deliveries.delete(queuedMessageId);
+    if (acked) {
+      this.rememberDelivery(queuedMessageId, 'done');
+    } else {
+      this.deliveries.delete(queuedMessageId);
+      this.ackSerialOf.delete(queuedMessageId);
+    }
   }
 
   /**
@@ -2450,6 +2529,7 @@ export abstract class BaseMlsService implements IMlsService {
       const oldest = this.deliveries.keys().next().value;
       if (oldest === undefined) break;
       this.deliveries.delete(oldest);
+      this.ackSerialOf.delete(oldest);
     }
   }
 
@@ -2458,9 +2538,19 @@ export abstract class BaseMlsService implements IMlsService {
    *   {@link MlsQueuedMessage}: it is a fact about the ARRIVAL, not about the message, and the same
    *   row can arrive twice by two different routes - which is the only thing {@link admitDelivery}
    *   cannot work out for itself.
+   * @param listedAfterAck a PULL's flush serial ({@link fetchPendingMessages}), required on that
+   *   channel: without it a repeat could not tell an ack the pull overtook from one it never saw.
    */
-  protected enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void {
-    if (!this.admitDelivery(msg.queuedMessageId, channel)) return;
+  protected enqueueMessage(msg: MlsQueuedMessage, channel: 'live'): void;
+  protected enqueueMessage(msg: MlsQueuedMessage, channel: 'pull', listedAfterAck: number): void;
+  protected enqueueMessage(
+    msg: MlsQueuedMessage,
+    channel: DeliveryChannel,
+    listedAfterAck?: number
+  ): void {
+    const arrival: DeliveryArrival =
+      channel === 'pull' ? { channel, listedAfterAck: listedAfterAck! } : { channel };
+    if (!this.admitDelivery(msg.queuedMessageId, arrival)) return;
     // Stamped HERE, after the dedup: the copy that was admitted is the one whose route is a fact.
     this.messageScheduler.enqueue({ ...msg, channel });
     if (!this.messageScheduler.draining) {
@@ -2789,7 +2879,13 @@ export abstract class BaseMlsService implements IMlsService {
       // and so was the drain's ack when `refetchFramesLeftBehind` called straight back in here.
       // Awaiting it is an ORDERING, not a timeout - it resolves the moment the acks land, or once
       // their retries are exhausted, and in that second case the rows really are still owed.
-      await this.announceAck([]).catch(() => {});
+      const flush = this.announceAck([]);
+      // WHAT THIS PULL IS ORDERED AFTER, read in the tick the flush was numbered: every ack up to
+      // this serial settles before the request leaves, and none issued later is waited for. A repeat
+      // of a row acknowledged by a later ack is a crossing, not an overtaken ack (`admitDelivery`).
+      // A lower bound for a later page, which may leave after more acks - never claimed as more.
+      const listedAfterAck = this.ackSerial;
+      await flush.catch(() => {});
       try {
         // The per-page silence deadline is the delivery API's own (`PENDING_PAGE_STALL_MS`): it is a
         // property of that request, and a second copy here is a second number to keep true.
@@ -2798,7 +2894,7 @@ export abstract class BaseMlsService implements IMlsService {
             fetched += rows.length;
             recordPendingMessagesFetched(rows.length);
             console.log(`[PENDING] Fetched ${rows.length} pending messages (${fetched} so far)`);
-            this.enqueuePendingRows(rows as Record<string, unknown>[]);
+            this.enqueuePendingRows(rows as Record<string, unknown>[], listedAfterAck);
           },
         });
         // Every page fetched and enqueued: the server holds nothing more for this device, which is
@@ -2914,8 +3010,11 @@ export abstract class BaseMlsService implements IMlsService {
    * are COUNTED and NAMED here, with their two causes kept apart because they call for opposite
    * fixes: a payload that is absent or empty is a producer writing a row it never filled, while one
    * that fails to decode is a corrupt or truncated write.
+   *
+   * @param listedAfterAck the serial of the ack flush the listing pull waited for - see
+   *   {@link DeliveryArrival}.
    */
-  private enqueuePendingRows(rows: Record<string, unknown>[]): void {
+  private enqueuePendingRows(rows: Record<string, unknown>[], listedAfterAck: number): void {
     /** Rows this page will not acknowledge, by cause. Bounded by the page size, so keeping ids is cheap. */
     const undeliverable: { empty: string[]; malformed: string[] } = { empty: [], malformed: [] };
 
@@ -2939,7 +3038,8 @@ export abstract class BaseMlsService implements IMlsService {
             type: 'group_reset',
             queuedCreatedAt,
           },
-          'pull'
+          'pull',
+          listedAfterAck
         );
         continue;
       }
@@ -2965,7 +3065,8 @@ export abstract class BaseMlsService implements IMlsService {
                 // The row's column (migration 033): the server routed it to this device alone.
                 addressed: msg.addressed === true,
               },
-              'pull'
+              'pull',
+              listedAfterAck
             );
             continue;
           }

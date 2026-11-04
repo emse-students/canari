@@ -1129,6 +1129,31 @@ Four properties, each of which would be a defect if dropped:
 `BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
 through `enqueueMessage` rather than asserting on the Map.
 
+### A `done` row listed again: whose ack came first (2026-11-04)
+
+`done` records that this device DECIDED to acknowledge a row; the ack naming it leaves only when the
+whole drain ends (`onDrainEnd`). `fetchPendingMessages` awaits every ack announced before it
+(`ackInFlight`), and only those. So a pull issued while a drain is still applying - at boot, the
+reconnect's pull and then `refetchFramesLeftBehind`'s re-fetch for the conversations the restore just
+seeded, which nothing holds behind the first drain - lists rows the server rightly still holds, and
+when the drain finishes before the answer is read they meet `done`. The old cell accused that as "an
+ack that had landed before the pull" - two such lines after each launch on the Mi 9T
+(`1.6.4-alpha.3`, dev).
+
+The discriminator is now carried, never inferred: every ack request gets a serial (`announceAck`),
+each `done` row remembers the serial of the ack that named it (`ackSerialOf`), and a pull records the
+serial of its own flush (`listedAfterAck`, typed on `DeliveryArrival`). A `pull:done` repeat is
+
+| The row's ack | Line |
+| --- | --- |
+| not issued yet, or issued after the pull's flush | `log`, once per shape: the ordinary crossing |
+| issued before, and it failed | `log`: the `[ACK]` failure above, showing its consequence |
+| issued before, and it landed | `warn`: nothing routine explains it (a pull outside the barrier, or a server that forgot an ack) |
+
+The flush serial is a lower bound for a later page of the same pull, which may leave after more acks;
+it is never claimed as more. `BaseMlsService.ackBarrier.test.ts` drives the two-pulls-at-boot case
+through the real pull and drain and fails on the old predicate.
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
