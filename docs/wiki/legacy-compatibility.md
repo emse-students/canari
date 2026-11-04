@@ -21,12 +21,11 @@ the version the floor must pass, and this rule is what moves the floor there. Th
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
 **Production's floor is `1.6.2`** (read back from `GET /api/version` on 2026-11-04, after the owner's raise;
-the owner decided to KEEP `1.6.2`, not lower it to `1.6.0`). **Dev still reads `1.6.0`** (same day): a
-removal that refuses what an older build sends may not deploy to dev until its floor is raised the same
-way, in `/admin/platform` (see "Removable at floor 1.2.7" below for why each estate has its own row). An
-older figure on this page is the floor at the date its entry names.
+the owner decided to KEEP `1.6.2`, not lower it to `1.6.0`). **Dev reads `1.6.2` too** (raised on the
+owner's instruction and read back from its `GET /api/version`, 2026-11-04). An older figure on this page
+is the floor at the date its entry names.
 
-### Entries `1.6.2` unblocks on production (floor read back 2026-11-04)
+### Entries `1.6.2` unblocks (both estates read it, 2026-11-04)
 
 "Carried by" is the first stable tag containing the pull request (`git tag --contains`). **Nothing is
 removed by this change**: removal is its own pull request, and an entry with a second half keeps waiting
