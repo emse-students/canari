@@ -1550,7 +1550,20 @@ Swift decodes that the Rust struct in front of it does not carry; on its first r
 upstream's `itemPositioning`, dropped the same way (unused here, carried now). A later patch adds a
 command, `set_tab_bar_interactive` (2026-11-04): the bar takes no touch under the guided tour's
 backdrop ([guided-help](guided-help.md)); its JS name is pinned by `nativePluginCommands.test.ts`,
-its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. The crate is otherwise
+its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. **Show and hide are ordered the
+same way** (2026-11-04): upstream's `show_tab_bar` / `hide_tab_bar` are ASYNC Rust commands, each on
+its own runtime worker before the hop to the main queue, so a hide quickly followed by a show (the
+keyboard closing as a conversation opens) could reach UIKit reversed and leave the bar in the state
+the layout had left. Both now take `TabBarVisibilityOptions { seq }`, invoked by name through
+`invokeSequenced` (`systemComponentsCommands.ts`) instead of the published JS API, which sends no
+argument. ONE mechanism serves the three commands: the page stamps every call from one rising
+counter, and Swift's `CommandSequence` - one instance per state (`interactiveOrder`,
+`visibilityOrder`), both reset by a configuration - drops a call older than the last one it applied.
+A sync Rust command is NOT the alternative: it runs on the main thread and would block it waiting
+for Swift, which answers from `DispatchQueue.main.async` - a deadlock. The race was read off the
+shape, never seen; owed on the iPhone is only that the bar still shows and hides with the layout (a
+conversation opened and left with the keyboard up, the bar back on the list) - a dropped call logs
+`[pendi-nav][native] showTabBar/hideTabBar seq=N dropped`. The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
 redraws both states and reconfigures the bar. **The redraw is keyed on the two COLOURS read off the
 DOM, never on `themeStore.isDark`** (2026-10-01): the bar's `onMount` runs before the root layout's

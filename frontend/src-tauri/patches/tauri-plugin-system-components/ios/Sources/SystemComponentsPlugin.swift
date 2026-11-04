@@ -62,6 +62,41 @@ class SetTabBarInteractiveArgs: Decodable {
     let seq: Int
 }
 
+/// CANARI PATCH: `showTabBar` / `hideTabBar`'s argument - the same rising `seq` as
+/// `SetTabBarInteractiveArgs`, ordered by the same `CommandSequence`. Upstream takes no argument.
+class TabBarVisibilityArgs: Decodable {
+    let seq: Int
+}
+
+/// CANARI PATCH: THE ONE ORDERING the sequenced tab-bar commands share. Each command is async on
+/// the Rust side (a sync one would block the main thread waiting for Swift, which answers from the
+/// main queue - a deadlock), so two quick calls may reach the main queue out of order. The page
+/// stamps every call with a rising `seq` (`systemComponentsCommands.ts`); a call older than the
+/// last one applied is dropped here. -1 since the last configuration: a reloaded page counts from 1
+/// again. Main queue only.
+struct CommandSequence {
+    let command: String
+    private(set) var applied = -1
+
+    init(_ command: String) {
+        self.command = command
+    }
+
+    /// Whether `seq` is newer than every call applied so far - and if so, records it as applied.
+    mutating func admits(_ seq: Int) -> Bool {
+        guard seq > applied else {
+            NSLog("[pendi-nav][native] %@ seq=%ld dropped: %ld already applied", command, seq, applied)
+            return false
+        }
+        applied = seq
+        return true
+    }
+
+    mutating func reset() {
+        applied = -1
+    }
+}
+
 class SetBadgeArgs: Decodable {
     let id: String
     let value: String?
@@ -108,9 +143,10 @@ class SystemComponentsPlugin: Plugin {
     private var componentsOverlay: ComponentsOverlayController?
     private var webView: WKWebView?
     private var sheets: [String: SheetController] = [:]
-    /// CANARI PATCH: the newest `setTabBarInteractive` sequence applied; -1 since the last
-    /// configuration (a reloaded page counts again from 1). Main queue only.
-    private var interactiveSeq = -1
+    /// CANARI PATCH: the order of `setTabBarInteractive`, and of `showTabBar` / `hideTabBar` (one
+    /// sequence for both: they set one state). See `CommandSequence`.
+    private var interactiveOrder = CommandSequence("setTabBarInteractive")
+    private var visibilityOrder = CommandSequence("showTabBar/hideTabBar")
     // CANARI PATCH: no KeyboardViewportGuard. Upstream installs one at load, with no switch, and it
     // resizes the WebView by 0.5 pt and back 100 ms after every keyboard dismissal. Canari already
     // owns that frame (`CanariApplyKeyboardLayout`, canari_ios.mm, on every keyboard frame change),
@@ -139,7 +175,8 @@ class SystemComponentsPlugin: Plugin {
             // that takes no touch with nothing left to turn it back on. The page configures the bar
             // first and then sends its own state (`NativeTabBar.svelte`), from sequence 1 again.
             overlay.view.isUserInteractionEnabled = true
-            self.interactiveSeq = -1
+            self.interactiveOrder.reset()
+            self.visibilityOrder.reset()
             overlay.apply(items: args.items, selectedId: args.selectedId)
             overlay.applyTint(args.tint.flatMap(ColorUtil.from(hex:)))
             if let acc = args.accessory {
@@ -167,12 +204,13 @@ class SystemComponentsPlugin: Plugin {
         }
     }
 
-    @objc public func showTabBar(_ invoke: Invoke) {
-        setHidden(false, invoke)
+    /// CANARI PATCH: show and hide carry a `seq` (`TabBarVisibilityArgs`).
+    @objc public func showTabBar(_ invoke: Invoke) throws {
+        setHidden(false, seq: try invoke.parseArgs(TabBarVisibilityArgs.self).seq, invoke)
     }
 
-    @objc public func hideTabBar(_ invoke: Invoke) {
-        setHidden(true, invoke)
+    @objc public func hideTabBar(_ invoke: Invoke) throws {
+        setHidden(true, seq: try invoke.parseArgs(TabBarVisibilityArgs.self).seq, invoke)
     }
 
     /// CANARI PATCH: whether the bar (and its accessory) takes touches. The app turns it off while
@@ -189,14 +227,10 @@ class SystemComponentsPlugin: Plugin {
                 invoke.reject("tab bar is not configured")
                 return
             }
-            guard args.seq > self.interactiveSeq else {
-                NSLog(
-                    "[pendi-nav][native] setTabBarInteractive seq=%ld dropped: %ld already applied",
-                    args.seq, self.interactiveSeq)
+            guard self.interactiveOrder.admits(args.seq) else {
                 invoke.resolve()
                 return
             }
-            self.interactiveSeq = args.seq
             overlay.view.isUserInteractionEnabled = args.interactive
             NSLog(
                 "[pendi-nav][native] setTabBarInteractive interactive=%@",
@@ -419,10 +453,15 @@ class SystemComponentsPlugin: Plugin {
         }
     }
 
-    private func setHidden(_ hidden: Bool, _ invoke: Invoke) {
+    private func setHidden(_ hidden: Bool, seq: Int, _ invoke: Invoke) {
         DispatchQueue.main.async { [weak self] in
-            guard let overlay = self?.overlay else {
+            guard let self, let overlay = self.overlay else {
                 invoke.reject("tab bar is not configured")
+                return
+            }
+            // CANARI PATCH: an older show or hide arriving last is dropped (`CommandSequence`).
+            guard self.visibilityOrder.admits(seq) else {
+                invoke.resolve()
                 return
             }
             UIView.transition(
