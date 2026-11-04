@@ -1589,22 +1589,47 @@ export interface ReadGrant {
   createdAt: string;
 }
 
-/** One line of the journal of grants and revocations. */
+/**
+ * One line of the journal: a cell granted or revoked, or the person's switch "voit les commentaires"
+ * turned on (`cmt_show`) or off (`cmt_hide`) - a switch line names no cell (`campus` null).
+ */
 export interface ReadGrantJournalEntry {
   userId: string;
-  campus: string;
+  campus: string | null;
   formation: string | null;
-  action: 'grant' | 'revoke';
+  action: 'grant' | 'revoke' | 'cmt_show' | 'cmt_hide';
   actor: string;
   at: string;
 }
 
-/** Current read grants and the recent journal. Global admins only. */
+/** A named reader's switch "voit les commentaires", once set. A person absent from the list is OFF. */
+export interface ReadGrantReader {
+  userId: string;
+  seesComments: boolean;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+/** Current read grants, the readers' switches and the recent journal. Global admins only. */
 export async function listReadGrants(): Promise<{
   grants: ReadGrant[];
+  /** Absent from a server older than the switch (2026-11-04): everybody reads as OFF. */
+  readers?: ReadGrantReader[];
   journal: ReadGrantJournalEntry[];
 }> {
   return request('/api/associations/read-grants');
+}
+
+/**
+ * Turns one named reader's switch "voit les commentaires" on or off (owner, 2026-11-04). Idempotent;
+ * global admins only. OFF (the default) hides from them the comments, and who reacted or voted, of
+ * every post only their grant shows them.
+ */
+export async function setReadGrantComments(userId: string, seesComments: boolean): Promise<void> {
+  await request('/api/associations/read-grants/comments', {
+    method: 'PUT',
+    body: JSON.stringify({ userId, seesComments }),
+  });
 }
 
 /** Grants or revokes one (account x campus x formation) cell. Idempotent; global admins only. */

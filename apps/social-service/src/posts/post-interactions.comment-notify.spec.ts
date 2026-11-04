@@ -101,6 +101,16 @@ describe('PostInteractionsService.addComment notifications', () => {
     for (const [, , data] of sent) {
       expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
     }
+    // And every bell ROW it writes names it too: how the bell tells a comment's mention from a
+    // post's (migration 132, `commentBorneNotificationSql`).
+    const rows = notifications.createNotification.mock.calls.map(
+      ([row]: [{ type: string; commentId?: string }]) => [row.type, row.commentId]
+    );
+    expect(rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
+      ['comment', commentId],
+      ['mention', commentId],
+      ['reply', commentId],
+    ]);
   });
 
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
@@ -113,12 +123,39 @@ describe('PostInteractionsService.addComment notifications', () => {
     await service.addComment('p1', { userId: 'reader', text: 'hello' });
     await flush();
     // The post author was told as such already, so the gate is asked only about the others.
-    expect(notifications.mentionRecipientsOf).toHaveBeenCalledWith(post, 'reader', [
-      'kept',
-      'dropped',
-    ]);
+    expect(notifications.mentionRecipientsOf).toHaveBeenCalledWith(
+      post,
+      'reader',
+      ['kept', 'dropped'],
+      'COMMENT'
+    );
     const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
     expect(sent.map(([to]) => to).sort()).toEqual(['author', 'kept']);
+  });
+
+  it("asks the comments' gate before telling a parent's writer of a reply, and drops whom it drops", async () => {
+    // A named reader whose comments are withheld (owner, 2026-11-04) wrote the parent before the
+    // switch: the gate (`'COMMENT'`) drops them, so the reply's text reaches nobody it must not.
+    const post = {
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'k', userId: 'withheld-reader', text: 'old' }],
+    };
+    const { service, push, notifications } = makeService(post);
+    notifications.mentionRecipientsOf.mockImplementation((_p, _w, ids: string[]) =>
+      Promise.resolve(ids.filter((id) => id !== 'withheld-reader'))
+    );
+    await service.addComment('p1', { userId: 'replier', text: 'r', parentId: 'k' });
+    await flush();
+    expect(notifications.mentionRecipientsOf).toHaveBeenCalledWith(
+      post,
+      'replier',
+      ['withheld-reader'],
+      'COMMENT'
+    );
+    const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
+    expect(sent.map(([to]) => to)).toEqual(['author']);
   });
 
   /** The review cohort (review-cohort.ts): no comment notice crosses it, in either direction. */

@@ -118,7 +118,7 @@ it('likes a reel not yet reacted to: one request, the heart, and the cards behin
   expect(addReaction).toHaveBeenCalledTimes(1);
   expect(addReaction).toHaveBeenCalledWith('a', "J'aime");
   expect(hearts()).toBe(1);
-  expect(told).toHaveBeenCalledWith({ alice: "J'aime" });
+  expect(told).toHaveBeenCalledWith({ reactions: { alice: "J'aime" } });
   stop();
 });
 

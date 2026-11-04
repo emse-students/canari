@@ -258,6 +258,7 @@ export class PostInteractionsService {
           actorId,
           actorName: masked ? actorName : undefined,
           text: preview,
+          commentId: comment.id,
           skipPush: true,
         });
       const pushContentFor = {
@@ -308,6 +309,21 @@ export class PostInteractionsService {
             recipients = [];
           }
         }
+        // A reply pushes ITS text: only to who may read this post's comments, through the same gate
+        // as a mention (`'COMMENT'`) - a named reader whose comments are withheld (owner,
+        // 2026-11-04), or a parent's writer who has lost the post since, is told nothing. The post's
+        // author, above, needs no gate: authorship is a door of its own, never a grant.
+        try {
+          recipients = await this.notifications.mentionRecipientsOf(
+            post,
+            data.userId,
+            recipients.filter((id) => !alreadyNotified.has(id)),
+            'COMMENT'
+          );
+        } catch (e) {
+          this.logger.warn(`[NOTIFY] reply recipients of post=${postId} unreadable`, e);
+          recipients = [];
+        }
         for (const recipientId of recipients) {
           if (alreadyNotified.has(recipientId)) continue;
           alreadyNotified.add(recipientId);
@@ -332,7 +348,8 @@ export class PostInteractionsService {
             data.userId,
             this.notifications
               .resolveMentionedUserIds(data.text)
-              .filter((id) => !alreadyNotified.has(id))
+              .filter((id) => !alreadyNotified.has(id)),
+            'COMMENT'
           );
         } catch (e) {
           this.logger.warn(`[NOTIFY] mention recipients of post=${postId} unreadable`, e);

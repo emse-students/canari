@@ -27,6 +27,15 @@ pub(crate) async fn hide_tab_bar<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     app.system_components().hide_tab_bar()
 }
 
+/// CANARI PATCH: see `SetTabBarInteractiveOptions`.
+#[command]
+pub(crate) async fn set_tab_bar_interactive<R: Runtime>(
+    app: AppHandle<R>,
+    options: SetTabBarInteractiveOptions,
+) -> Result<()> {
+    app.system_components().set_tab_bar_interactive(options)
+}
+
 #[command]
 pub(crate) async fn select_tab<R: Runtime>(
     app: AppHandle<R>,

@@ -22,10 +22,13 @@ const grant = (campus: string, formation: string | null): ReadGrant => ({
   createdAt: '2026-10-16T10:00:00Z',
 });
 
-function render(grants: ReadGrant[]) {
+function render(grants: ReadGrant[], seesComments = false) {
   const onEdit = vi.fn();
   const target = document.body.appendChild(document.createElement('ul'));
-  const instance = mount(ReadGrantCard, { target, props: { name: 'Alice', grants, onEdit } });
+  const instance = mount(ReadGrantCard, {
+    target,
+    props: { name: 'Alice', grants, seesComments, onEdit },
+  });
   flushSync();
   mounted.push(() => unmount(instance));
   return { target, onEdit };
@@ -57,4 +60,15 @@ it('the edit button names the person and calls onEdit', () => {
   expect(button.getAttribute('aria-label')).toBe(m.readaccess_edit_aria({ name: 'Alice' }));
   button.click();
   expect(onEdit).toHaveBeenCalledOnce();
+});
+
+it('says in one line whether the person sees the comments (owner, 2026-11-04)', () => {
+  const off = render([grant('gardanne', null)]).target;
+  expect(off.querySelector('[data-testid="read-grant-comments-state"]')!.textContent!.trim()).toBe(
+    m.readaccess_card_comments_off()
+  );
+  const on = render([grant('gardanne', null)], true).target;
+  expect(on.querySelector('[data-testid="read-grant-comments-state"]')!.textContent!.trim()).toBe(
+    m.readaccess_card_comments_on()
+  );
 });

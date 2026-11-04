@@ -71,8 +71,9 @@ tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
 # only change colour through the bar's `tintColor`, which on iOS 26 tints the glass too (user,
 # 2026-09-30: yellow when selected, black when not, the bar not tinted). The local patch adds a tab
 # item's `selectedImage`, and REMOVES the plugin's keyboard guard, which resized the WebView after
-# every keyboard dismissal alongside `CanariApplyKeyboardLayout` - the `CANARI PATCH` hunks in
-# `ios/Sources`; everything else is the published crate, unchanged.
+# every keyboard dismissal alongside `CanariApplyKeyboardLayout`, and ADDS `set_tab_bar_interactive`
+# (the bar takes no touch under the guided tour's backdrop) - the `CANARI PATCH` hunks in
+# `ios/Sources` and `src/`; everything else is the published crate, unchanged.
 tauri-plugin-system-components = { path = "patches/tauri-plugin-system-components" }
 # tauri-plugin-websocket 2.5.0 connects through `tokio-tungstenite`'s `TcpStream::connect`, which
 # tries the resolved addresses IN TURN: on a network handing out an IPv6 that routes nowhere, the

@@ -207,6 +207,16 @@ export interface PostEntity {
   canRepublish?: boolean;
   /** The poll may be voted: false for a reader who sees the post only through a read grant. */
   canVote?: boolean;
+  /**
+   * The comments (button, count, thread) and the lists of people (who reacted, who voted what) are
+   * shown. False only for a named reader whose ONLY door is a read grant with "voit les
+   * commentaires" off (owner, 2026-11-04): the post then carries no `comments`/`commentCount`, its
+   * `reactions` hold the reader's own only, `otherReactionCounts` the rest as a tally, and its polls
+   * are tallies. Absent is true (an older server).
+   */
+  canSeeComments?: boolean;
+  /** With `canSeeComments: false`: everybody else's reactions, counted by type - never an id. */
+  otherReactionCounts?: Record<string, number>;
   /** "Proposer a une association": the reader publishes in this post's association's name. */
   canProposeRepublication?: boolean;
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
@@ -529,16 +539,22 @@ export async function votePoll(
 export async function addReaction(
   postId: string,
   reactionType: string
-): Promise<{ ok: boolean; reactions: Record<string, string> }> {
+): Promise<{
+  ok: boolean;
+  reactions: Record<string, string>;
+  otherReactionCounts?: Record<string, number>;
+}> {
   return request(`/api/posts/${postId}/reactions`, {
     method: 'POST',
     body: JSON.stringify({ reactionType }),
   });
 }
 
-export async function removeReaction(
-  postId: string
-): Promise<{ ok: boolean; reactions: Record<string, string> }> {
+export async function removeReaction(postId: string): Promise<{
+  ok: boolean;
+  reactions: Record<string, string>;
+  otherReactionCounts?: Record<string, number>;
+}> {
   return request(`/api/posts/${postId}/reactions`, { method: 'DELETE' });
 }
 

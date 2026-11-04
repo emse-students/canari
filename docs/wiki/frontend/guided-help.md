@@ -150,6 +150,20 @@ Three refinements keep that exact:
   registers each place's id as a REGION - the band the bar covers, from the plugin's measured inset -
   and the step's icon names the tab. A slice per item was rejected: the plugin gives the band's
   height, not where each item sits, and the iOS 26 floating pill would make a slice a guess.
+- **The iOS native tab bar takes NO TOUCH under a modal step.** The backdrop cannot cover a bar drawn
+  above the WebView: on the iPhone 12 (`1.6.3-alpha.7`) a tap on the chat tab left the tour and
+  opened `/chat`. `GuideOverlay` writes `modalWebLayer.covering` (`navigation/nativeTabBarState`)
+  while a MODAL step is on screen - not while a tour is suspended, and never for a hint, which leaves
+  the page usable - and `NativeTabBar` sends it to the plugin's Canari-patched
+  `set_tab_bar_interactive`, which turns the overlay's root view's `isUserInteractionEnabled` off so
+  UIKit's hit test hands the touch to the WebView, where the backdrop takes it. Each call carries a
+  rising `seq` (the command is async, so two quick toggles may reach the main queue out of order, and
+  Swift drops an older one arriving last); a configuration resets the bar to interactive and the
+  sequence to -1, and `NativeTabBar` sends its state after EVERY configuration - the overlay outlives
+  a WebView reload, so a page reloaded under the backdrop would otherwise inherit a bar that takes no
+  touch. A call is recorded as sent only once the plugin answered. The bar stays drawn:
+  the tab steps point at its band. Hiding it was rejected for that reason. Owed on the iPhone: check T
+  in [device-verification](../device-verification.md).
 
 A help that ends up with NOTHING to show is put back unseen (it never reached the reader) and is not
 offered again until the situation changes (`situation()`: the settled route and the anchor registry's
@@ -267,9 +281,8 @@ its id is not in the allowlists - it never shipped, so no row can exist).
   news, neither on the tour's visit (the one-help-per-visit cap) nor on the next.
 - **Never on the same visit as another help**: the `#shownThisVisit` cap applies unchanged.
 - **Write it as a hint, not a tour**: nothing is put behind it. The iOS native tab bar cannot be
-  covered by any backdrop (it is drawn above the WebView), which is the open
-  [P3](../backlog.d/p3-the-native-tab-bar-stays-tappable-under-the-welcome-tour.md) - this batch does
-  not touch it.
+  covered by any backdrop (it is drawn above the WebView); a MODAL step turns its touches off
+  (see "The iOS native tab bar takes NO TOUCH under a modal step" above), a hint leaves it tappable.
 
 Pinned by `guideNews.test.ts` (version, derivation, the engine rules over made-up ids, the put-back),
 `guideEngine.test.ts`, `guides/batch2Hints.test.ts` (routes, layouts, anchors really marked, the (i)

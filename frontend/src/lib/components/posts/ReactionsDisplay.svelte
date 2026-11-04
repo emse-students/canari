@@ -14,9 +14,21 @@
     reactionList: ReadonlyArray<{ type: string; emoji: string }>;
     /** Called when the user taps a reaction badge to toggle their own reaction of the same type. */
     onReactionClick: (reactionType: string) => void;
+    /**
+     * Whether a badge opens "who reacted". False when the post's people are withheld from its
+     * reader (owner, 2026-11-04): the badges are a tally and nothing more.
+     */
+    showReactors?: boolean;
   }
 
-  let { reactionCounts, reactions, userReaction, reactionList, onReactionClick }: Props = $props();
+  let {
+    reactionCounts,
+    reactions,
+    userReaction,
+    reactionList,
+    onReactionClick,
+    showReactors = true,
+  }: Props = $props();
 
   let popupReactionType = $state<string | null>(null);
   let anchorEl = $state<HTMLElement | null>(null);
@@ -65,7 +77,9 @@
         type="button"
         onclick={() => onReactionClick(reactionType)}
         use:reactorsTrigger={{
-          open: (anchor) => openPopup(reactionType, anchor),
+          open: (anchor) => {
+            if (showReactors) openPopup(reactionType, anchor);
+          },
           close: closePopup,
         }}
         aria-describedby={popupReactionType === reactionType ? panelId : undefined}

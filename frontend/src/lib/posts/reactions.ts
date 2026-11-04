@@ -38,3 +38,21 @@ export function reactionTypeToLabel(type: string): string {
 export function reactionTypeToEmoji(type: string): string {
   return REACTIONS.find((r) => r.type === type)?.emoji ?? '❤️';
 }
+
+/**
+ * A post's reactions counted by type, as its card and its reel rail show them. A post served to a
+ * named reader whose comments are withheld (owner, 2026-11-04) names nobody but that reader: its
+ * `reactions` hold their own entry and `otherReactionCounts` everybody else's as a tally, so the
+ * count is that tally plus the map - which also keeps a reader's own tap counted the moment they
+ * make it. Any other post has no `otherReactionCounts` and is counted from the map alone.
+ */
+export function reactionCountsOf(post: {
+  reactions?: Record<string, string>;
+  otherReactionCounts?: Record<string, number>;
+}): Record<string, number> {
+  const counts: Record<string, number> = { ...post.otherReactionCounts };
+  for (const type of Object.values(post.reactions ?? {})) {
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  return counts;
+}

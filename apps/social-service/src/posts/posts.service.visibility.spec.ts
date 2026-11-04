@@ -160,6 +160,17 @@ describe('one post the reader may not see', () => {
     expect(audience[1].sql).not.toContain('read_grants');
   });
 
+  it("asks the comments' predicate for COMMENT, and only for COMMENT (owner, 2026-11-04)", async () => {
+    const { service, calls } = makeService({ visible: true, existing: post });
+    await service.assertVisible('p1', VIEWER, 'READ_OR_REACT');
+    const before = calls.length;
+    await service.assertVisible('p1', VIEWER, 'COMMENT');
+    const commentCalls = calls.slice(before);
+    expect(calls.slice(0, before).some((c) => c.sql.includes('read_grant_readers'))).toBe(false);
+    expect(commentCalls.find((c) => c.sql.includes('AS visible'))?.sql).toContain('read_grants');
+    expect(commentCalls.some((c) => c.sql.includes('read_grant_readers'))).toBe(true);
+  });
+
   it('is a 404 for the calendar-link read as well', async () => {
     const { service } = makeService({ visible: false, existing: post });
     await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).rejects.toBeInstanceOf(
