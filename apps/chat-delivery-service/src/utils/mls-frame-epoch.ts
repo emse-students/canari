@@ -198,3 +198,32 @@ export const MLS_MAX_PAST_EPOCHS = 2;
 export function isBeyondPastEpochWindow(frameEpoch: number, activeEpoch: number): boolean {
   return frameEpoch < activeEpoch - MLS_MAX_PAST_EPOCHS;
 }
+
+/**
+ * Whether an application frame sealed at `frameEpoch` was sealed BEFORE the commit that admitted
+ * `seat`, so the seat's device can never open it.
+ *
+ * A device admitted by a commit built on base epoch B holds the group from B + 1: a Welcome and an
+ * external join both start with no secrets of an earlier epoch, so a frame sealed at B or below is
+ * unreadable to it however it is delivered. A member that has not applied the join yet still seals
+ * at B after the join is accepted - the ordinary race of a send crossing a join - and that frame
+ * used to be queued and pushed to the newcomer anyway, which acknowledged it as
+ * `past-epoch-application`, counted it a loss and asked its peers for a seed it was never owed
+ * (rig log 2026-10-25: `msg_epoch=5 group_epoch=6` right after `externalJoin ... base epoch 5`).
+ *
+ * The CREATOR and a key group's PUBLISHER are recorded at the epoch they HOLD rather than at a
+ * commit's base (`admittedByBaseEpoch` is 0 for a creation, the first published epoch for a
+ * publisher): the rule reads them one epoch too strictly, which drops nothing, because no other
+ * device holds the epoch a group was created at.
+ *
+ * An INFERRED floor (`admissionInferred`) is no admission - it may be later than the real one - so
+ * it never withholds a frame, and no recorded admission (null) never does either.
+ */
+export function sealedBeforeAdmission(
+  frameEpoch: number,
+  seat: { admittedByBaseEpoch: number | null; admissionInferred: boolean }
+): boolean {
+  if (seat.admittedByBaseEpoch === null || seat.admittedByBaseEpoch === undefined) return false;
+  if (seat.admissionInferred) return false;
+  return frameEpoch <= seat.admittedByBaseEpoch;
+}

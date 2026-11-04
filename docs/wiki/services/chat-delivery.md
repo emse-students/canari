@@ -434,6 +434,25 @@ never appended to the history stream**: that stream is replayed to every member,
 belongs to one device's queue only. Why and what it costs:
 [channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
 
+**An application frame sealed before a seat's admission is withheld from that seat (2026-11-04).**
+A device admitted by a commit built on base epoch B (an Add, or its own external join) holds the
+group from B + 1, and neither a Welcome nor an external join carries the secrets of an earlier
+epoch. A member that has not applied the join yet still seals at B after the join is accepted -
+a send crossing a join - and that frame was queued and pushed to the newcomer, which acknowledged
+it as `past-epoch-application`, counted it as a lost key-group frame and asked its peers for a seed
+it was never owed (rig log, 2026-10-25: `msg_epoch=5 group_epoch=6` in the same second as
+`externalJoin ... base epoch 5`, two per community joined, each followed by three seed requests).
+`sendMessage` now drops, for an application frame, every seat for which `sealedBeforeAdmission`
+(`utils/mls-frame-epoch.ts`) holds - `frameEpoch <= admittedByBaseEpoch` - and logs one line,
+`[SEND][trace] SEALED_BEFORE_ADMISSION group= frameEpoch= withheld=N devices=`. It is the rule a
+pending seat already had (`admittedAtEpoch`), read from the admission every seat records. Commits
+are never withheld. An inferred floor (`admissionInferred`) or a seat with no recorded admission is
+never withheld from, because only a recorded admission proves the device cannot hold the epoch. The
+creator and a key group's publisher are recorded at the epoch they hold rather than at a base, so the
+rule is one epoch too strict for them, which withholds nothing: no other device can seal at the
+epoch a group was created at. Asserted in `messaging.durability.spec.ts` (an active device admitted
+after the frame) and `mls-frame-epoch.spec.ts`.
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which

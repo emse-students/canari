@@ -3,6 +3,7 @@ import {
   isBeyondPastEpochWindow,
   mlsFrameEpoch,
   readCommitFrame,
+  sealedBeforeAdmission,
 } from './mls-frame-epoch';
 import {
   externalCommitBody,
@@ -169,5 +170,27 @@ describe('isBeyondPastEpochWindow', () => {
 
   it('says nothing about a frame AHEAD of the group', () => {
     expect(isBeyondPastEpochWindow(142, 141)).toBe(false);
+  });
+});
+
+describe('sealedBeforeAdmission', () => {
+  const admitted = (base: number | null, inferred = false) => ({
+    admittedByBaseEpoch: base,
+    admissionInferred: inferred,
+  });
+
+  it('a frame sealed at the base of the admitting commit, or before it, is not the seat`s', () => {
+    expect(sealedBeforeAdmission(5, admitted(5))).toBe(true);
+    expect(sealedBeforeAdmission(3, admitted(5))).toBe(true);
+  });
+
+  it('a frame sealed at the epoch the admission created, or after, is', () => {
+    expect(sealedBeforeAdmission(6, admitted(5))).toBe(false);
+    expect(sealedBeforeAdmission(40, admitted(5))).toBe(false);
+  });
+
+  it('an inferred floor or no recorded admission never withholds anything', () => {
+    expect(sealedBeforeAdmission(1, admitted(5, true))).toBe(false);
+    expect(sealedBeforeAdmission(1, admitted(null))).toBe(false);
   });
 });

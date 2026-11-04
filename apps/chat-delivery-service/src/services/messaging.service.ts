@@ -51,6 +51,7 @@ import {
   mlsFrameEpoch,
   isPublicMlsFrame,
   readCommitFrame,
+  sealedBeforeAdmission,
 } from '../utils/mls-frame-epoch';
 import { groupInfoLeafIdentity } from '../utils/mls-group-info';
 import {
@@ -1885,12 +1886,37 @@ export class MessagingService {
             appVersion: senderVersion ?? 'unknown',
           };
         }
-        const members = recipients.filter(
+        const reachable = recipients.filter(
           (m) =>
             !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
+        // AN APPLICATION FRAME SEALED BEFORE A SEAT'S ADMISSION IS NOT ITS TO RECEIVE: its device
+        // joined at a later epoch and holds no secret of this one, so a row would be acknowledged as
+        // a loss on arrival and drive a seed request it was never owed (`sealedBeforeAdmission`).
+        // The same rule `admittedAtEpoch` applies to a pending seat above, applied to the seat's
+        // recorded admission so it holds for an active one too. Said in one line, as a count: it is
+        // the ordinary race of a send crossing a join, not a fault.
+        const beforeAdmission =
+          !isHandshake && frameEpoch !== null
+            ? reachable.filter((m) => sealedBeforeAdmission(frameEpoch, m))
+            : [];
+        if (beforeAdmission.length > 0) {
+          this.logger.log(
+            `[SEND][${traceId}] SEALED_BEFORE_ADMISSION group=${groupId} frameEpoch=${frameEpoch} ` +
+              `withheld=${beforeAdmission.length} devices=${beforeAdmission
+                .map(
+                  (m) =>
+                    `${cutUserId(m.userId)}:${cutDeviceId(m.deviceId)}@${m.admittedByBaseEpoch}`
+                )
+                .join(',')}`
+          );
+        }
+        const members =
+          beforeAdmission.length > 0
+            ? reachable.filter((m) => !beforeAdmission.includes(m))
+            : reachable;
         // AN ADDRESSED FRAME NARROWS THE SET RESOLVED ABOVE AND NEVER ADDS TO IT: a key that names no
         // live member of this group addresses nobody, so a client cannot use it to reach a device
         // outside the group. Measured on production 2026-10-12, an answer to one seed request was
