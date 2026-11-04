@@ -35,6 +35,7 @@
   import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
+  import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
   import type { MediaViewerInfo } from '$lib/utils/mediaViewerInfo';
   import { m } from '$lib/paraglide/messages';
 
@@ -470,17 +471,23 @@
 
 {#if galleryMode}
   <!-- Inside parent gallery lightbox - just render the content -->
-  {#if loading && poster}
-    <img
-      src={poster}
-      alt=""
-      aria-hidden="true"
-      class="pointer-events-none h-full w-full object-contain select-none"
-      data-video-first-frame-poster
-    />
-  {:else if loading}
-    <div class="flex min-h-[12rem] w-full items-center justify-center">
-      <ImageIcon size={32} class="animate-pulse text-white opacity-20" strokeWidth={1.5} />
+  {#if loading}
+    <!-- THE DOWNLOAD IS THE WAIT, AND IT IS SAID (Mi 9T, 400 kbps: ~55 s of a bare image icon before
+         the player mounted). The first-frame poster, when there is one, stays under the spinner. -->
+    <div
+      class="relative flex h-full min-h-[12rem] w-full items-center justify-center"
+      data-media-loading
+    >
+      {#if poster}
+        <img
+          src={poster}
+          alt=""
+          aria-hidden="true"
+          class="pointer-events-none h-full w-full object-contain select-none"
+          data-video-first-frame-poster
+        />
+      {/if}
+      <MediaSpinner />
     </div>
   {:else if authMissing}
     <div class="p-4 text-center text-xs text-white/60">{m.post_missing_auth_token()}</div>
