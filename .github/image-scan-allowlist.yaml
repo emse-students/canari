@@ -273,6 +273,15 @@ vulnerabilities:
     purls:
       - "pkg:apk/alpine/libexpat@2.9.0-r0"
     statement: "libexpat 2.9.0-r0 in nginx:1.31.8-alpine and nginx:stable-alpine (signed integer overflow), pulled in only through fontconfig, which the optional image_filter module needs; no configuration here loads a dynamic module, and nginx itself parses no XML. The dependency graph was verified, runtime use was not. No patched upstream image yet (Alpine ships 2.10.0-r0); remove when the pins are rebuilt."
+  # CVE-2026-113351 (denial of service via improper memory tracking), HIGH, same package, same fixed
+  # version, published after the two above and first reported on main on 2026-11-04. Re-measured
+  # that day on Docker Hub: no nginx alpine tag was rebuilt after 2026-10-29 (1.31.8-alpine, alpine
+  # and mainline-alpine are still 785835ea65db; stable-alpine and 1.30.6-alpine 0e52bd054126), so
+  # there is still no patched digest to move to. Same reach as above.
+  - id: CVE-2026-113351
+    purls:
+      - "pkg:apk/alpine/libexpat@2.9.0-r0"
+    statement: "libexpat 2.9.0-r0 in nginx:1.31.8-alpine and nginx:stable-alpine (denial of service via improper memory tracking), pulled in only through fontconfig, which the optional image_filter module needs; no configuration here loads a dynamic module, and nginx itself parses no XML. The dependency graph was verified, runtime use was not. No patched upstream image yet (Alpine ships 2.10.0-r0); remove when the pins are rebuilt."
 
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.5 -------------------------------
   # An upstream image this repository cannot rebuild, and which one is RUN is the host's `.env`
