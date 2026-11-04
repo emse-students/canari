@@ -14,7 +14,10 @@
 -- NOT IN THE RELEASE THAT UNMAPPED IT. The deploy applies migrations before the rolling replacement,
 -- and an image that still maps `pinned` names it in every `INSERT INTO posts` (TypeORM lists every
 -- mapped column, `DEFAULT` for an unset one). So this file ships only once `prod-released` contains
--- the commit that removed the entity property (docs/wiki/durable-rules.md, Release and CI).
+-- the commit that removed the entity property (docs/wiki/durable-rules.md, Release and CI), and DEV
+-- too: no pre-release carries it while dev runs an image without that commit. Once it has run, a
+-- rollback to ANY image older than that commit fails every post INSERT: the oldest image a rollback
+-- may reach is the first release containing it (docs/wiki/legacy-compatibility.md, `posts.pinned`).
 --
 -- Held for the owner's hand-merge (`-- canari:hold-for-owner`, docs/wiki/cicd.md): a DROP, which the
 -- judge holds anyway. The deploy takes a backup right before it; the dropped values are one boolean
