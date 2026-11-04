@@ -9,6 +9,9 @@
 > drawn as a pill rather than a bare avatar. Why: `docs/wiki/frontend/mobile.md#the-conversations-native-glass-chrome`.
 > And while such a button's menu is displayed the webview takes no touch (`CanariButton`), so the
 > touch that dismisses the menu is never also the page's - same page.
+> Fourth, `setTabBarInteractive({ interactive })` (`set_tab_bar_interactive`): the overlay stops taking
+> touches while a modal web layer (the guided tour's backdrop) covers the page, which it cannot cover
+> since the bar is drawn above the WebView. Why: `docs/wiki/frontend/guided-help.md`.
 
 # tauri-plugin-system-components
 

@@ -23,6 +23,7 @@ const PAIRS: Record<string, string> = {
   ConfigureTabBarArgs: 'ConfigureTabBarOptions',
   SelectTabArgs: 'SelectTabOptions',
   SetBadgeArgs: 'SetBadgeOptions',
+  SetTabBarInteractiveArgs: 'SetTabBarInteractiveOptions',
   SheetOptionArgs: 'SheetOption',
   SheetRowArgs: 'SheetRow',
   PresentSheetArgs: 'PresentSheetOptions',
@@ -79,5 +80,23 @@ describe('the vendored system-components plugin', () => {
     const carried = rustFields(models, rust);
     expect(carried.length).toBeGreaterThan(0);
     expect(swift[swiftName].filter((field) => !carried.includes(field))).toEqual([]);
+  });
+
+  it('starts every configuration interactive, and orders the interaction switch by sequence', () => {
+    // The overlay outlives a WebView reload: a page reloaded under the tour's backdrop must not
+    // inherit a bar that takes no touch (`NativeTabBar.svelte` resends its state after configuring).
+    const plugin = read('ios/Sources/SystemComponentsPlugin.swift');
+    /** One method's text: from its declaration to the next `@objc` method. */
+    const method = (name: string) => {
+      const start = plugin.indexOf(`@objc public func ${name}(`);
+      expect(start).toBeGreaterThan(0);
+      const next = plugin.indexOf('@objc public func', start + 1);
+      return plugin.slice(start, next < 0 ? undefined : next);
+    };
+    const configure = method('configureTabBar');
+    expect(configure).toMatch(/overlay\.view\.isUserInteractionEnabled = true/);
+    expect(configure).toMatch(/self\.interactiveSeq = -1/);
+    const toggle = method('setTabBarInteractive');
+    expect(toggle).toMatch(/guard args\.seq > self\.interactiveSeq/);
   });
 });

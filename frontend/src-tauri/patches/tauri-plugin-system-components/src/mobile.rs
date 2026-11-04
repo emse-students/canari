@@ -79,6 +79,14 @@ impl<R: Runtime> SystemComponents<R> {
         ios_command!(self, "hideTabBar", ())
     }
 
+    /// CANARI PATCH: see `SetTabBarInteractiveOptions`.
+    pub fn set_tab_bar_interactive(
+        &self,
+        options: SetTabBarInteractiveOptions,
+    ) -> crate::Result<()> {
+        ios_command!(self, "setTabBarInteractive", options)
+    }
+
     pub fn select_tab(&self, options: SelectTabOptions) -> crate::Result<()> {
         ios_command!(self, "selectTab", options)
     }

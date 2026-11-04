@@ -14,7 +14,7 @@
     isBelowMinClientVersion,
     isMaintenanceBlockingCurrentUser,
   } from '$lib/stores/appVersionCheck.svelte';
-  import { nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
+  import { modalWebLayer, nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
   import { isFullScreenPlace } from '$lib/navigation/places';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
@@ -91,6 +91,12 @@
   const view = $derived(guideEngine.view);
   /** On screen: a step to draw and a quiet app. Hidden otherwise - suspended, never ended. */
   const visible = $derived(view !== null && blocker === null);
+  // A modal step's backdrop is on screen: the iOS native tab bar, drawn above the WebView, must
+  // take no touch meanwhile (`modalWebLayer`, read by `NativeTabBar`).
+  $effect(() => {
+    modalWebLayer.covering = visible && view?.modal === true;
+    return () => (modalWebLayer.covering = false);
+  });
 
   // Says what a help waits for, once per change: the line a reader of the log needs and nothing more.
   let lastBlocker: string | null = null;

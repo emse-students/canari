@@ -28,6 +28,9 @@
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { Log } from '$lib/utils/Log';
   import { registerGuideRegion } from '$lib/guidance/guideAnchors.svelte';
+  import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { systemComponentsCommand } from '$lib/services/systemComponentsCommands';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
@@ -238,6 +241,46 @@
     });
     const releases = MOBILE_NAV_PLACES.map((p) => registerGuideRegion(`nav.${p.id}`, rect));
     return () => releases.forEach((release) => release());
+  });
+
+  /**
+   * NO TOUCH UNDER A MODAL WEB LAYER (iPhone 12, `1.6.3-alpha.7`). The bar is drawn above the WebView,
+   * so the guided tour's backdrop cannot cover it, and a tap on a tab left the tour and navigated.
+   * While the backdrop is on screen the plugin is told to take no touch (the Canari patch
+   * `set_tab_bar_interactive`); the bar stays drawn, because the tour's steps point at its band.
+   *
+   * SENT AFTER EVERY CONFIGURATION, whatever it was before: the plugin resets the bar to interactive
+   * when configured, and its overlay OUTLIVES a WebView reload - a page reloaded under the backdrop
+   * would otherwise leave a bar that takes no touch, with this side believing it never blocked it.
+   * Recorded as sent only once the plugin ANSWERED, so a failed call is retried on the next change;
+   * every call carries a rising `seq`, because the command is async and two quick toggles may reach
+   * the main queue out of order - Swift drops an older one arriving last.
+   */
+  let interactiveSeq = 0;
+  let sentInteractive: { configuration: number; interactive: boolean } | null = null;
+  $effect(() => {
+    const configuration = configurations;
+    if (nativeTabBar.status !== 'native') return;
+    const interactive = !modalWebLayer.covering;
+    if (
+      sentInteractive?.configuration === configuration &&
+      sentInteractive.interactive === interactive
+    ) {
+      return;
+    }
+    const seq = ++interactiveSeq;
+    Log.d(
+      'NativeTabBar',
+      `interactive=${interactive} seq=${seq} (modal web layer ${interactive ? 'gone' : 'up'})`
+    );
+    invoke(systemComponentsCommand('setTabBarInteractive'), {
+      options: { interactive, seq },
+    }).then(
+      () => {
+        if (seq === interactiveSeq) sentInteractive = { configuration, interactive };
+      },
+      logFailure(interactive ? 'interaction restore' : 'interaction block')
+    );
   });
 
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.

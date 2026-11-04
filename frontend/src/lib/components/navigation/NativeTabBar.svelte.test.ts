@@ -22,6 +22,10 @@ const plugin = vi.hoisted(() => ({
 }));
 vi.mock('@sosweetham/tauri-plugin-system-components-api', () => plugin);
 
+// The Canari-patched commands go through `invoke` by name (`systemComponentsCommands.ts`).
+const core = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => core);
+
 const route = vi.hoisted(() => ({ page: { url: new URL('https://canari.emse.fr/posts') } }));
 vi.mock('$app/state', () => route);
 
@@ -44,8 +48,19 @@ import NativeTabBar, { nativeTabBar } from './NativeTabBar.svelte';
 import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import { PLACE_ICONS } from '$lib/navigation/placeIcons';
 import { themeStore } from '$lib/stores/themeStore.svelte';
+import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
 
 const mounted: (() => void)[] = [];
+const INTERACTIVE = 'plugin:system-components|set_tab_bar_interactive';
+
+/** Lets the plugin's answers and the effects they trigger settle. */
+async function settle() {
+  for (let i = 0; i < 6; i++) {
+    await tick();
+    await Promise.resolve();
+  }
+  flushSync();
+}
 let selectTabHandler: ((e: { id: string }) => void) | null = null;
 const originalMatchMedia = window.matchMedia;
 
@@ -77,6 +92,8 @@ beforeEach(() => {
   themeStore.setPreference('light');
   badges.placeBadge.mockReset().mockReturnValue(0);
   nativeTabBar.status = 'pending';
+  core.invoke.mockReset().mockResolvedValue(undefined);
+  modalWebLayer.covering = false;
   window.matchMedia = ((query: string) => ({
     matches: false,
     media: query,
@@ -217,5 +234,65 @@ describe('NativeTabBar', () => {
     expect(nativeTabBar.status).toBe('failed');
     expect(error.mock.calls.flat().join(' ')).toContain('web bar');
     error.mockRestore();
+  });
+
+  it('takes no touch while a modal web layer covers the page, and takes them again after', async () => {
+    // iPhone 12, `1.6.3-alpha.7`: a tab tapped under the tour's backdrop left the tour.
+    await mountBar({ visible: true });
+    // Sent once the bar is configured, whatever it was: the overlay outlives a WebView reload.
+    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
+      options: { interactive: true, seq: expect.any(Number) },
+    });
+
+    modalWebLayer.covering = true;
+    await settle();
+    expect(core.invoke).toHaveBeenLastCalledWith(INTERACTIVE, {
+      options: { interactive: false, seq: expect.any(Number) },
+    });
+
+    modalWebLayer.covering = false;
+    await settle();
+    expect(core.invoke).toHaveBeenLastCalledWith(INTERACTIVE, {
+      options: { interactive: true, seq: expect.any(Number) },
+    });
+    expect(core.invoke).toHaveBeenCalledTimes(3);
+    // Every call carries a rising sequence, which Swift orders the async calls by.
+    const seqs = core.invoke.mock.calls.map(
+      (c) => (c[1] as { options: { seq: number } }).options.seq
+    );
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(3);
+    // Still drawn throughout: the tour's steps point at its band.
+    expect(plugin.hideTabBar).not.toHaveBeenCalled();
+  });
+
+  it('blocks a bar that comes up under a modal layer already on screen', async () => {
+    modalWebLayer.covering = true;
+    await mountBar({ visible: true });
+    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
+      options: { interactive: false, seq: expect.any(Number) },
+    });
+  });
+
+  it('retries a block the plugin refused on the next change', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await mountBar({ visible: true });
+    core.invoke.mockRejectedValueOnce(new Error('tab bar is not configured'));
+    modalWebLayer.covering = true;
+    await settle();
+    expect(warn).toHaveBeenCalled();
+    core.invoke.mockClear();
+
+    // The refused block was never recorded as sent: the plugin still holds `interactive: true`, so
+    // the layer going away asks nothing, and the next one sends the block again.
+    modalWebLayer.covering = false;
+    await settle();
+    expect(core.invoke).not.toHaveBeenCalled();
+    modalWebLayer.covering = true;
+    await settle();
+    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
+      options: { interactive: false, seq: expect.any(Number) },
+    });
+    warn.mockRestore();
   });
 });
