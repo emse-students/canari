@@ -12,6 +12,7 @@ import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimatio
 import { m } from '$lib/paraglide/messages';
 import { emptyPostComposerDraft, savePostComposerDraft } from '$lib/posts/postComposerDraft';
 import { createPost } from '$lib/posts/api';
+import { cameraOverlayStub } from '../reels/cameraOverlayStub.test-helper';
 import type { Association } from '$lib/associations/api';
 
 const ENTITIES = vi.hoisted(() => [
@@ -121,5 +122,33 @@ describe('CreatePostForm - "Entre étudiants"', () => {
     unmount(mounted.pop()!);
     document.body.innerHTML = '';
     expect(switchOf(await openAs(''))).toBeNull();
+  });
+
+  it('goes INTO the reel step: the camera starts from the switch as the composer holds it', async () => {
+    const target = await openAs('list-1');
+    switchOf(target)!.click();
+    flushSync();
+    target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
+    flushSync();
+    expect(cameraOverlayStub.last?.composerStart).toEqual({
+      caption: 'la soirée',
+      identity: 'list-1',
+      studentsOnly: true,
+    });
+  });
+
+  it('comes BACK from the reel step with "Garder comme post", as the step left it', async () => {
+    const target = await openAs('list-1');
+    target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
+    flushSync();
+    cameraOverlayStub.keepWith = { caption: 'la soirée', identity: 'list-1', studentsOnly: true };
+    try {
+      document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
+      flushSync();
+      await tick();
+    } finally {
+      cameraOverlayStub.keepWith = null;
+    }
+    expect(switchOf(target)!.checked).toBe(true);
   });
 });

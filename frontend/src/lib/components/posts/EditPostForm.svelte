@@ -317,6 +317,9 @@
         // Named only where the switch is drawn: absent leaves the stored value as it is.
         ...(studentsOnlyEditable ? { studentsOnly } : {}),
       };
+      if (studentsOnlyEditable && studentsOnly !== (post.studentsOnly === true)) {
+        Log.d('STUDENTS_ONLY', `edit turns the switch ${studentsOnly ? 'ON' : 'off'}`);
+      }
 
       if (includePoll) {
         const options = filledPollOptions(pollOptions);

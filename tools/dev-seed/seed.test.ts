@@ -255,6 +255,11 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: `status <> 'accepted' OR "acceptedAt" IS NOT NULL`,
     holds: (r) => (r.status ?? 'pending') !== 'accepted' || given(r.acceptedAt),
   },
+  // `studentsOnly` defaults to false since migration 133.
+  CHK_posts_students_only_entity: {
+    sql: `NOT "studentsOnly" OR "associationId" IS NOT NULL`,
+    holds: (r) => r.studentsOnly !== true || given(r.associationId),
+  },
   // `kind` defaults to 'post'.
   posts_kind_shape: {
     sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL)

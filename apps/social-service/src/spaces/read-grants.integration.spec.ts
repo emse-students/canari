@@ -508,7 +508,10 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
           transaction: (fn: (m: EntityManager) => Promise<unknown>) => fn(manager),
           query: (sql: string, params?: unknown[]) => manager.query(sql, params),
         } as unknown as DataSource,
-        { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService
+        {
+          incr: () => Promise.resolve(1),
+          deleteByPattern: () => Promise.resolve(0),
+        } as unknown as RedisService
       );
     });
 

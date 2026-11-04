@@ -2294,7 +2294,8 @@ see nothing of it. OFF by default, for every author.
   a personal post never carries it. The entity's TYPE is the write's to refuse, since a CHECK
   cannot read `associations`.
 - **ONE conjunct of the one predicate**: `studentsOnlyAdmitsUserSql` in `spaces/reader-spaces.ts`
-  narrows EVERY door of `postVisibleToUserSql` but two - the post's author, and `adminSeesAll`. It
+  narrows EVERY door of `postVisibleToUserSql` but two - the post's author, and `adminSeesAll` with
+  `adminModerates` (the moderation read, below). It
   admits a reader who is a student (`isStudentSql`: at least one SPACE, so a campus and a cursus
   formation that make a space; staff and a review account have none) or a member of the post's own
   association (`isMemberSql` on `posts."associationId"`, never a republisher's). Because it reads no
@@ -2302,7 +2303,9 @@ see nothing of it. OFF by default, for every author.
   (`NEWLY_REACHED_BY_REPUBLICATION_SQL`, `NEWLY_REACHED_BY_MEMBER_REPOST_SQL`) restate it on their
   "after" side, so a carrier's staff member or a reposter's staff follower is never told about a post
   they will not see. Republication, member reposts and pins stay allowed (decision 2, 8): the rule
-  follows the post wherever it arrives.
+  follows the post wherever it arrives. On such a post the READ GRANT door is closed outright
+  (`ReadOpts.grantGuard` = "not students-only", the lead's decision below), so a student holding a
+  grant on another cell does not read through it either.
 - **Every consumer, and the test that proves it** (`posts/students-only.integration.spec.ts`, real
   PostgreSQL, every case with the switch OFF - the reader IS reached - then ON): the predicate; the
   feed arms `associations`, `all`, `followed` and the CanaReels viewer `reels` (the shipped
@@ -2312,7 +2315,10 @@ see nothing of it. OFF by default, for every author.
   (`serveReactionsTo`); the bell (`bellRowShownSql`); the announcement (`announceRecipientsSql`) and
   a mention (`mentionRecipientsOf`); a republication's and a member repost's newly-reached readers; a
   pin in a space a named reader's cell holds (the feed drops the post); the agenda's link back to the
-  post (`findPostLinkedToCalendarEvent`); and a change of the switch read at once. The public link
+  post (`findPostLinkedToCalendarEvent`); a change of the switch read at once; a student's grant on
+  another cell (closed); the platform admin, who opens it only with `allowHidden`; and a REPOST
+  PROPOSAL (`RepublicationsService.announce` and `describe`), whose text an acceptor the gate refuses
+  never gets. The public link
   preview (`PostPreviewService.findShareable`, the only anonymous surface that names a post) refuses
   such a post (`post-preview.service.spec.ts`). The sitemap lists no post since 2026-11-02.
 - **The write** (`posts/students-only.ts`): `STUDENTS_ONLY_ASSOCIATION_TYPES` = association, list, an
@@ -2321,9 +2327,27 @@ see nothing of it. OFF by default, for every author.
   it OFF is never refused. `updatePost` changes it when the edit names it (absent leaves it alone, so
   an older client never clears it), a reel's included (`posts.service.students-only.spec.ts`).
 - **A change reaches every path at once**: the predicate reads the row, so no audience is stored
-  anywhere; `updatePost` drops EVERY cached feed page (`invalidatePostListCache`, asserted in the
-  unit spec), so no 30-second page serves the old audience. The served association card and every
-  served post carry `studentsOnly` and the association's `type`.
+  anywhere; `updatePost` invalidates EVERY cached feed page (`invalidatePostListCache`, asserted in
+  the unit spec). A sweep alone RACED a feed read that computed its page before the flip and stored
+  it after (review of #3010), so the cache carries a GENERATION (`posts:list:generation`, plus one
+  per reader for `invalidatePostListCacheFor`): every invalidation increments it first, a page is
+  stored with the stamp it was computed under, and a page whose stamp is not current is never served
+  (`readPostListPage`, one `MGET`). The order makes it deterministic for a delete or a hide too, and a
+  failed sweep harmless; only a failed increment can leave a page stale, and it throws to a caller
+  that logs it (`post-list-cache.spec.ts` plays the interleavings). The prefix moved to `v3` with the
+  stored shape, so a `v2` replica in a rolling deploy never serves a stamped value as a page. The
+  served association card and every served post carry `studentsOnly` and the association's `type`.
+- **Text copied where the predicate is not asked again**: the swept list is every `previewOf` of a
+  post's markdown in the service. The announcement, a mention, a reply, a republication's and a
+  member repost's newly-reached readers are all chosen by the predicate. A repost PROPOSAL was not:
+  its notification is bound to the receiving association's queue, not to the post, so the bell never
+  re-asks; `announce` now sends the text only to the acceptors `studentsOnlyAdmitsUserSql` admits and
+  an empty text (the push reads "Publication à relayer") to the others, and the queue's `describe`
+  takes the viewer (`ProposalKindHandler.describe(ids, viewerId)`, every kind) and blanks the preview
+  for one the gate refuses. The proposal itself still reaches every acceptor, who decides by opening
+  the post - which the predicate answers. A BDE `MODERATE` holder sees the text of a REPORTED or
+  HIDDEN post in the moderation queues (`getHiddenPosts`, the report queue's 250-character preview),
+  as for any post they moderate: moderation is the one surface the switch does not narrow.
 - **Notifications already delivered - the reversible choice (taken in the build, 2026-11-04)**: a bell
   row is re-asked against the predicate at every read, so closing hides it from the readers it
   withdraws and reopening shows it again; nothing is deleted. A push already shown on a phone cannot
@@ -2331,23 +2355,42 @@ see nothing of it. OFF by default, for every author.
   announced once, and a second announcement would be a second notice of the same post.
 - **The event is independent** (decision 6): `studentsOnly` is on the post only; the event linked to
   it keeps its own visibility in the agenda and the public calendar. Only the link FROM the event TO
-  the post follows the post's rule.
+  the post follows the post's rule. A FORM attached to the post is independent the same way: it stays
+  reachable by its own id under its own rules, and only the post that carries it is withheld.
 - **The client**: `StudentsOnlySwitch.svelte` (a `Toggle`, label "Entre étudiants", and one line that
   follows its position: who will see the post when ON, that everyone of the association's audience
   will when OFF) in the composer, the reel publish step and the edit form - offered while the
   identity is an association or a list (`studentsOnlyOffered`), and in the edit form also on any post
-  that already carries it, so it can always be reopened. The composer keeps it in its draft.
+  that already carries it, so it can always be reopened. The composer keeps it in its draft, and
+  hands it to the reel step and back ("Garder comme post") inside ONE object, `ComposerReelState`
+  (`lib/posts/composerReelState.ts`), through `PostComposerBar`, `CameraOverlay`, `ReelCapture` and
+  `ReelPublishSheet`, so no field of that round trip can be carried one way only.
   `StudentsOnlyChip.svelte` on the card's time line and on the reel viewer, for every reader. A
   refusal reads `post_students_only_not_offered`. Nothing on a republisher's side changes (decision 8).
 
 **Decisions taken in the build, reversible, recorded here:**
 
 1. "A student" is an account with at least one SPACE (`isStudentSql`), the vocabulary every other
-   rule uses; an account whose cursus names a formation with no space on its campus is not one.
-2. The platform admin keeps the MODERATION door (`adminSeesAll`, the post by id and every intent of
-   it), so a reported "Entre étudiants" post can still be judged; browsing (feed, search, bell) shows
-   an admin without a cursus nothing of it, like any staff member.
+   rule uses. So a student whose campus and formation have no OPENED space is refused, like staff,
+   until that space opens - the same gap they meet on every other space-based rule.
+2. The platform admin keeps the MODERATION read only (see the lead's decision S2 below); browsing
+   (feed, search, bell) shows an admin without a cursus nothing of it, like any staff member.
 3. The post's author always reads it, even after leaving the association.
 4. "Members" are the members of the PUBLISHING association only (decision 2 says so); a republisher's
    members without a cursus do not read it.
 5. Reopening a post announces nothing new (above).
+
+**The lead's decisions of the review of #3010 (2026-11-04), restrictive and reversible; the owner may
+revisit them:**
+
+- **S1 - a read grant never opens an "Entre étudiants" post.** The grant door of the predicate
+  carries `grantGuard` = "not students-only" (`associationVisibleToUserSql` and the republication
+  disjunct), so on such a post the doors are asked WITHOUT grants: a student who also holds a grant
+  on another cell does not read that cell's post through it. A grant is a staff tool; the switch
+  says the post is not for staff.
+- **S2 - the platform admin bypasses the gate only to MODERATE.** `adminSeesAll` opens such a post to
+  an admin only with `adminModerates`, which `readPostOpenVerdict` sets from `allowHidden` - the
+  post by id, its comment page and a comment's moderation, the routes a platform admin calls as
+  one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
+  admin without a cursus cannot act on a post they could not read.
+

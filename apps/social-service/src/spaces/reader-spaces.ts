@@ -150,6 +150,12 @@ export function readGrantReachesAssociationSql(association: string, user: string
  */
 export interface ReadOpts {
   readGrants?: boolean;
+  /**
+   * A SQL boolean the grant door ALSO requires when `readGrants` is on. `postVisibleToUserSql`
+   * passes "the post is not students-only": a read grant never opens an "Entre étudiants" post
+   * (lead's decision, 2026-11-04), so the guard closes that one door and leaves the others alone.
+   */
+  grantGuard?: string;
 }
 
 /**
@@ -174,8 +180,9 @@ export function associationVisibleToUserSql(
   user: string,
   opts: ReadOpts = {}
 ): string {
+  const grantDoor = readGrantReachesAssociationSql(association, user);
   const grant = opts.readGrants
-    ? `\n    OR ${readGrantReachesAssociationSql(association, user)}`
+    ? `\n    OR ${opts.grantGuard ? `(${opts.grantGuard} AND ${grantDoor})` : grantDoor}`
     : '';
   return `(${isMemberSql(association, user)} OR ${associationRulesReachUserSql(association, user)}${grant})`;
 }
@@ -451,6 +458,16 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
 }
 
 /**
+ * {@link studentsOnlyAdmitsUserSql} for the viewer whose id is the placeholder `viewer`: what a
+ * surface that copies a post's TEXT somewhere the predicate does not re-ask (a proposal queue, a
+ * notification that is not bound to the post) asks before copying it. An absent viewer is refused.
+ */
+export function studentsOnlyAdmitsViewerSql(post: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users so_viewer WHERE so_viewer.id = ${viewer}
+    AND ${studentsOnlyAdmitsUserSql(post, 'so_viewer')})`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
@@ -481,15 +498,25 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
  * EVERY DOOR BUT THE AUTHOR'S AND THE MODERATING ADMIN'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
  * ({@link studentsOnlyAdmitsUserSql}, owner 2026-11-04). It reads no republication and no repost, so
  * the predicate stays monotone in both, and the newly-reached rules restate it on their "after" side.
- * `adminSeesAll` is the moderation door (a report, a moderation link): a platform admin judging a
- * reported post must be able to open it, whatever their own profile.
+ * Two narrowings more on such a post (the lead's decisions, 2026-11-04, reversible):
+ * - A READ GRANT NEVER OPENS IT: the grant door carries `grantGuard` = "not students-only", so a
+ *   student who also holds a grant on another campus does not read that campus's post through it;
+ * - `adminSeesAll` opens it to a platform admin ONLY with `adminModerates` - the moderation read
+ *   (`allowHidden`: the post by id, its comments, a comment's moderation). Reacting, commenting,
+ *   voting and browsing it ask the gate of an admin like of anyone.
  */
 export function postVisibleToUserSql(
   post: string,
   user: string,
-  opts: { adminSeesAll?: boolean } & ReadOpts & FollowerOpts = {}
+  opts: { adminSeesAll?: boolean; adminModerates?: boolean } & ReadOpts & FollowerOpts = {}
 ): string {
-  const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
+  const notStudentsOnly = `NOT COALESCE(${post}."studentsOnly", false)`;
+  const adminClause = opts.adminSeesAll
+    ? opts.adminModerates
+      ? `${isAdminSql(user)}\n    OR `
+      : `(${isAdminSql(user)} AND ${notStudentsOnly})\n    OR `
+    : '';
+  const grantOpts: ReadOpts = { readGrants: opts.readGrants, grantGuard: notStudentsOnly };
   const followerClause =
     opts.followers === false
       ? ''
@@ -514,8 +541,8 @@ export function postVisibleToUserSql(
     (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
     OR (${post}."associationId" IS NOT NULL AND (
-      ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
-      OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })}${repostClause})))))`;
+      ${associationVisibleToUserSql(`${post}."associationId"`, user, grantOpts)}
+      OR ${republicationReachesUserSql(post, user, grantOpts)}${repostClause})))))`;
 }
 
 /**
@@ -653,7 +680,11 @@ export function isPinSpaceOfUserSql(space: string, user: string): string {
 export function postVisibleToViewerSql(
   post: string,
   viewer: string,
-  opts: { adminSeesAll?: boolean; readGrants?: boolean } & FollowerOpts = {}
+  opts: {
+    adminSeesAll?: boolean;
+    adminModerates?: boolean;
+    readGrants?: boolean;
+  } & FollowerOpts = {}
 ): string {
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.

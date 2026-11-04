@@ -134,7 +134,10 @@ function makeWorld(initial: {
     ),
   };
 
-  const redis = { deleteByPattern: jest.fn(() => Promise.resolve(0)) };
+  const redis = {
+    incr: jest.fn(() => Promise.resolve(1)),
+    deleteByPattern: jest.fn(() => Promise.resolve(0)),
+  };
   const scheduler = new ReelRetentionScheduler(
     { manager } as never,
     retention as never,

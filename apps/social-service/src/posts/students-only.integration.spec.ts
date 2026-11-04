@@ -27,6 +27,12 @@
  *   ad  - a platform admin, no cursus                           - by id only (moderation)
  *   os  - staff, no cursus, no door at all                      - nothing
  *
+ * Outside the cast, for the lead's decisions of the review (2026-11-04): `gs`, a STUDENT of another
+ * space (ISMIN x Saint-Etienne) who also holds a read grant on A1's cell - a grant never opens such a
+ * post, even to a student; the platform admin opens it only to moderate (`allowHidden`); and a
+ * repost PROPOSAL (`RepublicationsService.announce`, `describe`) keeps the proposal but withholds the
+ * text from an acceptor the gate refuses.
+ *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here. Locally:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- students-only.integration
@@ -48,6 +54,7 @@ import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { ListPostsFeed, ListPostsParams } from './list-feed';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { commentsWithheldPostIds } from './comments-withheld';
+import { RepublicationsService } from './republications.service';
 import {
   NEWLY_REACHED_BY_MEMBER_REPOST_SQL,
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
@@ -79,6 +86,8 @@ const USERS: Record<string, { campus: string | null; formation: string | null; a
     // Only for the newly-reached rules: staff in carrier C2, staff following st.
     s2: { campus: GA, formation: null },
     f2: { campus: GA, formation: null },
+    // A student of ANOTHER space, with a read grant on A1's cell (ICM x Saint-Etienne).
+    gs: { campus: SE, formation: 'ISMIN' },
   };
 const READERS = ['st', 'rp', 'sg', 'mb', 'off', 'sf', 'nr', 'fo', 'ad', 'os'] as const;
 type Reader = (typeof READERS)[number];
@@ -264,7 +273,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       [A1, C, C2]
     );
     await q(
-      `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES ('nr', $1, 'ICM', 'admin')`,
+      `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES
+         ('nr', $1, 'ICM', 'admin'), ('gs', $1, 'ICM', 'admin')`,
       [SE]
     );
     await q(
@@ -385,7 +395,7 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
   });
 
   it.each(['READ_OR_REACT', 'COMMENT', 'VOTE'] as const)(
-    'the post by id, intent %s (`readPostOpenVerdict`): the admin keeps the moderation door',
+    'the post by id, intent %s (`readPostOpenVerdict`): ON, the admin browsing is refused too',
     async (intent: PostAccessIntent) => {
       const opens = (reader: Reader) => async () =>
         (await readPostOpenVerdict(manager, await row(P), { viewerId: reader }, intent)).refusal ===
@@ -395,9 +405,91 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       // the comments either (their switch "voit les commentaires" is off).
       const nrOff = intent === 'READ_OR_REACT' ? ['nr'] : [];
       expect(off).toEqual(['st', 'rp', 'sg', 'mb', 'off', 'sf', ...nrOff, 'fo', 'ad']);
-      expect(on).toEqual([...ADMITTED, 'ad']);
+      expect(on).toEqual([...ADMITTED]);
     }
   );
+
+  it.each(['READ_OR_REACT', 'COMMENT'] as const)(
+    'the platform admin opens it ON only to MODERATE (`allowHidden`), intent %s (lead, 2026-11-04)',
+    async (intent: PostAccessIntent) => {
+      const { off, on } = await bothWays(async () => ({
+        moderating:
+          (
+            await readPostOpenVerdict(
+              manager,
+              await row(P),
+              { viewerId: 'ad', allowHidden: true },
+              intent
+            )
+          ).refusal === null,
+        acting:
+          (await readPostOpenVerdict(manager, await row(P), { viewerId: 'ad' }, intent)).refusal ===
+          null,
+      }));
+      expect(off).toEqual({ moderating: true, acting: true });
+      // React, comment and vote routes never pass `allowHidden`: the admin is asked the gate there.
+      expect(on).toEqual({ moderating: true, acting: false });
+    }
+  );
+
+  it('a read grant never opens it, even to a student of another space (lead, 2026-11-04)', async () => {
+    const reads = async () => ({
+      byId:
+        (await readPostOpenVerdict(manager, await row(P), { viewerId: 'gs' }, 'READ_OR_REACT'))
+          .refusal === null,
+      feed: await feedHas('associations', 'gs' as Reader, P),
+      // A1's own student keeps it: the guard closes the grant door, nothing else.
+      student: await feedHas('associations', 'st', P),
+    });
+    const { off, on } = await bothWays(reads);
+    expect(off).toEqual({ byId: true, feed: true, student: true });
+    expect(on).toEqual({ byId: false, feed: false, student: true });
+  });
+
+  it('a repost proposal keeps going to every acceptor, its text only to those the gate admits', async () => {
+    const sent: { recipientIds: string[]; text: string }[] = [];
+    const republications = new RepublicationsService(
+      { manager } as never,
+      {} as never,
+      {
+        createNotifications: (n: { recipientIds: string[]; text: string }) => {
+          sent.push({ recipientIds: [...n.recipientIds].sort(), text: n.text });
+          return Promise.resolve(n.recipientIds.length);
+        },
+      } as never,
+      {} as never,
+      {} as never
+    );
+    const proposal = {
+      id: '00000000-0000-4000-8000-0000000000aa',
+      kind: 'repost',
+      subjectId: P,
+      fromAssociationId: A1,
+      toAssociationId: C2,
+      proposedBy: 'off',
+    };
+    const { off, on } = await bothWays(async () => {
+      sent.length = 0;
+      // C2's acceptors: s2, its staff officer, and a student of it, sg.
+      await republications.announce(proposal as never, ['s2', 'sg']);
+      const queue = async (viewer: string) =>
+        (await republications.describe([P], viewer)).get(P)?.preview;
+      return { sent: [...sent], staffQueue: await queue('s2'), studentQueue: await queue('sg') };
+    });
+    expect(off).toEqual({
+      sent: [{ recipientIds: ['s2', 'sg'], text: 'la soirée des promos' }],
+      staffQueue: 'la soirée des promos',
+      studentQueue: 'la soirée des promos',
+    });
+    expect(on).toEqual({
+      sent: [
+        { recipientIds: ['sg'], text: 'la soirée des promos' },
+        { recipientIds: ['s2'], text: '' },
+      ],
+      staffQueue: '',
+      studentQueue: 'la soirée des promos',
+    });
+  });
 
   it('composes with #2998: OFF, the named reader reads without the comments; ON, reads nothing', async () => {
     const { off, on } = await bothWays(async () => ({

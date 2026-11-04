@@ -283,6 +283,8 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       },
     } as unknown as PostNotificationsService;
     const redis = {
+      // The readers' generations move first (`invalidatePostListCacheFor`); the pages are the assertion.
+      incrEach: () => Promise.resolve(),
       deleteMatching: (_match: string, select: (key: string) => boolean) => {
         const doomed = [...cache].filter(select);
         for (const key of doomed) cache.delete(key);

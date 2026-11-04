@@ -226,7 +226,7 @@ describe('InternalController.deleteUserData', () => {
       }),
       announceErasedPins: jest.fn(async () => 0),
     };
-    const redis = { deleteByPattern: jest.fn(async () => 0) };
+    const redis = { incr: jest.fn(async () => 1), deleteByPattern: jest.fn(async () => 0) };
     const lydiaCashiers = {
       revokeBeforeErasure: jest.fn(opts.revoke ?? (async () => new Set<string>())),
     };

@@ -42,7 +42,12 @@ import { assertReelEditShape } from './reel-rules';
 import type { ReelPurgeReason } from '../internal/reel-media';
 import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 import { publicationTime } from './publication-time';
-import { invalidatePostListCache, postListCacheKey } from './post-list-cache';
+import {
+  invalidatePostListCache,
+  postListCacheKey,
+  readPostListPage,
+  writePostListPage,
+} from './post-list-cache';
 import { assertStudentsOnlyOffered } from './students-only';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
@@ -379,7 +384,7 @@ export class PostsService {
       // A SWALLOWED BRANCH LOGS: a sweep that failed leaves a deleted post on screen for up to the
       // TTL, and that is exactly the symptom nobody can attribute without this line.
       this.logger.warn(
-        `[CACHE] feed cache sweep failed - pages stay stale for up to ${PostsService.LIST_CACHE_TTL}s`,
+        `[CACHE] feed cache invalidation failed - if the generation did not move, pages stay stale for up to ${PostsService.LIST_CACHE_TTL}s`,
         e
       );
     }
@@ -1436,12 +1441,18 @@ export class PostsService {
       singlePhotos
     );
 
+    // The stamp is read BEFORE the page is computed, so a page computed across an invalidation is
+    // stored under the generation it started in and never served (`readPostListPage`). No stamp
+    // (Redis unreachable) means no page is stored either.
+    let stamp: string | null = null;
     try {
-      const cached = await Promise.race([
-        this.redis.get(cacheKey),
+      const cached = (await Promise.race([
+        readPostListPage(this.redis, cacheKey, viewerUserId),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
-      ]);
-      if (cached) return JSON.parse(cached as string);
+      ])) as { page: unknown; stamp: string };
+      stamp = cached.stamp;
+      // The stored page is what this method returned before, parsed: as untyped as JSON.parse was.
+      if (cached.page !== undefined) return cached.page as any;
     } catch {
       // Redis miss or error - fall through to DB
     }
@@ -1518,10 +1529,12 @@ export class PostsService {
 
     const safe = this.stripBigIntForJson(result);
 
-    try {
-      await this.redis.setex(cacheKey, PostsService.LIST_CACHE_TTL, JSON.stringify(safe));
-    } catch {
-      // Non-fatal
+    if (stamp !== null) {
+      try {
+        await writePostListPage(this.redis, cacheKey, stamp, safe, PostsService.LIST_CACHE_TTL);
+      } catch {
+        // Non-fatal
+      }
     }
 
     return safe;

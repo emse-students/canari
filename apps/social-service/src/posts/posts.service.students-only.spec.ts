@@ -27,6 +27,7 @@ const TYPES: Record<string, string> = {
 function makeService(existing?: Partial<Post>) {
   const saved: Array<Record<string, unknown>> = [];
   const deleteByPattern = jest.fn(() => Promise.resolve(3));
+  const incr = jest.fn(() => Promise.resolve(2));
   const postRepo = {
     create: jest.fn((data: Record<string, unknown>) => ({ ...data })),
     save: jest.fn((post: Record<string, unknown>) => {
@@ -46,7 +47,7 @@ function makeService(existing?: Partial<Post>) {
   };
   const service = new PostsService(
     postRepo as unknown as Repository<Post>,
-    { setex: jest.fn(), get: jest.fn(), deleteByPattern } as unknown as RedisService,
+    { setex: jest.fn(), get: jest.fn(), incr, deleteByPattern } as unknown as RedisService,
     {} as FollowsService,
     {
       isContentModerator: () => Promise.resolve(false),
@@ -61,7 +62,7 @@ function makeService(existing?: Partial<Post>) {
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
     { release: jest.fn() } as unknown as PostMediaRetentionService
   );
-  return { service, saved, deleteByPattern };
+  return { service, saved, deleteByPattern, incr };
 }
 
 const refusal = (p: Promise<unknown>) =>
@@ -143,10 +144,14 @@ describe('updatePost and "Entre étudiants" (decision 5: both ways, after public
   it.each([true, false])(
     'turns it %s and drops every cached feed page in the same request',
     async (next) => {
-      const { service, saved, deleteByPattern } = makeService(stored({ studentsOnly: !next }));
+      const { service, saved, deleteByPattern, incr } = makeService(
+        stored({ studentsOnly: !next })
+      );
       await service.updatePost('p1', 'a', { markdown: 'x', studentsOnly: next });
       expect(saved[0].studentsOnly).toBe(next);
-      expect(deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
+      // The generation moves (what makes it deterministic), then the sweep reclaims the pages.
+      expect(incr).toHaveBeenCalledWith('posts:list:generation');
+      expect(deleteByPattern).toHaveBeenCalledWith('posts:list:v3:*');
     }
   );
 

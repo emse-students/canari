@@ -103,6 +103,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
   /** The feed cache: what was dropped is the assertion. */
   const dropped: string[] = [];
   const redis = {
+    incr: () => Promise.resolve(1),
     deleteByPattern: (match: string) => {
       dropped.push(match);
       return Promise.resolve(1);
