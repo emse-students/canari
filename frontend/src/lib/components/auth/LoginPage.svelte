@@ -221,17 +221,20 @@
   }
 
   /**
-   * Reports a login that never reached Authentik, and hands the form back to the user.
+   * Reports a sign-in that failed on THIS side of the identity provider, and hands the form back.
    *
-   * The card carries a GENERIC line and the console carries the exception. `startOidcLogin` fails
-   * before any response exists - a discovery document that would not parse, a redirect the engine
-   * refused - so there is no status to describe and nothing localized to show: its message is dev
-   * prose in English, and this is the most exposed card in the application, read by someone who is
-   * not signed in and has no way past it.
+   * Two kinds reach it, neither carrying an HTTP status: a failure before MiConnect was reached (a
+   * discovery document that would not parse, a redirect the engine refused), and - on a phone - an
+   * in-app browser that failed after reaching it (the session errored, or its callback could not be
+   * re-dispatched to the app). A sheet the USER closed is not one: that is `cancelled`, an outcome.
+   *
+   * The card carries a GENERIC line and the console carries the exception: its message is dev prose
+   * in English, and this is the most exposed card in the application, read by someone who is not
+   * signed in and has no way past it.
    */
   function failLoginAttempt(e: unknown) {
-    console.warn(`[LOGIN] OIDC start failed: ${String(e)}`);
-    loginError = m.auth_login_start_failed();
+    console.warn(`[LOGIN] OIDC sign-in failed: ${String(e)}`);
+    loginError = m.auth_login_attempt_failed();
     isLoggingIn = false;
   }
 

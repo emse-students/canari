@@ -109,8 +109,20 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
   private func settle(_ invoke: Invoke, callbackURL: URL?, error: Error?) {
     if let callbackURL, error == nil {
       NSLog("[CustomTabsPlugin] session completed - re-dispatching the callback to the app scheme")
-      UIApplication.shared.open(callbackURL, options: [:], completionHandler: nil)
-      invoke.resolve(["outcome": "completed"])
+      // `completed` is answered only once the re-dispatch is KNOWN to have reached the app: the
+      // page keeps its button busy on `completed`, waiting for `/auth/callback`, so a re-dispatch
+      // that failed and was answered `completed` would be the stuck "Redirection..." again.
+      UIApplication.shared.open(callbackURL, options: [:]) { opened in
+        if opened {
+          NSLog("[CustomTabsPlugin] callback re-dispatched to the app scheme")
+          invoke.resolve(["outcome": "completed"])
+        } else {
+          NSLog(
+            "[CustomTabsPlugin] ERROR the callback could not be re-dispatched to the app scheme - the sign-in is lost"
+          )
+          invoke.reject("the callback could not be re-dispatched to the app scheme")
+        }
+      }
       return
     }
     if let authError = error as? ASWebAuthenticationSessionError,
@@ -139,9 +151,16 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
         return window
       }
     }
-    return UIApplication.shared.connectedScenes
-      .compactMap { ($0 as? UIWindowScene)?.windows.first }
-      .first ?? ASPresentationAnchor()
+    // A FALLBACK IS A SIGNAL: no key window means the app is presenting from a state the primary
+    // path does not expect (backgrounded, mid scene change). Said at a level that accuses.
+    NSLog("[CustomTabsPlugin] ERROR FALLBACK presentationAnchor: no key window - using a scene's first window")
+    if let window = UIApplication.shared.connectedScenes
+      .compactMap({ ($0 as? UIWindowScene)?.windows.first }).first
+    {
+      return window
+    }
+    NSLog("[CustomTabsPlugin] ERROR FALLBACK presentationAnchor: no window at all - an empty anchor")
+    return ASPresentationAnchor()
   }
 }
 

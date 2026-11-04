@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 /// clock.
 ///
 /// - `Completed` (iOS): the session intercepted the `fr.emse.canari://` redirect and re-opened it
-///   through the app's own scheme, so the shared deep-link pipeline (`/auth/callback`) takes over.
+///   through the app's own scheme - answered only once that re-dispatch succeeded - so the shared
+///   deep-link pipeline (`/auth/callback`) takes over.
 /// - `Cancelled` (iOS): the user closed the sheet (its close button, "Annuler" on the consent
 ///   alert) - nothing comes back, and the page must hand its button back.
 /// - `HandedOff` (Android): the Chrome Custom Tab is a separate activity the OS owns; the plugin

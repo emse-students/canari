@@ -38,8 +38,15 @@ vi.mock('$app/navigation', () => ({
 vi.stubEnv('VITE_AUTHENTIK_URL', 'https://auth.example');
 vi.stubEnv('VITE_AUTHENTIK_CLIENT_ID', 'client');
 
-const { planMiconnectSignOut, handleOidcCallback, leaveSignedOut } =
+const { planMiconnectSignOut, handleOidcCallback, leaveSignedOut, startOidcLogin } =
   await import('$lib/stores/auth');
+
+/** A promise the test settles by hand - the in-app browser's answer, which comes when its sheet goes. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
 const { connectivity } = await import('$lib/stores/connectivity.svelte');
 
 const ISSUER = 'https://auth.example/application/o/canari/';
@@ -151,6 +158,42 @@ describe('from sign-in to sign-out', () => {
     await leaveSignedOut();
 
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('goes to /login at once, without waiting for the end-session sheet to close', async () => {
+    // The plugin answers when the sheet GOES (iOS): a sign-out that awaited it would sit behind it.
+    await signIn({ access_token: 'h.e30.s', id_token: idToken(), user: { id: 'user-1' } });
+    invokeMock.mockReturnValue(new Promise(() => {}));
+
+    await leaveSignedOut();
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
+  });
+
+  it('a sign-in over a sheet still up: the superseded sheet answers `cancelled`, the sign-in its own', async () => {
+    // The plugin answers the EARLIER invoke `cancelled` when a second sheet replaces it; that answer
+    // belongs to the sign-out (only logged) and must not be read as the sign-in's.
+    await signIn({ access_token: 'h.e30.s', id_token: idToken(), user: { id: 'user-1' } });
+    const endSession = deferred<unknown>();
+    const authorize = deferred<unknown>();
+    invokeMock.mockReturnValueOnce(endSession.promise).mockReturnValueOnce(authorize.promise);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await leaveSignedOut();
+    let started: string | null = null;
+    const login = startOidcLogin('/chat').then((s) => (started = s));
+    await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(2));
+
+    endSession.resolve({ outcome: 'cancelled' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started).toBeNull();
+
+    authorize.resolve({ outcome: 'completed' });
+    await login;
+    expect(started).toBe('completed');
+    log.mockRestore();
   });
 
   it('still completes the Canari sign-out when the in-app browser cannot open', async () => {
