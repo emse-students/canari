@@ -33,6 +33,11 @@ interface HubRowBase {
   badge?: number;
   /** The localized name of `badge` for assistive technology; required for the pill to be read. */
   badgeLabel?: string;
+  /**
+   * The guided-help anchor this row IS (`guideAnchor`), set only when the page wants a help to point
+   * at it - and only for a reader it applies to, since an unset row registers nothing.
+   */
+  guideAnchor?: string;
 }
 
 /** A row's glyph: a Lucide component. */

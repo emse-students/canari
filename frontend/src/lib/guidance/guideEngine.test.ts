@@ -348,3 +348,46 @@ describe('at most one help per visit (2026-11-03)', () => {
     expect(g.engine.activeId).toBe('welcome-tour');
   });
 });
+
+describe('a help only for some accounts (`eligible`)', () => {
+  const only = (eligible: () => boolean): GuideDefinition => ({
+    id: 'hint-asso-post-as',
+    kind: 'hint',
+    appliesTo: (p) => p === '/posts',
+    eligible,
+    steps: [step('only', 'compose')],
+  });
+
+  it('never offers the help to an account it is not for, and offers it once the answer is yes', () => {
+    let yes = false;
+    const g = harness([only(() => yes)]);
+    g.rendered.add('compose');
+    g.engine.consider(true, '/posts');
+    expect(g.engine.activeId).toBeNull();
+    expect(g.markSeen).not.toHaveBeenCalled();
+    yes = true; // the probe answered: the scheduler asks again
+    g.engine.consider(true, '/posts');
+    expect(g.engine.activeId).toBe('hint-asso-post-as');
+  });
+
+  it('holds a replay back for an account it is not for', () => {
+    const g = harness([only(() => false)]);
+    g.rendered.add('compose');
+    g.engine.request('hint-asso-post-as');
+    g.engine.consider(true, '/posts');
+    expect(g.engine.activeId).toBeNull();
+  });
+
+  it('lets another help run when the first is not for this account', () => {
+    const other: GuideDefinition = {
+      id: 'hint-create-post',
+      kind: 'hint',
+      appliesTo: (p) => p === '/posts',
+      steps: [step('only', 'compose')],
+    };
+    const g = harness([only(() => false), other]);
+    g.rendered.add('compose');
+    g.engine.consider(true, '/posts');
+    expect(g.engine.activeId).toBe('hint-create-post');
+  });
+});
