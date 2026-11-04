@@ -42,14 +42,102 @@ identity provider, which production shares and which is not touched:
   `POST /api/associations/:id/members` as gamma. It must NOT become an admin: a platform admin
   moderates everything, so only a non-admin moderator shows a tombstone. A dev reset removes it; it is
   re-added the same way, and that call is the owner's to approve (an agent's permission layer refuses
-  a permission grant).
-- `canari-test-alpha` and `-beta` are ordinary accounts.
+  a permission grant). **Since 2026-11-04 it is also a NON-STUDENT (empty cursus)**: see [the 1.6.4 fixtures](#dev-bench-fixtures-for-the-164-readings-2026-11-04).
+- `canari-test-alpha` and `-beta` are ordinary students, **until the fixtures below turn them into
+  an officer and a non-student**: read [the 1.6.4 fixtures](#dev-bench-fixtures-for-the-164-readings-2026-11-04).
 - **Driving dev without typing a password:** from a signed-in dev page, `POST /api/auth/refresh`
   (cookie) returns an access token for `fetch` with `Authorization: Bearer`. Fixtures are created
   through the app's routes (`POST /api/associations/admin`, `POST /api/posts` with `associationId`,
   `.../comments` with `parentId` and `associationId` for a reply in an entity's name) and removed with
   `DELETE /api/posts/:id` and `DELETE /api/associations/:id`. A comment's id is NOT in its create
   answer: read it from `GET /api/posts/:id/comments` before replying with `parentId`.
+
+### Dev bench fixtures for the 1.6.4 readings (2026-11-04)
+
+Prepared on dev for the readings `1.6.4-alpha.3` could not take. Everything went through the app's
+own routes as a signed-in bench account (the refresh-cookie token above); **the only SQL writes are
+the ones listed under "SQL writes"**. Every association is a seeded fictional one. A dev reset
+removes ALL of it (the reels' rows, the memberships, the grants, the product, the cursus change):
+recreate it with the recipes below, in this order.
+
+| Reading | What exists on dev | Who reads it |
+| --- | --- | --- |
+| **(a) 10 video reels** (slow-network CanaReels, #3015) | 10 `kind=reel` posts, 5 by `canari-test-alpha` and 5 by `canari-test-gamma`, captions "Banc reel 1".."Banc reel 10": 540x960, 8 s, H.264 baseline plus AAC, about 2.9 MB each (3 segments of the `segmented-v1` container), declared `durationMs` 8000. The round trip was checked (download, decrypt, `ftyp` header, size equal to the declared size) | any signed-in student account of ICM Saint-Etienne |
+| **(b) a shop with a product** (`hint-asso-shop`, guided help batch 3) | "Club Photo Fictif" (`photo-fictif`): one ACTIVE product "Sticker Canari (banc)", 2.00 EUR, type `other`. Payments cannot be taken on it (see "SQL writes"), so it is for the hint's anchor only, never a checkout | any signed-in account opening `/associations/photo-fictif` |
+| **(c) an association officer who is not an admin** (students-only switch, edit form, #3010) | `canari-test-alpha` is a member of "Club Photo Fictif" AND "Club d'Echecs Fictif" with role "Bureau (banc)" and permissions `4355` = `POST_AS_ASSO` + `PROPOSE_EVENT` + `MANAGE_PRODUCTS` + `EDIT_PROFILE` (not `MANAGE_MEMBERS`, not an admin). Posts published as the association: Photo "Annonce du Club Photo (banc): sortie photo samedi" and "Club Photo (banc): exposition de fin de semestre"; Echecs "Echecs (banc): tournoi du jeudi, ouvert a tous". All three have the switch OFF. Alpha edits them (`PATCH /api/posts/:id` answered 200 and was put back) | Mi 9T (alpha) |
+| **(d1) a non-student recipient of a repost proposal** (bell row, #3019) | `canari-test-delta` AND `canari-test-beta`, both with an EMPTY cursus (campus Saint-Etienne, no space), each a member with `POST_AS_ASSO` of a receiving association (delta: "Club Robotique Fictif", beta: "Fanfare Fictive") that holds a PENDING repost proposal from "Club Photo Fictif", one proposal per Photo post above (switch OFF at proposal time; turn it ON as alpha to read the blanked text). **BLOCKED by a defect: [their bell answers 500](backlog.d/p1-bell-500-on-a-repost-proposal-row.md) until it is fixed** | delta on the harness Chrome slot W5, beta on W4 (both signed in) |
+| **(d2) a named reader with a grant-only door** (live chat, #3014) | `canari-test-beta`: a read grant on "saint-etienne, whole campus", "voit les commentaires" OFF (the default), NO membership of the association watched, no cursus. Read through the API on an Echecs post: 200, `canSeeComments: false`; a "students only" post 404 | beta (W4) |
+
+**Why beta, not delta, is the named reader.** delta is also the BDE moderator: a `MODERATE` holder
+opens an Echecs post by id (200, comments visible, even a "students only" one), so a live read
+through delta would be a moderation read, not a grant-only one (the unasserted case of
+[profiles-and-access](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+beta holds nothing else.
+
+**Broadcasting an association's live on dev** (lives are on: `GET /api/version` says
+`lives.mode: on`). Proven by API as alpha: `POST /api/lives` with `{ key: <64 hex>, associationId:
+<Photo or Echecs> }` answered 201 and `POST /api/lives/:id/end` 200 (the first-live rules were
+already accepted). The `/api/lives` routes answer 404 to a request WITHOUT the header
+`X-Canari-Client-Version` (at least the lives floor), which looks exactly like "lives off". A live
+needs real video, so it cannot be left standing as a fixture; to take the reading, either:
+
+1. **Mi 9T as alpha** (the app, the real path): feed composer, "Go live", pick the identity
+   "Club d'Echecs Fictif", then watch from beta's Chrome (W4); or
+2. **a scripted broadcaster** through `tools/live-bench/bench.js` evaluated in alpha's page
+   (`inject.mjs`, its README): its `POST /api/lives` body has no `associationId`, so a copy of
+   `bench.js` with `associationId` added to that one body is needed; it needs a camera, so Chrome
+   must be launched with the fake-device flags (`--use-fake-device-for-media-stream
+   --use-fake-ui-for-media-stream`), which the launcher does not set.
+
+Then write a line in the live's chat from a native viewer (a student account) and read beta's view
+against [the entry's procedure](backlog.d/named-readers-comments-switch-readings-owed.md).
+
+**Recipes** (token = `POST /api/auth/refresh` from the account's signed-in dev page, field
+`access_token`; every call carries `Authorization: Bearer` and, for `/api/lives`,
+`X-Canari-Client-Version`):
+
+- **(a)** `ffmpeg -f lavfi -i testsrc2=size=540x960:rate=24:duration=8,hue=h=N*36 -f lavfi -i
+  sine=frequency=...:duration=8 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -b:v 3M -c:a aac
+  -movflags frag_keyframe+empty_moov+default_base_moof -shortest reelN.mp4`; then, per file: encrypt
+  with `encryptSegmentedMedia` (`frontend/src/lib/mediaSegmented.ts`, WebCrypto only, runs under
+  `bun` once its `$lib/` imports are made relative), `POST /api/media/upload` (multipart `file` plus
+  `retentionClass=reel-pending`, under the 10 MiB request budget), then `POST /api/posts` with
+  `{ kind: 'reel', durationMs: 8000, markdown, media: [{ type: 'video', mediaId, key, iv, mimeType:
+  'video/mp4', size, fileName, width: 540, height: 960, encoding: 'segmented-v1' }] }`. Same path as
+  `publishReel.ts`, minus the re-encode (the file is already one fragmented MP4).
+- **(b)** as gamma: `POST /api/associations/:id/products` `{ name, amountCents: 200, type: 'other' }`
+  (created INACTIVE: the platform withholds it while the association's payment onboarding is not
+  done, and `PATCH ... { isActive: true }` answers 400), then SQL write 2.
+- **(c)** as gamma: `POST /api/associations/:id/members` `{ userId, role, permissions: 4355 }`;
+  then as alpha `POST /api/posts` `{ markdown, associationId }`.
+- **(d1)** as gamma: `POST /api/associations/:id/members` `{ userId, role, permissions: 1 }` on the
+  receiving association; as alpha `POST /api/posts/:postId/republication-proposals`
+  `{ associationId: <receiving> }`; then clear the cursus (SQL write 1).
+- **(d2)** as gamma: `PUT /api/associations/read-grants` `{ userId, campus: 'saint-etienne',
+  formation: null, granted: true }` (the "voit les commentaires" switch stays OFF).
+
+**SQL writes on dev, each one** (the owner allows the campaign to write to dev's database,
+[dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)):
+
+1. **A non-student account** has no route: a cursus is the identity provider's attribute and
+   `findOrCreateFromOidc` REPLACES it at every OIDC sign-in. So, AFTER the sign-in:
+   `UPDATE users SET cursus = '[]'::jsonb, promo = NULL, formation = NULL WHERE id = '<id>'`. Done
+   for delta and beta. **The next sign-in as that account restores the student cursus: run it again
+   afterwards**, and read `GET /api/users/me` (`cursus: []`) before the reading. To give an account
+   its student life back: `cursus` to `[{"promo": 2024, "formation": "ICM"}]`, `promo` 2024,
+   `formation` 'ICM' (delta, alpha, gamma; beta's own were 2023 / ICM). A session already open keeps
+   working.
+2. **The product on sale**: `UPDATE association_products SET "isActive" = true,
+   "activationWithheld" = false WHERE id = '<product id>'`, because dev's payment target is not
+   ready (a reset puts payments back to `disabled`,
+   [dev-environment](infrastructure/dev-environment.md#payments-on-dev-are-switched-on-by-hand-2026-10-21))
+   and the API refuses to activate. A product listed this way answers 400 at checkout.
+3. Read-only selects of `users`, `associations`, `association_audiences`, `association_products`,
+   `posts` and `post_notifications` to pick the fixtures.
+
+**Left as found.** `canari-test-gamma` joined a community "nse banc communaute" by accident during
+the readings; it is still a member, because it disturbs none of these readings. The harness Chrome
+slots W4 (beta) and W5 (delta) were started and signed in for this; W1, W2 and W3 were not touched.
 
 **2026-11-04, the bench readings of `v1.6.3-alpha.10` (dev answering `1.6.3-alpha.10`, server fixes #2992 and #2990): Mi 9T `canari-test-alpha`, iPhone 12 `canari-test-gamma`, gamma also on the harness Chrome (W2 slot, port 9223).** Mi 9T: the release `app-universal-release.apk` sideloaded with `adb install -r` (versionCode `100600310`), Settings > A propos reads `1.6.3-alpha.10`. **iPhone: TestFlight still offered only `1.6.3 (100600309)` (`alpha.9`) about 40 min after the release run went green, so the iPhone ran the `alpha.9` client, not `alpha.10`.** Both fixes are server-side, so readings 1-3 hold for an `alpha.9` client on the iPhone (the web tab was reloaded and runs the `alpha.10` bundle); the iPhone was not re-read on `alpha.10`. After the update the iPhone asked for the PIN again; the typed text did not reach the web field (`ios.mjs type`), the numeric keypad did.
 
