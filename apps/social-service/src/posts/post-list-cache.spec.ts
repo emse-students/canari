@@ -1,5 +1,7 @@
 /// <reference types="jest" />
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   POST_LIST_CACHE_PREFIX,
   POST_LIST_GENERATION_KEY,
@@ -239,4 +241,17 @@ describe('the feed cache generation', () => {
     expect((await readPostListPage(redis, key, 'staff-1')).page).toBeUndefined();
     expect((await readPostListPage(redis, other, 'student-1')).page).toEqual(['b']);
   });
+
+  it.each(['docker-compose.prod.yml', 'docker-compose.dev.yml'])(
+    'its counters cannot be evicted: %s runs a volatile-* policy, which evicts only keys with a TTL',
+    (file) => {
+      // The counters carry no TTL on purpose (`POST_LIST_GENERATION_KEY`): under `volatile-*` that
+      // makes them unevictable. An `allkeys-*` policy could reset one and re-serve a stale page.
+      const compose = readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'infrastructure', file),
+        'utf8'
+      );
+      expect(compose).toMatch(/"--maxmemory-policy",\s*"volatile-[a-z-]+"/);
+    }
+  );
 });

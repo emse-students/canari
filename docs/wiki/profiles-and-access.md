@@ -2334,7 +2334,11 @@ see nothing of it. OFF by default, for every author.
   stored with the stamp it was computed under, and a page whose stamp is not current is never served
   (`readPostListPage`, one `MGET`). The order makes it deterministic for a delete or a hide too, and a
   failed sweep harmless; only a failed increment can leave a page stale, and it throws to a caller
-  that logs it (`post-list-cache.spec.ts` plays the interleavings). The prefix moved to `v3` with the
+  that logs it (`post-list-cache.spec.ts` plays the interleavings). The counters carry NO TTL, on
+  purpose: a counter reset to 0 could match a page still stored under its earlier value, and Redis
+  runs `volatile-lru` on both estates, which evicts only keys with a TTL - so without one they are
+  never evicted, and AOF keeps them across restarts. The same spec asserts that policy in both
+  compose files; the cost is one small integer per reader a member repost ever reached. The prefix moved to `v3` with the
   stored shape, so a `v2` replica in a rolling deploy never serves a stamped value as a page. The
   served association card and every served post carry `studentsOnly` and the association's `type`.
 - **Text copied where the predicate is not asked again**: the swept list is every `previewOf` of a
@@ -2345,7 +2349,13 @@ see nothing of it. OFF by default, for every author.
   an empty text (the push reads "Publication à relayer") to the others, and the queue's `describe`
   takes the viewer (`ProposalKindHandler.describe(ids, viewerId)`, every kind) and blanks the preview
   for one the gate refuses. The proposal itself still reaches every acceptor, who decides by opening
-  the post - which the predicate answers. A BDE `MODERATE` holder sees the text of a REPORTED or
+  the post - which the predicate answers. A proposal's BELL ROW written while the switch was OFF
+  keeps its text in the table, and its `postId` names the queue, so `bellRowShownSql` never
+  re-asks; `getNotifications` blanks it at the read (`repostProposalTextWithheldSql`, which finds the
+  post through the proposal the row announced: same sending association, queue and proposer). It
+  FAILS CLOSED: the text shows only while such a proposal leads to a post that exists, is not hidden
+  and admits the recipient, and none leads to one that refuses them - so a post deleted or hidden
+  (its proposals dropped with it) or a sending association deleted takes the text along. A BDE `MODERATE` holder sees the text of a REPORTED or
   HIDDEN post in the moderation queues (`getHiddenPosts`, the report queue's 250-character preview),
   as for any post they moderate: moderation is the one surface the switch does not narrow.
 - **Notifications already delivered - the reversible choice (taken in the build, 2026-11-04)**: a bell
