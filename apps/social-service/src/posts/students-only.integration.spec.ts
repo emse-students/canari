@@ -608,4 +608,53 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     // The row stays in the staff officer's bell - the proposal is still theirs to decide - textless.
     expect(on).toEqual({ staff: '', student: 'la soirée des promos' });
   });
+
+  it("FAILS CLOSED: a proposal's bell row loses its text once its post is deleted or hidden (review of #3019)", async () => {
+    // Two posts of A1, proposed by mb (a proposer no other case uses) to C2 and to C; the recipient
+    // is sg, a student the gate admits - so only the post's fate can take the text away.
+    const gone = '00000000-0000-4000-8000-0000000000f3';
+    const hidden = '00000000-0000-4000-8000-0000000000f4';
+    for (const [id, to, text] of [
+      [gone, C2, 'le post supprimé'],
+      [hidden, C, 'le post masqué'],
+    ] as const) {
+      await q(
+        `INSERT INTO posts (id, "authorId", "associationId", markdown, "studentsOnly")
+           VALUES ($1, 'off', $2, $3, true)`,
+        [id, A1, text]
+      );
+      await q(
+        `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toAssociationId", "proposedBy")
+           VALUES ('repost', $1, $2, $3, 'mb')`,
+        [id, A1, to]
+      );
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", "actorName",
+           "associationId", text) VALUES ('sg', 'repost_proposed', $1, 'mb', 'A1', $2, $3)`,
+        [to, A1, text]
+      );
+    }
+    const bell = new PostNotificationsService(
+      ds.getRepository(PostNotification),
+      { manager } as never,
+      {} as never,
+      {} as never
+    );
+    const texts = async () => {
+      const rows = (await bell.getNotifications('sg')).filter(
+        (n) => n.type === 'repost_proposed' && n.actorId === 'mb'
+      );
+      return Object.fromEntries(rows.map((n) => [n.postId, n.text]));
+    };
+    // The switch is ON and sg is a student: both texts are theirs to read.
+    expect(await texts()).toEqual({ [C2]: 'le post supprimé', [C]: 'le post masqué' });
+
+    // Deleted: `proposals_drop_deleted_post` takes the proposal with it - nothing matches any more.
+    await q(`DELETE FROM posts WHERE id = $1`, [gone]);
+    expect(await q(`SELECT 1 FROM proposals WHERE "subjectId" = $1`, [gone])).toHaveLength(0);
+    // Hidden by moderation, the proposal still there: the post it leads to is not one to quote.
+    await q(`UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`, [hidden]);
+
+    expect(await texts()).toEqual({ [C2]: '', [C]: '' });
+  });
 });

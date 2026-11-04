@@ -37,6 +37,9 @@ export const POST_LIST_CACHE_PREFIX = 'posts:list:v3:';
  * `volatile-lru` on both estates, which evicts ONLY keys carrying a TTL: without one these are
  * never evicted, and AOF keeps them across a restart. A TTL would make them evictable, which is
  * the one way to reset them - `post-list-cache.spec.ts` asserts the policy in both compose files.
+ * AOF `everysec` (the default fsync) can lose the last second of increments in a crash: a counter
+ * that comes back one step behind serves again the pages stamped before the lost increment, at
+ * most until their 30 s TTL - the bound the cache had before it had a generation.
  * The cost is one small integer per reader a member repost ever reached, bounded by the users.
  */
 export const POST_LIST_GENERATION_KEY = 'posts:list:generation';

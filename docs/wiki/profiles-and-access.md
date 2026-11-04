@@ -2352,8 +2352,10 @@ see nothing of it. OFF by default, for every author.
   the post - which the predicate answers. A proposal's BELL ROW written while the switch was OFF
   keeps its text in the table, and its `postId` names the queue, so `bellRowShownSql` never
   re-asks; `getNotifications` blanks it at the read (`repostProposalTextWithheldSql`, which finds the
-  post through the proposal the row announced: same sending association, queue and proposer -
-  restrictive when one proposer sent the same queue several posts). A BDE `MODERATE` holder sees the text of a REPORTED or
+  post through the proposal the row announced: same sending association, queue and proposer). It
+  FAILS CLOSED: the text shows only while such a proposal leads to a post that exists, is not hidden
+  and admits the recipient, and none leads to one that refuses them - so a post deleted or hidden
+  (its proposals dropped with it) or a sending association deleted takes the text along. A BDE `MODERATE` holder sees the text of a REPORTED or
   HIDDEN post in the moderation queues (`getHiddenPosts`, the report queue's 250-character preview),
   as for any post they moderate: moderation is the one surface the switch does not narrow.
 - **Notifications already delivered - the reversible choice (taken in the build, 2026-11-04)**: a bell

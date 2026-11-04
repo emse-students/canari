@@ -155,7 +155,7 @@ export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
   return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
-        AND ${n}."postId" ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
       AND NOT notif_post."hiddenByModeration"
       AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
@@ -163,28 +163,41 @@ export function bellRowShownSql(n: string): string {
         AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
+/** The shape of a uuid, which a varchar column must have before it is cast to one. */
+const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+/** `column` (a varchar) as a uuid, or NULL when it does not have the shape of one. */
+function asUuidSql(column: string): string {
+  return `(CASE WHEN ${column} ~* '${UUID_SHAPE}' THEN ${column}::uuid END)`;
+}
+
 /**
- * A `repost_proposed` bell row whose TEXT its recipient may no longer read: the proposal's post is
- * "Entre étudiants" and the gate refuses the recipient (`studentsOnlyAdmitsViewerSql`). Such a row
- * is not post-bound - its `postId` names the receiving association's queue - so
- * {@link bellRowShownSql} never re-asks the predicate, and a row written while the switch was OFF
- * would keep its preview once it is turned on. The row stays (the proposal is still theirs to
- * decide); only its text is withheld at the read, as the queue's `describe` withholds it.
+ * A `repost_proposed` bell row whose TEXT its recipient may no longer read. Such a row is not
+ * post-bound - its `postId` names the receiving association's queue - so {@link bellRowShownSql}
+ * never re-asks the predicate, and a row written while the "Entre étudiants" switch was OFF would
+ * keep its preview once it is turned on. The row stays (the proposal is still theirs to decide);
+ * only its text is withheld at the read, as the queue's `describe` withholds it.
  *
- * The row does not name its post, so the post is found through the proposal the row announced:
- * a `repost` proposal from the row's association (`associationId`) to its queue (`postId`), by its
- * actor. ANY such proposal whose post the gate refuses withholds the text - restrictive where one
- * proposer sent the same association several posts, never permissive. The proposal's status does
- * not matter: a decided proposal's row is still in the bell.
+ * The row does not name its post, so the post is found through the proposal the row announced: a
+ * `repost` proposal from the row's association (`associationId`) to its queue (`postId`), by its
+ * actor, whatever its status (a decided proposal's row is still in the bell). FAIL CLOSED (review
+ * of #3019): the text is shown only while such a proposal still leads to a post that exists, is not
+ * hidden by moderation, and admits the recipient (`studentsOnlyAdmitsViewerSql`), and NO such
+ * proposal leads to one that refuses them. So a proposal gone with its post (deleted, hidden - which
+ * drops its proposals - or its sending association deleted) takes the text with it, and one proposer
+ * who sent the same queue several posts is judged on the strictest.
  */
 export function repostProposalTextWithheldSql(n: string): string {
-  return `(${n}.type = 'repost_proposed' AND EXISTS (SELECT 1 FROM proposals rpw_prop
-    JOIN posts rpw_post ON rpw_post.id = rpw_prop."subjectId"
-    WHERE rpw_prop.kind = 'repost'
-      AND rpw_prop."toAssociationId"::text = ${n}."postId"
-      AND rpw_prop."fromAssociationId"::text = ${n}."associationId"
-      AND rpw_prop."proposedBy" = ${n}."actorId"
-      AND NOT ${studentsOnlyAdmitsViewerSql('rpw_post', `${n}."recipientId"`)}))`;
+  const matches = (prop: string) => `${prop}.kind = 'repost'
+      AND ${prop}."toAssociationId" = ${asUuidSql(`${n}."postId"`)}
+      AND ${prop}."fromAssociationId" = ${asUuidSql(`${n}."associationId"`)}
+      AND ${prop}."proposedBy" = ${n}."actorId"`;
+  const admitted = (post: string) => studentsOnlyAdmitsViewerSql(post, `${n}."recipientId"`);
+  return `(${n}.type = 'repost_proposed' AND (
+    NOT EXISTS (SELECT 1 FROM proposals rpw_ok JOIN posts rpw_ok_post ON rpw_ok_post.id = rpw_ok."subjectId"
+      WHERE ${matches('rpw_ok')} AND NOT rpw_ok_post."hiddenByModeration" AND ${admitted('rpw_ok_post')})
+    OR EXISTS (SELECT 1 FROM proposals rpw_no JOIN posts rpw_no_post ON rpw_no_post.id = rpw_no."subjectId"
+      WHERE ${matches('rpw_no')} AND NOT ${admitted('rpw_no_post')})))`;
 }
 
 /**
