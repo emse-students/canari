@@ -442,6 +442,12 @@ class SystemComponentsPlugin: Plugin {
         overlay.onSelect = { [weak self] id in
             self?.trigger("tabSelected", data: ["id": id])
         }
+        // CANARI PATCH: the status bar tap goes to the page, which scrolls its own box. UIKit picks
+        // ONE scroll view for that tap, so the web view's is switched off for ours to be chosen.
+        overlay.statusBarTapCatcher.onTap = { [weak self] in
+            self?.trigger("statusBarTap", data: [:])
+        }
+        webView?.scrollView.scrollsToTop = false
         host.addChild(overlay)
         overlay.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.addSubview(overlay.view)

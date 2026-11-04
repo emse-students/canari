@@ -5,6 +5,7 @@
   import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
+  import { registerRetapRefresh } from '$lib/navigation/scrollToTop';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
@@ -793,7 +794,13 @@
     // Attach pull-to-refresh to the root scroll container (page-scroll-wrap in +layout.svelte).
     const scrollContainer = document.querySelector<HTMLElement>('.page-scroll-wrap');
     if (scrollContainer) {
-      const { destroy } = pullToRefresh(scrollContainer, { onRefresh: refreshPosts });
+      const { destroy: destroyPull } = pullToRefresh(scrollContainer, { onRefresh: refreshPosts });
+      // A re-tap of the Feed tab while already at the top refreshes through the SAME action.
+      const unregisterRetap = registerRetapRefresh(refreshPosts);
+      const destroy = () => {
+        destroyPull();
+        unregisterRetap();
+      };
       // The tab row comes back on the first scroll UP (see `tabsShown`). No log per event.
       // Seeded at where the page already is (a restored scroll is not the top), so the first
       // event measures from there rather than reading the whole offset as one scroll down.
