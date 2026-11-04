@@ -94,6 +94,30 @@ export function guideAnchor(node: HTMLElement, id: string) {
 }
 
 /**
+ * {@link guideAnchor} for a control that is a target ONLY SOMETIMES: `undefined` registers nothing,
+ * so a row of a shared list (a hub row) names its anchor in its DATA and the page decides, from the
+ * very permission it already draws the row by, whether the row is a target at all.
+ */
+export function guideAnchorWhen(node: HTMLElement, id: string | undefined) {
+  let current = id ? guideAnchor(node, id) : null;
+  return {
+    update(next: string | undefined) {
+      if (next === id) return;
+      id = next;
+      if (current && next) {
+        current.update(next);
+        return;
+      }
+      current?.destroy();
+      current = next ? guideAnchor(node, next) : null;
+    },
+    destroy() {
+      current?.destroy();
+    },
+  };
+}
+
+/**
  * Registers a region - a target that is not a page element (the native tab bar). `rect` answers
  * `null` while the region is not on screen. Returns the release.
  */

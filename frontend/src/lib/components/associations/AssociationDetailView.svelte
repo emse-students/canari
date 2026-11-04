@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Log } from '$lib/utils/Log';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { goto } from '$app/navigation';
   import {
     getAssociationBySlug,
@@ -203,6 +204,19 @@
     })
   );
 
+  /**
+   * The first-time helps' anchors on the hub rows (docs/wiki/frontend/guided-help.md, batch 3), each
+   * set only for a reader the help is FOR, from the facts this page already draws by: the shop row
+   * whenever it is drawn (the hub lists it only when the association sells something); the agenda row
+   * only for a manager who may propose events (the agenda section's own edit right). An unset row
+   * registers nothing, so its step is left out.
+   */
+  function hubAnchor(section: PublicSection): string | undefined {
+    if (section === 'shop') return 'asso.shop';
+    if (section === 'calendar') return canManage && canProposeEvent ? 'asso.agenda' : undefined;
+    return undefined;
+  }
+
   /** One hub row per section that exists; a count only where the roster already has it. */
   const hubRows = $derived(
     visiblePublicSections(content).map((section): HubRow => ({
@@ -210,6 +224,7 @@
       href: publicSectionHref(base, slug, section),
       label: sectionLabel(section),
       icon: SECTION_ICONS[section],
+      guideAnchor: hubAnchor(section),
       summary:
         section === 'members'
           ? kind === 'list'
@@ -526,6 +541,7 @@
             {#if canManage}
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
+                use:guideAnchor={'asso.manage'}
                 class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />

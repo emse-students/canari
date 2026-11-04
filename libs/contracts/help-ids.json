@@ -7,7 +7,11 @@
     "hint-create-form",
     "hint-feed-tabs",
     "hint-reels",
-    "hint-chats"
+    "hint-chats",
+    "hint-asso-shop",
+    "hint-asso-post-as",
+    "hint-asso-manage",
+    "hint-asso-manage-hub"
   ],
   "unknownIdCode": "HELP_ID_UNKNOWN"
 }
