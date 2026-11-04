@@ -52,7 +52,7 @@ export class ModerationController {
   ): Promise<void> {
     await this.assertModerator(userId, isGlobalAdmin);
     if (await this.assocService.mayModerateUser(userId, targetUserId, { isGlobalAdmin })) return;
-    await this.assocService.refuseModeration(userId, `user:${targetUserId}`);
+    await this.assocService.refuseModeration(userId, { kind: 'user', id: targetUserId });
   }
 
   // ── Public (authenticated) reports ───────────────────────────────────────
@@ -117,7 +117,7 @@ export class ModerationController {
     const isGlobalAdmin = ga === 'true';
     await this.assertModerator(userId, isGlobalAdmin);
     if (!(await this.assocService.mayModerateReport(userId, reportId, { isGlobalAdmin }))) {
-      await this.assocService.refuseModeration(userId, `report:${reportId}`);
+      await this.assocService.refuseModeration(userId, { kind: 'report', id: reportId });
     }
     return this.service.reviewReport(reportId, userId, dto.action);
   }
@@ -178,10 +178,14 @@ export class ModerationController {
   ) {
     const isGlobalAdmin = ga === 'true';
     await this.assertModerator(userId, isGlobalAdmin);
-    // A comment is judged by the post it sits under; a missing one stays the service's 404.
+    // A comment is judged by the post it sits under AND by who publishes it and its replies
+    // (`mayModerateComment`, owner 2026-11-03); a missing one stays the service's 404.
     const postId = await this.service.findPostIdForComment(commentId);
-    if (postId && !(await this.assocService.mayModeratePost(userId, postId, { isGlobalAdmin }))) {
-      await this.assocService.refuseModeration(userId, `comment:${commentId}`);
+    if (
+      postId &&
+      !(await this.assocService.mayModerateComment(userId, postId, commentId, { isGlobalAdmin }))
+    ) {
+      await this.assocService.refuseModeration(userId, { kind: 'comment', id: commentId, postId });
     }
     return this.service.deleteCommentById(commentId);
   }

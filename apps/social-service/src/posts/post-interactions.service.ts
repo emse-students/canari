@@ -18,7 +18,12 @@ import {
 } from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { isAnonymousPoll, recordAnonymousVote } from './anonymous-poll';
-import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
+import {
+  CommentIdentityService,
+  commentIdentityOf,
+  commentRights,
+  repliesByParent,
+} from './comment-identity';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
@@ -441,16 +446,23 @@ export class PostInteractionsService {
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    // The moderator half is asked of THIS post: a BDE moderates the comments of its governed spaces.
-    const viewer = await this.identity.viewerFor([comment], {
+    // The moderator half is asked of THIS post: a BDE moderates the comments of its governed spaces -
+    // and of THIS thread: the comment and the replies the delete takes must each be published by
+    // someone it moderates, never an institution or another BDE (owner, 2026-11-03).
+    const replies = repliesByParent(comments).get(commentId) ?? [];
+    const viewer = await this.identity.viewerFor([comment, ...replies], {
       viewerId: userId,
       isGlobalAdmin: isAdmin,
       postId,
     });
-    if (!commentRights(comment, viewer).canDelete) {
+    if (!commentRights(comment, viewer, replies).canDelete) {
       this.logger.warn(
         `[PERM] comment delete refused user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
       );
+      // A moderator of the post refused for WHO publishes the thread: the moderation refusal, typed.
+      if (viewer.isModerator) {
+        await this.identity.refuseModeration(userId, { kind: 'comment', id: commentId, postId });
+      }
       throw new ForbiddenException({
         code: COMMENT_DELETE_FORBIDDEN,
         message: 'You may not delete this comment',

@@ -29,6 +29,7 @@ import {
   type PostMediaRef,
 } from '$lib/posts/api';
 import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
+import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
 import { withCommentCountDelta, type CommentChange } from '$lib/posts/commentChange';
 import { PostListeners } from '$lib/posts/postListeners';
@@ -270,7 +271,7 @@ export class PostCommentThread {
       this.announce({ kind: 'remove', ids: ids.length > 0 ? ids : [commentId], count });
     } catch (err) {
       Log.d('PostCommentThread.remove failed', err);
-      this.host.fail(m.post_unable_to_delete_comment());
+      this.host.fail(describeModerationRefusal(err) ?? m.post_unable_to_delete_comment());
     }
   }
 

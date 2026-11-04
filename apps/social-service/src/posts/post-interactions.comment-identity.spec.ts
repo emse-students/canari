@@ -59,6 +59,66 @@ describe('PostInteractionsService - comment identity', () => {
     return { service, post, created, push, associations };
   }
   const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  describe("a BDE moderator of the post, on content in an institution's or another BDE's name (owner, 2026-11-03)", () => {
+    const INST = 'inst-1';
+    const CLUB = 'club-1';
+    /** The post's moderator, who moderates what CLUB publishes and not what INST does. */
+    function moderating(comments: any[]) {
+      const made = make({ ...base(), comments });
+      const associations = made.associations as typeof made.associations & Record<string, unknown>;
+      associations.mayModeratePost = jest.fn(() => Promise.resolve(true));
+      associations.mayActOnAny = jest.fn((_u: string, _ids: string[]) =>
+        Promise.resolve(new Set<string>())
+      );
+      associations.moderatedAssociationIds = jest.fn((_u: string, ids: string[]) =>
+        Promise.resolve(new Set(ids.filter((id) => id === CLUB)))
+      );
+      associations.refuseModeration = jest.fn(() =>
+        Promise.reject(new ForbiddenException({ code: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN' }))
+      );
+      (made.service as any).mediaRetention = { release: jest.fn(() => Promise.resolve()) };
+      return made;
+    }
+
+    it('CONTROL: deletes the comment of a club it governs, and a thread whose reply is that club', async () => {
+      const { service, post } = moderating([
+        { id: 'c1', userId: 'w', associationId: CLUB },
+        { id: 'c2', userId: 'student' },
+        { id: 'r2', userId: 'w', associationId: CLUB, parentId: 'c2' },
+      ]);
+      await service.deleteComment('p1', 'c1', 'bde');
+      await service.deleteComment('p1', 'c2', 'bde');
+      expect(post.comments).toEqual([]);
+    });
+
+    it("refuses the institution's comment with the typed reserved refusal, and deletes nothing", async () => {
+      const { service, post, associations } = moderating([
+        { id: 'c1', userId: 'w', associationId: INST },
+      ]);
+      const refusal = await service.deleteComment('p1', 'c1', 'bde').catch((e: unknown) => e);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN',
+      });
+      expect((associations as any).refuseModeration).toHaveBeenCalledWith('bde', {
+        kind: 'comment',
+        id: 'c1',
+        postId: 'p1',
+      });
+      expect(post.comments).toHaveLength(1);
+    });
+
+    it("refuses a student's comment whose reply is the institution's: the delete would take it", async () => {
+      const { service, post } = moderating([
+        { id: 'c1', userId: 'student' },
+        { id: 'r1', userId: 'w', associationId: INST, parentId: 'c1' },
+      ]);
+      await expect(service.deleteComment('p1', 'c1', 'bde')).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+      expect(post.comments).toHaveLength(2);
+    });
+  });
   const base = () => ({ id: 'p1', authorId: 'author', associationId: null, comments: [] as any[] });
 
   it('stores an anonymous comment with the real account and no name', async () => {

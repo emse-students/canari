@@ -144,7 +144,7 @@ export class LivesController {
   ): Promise<void> {
     const isGlobalAdmin = globalAdmin === 'true';
     if (await this.associations.mayModerateUser(caller, target, { isGlobalAdmin })) return;
-    await this.associations.refuseModeration(caller, `broadcaster:${target}`);
+    await this.associations.refuseModeration(caller, { kind: 'broadcaster', id: target });
   }
 
   /** The open lives the caller may watch, newest first. */
@@ -281,7 +281,7 @@ export class LivesController {
     const liveId = id.toLowerCase();
     const isGlobalAdmin = globalAdmin === 'true';
     if (!(await this.associations.mayModerateLive(caller, liveId, { isGlobalAdmin }))) {
-      await this.associations.refuseModeration(caller, `live:${liveId}`);
+      await this.associations.refuseModeration(caller, { kind: 'live', id: liveId });
     }
     return this.lives.cut(caller, liveId, body ?? {});
   }

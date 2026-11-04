@@ -105,6 +105,10 @@ describe('PostsController.votePoll', () => {
       moderatedPostIds: jest.fn((id: string, ids: string[]) =>
         Promise.resolve(new Set(id === MODERATOR ? ids : []))
       ),
+      // The publishers a BDE moderator moderates (owner, 2026-11-03): this one governs them all.
+      moderatedAssociationIds: jest.fn((id: string, ids: string[]) =>
+        Promise.resolve(new Set(id === MODERATOR ? ids : []))
+      ),
     };
     const postRepo = {
       manager: { query },

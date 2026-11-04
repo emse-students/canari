@@ -142,8 +142,29 @@ the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): 
 it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
 `COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
 of `POST_AS_ASSO` in it (decided the same day). Deleting a comment is MODERATE's within its scope: a
-moderator of the post deletes any comment under it - plain, anonymous or an association's - which
-`commentRights.canDelete` serves and `POST /moderation/comments/:id/delete` enforces alike.
+moderator of the post deletes a plain or an anonymous comment under it, and an association's only
+when it moderates that association too (next paragraph) - which `commentRights.canDelete` serves and
+`POST /moderation/comments/:id/delete` enforces alike.
+
+**No BDE moderates content in an INSTITUTION's or ANOTHER BDE's name (owner, 2026-11-03).** Whatever
+the path - hide, delete, unmask, reading an association comment's writer, cutting a live, a report on
+any of them - only the platform admin acts on it; a BDE keeps moderating, in its governed spaces, what
+students and the associations and lists it governs publish. ONE predicate decides every act:
+`bdeModeratesPublisherSql` (`spaces/bde-moderation.ts`, the management predicate read for `MODERATE`,
+false for an institution and for another BDE) for whatever is in an association's name, the per-space
+standing for a person's. A post and a live were already judged by their publisher (#2953); since this
+change a **comment** is too - its post must be in scope AND its own publisher, AND every reply its
+delete would take (`bdeModeratesCommentSql`; `moderatesCommentThread` is its in-memory twin, proved to
+agree on real SQL). **The reports queue lists only what the BDE may act on** - an escalated item is
+simply absent from it, and stays in the platform admin's queue (decided 2026-11-04, the simpler and
+reversible of the two options: no "escalated" row to render). A refused act is classified at the
+throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is in an institution's or a BDE's
+name, `MODERATION_OUT_OF_SCOPE` otherwise, `MODERATOR_REQUIRED` for a caller who moderates nowhere -
+each worded by the client through `describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`).
+**Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
+another BDE's or an institution's post), the agenda rights over an institution's event (owner,
+2026-11-03, `holdsBdeAgendaRightOverSql`), and a mute or a broadcast withdrawal, which name a person.
+Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03").
 
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or

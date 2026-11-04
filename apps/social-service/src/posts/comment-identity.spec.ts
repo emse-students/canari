@@ -15,8 +15,13 @@ const viewer = (over: Partial<CommentViewer> = {}): CommentViewer => ({
   isGlobalAdmin: false,
   isModerator: false,
   managedAssociationIds: new Set(),
+  moderatedAssociationIds: new Set(),
   ...over,
 });
+
+/** A BDE moderator of the post who also moderates what `asso-1` publishes (a club it governs). */
+const governingModerator = (over: Partial<CommentViewer> = {}) =>
+  viewer({ isModerator: true, moderatedAssociationIds: new Set(['asso-1']), ...over });
 
 const ANON = { id: 'c1', userId: 'writer', anonymous: true, text: 'x' };
 const ASSO = { id: 'c2', userId: 'writer', associationId: 'asso-1', text: 'x' };
@@ -60,8 +65,14 @@ describe('an association comment', () => {
     expect(out).not.toHaveProperty('associationId');
   });
 
-  it('shows the account to moderation', () => {
-    expect(serveComment(ASSO, viewer({ isModerator: true }), POST, CARDS).userId).toBe('writer');
+  it('shows the account to moderation of that association, and to the platform admin', () => {
+    expect(serveComment(ASSO, governingModerator(), POST, CARDS).userId).toBe('writer');
+    expect(serveComment(ASSO, viewer({ isGlobalAdmin: true }), POST, CARDS).userId).toBe('writer');
+  });
+
+  it("withholds the account from a post's moderator who does not moderate the publisher (owner, 2026-11-03)", () => {
+    // An institution's or another BDE's comment: reading who wrote it is moderating it.
+    expect(serveComment(ASSO, viewer({ isModerator: true }), POST, CARDS).userId).toBeUndefined();
   });
 });
 
@@ -88,13 +99,34 @@ describe('commentRights', () => {
     expect(commentRights(ASSO, holdingAdmin).canEdit).toBe(true);
   });
 
-  it("lets a moderator of the post delete an association's comment, never edit it", () => {
+  it('lets a moderator of the post delete the comment of an association it governs, never edit it', () => {
     // The same answer as `POST /moderation/comments/:id/delete`, so the bin and the route agree.
-    expect(commentRights(ASSO, viewer({ isModerator: true }))).toEqual({
+    expect(commentRights(ASSO, governingModerator())).toEqual({
       canEdit: false,
       canDelete: true,
     });
     expect(commentRights(ASSO, viewer())).toEqual({ canEdit: false, canDelete: false });
+  });
+
+  it('refuses a moderator of the post the comment of an institution or another BDE (owner, 2026-11-03)', () => {
+    // `asso-1` is not in the moderator's publisher set: only the platform admin moderates it.
+    expect(commentRights(ASSO, viewer({ isModerator: true }))).toEqual({
+      canEdit: false,
+      canDelete: false,
+    });
+    // The publisher set is matched whatever the case the stored id is spelled in.
+    const upper = { ...ASSO, associationId: 'ASSO-1' };
+    expect(commentRights(upper, governingModerator()).canDelete).toBe(true);
+  });
+
+  it('refuses a moderator a comment whose thread holds a reply it does not moderate', () => {
+    // Deleting a comment takes its replies: an institution's reply is never deleted through its parent.
+    const reply = { id: 'r1', parentId: PLAIN.id, userId: 'w2', associationId: 'asso-1' };
+    expect(commentRights(PLAIN, viewer({ isModerator: true }), [reply]).canDelete).toBe(false);
+    expect(commentRights(PLAIN, governingModerator(), [reply]).canDelete).toBe(true);
+    expect(commentRights(PLAIN, viewer({ isGlobalAdmin: true }), [reply]).canDelete).toBe(true);
+    // The author deletes their own comment whatever replies it holds - that is not moderation.
+    expect(commentRights(PLAIN, viewer({ viewerId: 'writer' }), [reply]).canDelete).toBe(true);
   });
 
   it('lets a moderator delete an anonymous comment but never edit it', () => {

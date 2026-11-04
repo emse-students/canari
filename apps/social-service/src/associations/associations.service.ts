@@ -198,12 +198,17 @@ import {
 } from './admin-catalogue';
 import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
 import {
+  BDE_MODERATED_ASSOCIATION_IDS_SQL,
   BDE_MODERATED_POST_IDS_SQL,
   BDE_MODERATED_USER_IDS_SQL,
+  BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
   BDE_MODERATES_REPORT_SQL,
   MODERATION_OUT_OF_SCOPE,
+  MODERATION_RESERVED_SQL,
+  MODERATION_RESERVED_TO_PLATFORM_ADMIN,
   MODERATOR_REQUIRED,
+  type ModerationTarget,
 } from '../spaces/bde-moderation';
 import { Space } from '../spaces/space.entity';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
@@ -2905,7 +2910,9 @@ export class AssociationsService {
    * THE DOOR, NOT THE REACH (owner, 2026-11-02): since `MODERATE` is scoped (`spaces/bde-moderation.ts`)
    * this answers only who may open the moderation surfaces at all - the queue, the lists - and
    * classifies a refusal (out of scope vs not a moderator). Acting on ONE target asks the scoped
-   * predicate of its kind: `mayModeratePost`, `mayModerateLive`, `mayModerateUser`.
+   * predicate of its kind: `mayModeratePost`, `mayModerateComment`, `mayModerateLive`,
+   * `mayModerateReport`, `mayModerateUser` - each a composition of the ONE predicate of
+   * `spaces/bde-moderation.ts`.
    */
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
@@ -3019,22 +3026,89 @@ export class AssociationsService {
   }
 
   /**
-   * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATION_OUT_OF_SCOPE`
-   * when the caller moderates SOMEWHERE but not this target, 403 `MODERATOR_REQUIRED` when they
-   * moderate nowhere. Logged with the target's kind, never its content.
+   * May `userId` moderate (delete) comment `commentId` under post `postId`? A platform admin always; a
+   * BDE `MODERATE` holder when the post is in its scope AND the comment and every reply that would go
+   * with it are published by a person or an association it moderates (`bdeModeratesCommentSql`) - never
+   * a comment in an institution's or another BDE's name (owner, 2026-11-03).
    */
-  async refuseModeration(userId: string | undefined, target: string): Promise<never> {
+  async mayModerateComment(
+    userId: string | undefined,
+    postId: string,
+    commentId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(BDE_MODERATES_COMMENT_SQL, [
+      userId,
+      postId,
+      commentId,
+    ]);
+    const moderates = rows[0]?.moderates === true;
+    this.logger.debug(
+      `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} comment=${sanitizeLog(commentId.slice(0, 12))} -> ${moderates}`
+    );
+    return moderates;
+  }
+
+  /**
+   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`bdeModeratesPublisherSql`):
+   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its governed spaces
+   * reach - never an institution, never another BDE. What `commentRights` reads for a comment in an
+   * association's name; empty for an unknown caller.
+   */
+  async moderatedAssociationIds(
+    userId: string | undefined,
+    associationIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(associationIds.filter(Boolean).map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_ASSOCIATION_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATOR_REQUIRED` when the
+   * caller moderates nowhere; 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is published
+   * in an institution's or a BDE's name (owner, 2026-11-03: only the platform admin moderates those);
+   * 403 `MODERATION_OUT_OF_SCOPE` otherwise - outside the spaces the caller's BDE governs. Logged with
+   * the target's kind, never its content.
+   */
+  async refuseModeration(userId: string | undefined, target: ModerationTarget): Promise<never> {
     const somewhere = !!userId && (await this.isContentModerator(userId));
-    const code = somewhere ? MODERATION_OUT_OF_SCOPE : MODERATOR_REQUIRED;
+    const reserved = somewhere && (await this.isReservedToPlatformAdmin(target));
+    const code = !somewhere
+      ? MODERATOR_REQUIRED
+      : reserved
+        ? MODERATION_RESERVED_TO_PLATFORM_ADMIN
+        : MODERATION_OUT_OF_SCOPE;
     this.logger.log(
-      `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${sanitizeLog(target)} code=${code}`
+      `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${target.kind}:${sanitizeLog(target.id)} code=${code}`
     );
     throw new ForbiddenException({
       code,
-      message: somewhere
-        ? 'Outside the spaces your BDE governs'
-        : 'BDE MODERATE permission or global admin required',
+      message: !somewhere
+        ? 'BDE MODERATE permission or global admin required'
+        : reserved
+          ? "Content in an institution's or a BDE's name is moderated by the platform admin only"
+          : 'Outside the spaces your BDE governs',
     });
+  }
+
+  /** Is `target` published in an institution's or a BDE's name (`MODERATION_RESERVED_SQL`)? */
+  private async isReservedToPlatformAdmin(target: ModerationTarget): Promise<boolean> {
+    if (target.kind === 'user' || target.kind === 'broadcaster') return false;
+    const rows: { reserved: boolean }[] = await this.memberRepo.query(MODERATION_RESERVED_SQL, [
+      target.kind,
+      target.id,
+      target.postId ?? null,
+    ]);
+    return rows[0]?.reserved === true;
   }
 
   /**

@@ -2047,7 +2047,7 @@ export class PostsService {
     this.logger.debug(
       `[PERM] ${userId.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`
     );
-    return this.associationsService.refuseModeration(userId, `post:${post.id}`);
+    return this.associationsService.refuseModeration(userId, { kind: 'post', id: post.id });
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */

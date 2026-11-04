@@ -1665,7 +1665,7 @@ standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
 | an association's post or live | the association is reached by a space the BDE governs (`holdsBdeFlagOverSql`) - never an institution's |
 | a post or live in ANOTHER BDE's name | never, even when it is seen in the BDE's own spaces: only the platform admin, as for an institution (owner, 2026-11-03); a BDE's own content is its own members' |
 | a personal post or live | its author belongs to one of the spaces the BDE governs (`isReaderSpaceSql`) |
-| a comment | the post it sits under is in scope |
+| a comment | the post it sits under is in scope AND, for a comment in an association's name, so is that association's content - never an institution's or another BDE's (owner, 2026-11-03) - AND so is every reply its delete would take (`bdeModeratesCommentSql`) |
 | a live chat line | its live is in scope (read from the live, or from its cut once purged) |
 | a person (mute, unmute, broadcast withdrawal) | they belong to one of the BDE's spaces |
 | a report | what it is about is in scope; once its content is gone, the platform admin's |
@@ -1679,10 +1679,14 @@ predicate carries that exclusion once, and moderation reads it (proved in
 `bde-moderation.integration.spec.ts`). **The platform admin stays global for every one of these.**
 
 - **The door and the reach.** `isContentModerator` ("moderates somewhere") still opens the moderation
-  surfaces; every act asks the scoped predicate of its target (`mayModeratePost`, `mayModerateLive`,
-  `mayModerateUser`, `mayModerateReport`). A BDE moderator outside its scope gets 403
+  surfaces; every act asks the scoped predicate of its target (`mayModeratePost`, `mayModerateComment`,
+  `mayModerateLive`, `mayModerateUser`, `mayModerateReport`), each a composition of ONE predicate
+  (`bdeModeratesPublisherSql` for association content, the per-space standing for a person's). A BDE
+  moderator refused on content in an institution's or a BDE's name gets 403
+  `MODERATION_RESERVED_TO_PLATFORM_ADMIN` (2026-11-04), one otherwise outside its scope 403
   `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere 403 `MODERATOR_REQUIRED`, classified at
-  the throw (`refuseModeration`, logged `[MODERATION]`). **Never a 401** on these routes (review of
+  the throw (`refuseModeration` and `MODERATION_RESERVED_SQL`, logged `[MODERATION]`) and worded by
+  the client (`describeModerationRefusal`). **Never a 401** on these routes (review of
   #2953): only a 401 may log a user out, and these callers' sessions are fine - the post and comment
   routes answered "Not your post" / "Not your comment" / "Content moderator required" as 401s and now
   answer typed 403s (`POST_EDIT_PUBLISHER_ONLY`, `COMMENT_EDIT_AUTHOR_ONLY`, `COMMENT_DELETE_FORBIDDEN`,
