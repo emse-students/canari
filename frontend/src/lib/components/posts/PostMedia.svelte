@@ -109,11 +109,14 @@
     /** Called with the decrypted URL once the WHOLE file is in this device's media pool. */
     onLoaded?: (url: string) => void;
     /**
-     * `galleryMode` only: told once the media will not show by itself - its player was refused or
-     * failed the autoplay (`refused`), refused the bytes (`unplayable`), or the download failed
-     * (`failed`). The reel viewer stops waiting on it then.
+     * `galleryMode` only: told once the media will not show by itself - its player was refused,
+     * interrupted or failed the autoplay (`refused`, `interrupted`, `errored` - `videoAutoplay.ts`),
+     * refused the bytes (`unplayable`), or the download failed (`failed`). The reel viewer stops
+     * waiting on it then.
      */
-    onPlaybackBlocked?: (cause: 'refused' | 'unplayable' | 'failed') => void;
+    onPlaybackBlocked?: (
+      cause: 'refused' | 'interrupted' | 'errored' | 'unplayable' | 'failed'
+    ) => void;
     /**
      * Told WHY the download failed, typed (`mediaFailureCause`), once per failure. A conversation's
      * reel reads `expired` (the `410`) to record the loss on its message (RC-6); nothing else
