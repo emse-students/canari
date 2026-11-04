@@ -54,6 +54,11 @@ class SelectTabArgs: Decodable {
     let id: String
 }
 
+/// CANARI PATCH: see `setTabBarInteractive`.
+class SetTabBarInteractiveArgs: Decodable {
+    let interactive: Bool
+}
+
 class SetBadgeArgs: Decodable {
     let id: String
     let value: String?
@@ -156,6 +161,28 @@ class SystemComponentsPlugin: Plugin {
 
     @objc public func hideTabBar(_ invoke: Invoke) {
         setHidden(true, invoke)
+    }
+
+    /// CANARI PATCH: whether the bar (and its accessory) takes touches. The app turns it off while
+    /// a MODAL web layer covers the page - the guided tour's backdrop: the bar is drawn ABOVE the
+    /// WebView, so the backdrop cannot cover it, and a tap on a tab left the tour and navigated
+    /// (iPhone 12, `1.6.3-alpha.7`). With the overlay's root view not interactive, UIKit's hit test
+    /// skips the whole overlay and the touch reaches the WebView, where the backdrop takes it. The
+    /// bar stays DRAWN: the tour's steps point at its band.
+    @objc public func setTabBarInteractive(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(SetTabBarInteractiveArgs.self)
+        DispatchQueue.main.async { [weak self] in
+            guard let overlay = self?.overlay else {
+                NSLog("[pendi-nav][native] setTabBarInteractive refused: tab bar is not configured")
+                invoke.reject("tab bar is not configured")
+                return
+            }
+            overlay.view.isUserInteractionEnabled = args.interactive
+            NSLog(
+                "[pendi-nav][native] setTabBarInteractive interactive=%@",
+                args.interactive ? "yes" : "no")
+            invoke.resolve()
+        }
     }
 
     @objc public func selectTab(_ invoke: Invoke) throws {

@@ -3,6 +3,8 @@ const COMMANDS: &[&str] = &[
     "remove_tab_bar",
     "show_tab_bar",
     "hide_tab_bar",
+    // CANARI PATCH: see `SetTabBarInteractiveOptions` in src/models.rs.
+    "set_tab_bar_interactive",
     "select_tab",
     "set_badge",
     "get_tab_bar_insets",

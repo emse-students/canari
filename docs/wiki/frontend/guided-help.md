@@ -151,6 +151,15 @@ Three refinements keep that exact:
   registers each place's id as a REGION - the band the bar covers, from the plugin's measured inset -
   and the step's icon names the tab. A slice per item was rejected: the plugin gives the band's
   height, not where each item sits, and the iOS 26 floating pill would make a slice a guess.
+- **The iOS native tab bar takes NO TOUCH under a modal step.** The backdrop cannot cover a bar drawn
+  above the WebView: on the iPhone 12 (`1.6.3-alpha.7`) a tap on the chat tab left the tour and
+  opened `/chat`. `GuideOverlay` writes `modalWebLayer.covering` (`navigation/nativeTabBarState`)
+  while a MODAL step is on screen - not while a tour is suspended, and never for a hint, which leaves
+  the page usable - and `NativeTabBar` sends it to the plugin's Canari-patched
+  `set_tab_bar_interactive`, which turns the overlay's root view's `isUserInteractionEnabled` off so
+  UIKit's hit test hands the touch to the WebView, where the backdrop takes it. The bar stays drawn:
+  the tab steps point at its band. Hiding it was rejected for that reason. Owed on the iPhone: check T
+  in [device-verification](../device-verification.md).
 
 A help that ends up with NOTHING to show is put back unseen (it never reached the reader) and is not
 offered again until the situation changes (`situation()`: the settled route and the anchor registry's

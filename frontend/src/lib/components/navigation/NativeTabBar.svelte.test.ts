@@ -22,6 +22,10 @@ const plugin = vi.hoisted(() => ({
 }));
 vi.mock('@sosweetham/tauri-plugin-system-components-api', () => plugin);
 
+// The Canari-patched commands go through `invoke` by name (`systemComponentsCommands.ts`).
+const core = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => core);
+
 const route = vi.hoisted(() => ({ page: { url: new URL('https://canari.emse.fr/posts') } }));
 vi.mock('$app/state', () => route);
 
@@ -44,6 +48,7 @@ import NativeTabBar, { nativeTabBar } from './NativeTabBar.svelte';
 import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import { PLACE_ICONS } from '$lib/navigation/placeIcons';
 import { themeStore } from '$lib/stores/themeStore.svelte';
+import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
 
 const mounted: (() => void)[] = [];
 let selectTabHandler: ((e: { id: string }) => void) | null = null;
@@ -77,6 +82,8 @@ beforeEach(() => {
   themeStore.setPreference('light');
   badges.placeBadge.mockReset().mockReturnValue(0);
   nativeTabBar.status = 'pending';
+  core.invoke.mockReset().mockResolvedValue(undefined);
+  modalWebLayer.covering = false;
   window.matchMedia = ((query: string) => ({
     matches: false,
     media: query,
@@ -217,5 +224,37 @@ describe('NativeTabBar', () => {
     expect(nativeTabBar.status).toBe('failed');
     expect(error.mock.calls.flat().join(' ')).toContain('web bar');
     error.mockRestore();
+  });
+
+  it('takes no touch while a modal web layer covers the page, and takes them again after', async () => {
+    // iPhone 12, `1.6.3-alpha.7`: a tab tapped under the tour's backdrop left the tour.
+    await mountBar({ visible: true });
+    // A bar that starts under no modal layer asks nothing: a new overlay is interactive.
+    expect(core.invoke).not.toHaveBeenCalled();
+
+    modalWebLayer.covering = true;
+    flushSync();
+    expect(core.invoke).toHaveBeenLastCalledWith(
+      'plugin:system-components|set_tab_bar_interactive',
+      { options: { interactive: false } }
+    );
+
+    modalWebLayer.covering = false;
+    flushSync();
+    expect(core.invoke).toHaveBeenLastCalledWith(
+      'plugin:system-components|set_tab_bar_interactive',
+      { options: { interactive: true } }
+    );
+    expect(core.invoke).toHaveBeenCalledTimes(2);
+    // Still drawn throughout: the tour's steps point at its band.
+    expect(plugin.hideTabBar).not.toHaveBeenCalled();
+  });
+
+  it('blocks a bar that comes up under a modal layer already on screen', async () => {
+    modalWebLayer.covering = true;
+    await mountBar({ visible: true });
+    expect(core.invoke).toHaveBeenCalledWith('plugin:system-components|set_tab_bar_interactive', {
+      options: { interactive: false },
+    });
   });
 });

@@ -28,6 +28,9 @@
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { Log } from '$lib/utils/Log';
   import { registerGuideRegion } from '$lib/guidance/guideAnchors.svelte';
+  import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { systemComponentsCommand } from '$lib/services/systemComponentsCommands';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
@@ -238,6 +241,28 @@
     });
     const releases = MOBILE_NAV_PLACES.map((p) => registerGuideRegion(`nav.${p.id}`, rect));
     return () => releases.forEach((release) => release());
+  });
+
+  /**
+   * NO TOUCH UNDER A MODAL WEB LAYER (iPhone 12, `1.6.3-alpha.7`). The bar is drawn above the WebView,
+   * so the guided tour's backdrop cannot cover it, and a tap on a tab left the tour and navigated.
+   * While the backdrop is on screen the plugin is told to take no touch (the Canari patch
+   * `set_tab_bar_interactive`); the bar stays drawn, because the tour's steps point at its band.
+   * Sent on every change, and on a (re)mount of the bar - a new overlay starts interactive.
+   */
+  let sentInteractive = true;
+  $effect(() => {
+    if (nativeTabBar.status !== 'native') return;
+    const interactive = !modalWebLayer.covering;
+    if (interactive === sentInteractive) return;
+    sentInteractive = interactive;
+    Log.d(
+      'NativeTabBar',
+      `interactive=${interactive} (modal web layer ${interactive ? 'gone' : 'up'})`
+    );
+    void invoke(systemComponentsCommand('setTabBarInteractive'), {
+      options: { interactive },
+    }).catch(logFailure(interactive ? 'interaction restore' : 'interaction block'));
   });
 
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.

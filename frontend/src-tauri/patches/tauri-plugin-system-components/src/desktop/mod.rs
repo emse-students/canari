@@ -86,6 +86,16 @@ impl<R: Runtime> SystemComponents<R> {
         )
     }
 
+    /// CANARI PATCH: iOS only - the app never mounts the native bar on a desktop.
+    pub fn set_tab_bar_interactive(
+        &self,
+        _options: SetTabBarInteractiveOptions,
+    ) -> crate::Result<()> {
+        Err(crate::Error::Unsupported(
+            "the tab bar's interaction switch is iOS-only",
+        ))
+    }
+
     pub fn select_tab(&self, options: SelectTabOptions) -> crate::Result<()> {
         let _ = &options;
         macos_only!(

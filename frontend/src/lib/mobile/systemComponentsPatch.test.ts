@@ -23,6 +23,7 @@ const PAIRS: Record<string, string> = {
   ConfigureTabBarArgs: 'ConfigureTabBarOptions',
   SelectTabArgs: 'SelectTabOptions',
   SetBadgeArgs: 'SetBadgeOptions',
+  SetTabBarInteractiveArgs: 'SetTabBarInteractiveOptions',
   SheetOptionArgs: 'SheetOption',
   SheetRowArgs: 'SheetRow',
   PresentSheetArgs: 'PresentSheetOptions',
