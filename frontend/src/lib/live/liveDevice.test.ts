@@ -7,6 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { ScreenWakeLock, openLiveCamera, type WakeLockApi } from './liveDevice';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 class FakeSentinel {
   released = false;
   release = vi.fn(async () => {

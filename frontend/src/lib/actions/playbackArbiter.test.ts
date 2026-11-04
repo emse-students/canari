@@ -107,6 +107,21 @@ it('tells the audio session when an UNMUTED media plays, and when none does any 
   reel.muted = false;
   reel.dispatchEvent(new Event('volumechange'));
   expect(audible.reports.at(-1)).toBe(true);
+  // A volume of 0 is silence, like `muted`.
+  reel.volume = 0;
+  reel.dispatchEvent(new Event('volumechange'));
+  expect(audible.reports.at(-1)).toBe(false);
+});
+
+it('a new source on a playing element (emptied, no pause event) is reported quiet', () => {
+  audible.reports.length = 0;
+  const note = voice();
+  note.startPlaying();
+  expect(audible.reports.at(-1)).toBe(true);
+  // The load algorithm resets `paused` without a `pause` event.
+  Object.defineProperty(note, 'paused', { configurable: true, get: () => true });
+  note.dispatchEvent(new Event('emptied'));
+  expect(audible.reports.at(-1)).toBe(false);
 });
 
 it('video <-> video: starting one pauses the other, which keeps its position and ends nothing', () => {

@@ -61,12 +61,14 @@ export function isForegroundPlaying(except?: HTMLMediaElement): boolean {
 /**
  * Tells the audio session (`audioSession.ts`) whether a registered media plays WITH SOUND - its
  * `playback` category, under which an explicitly unmuted reel or a voice note plays with the silent
- * switch on. Re-read on every event that can change it: play, pause, end, volume, unmount.
+ * switch on. Re-read on every event that can change it: play, pause, end, volume, a new source
+ * (`emptied` / `loadstart`: a load resets `paused` without a `pause` event), unmount. A volume of 0
+ * is silence, like `muted`.
  */
 function reportAudible() {
   let audible = false;
   for (const el of registry.keys()) {
-    if (isPlaying(el) && !el.muted) {
+    if (isPlaying(el) && !el.muted && el.volume > 0) {
       audible = true;
       break;
     }
@@ -207,8 +209,12 @@ export function arbitratePlayback(el: HTMLMediaElement, options: PlaybackOptions
   el.addEventListener('pause', onQuiet);
   el.addEventListener('ended', onQuiet);
   el.addEventListener('volumechange', onVolume);
+  el.addEventListener('emptied', reportAudible);
+  el.addEventListener('loadstart', reportAudible);
   return {
     destroy() {
+      el.removeEventListener('emptied', reportAudible);
+      el.removeEventListener('loadstart', reportAudible);
       el.removeEventListener('volumechange', onVolume);
       el.removeEventListener('play', onPlay);
       el.removeEventListener('pause', onQuiet);

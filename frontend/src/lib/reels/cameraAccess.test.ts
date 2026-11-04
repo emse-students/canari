@@ -15,6 +15,14 @@ import {
   torchSupported,
 } from './cameraAccess';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 function domError(name: string): DOMException {
   return new DOMException('x', name);
 }

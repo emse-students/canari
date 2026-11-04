@@ -120,7 +120,8 @@ export function playTone(
     return [];
   }
   if (purpose === 'app' && ringerSilencesAppTones()) {
-    Log.d('AUDIO', `${name} tone silenced - the phone's ringer is silent or vibrate`);
+    // `Log.i`: the in-app log keeps it, and a tone is a user event (a message, a send), not a loop.
+    Log.i('AUDIO', `${name} tone silenced - the phone's ringer is silent or vibrate`);
     return [];
   }
   // The category is the page's before any output opens: `ambient`, which obeys the iPhone's switch.

@@ -14,6 +14,7 @@ vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => platform.
 import {
   RINGER_MODE_NORMAL,
   RINGER_MODE_SILENT,
+  RINGER_MODE_UNREADABLE,
   RINGER_MODE_VIBRATE,
   resetAndroidRingerForTest,
   ringerSilencesAppTones,
@@ -42,11 +43,26 @@ it('silent and vibrate silence the app tones', () => {
   expect(ringerSilencesAppTones()).toBe(true);
 });
 
-it('normal plays them, and so does a mode this code has never met', () => {
+it('normal plays them, and so does a mode this code has never met - said ONCE, not per tone', () => {
   bridge(() => RINGER_MODE_NORMAL);
   expect(ringerSilencesAppTones()).toBe(false);
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   bridge(() => 7);
   expect(ringerSilencesAppTones()).toBe(false);
+  expect(ringerSilencesAppTones()).toBe(false);
+  const said = [...info.mock.calls, ...log.mock.calls].filter((c) =>
+    c.some((part) => String(part).includes('unknown ringer mode 7'))
+  );
+  expect(said.length).toBeLessThanOrEqual(1);
+});
+
+it('a mode the native side could not read plays the tone, said once at error level', () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  bridge(() => RINGER_MODE_UNREADABLE);
+  expect(ringerSilencesAppTones()).toBe(false);
+  expect(ringerSilencesAppTones()).toBe(false);
+  expect(error).toHaveBeenCalledTimes(1);
 });
 
 it('reads the mode at every tone, never a cached value', () => {

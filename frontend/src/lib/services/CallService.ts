@@ -66,6 +66,7 @@ import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion'
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
 import { reportCallSoundPhase, retireCallSoundHolder } from '$lib/utils/callSoundGate';
+import { captureUserMedia } from '$lib/utils/audioSession';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -3724,10 +3725,13 @@ export class CallService {
    * the camera off, which the user can retry from the call screen.
    */
   private async setupMedia(video: boolean, seq: number) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: buildCallAudioConstraints(),
-      video: false,
-    });
+    // The microphone is held from before the ask: an ANSWER opens it while the phase is still
+    // `incoming`, whose session type (`ambient`) WebKit would refuse a capture under.
+    const stream = await captureUserMedia(
+      navigator.mediaDevices,
+      { audio: buildCallAudioConstraints(), video: false },
+      'call'
+    );
     try {
       this.assertSetupLive(seq, 'after the microphone prompt');
     } catch (e) {

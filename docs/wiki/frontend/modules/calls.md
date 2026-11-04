@@ -581,6 +581,11 @@ iPhone until its deadline. To measure on the bench (K7) before anything is built
 remedy is a `PushSecret`-authenticated ring-state read by the ringing call, never a VoIP push for
 the end (each one would have to report a new call).
 
+**The in-app incoming ring obeys the iPhone's silent switch - deliberately (owner, 2026-11-04).**
+While a call rings IN, the page's audio session is `ambient` ([sounds](../sounds.md#the-silent-switch-and-the-ringer-who-owns-the-category-owner-2026-11-04)),
+so the ring of an open app is silent with the switch on, exactly as CallKit's ring is; answering
+holds the microphone (`play-and-record`) before `getUserMedia` asks.
+
 **Answering from the lock screen, and the audio hand-off.** CallKit's answer cannot start audio:
 the MLS keys are behind the app's PIN in the web view. The answer writes `pending_call_accept.json`
 and opens the conversation's plain link (navigation only); from the lock screen the user unlocks

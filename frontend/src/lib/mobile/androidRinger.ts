@@ -17,6 +17,8 @@ import { Log } from '$lib/utils/Log';
 export const RINGER_MODE_SILENT = 0;
 export const RINGER_MODE_VIBRATE = 1;
 export const RINGER_MODE_NORMAL = 2;
+/** What the bridge answers when `AudioManager` could not be read (it logs the cause natively). */
+export const RINGER_MODE_UNREADABLE = -1;
 
 /** `window.canariAudio`, registered by `MainActivity.onWebViewCreate`. */
 interface CanariAudioBridge {
@@ -24,11 +26,13 @@ interface CanariAudioBridge {
 }
 
 let absenceSaid = false;
+/** The modes outside the three known ones already said: each is logged ONCE, not once per tone. */
+const unknownSaid = new Set<number>();
 
 /**
  * Whether the phone's ringer mode silences the app's own tones: silent or vibrate. An unknown mode
- * (a newer platform) does not silence - as `IncomingRing.plan` reads it - and is logged with its
- * value. Off Android, never.
+ * (a newer platform, or {@link RINGER_MODE_UNREADABLE}) does not silence - as `IncomingRing.plan`
+ * reads it - and is logged once per value. Off Android, never.
  */
 export function ringerSilencesAppTones(): boolean {
   if (!isAndroidTauriRuntime()) return false;
@@ -51,11 +55,19 @@ export function ringerSilencesAppTones(): boolean {
     return false;
   }
   if (mode === RINGER_MODE_SILENT || mode === RINGER_MODE_VIBRATE) return true;
-  if (mode !== RINGER_MODE_NORMAL) Log.i('AUDIO', `unknown ringer mode ${mode} - tones play`);
+  if (mode !== RINGER_MODE_NORMAL && !unknownSaid.has(mode)) {
+    unknownSaid.add(mode);
+    if (mode === RINGER_MODE_UNREADABLE) {
+      console.error('[AUDIO] the ringer mode could not be read natively - tones play');
+    } else {
+      Log.i('AUDIO', `unknown ringer mode ${mode} - tones play`);
+    }
+  }
   return false;
 }
 
-/** Test seam: forgets the one-time absence line. */
+/** Test seam: forgets the one-time lines. */
 export function resetAndroidRingerForTest(): void {
   absenceSaid = false;
+  unknownSaid.clear();
 }

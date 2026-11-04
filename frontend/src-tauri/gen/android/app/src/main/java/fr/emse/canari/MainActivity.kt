@@ -244,11 +244,18 @@ class MainActivity : TauriActivity() {
      * (`frontend/src/lib/mobile/androidRinger.ts`). The WebView plays those tones on the MEDIA stream,
      * which ignores the ringer, so the page asks: silent and vibrate silence them, as
      * [fr.emse.canari.call.IncomingRing.plan] silences the in-app ring. Read at each tone, never
-     * cached - the user flips the ringer at any moment.
+     * cached - the user flips the ringer at any moment. A read that fails answers -1
+     * (`RINGER_MODE_UNREADABLE` on the page, which plays the tone and says it once) and is logged
+     * here with its cause.
      */
     private inner class AudioBridge {
         @JavascriptInterface
-        fun ringerMode(): Int = (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
+        fun ringerMode(): Int = try {
+            (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
+        } catch (e: Exception) {
+            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e)
+            -1
+        }
     }
 
     /**
