@@ -20,18 +20,17 @@ It replaces every per-entry "the user's gesture, when the time comes": a removal
 the version the floor must pass, and this rule is what moves the floor there. The raise is a production
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
-**Production's floor is `1.5.3` on 2026-11-04, and the owner decided (2026-11-04) to raise it to `1.6.0` on
-both estates.** Dev reads `1.6.0` (`GET /api/version`, 2026-11-04). Production's raise is the owner's
-gesture at `/admin/platform` and is NOT yet read back: **until production reads `1.6.0`, no entry below
-counts as unblocked on it** - read the endpoint, then act. The floor rule above still
-governs the next raise (wait for BOTH stores). An older figure on this page is the floor at the date its
-entry names.
+**Production's floor is `1.6.2`** (read back from `GET /api/version` on 2026-11-04, after the owner's raise;
+the owner decided to KEEP `1.6.2`, not lower it to `1.6.0`). **Dev still reads `1.6.0`** (same day): a
+removal that refuses what an older build sends may not deploy to dev until its floor is raised the same
+way, in `/admin/platform` (see "Removable at floor 1.2.7" below for why each estate has its own row). An
+older figure on this page is the floor at the date its entry names.
 
-### Entries `1.6.0` unblocks, once production reads it (decided 2026-11-04)
+### Entries `1.6.2` unblocks on production (floor read back 2026-11-04)
 
 "Carried by" is the first stable tag containing the pull request (`git tag --contains`). **Nothing is
 removed by this change**: removal is its own pull request, and an entry with a second half keeps waiting
-on it.
+on it. The first eleven rows were already met by `1.6.0`; the last four need `1.6.1` or `1.6.2`.
 
 | Entry | Carried by | Still owed besides the floor |
 | --- | --- | --- |
@@ -46,13 +45,16 @@ on it.
 | `PUT lydia-business-key` answers `410` | #2772, `v1.5.2` | - |
 | `X-Canari-Client-Version` on `/api/lives` routes | #2812, `v1.6.0` (floor condition `1.5.4`) | - |
 | `klipy_cid` drop | `v1.2.9` | - (already met at floor `1.5.1`) |
+| Presence GET (server half) | #2661, `v1.5.1` | the `legacy GET /api/presence served` line absent from production for a week |
+| Paid-form tier codes of #2667 (wording only) | #2667, `v1.5.1` | - |
+| Device-notice marker named by the key in hex | #2871, `v1.6.1` | every build has run since and migrated its markers (data at rest: the floor alone does not retire it) |
+| Call record with no start clocks | #2890, `v1.6.2` | - |
 
-**NOT unblocked by `1.6.0`:** the entries whose carrying pull request first ships in `v1.6.3` (the
+**NOT unblocked by `1.6.2`:** the entries whose carrying pull request first ships in `v1.6.3` (the
 institution's republication consent, #2965; WP-PIN's body-less pin, #2984; `GET spaces/audiences`, #2951;
-`kind=reel` on `feed=all`, #2990), the device-notice marker (needs `1.6.1`), a restored message with no
-author signature (#2276, `v1.5.0`; the oldest unsigned message must also leave retention), and the refresh
-cookie on `tauri://localhost` (a desktop measurement).
-
+`kind=reel` on `feed=all`, #2990; and the creator-with-several-BDEs error, #2986), a restored message with
+no author signature (#2276, `v1.5.0`; the oldest unsigned message must also leave retention), and the
+refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named here were not re-checked.
 ---
 
 ## What the 2026-08-17 gate actually retired, and what it did not
