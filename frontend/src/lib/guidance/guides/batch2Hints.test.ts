@@ -15,8 +15,6 @@ import { GUIDES } from './index';
 import { chatsHint } from './chatsHint';
 import { feedTabsHint } from './feedTabsHint';
 import { reelsHint } from './reelsHint';
-import { welcomeTour } from './welcomeTour';
-import { whatsNew163 } from './whatsNew';
 
 vi.mock('$lib/utils/Log', () => ({ Log: { d: () => {}, i: () => {} } }));
 
@@ -88,28 +86,12 @@ describe('the feed tabs hint replaces the (i) button', () => {
   });
 });
 
-describe("the current version's what's new", () => {
-  it('is one hint of 2 to 5 steps on the feed, after the tour and offered only past it', () => {
-    expect(isHelpId(whatsNew163.id)).toBe(true);
-    expect(whatsNew163.kind).toBe('hint');
-    expect(whatsNew163.requires).toBe('welcome-tour');
-    expect(whatsNew163.steps.length).toBeGreaterThanOrEqual(2);
-    expect(whatsNew163.steps.length).toBeLessThanOrEqual(5);
-    expect(GUIDES.indexOf(whatsNew163)).toBe(GUIDES.indexOf(welcomeTour) + 1);
-    // Exactly one what's-new is declared: an account is never owed a backlog.
-    expect(GUIDES.filter((g) => g.id.startsWith('whats-new-'))).toEqual([whatsNew163]);
-  });
-
-  it('is superseded by the welcome tour, so a new account never gets it', () => {
-    expect(welcomeTour.supersedes).toEqual([whatsNew163.id]);
-  });
-
-  it('keeps every step on both layouts once its anchors are drawn', () => {
-    const drawn = new Set(['posts.tab.all', 'nav.chat']);
-    for (const layout of [PHONE, DESKTOP]) {
-      const { steps, skipped } = planGuide(whatsNew163, layout, (a) => drawn.has(a));
-      expect(steps.map((s) => s.id)).toEqual(whatsNew163.steps.map((s) => s.id));
-      expect(skipped).toEqual([]);
+describe('replay from Settings', () => {
+  it('is declared by the batch hints, each on the route it plays on', () => {
+    for (const guide of [feedTabsHint, reelsHint, chatsHint]) {
+      expect(guide.replay, guide.id).toBeDefined();
+      expect(guide.appliesTo(guide.replay!.route)).toBe(true);
+      expect(guide.replay!.label().length).toBeGreaterThan(0);
     }
   });
 });

@@ -29,8 +29,8 @@ export const welcomeTour: GuideDefinition = {
   id: 'welcome-tour',
   kind: 'tour',
   // A new account is shown this tour and NOT the news of the version it installed: meeting the
-  // tour for the first time records the current "what's new" as seen with it.
-  supersedes: ['whats-new-1-6-3'],
+  // tour for the first time records every declared "what's new" as seen with it.
+  supersedesNews: true,
   appliesTo: (pathname) => pathname === '/posts',
   steps: [
     {

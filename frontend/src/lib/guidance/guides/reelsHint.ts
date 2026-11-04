@@ -11,6 +11,7 @@ export const reelsHint: GuideDefinition = {
   id: 'hint-reels',
   kind: 'hint',
   appliesTo: (pathname) => pathname === '/posts',
+  replay: { label: m.guide_hint_reels_title, route: '/posts' },
   steps: [
     {
       id: 'reels',

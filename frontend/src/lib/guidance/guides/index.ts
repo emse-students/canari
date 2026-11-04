@@ -6,7 +6,6 @@ import { createPostHint } from './createPostHint';
 import { feedTabsHint } from './feedTabsHint';
 import { reelsHint } from './reelsHint';
 import { welcomeTour } from './welcomeTour';
-import { whatsNew163 } from './whatsNew';
 
 /**
  * EVERY FIRST-TIME HELP THE APP DECLARES, IN PRIORITY ORDER: when several apply to a route and none
@@ -16,7 +15,6 @@ import { whatsNew163 } from './whatsNew';
  */
 export const GUIDES: readonly GuideDefinition[] = [
   welcomeTour,
-  whatsNew163,
   createPostHint,
   feedTabsHint,
   reelsHint,

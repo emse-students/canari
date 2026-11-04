@@ -23,8 +23,6 @@ const nav = vi.hoisted(() => ({ after: [] as NavCallback[], before: [] as NavCal
 const layout = vi.hoisted(() => ({ phone: true, swipe: true }));
 const seen = vi.hoisted(() => ({ ids: new Set<string>() }));
 const markSeen = vi.hoisted(() => vi.fn((id: string) => seen.ids.add(id)));
-/** The tour met for the first time records itself AND the current what's-new (it supersedes it). */
-const TOUR_RECORDED = [['welcome-tour'], ['whats-new-1-6-3']];
 
 vi.mock('$app/navigation', () => ({
   afterNavigate: (cb: NavCallback) => nav.after.push(cb),
@@ -187,7 +185,7 @@ describe('the welcome tour on a phone', () => {
     }
     expect(visited).toEqual(['welcome', 'feed', 'chats', 'camera', 'agenda', 'profile']);
     expect(bubble()).toBeNull();
-    expect(markSeen.mock.calls).toEqual(TOUR_RECORDED);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
   });
 
   it('lights the control the phone draws, and is modal', async () => {
@@ -226,7 +224,7 @@ describe('the welcome tour on a phone', () => {
     expect(stepId()).toBe('welcome');
     key('Escape');
     expect(bubble()).toBeNull();
-    expect(markSeen.mock.calls).toEqual(TOUR_RECORDED);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
   });
 
   it('ends on "Passer", always on screen', async () => {
@@ -234,7 +232,7 @@ describe('the welcome tour on a phone', () => {
     click('[data-guide-next]');
     click('[data-guide-skip]');
     expect(bubble()).toBeNull();
-    expect(markSeen.mock.calls).toEqual(TOUR_RECORDED);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
   });
 
   it('is closed by Back like every overlay - the system Back and the gesture Back', async () => {
@@ -244,7 +242,7 @@ describe('the welcome tour on a phone', () => {
     flushSync();
     expect(bubble()).toBeNull();
     expect(history.historyOverlayStackDepth()).toBe(0);
-    expect(markSeen.mock.calls).toEqual(TOUR_RECORDED);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
 
     // The replay, closed by the iOS edge swipe this time.
     const { guideEngine } = await import('$lib/guidance/guidance.svelte');
@@ -275,7 +273,7 @@ describe('the welcome tour on a phone', () => {
     expect(bubble()).toBeNull();
     expect(history.historyOverlayStackDepth()).toBe(0);
     expect(depths.at(-1)).toBe(0);
-    expect(markSeen.mock.calls).toEqual(TOUR_RECORDED);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
   });
 
   it('is suspended by a call that starts under it, and comes back on the same step after', async () => {
@@ -335,7 +333,6 @@ describe('the welcome tour on a phone', () => {
 
   it('does not start again once seen', async () => {
     seen.ids.add('welcome-tour');
-    seen.ids.add('whats-new-1-6-3');
     await setUp();
     expect(bubble()).toBeNull();
   });
@@ -375,6 +372,6 @@ describe('the welcome tour on a desktop', () => {
       click('[data-guide-next]');
     }
     expect(visited).toEqual(['welcome', 'feed', 'chats', 'agenda', 'profile']);
-    expect(markSeen.mock.calls).toEqual(TOUR_RECORDED);
+    expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
   });
 });

@@ -11,6 +11,7 @@ export const feedTabsHint: GuideDefinition = {
   id: 'hint-feed-tabs',
   kind: 'hint',
   appliesTo: (pathname) => pathname === '/posts',
+  replay: { label: m.guide_replay_hint_tabs, route: '/posts' },
   steps: [
     {
       id: 'associations',

@@ -12,6 +12,7 @@ export const chatsHint: GuideDefinition = {
   id: 'hint-chats',
   kind: 'hint',
   appliesTo: (pathname) => pathname === '/chat',
+  replay: { label: m.guide_hint_chats_title, route: '/chat' },
   steps: [
     {
       id: 'new-chat',
