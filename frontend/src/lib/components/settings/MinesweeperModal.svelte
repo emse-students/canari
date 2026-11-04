@@ -40,6 +40,7 @@
   } from '$lib/minesweeper/settings';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
   import MinesweeperCell from './MinesweeperCell.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     HAPTIC_FLAG,
     HAPTIC_LONG_PRESS,
@@ -1272,22 +1273,17 @@
           <h2 class="text-cn-dark text-base font-semibold">{m.minesweeper_leaderboard()}</h2>
         </div>
         <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 sm:p-4">
-          <div role="tablist" class="bg-cn-bg mb-3 flex shrink-0 gap-1 rounded-full p-1">
-            {#each ['ranking', 'stats'] as const as tab (tab)}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sheetTab === tab}
-                onclick={() => selectSheetTab(tab)}
-                class="flex-1 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {sheetTab ===
-                tab
-                  ? 'bg-cn-yellow text-cn-ink'
-                  : 'text-text-muted hover:text-text-main'}"
-              >
-                {tab === 'ranking' ? m.minesweeper_tab_ranking() : m.minesweeper_tab_stats()}
-              </button>
-            {/each}
-          </div>
+          <SegmentedControl
+            class="mb-3 shrink-0"
+            tone="yellow"
+            label={m.minesweeper_leaderboard()}
+            items={[
+              { key: 'ranking', label: m.minesweeper_tab_ranking() },
+              { key: 'stats', label: m.minesweeper_tab_stats() },
+            ]}
+            value={sheetTab}
+            onSelect={selectSheetTab}
+          />
 
           {#if sheetTab === 'stats'}
             {@render statsTab()}
