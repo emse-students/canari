@@ -19,9 +19,10 @@ Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default,
 
 Owner, 2026-11-04: design the rest first. **[content-free-push](../protocols/content-free-push.md)**
 measures every push type from the code (step 1 covers the MLS frames only: salons, social and bell
-pushes - which carry the plaintext opening of comments and posts - reactions, join asks and call
-rings still leave in full) and designs step 2 (a push envelope in chat-delivery, deleted by the fetch
-that serves it), the platform mechanics, the failure contract, calls, several accounts on one device,
+pushes - which carry the plaintext opening of comments and posts - reactions, join asks, the
+welcome-request-pending wake and call rings still leave in full) and designs step 2 (a push envelope
+in chat-delivery, re-served to its device until the app opens, the token goes or a cap evicts it, with
+the iOS thread and sound carried in the answer), the platform mechanics, the failure contract, calls, several accounts on one device,
 rollout by a `wakeVersion`, the server cost to measure, and WP-W1..W7 with their gates. **The owner
 decided its three non-reversible questions on 2026-11-04**
 ([section 11](../protocols/content-free-push.md#not-reversible---decided-by-the-owner-2026-11-04)):
