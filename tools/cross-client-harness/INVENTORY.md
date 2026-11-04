@@ -258,7 +258,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-69 scripts.
+70 scripts.
 
 | script | what it is |
 |---|---|
@@ -296,6 +296,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/invariant-selftest.mjs` | THE FIVE INVARIANTS EVERY MLS ROW ASSERTS, PINNED (R8, `invariantverdict.mjs`). |
+| `archive/ios-device-selftest.mjs` | `tools/ios-device/ios.mjs`'s decisions, pinned with no phone: what `type` sends and compares, what |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
 | `archive/kill-selftest.mjs` | THE KILL ROWS' OWN JUDGEMENTS, PINNED (`killrows.mjs`). |
 | `archive/listrace-selftest.mjs` | LIST-RACE-1'S TABLE AND JUDGE, PINNED (`listracerows.mjs`). |
@@ -389,4 +390,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-328 scripts in total.
+329 scripts in total.

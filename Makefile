@@ -485,6 +485,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/phone-ios-selftest.mjs
 	@bun tools/cross-client-harness/archive/webkit-input-selftest.mjs
 	@bun tools/cross-client-harness/archive/ios-observables-selftest.mjs
+	@bun tools/cross-client-harness/archive/ios-device-selftest.mjs
 	@bun tools/cross-client-harness/archive/sendtrace-selftest.mjs
 	@bun tools/cross-client-harness/archive/deploy-selftest.mjs
 	@bun tools/cross-client-harness/archive/fault-selftest.mjs

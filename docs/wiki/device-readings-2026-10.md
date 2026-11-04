@@ -160,8 +160,8 @@ Bench observations: the first sideways swipes on the Feed moved the feed's own A
 Tout chips (the Feed has an inner swipe), not the tab - start the tab swipe from Communautes or the
 camera. The Passwords autofill sheet offers a keychain login of the phone's owner on the Authentik
 form: dismiss it, never fill it. `ios.mjs type` appended a stray letter twice when a tap landed on the
-keyboard after the layout shifted: read the field back, and press Return with `type` of a newline
-instead of tapping "Se connecter".
+keyboard after the layout shifted: read the field back (`type` now does), and press Return with `type --submit`
+instead of tapping "Se connecter" (`tap` now refuses a target under the keyboard).
 
 ## 2026-10-08 - origin/main without #1630 (Mi 9T, debug APK, local stack rebuilt)
 
