@@ -8,6 +8,7 @@ const COMMANDS: &[&str] = &[
     "share_text",
     "share_staged",
     "discard_shared_out",
+    "write_staged_document",
     "publish_share_targets",
     "clear_share_targets",
     "clear_conversation_shortcuts",

@@ -437,6 +437,27 @@ matches it - without one, a second save became `X.mp3 (1)` and lost its type. Tw
   (user, 2026-09-29, on the agenda sheet). `exportSearchablePdf` now hands its `pdf.output('blob')`
   to `downloadDecryptedFile`; its test's fake jsPDF throws from `save()` so the regression cannot
   return quietly. When a dependency offers to write a file, look for what it does under the name.
+- **On Android, a saved document is written through ITS PROVIDER'S stream, never `plugin-fs`**
+  (owner report 2026-11-04: an exported log "badly formed", Messenger refusing it or seeing 0
+  bytes). `writeFile` on a `content://` URI asks the Kotlin side for a descriptor, and
+  `tauri-plugin-fs` (2.7.1) answers `openAssetFileDescriptor(...).parcelFileDescriptor.detachFd()`;
+  Rust writes the raw fd and closes it. A `detachFd()` tells the provider's close listener "closed"
+  AT ONCE, before the first byte, so a provider that records the size on close records 0 and keeps
+  it. **Measured on the Mi 9T (Android 16), `1.6.4-alpha.2`:** the log saved into the
+  "Telechargements" root is 2 138 451 bytes on disk and in MediaStore (`_size`), and the Downloads
+  root lists it as **"0 octet(s)"** - as it still lists three logs saved there on 15, 16 and 19
+  October; the same log saved into the "Mi 9T > Download" root (external storage provider, which
+  learns the size from the file system) lists 2,15 Mo. A file shared from the Downloads view
+  carries that provider's size to the receiver. `isProviderDocument(target)` now sends a
+  `content://` destination to `write_staged_document` (gallery plugin): the bytes are staged in the
+  app cache like a shared file, and Kotlin copies them through `contentResolver.openOutputStream`,
+  closed AFTER the copy, so the listener fires once the bytes are in. iOS and desktop return a path
+  and keep `writeFile`: the iPhone 12 save into "Sur mon iPhone" read 1,6 Mo in Files (2026-11-04).
+  **Owed:** after a pre-release, a log saved into "Telechargements" on the Mi 9T lists its real size
+  there, and shared from that view to Gmail and Messenger the receiver shows the size and opens it.
+  Not read: an iOS save into iCloud Drive or a third-party provider, where the dialog plugin exports
+  an EMPTY placeholder (`UIDocumentPickerViewController(url:in: .exportToService)`) before the
+  write.
 - **Never ask for a directory.** Android's storage access framework offers a *document* picker;
   `dialog.open({ directory: true })` has no equivalent there. `save()` is the portable shape.
 - **`fs:default` is READ-ONLY.** It grants reading the app-specific directories and creating them,
@@ -477,7 +498,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
 | Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
 | Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
-| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
+| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, written through the provider's own stream, for the reason given in the download rules above - iOS's Files picker, the desktop save panel). The file is `canari-log-<version>-<date>-<time>.txt`, `text/plain;charset=utf-8`. A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
 
 **Why IndexedDB and not a file through the log or fs plugin.** A plugin-log `Webview`/`LogDir`
 forward would cost an IPC crossing per line - on Android a JSON `postMessage` - on the hot path,
@@ -1550,7 +1571,20 @@ Swift decodes that the Rust struct in front of it does not carry; on its first r
 upstream's `itemPositioning`, dropped the same way (unused here, carried now). A later patch adds a
 command, `set_tab_bar_interactive` (2026-11-04): the bar takes no touch under the guided tour's
 backdrop ([guided-help](guided-help.md)); its JS name is pinned by `nativePluginCommands.test.ts`,
-its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. The crate is otherwise
+its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. **Show and hide are ordered the
+same way** (2026-11-04): upstream's `show_tab_bar` / `hide_tab_bar` are ASYNC Rust commands, each on
+its own runtime worker before the hop to the main queue, so a hide quickly followed by a show (the
+keyboard closing as a conversation opens) could reach UIKit reversed and leave the bar in the state
+the layout had left. Both now take `TabBarVisibilityOptions { seq }`, invoked by name through
+`invokeSequenced` (`systemComponentsCommands.ts`) instead of the published JS API, which sends no
+argument. ONE mechanism serves the three commands: the page stamps every call from one rising
+counter, and Swift's `CommandSequence` - one instance per state (`interactiveOrder`,
+`visibilityOrder`), both reset by a configuration - drops a call older than the last one it applied.
+A sync Rust command is NOT the alternative: it runs on the main thread and would block it waiting
+for Swift, which answers from `DispatchQueue.main.async` - a deadlock. The race was read off the
+shape, never seen; owed on the iPhone is only that the bar still shows and hides with the layout (a
+conversation opened and left with the keyboard up, the bar back on the list) - a dropped call logs
+`[pendi-nav][native] showTabBar/hideTabBar seq=N dropped`. The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
 redraws both states and reconfigures the bar. **The redraw is keyed on the two COLOURS read off the
 DOM, never on `themeStore.isDark`** (2026-10-01): the bar's `onMount` runs before the root layout's
