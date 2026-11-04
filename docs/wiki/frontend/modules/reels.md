@@ -616,25 +616,39 @@ have to tap play"*):
 | `loadstart` | a new LOAD: its autoplay will be asked afresh, earlier answers void | `Log.d` `load N started` |
 | `loadedmetadata` (else `loadeddata` / `canplay`) | asks `play()` ONCE for this load | `Log.d` `autoplay asked` |
 | `play()` resolves | playing - nothing more is asked in this load | - |
-| `NotAllowedError`, sound ON | mutes the element AND the app's one answer (`videoSound`), asks again at once | `warn` `autoplay with sound refused - muted and asked again` |
-| `NotAllowedError`, muted | the button (`refused`) | `warn` |
-| `AbortError` after a new `loadstart` | that load's first event asks again | `debug` |
-| `AbortError`, no new load | a PAUSE interrupted it (the reader, or the arbiter: screen left, a call): the button (`interrupted`) | `info` |
+| `NotAllowedError`, muted or with sound | the button (`refused`); the reader's tap plays it as it is, with the sound they chose | `warn` |
+| `AbortError`, the element's `src` changed since the ask | the new source's load asks again at its first event | `debug` |
+| `AbortError`, same `src` | a PAUSE interrupted it (the reader, or the arbiter: screen left, a call): the button (`interrupted`) | `info` |
 | anything else | the button (`errored`) | `warn` |
 | `waiting` while not paused | a SPINNER (`data-video-buffering`), a slow network - never the button; cleared by `playing`, a pause, a new load | `Log.d` with `readyState` / `networkState` |
-| `stalled` | nothing drawn | `Log.d` |
+| `stalled` | nothing drawn - it also arrives on a PAUSED element, which under `preload="metadata"` may stop fetching by design | `Log.d` with `paused` / `playing` |
 
 The rule is `utils/videoAutoplay.ts` (`decideAutoplayRejection`), classified by the exception's NAME
-at the throw, never by its message. Two holes closed: (1) the ask used to wait for
+at the throw, never by its message, and by ONE fact read when the rejection lands: whether `src`
+still names the resource the ask was made on. **Not the next `loadstart`**: the media load algorithm
+rejects the pending `play()` synchronously and only QUEUES `loadstart`, so when the rejection lands
+the event has not fired yet - a classification waiting for it called every source change a pause.
+The button is drawn on a decided outcome even BEFORE the first frame (over the poster or the black
+box): a paused `preload="metadata"` element may never fetch one. `onPlaybackBlocked` is called ONCE
+per player, a later verdict only logged. Holes closed: (1) the ask used to wait for
 `loadeddata` / `canplay`, which an iPhone with `preload="metadata"` never reaches when WebKit
 declines the `autoplay` attribute (its `InvisibleAutoplayNotPermitted` rule, read in
 `MediaElementSession::autoplayPermitted`: a reel not yet in the viewport) - an explicit `play()` is
 not subject to that rule and makes the engine fetch the data; (2) an `AbortError` with no new load
 waited for a load event that never came - a frozen reel, no button, only a debug line. Every branch
-terminates by a proof, not a count: the muted retry is muted, so its refusal is final; a re-ask
-needs a new load. **The owner's rule (2026-11-04): a reel STARTS MUTED** (`videoSound`, muted at
-every launch); the reader's sound button is the explicit request, and only then does the reel's
-sound play with the iPhone's silent switch on. Pinned by
+terminates by a proof, not a count: a refusal is final; a re-ask needs a new source. **The owner's
+rule (2026-11-04): a reel STARTS MUTED** (`videoSound`, muted at every launch); the reader's sound
+button is the explicit request, and only then does the reel's sound play with the iPhone's silent
+switch on.
+
+**A refusal never mutes (lead decision, 2026-11-04, review of #3015).** A first draft muted the
+element AND the app's `videoSound` on a `NotAllowedError` with sound on, and asked again: Instagram's
+answer, but it overrode the reader's explicit choice, re-muting the app on every swipe in a browser
+that refuses each new element's audible autoplay (iOS Safari). The refusal draws the button instead,
+and the tap - a user gesture - plays with sound. **In the iOS app this case never arises**: the
+patched wry sets `mediaTypesRequiringUserActionForPlayback = None` when the webview's `autoplay` is
+on, the default (`frontend/src-tauri/patches/wry/src/wkwebview/mod.rs`); it is a browser's case only.
+Pinned by
 `videoAutoplay.test.ts`, `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
 `ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`. **Owed on the iPhone 12** (none
 of it read on a device): ten reels swiped on a throttled link - each starts without a tap, a stall shows the spinner, and the in-app log carries no `[VideoPlayer] autoplay` warning or `interrupted by a pause` line the reader did not cause (the device console, Safari Web Inspector, shows the `Log.d` lines: one `autoplay asked` per load).

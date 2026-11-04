@@ -164,19 +164,17 @@
   /** The engine refused the bytes (codec, container): said, rather than a black box. */
   let unplayable = $state(false);
   /**
-   * THE AUTOPLAY WILL NOT HAPPEN AND THE READER MUST ACT (`videoAutoplay.ts`: refused even muted,
-   * interrupted by a pause, failed). Only then does the minimal player draw a play button: it is
-   * the answer to a decided outcome, never a loading state.
+   * THE AUTOPLAY WILL NOT HAPPEN AND THE READER MUST ACT (`videoAutoplay.ts`: refused, interrupted
+   * by a pause, failed). Only then does the minimal player draw a play button: it is the answer to
+   * a decided outcome, never a loading state - and it is drawn even before the first frame (over the
+   * poster or the black box), since a paused `preload="metadata"` element may never fetch one.
    */
   let autoplayRefused = $state(false);
   /** The autoplay of the current load has an answer (playing, or a decided failure). */
   let autoplayDone = false;
   /** A `play()` is pending: a second load event does not ask twice. */
   let autoplayInFlight = false;
-  /**
-   * THE LOAD THE ELEMENT IS ON, bumped by every `loadstart`. The autoplay is asked once per load,
-   * and an `AbortError` is read against it: a newer load means a new source interrupted the ask.
-   */
+  /** THE LOAD THE ELEMENT IS ON, bumped by every `loadstart`: it names each load in the logs. */
   let loadGeneration = 0;
   /**
    * THE ELEMENT WAITS FOR DATA WHILE IT SHOULD PLAY (`waiting`): the network is slow. The minimal
@@ -397,9 +395,14 @@
    */
   function askAutoplay(el: HTMLVideoElement) {
     autoplayInFlight = true;
-    const generation = loadGeneration;
+    // The source the ask is made on: a rejection that finds another one was interrupted by that
+    // new load (`videoAutoplay.ts` - the load rejects synchronously, before its `loadstart`).
+    const askedSrc = el.src;
     const muted = el.muted;
-    Log.d('VideoPlayer', `autoplay asked (load ${generation}, ${muted ? 'muted' : 'with sound'})`);
+    Log.d(
+      'VideoPlayer',
+      `autoplay asked (load ${loadGeneration}, ${muted ? 'muted' : 'with sound'})`
+    );
     el.play()
       .then(() => {
         autoplayInFlight = false;
@@ -408,33 +411,17 @@
       .catch((err: unknown) => {
         autoplayInFlight = false;
         const name = playRejectionName(err);
-        const verdict = decideAutoplayRejection(name, {
-          muted,
-          reloaded: loadGeneration !== generation,
-        });
+        const verdict = decideAutoplayRejection(name, { sourceChanged: el.src !== askedSrc });
         if (verdict.kind === 'ask-at-next-load') {
           console.debug(
-            `[VideoPlayer] autoplay interrupted by a new load (${name}) - that load asks again`
+            `[VideoPlayer] autoplay interrupted by a new source (${name}) - its load asks again`
           );
-          return;
-        }
-        if (verdict.kind === 'retry-muted') {
-          // A FALLBACK THAT ACCUSES: the audible autoplay was refused, so the reel plays muted - as
-          // Instagram's does - and the reader's sound button is the explicit request that unmutes.
-          console.warn(
-            `[VideoPlayer] autoplay with sound refused (${name}) - muted and asked again`
-          );
-          el.muted = true;
-          // Said to the app's one answer here, not left to `volumechange`: the next reel must start
-          // muted too, whatever the engine does with the event.
-          if (soundScope === 'app') videoSound.setMuted(true);
-          askAutoplay(el);
           return;
         }
         autoplayDone = true;
         if (verdict.cause === 'interrupted') {
           console.info(
-            `[VideoPlayer] autoplay interrupted by a pause (${name}, no new load) - the play button is shown`
+            `[VideoPlayer] autoplay interrupted by a pause (${name}, same source) - the play button is shown`
           );
         } else {
           console.warn(
@@ -444,8 +431,21 @@
         }
         autoplayRefused = true;
         buffering = false;
-        onPlaybackBlocked?.(verdict.cause);
+        tellBlocked(verdict.cause);
       });
+  }
+
+  /** `onPlaybackBlocked` was called: the contract is ONE call per player, whatever follows. */
+  let blockedTold = false;
+
+  /** Says once that this video will not play by itself; a later verdict is only logged. */
+  function tellBlocked(cause: AutoplayBlockCause | 'unplayable') {
+    if (blockedTold) {
+      Log.d('VideoPlayer', `blocked again (${cause}) - already told`);
+      return;
+    }
+    blockedTold = true;
+    onPlaybackBlocked?.(cause);
   }
 
   /** A new load of the element: its autoplay is asked afresh, earlier answers are void. */
@@ -483,7 +483,7 @@
       msg: video?.error?.message,
     });
     unplayable = true;
-    onPlaybackBlocked?.('unplayable');
+    tellBlocked('unplayable');
   }
 </script>
 
@@ -576,8 +576,9 @@
            read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if paused && frameReady && (!minimal || autoplayRefused)}
-      <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. -->
+    {#if paused && (minimal ? autoplayRefused : frameReady)}
+      <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
+           minimal player draws it on a decided outcome only, with or without a first frame. -->
       <button
         type="button"
         class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
