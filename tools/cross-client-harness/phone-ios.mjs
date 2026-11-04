@@ -783,7 +783,7 @@ export function tapNotification(needle) {
   const { x: x1, y: y1, width, height } = hit.rect;
   const x = Math.round(x1 + width / 2);
   const y = Math.round(y1 + height / 2);
-  io.ios(['tap', `${x},${y}`]);
+  io.ios(['tap', `${x},${y}`, '--no-guard=springboard-notification-foreign-process']);
   return { ok: true, dumped: true, found: true, x, y, bounds: [x1, y1, x1 + width, y1 + height] };
 }
 
@@ -958,13 +958,27 @@ const readFlat = () => JSON.parse(io.ios(['flat']));
 const labelOf = (e) => String(e?.label || String(e?.text ?? '').split(' | ')[0]).trim();
 const centreOf = (r) => ({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
 /**
+ * Per-site reasons for `--no-guard=<reason>`: a tap inside a FOREIGN process (Settings, Control Center, a
+ * system alert, the notification shade) must not depend on `element/active` answering for a session bound to
+ * Canari, and none of those screens raises the keyboard over its own target. `ios.mjs tap` logs the reason on
+ * stderr each time. The Canari-owned taps keep the guard.
+ */
+const FOREIGN = {
+  systemSwitch: { noGuard: 'control-centre-or-settings-switch-foreign-process' },
+  settings: { noGuard: 'settings-foreign-process' },
+  alert: { noGuard: 'system-alert-foreign-process' },
+  notification: { noGuard: 'springboard-notification-foreign-process' },
+};
+
+/**
  * Taps the centre of `r`. The keyboard guard of `ios.mjs tap` stays ON; `overKeyboard` is a per-site
  * decision (`--over-keyboard`), taken only where the target is tapped WHILE a field holds focus by
- * construction: a text field being focused (the sign-in stages) and a notification reply's Send.
+ * construction: a text field being focused (the sign-in stages).
+ * `noGuard` (a reason string) skips the guard entirely, for the FOREIGN sites above.
  */
-const tapRect = (r, { overKeyboard = false } = {}) => {
+const tapRect = (r, { overKeyboard = false, noGuard = '' } = {}) => {
   const c = centreOf(r);
-  io.ios(['tap', `${c.x},${c.y}`, ...(overKeyboard ? ['--over-keyboard'] : [])]);
+  io.ios(['tap', `${c.x},${c.y}`, ...(overKeyboard ? ['--over-keyboard'] : []), ...(noGuard ? [`--no-guard=${noGuard}`] : [])]);
   return c;
 };
 
@@ -1011,7 +1025,7 @@ function setSwitch(labels, on, where) {
   const was = switchState(before);
   if (was === null) throw new Error(`${where}: "${labelOf(before)}" is not a switch (value ${JSON.stringify(before.value)})`);
   if (was !== on) {
-    tapRect(before.rect);
+    tapRect(before.rect, FOREIGN.systemSwitch);
     io.sleepSync(900);
   }
   const after = switchState(findSwitch(readFlat(), labels));
@@ -1088,7 +1102,7 @@ export function setLinkConditioner(profile) {
   openSettings([DEVELOPER_LABELS, LINK_CONDITIONER_LABELS]);
   try {
     if (profile) {
-      tapRect(scrollTo([profile], 'Network Link Conditioner').rect);
+      tapRect(scrollTo([profile], 'Network Link Conditioner').rect, FOREIGN.settings);
       io.sleepSync(600);
     }
     const enable = setSwitch(LINK_CONDITIONER_ENABLE_LABELS, Boolean(profile), 'Network Link Conditioner');
@@ -1182,7 +1196,7 @@ export function openSettings(steps) {
   const took = [];
   for (const labels of steps) {
     const hit = scrollTo(labels, `Settings > ${took.join(' > ') || '(root)'}`);
-    tapRect(hit.rect);
+    tapRect(hit.rect, FOREIGN.settings);
     took.push(labelOf(hit));
     io.sleepSync(900);
   }
@@ -1196,11 +1210,11 @@ export const APPS_LABELS = ['Apps'];
 export function openAppSettings() {
   const took = openSettings([]);
   const first = scrollTo([APP_NAME, ...APPS_LABELS], 'Settings (root)');
-  tapRect(first.rect);
+  tapRect(first.rect, FOREIGN.settings);
   took.push(labelOf(first));
   io.sleepSync(900);
   if (APPS_LABELS.includes(labelOf(first))) {
-    tapRect(scrollTo([APP_NAME], 'Settings > Apps').rect);
+    tapRect(scrollTo([APP_NAME], 'Settings > Apps').rect, FOREIGN.settings);
     took.push(APP_NAME);
     io.sleepSync(900);
   }
@@ -1216,7 +1230,7 @@ export const ALLOW_NOTIFICATIONS_LABELS = ['Autoriser les notifications', 'Allow
 export function setNotificationsAllowed(allowed) {
   const path = openAppSettings();
   try {
-    tapRect(scrollTo(['Notifications'], `Settings > ${path.join(' > ')}`).rect);
+    tapRect(scrollTo(['Notifications'], `Settings > ${path.join(' > ')}`).rect, FOREIGN.settings);
     io.sleepSync(900);
     return { path: [...path, 'Notifications'], ...setSwitch(ALLOW_NOTIFICATIONS_LABELS, allowed, 'Settings > Canari > Notifications') };
   } finally {
@@ -1349,7 +1363,7 @@ export async function signInThroughSheet(creds, { hosts, settled = async () => f
     const flat = readFlat();
     const stage = signInStage(flat, hosts);
     if (stage === 'consent') {
-      tapRect(findLabelled(flat, CONSENT_LABELS, { type: 'Button' }).rect);
+      tapRect(findLabelled(flat, CONSENT_LABELS, { type: 'Button' }).rect, FOREIGN.alert);
       answered.push('consent');
     } else if (stage === 'identifier' || stage === 'password') {
       // A stage answered once and still on screen is the IdP REFUSING it, not a slow page: typing
@@ -1390,7 +1404,7 @@ export async function openDeepLink(url, timeoutMs = 20_000) {
     if (foregrounded()) return { url, cold, confirmed, inFrontInMs: io.now() - t0 };
     const ask = findLabelled(readFlat(), OPEN_LABELS, { type: 'Button' });
     if (ask) {
-      tapRect(ask.rect);
+      tapRect(ask.rect, FOREIGN.alert);
       confirmed = true;
     }
     await io.sleep(500);
@@ -1461,13 +1475,15 @@ export async function notificationAction(needle, action, { text } = {}) {
         seen: flat.map(labelOf).filter(Boolean).slice(0, 20),
       };
     }
-    tapRect(button.rect);
+    tapRect(button.rect, FOREIGN.notification);
     io.sleepSync(800);
     if (action === 'reply') {
-      io.typeStdin(text);
+      // The reply field is a SpringBoard field, outside the Canari-bound WDA session: `element/active` may not answer for it, and there is
+      // nothing to read back from a foreign process. So the raw key events, chosen here and not as a fallback on error.
+      io.typeStdin(text, { keys: true });
       const send = findLabelled(readFlat(), titles.send, { type: 'Button' });
       if (!send) return { ok: false, found: true, why: `the reply field shows no ${titles.send.join(' / ')} button` };
-      tapRect(send.rect, { overKeyboard: true });
+      tapRect(send.rect, FOREIGN.notification);
       io.sleepSync(800);
     }
     const still = findLabelled(readFlat(), [...titles[action], ...titles.send], { type: 'Button' });

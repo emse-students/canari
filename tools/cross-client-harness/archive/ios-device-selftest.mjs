@@ -185,6 +185,13 @@ const rejects = async (p, re) => {
   f = fakeWda({ tree: tree(300, true) });
   await tapText('S', 'Continuer');
   check('tapText: a focused field with the target ABOVE the band is allowed', f.taps === 1);
+  // a foreign-process tap: no request at all (element/active is not consulted), the reason is logged
+  f = fakeWda({ tree: tree(600, true) });
+  out.length = 0;
+  capture();
+  await tapText('S', 'Continuer', { noGuard: 'settings-foreign-process' });
+  release();
+  check('tapText: --no-guard=<reason> never asks element/active, taps, and logs the reason', f.taps === 1 && !f.log.some((l) => l.includes('/element/')) && out.some((l) => /guard skipped \(settings-foreign-process\)/.test(l)));
   fakeWda();
   globalThis.fetch = async () => {
     throw new Error('network down');

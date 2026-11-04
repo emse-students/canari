@@ -204,7 +204,7 @@ const GENERIC = { type: 'XCUIElementTypeButton', text: 'Canari, Canari, Nouveau 
 {
   const { s, restore } = fakePhone({ state: 1, flat: [OLD, NEW] });
   const t = ios.tapNotification('NEW-7');
-  check('tapNotification: taps the centre of the element, in points', t.ok && s.calls.includes('tap 195,260'), JSON.stringify(t));
+  check('tapNotification: taps the centre of the element, in points', t.ok && s.calls.includes('tap 195,260 --no-guard=springboard-notification-foreign-process'), JSON.stringify(t));
   const miss = ios.tapNotification('ABSENT');
   check('tapNotification: absent is found:false, an ANSWER', miss.ok === false && miss.dumped === true && miss.found === false);
   s.flat = 'error';

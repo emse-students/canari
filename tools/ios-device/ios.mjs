@@ -7,13 +7,15 @@
  *   bun tools/ios-device/ios.mjs shot <file.png>        screenshot
  *   bun tools/ios-device/ios.mjs tree                   the visible accessibility tree, one line each
  *   bun tools/ios-device/ios.mjs find <text>            elements whose label/name/value contain text
- *   bun tools/ios-device/ios.mjs tap <text | x,y> [--over-keyboard]
+ *   bun tools/ios-device/ios.mjs tap <text | x,y> [--over-keyboard | --no-guard=<reason>]
  *                                                       tap a Button/Link/... by text (an ambiguity is refused and
  *                                                       listed), or a point; refused in the keyboard band unless the flag
  *   bun tools/ios-device/ios.mjs type <text> [--submit] REPLACE the focused field's value in one call, read it back
  *                                                       (exact, or length for a secure field), then Return if --submit;
  *                                                       prints { length, secure, submitted }
- *   bun tools/ios-device/ios.mjs type - --keys          raw key events, no read-back: the device passcode keypad only
+ *   bun tools/ios-device/ios.mjs type - --keys          raw key events, no read-back: the device passcode keypad and fields of a
+ *                                                       foreign process (a notification reply). A value that is itself
+ *                                                       `--submit` or `--keys` cannot be typed as an argv: use stdin `-`.
  *   bun tools/ios-device/ios.mjs swipe x1 y1 x2 y2 [s]  drag, in POINTS (see `size`)
  *   bun tools/ios-device/ios.mjs button <home|volumeUp|volumeDown>
  *   bun tools/ios-device/ios.mjs size                   window size in points
@@ -265,7 +267,14 @@ export function underKeyboard(up, windowHeight, y) {
  * reads the tree and, when the guard WOULD have refused, says so on stderr each time. A tree that
  * cannot be read throws: the guard fails closed.
  */
-export async function guardKeyboard(sid, x, y, what, { overKeyboard = false } = {}) {
+export async function guardKeyboard(sid, x, y, what, { overKeyboard = false, noGuard = '' } = {}) {
+  // `noGuard` is a REASON (CLI `--no-guard=<reason>`): the target is inside a foreign process (Settings, a
+  // system alert, the shade) where `element/active` of a Canari-bound session proves nothing and no
+  // keyboard covers it. No request is made at all; the reason is logged each time.
+  if (noGuard) {
+    console.error(`[ios] tap ${what} at ${x},${y}: keyboard guard skipped (${noGuard})`);
+    return;
+  }
   const up = await keyboardUp(sid);
   if (!up) return;
   const { height } = await size(sid);
@@ -508,12 +517,15 @@ async function main() {
     case 'tap': {
       // `--over-keyboard`: the caller's per-call decision to tap in the keyboard band (see `guardKeyboard`).
       const overKeyboard = args.includes('--over-keyboard');
-      const rest = args.filter((a) => a !== '--over-keyboard');
+      // `--no-guard=<reason>`: skip the guard for a target inside a foreign process; the reason is logged.
+      const noGuard = args.find((a) => a.startsWith('--no-guard='))?.slice('--no-guard='.length) ?? '';
+      if (args.includes('--no-guard')) throw new Error('--no-guard needs a reason: --no-guard=<reason>');
+      const rest = args.filter((a) => a !== '--over-keyboard' && a !== '--no-guard' && !a.startsWith('--no-guard='));
       const point = /^(\d+),(\d+)$/.exec(rest[0] ?? '');
       if (point) {
-        await guardKeyboard(sid, Number(point[1]), Number(point[2]), 'the point', { overKeyboard });
+        await guardKeyboard(sid, Number(point[1]), Number(point[2]), 'the point', { overKeyboard, noGuard });
         await tapAt(sid, Number(point[1]), Number(point[2]));
-      } else console.log(JSON.stringify(await tapText(sid, rest.join(' '), { overKeyboard })));
+      } else console.log(JSON.stringify(await tapText(sid, rest.join(' '), { overKeyboard, noGuard })));
       break;
     }
     case 'type': {

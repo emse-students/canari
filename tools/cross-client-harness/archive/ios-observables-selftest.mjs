@@ -174,7 +174,8 @@ function device({ screens, start, state = 4, installed = true, pymd = () => '' }
   const r = ios.setLinkConditioner('3G');
   check('O3 throttle: Settings from its ROOT, scrolled to Developer, NLC enabled and read back', r.enable.after === true && r.profile === '3G', JSON.stringify(r));
   check('O3 throttle: Settings was ENDED first, so the path starts at the root', s.calls.indexOf('terminate com.apple.Preferences') < s.calls.indexOf('launch com.apple.Preferences'));
-  check('O3 throttle: the profile row was tapped', s.calls.includes('tap 195,422'));
+  check('O3 throttle: the profile row was tapped, with the Settings tap marked --no-guard=<reason> (a foreign process)', s.calls.includes('tap 195,422 --no-guard=settings-foreign-process'));
+  check('O3 throttle: EVERY tap inside Settings (the switch included) carries a no-guard reason', s.calls.filter((c) => c.startsWith('tap ')).every((c) => /--no-guard=[a-z-]+-foreign-process$/.test(c)));
   const off = ios.setLinkConditioner(null);
   check('O3 throttle off: the switch read back OFF', off.enable.after === false && off.profile === null);
   restore();
@@ -401,6 +402,8 @@ const NOTE = { type: 'XCUIElementTypeButton', label: 'Canari, Paul Peer, hello N
   check('O11 reply: long press, Répondre, typed, Envoyer - and the action is gone', r.ok === true && r.found === true, JSON.stringify(r));
   check('O11: a LONG press on the notification, at its centre', s.calls.includes('long 195 260 900'));
   check('O11: the reply text went through stdin', JSON.stringify(s.stdin) === '["ok from the shade"]');
+  check('O11: the reply is typed as RAW KEYS, chosen explicitly (a SpringBoard field: no element/active, no read-back), never submit', s.stdinOpts.length === 1 && s.stdinOpts[0].keys === true && !s.stdinOpts[0].submit);
+  check('O11: every tap in the shade carries --no-guard=<reason> (a foreign process)', s.calls.filter((c) => c.startsWith('tap ')).length === 2 && s.calls.filter((c) => c.startsWith('tap ')).every((c) => c.endsWith('--no-guard=springboard-notification-foreign-process')));
   check('O11: the app was not launched to do it (it may be dead - NOTIF-6)', !s.calls.some((c) => c.startsWith('launch')) && s.state === 1);
   s.screen = 'centre';
   const m = await ios.notificationAction('N11-REPLY', 'mark_read');
