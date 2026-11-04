@@ -276,11 +276,16 @@ describe('the iOS status bar bridge', () => {
     expect(overlay).not.toContain('heightAnchor.constraint(equalToConstant: 1)');
   });
 
-  it('the catcher is visible and hit-testable to UIKit, and always has range', () => {
+  it('the catcher is visible to UIKit, takes no touch, and always has range', () => {
     const overlay = readFileSync(`${PLUGIN}TabBarOverlay.swift`, 'utf8');
-    // The overlay's root lets every other touch through; the strip must be claimed explicitly.
-    expect(overlay).toContain('statusBarStrip = statusBarTapCatcher');
-    expect(overlay).toMatch(/if let strip = statusBarStrip, hit === strip/);
+    // The tap is a scene action, not a touch: the strip is never claimed by the overlay's hit test,
+    // since the camera, the reel viewer and the lightbox take touches under the status bar.
+    const hitTest = overlay.slice(
+      overlay.indexOf('override func hitTest'),
+      overlay.indexOf('/// CANARI PATCH: catches a tap on the iOS status bar')
+    );
+    expect(hitTest).not.toMatch(/statusBarTapCatcher|statusBarStrip|strip/);
+    expect(overlay).not.toMatch(/statusBarStrip/);
     // `alpha` 0.01 sat on UIKit's "hidden" threshold: never a fractional alpha on the catcher.
     expect(overlay).not.toMatch(/^\s*alpha = 0\./m);
     expect(overlay).toContain('height: bounds.height + 2');

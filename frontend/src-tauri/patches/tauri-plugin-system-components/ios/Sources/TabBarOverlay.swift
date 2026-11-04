@@ -18,15 +18,9 @@ final class PassthroughView: UIView {
     weak var interactiveView: UIView?
     /// The standalone account button beside the bar, if any — also interactive.
     weak var accessory: UIView?
-    /// CANARI PATCH: the status bar strip, claimed for the same reason as the bar - see
-    /// `StatusBarTapCatcher`.
-    weak var statusBarStrip: UIView?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let hit = super.hitTest(point, with: event) else { return nil }
-        if let strip = statusBarStrip, hit === strip {
-            return hit
-        }
         if let bar = interactiveView, !bar.isHidden, hit === bar || hit.isDescendant(of: bar) {
             return hit
         }
@@ -39,25 +33,23 @@ final class PassthroughView: UIView {
 
 /// CANARI PATCH: catches a tap on the iOS status bar and reports it instead of scrolling.
 ///
-/// UIKit sends that tap to a visible scroll view with `scrollsToTop` set that can scroll vertically
-/// and lies under the tap. The WKWebView's own scroll view never qualifies here: Canari's pages
+/// Since iOS 13 that tap is a SCENE action (`UIStatusBarTapAction`), not a touch: no hit test runs,
+/// and UIKit hands it to a visible scroll view with `scrollsToTop` set that can scroll vertically.
+/// That it picks the one under the tap's x position is INFERRED from behaviour (iPad split views),
+/// not documented. The WKWebView's own scroll view never qualifies here: Canari's pages
 /// scroll in an inner `overflow-y-auto` box, the document has no range at all (the plugin also
 /// switches its `scrollsToTop` off), so the gesture did nothing.
 ///
-/// This scroll view is that candidate, and is built so UIKit cannot pass it over, whichever way it
-/// looks for "under the tap":
-/// - it COVERS the status bar - from the top edge down to the safe area's top (`viewDidLoad`) - so a
-///   tap point anywhere in the bar lies inside it. The first build was a 1 pt strip, which a tap
-///   lower in the bar never reached (iPhone 12, `1.6.4-alpha.3`: `UIStatusBarTapAction` received,
-///   the page did not move);
-/// - it is HIT-TESTABLE there (`PassthroughView.statusBarStrip`): the first build let every touch
-///   fall through to the web view, so a search that walks up from the hit view never met it. The
-///   strip is the status bar's own padding (every page pads it, `--safe-area-inset-top`), so it
-///   takes no touch a control needed;
+/// This scroll view is that candidate (iPhone 12, `1.6.4-alpha.3`: `UIStatusBarTapAction` received,
+/// the page did not move with the first build), built so UIKit cannot pass it over:
 /// - it is VISIBLE to UIKit (`alpha` 1, a clear background, so it draws nothing): the first build's
-///   `alpha` 0.01 sat on the threshold below which UIKit treats a view as hidden, and a layer stores
-///   it as a `Float` (0.0099999998), under it - which side UIKit read is not knowable from here, so
-///   the doubt is removed rather than argued;
+///   `alpha` 0.01 is stored by its layer as a `Float` (0.0099999998), below UIKit's 0.01 visibility
+///   threshold - the most likely single cause;
+/// - it COVERS the status bar, full width, from the top edge down to the safe area's top
+///   (`viewDidLoad`), rather than a 1 pt strip, so however UIKit locates the tap it lies inside;
+/// - it takes NO touch: `PassthroughView` lets every touch through it. The tap needs none, and the
+///   area under the status bar is live content (the full-bleed camera tab, the reel viewer's swipe,
+///   the media lightbox's pan and pinch, and real content just below a Dynamic Island);
 /// - it always has vertical range (`layoutSubviews`): two points more content than its height,
 ///   resting one point down, since a scroll view already at its top or with nothing to scroll is
 ///   not a candidate.
@@ -172,7 +164,6 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
         // iPhone) the safe area's top is 0 and the strip keeps 1 pt rather than collapsing.
         statusBarTapCatcher.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusBarTapCatcher)
-        (view as? PassthroughView)?.statusBarStrip = statusBarTapCatcher
         let reachesSafeArea = statusBarTapCatcher.bottomAnchor.constraint(
             equalTo: view.safeAreaLayoutGuide.topAnchor)
         reachesSafeArea.priority = .defaultHigh
