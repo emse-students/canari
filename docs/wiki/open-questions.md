@@ -16,27 +16,6 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
-### DECISION OWED - who moderates a student's content inside an institution's or another BDE's post? (2026-11-04)
-
-**Owed to the owner; parked by the lead's review of #2999, nothing changed meanwhile.** The owner's
-rule of 2026-11-03 says no BDE moderates content in an institution's or another BDE's NAME, and that
-a BDE keeps moderating what its students publish. A student's comment under an institution's post (or
-under another BDE's post, or a line in the chat of such a live) is both: a student's content, in a
-place that is not the BDE's. Two readings:
-
-- **The place decides (what ships).** A comment is judged by the post it sits under first
-  (`bdeModeratesCommentSql`: the post must be in scope), and a live chat line by its live; an
-  institution's or another BDE's post or live is never in scope, so everything under it - the
-  students' comments and lines included - is the platform admin's alone. Simple, and the institution's
-  thread is moderated by one hand; the cost is that the platform admin is the only one who can act on
-  a student's abusive comment there.
-- **The publisher decides.** A student's comment or line is their BDE's to moderate wherever it sits:
-  the student's spaces decide, not the post's. The BDE closest to the student acts; the cost is a BDE
-  acting inside an institution's thread, and two BDEs reaching the same thread for their own students.
-
-Either is a change to ONE fragment (the place half of `bdeModeratesCommentSql`, and
-`bdeModeratesLiveSql` for chat lines) and to its matrix rows in `bde-moderation.integration.spec.ts`.
-
 ### DECISION OWED - may an author's own delete take the replies written in a protected name? (2026-11-04)
 
 **Owed to the owner; parked by the lead's second review of #2999, nothing changed.** A student who
