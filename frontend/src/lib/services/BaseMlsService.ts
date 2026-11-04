@@ -2083,12 +2083,54 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** {@link isGroupDrained}'s evidence, read silently - the waiters re-read it on every event. */
   private groupDrainedNow(groupId: string): boolean {
-    return (
-      this.mailboxEmptiedByAPull &&
-      !this.pendingPullInFlight &&
-      this.isWsOpen() &&
-      this.messageScheduler.isGroupIdle(groupId)
-    );
+    return this.mailboxListedOnThisLink() && this.messageScheduler.isGroupIdle(groupId);
+  }
+
+  /**
+   * Whether a pull has listed the WHOLE mailbox since the socket last opened, and none is running:
+   * everything the server queued for this device before now is in the scheduler already, ahead of
+   * whatever arrives next. Cleared when a socket opens ({@link noteSocketOpened}), because frames
+   * queued while the link was down are listed only by the pull that follows the reconnect.
+   */
+  private mailboxListedOnThisLink(): boolean {
+    return this.mailboxEmptiedByAPull && !this.pendingPullInFlight && this.isWsOpen();
+  }
+
+  /**
+   * Called by each platform when its gateway socket opens: the mailbox has not been listed on this
+   * link yet. Without it, the last pull of the previous link - before a resume, minutes or hours
+   * ago - still read as "listed", and a live frame or a key-group catch-up acted as if nothing were
+   * queued ahead of it.
+   */
+  protected noteSocketOpened(): void {
+    this.mailboxEmptiedByAPull = false;
+  }
+
+  /** Key groups with a live frame held by {@link holdLiveKeyGroupFrame} since its last pull. */
+  private readonly liveHeldKeyGroups = new Set<string>();
+
+  /** The pull {@link holdLiveKeyGroupFrame} owes, until it starts. */
+  private liveHoldPull: Promise<void> | null = null;
+
+  /**
+   * Leaves a live key-group frame queued on the server and asks for the pull that lists it in
+   * order. ONE pull for a burst: frames held before it starts ride on it, and one held after it
+   * started asks for the next, so no held frame is left without a pull that lists it. Started
+   * after any pull in flight, which may have listed past this frame's row already.
+   */
+  private holdLiveKeyGroupFrame(groupId: string): void {
+    this.liveHeldKeyGroups.add(groupId);
+    if (this.liveHoldPull) return;
+    this.liveHoldPull = (async () => {
+      await this.pendingPullInFlight?.catch(() => {});
+      const groups = [...this.liveHeldKeyGroups].map((g) => g.slice(0, 8));
+      this.liveHeldKeyGroups.clear();
+      this.liveHoldPull = null;
+      console.log(
+        `[GRAINE] live frame(s) of key group(s) ${groups.join(', ')} ahead of the local epoch before the mailbox was listed on this link - left queued and pulled in the server's order, no commit replayed past the frames queued before them`
+      );
+      await this.fetchPendingMessages();
+    })();
   }
 
   /** Waiters of {@link whenGroupDrained}, by group. */
@@ -6000,6 +6042,23 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void> {
     const short = groupId.slice(0, 8);
     const log = (msg: string) => console.log(msg);
+    // A KEY GROUP IS NOT CAUGHT UP FROM THE LOG WHILE ITS OWN MAILBOX MAY STILL HOLD THE COMMITS. A
+    // commit this device makes on a key group early in a resume (a roster pass, a departure) is
+    // refused at a base the queue is about to move, and replaying the log here jumped every seed the
+    // queue still held between those commits - `max_past_epochs` is 2, so they were lost for good.
+    // The check that waits for this link's drain does the replay, only if the group is still behind
+    // once the queue has applied what it held; the caller surfaces this refusal meanwhile, and its
+    // next attempt is built on the epoch the queue reached. Not awaited: the caller holds the MLS
+    // lock, and the drain needs it.
+    if (this.isDistributionGroup(groupId) && !this.mailboxListedOnThisLink()) {
+      log(
+        `[COMMIT] ${short}... refused on key group at epoch ${baseEpoch} (${reason ?? 'no reason'}, server ${activeEpoch ?? 'unknown'}) before the mailbox was listed on this link - no log replay past the queued frames; the epoch is checked once the queue has drained`
+      );
+      if (activeEpoch !== undefined && activeEpoch > baseEpoch) {
+        void this.verifyDistributionEpoch(groupId, activeEpoch);
+      }
+      return;
+    }
     // A `concurrent_commit` REPORTS THE EPOCH IT READ WHILE ANOTHER COMMIT HELD THE GATE'S LOCK, so
     // "not ahead" there is not an answer: the lock holder may have landed a moment after that read
     // (CC-4, 2026-10-25: a leaf refresh accepted at epoch 3, the Add beside it refused with
@@ -6269,8 +6328,14 @@ export abstract class BaseMlsService implements IMlsService {
       // this device's own queue may still hold every commit it is missing - production 2026-09-28
       // held eight - and those apply in order with their seeds between them. Replaying from the log
       // first would jump past the epochs those seeds were sealed at, and `max_past_epochs` is 2.
-      await this.initialDrain;
-      await this.waitForGroupQueueIdle('key-group epoch check', groupId).catch(() => {});
+      //
+      // THE DRAIN OF THIS LINK, NOT OF THE BOOT. This waited for the first drain of the session and
+      // then for whatever pull happened to be in flight - after a resume, the first drain was hours
+      // old and the reconnect's pull had not always started, so "the group is idle" read true over a
+      // mailbox nobody had listed, and the replay jumped the seeds still in it (2026-11-04).
+      // `whenGroupDrained` is the fact: a pull listed the whole mailbox since the socket opened, and
+      // the scheduler applied this group's share of it.
+      await this.whenGroupDrained(groupId);
       const local = this.getEpoch(groupId);
       if (local >= activeEpoch) return 'current';
       // A PROOF, AND SAID AS ONE: the drain has settled and the group is still short of an epoch the
@@ -6593,7 +6658,8 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
-    senderDeviceId?: string
+    senderDeviceId?: string,
+    channel?: DeliveryChannel
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
@@ -6625,6 +6691,19 @@ export abstract class BaseMlsService implements IMlsService {
       // commit, or ends the loop.
       if (classifyIncomingDecryptError(e) !== 'epoch-gap') {
         return this.dispositionOfUnreadableFrame(groupId, e);
+      }
+      // A LIVE FRAME IS NOT A PROOF THAT THE MISSING COMMITS ARE MISSING FROM THE MAILBOX. Until a
+      // pull has listed the whole mailbox on this link, the commits it is ahead of - and the seeds
+      // sealed between them - may still be on the server, queued BEFORE it. Stepping from the log
+      // to this frame's epoch jumped past them, and every one of those seeds more than
+      // `max_past_epochs` (2) behind then arrived as `past-epoch-application`, "unreadable for
+      // good" (tester export, 2026-11-04: nine on one key group in one second of a resume's bulk
+      // ingest, no join anywhere). So it is left queued, unacknowledged, and the pull that lists
+      // the mailbox in the server's order brings it back after them, as `pull`, which is never
+      // held: the step below then runs only when the commits really are not in the queue.
+      if (channel === 'live' && !this.mailboxListedOnThisLink()) {
+        this.holdLiveKeyGroupFrame(groupId);
+        return false;
       }
       plaintext = null;
       let opened = false;

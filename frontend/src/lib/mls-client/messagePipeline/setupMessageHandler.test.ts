@@ -125,7 +125,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       false,
       undefined,
       false,
-      { senderDeviceId: 'peer-phone' }
+      { senderDeviceId: 'peer-phone', channel: 'live' }
     );
 
     // The branch has to come FIRST. This group has no conversation, so the known-group path would
@@ -138,7 +138,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       distributionGroup,
       'peer',
       new Uint8Array([1, 2]),
-      'peer-phone'
+      'peer-phone',
+      // The channel too: a LIVE frame ahead of the local epoch is held until the mailbox has been
+      // listed on this link, a pulled one is the mailbox in order (`routeDistributionFrame`).
+      'live'
     );
     expect(deps.addMessageToChat).not.toHaveBeenCalled();
   });

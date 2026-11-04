@@ -56,6 +56,14 @@ describe('isGroupDrained', () => {
     expect(svc.isGroupDrained('g-1')).toBe(false);
   });
 
+  it('does not hold on a NEW link until a pull has listed the mailbox again', () => {
+    // A resume: the last pull of the previous link emptied the mailbox hours ago, and frames were
+    // queued while the socket was down. Only the reconnect's pull lists them (2026-11-04).
+    const svc = drainedService();
+    (svc as unknown as { noteSocketOpened(): void }).noteSocketOpened();
+    expect(svc.isGroupDrained('g-1')).toBe(false);
+  });
+
   it('does not hold while the group has frames queued, parked or being applied', () => {
     const svc = drainedService((groupId) => groupId !== 'g-1');
     expect(svc.isGroupDrained('g-1')).toBe(false);
