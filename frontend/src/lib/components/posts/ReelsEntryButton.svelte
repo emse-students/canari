@@ -12,6 +12,7 @@
    * the viewer's own first page, not a second request (`reelsAfterFirstPage`).
    */
   import { Clapperboard } from '@lucide/svelte';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import ReelsEmptyState from './ReelsEmptyState.svelte';
@@ -79,6 +80,7 @@
   type="button"
   bind:this={entry}
   data-reels-entry
+  use:guideAnchor={'posts.reels'}
   aria-label={m.posts_reels_open()}
   title={m.posts_reels_open()}
   aria-haspopup="dialog"

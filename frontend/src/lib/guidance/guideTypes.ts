@@ -77,6 +77,24 @@ export interface GuideDefinition {
   /** The routes it may START on. It runs only there; a hint whose route is left is put back. */
   readonly appliesTo: (pathname: string) => boolean;
   readonly steps: readonly GuideStep[];
+  /**
+   * Marks the "what's new" help of a release: id `whats-new-<major>-<minor>-<patch>`, whose version
+   * is the app's own (asserted by `guides/whatsNew.test.ts`). At most one is declared at a time. It
+   * is offered only to an account that has already seen the welcome tour: one that has not is new
+   * (or not yet shown the tour) and gets the tour, never the news of the version it installed.
+   */
+  readonly news?: true;
+  /**
+   * When this help is met for the FIRST time (a replay records nothing extra), every declared
+   * `news` help is recorded as seen with it, DERIVED from the declarations: the welcome tour already
+   * covers what a new account has not seen, so its next visit must not open with the news.
+   */
+  readonly supersedesNews?: true;
+  /**
+   * Makes the help replayable from Settings > Preferences > "Revoir les aides": the label of its
+   * button and the route it plays on. The welcome tour has its own row there.
+   */
+  readonly replay?: { readonly label: () => string; readonly route: '/posts' | '/chat' };
 }
 
 /** Why a help ended. Every one of them records it as seen, except none: an end is an end. */

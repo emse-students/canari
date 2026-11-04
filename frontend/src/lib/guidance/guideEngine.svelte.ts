@@ -189,7 +189,11 @@ export class GuideEngine {
     }
     if (!this.env.seenReady()) return null;
     if (this.#shownThisVisit) return null;
-    return this.guides.find((g) => !this.env.isSeen(g.id) && offered(g)) ?? null;
+    return (
+      this.guides.find(
+        (g) => !this.env.isSeen(g.id) && (!g.news || this.env.isSeen('welcome-tour')) && offered(g)
+      ) ?? null
+    );
   }
 
   #start(guide: GuideDefinition, pathname: string): void {
@@ -276,9 +280,20 @@ export class GuideEngine {
       this.#decline(run.guide, `ended (${reason}) before any step was shown`);
       return;
     }
+    if (reason === 'navigation' && run.guide.kind === 'hint' && run.index + 1 < run.steps.length) {
+      // Left by navigation before the LAST step: nobody read it, so it is offered again later.
+      this.#decline(run.guide, `left by navigation at step ${run.index + 1}/${run.steps.length}`);
+      return;
+    }
     Log.i('guide', `${run.guide.id} ended: ${reason} at step ${run.index + 1}/${run.steps.length}`);
     this.#run = null;
+    const first = !this.env.isSeen(run.guide.id);
     this.env.markSeen(run.guide.id);
+    if (!first || !run.guide.supersedesNews) return;
+    for (const g of this.guides.filter((n) => n.news && !this.env.isSeen(n.id))) {
+      Log.i('guide', `${run.guide.id} met for the first time: ${g.id} recorded as seen with it`);
+      this.env.markSeen(g.id);
+    }
   }
 
   /**
