@@ -76,13 +76,20 @@ function scrim(): HTMLElement {
 }
 
 /** Answers every `matchMedia` as `matches`, standing in for a window below or above `xl`. */
-function stubViewport(matches: boolean): void {
+function stubViewport(matches: boolean): (matches: boolean) => void {
+  const handlers = new Set<(event: { matches: boolean }) => void>();
   vi.stubGlobal('matchMedia', (query: string) => ({
     matches,
     media: query,
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (_: string, h: (event: { matches: boolean }) => void) => handlers.add(h),
+    removeEventListener: (_: string, h: (event: { matches: boolean }) => void) =>
+      handlers.delete(h),
   }));
+  /** Crosses the breakpoint live: every registered `change` handler hears it. */
+  return (next) => {
+    for (const h of handlers) h({ matches: next });
+    flushSync();
+  };
 }
 
 describe('a side panel leaves the page unless it has a row to join', () => {
@@ -138,5 +145,43 @@ describe('a side panel leaves the page unless it has a row to join', () => {
     const wrap = mountInPage(true);
 
     expect(wrap.contains(panel())).toBe(true);
+  });
+
+  it('follows a live crossing of xl: body below, back in the page above, one aside and one scrim each time', () => {
+    const cross = stubViewport(true);
+    const wrap = mountInPage(true);
+    const sibling = document.createElement('p');
+    wrap.appendChild(sibling);
+    const count = (sel: string) => document.querySelectorAll(sel).length;
+
+    expect(panel().parentElement).toBe(document.body);
+    expect([count('aside.side-panel'), count('button[class*="inset-0"]')]).toEqual([1, 1]);
+
+    cross(false);
+    expect(wrap.contains(panel())).toBe(true);
+    expect([count('aside.side-panel'), count('button[class*="inset-0"]')]).toEqual([1, 1]);
+
+    cross(true);
+    expect(panel().parentElement).toBe(document.body);
+    expect([count('aside.side-panel'), count('button[class*="inset-0"]')]).toEqual([1, 1]);
+
+    while (mounted.length) mounted.pop()!();
+    flushSync();
+    expect(wrap.contains(sibling)).toBe(true);
+  });
+
+  it('marks the drawer as covering the screen, so a minimised call bar insets its header too', () => {
+    // `:root[data-call-bar] [data-covers-screen]` redefines the top inset only for what is UNDER such a
+    // node; the header lives in the aside, so the aside must carry the mark, not just the scrim.
+    stubViewport(true);
+    mountInPage(true);
+    expect(panel().hasAttribute('data-covers-screen')).toBe(true);
+    expect(scrim().hasAttribute('data-covers-screen')).toBe(true);
+  });
+
+  it('does not claim to cover the screen as a column at xl', () => {
+    stubViewport(false);
+    mountInPage(true);
+    expect(panel().hasAttribute('data-covers-screen')).toBe(false);
   });
 });

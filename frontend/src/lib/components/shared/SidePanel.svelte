@@ -38,7 +38,6 @@
    */
   let overlay = $state(isOverlayLayout());
   $effect(() => {
-    overlay = isOverlayLayout();
     return onViewportChange(OVERLAY_LAYOUT_QUERY, (narrow) => (overlay = narrow));
   });
 
@@ -121,13 +120,14 @@
     aria-label={m.chat_panel_close_label()}
     onclick={onClose}
     use:portalWhile={escapes}
-    use:coversScreen
+    use:coversScreen={escapes}
     transition:fade={{ duration: 180 }}
   ></button>
 
   <aside
     class="side-panel bg-cn-surface flex flex-col {column ? 'side-panel-column' : ''}"
     use:portalWhile={escapes}
+    use:coversScreen={escapes}
     transition:fly={{ x: 320, duration: 220 }}
   >
     <div
@@ -158,9 +158,10 @@
       stood 66px outside a panel that clips - a control nobody could see or press on a desktop.
 
       So the children write `@md:`, and `sidePanelWidth.test.ts` holds them to it. `@md` is 28rem,
-      which is exactly the drawer's `max-width`: the side-by-side forms exist in the drawer at full
-      width and nowhere narrower, and no arithmetic about padding has to be believed for that to
-      hold.
+      which is the drawer's `max-width` FROM 768px. Below 768px the drawer is the whole screen and
+      has no cap, so on a wide phone or in landscape (up to 767px) the container is wider than 28rem
+      and the `@md` side-by-side forms apply there too: intended - the room is real, and the forms
+      only ever needed 28rem of it.
 
       SAFE HERE ONLY BECAUSE EVERYTHING FULL-SCREEN INSIDE THIS PANEL IS PORTALLED. `container-type:
       inline-size` makes this div the containing block for `position: fixed` descendants; the invite

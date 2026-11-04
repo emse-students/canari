@@ -4343,6 +4343,14 @@ keeps its 28rem card. Only a column at `xl` stays in the page. Same shell, so it
 panel, the channel members, media and channel settings (`ConversationSidePanel`) and the community
 settings (`SidebarCommunityAdminPanel`, already portalled). Pinned by `SidePanel.portal.svelte.test.ts`.
 
+Two consequences, both intended. (1) The aside carries `use:coversScreen` as well as the scrim, because
+the minimised call bar redefines `--safe-area-inset-top` only UNDER a `data-covers-screen` node, and the
+header lives in the aside. (2) At 768-1279 px the drawer's `top: calc(var(--app-content-top) + 0.75rem)`
+now resolves against the window, as the sidebar's panels always did, instead of against
+`.page-scroll-wrap` (which already starts below the top bar, so it used to offset twice). The geometry
+there therefore CHANGED - it now sits where its own comment says, below the bar; read it once at iPad
+width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 px).
+
 ## See also
 
 - [`frontend/architecture.md`](../architecture.md) — SvelteKit architecture, stores, routing
