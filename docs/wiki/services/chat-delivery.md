@@ -451,7 +451,10 @@ never withheld from, because only a recorded admission proves the device cannot 
 key group's PUBLISHER is recorded at the base leading to the epoch E it publishes, `E - 1`
 (`publisherAdmissionBase`): the publish writes an admission on ANY active seat that has none - a
 member whose seat carries no admission, not only the creator - and recording E itself would
-withhold the frames peers seal at E, which that device reads. A conversation's creator is recorded
+withhold the frames peers seal at E, which that device reads. Past the creation's publish (E = 0,
+recorded as an admission) the value is written as an INFERRED floor (`admissionInferred`): such a
+member may have been in the tree long before it published, so the floor dates the commit times it
+is answered and never withholds a frame from it. A conversation's creator is recorded
 at 0, the epoch it holds: one epoch too strict, which withholds nothing, because no other device can
 seal at the epoch a group was created at. The history stream (`GET mls/history/:groupId`, the batch)
 is not a second road to the key-group loss: the client replays it only for conversations

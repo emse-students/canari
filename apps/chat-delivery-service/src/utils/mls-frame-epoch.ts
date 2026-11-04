@@ -214,7 +214,9 @@ export function isBeyondPastEpochWindow(frameEpoch: number, activeEpoch: number)
  * A key group's PUBLISHER is recorded by {@link publisherAdmissionBase} - the base that leads to
  * the epoch it holds - so a frame a peer seals at that epoch reaches it. The publish records an
  * admission on ANY active seat that has none, not only the creator's, so recording the held epoch
- * itself would withhold frames a member can read. A conversation's CREATOR is recorded at 0, the
+ * itself would withhold frames a member can read; and past the creation's publish (epoch 0) the
+ * value is written INFERRED, so it never withholds at all - such a member may have been in the tree
+ * long before it published. A conversation's CREATOR is recorded at 0, the
  * epoch it holds: one epoch too strict, which drops nothing, because no other device ever holds
  * the epoch a group was created at, so nothing is sealed there for it.
  *

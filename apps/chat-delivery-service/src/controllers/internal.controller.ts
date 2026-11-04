@@ -641,6 +641,11 @@ export class InternalController {
             // Written only on a seat with no admission, so a device that external-joined keeps
             // the floor its commit set.
             admittedByBaseEpoch: publisherAdmissionBase(body.baseEpoch as number),
+            // Only the CREATION's publish (epoch 0: no other device can hold that epoch) is an
+            // admission. Any later publish by a seat with none may come from a member that was in
+            // the tree long before it, so it is written as an INFERRED floor: it dates the commit
+            // times it is answered and never withholds a frame from it.
+            admissionInferred: (body.baseEpoch as number) > 0,
           }
         )
       : { ok: false, reason: 'not_on_roster' };
