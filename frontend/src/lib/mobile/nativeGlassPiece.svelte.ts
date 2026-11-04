@@ -58,20 +58,23 @@ export interface ScreenFrame {
  * MINUS the page's own idea of its scroll, and the page's idea can disagree with what is drawn: the
  * iPhone 12 reading of 2026-11-04 (`v1.6.4-alpha.2`) had the web composer drawn at 487 pt, the native
  * scroll view at offset 0 (content = bounds = 543, so no range), and the "+" - placed at the rect -
- * at 186 = 487 - 301. The app never scrolls its document (the shell is pinned and every list scrolls
- * in its own element; native clamps the offset to 0), so what is drawn is always the document
- * position, `rect + scroll`, whatever the page believes. Pinch-zoomed there is a real pan, so the
- * visual viewport's transform is applied instead.
+ * at 186 = 487 - 301. This is right WHILE UIKit's offset is 0, which holds because the document has
+ * no scroll range (the shell is `overflow-hidden` at the viewport height and every list scrolls in
+ * its own element); `CanariClampDocumentScroll` guarantees it only for an offset that leaves its
+ * range, not in general. So what is drawn is the document position, `rect + scroll`, whatever the
+ * page believes. Pinch-zoomed there is a real pan, so the visual viewport's transform is applied
+ * instead.
  */
 export function screenRect(
   box: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
   frame: ScreenFrame
 ) {
-  const scale = frame.vv?.scale ?? 1;
-  if (frame.vv && scale > 1.01) {
+  if (isZoomed(frame)) {
+    const vv = frame.vv!;
+    const scale = vv.scale;
     return {
-      x: (box.left - frame.vv.offsetLeft) * scale,
-      y: (box.top - frame.vv.offsetTop) * scale,
+      x: (box.left - vv.offsetLeft) * scale,
+      y: (box.top - vv.offsetTop) * scale,
       width: box.width * scale,
       height: box.height * scale,
     };
@@ -82,6 +85,22 @@ export function screenRect(
     width: box.width,
     height: box.height,
   };
+}
+
+/**
+ * A pinch scale above this counts as zoomed. NOT `!== 1`: WebKit reports the resting scale with float
+ * noise (1.0000001) after a keyboard or a zoom-out, which would put every piece on the zoom branch.
+ */
+const ZOOM_SCALE_EPSILON = 1.01;
+
+/** Whether the visual viewport is pinch-zoomed, where a pan is real and scroll is not stale. */
+function isZoomed(frame: ScreenFrame): boolean {
+  return !!frame.vv && frame.vv.scale > ZOOM_SCALE_EPSILON;
+}
+
+/** Whether `screenRect` is compensating a document scroll the page believes in (the 2026-11-04 shape). */
+export function compensatesScroll(frame: ScreenFrame): boolean {
+  return !isZoomed(frame) && (frame.scrollX !== 0 || frame.scrollY !== 0);
 }
 
 /** What one native piece shows, and what a tap on it does. */
@@ -164,6 +183,8 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
   if (!usesNativeGlassChrome()) return {};
 
   const nativeId = `${initial.id}-${++mounted}`;
+  /** Whether the last measure compensated a nonzero document scroll - logged per TRANSITION only. */
+  let compensating = false;
   let params = $state.raw(initial);
   /** Bumped when the rasterised avatar may have changed (a photo loaded, an initial changed). */
   let avatarVersion = $state(0);
@@ -174,11 +195,22 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
   let queue: Promise<unknown> = Promise.resolve();
 
   function measure() {
-    return screenRect(node.getBoundingClientRect(), {
+    const frame: ScreenFrame = {
       scrollX: window.scrollX,
       scrollY: window.scrollY,
       vv: window.visualViewport,
-    });
+    };
+    const now = compensatesScroll(frame);
+    if (now !== compensating) {
+      compensating = now;
+      // The page's own scroll line is `<private>` natively on a store build: this is the reading
+      // that confirms (or refutes) the cause of the "+" 301 pt too high (mobile.md).
+      Log.i(
+        'nativeGlassPiece',
+        `${initial.id} ${now ? 'compensating a document scroll' : 'document scroll back to 0'}: scrollX=${frame.scrollX} scrollY=${frame.scrollY}`
+      );
+    }
+    return screenRect(node.getBoundingClientRect(), frame);
   }
 
   function enqueue(what: string, call: () => Promise<unknown>) {
@@ -306,6 +338,9 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
   resizes.observe(node);
   window.addEventListener('resize', remeasure);
   window.visualViewport?.addEventListener('resize', remeasure);
+  // A pan while pinch-zoomed fires only the visual viewport's `scroll`, and it moves the piece (the
+  // zoom branch of `screenRect`). Unzoomed it changes nothing - the document anchor is invariant.
+  window.visualViewport?.addEventListener('scroll', remeasure);
   // THE ROOT'S STYLE AND CLASS MOVE A PIECE WITHOUT RESIZING IT OR THE WINDOW. Native writes
   // `--safe-area-inset-bottom` on `<html>` when the keyboard's animation ENDS (canari_ios.mm), after
   // the window's `resize` was already read, and the composer's floor is
@@ -344,6 +379,7 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
       node.removeEventListener('load', onAvatarLoad, true);
       window.removeEventListener('resize', remeasure);
       window.visualViewport?.removeEventListener('resize', remeasure);
+      window.visualViewport?.removeEventListener('scroll', remeasure);
       handlers.delete(nativeId);
       node.style.visibility = '';
       // Queued behind a creation still in flight, so a piece created after its unmount is removed.

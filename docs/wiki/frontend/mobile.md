@@ -1721,9 +1721,14 @@ No fix is written until the line has named one.
 
 **The fix.** The piece's rect is anchored to the DOCUMENT, not to the layout viewport:
 `screenRect` = `getBoundingClientRect() + (scrollX, scrollY)`. The app never scrolls its document (the
-shell is pinned, native clamps the offset to 0), so what is drawn is always the document position
-whatever the page believes. `rect + scroll` is invariant under that stale scroll, so no scroll
-listener is needed and none was added. Pinch-zoomed (`visualViewport.scale > 1.01`; the viewport meta
+shell is `overflow-hidden` at the viewport height, so the document has no scroll range and UIKit's
+offset is 0; `CanariClampDocumentScroll` guarantees that only for an offset leaving its range). The
+rect is therefore right WHILE the offset is 0, and then what is drawn is the document position
+whatever the page believes. `rect + scroll` is invariant under that stale scroll, so no document
+scroll listener is needed; the visual viewport's `scroll` is listened to for the zoomed pan only.
+When it compensates a nonzero scroll it logs once per transition (`Log.i`, "compensating a document
+scroll: scrollX= scrollY="): the in-app reading that confirms the cause, since the native page line
+is `<private>`. Pinch-zoomed (`visualViewport.scale > 1.01`; the viewport meta
 does not forbid zoom) there is a real pan, and the visual viewport's transform
 `(rect - offset) * scale` is used instead. **Owed:** the same three rounds on the build that carries
 it (the "+" at 487 beside "Envoyer", the header in place), and a salon.

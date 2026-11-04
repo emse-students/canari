@@ -213,16 +213,62 @@ describe('nativeGlassPiece', () => {
     await settle();
     plugin.updateComponent.mockClear();
 
-    rect.top = 186;
-    Object.defineProperty(window, 'scrollY', { value: 301, configurable: true });
-    window.dispatchEvent(new Event('resize'));
-    await settle();
-    expect(plugin.updateComponent).not.toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ y: 186 })
-    );
-    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
-    action.destroy?.();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      rect.top = 186;
+      Object.defineProperty(window, 'scrollY', { value: 301, configurable: true });
+      window.dispatchEvent(new Event('resize'));
+      await settle();
+      // rect 186 + scrollY 301 = 487 = where it already is: no move is sent at all.
+      expect(plugin.updateComponent).not.toHaveBeenCalled();
+      // The compensation is logged ONCE, on the transition, and again on the way back.
+      window.dispatchEvent(new Event('resize'));
+      await settle();
+      const lines = () =>
+        info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('document scroll'));
+      expect(lines()).toHaveLength(1);
+      expect(lines()[0]).toContain('compensating a document scroll: scrollX=0 scrollY=301');
+      Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+      rect.top = 487;
+      window.dispatchEvent(new Event('resize'));
+      await settle();
+      expect(lines()).toHaveLength(2);
+      expect(lines()[1]).toContain('back to 0');
+    } finally {
+      Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+      info.mockRestore();
+      action.destroy?.();
+    }
+  });
+
+  it('follows a pan while pinch-zoomed, which fires only the visual viewport scroll', async () => {
+    const vv = Object.assign(new EventTarget(), { offsetLeft: 0, offsetTop: 0, scale: 2 });
+    const had = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+    Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
+    const rect = { left: 12, top: 100, width: 44, height: 44 };
+    const node = piece(rect);
+    const action = nativeGlassPiece(node, { id: 'chat-add', label: 'Add', icon: Images });
+    try {
+      await settle();
+      const id = lastCreate().id;
+      plugin.updateComponent.mockClear();
+      vv.offsetTop = 30;
+      vv.dispatchEvent(new Event('scroll'));
+      await settle();
+      expect(plugin.updateComponent).toHaveBeenLastCalledWith(
+        id,
+        expect.objectContaining({ y: 140 })
+      );
+      action.destroy?.();
+      plugin.updateComponent.mockClear();
+      vv.offsetTop = 60;
+      vv.dispatchEvent(new Event('scroll'));
+      await settle();
+      expect(plugin.updateComponent).not.toHaveBeenCalled();
+    } finally {
+      if (had) Object.defineProperty(window, 'visualViewport', had);
+      else Reflect.deleteProperty(window, 'visualViewport');
+    }
   });
 
   it('is hidden while its web twin has no box (the phone header at md width)', async () => {
