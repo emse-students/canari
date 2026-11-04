@@ -2,6 +2,7 @@ import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
   mlsFrameEpoch,
+  publisherAdmissionBase,
   readCommitFrame,
   sealedBeforeAdmission,
 } from './mls-frame-epoch';
@@ -192,5 +193,26 @@ describe('sealedBeforeAdmission', () => {
   it('an inferred floor or no recorded admission never withholds anything', () => {
     expect(sealedBeforeAdmission(1, admitted(5, true))).toBe(false);
     expect(sealedBeforeAdmission(1, admitted(null))).toBe(false);
+  });
+});
+
+describe('publisherAdmissionBase', () => {
+  // The publish records an admission on ANY active seat without one - a member whose seat carries
+  // none, not only the creator - so the device holding epoch 7 must still be handed a frame a peer
+  // seals at 7 (review of #3026: recording 7 itself withheld it).
+  it('records the base leading to the held epoch, so a frame sealed AT that epoch still reaches it', () => {
+    const base = publisherAdmissionBase(7);
+    expect(base).toBe(6);
+    expect(sealedBeforeAdmission(7, { admittedByBaseEpoch: base, admissionInferred: false })).toBe(
+      false
+    );
+    expect(sealedBeforeAdmission(6, { admittedByBaseEpoch: base, admissionInferred: false })).toBe(
+      true
+    );
+  });
+
+  it('never records below 0, the base of the first commit', () => {
+    expect(publisherAdmissionBase(0)).toBe(0);
+    expect(publisherAdmissionBase(1)).toBe(0);
   });
 });

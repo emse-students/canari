@@ -211,10 +211,12 @@ export function isBeyondPastEpochWindow(frameEpoch: number, activeEpoch: number)
  * `past-epoch-application`, counted it a loss and asked its peers for a seed it was never owed
  * (rig log 2026-10-25: `msg_epoch=5 group_epoch=6` right after `externalJoin ... base epoch 5`).
  *
- * The CREATOR and a key group's PUBLISHER are recorded at the epoch they HOLD rather than at a
- * commit's base (`admittedByBaseEpoch` is 0 for a creation, the first published epoch for a
- * publisher): the rule reads them one epoch too strictly, which drops nothing, because no other
- * device holds the epoch a group was created at.
+ * A key group's PUBLISHER is recorded by {@link publisherAdmissionBase} - the base that leads to
+ * the epoch it holds - so a frame a peer seals at that epoch reaches it. The publish records an
+ * admission on ANY active seat that has none, not only the creator's, so recording the held epoch
+ * itself would withhold frames a member can read. A conversation's CREATOR is recorded at 0, the
+ * epoch it holds: one epoch too strict, which drops nothing, because no other device ever holds
+ * the epoch a group was created at, so nothing is sealed there for it.
  *
  * An INFERRED floor (`admissionInferred`) is no admission - it may be later than the real one - so
  * it never withholds a frame, and no recorded admission (null) never does either.
@@ -226,4 +228,18 @@ export function sealedBeforeAdmission(
   if (seat.admittedByBaseEpoch === null || seat.admittedByBaseEpoch === undefined) return false;
   if (seat.admissionInferred) return false;
   return frameEpoch <= seat.admittedByBaseEpoch;
+}
+
+/**
+ * The admission recorded for a key group's PUBLISHER, which holds `heldEpoch` and was admitted by
+ * no commit this server saw (the creator, or a member whose seat carries no admission yet).
+ *
+ * An admission is a commit's BASE - the device holds the group from base + 1 - so a device that
+ * holds `heldEpoch` is recorded at `heldEpoch - 1`: it is then neither withheld a frame sealed at
+ * the epoch it holds ({@link sealedBeforeAdmission}) nor refused the time of the commit that led
+ * there, the same floor an external join at that base would have set. Never below 0, the base of
+ * the first commit.
+ */
+export function publisherAdmissionBase(heldEpoch: number): number {
+  return Math.max(0, heldEpoch - 1);
 }

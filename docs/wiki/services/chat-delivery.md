@@ -447,11 +447,23 @@ it was never owed (rig log, 2026-10-25: `msg_epoch=5 group_epoch=6` in the same 
 `[SEND][trace] SEALED_BEFORE_ADMISSION group= frameEpoch= withheld=N devices=`. It is the rule a
 pending seat already had (`admittedAtEpoch`), read from the admission every seat records. Commits
 are never withheld. An inferred floor (`admissionInferred`) or a seat with no recorded admission is
-never withheld from, because only a recorded admission proves the device cannot hold the epoch. The
-creator and a key group's publisher are recorded at the epoch they hold rather than at a base, so the
-rule is one epoch too strict for them, which withholds nothing: no other device can seal at the
-epoch a group was created at. Asserted in `messaging.durability.spec.ts` (an active device admitted
-after the frame) and `mls-frame-epoch.spec.ts`.
+never withheld from, because only a recorded admission proves the device cannot hold the epoch. A
+key group's PUBLISHER is recorded at the base leading to the epoch E it publishes, `E - 1`
+(`publisherAdmissionBase`): the publish writes an admission on ANY active seat that has none - a
+member whose seat carries no admission, not only the creator - and recording E itself would
+withhold the frames peers seal at E, which that device reads. A conversation's creator is recorded
+at 0, the epoch it holds: one epoch too strict, which withholds nothing, because no other device can
+seal at the epoch a group was created at. The history stream (`GET mls/history/:groupId`, the batch)
+is not a second road to the key-group loss: the client replays it only for conversations
+(`utils/chat/conversations.ts`, the conversation metas minus salons), never a key group, and a key
+group's peer reconcile is closed (`historyReconcile.ts`, `isDistributionGroup`), so no seed request
+comes from it. A CONVERSATION joiner can still be handed the crossing frame by its stream (rows are
+filtered by arrival time, not epoch): the replay marks the row seen (`utils/chat/history.ts`, no
+queue ack) and escalates a peer reconcile, whose answer is sealed at the current epoch - the one
+road by which a message sent after the arrival still reaches the newcomer, so the stream is
+deliberately NOT filtered by this rule. Asserted in
+`messaging.durability.spec.ts` (an active device admitted after the frame),
+`mls-frame-epoch.spec.ts` and `internal.distribution-group.spec.ts` (the publisher's record).
 
 ### The queue is bounded on ONE axis, and observed on the other
 

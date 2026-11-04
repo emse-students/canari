@@ -455,9 +455,11 @@ describe('InternalController - the community distribution group', () => {
           tag: 'DISTRIBUTION_PUBLISHER',
           authority: 'distribution_publisher',
           claim: { groupId: 'g-1', userId: PUBLISHER.userId, generation: 0, owed: false },
-          // The creating device sends no commit: it holds the group at the published epoch, and
-          // that is recorded only on a seat no commit admitted.
-          admittedByBaseEpoch: 7,
+          // The creating device sends no commit: it HOLDS the published epoch 7, so it is
+          // recorded at the base leading there, 6 - a frame a peer seals at 7 is one it can read,
+          // and the record withholds every frame at or below it. Recorded only on a seat no
+          // commit admitted, which is not only the creator's.
+          admittedByBaseEpoch: 6,
         }
       );
     });
