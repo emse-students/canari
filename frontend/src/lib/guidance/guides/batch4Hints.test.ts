@@ -109,6 +109,13 @@ describe('the anchors follow what the page draws', () => {
   it('the week step words differ by layout (planning list on a phone, grid on a wide screen)', () => {
     const body = bookingWeekHint.steps[1].body as { byLayout: (l: GuideLayout) => () => string };
     expect(body.byLayout(PHONE)).not.toBe(body.byLayout(DESKTOP));
+    // The phone's "Réserver un créneau" is only the aria-label of an icon-only "+": name the button.
+    const fr = JSON.parse(src('../messages/fr.json')) as Record<string, string>;
+    const en = JSON.parse(src('../messages/en.json')) as Record<string, string>;
+    expect(fr.guide_hint_booking_week_body_phone).toContain('le bouton +');
+    expect(en.guide_hint_booking_week_body_phone).toContain('the + button');
+    expect(fr.guide_hint_booking_week_body_phone).not.toContain('Réserver un créneau');
+    expect(en.guide_hint_booking_week_body_phone).not.toContain('Book a slot');
   });
 
   it('the Reservations hint is replayable from its fixed route, the space one is not', () => {

@@ -5320,6 +5320,6 @@
   "guide_hint_booking_column_title": "One column per resource",
   "guide_hint_booking_column_body": "This space has several columns, one per room or resource. Pick the one you want to book: the number of free slots is shown.",
   "guide_hint_booking_week_title": "Book a slot",
-  "guide_hint_booking_week_body_phone": "Pick the day, then a free slot in the list, or \"Book a slot\". A sheet lets you adjust the length and add people before you confirm.",
+  "guide_hint_booking_week_body_phone": "Pick the day, then a free slot in the list, or use the + button. A sheet lets you adjust the length and add people before you confirm.",
   "guide_hint_booking_week_body_desktop": "Pick a free slot in the grid, or drag over several to book for longer. A sheet lets you adjust the length and add people before you confirm."
 }
