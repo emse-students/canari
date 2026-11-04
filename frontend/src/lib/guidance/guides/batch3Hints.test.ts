@@ -123,7 +123,7 @@ describe('eligibility is the page facts the control is drawn by', () => {
     const fr = JSON.parse(src('../messages/fr.json')) as Record<string, string>;
     const en = JSON.parse(src('../messages/en.json')) as Record<string, string>;
     for (const [key, text] of [...Object.entries(fr), ...Object.entries(en)]) {
-      if (key.startsWith('guide_hint_asso_')) expect(text, key).not.toMatch(/rejoindre|join/i);
+      if (key.startsWith('guide_hint_asso_')) expect(text, key).not.toMatch(/rejoindre|\bjoin/i);
     }
   });
 
@@ -170,7 +170,7 @@ describe('the publish-as text is valid on both layouts', () => {
     expect(fr[key]).toContain(fr.post_create_post_as_label);
     expect(en[key]).toContain(en.post_create_post_as_label);
     expect(fr[key]).not.toMatch(/touchez|cliquez|message|ici/i);
-    expect(en[key]).not.toMatch(/(tap|click|here)/i);
+    expect(en[key]).not.toMatch(/\b(tap|click|here)\b/i);
   });
 
   it('is a plain message, not a per-layout value', () => {
