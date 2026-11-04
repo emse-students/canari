@@ -51,6 +51,16 @@ import { themeStore } from '$lib/stores/themeStore.svelte';
 import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
 
 const mounted: (() => void)[] = [];
+const INTERACTIVE = 'plugin:system-components|set_tab_bar_interactive';
+
+/** Lets the plugin's answers and the effects they trigger settle. */
+async function settle() {
+  for (let i = 0; i < 6; i++) {
+    await tick();
+    await Promise.resolve();
+  }
+  flushSync();
+}
 let selectTabHandler: ((e: { id: string }) => void) | null = null;
 const originalMatchMedia = window.matchMedia;
 
@@ -229,23 +239,29 @@ describe('NativeTabBar', () => {
   it('takes no touch while a modal web layer covers the page, and takes them again after', async () => {
     // iPhone 12, `1.6.3-alpha.7`: a tab tapped under the tour's backdrop left the tour.
     await mountBar({ visible: true });
-    // A bar that starts under no modal layer asks nothing: a new overlay is interactive.
-    expect(core.invoke).not.toHaveBeenCalled();
+    // Sent once the bar is configured, whatever it was: the overlay outlives a WebView reload.
+    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
+      options: { interactive: true, seq: expect.any(Number) },
+    });
 
     modalWebLayer.covering = true;
-    flushSync();
-    expect(core.invoke).toHaveBeenLastCalledWith(
-      'plugin:system-components|set_tab_bar_interactive',
-      { options: { interactive: false } }
-    );
+    await settle();
+    expect(core.invoke).toHaveBeenLastCalledWith(INTERACTIVE, {
+      options: { interactive: false, seq: expect.any(Number) },
+    });
 
     modalWebLayer.covering = false;
-    flushSync();
-    expect(core.invoke).toHaveBeenLastCalledWith(
-      'plugin:system-components|set_tab_bar_interactive',
-      { options: { interactive: true } }
+    await settle();
+    expect(core.invoke).toHaveBeenLastCalledWith(INTERACTIVE, {
+      options: { interactive: true, seq: expect.any(Number) },
+    });
+    expect(core.invoke).toHaveBeenCalledTimes(3);
+    // Every call carries a rising sequence, which Swift orders the async calls by.
+    const seqs = core.invoke.mock.calls.map(
+      (c) => (c[1] as { options: { seq: number } }).options.seq
     );
-    expect(core.invoke).toHaveBeenCalledTimes(2);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(3);
     // Still drawn throughout: the tour's steps point at its band.
     expect(plugin.hideTabBar).not.toHaveBeenCalled();
   });
@@ -253,8 +269,30 @@ describe('NativeTabBar', () => {
   it('blocks a bar that comes up under a modal layer already on screen', async () => {
     modalWebLayer.covering = true;
     await mountBar({ visible: true });
-    expect(core.invoke).toHaveBeenCalledWith('plugin:system-components|set_tab_bar_interactive', {
-      options: { interactive: false },
+    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
+      options: { interactive: false, seq: expect.any(Number) },
     });
+  });
+
+  it('retries a block the plugin refused on the next change', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await mountBar({ visible: true });
+    core.invoke.mockRejectedValueOnce(new Error('tab bar is not configured'));
+    modalWebLayer.covering = true;
+    await settle();
+    expect(warn).toHaveBeenCalled();
+    core.invoke.mockClear();
+
+    // The refused block was never recorded as sent: the plugin still holds `interactive: true`, so
+    // the layer going away asks nothing, and the next one sends the block again.
+    modalWebLayer.covering = false;
+    await settle();
+    expect(core.invoke).not.toHaveBeenCalled();
+    modalWebLayer.covering = true;
+    await settle();
+    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
+      options: { interactive: false, seq: expect.any(Number) },
+    });
+    warn.mockRestore();
   });
 });

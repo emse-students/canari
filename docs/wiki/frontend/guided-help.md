@@ -157,7 +157,12 @@ Three refinements keep that exact:
   while a MODAL step is on screen - not while a tour is suspended, and never for a hint, which leaves
   the page usable - and `NativeTabBar` sends it to the plugin's Canari-patched
   `set_tab_bar_interactive`, which turns the overlay's root view's `isUserInteractionEnabled` off so
-  UIKit's hit test hands the touch to the WebView, where the backdrop takes it. The bar stays drawn:
+  UIKit's hit test hands the touch to the WebView, where the backdrop takes it. Each call carries a
+  rising `seq` (the command is async, so two quick toggles may reach the main queue out of order, and
+  Swift drops an older one arriving last); a configuration resets the bar to interactive and the
+  sequence to -1, and `NativeTabBar` sends its state after EVERY configuration - the overlay outlives
+  a WebView reload, so a page reloaded under the backdrop would otherwise inherit a bar that takes no
+  touch. A call is recorded as sent only once the plugin answered. The bar stays drawn:
   the tab steps point at its band. Hiding it was rejected for that reason. Owed on the iPhone: check T
   in [device-verification](../device-verification.md).
 

@@ -57,6 +57,9 @@ class SelectTabArgs: Decodable {
 /// CANARI PATCH: see `setTabBarInteractive`.
 class SetTabBarInteractiveArgs: Decodable {
     let interactive: Bool
+    /// Rises with every call the page makes. The command is async on the Rust side, so two quick
+    /// toggles may reach the main queue out of order; an older one arriving last is dropped.
+    let seq: Int
 }
 
 class SetBadgeArgs: Decodable {
@@ -105,6 +108,9 @@ class SystemComponentsPlugin: Plugin {
     private var componentsOverlay: ComponentsOverlayController?
     private var webView: WKWebView?
     private var sheets: [String: SheetController] = [:]
+    /// CANARI PATCH: the newest `setTabBarInteractive` sequence applied; -1 since the last
+    /// configuration (a reloaded page counts again from 1). Main queue only.
+    private var interactiveSeq = -1
     // CANARI PATCH: no KeyboardViewportGuard. Upstream installs one at load, with no switch, and it
     // resizes the WebView by 0.5 pt and back 100 ms after every keyboard dismissal. Canari already
     // owns that frame (`CanariApplyKeyboardLayout`, canari_ios.mm, on every keyboard frame change),
@@ -128,6 +134,12 @@ class SystemComponentsPlugin: Plugin {
             }
             // Idempotent: reconfiguring updates the mounted bar in place.
             let overlay = self.overlay ?? self.mount(on: host)
+            // CANARI PATCH: a configuration starts INTERACTIVE. The overlay outlives a WebView
+            // reload, so a page reloaded under the tour's backdrop would otherwise inherit a bar
+            // that takes no touch with nothing left to turn it back on. The page configures the bar
+            // first and then sends its own state (`NativeTabBar.svelte`), from sequence 1 again.
+            overlay.view.isUserInteractionEnabled = true
+            self.interactiveSeq = -1
             overlay.apply(items: args.items, selectedId: args.selectedId)
             overlay.applyTint(args.tint.flatMap(ColorUtil.from(hex:)))
             if let acc = args.accessory {
@@ -172,11 +184,19 @@ class SystemComponentsPlugin: Plugin {
     @objc public func setTabBarInteractive(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(SetTabBarInteractiveArgs.self)
         DispatchQueue.main.async { [weak self] in
-            guard let overlay = self?.overlay else {
+            guard let self, let overlay = self.overlay else {
                 NSLog("[pendi-nav][native] setTabBarInteractive refused: tab bar is not configured")
                 invoke.reject("tab bar is not configured")
                 return
             }
+            guard args.seq > self.interactiveSeq else {
+                NSLog(
+                    "[pendi-nav][native] setTabBarInteractive seq=%ld dropped: %ld already applied",
+                    args.seq, self.interactiveSeq)
+                invoke.resolve()
+                return
+            }
+            self.interactiveSeq = args.seq
             overlay.view.isUserInteractionEnabled = args.interactive
             NSLog(
                 "[pendi-nav][native] setTabBarInteractive interactive=%@",

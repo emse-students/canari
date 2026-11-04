@@ -248,21 +248,39 @@
    * so the guided tour's backdrop cannot cover it, and a tap on a tab left the tour and navigated.
    * While the backdrop is on screen the plugin is told to take no touch (the Canari patch
    * `set_tab_bar_interactive`); the bar stays drawn, because the tour's steps point at its band.
-   * Sent on every change, and on a (re)mount of the bar - a new overlay starts interactive.
+   *
+   * SENT AFTER EVERY CONFIGURATION, whatever it was before: the plugin resets the bar to interactive
+   * when configured, and its overlay OUTLIVES a WebView reload - a page reloaded under the backdrop
+   * would otherwise leave a bar that takes no touch, with this side believing it never blocked it.
+   * Recorded as sent only once the plugin ANSWERED, so a failed call is retried on the next change;
+   * every call carries a rising `seq`, because the command is async and two quick toggles may reach
+   * the main queue out of order - Swift drops an older one arriving last.
    */
-  let sentInteractive = true;
+  let interactiveSeq = 0;
+  let sentInteractive: { configuration: number; interactive: boolean } | null = null;
   $effect(() => {
+    const configuration = configurations;
     if (nativeTabBar.status !== 'native') return;
     const interactive = !modalWebLayer.covering;
-    if (interactive === sentInteractive) return;
-    sentInteractive = interactive;
+    if (
+      sentInteractive?.configuration === configuration &&
+      sentInteractive.interactive === interactive
+    ) {
+      return;
+    }
+    const seq = ++interactiveSeq;
     Log.d(
       'NativeTabBar',
-      `interactive=${interactive} (modal web layer ${interactive ? 'gone' : 'up'})`
+      `interactive=${interactive} seq=${seq} (modal web layer ${interactive ? 'gone' : 'up'})`
     );
-    void invoke(systemComponentsCommand('setTabBarInteractive'), {
-      options: { interactive },
-    }).catch(logFailure(interactive ? 'interaction restore' : 'interaction block'));
+    invoke(systemComponentsCommand('setTabBarInteractive'), {
+      options: { interactive, seq },
+    }).then(
+      () => {
+        if (seq === interactiveSeq) sentInteractive = { configuration, interactive };
+      },
+      logFailure(interactive ? 'interaction restore' : 'interaction block')
+    );
   });
 
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.

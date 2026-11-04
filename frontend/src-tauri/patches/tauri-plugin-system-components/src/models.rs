@@ -392,4 +392,7 @@ pub struct GlassSupport {
 #[serde(rename_all = "camelCase")]
 pub struct SetTabBarInteractiveOptions {
     pub interactive: bool,
+    /// Rises with every call from the page; Swift drops one older than the last it applied, since
+    /// this async command may reach the main queue out of order. Reset by a configuration.
+    pub seq: u64,
 }
