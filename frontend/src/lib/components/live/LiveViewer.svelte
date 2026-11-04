@@ -88,7 +88,10 @@
   // The key from the player, and the account READ REACTIVELY: an account that loads after the viewer
   // opened enables the composer then, not never.
   let chatKeyed = $state(false);
-  /** The server withholds the chat from this named reader (owner, 2026-11-04): the session says. */
+  /**
+   * The server withholds the chat from this named reader (owner, 2026-11-04): the session says. The
+   * comments rule exactly (lead, 2026-11-04): no chat area, no toggle, no line explaining it.
+   */
   let chatWithheld = $state(false);
   const chatCanWrite = $derived(chatKeyed && !chatWithheld && currentUserId() !== null);
   let chatOpen = $state(true);
@@ -336,21 +339,24 @@
           <Volume2 size={22} />
         {/if}
       </button>
-      <button
-        type="button"
-        class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
-        aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-        title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-        aria-pressed={chatOpen}
-        onclick={() => (chatOpen = !chatOpen)}
-        data-live-chat-toggle
-      >
-        {#if chatOpen}
-          <MessageCircle size={22} />
-        {:else}
-          <MessageCircleOff size={22} />
-        {/if}
-      </button>
+      <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
+      {#if !chatWithheld}
+        <button
+          type="button"
+          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
+          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          aria-pressed={chatOpen}
+          onclick={() => (chatOpen = !chatOpen)}
+          data-live-chat-toggle
+        >
+          {#if chatOpen}
+            <MessageCircle size={22} />
+          {:else}
+            <MessageCircleOff size={22} />
+          {/if}
+        </button>
+      {/if}
       {#if !terminal}
         <button
           type="button"
@@ -389,7 +395,7 @@
         class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
       >
         <div class="min-w-0 flex-1">
-          {#if chatOpen}
+          {#if chatOpen && !chatWithheld}
             <LiveChatPanel
               lines={chatLines}
               canWrite={chatCanWrite}
@@ -400,7 +406,6 @@
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
               report={(line) => (reportedLine = line)}
-              withheld={chatWithheld}
             />
           {/if}
         </div>

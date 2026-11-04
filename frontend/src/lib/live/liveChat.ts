@@ -155,7 +155,7 @@ export interface LiveChatSessionOptions {
   onChange(lines: readonly LiveChatLine[]): void;
   /**
    * Told when the chat becomes withheld from me or served to me again (see the module comment) -
-   * the panel draws its one-line explanation in place of the chat while it is `true`.
+   * while it is `true` the screen draws no chat at all, and no toggle for it (the comments rule).
    */
   onWithheld?(withheld: boolean): void;
   /** Told reactions to float: mine at the tap, everyone else's as each poll brings them. */
@@ -274,7 +274,7 @@ export class LiveChatSession {
 
   /**
    * The player's hook (`LivePlayerChatHook.onKey`): the key its open fetched, and whether that open
-   * said the chat is withheld from me - so the explanation is drawn before the first poll answers.
+   * said the chat is withheld from me - so no chat is drawn before the first poll answers.
    */
   onKey(keyHex: string, opened: { chatWithheld?: boolean } = {}): void {
     this.setKey(keyHex);
@@ -339,6 +339,12 @@ export class LiveChatSession {
    * sealing. Resolves with the failure, or null once the server stored it.
    */
   async send(raw: string): Promise<LiveChatSendFailure | null> {
+    if (this.chatWithheld) {
+      // The server already said the chat is withheld from me: no pending line, no request - a line
+      // drawn now would outlive the withholding and show when the chat comes back.
+      console.info(`[LIVE_CHAT] ${this.liveId}: send refused here, the chat is withheld`);
+      return 'withheld';
+    }
     const text = raw.trim();
     if (text === '') return 'empty';
     if (this.maxChars !== null && text.length > this.maxChars) {
@@ -564,6 +570,16 @@ export class LiveChatSession {
         console.warn(`[LIVE_CHAT] ${this.liveId}: a chat row dropped (${String(e)})`);
       }
       if (this.stopped) return;
+      // A withheld block arrived while this one was opening its rows: the rest are not drawn, and
+      // the ones drawn since the withholding's clear go too - none may stay in memory. The block's
+      // reactions still float below: they are served to a withheld reader as to anyone.
+      if (this.chatWithheld) {
+        console.info(
+          `[LIVE_CHAT] ${this.liveId}: the chat was withheld mid-block, the rest dropped`
+        );
+        this.lines = [];
+        break;
+      }
     }
     if (messages.length > 0) {
       Log.d(TAG, { op: 'receive', messages: messages.length, dropped });

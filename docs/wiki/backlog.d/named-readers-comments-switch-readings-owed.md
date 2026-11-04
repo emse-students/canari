@@ -45,8 +45,8 @@ What closes it:
   against PostgreSQL). **The reading, after a pre-release, on dev**: the throwaway grantee above
   (no space, a campus granted), an association of that campus going live from a member's phone, and
   one line written in its chat by a native viewer. Switch OFF - the grantee opens the live: the video
-  plays, the chat area shows the one line "Le chat de ce live n'est pas visible avec votre accès en
-  lecture", no composer, no line; the floating reactions arrive and the grantee's own taps are taken
+  plays, there is no chat area at all - no line, no composer, no explanation - and no chat toggle in
+  the top bar (the comments rule); the floating reactions arrive and the grantee's own taps are taken
   (`POST .../reactions` 201); `GET /api/lives/:id/manifest?chat=1` answers `chat.withheld: true` with
   `messages: []`, `POST .../messages` 403 `LIVE_CHAT_WITHHELD`; the browser console shows no error.
   Switch ON in `/admin/read-access` WITHOUT closing the live: within one poll the lines appear (the

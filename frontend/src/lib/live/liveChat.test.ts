@@ -668,4 +668,52 @@ describe('the chat withheld from a named reader (owner, 2026-11-04)', () => {
     expect(told).toEqual([true]);
     info.mockRestore();
   });
+
+  it('a send while already withheld is refused here: no pending line, no request, nothing kept for the way back', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    expect(await s.send('bonjour')).toBe('withheld');
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(lines).toEqual([]);
+    // Served again: the backlog alone is drawn, never the refused line.
+    await s.receive(block([wire(4, 'backlog')], 4));
+    expect(texts()).toEqual(['backlog']);
+    info.mockRestore();
+  });
+
+  it('a block still opening its rows when a withheld block arrives draws none of them, and its reactions still float', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    // The first row's open waits on a gate the test opens, so the withheld block lands MID-block:
+    // an ordering, never a duration.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let opening!: () => void;
+    const opened = new Promise<void>((r) => (opening = r));
+    deps.open = vi.fn(async (_k, _l, _c, _a, sealed: string) => {
+      if (sealed === 'S:gated') {
+        opening();
+        await gate;
+      }
+      return sealed.slice(2);
+    });
+    const { s } = watched();
+    s.onKey(KEY);
+    const first = s.receive(
+      block([wire(1, 'gated'), wire(2, 'after')], 2, {
+        reactions: [{ window: 0, counts: { clap: 1 } }],
+        reactionsCursor: 1,
+      })
+    );
+    await opened;
+    const second = s.receive(block([], 9, { withheld: true, reactionsCursor: 1 }));
+    release();
+    await first;
+    await second;
+    expect(deps.open).toHaveBeenCalledTimes(1);
+    expect(lines).toEqual([]);
+    expect(s.withheld).toBe(true);
+    expect(floats).toEqual([['clap', 1]]);
+    info.mockRestore();
+  });
 });

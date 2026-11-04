@@ -86,8 +86,8 @@ export interface LiveView {
  * `viewerModerates` the list carries), so a viewer opened from a link draws the staff hide button
  * exactly as one opened from the list - never from a client-side fallback. `chatWithheld`: the
  * viewer is a named reader who watches this live only through a read grant with "voit les
- * commentaires" off (owner, 2026-11-04, `liveChatWithheldFromViewerSql`) - the screen draws its
- * one-line explanation instead of the chat from the first frame; every poll then says it again.
+ * commentaires" off (owner, 2026-11-04, `liveChatWithheldFromViewerSql`) - the screen draws no chat
+ * and no chat toggle from the first frame; every poll then says it again.
  */
 export type LiveViewerView = LiveView & { viewerModerates: boolean; chatWithheld: boolean };
 

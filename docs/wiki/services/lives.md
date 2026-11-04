@@ -178,6 +178,20 @@ holds from the NEXT poll on, both ways, with no reopen: the poll is the stream, 
 the predicate again - no cache, no timer. A chat line notifies nobody, so there is no notification to
 withhold. Proof: `lives.integration.spec.ts`, "a named reader and the chat of an association live".
 
+**The live follows the comments rule EXACTLY on the reader's side (lead decision, 2026-11-04,
+applying the owner's "same rule as comments")**: no dead control and nothing hinting at a hidden
+discussion. While the chat is withheld the viewer draws NO chat area, no line explaining why, and no
+chat show/hide toggle (`LiveViewer.svelte`, `chatWithheld`); the video, the viewer count and the
+reaction bar stay. **What the withheld block still says, accepted**: its `messagesCursor` is the
+live's newest seq, so a reader of the raw API learns how many chat events (lines and hides) there
+were - an activity count, never a line, an author or a text; the client does not even keep it. **Not
+logged per poll**: the withheld branch of the chat read runs once a second per viewer and the server
+keeps no state to log a transition only, so it writes nothing; the 403 of a send is logged. **One
+case is not asserted**: a BDE `MODERATE` holder whose moderating scope holds the live but who
+reaches it ONLY through a grant would get `viewerModerates` and a withheld chat - so no line to
+moderate. Nobody is known to be in that position (a BDE moderator is a student of the spaces they
+govern, so reaches the live natively); it is named here, not tested.
+
 **A segment is read WITHOUT A TOKEN**, `GET /api/media/public/live/<liveId>/<name>`, by the `name`
 the manifest gives, and it is answered by Canari's own nginx from the second viewer on (below).
 

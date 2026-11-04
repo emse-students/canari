@@ -453,7 +453,9 @@ export class LiveChatService {
         `SELECT COALESCE(max(seq), 0)::int AS top FROM live_chat_messages WHERE "liveId" = $1`,
         [liveId]
       );
-      this.logger.debug(`[LIVE_CHAT] ${liveId}: chat withheld from ${short(viewerId)}`);
+      // NOT LOGGED HERE: this runs on every poll (once a second per viewer), and the server keeps no
+      // state to log the transition only - so a line here would be per-second noise. The decision
+      // is logged where it changes something: the 403 of a send (`LivesService.mayChat`).
       const reactions = await this.readReactions(viewerId, liveId, cursors, blocked);
       return { messages: [], messagesCursor: top, ...reactions, withheld: true };
     }
