@@ -51,7 +51,7 @@ const el = (label, type, rect, extra = {}) => ({ label, type: `XCUIElementType${
  * scrolls (their elements move up 400 pt). Records every ios.mjs call and every stdin text.
  */
 function device({ screens, start, state = 4, installed = true, pymd = () => '' } = {}) {
-  const s = { screens, screen: start, state, calls: [], stdin: [], clock: 0, installed, signInstalls: 0 };
+  const s = { screens, screen: start, state, calls: [], stdin: [], stdinOpts: [], clock: 0, installed, signInstalls: 0 };
   const visible = () =>
     (s.screens[s.screen] ?? []).map((e) => {
       const { go: _g, toggle: _t, stuck: _s, onTap: _o, ...rest } = e;
@@ -114,9 +114,10 @@ function device({ screens, start, state = 4, installed = true, pymd = () => '' }
           return '';
       }
     },
-    typeStdin: (text) => {
+    typeStdin: (text, opts = {}) => {
       s.stdin.push(text);
-      s.onType?.(s, text);
+      s.stdinOpts.push(opts);
+      s.onType?.(s, text, opts);
     },
     signInstall: () => {
       s.signInstalls++;
@@ -322,15 +323,16 @@ const notifScreens = (root) => ({
       app: [appField],
     },
   });
-  s.onType = (st, text) => {
-    if (st.screen === 'uid' && text.endsWith('\n')) st.screen = 'pwd';
-    else if (st.screen === 'pwd' && text.endsWith('\n')) st.screen = 'app';
+  s.onType = (st, text, opts) => {
+    if (st.screen === 'uid' && opts.submit) st.screen = 'pwd';
+    else if (st.screen === 'pwd' && opts.submit) st.screen = 'app';
   };
   const r = await ios.signInThroughSheet(creds, { hosts: HOSTS, settled: async () => s.screen === 'app' });
   check('O9 sign-in: consent, identifier, password - in that order', JSON.stringify(r.stages) === '["consent","identifier","password"]', JSON.stringify(r));
-  check('O9 sign-in: each stage ended with RETURN, never the form\'s button', s.stdin.every((t) => t.endsWith('\n')) && s.stdin.length === 2);
-  check('O9 sign-in: the field is cleared first (its placeholder deleted, harmless)', s.stdin[0].startsWith('\b'.repeat("Nom d'utilisateur".length)) && s.stdin[0].endsWith('canari-test-alpha\n'));
-  check('O9 sign-in: the PASSWORD never reached an argv', !s.calls.some((c) => c.includes(creds.password)) && s.stdin[1].endsWith('s3cr3t-Pw\n'));
+  check('O9 sign-in: each stage ended with RETURN as the explicit submit option, never the form button', s.stdinOpts.every((o) => o.submit === true) && s.stdin.length === 2);
+  check('O9 sign-in: the text carries NO control character (`ios.mjs type` clears the field itself and `--submit` presses Return)', s.stdin.every((t) => ![...t].some((c) => c.charCodeAt(0) < 32)) && s.stdin[0] === 'canari-test-alpha');
+  check('O9 sign-in: the PASSWORD never reached an argv', !s.calls.some((c) => c.includes(creds.password)) && s.stdin[1] === 's3cr3t-Pw');
+  check('O9 sign-in: the two field taps are marked --over-keyboard, the consent tap is not', s.calls.filter((c) => c.endsWith('--over-keyboard')).length === 2 && s.calls.filter((c) => c.startsWith('tap ')).length === 3);
   check('O9 sign-in: the app\'s own search field, once back, was left alone', s.stdin.length === 2);
   restore();
 }

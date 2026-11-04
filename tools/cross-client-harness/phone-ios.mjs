@@ -96,8 +96,10 @@ const io = {
    * `ios.mjs type -` with `text` on STDIN - a credential typed into the sign-in sheet never becomes an
    * argv value a process list or a captured shell would show.
    */
-  typeStdin(text, timeout = 60_000) {
-    const r = spawnSync(process.execPath, [join(HERE, '..', 'ios-device', 'ios.mjs'), 'type', '-'], { input: text, encoding: 'utf8', timeout });
+  typeStdin(text, { submit = false, keys = false, timeout = 60_000 } = {}) {
+    // `text` is text only: the field is cleared by `type` itself and Return is `--submit`, never an in-band newline.
+    const flags = [...(submit ? ['--submit'] : []), ...(keys ? ['--keys'] : [])];
+    const r = spawnSync(process.execPath, [join(HERE, '..', 'ios-device', 'ios.mjs'), 'type', '-', ...flags], { input: text, encoding: 'utf8', timeout });
     if (r.status !== 0) throw new Error(`ios.mjs type - failed (exit ${r.status ?? 'none'}): ${String(r.stderr || r.error?.message || '').trim().slice(0, 300)}`);
   },
   /** Runs `sign-install.mjs` on an unsigned bench IPA (it signs AND installs); throws with its output. */
@@ -473,7 +475,8 @@ export function tapNativeTab(placeId) {
     throw new Error(`tapNativeTab: the bar shows ${slots.length} buttons and places.ts names ${order.length} (${order.join(', ')})`);
   }
   const s = slots[index];
-  io.ios(['tap', `${Math.round(s.x + s.width / 2)},${Math.round(s.y + s.height / 2)}`]);
+  // Over the keyboard on purpose: the slot is PROVEN selected by the read below, so a tap that pressed a key instead throws.
+  io.ios(['tap', `${Math.round(s.x + s.width / 2)},${Math.round(s.y + s.height / 2)}`, '--over-keyboard']);
   const after = JSON.parse(io.ios(['tabs']));
   if (!after[index]?.selected) throw new Error(`tapNativeTab: tapped slot ${index} ('${placeId}') and it is not selected`);
   return { index, of: order.length };
@@ -954,9 +957,14 @@ export function console_(sinceLines = 3000) {
 const readFlat = () => JSON.parse(io.ios(['flat']));
 const labelOf = (e) => String(e?.label || String(e?.text ?? '').split(' | ')[0]).trim();
 const centreOf = (r) => ({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
-const tapRect = (r) => {
+/**
+ * Taps the centre of `r`. The keyboard guard of `ios.mjs tap` stays ON; `overKeyboard` is a per-site
+ * decision (`--over-keyboard`), taken only where the target is tapped WHILE a field holds focus by
+ * construction: a text field being focused (the sign-in stages) and a notification reply's Send.
+ */
+const tapRect = (r, { overKeyboard = false } = {}) => {
   const c = centreOf(r);
-  io.ios(['tap', `${c.x},${c.y}`]);
+  io.ios(['tap', `${c.x},${c.y}`, ...(overKeyboard ? ['--over-keyboard'] : [])]);
   return c;
 };
 
@@ -1306,14 +1314,16 @@ export function signInStage(flat, hosts) {
   return null;
 }
 
-/** Focuses `field`, deletes what it holds, and types `text` + Return - Return, never the IdP's button. */
+/**
+ * Focuses `field` and types `text` + Return - Return, never the IdP's button. `type` clears the field
+ * itself, sets the value in one call and reads it back before pressing Return (`submit`), so a wrong
+ * value is never submitted. Typed through stdin - see `typeStdin`. The field tap is the one tap that
+ * is made while another field may still hold focus, so it passes `overKeyboard`.
+ */
 function fillField(field, text) {
-  tapRect(field.rect);
+  tapRect(field.rect, { overKeyboard: true });
   io.sleepSync(400);
-  // A secure field reads as dots and an empty one as its placeholder: deleting that many characters
-  // clears the first and is harmless to the second. Typed through stdin - see `typeStdin`.
-  const held = String(field.value ?? '').length;
-  io.typeStdin(`${'\b'.repeat(held)}${text}\n`);
+  io.typeStdin(text, { submit: true });
 }
 
 /**
@@ -1457,7 +1467,7 @@ export async function notificationAction(needle, action, { text } = {}) {
       io.typeStdin(text);
       const send = findLabelled(readFlat(), titles.send, { type: 'Button' });
       if (!send) return { ok: false, found: true, why: `the reply field shows no ${titles.send.join(' / ')} button` };
-      tapRect(send.rect);
+      tapRect(send.rect, { overKeyboard: true });
       io.sleepSync(800);
     }
     const still = findLabelled(readFlat(), [...titles[action], ...titles.send], { type: 'Button' });
