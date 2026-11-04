@@ -108,6 +108,22 @@ describe('saveObjectUrlAs', () => {
     );
   });
 
+  it('discards the staged copy and rejects when the document write is refused', async () => {
+    // A rejection before the command runs (IPC, permission) leaves the staged copy behind.
+    pretendTauri(new Uint8Array([1]));
+    save.mockResolvedValue('content://com.android.externalstorage.documents/document/x');
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'plugin:gallery|write_staged_document') throw new Error('not allowed');
+      return undefined;
+    });
+
+    await expect(saveObjectUrlAs('blob:x', 'a.txt')).rejects.toThrow('not allowed');
+
+    const [session] = stageBlob.mock.calls[0] as [string, Blob];
+    expect(invoke).toHaveBeenCalledWith('plugin:gallery|discard_video', { session });
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
   it('writes nothing when the user cancels the dialog', async () => {
     pretendTauri(new Uint8Array([9]));
     save.mockResolvedValue(null);

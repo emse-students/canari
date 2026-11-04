@@ -29,8 +29,9 @@ fn valid_session(session: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// The file a session stages into. `.mp4`, because iOS Photos reads the container off the
-/// extension of the URL it is given.
+/// The file a session stages into: a reel saved to the gallery, a file shared out, or a document
+/// written through its provider. `.mp4` whatever the content, because iOS Photos reads the container
+/// off the extension of the URL it is given; the other two never read the staged file's name.
 fn staged_path<R: Runtime>(app: &AppHandle<R>, session: &str) -> crate::Result<PathBuf> {
     if !valid_session(session) {
         return Err(crate::Error::BadSession);

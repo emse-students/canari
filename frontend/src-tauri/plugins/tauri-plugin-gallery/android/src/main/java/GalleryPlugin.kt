@@ -197,8 +197,9 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
      * THE STREAM IS THE PROVIDER'S, AND IT IS CLOSED HERE, AFTER THE COPY. The `plugin-fs` write
      * this replaces took the descriptor out of its `ParcelFileDescriptor` (`detachFd()`), which
      * tells the provider's close listener "closed" before the first byte: the Downloads provider
-     * recorded the size then - 0 - and kept it. Mode `w`: the document is the one the dialog has
-     * just created, empty, and `ACTION_CREATE_DOCUMENT` never hands back an existing file.
+     * recorded the size then - 0 - and kept it. Mode `wt`, as the `plugin-fs` write it replaces
+     * (`truncate: true`): since API 29 a bare `w` is not guaranteed to truncate, and a provider may
+     * hand back an existing document, so an overwrite with `w` could keep stale trailing bytes.
      */
     @Command
     fun writeDocument(invoke: Invoke) {
@@ -210,7 +211,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             try {
                 val uri = Uri.parse(args.uri)
                 val resolver = activity.contentResolver
-                val out = resolver.openOutputStream(uri, "w")
+                val out = resolver.openOutputStream(uri, "wt")
                     ?: throw IllegalStateException("the provider gave no output stream")
                 val written = out.use { stream -> source.inputStream().use { it.copyTo(stream) } }
                 Log.d(TAG, "writeDocument: $written bytes written, stream closed")

@@ -81,20 +81,32 @@ async function writeIntoDocument(bytes: Uint8Array, target: string): Promise<voi
     import('$lib/services/galleryCommands'),
   ]);
   const session = crypto.randomUUID();
+  /** Removes the staged copy after a failure, so it does not wait for the next launch. */
+  const discardStaged = () =>
+    invoke(galleryCommand('discardVideo'), { session }).catch((discardErr: unknown) => {
+      console.error('[download] the staged copy was not discarded', discardErr);
+    });
   console.debug(`[download] staging ${bytes.byteLength} bytes for a provider document, ${session}`);
   try {
     await stageBlob(session, new Blob([bytes as BlobPart]));
   } catch (err) {
     console.error('[download] staging for the provider document failed', err);
-    await invoke(galleryCommand('discardVideo'), { session }).catch((discardErr: unknown) => {
-      console.error('[download] the staged copy was not discarded', discardErr);
-    });
+    await discardStaged();
     throw err;
   }
-  const { written } = await invoke<{ written: number }>(galleryCommand('writeStagedDocument'), {
-    session,
-    uri: target,
-  });
+  let written: number;
+  try {
+    ({ written } = await invoke<{ written: number }>(galleryCommand('writeStagedDocument'), {
+      session,
+      uri: target,
+    }));
+  } catch (err) {
+    // The command removes the staged copy on every path it runs; a rejection before it ran
+    // (IPC, permission) would leave the copy behind, so discard it here - a no-op otherwise.
+    console.error('[download] writing the provider document failed', err);
+    await discardStaged();
+    throw err;
+  }
   console.debug(`[download] the provider's stream took ${written} bytes and closed`);
 }
 
