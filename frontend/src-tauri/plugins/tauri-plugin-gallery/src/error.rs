@@ -13,6 +13,8 @@ pub enum Error {
     BadMime,
     #[error("the file name is empty or names a path")]
     BadName,
+    #[error("the save destination is not a content:// document")]
+    BadUri,
     #[error("the staging session is not a plain token")]
     BadSession,
     #[error("a chunk of the video is not base64")]

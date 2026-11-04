@@ -49,6 +49,8 @@ describe('gallery command contract', () => {
     expect(commandsRs).toMatch(
       /fn share_staged[\s\S]*?session: String,\s*name: String,\s*mime: String/
     );
+    expect(commandsRs).toMatch(/fn write_staged_document[\s\S]*?session: String,\s*uri: String/);
+    expect(commandsRs).toMatch(/pub struct DocumentWritten \{\s*pub written: u64,/);
     expect(commandsRs).toMatch(/fn publish_share_targets[\s\S]*?targets: Vec<ShareTarget>/);
     expect(commandsRs).toMatch(
       /pub struct ShareTarget \{\s*pub id: String,\s*pub label: String,\s*pub link: String,/
