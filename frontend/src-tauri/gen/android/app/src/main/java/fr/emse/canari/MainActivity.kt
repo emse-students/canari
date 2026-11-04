@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.Rect
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -215,6 +216,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
         webView.addJavascriptInterface(BackBridge(), "canariBack")
+        webView.addJavascriptInterface(AudioBridge(), "canariAudio")
         // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
         // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
@@ -235,6 +237,18 @@ class MainActivity : TauriActivity() {
         fun setOverlayDepth(depth: Int) {
             overlayDepth.set(depth.coerceAtLeast(0))
         }
+    }
+
+    /**
+     * `window.canariAudio`: the phone's ringer mode, read by the page before each of its own tones
+     * (`frontend/src/lib/mobile/androidRinger.ts`). The WebView plays those tones on the MEDIA stream,
+     * which ignores the ringer, so the page asks: silent and vibrate silence them, as
+     * [fr.emse.canari.call.IncomingRing.plan] silences the in-app ring. Read at each tone, never
+     * cached - the user flips the ringer at any moment.
+     */
+    private inner class AudioBridge {
+        @JavascriptInterface
+        fun ringerMode(): Int = (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
     }
 
     /**

@@ -1,4 +1,4 @@
-import { writable, type Readable } from 'svelte/store';
+import { get, writable, type Readable } from 'svelte/store';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -30,6 +30,32 @@ const holders = new Map<string, string>();
 const held = writable(false);
 
 /**
+ * The strongest call phase any holder is in: `none` when no call holds the sound. The audio
+ * session (`audioSession.ts`) reads it, because the phases do not want the same category - a call
+ * the user placed or answered (`calling`, `incall`) has its microphone open, a ring coming in
+ * (`incoming`) does not.
+ */
+export type CallSoundPhase = 'none' | 'incoming' | 'calling' | 'incall';
+
+/** Ranks the phases: a call in progress outranks one ringing out, which outranks one ringing in. */
+const PHASE_RANK: Record<CallSoundPhase, number> = { none: 0, incoming: 1, calling: 2, incall: 3 };
+
+const phaseStore = writable<CallSoundPhase>('none');
+
+/** The strongest phase among the holders - see {@link CallSoundPhase}. */
+export const callSoundPhase: Readable<CallSoundPhase> = { subscribe: phaseStore.subscribe };
+
+/** The strongest phase among the holders; only {@link HOLDING} phases are ever held. */
+function strongestPhase(): CallSoundPhase {
+  let best: CallSoundPhase = 'none';
+  for (const holding of holders.values()) {
+    const candidate = holding as CallSoundPhase;
+    if (PHASE_RANK[candidate] > PHASE_RANK[best]) best = candidate;
+  }
+  return best;
+}
+
+/**
  * Whether a call holds the app's sound right now. Subscribe to react to its start (the arbiter
  * pauses what plays); read {@link callHoldsAppSound} to decide one sound.
  */
@@ -56,6 +82,8 @@ export function reportCallSoundPhase(holder: string, phase: string): void {
   const before = holders.size > 0;
   if (HOLDING.has(phase)) holders.set(holder, phase);
   else holders.delete(holder);
+  const strongest = strongestPhase();
+  if (get(phaseStore) !== strongest) phaseStore.set(strongest);
   const after = holders.size > 0;
   if (before === after) return;
   // `Log.i`, NOT `Log.d`: the in-app log records no debug, so this line was unreadable on a device
@@ -86,4 +114,5 @@ export function resetCallSoundGateForTest(): void {
   holders.clear();
   silencedTones = 0;
   held.set(false);
+  phaseStore.set('none');
 }

@@ -135,3 +135,68 @@ native phone).
 
 **Owed:** the same `dumpsys audio` reading on the Pixel 6a once a build carrying this is installed -
 no stream `started` while the app is backgrounded.
+
+## The silent switch and the ringer: who owns the category (owner, 2026-11-04)
+
+**Reported (iPhone, 2026-11-04):** *with the phone in silent mode, sending a message still plays the
+send sound - every other app is silent.* **The owner's rule, the same day:** the app's own sounds
+(send, receive, read, mention, reaction) ALWAYS obey the silent switch; a CanaReel STARTS MUTED, and
+once the reader taps its speaker the reel's sound plays even in silent mode - an explicit request,
+as on Instagram; a call has the microphone's category while it runs.
+
+**The measured cause.** Nothing in Canari set an audio session category: no `setCategory` in
+`canari_ios.mm`, `canari_push.mm`, the NSE, a plugin or the Rust (searched 2026-11-04; the only
+`AVAudioSession` use is the call proximity's route READ). WebKit chose alone, in
+`MediaSessionManagerCocoa::updateSessionState` (read in WebKit's source the same day): a category
+OVERRIDE first; else PlayAndRecord while the microphone is captured (and while Web Audio plays
+after it - it sticks); else MediaPlayback when any `<audio>`/`<video>` is audible OR **has played
+audibly since the last interruption**; else AmbientSound for Web Audio alone. AmbientSound obeys
+the switch; MediaPlayback does not. So one voice note, one unmuted reel or one ringback left the
+session in MediaPlayback for as long as its element lived, and every tone - Web Audio,
+[`toneOutput.ts`](../../../frontend/src/lib/utils/toneOutput.ts) - rode it through the switch.
+
+**The fix: the page owns the category** ([`audioSession.ts`](../../../frontend/src/lib/utils/audioSession.ts)),
+through WebKit's Audio Session API - `navigator.audioSession.type`, the override WebKit applies
+before every rule above (`DOMAudioSessionEnabled`, status mature, on by default in WKWebView; iOS
+16.4+). ONE decision, `decideAudioSessionType`, over two facts that arrive as events:
+
+| Facts | Type | WebKit category |
+| --- | --- | --- |
+| a call placed or answered (`callSoundPhase` `calling` / `incall`) | `play-and-record` | PlayAndRecord, mode VideoChat - what capture already got |
+| an unmuted registered media playing (`playbackArbiter`: a reel the reader unmuted, a voice note, a video) | `playback` | MediaPlayback - plays with the switch on |
+| everything else: idle, every tone, a ring coming in (`incoming`) | `ambient` | AmbientSound - obeys the switch, mixes with other apps |
+
+- **Who tells it.** `callSoundGate` exposes `callSoundPhase`, the strongest phase among its holders
+  (`incall` > `calling` > `incoming`); the arbiter re-reads "a registered media plays unmuted" on
+  every `play`, `pause`, `ended`, `volumechange` and unmount. `playTone` and the arbiter ARM the
+  owner before any sound, so the first tone of a session already plays under `ambient`. A type equal
+  to the one applied is not set again: the in-app log carries one `Log.i` line per transition,
+  `audio session <from> -> <to> (<reason>)`.
+- **A ring coming in stays `ambient`:** the system ring obeys the switch, and Web Audio alone is what
+  WebKit already put there. The caller's ringback plays in `calling`, when the microphone is already
+  open (`setupMedia` runs before the ring), so its category is the one it always had.
+- **An engine without the API** (an iPhone before 16.4) keeps WebKit's own choice; the page says so
+  ONCE, `[AUDIO] navigator.audioSession is absent`, at warn. A `type` the engine refuses
+  (`InvalidStateError`) is said at error level and retried on the next change.
+
+**Android: the ringer mode.** The WebView plays Web Audio on the MEDIA stream (`usage MEDIA`, the
+2026-10-09 reading above), which ignores the ringer, and no web API reads it. So `MainActivity`
+registers `window.canariAudio.ringerMode()` (`AudioManager.getRingerMode()`), and `playTone`
+refuses an APP tone unless the mode is `RINGER_MODE_NORMAL`
+([`androidRinger.ts`](../../../frontend/src/lib/mobile/androidRinger.ts)) - read at each tone,
+never cached; an unknown mode plays, as `IncomingRing.plan` reads it; a missing bridge is said once
+at error level. The call's own ring (`purpose: 'call'`) is not an app tone. Media the reader starts
+(a voice note, an unmuted reel) is untouched on both platforms: the reader asked for it.
+
+Pinned by `audioSession.test.ts` (the table and every transition: arm -> ambient, media -> playback
+-> ambient, call placed -> play-and-record -> ambient, ring in stays ambient, a call over a playing
+media hands playback back, a refusal, the absent API), `callSoundGate.test.ts` (the strongest
+phase), `playbackArbiter.test.ts` (what is reported), `androidRinger.test.ts` and
+`toneOutput.test.ts` (a silenced ringer opens no output).
+
+**Owed on the phones** (nothing above was read on a device): iPhone 12, switch on SILENT - send a
+message (no trill), play a voice note (heard), open a reel (muted; tap the speaker: heard), send
+again while the reel plays and after it (no trill once it stopped), then a call placed and ended
+(the call is heard; the next send is silent) - and the in-app log's `audio session` lines for each.
+Mi 9T: ringer on vibrate, then silent - a send makes no trill and the log says `the phone's ringer
+is silent or vibrate`; normal - the trill is back.

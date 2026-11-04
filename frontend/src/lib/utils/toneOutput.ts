@@ -1,6 +1,8 @@
 import { onAppScreenChange } from '$lib/utils/appForeground';
 import { callHoldsAppSound, noteToneSilenced } from '$lib/utils/callSoundGate';
 import { Log } from '$lib/utils/Log';
+import { armAudioSession } from '$lib/utils/audioSession';
+import { ringerSilencesAppTones } from '$lib/mobile/androidRinger';
 
 /**
  * THE APP'S ONE SOUND OUTPUT FOR SYNTHESISED TONES, AND THE RULE IT EXISTS FOR: THE APP HOLDS NO
@@ -95,6 +97,10 @@ function suspendIfIdle(ctx: AudioContext, reason: string): void {
  * not played at all - no output is opened for it - and the skip is logged. Only the call's own ring
  * passes `call`.
  *
+ * THE PHONE'S SILENCE HOLDS IT TOO (2026-11-04): on Android an `app` tone is refused unless the
+ * ringer is normal (`androidRinger.ts`); on an iPhone the tone plays under the page's `ambient`
+ * audio session (`audioSession.ts`), which the silent switch mutes.
+ *
  * @param name What the tone is, for the log line.
  * @param score Builds and schedules the tone's oscillators.
  * @param purpose `app` for every app sound (message, send, read); `call` for the call's own ring.
@@ -113,6 +119,12 @@ export function playTone(
     Log.d('AUDIO', `${name} tone silenced - a call holds the app's sound`);
     return [];
   }
+  if (purpose === 'app' && ringerSilencesAppTones()) {
+    Log.d('AUDIO', `${name} tone silenced - the phone's ringer is silent or vibrate`);
+    return [];
+  }
+  // The category is the page's before any output opens: `ambient`, which obeys the iPhone's switch.
+  armAudioSession();
   armScreenWatch();
   if (!context) {
     Log.d('AUDIO', `opening the tone output for ${name}`);

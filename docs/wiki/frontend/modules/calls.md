@@ -587,7 +587,7 @@ and opens the conversation's plain link (navigation only); from the lock screen 
 (Face ID), opens Canari from CallKit's button, enters the PIN; the web view drains the accept and
 joins once the session has caught up, with no invite awaited
 ([below](#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30)). On `didBecomeActive` the CallKit call is ended (`AnsweredElsewhere`), so
-WebKit owns the audio session from then on, and the `audio` background mode (`CALLS_COMPILED`)
+WebKit owns the audio session from then on (its category stated by the page, `play-and-record` while the call is placed or answered - [sounds](../sounds.md#the-silent-switch-and-the-ringer-who-owns-the-category-owner-2026-11-04)), and the `audio` background mode (`CALLS_COMPILED`)
 keeps the call alive when the phone locks again (WP-C-BG-I). Cost, accepted by this design: the
 caller hears it ring until the callee has unlocked, inside the 60 s window; Messenger connects at
 once because its keys are not behind a PIN. Keeping the CallKit call for the whole call (the green
