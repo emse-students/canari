@@ -365,6 +365,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
+	@bun .github/scripts/tests/pipefail-early-reader.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/backlog-fragments.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs

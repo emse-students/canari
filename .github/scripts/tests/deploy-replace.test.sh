@@ -89,12 +89,12 @@ for name, s in json.load(sys.stdin)["services"].items():
   else
     fail "$file: FRONTEND_HOST_PORT is published by: ${holders:-nobody}"
   fi
-  if printf '%s\n' "$plan" | grep -qE '^edge pinned yes - [^ ]+$'; then
+  if grep -qE '^edge pinned yes - [^ ]+$' <<<"$plan"; then
     ok "$file: the edge is pinned"
   else
     fail "$file: the edge is not 'pinned yes -'"
   fi
-  if printf '%s\n' "$plan" | grep -qE '^frontend overlap no edge:80 [^ ]*/frontend:[^ ]+$'; then
+  if grep -qE '^frontend overlap no edge:80 [^ ]*/frontend:[^ ]+$' <<<"$plan"; then
     ok "$file: the frontend is replaced with overlap, and taken out of rotation at the edge"
   else
     fail "$file: the frontend is not 'overlap no edge:80'"
@@ -175,7 +175,7 @@ refuses() {
   local label="$1" json="$2" expect="$3" out
   if out="$(printf '%s' "$json" | "$PYTHON" "$MODES" "own/" 2>&1)"; then
     fail "refuses $label (it accepted: $out)"
-  elif printf '%s' "$out" | grep -q "$expect"; then
+  elif grep -q "$expect" <<<"$out"; then
     ok "refuses $label"
   else
     fail "refuses $label, but says: $out"
@@ -194,7 +194,7 @@ refuses "a rotation through no service" '{"services":{"a":{'"$L"':"overlap",'"$R
 refuses "a rotation on an exclusive service" '{"services":{"a":{'"$L"':"exclusive",'"$R"'},"image":"own/a:1"},'"$P"'}}' 'never taken out of rotation'
 refuses "overlap on a writable bind mount" '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"',"volumes":[{"type":"bind","source":"/d","target":"/d"}]},'"$P"'}}' 'mounts a volume'
 if printf '%s' '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$HC"',"volumes":[{"type":"bind","source":"/d","target":"/d","read_only":true}]},'"$P"'}}' |
-  "$PYTHON" "$MODES" own/ | grep -qx 'a overlap no p:80 own/a:1'; then
+  "$PYTHON" "$MODES" own/ | grep -x 'a overlap no p:80 own/a:1' >/dev/null; then
   ok "accepts overlap on a read-only bind mount, and prints its rotation and its image"
 else
   fail "refuses overlap on a read-only bind mount, or prints no rotation or no image"
@@ -491,7 +491,7 @@ edge pinned yes -'
       *) return 1 ;;
       esac
     }
-    rotation_apply front plain 2>&1 | grep -q '^::warning title=A proxy replica that is not running::front: fe-1 is restarting' && echo plain-skipped
+    rotation_apply front plain 2>&1 | grep '^::warning title=A proxy replica that is not running::front: fe-1 is restarting' >/dev/null && echo plain-skipped
     rotation_apply front plain >/dev/null 2>&1 && echo plain-passed
     rotation_apply front retiring >/dev/null 2>&1 || echo retiring-refused
   )"
@@ -515,6 +515,30 @@ edge pinned yes -'
   verdict "a plain reload reads no subrequest port, a retiring one does" \
     '[ "$(printf "%s\n" "$ports_read" | tr "\n" " ")" = "reload:plain: read reload:retiring: " ]'
 
+  # A DUMP LARGER THAN THE PIPE BUFFER (64 KiB) IS STILL READ. `nginx -T` of the real edge grew past
+  # it, and `printf "$dump" | grep -q` then failed under pipefail precisely when the marker WAS found
+  # (grep exits on its first match, the writer takes SIGPIPE): the dev deploy of v1.6.4-alpha.1 was
+  # refused with "not the one just written". The matches sit at the TOP, so grep leaves early. Linux
+  # delivers that SIGPIPE; MSYS bash does not, so a local green proves little and CI is the reading.
+  big_dump="$(
+    fake_docker() {
+      case "$1" in
+      ps) echo fe-1 ;;
+      inspect) echo running ;;
+      exec)
+        printf '# configuration file /etc/nginx/targets/front.conf:\n# render %s\n' "$ROTATION_TOKEN"
+        head -c 300000 /dev/zero | tr '\0' 'x' | fold -w 100
+        echo
+        ;;
+      *) return 1 ;;
+      esac
+    }
+    rotation_reload() { echo "reload:$3"; }
+    rotation_apply front plain 2>&1
+  )"
+  verdict "a configuration dump of 300 KB is matched on its first lines, not refused by a SIGPIPE" \
+    '[ "$big_dump" = "reload:plain" ]'
+
   # A proxy that reads no list is a TRANSITION only when it runs the previous release's image.
   legacy="$(
     fake_docker() {
@@ -532,12 +556,12 @@ front overlap no edge:80 own/front:2'
     WANTED=sha256:running
     rotation_apply front plain >/dev/null 2>&1 || echo own-image-refused
     WANTED=sha256:newer
-    rotation_apply front plain 2>&1 | grep -q '^::warning title=A proxy from before the target lists::' && echo older-image-drained
+    rotation_apply front plain 2>&1 | grep '^::warning title=A proxy from before the target lists::' >/dev/null && echo older-image-drained
   )"
   verdict "a proxy reading no list that runs THIS release's own image is refused, not taken for a transition" \
-    'printf "%s\n" "$legacy" | grep -qx own-image-refused'
+    'grep -qx own-image-refused <<<"$legacy"'
   verdict "a proxy reading no list that runs the previous release's image is drained the old way, with a warning" \
-    'printf "%s\n" "$legacy" | grep -qx older-image-drained'
+    'grep -qx older-image-drained <<<"$legacy"'
 
   # auth_request: which upstream connections are subrequests, read from `nginx -T`.
   rotation_routes_set <<<'core-service overlap no frontend:3012

@@ -143,7 +143,7 @@ jobs:
           echo "Changed files:" && echo "$CHANGED"
 
           # Helper: returns 0 if any changed file matches the pattern
-          has() { echo "$CHANGED" | grep -qE "$1"; }
+          has() { grep -qE "$1" <<<"$CHANGED"; }
 
           # THE CI DEFINITION ITSELF CHANGED -> test everything, and THE PATH IS DERIVED FROM THE
           # RUN rather than written down here.
@@ -165,7 +165,7 @@ jobs:
           SELF="${SELF#*/*/}"                # .github/workflows/ci.yml
           # The path is matched as a FIXED WHOLE LINE, so no regex escaping stands between the
           # name the runner gave us and the name in the diff.
-          if printf '%s\n' "$CHANGED" | grep -qxF "$SELF" \
+          if grep -qxF "$SELF" <<<"$CHANGED" \
              || has '^\.github/workflows/code-analysis\.yml$'; then
             echo "CI definition changed ($SELF) - running all tests."
             run_all; exit 0

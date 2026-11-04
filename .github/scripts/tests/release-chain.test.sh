@@ -663,12 +663,12 @@ done
 # the refusal's cause is ever explained, and the two are separate: the cause is still unmeasured.
 for f in ios android; do
   block="$(sed -n '/^      - name: Upload to Release$/,/^      - name:/p' "$WF/$f.yml")"
-  if printf '%s' "$block" | grep -qE '^ +uses:'; then
+  if grep -qE '^ +uses:' <<<"$block"; then
     fail "$f.yml attaches the release asset through an ACTION again - if it updates the release, it re-adds the capability that was refused on 0.16.0"
   else
     pass "$f.yml attaches the asset with no action, so it asks for no release update"
   fi
-  if printf '%s' "$block" | grep -q 'gh release upload'; then
+  if grep -q 'gh release upload' <<<"$block"; then
     pass "$f.yml uses the one call the job actually needs"
   else
     fail "$f.yml no longer attaches the asset with 'gh release upload' - name what replaced it and why it needs no PATCH"
@@ -966,7 +966,7 @@ else
   pass 'no release step pushes HEAD:main'
 fi
 LAND_JOB="$(sed -n '/^  land:/,/^  [a-z][a-z-]*:$/p' "$WF/release.yml")"
-if printf '%s\n' "$LAND_JOB" | grep -qE '^    if:'; then
+if grep -qE '^    if:' <<<"$LAND_JOB"; then
   fail 'the land job is conditional - a pre-release version would never reach main'
 else
   pass 'the land job runs for every release, pre-releases included'

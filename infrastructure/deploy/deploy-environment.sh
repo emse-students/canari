@@ -427,7 +427,7 @@ for _ in $(seq 1 36); do
 
   missing=""
   for service in $critical; do
-    printf '%s\n' "$running" | grep -qx "$service" || missing="$missing $service"
+    grep -qx "$service" <<<"$running" || missing="$missing $service"
   done
 
   if [ -z "$missing" ]; then
@@ -455,7 +455,7 @@ retry_http() {
   local i
   for i in $(seq 1 "$attempts"); do
     status="$(eval "$cmd" || true)"
-    if printf '%s' "$status" | grep -Eq "$expected"; then
+    if grep -Eq "$expected" <<<"$status"; then
       printf 'ok   %s (HTTP %s)\n' "$label" "$status"
       return 0
     fi

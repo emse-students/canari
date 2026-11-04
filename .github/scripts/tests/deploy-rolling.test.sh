@@ -231,7 +231,7 @@ done < <(
   fi
   # NO `upstream` BLOCK, so no idle upstream connection is ever cached: the pairing check counts every
   # upstream connection of an old worker as a request that has chosen, which a cached one is not.
-  if printf '%s\n' "$rest" | grep -qE '^[[:space:]]*upstream[[:space:]]'; then
+  if grep -qE '^[[:space:]]*upstream[[:space:]]' <<<"$rest"; then
     echo fail "the real frontend declares an upstream block - an idle cached connection would pass for a chosen request"
   else
     echo ok "the real frontend declares no upstream block, so it caches no upstream connection"
@@ -253,8 +253,8 @@ done < <(
     echo fail "the real frontend accepts a list naming a container"
   fi
   dump="$(nopath docker run --rm -v "$rot:/etc/nginx/targets:ro" rolltest/frontend-real nginx -T -q 2>&1)"
-  if printf '%s\n' "$dump" | grep -qE '^# configuration file /etc/nginx/targets/frontend\.conf:$' &&
-    printf '%s\n' "$dump" | grep -qxF "# render $token"; then
+  if grep -qE '^# configuration file /etc/nginx/targets/frontend\.conf:$' <<<"$dump" &&
+    grep -qxF "# render $token" <<<"$dump"; then
     echo ok "the real frontend's nginx -T shows the mounted list, render id included"
   else
     echo fail "the real frontend's nginx -T does not show the mounted list with its render id"
@@ -496,7 +496,7 @@ for c in $(containers_of frontend); do
     cached="$cached unreadable:${c:0:12}"
     continue
   }
-  printf '%s\n' "$dump" | grep -qE '^[[:space:]]*upstream[[:space:]]' && cached="$cached ${c:0:12}"
+  grep -qE '^[[:space:]]*upstream[[:space:]]' <<<"$dump" && cached="$cached ${c:0:12}"
 done
 if [ -z "$cached" ] && [ -n "$(containers_of frontend)" ]; then
   ok "the running frontend declares no upstream block, so it caches no connection to the api"

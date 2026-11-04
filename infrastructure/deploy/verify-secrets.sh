@@ -178,7 +178,7 @@ while IFS=$'\t' read -r key prod dev _source _note <&3; do
   expected="$(printf '%s' "$value" | sha256sum | awk '{ print $1 }')"
 
   for service in $services; do
-    if ! printf '%s\n' "$RUNNING" | grep -qx "$service"; then
+    if ! grep -qx "$service" <<<"$RUNNING"; then
       printf '::error::%s should carry %s and is not running\n' "$service" "$key" >&2
       failed=$((failed + 1))
       continue

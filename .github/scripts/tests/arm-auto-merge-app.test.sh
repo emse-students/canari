@@ -171,7 +171,7 @@ for ref in 'deps/lock-refresh/cargo/dependabot-12;touch PWNED' 'deps/lock-refres
   # by pull request number only (B32); nothing derived from the branch name reaches the API.
   if [ "$st" = 0 ] && ! armed && [ ! -e "$work/PWNED" ] && ! grep '^api' "$work/gh.log" |
     grep -vxF -e 'api repos/o/r/pulls/5/files?per_page=100 --paginate --jq .[] | [.filename, (.previous_filename // "")] | @tsv' \
-      -e 'api repos/o/r/pulls/5 --jq .head.sha' | grep -q .; then
+      -e 'api repos/o/r/pulls/5 --jq .head.sha' | grep . >/dev/null; then
     pass "B3 a hostile or foreign refresh branch is refused before any API call it names: $(printf '%q' "$ref")"
   else
     fail "B3 the branch $(printf '%q' "$ref") was not refused cleanly (exit $st)" "$out"

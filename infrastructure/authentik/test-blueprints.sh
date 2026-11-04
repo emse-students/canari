@@ -85,7 +85,7 @@ echo "enrolment flow: driving it through the executor"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=ak-shell.sh
 . "$here/ak-shell.sh"
-if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&2) | grep -qx 'ENROLLMENT-OK'; then
+if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&2) | grep -x 'ENROLLMENT-OK' >/dev/null; then
   echo "::error::the enrolment flow did not behave - read the assertion above"
   exit 1
 fi
@@ -95,7 +95,7 @@ echo "the enrolment flow lets the right people in, refuses the others, and write
 # factor that exists, and stops after five wrong passwords; the enrolment flow does not plan without a
 # source (infrastructure/authentik/test-password-guard.py).
 echo "password sign-in and direct enrolment: driving them through the executor"
-if ! run_ak_shell "$worker" <"$here/test-password-guard.py" 2>&1 | tee >(cat >&2) | grep -qx 'PASSWORD-GUARD-OK'; then
+if ! run_ak_shell "$worker" <"$here/test-password-guard.py" 2>&1 | tee >(cat >&2) | grep -x 'PASSWORD-GUARD-OK' >/dev/null; then
   echo "::error::a way into MiConnect that is not the CAS is not guarded - read the assertion above"
   exit 1
 fi
@@ -105,7 +105,7 @@ echo "password sign-in is guarded and enrolment starts only from a source"
 # only calling the API with the token shows what a holder of it can DO - read and change users, and
 # nothing else (infrastructure/authentik/test-profile-editor.py).
 echo "profile editor: calling the API with its token"
-if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2) | grep -qx 'PROFILE-EDITOR-OK'; then
+if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2) | grep -x 'PROFILE-EDITOR-OK' >/dev/null; then
   echo "::error::the profile editor's token does not behave - read the assertion above"
   exit 1
 fi
@@ -115,7 +115,7 @@ echo "the profile editor reads and changes users, and nothing else"
 # verifier; what makes a captured code worthless is MiConnect REFUSING it without the verifier. Only
 # the real token endpoint shows that (infrastructure/authentik/test-pkce.py).
 echo "PKCE: authorizing with a challenge and redeeming with and without the verifier"
-if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -qx 'PKCE-OK'; then
+if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -x 'PKCE-OK' >/dev/null; then
   echo "::error::MiConnect did not enforce PKCE as the sign-in relies on - read the assertion above"
   exit 1
 fi
@@ -128,7 +128,7 @@ echo "a challenged code is redeemed with its verifier only, and a verifier is ne
 # made it), so this is what proves these blueprints switch every provider back. Lifting the hold is
 # `git revert` of the commit that wrote this, which brings the driven test back.
 echo "terms of use: HELD - asserting no provider authorizes through miconnect-authorization"
-if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -qx 'CONSENT-HELD-OK'; then
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'CONSENT-HELD-OK' >/dev/null; then
 from authentik.providers.oauth2.models import OAuth2Provider
 on_flow = sorted(OAuth2Provider.objects.filter(authorization_flow__slug="miconnect-authorization").values_list("name", flat=True))
 assert not on_flow, f"providers still on the held terms flow: {on_flow}"
@@ -147,7 +147,7 @@ echo "the terms stage is held: every provider authorizes through the implicit-co
 # assertion, no source runs a weak (SHA-1/MD5) signature or digest algorithm, none allows
 # IdP-initiated SSO (which skips request-ID validation), and each uses an expected NameID format.
 echo "SAML sources: signed on both levels, no weak algorithm, and none enabled without a certificate"
-if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -qx 'SAML-SOURCES-OK'; then
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'SAML-SOURCES-OK' >/dev/null; then
 from authentik.sources.saml.models import SAMLSource
 
 ALLOWED_NAME_ID = {

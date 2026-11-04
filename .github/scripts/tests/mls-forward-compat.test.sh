@@ -79,7 +79,7 @@ fi
 filter_fires() {
   local changed="$1" pattern
   while IFS= read -r pattern; do
-    printf '%s\n' "$changed" | grep -qE "$pattern" && return 0
+    grep -qE "$pattern" <<<"$changed" && return 0
   done <<< "$patterns"
   return 1
 }

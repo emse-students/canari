@@ -179,7 +179,7 @@ else
     # Check supported scopes
     SCOPES=$(jq -r '.scopes_supported // [] | join(" ")' /tmp/canari_oidc_disco.json 2>/dev/null || true)
     for S in openid profile email; do
-      if echo "$SCOPES" | grep -qw "$S"; then
+      if grep -qw "$S" <<<"$SCOPES"; then
         pass "  scope '$S' supported"
       else
         warn "  scope '$S' not listed (may still work)"

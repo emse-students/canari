@@ -207,25 +207,25 @@ fi
 
 # The remedy changed on 2026-10-16: dev no longer has a copy of production to fall back on, so a
 # virgin dev database gets a SCHEMA-ONLY restore (no row of production) and then the fictional seed.
-if printf '%s' "$dev_out" | grep -q 'SCHEMA-ONLY restore' && printf '%s' "$dev_out" | grep -q 'dev-reset'; then
+if grep -q 'SCHEMA-ONLY restore' <<<"$dev_out" && grep -q 'dev-reset' <<<"$dev_out"; then
   ok "the dev refusal NAMES the schema-only restore and the job that seeds the database"
 else
   fail "the dev refusal does not name the schema-only restore and the dev-reset job - the reader is left to find them"
 fi
-if printf '%s' "$dev_out" | grep -qi 'from production'; then
+if grep -qi 'from production' <<<"$dev_out"; then
   fail "the dev refusal still sends the reader to a copy of production"
 else
   ok "and it sends nobody to a copy of production's data"
 fi
 
 prod_out="$(run_without_schema prod </dev/null 2>&1)"
-if printf '%s' "$prod_out" | grep -qi 'restore a backup'; then
+if grep -qi 'restore a backup' <<<"$prod_out"; then
   ok "the production refusal says the schema is GONE and to restore a backup"
 else
   fail "production and dev get the same remedy, and only one of them may be rebuilt from a seed"
 fi
 
-if printf '%s' "$prod_out" | grep -q 'dev-reset'; then
+if grep -q 'dev-reset' <<<"$prod_out"; then
   fail "the production refusal points at the DEV reset job - a reader could empty the wrong estate"
 else
   ok "and it does not point production at a dev-only remedy"
@@ -447,37 +447,37 @@ if [ "$rc" -ne 0 ]; then
 else
   fail "with no approval the deploy succeeded - a held migration would reach production unread"
 fi
-if printf '%s\n' "$out" | grep -q '^::error::.*002_held\.sql is HELD.*hold marker'; then
+if grep -q '^::error::.*002_held\.sql is HELD.*hold marker' <<<"$out"; then
   ok "the refusal is an ::error:: naming the marked file and why it is held"
 else
   fail "no ::error:: names 002_held.sql and its marker"
 fi
-if printf '%s\n' "$out" | grep -q '^::error::.*003_drop\.sql is HELD.*DROP COLUMN'; then
+if grep -q '^::error::.*003_drop\.sql is HELD.*DROP COLUMN' <<<"$out"; then
   ok "an UNMARKED destructive statement is held too, and the statement is named"
 else
   fail "003_drop.sql (DROP COLUMN, no marker) was not held"
 fi
-if printf '%s\n' "$out" | grep -qF "$HMIG/002_held.sql $held_sum"; then
+if grep -qF "$HMIG/002_held.sql $held_sum" <<<"$out"; then
   ok "the refusal prints the exact approval line, path and checksum"
 else
   fail "the refusal does not print the approval line the owner would commit"
 fi
-if printf '%s\n' "$out" | grep -q 'cuts a NEW pre-release tag' && ! printf '%s\n' "$out" | grep -qi 're-runs this deploy'; then
+if grep -q 'cuts a NEW pre-release tag' <<<"$out" && ! grep -qi 're-runs this deploy' <<<"$out"; then
   ok "the remedy is a NEW pre-release tag - a rerun re-reads the release's own commit, which carries no approval"
 else
   fail "the remedy does not send the owner to a new pre-release tag"
 fi
-if printf '%s\n' "$out" | grep -q '^owner hold: 4 unrecorded file(s) examined, 2 held, 0 approved, 2 refused$'; then
+if grep -q '^owner hold: 4 unrecorded file(s) examined, 2 held, 0 approved, 2 refused$' <<<"$out"; then
   ok "the decision is logged: 4 examined, 2 held, 2 refused"
 else
   fail "no decision line counts what the gate examined and held"
 fi
-if [ -z "$(applied_list)" ] && ! printf '%s\n' "$out" | grep -q '^backup taken before' && [ ! -e "$BACKUPS" ]; then
+if [ -z "$(applied_list)" ] && ! grep -q '^backup taken before' <<<"$out" && [ ! -e "$BACKUPS" ]; then
   ok "and NOTHING is applied or backed up, not even the plain files before the held one"
 else
   fail "files were touched before the refusal: $(applied_list)"
 fi
-if printf '%s\n' "$out" | grep -qE '00[14]_plain\.sql is HELD'; then
+if grep -qE '00[14]_plain\.sql is HELD' <<<"$out"; then
   fail "a plain migration (or the re-create idiom, or a DROP in a comment) was held"
 else
   ok "the plain files, the DROP CONSTRAINT IF EXISTS idiom and a real commented DROP are not held"
@@ -500,7 +500,7 @@ if [ "$order" = "$want" ]; then
 else
   fail "the backups are not right before the approved files: $order"
 fi
-if printf '%s\n' "$out" | grep -q '002_held\.sql is held because.*APPROVED'; then
+if grep -q '002_held\.sql is held because.*APPROVED' <<<"$out"; then
   ok "and the log says which approval let each one through"
 else
   fail "an approved held migration applied without a line saying so"
@@ -518,7 +518,7 @@ out="$(BACKUP=fail run_hold "$HMIG/002_held.sql $held_sum
 $HMIG/003_drop.sql $drop_sum
 " '' </dev/null 2>&1)"
 rc=$?
-if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && printf '%s\n' "$out" | grep -q '^::error::the backup before .*002_held\.sql failed'; then
+if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && grep -q '^::error::the backup before .*002_held\.sql failed' <<<"$out"; then
   ok "a FAILED backup refuses the approved file and everything after it (only the plain 001 ran)"
 else
   fail "a failed backup did not stop the approved migration (exit $rc, applied: $(applied_list))"
@@ -534,7 +534,7 @@ out="$(CRON=none run_hold "$HMIG/002_held.sql $held_sum
 $HMIG/003_drop.sql $drop_sum
 " '' </dev/null 2>&1)"
 rc=$?
-if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && printf '%s\n' "$out" | grep -q '^::error::the crontab of this account .* has no BACKUP_DIR= line' && [ ! -e "$BACKUPS" ]; then
+if [ "$rc" -ne 0 ] && [ "$(applied_list)" = "$HMIG/001_plain.sql " ] && grep -q '^::error::the crontab of this account .* has no BACKUP_DIR= line' <<<"$out" && [ ! -e "$BACKUPS" ]; then
   ok "a crontab that names NO backup directory refuses the approved file - no default directory is guessed"
 else
   fail "the backup ran without a named directory, or did not refuse (exit $rc, applied: $(applied_list)): $out"
@@ -544,7 +544,7 @@ out="$(BACKUP=none run_hold "$HMIG/002_held.sql $held_sum
 $HMIG/003_drop.sql $drop_sum
 " '' </dev/null 2>&1)"
 rc=$?
-if [ "$rc" -ne 0 ] && [ -z "$(applied_list)" ] && printf '%s\n' "$out" | grep -q 'defines no migration_backup'; then
+if [ "$rc" -ne 0 ] && [ -z "$(applied_list)" ] && grep -q 'defines no migration_backup' <<<"$out"; then
   ok "a caller that cannot take a backup applies NO approved held file - and nothing else"
 else
   fail "an approved held file was applicable without a backup route (exit $rc, applied: $(applied_list))"
@@ -556,12 +556,12 @@ $HMIG/002_held.sql $stale
 $HMIG/003_drop.sql $drop_sum
 " '' </dev/null 2>&1)"
 rc=$?
-if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q '002_held\.sql is HELD.*approves another content'; then
+if [ "$rc" -ne 0 ] && grep -q '002_held\.sql is HELD.*approves another content' <<<"$out"; then
   ok "an approval of ANOTHER content of the file does not apply this one - an edit after approval re-holds it"
 else
   fail "an approval with a stale checksum let the edited migration through (exit $rc)"
 fi
-if printf '%s\n' "$out" | grep -q '003_drop\.sql is HELD'; then
+if grep -q '003_drop\.sql is HELD' <<<"$out"; then
   fail "a correctly approved migration was held alongside the stale one"
 else
   ok "and the other approval still holds - each file is judged on its own line"
@@ -578,7 +578,7 @@ fi
 
 out="$(LEDGER=fail run_hold '' '' </dev/null 2>&1)"
 rc=$?
-if [ "$rc" -ne 0 ] && [ -z "$(applied_list)" ] && printf '%s\n' "$out" | grep -q '^::error::the schema_migrations ledger .* could not be read'; then
+if [ "$rc" -ne 0 ] && [ -z "$(applied_list)" ] && grep -q '^::error::the schema_migrations ledger .* could not be read' <<<"$out"; then
   ok "an UNREADABLE ledger is refused with an accusing line, never read as empty"
 else
   fail "an unreadable ledger was not refused as one (exit $rc, applied: $(applied_list))"

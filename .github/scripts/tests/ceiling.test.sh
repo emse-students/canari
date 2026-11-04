@@ -294,7 +294,7 @@ filter_if="$(awk '/-- Android `:app` compile --/{f=1} f && /^          if has/{c
 filter_fires() { # <path>: does the android_app filter fire for a change to that single path?
   (
     CHANGED="$1"
-    has() { echo "$CHANGED" | grep -qE "$1"; }
+    has() { grep -qE "$1" <<<"$CHANGED"; }
     eval "$filter_if
       exit 0
     else

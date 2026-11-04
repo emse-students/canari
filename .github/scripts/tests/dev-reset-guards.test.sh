@@ -156,13 +156,13 @@ else
 fi
 
 job=$(awk '/^  dev-reset:/ { on = 1; print; next } on && /^  [a-z][a-z0-9-]*:$/ { exit } on { print }' "$SCHEDULED")
-if printf '%s' "$job" | grep -q 'bash infrastructure/dev/reset-dev-to-seed.sh --dry-run' &&
-  printf '%s' "$job" | grep -qE 'bash infrastructure/dev/reset-dev-to-seed.sh$'; then
+if grep -q 'bash infrastructure/dev/reset-dev-to-seed.sh --dry-run' <<<"$job" &&
+  grep -qE 'bash infrastructure/dev/reset-dev-to-seed.sh$' <<<"$job"; then
   ok "scheduled.yml's dev-reset job runs the reset, and passes --dry-run when asked"
 else
   fail "scheduled.yml's dev-reset job does not run reset-dev-to-seed.sh with and without --dry-run"
 fi
-if printf '%s' "$job" | grep -q 'if: inputs.dry_run != true'; then
+if grep -q 'if: inputs.dry_run != true' <<<"$job"; then
   ok "the 'estate answers' gate is skipped on a dry run, which proves nothing about the estate"
 else
   fail "the dev-reset job asserts the estate answers even after a dry run"
