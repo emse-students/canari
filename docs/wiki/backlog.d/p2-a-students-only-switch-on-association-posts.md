@@ -25,7 +25,16 @@ switch with a plain label and a one-line explanation of who will and will not se
 on the card that says the same thing to every reader, and no new screen; the named-reader comment
 switch reads the same way in the admin grid.
 
-To settle when it is built: whether the author may change the switch after publishing (narrowing
-at once), the event of such a post in the agenda and its public calendar link, the chip shown on the
-card, and its place in `postVisibleToUserSql` (ONE predicate every read path already goes through).
+Settled by the owner later the same day:
+
+5. **The author may change the switch after publishing, both ways.** Closing withdraws the post from
+   outside readers at once; reopening gives it back.
+6. **The post and its event are independent.** The switch governs the post alone; an event announced
+   by such a post keeps its own visibility, set on the event, in the agenda and the public calendar.
+7. **Associations and lists only** - not institutions, not personal posts.
+8. **A republished "students only" post keeps its chip and its rule, and republishing is not
+   blocked or warned**: the chip on the card is the whole signal, to the republisher as to everyone.
+
+Left to the build: its place in `postVisibleToUserSql` (ONE predicate every read path already goes
+through).
 Built after the named-reader comments change, which edits the same predicate.

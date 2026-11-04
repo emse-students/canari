@@ -38,4 +38,6 @@ What closes it:
   with `anonymous_actor` and `anonymous_post` both true. **Measured 2026-11-04, read-only: the
   query returns no row - three accounts hold a read grant and none of them holds a `mention` row,
   so the ambiguity touches nobody and this point is closed.**
-- **Live chat on an association live - parked for the owner.**
+- **Live chat on an association live: the same rule, decided by the owner on 2026-11-04, not built.**
+  A named reader who sees a live only through their grant sees the video but not its chat - no lines,
+  no sending - unless their switch in the read-access grid is on; the same switch, no second one.

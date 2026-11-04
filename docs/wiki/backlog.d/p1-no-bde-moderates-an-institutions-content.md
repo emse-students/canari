@@ -26,8 +26,8 @@ club of each / a list / a student, named and anonymous, and the platform admin; 
 the route). The mechanism, the decisions taken and the queue's measured cost are in
 [moderation-and-blocking](../moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible).
 
-**Owed:** the release, then this file and its queue line are deleted. **Parked for the owner:** a
-student's content inside an institution's or another BDE's post
-([open-questions](../open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04)),
-and whether an author's own delete may take a reply in a protected name
+**Owed:** the release, then this file and its queue line are deleted. A student's content inside an
+institution's or another BDE's post: **the place decides**, owner 2026-11-04, what ships
+([moderation-and-blocking](../moderation-and-blocking.md#decided-by-the-owner-2026-11-04)).
+**Parked for the owner:** whether an author's own delete may take a reply in a protected name
 ([open-questions](../open-questions.md#decision-owed---may-an-authors-own-delete-take-the-replies-written-in-a-protected-name-2026-11-04)).

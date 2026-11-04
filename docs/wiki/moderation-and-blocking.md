@@ -166,9 +166,16 @@ in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `re
 **Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
 another BDE's or an institution's post), the agenda rights over an institution's event (owner,
 2026-11-03, `holdsBdeAgendaRightOverSql`), and a mute or a broadcast withdrawal, which name a person.
-Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). **Open:** a
-student's content inside an institution's or another BDE's post or live -
-[open-questions](open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04).
+Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). A student's
+content inside an institution's or another BDE's post or live: [the place decides](#decided-by-the-owner-2026-11-04).
+
+#### Decided by the owner (2026-11-04)
+
+- **The place decides.** A student's comment under an institution's or another BDE's post, and a
+  student's line in the chat of such a live, is judged by the post or live it sits in
+  (`bdeModeratesCommentSql`, `bdeModeratesLiveSql`): no BDE moderates it, whoever wrote it - the
+  platform admin does. The reading where the student's own BDE acts wherever the comment sits was
+  weighed and turned down.
 
 #### Decisions taken (2026-11-04, the lead, reversible)
 
