@@ -26,7 +26,7 @@ vi.mock('$lib/mobile/nativeTabIcons', () => ({
 vi.mock('$lib/mobile/avatarBitmap', () => ({ renderedAvatarPng: async () => 'png:avatar' }));
 
 import { coversScreen } from '$lib/actions/coversScreen.svelte';
-import { nativeGlassPiece } from './nativeGlassPiece.svelte';
+import { nativeGlassPiece, screenRect } from './nativeGlassPiece.svelte';
 import { flushMacrotask } from '../../test/flush';
 
 /** Lets the action's queue of plugin calls drain. */
@@ -240,5 +240,28 @@ describe('nativeGlassPiece', () => {
     await settle();
     expect(plugin.removeComponent).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+describe('screenRect', () => {
+  const box = { left: 12, top: 487, width: 44, height: 44 };
+
+  it('is the rect itself while the viewports are aligned', () => {
+    expect(screenRect(box, { offsetLeft: 0, offsetTop: 0 })).toEqual({
+      x: 12,
+      y: 487,
+      width: 44,
+      height: 44,
+    });
+    expect(screenRect(box, null).y).toBe(487);
+  });
+
+  it('subtracts the visual viewport pan, so a panned page still hands native the screen place', () => {
+    expect(screenRect(box, { offsetLeft: 4, offsetTop: 301 })).toEqual({
+      x: 8,
+      y: 186,
+      width: 44,
+      height: 44,
+    });
   });
 });
