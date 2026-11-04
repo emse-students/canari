@@ -6,11 +6,12 @@
  * It mounts no `<video>`: an element would count as an open viewer and claim playback from the reel
  * being watched (`followVideoSound`).
  *
- * NO TWO DOWNLOADS OF ONE REEL. When the reel becomes current BEFORE its preload has finished, the
- * preload is ABORTED rather than left to race the player's own fetch (which streams a segmented video
- * as it arrives) - so a reel is fetched by the preload or by the player, never by both at once. When
- * it has finished, its hold is released: the player retained the same cached URL first, and the pool
- * keeps an unheld URL for minutes anyway.
+ * HAND-OVER AT THE SWIPE. `stop()` releases the preload's HOLD on the shared load
+ * (`mediaBlobCache.ts`), it does not cancel bytes already on the wire: a request that has left the
+ * gate's queue stays joinable, so the player's whole-blob read of the same reel joins it and loses
+ * nothing. A STREAMED segmented video opens its own fetch (`openSegmentedStream`) instead, so the
+ * preload's partial bytes are dropped there. A preload that has finished has its hold given back;
+ * the player retained the same cached URL first, and the pool keeps an unheld URL for minutes anyway.
  */
 import {
   acquireDecryptedMediaBlobUrl,
