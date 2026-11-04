@@ -605,13 +605,22 @@ export async function editComment(
 /** The server's answer to a comment's delete: what it dropped, and what it kept as a tombstone. */
 export interface CommentDeleteAnswer {
   ok: boolean;
-  /** Every row the delete took: the comment and its descendants the deleter may remove. */
-  removedIds: string[];
+  /**
+   * Every row the delete took: the comment and its descendants the deleter may remove. Absent from
+   * a server older than the moderation tombstone (it answered `{ ok: true }` alone), which the thread
+   * reads as version skew (`postCommentThread.remove`).
+   */
+  removedIds?: string[];
   /**
    * The rows kept as moderation tombstones (`removedByModeration`), served as this reader sees them:
    * a moderator's delete met a reply it does not moderate, which stays in its context. Absent when none.
    */
   tombstones?: PostComment[];
+  /**
+   * How many COUNTED comments left the thread: the live rows removed plus the rows turned into
+   * tombstones (a tombstone is not counted, a pruned one already was not). Absent from an older server.
+   */
+  countedOut?: number;
 }
 
 export async function deleteComment(

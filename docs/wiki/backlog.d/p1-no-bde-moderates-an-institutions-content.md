@@ -17,7 +17,9 @@ reports queue, or through the delete of a parent comment taking its replies.
 composed by every target kind; a comment is now judged by its post and its own publisher
 (`bdeModeratesCommentSql`, `mayModerateComment`, and `moderatesComment` for the served bin). A
 moderator's delete takes the descendants it moderates and leaves a moderation tombstone where a reply
-it does not moderate must keep its context (lead, 2026-11-04). A refusal is typed
+it does not moderate must keep its context (lead, 2026-11-04); the tombstone carries no account, no
+block hides it, it takes no reply or heart and is not counted, and every comment write holds the post
+row (`writeComments`, the second review). A refusal is typed
 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` and worded by the client, the reports queue included. Proof:
 `bde-moderation.integration.spec.ts` (real PostgreSQL, the matrix BDE A / BDE B / an institution / a
 club of each / a list / a student, named and anonymous, and the platform admin; the tombstone through
@@ -26,4 +28,6 @@ the route). The mechanism, the decisions taken and the queue's measured cost are
 
 **Owed:** the release, then this file and its queue line are deleted. **Parked for the owner:** a
 student's content inside an institution's or another BDE's post
-([open-questions](../open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04)).
+([open-questions](../open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04)),
+and whether an author's own delete may take a reply in a protected name
+([open-questions](../open-questions.md#decision-owed---may-an-authors-own-delete-take-the-replies-written-in-a-protected-name-2026-11-04)).

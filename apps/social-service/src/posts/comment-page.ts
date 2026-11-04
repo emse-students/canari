@@ -14,16 +14,26 @@ export interface StoredComment {
   anonymous?: boolean;
   associationId?: string | null;
   parentId?: string | null;
+  /** A moderation tombstone (`comment-removal.ts`): no writer, no text. */
+  removedByModeration?: boolean;
 }
 
 /**
  * Whether a reader whose blocks (either way) are `blocked` is shown this stored comment: not when
  * its writer is one of them, unless it is anonymous or an association's - filtering those on
  * `userId` would let a block probe who wrote them (the rule `blockedAuthorSql` applies to posts).
- * The comment page and a comment's report both ask it.
+ * A moderation TOMBSTONE is always shown: it names nobody, and hiding it would take the protected
+ * replies under it out of the thread and say something about who wrote what it replaced (lead's
+ * review of #2999). The comment page and a comment's report both ask it; the feed's SQL twin is
+ * `PostsService.postSelectBody`.
  */
 export function commentShownDespiteBlocks(c: StoredComment, blocked: ReadonlySet<string>): boolean {
-  return !blocked.has(c.userId ?? '') || c.anonymous === true || !!c.associationId;
+  return (
+    c.removedByModeration === true ||
+    !blocked.has(c.userId ?? '') ||
+    c.anonymous === true ||
+    !!c.associationId
+  );
 }
 
 export interface CommentPage<T extends StoredComment> {

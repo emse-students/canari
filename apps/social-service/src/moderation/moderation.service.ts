@@ -11,7 +11,11 @@ import { isBlockedBetween } from '../common/user-blocks';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { bdeModeratesUserSql, reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { StoredComment as RemovableComment } from '../posts/comment-identity';
-import { planCommentRemoval } from '../posts/comment-removal';
+import { idsOfRows, planCommentRemoval, rowsReleasedBy } from '../posts/comment-removal';
+import { forgetCommentNotices, writeComments } from '../posts/comment-write';
+import { commentMediaIds } from '../posts/post-media-retention.service';
+import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
@@ -141,7 +145,9 @@ export class ModerationService {
     @InjectRepository(ContentReport)
     private readonly reportRepo: Repository<ContentReport>,
     @InjectRepository(UserModeration)
-    private readonly muteRepo: Repository<UserModeration>
+    private readonly muteRepo: Repository<UserModeration>,
+    /** For the media service: a moderated comment's media are released (`deleteCommentById`). */
+    private readonly http: HttpService
   ) {}
 
   // ── Content reports ───────────────────────────────────────────────────────
@@ -928,8 +934,16 @@ export class ModerationService {
    * Removes a comment and its descendants from the post that holds it - the moderators' act on a
    * comment report. What goes is `planCommentRemoval` (`posts/comment-removal.ts`), the same plan the
    * comment's own delete route applies: each descendant `mayRemove` admits goes, one it does not stays
-   * under a moderation tombstone (lead, 2026-11-04). The row is read and written under a row lock, so
-   * a comment added meanwhile is not overwritten by this plan.
+   * under a moderation tombstone (lead, 2026-11-04).
+   *
+   * It writes through `writeComments` (`posts/comment-write.ts`), as every other comment writer does:
+   * the post row locked, the array read under the lock, so a reply that lands meanwhile either waits
+   * for this delete and sees its result, or is seen by it - never lost, and never brings a removed
+   * comment back. `mayRemove` was built from the comments read before the lock; a reply in a name it
+   * has not seen is judged as one the moderator does not moderate, and stays.
+   *
+   * Afterwards, as the comment's own delete route does: the media of every removed row and of each
+   * tombstone's original are released, and the bell forgets them (`forgetCommentNotices`).
    */
   async deleteCommentById(
     commentId: string,
@@ -937,30 +951,24 @@ export class ModerationService {
   ): Promise<{ postId: string; removedIds: string[]; tombstoneIds: string[] }> {
     const postId = await this.findPostIdForComment(commentId);
     if (!postId) throw new NotFoundException('Comment not found');
-    return this.reportRepo.manager.transaction(async (m) => {
-      const rows: { comments: RemovableComment[] | null }[] = await m.query(
-        `SELECT comments FROM posts WHERE id = $1 FOR UPDATE`,
-        [postId]
-      );
-      const plan = planCommentRemoval(
-        rows[0]?.comments ?? [],
-        commentId,
-        mayRemove,
-        new Date().toISOString()
-      );
-      await m.query(`UPDATE posts SET comments = $2::jsonb WHERE id = $1`, [
-        postId,
-        JSON.stringify(plan.comments),
-      ]);
-      this.logger.log(
-        `[MODERATION] reported comment delete post=${postId.slice(0, 8)} comment=${commentId.slice(0, 12)} removed=${plan.removed.length} tombstoned=${plan.tombstoned.length}`
-      );
-      return {
-        postId,
-        removedIds: plan.removed.map((c) => c.id).filter((id): id is string => !!id),
-        tombstoneIds: plan.tombstoned.map((t) => t.after.id).filter((id): id is string => !!id),
-      };
+    const plan = await writeComments(this.reportRepo.manager, postId, (comments) => {
+      if (!comments.some((c) => c.id === commentId)) {
+        throw new NotFoundException('Comment not found');
+      }
+      const planned = planCommentRemoval(comments, commentId, mayRemove, new Date().toISOString());
+      return { next: planned.comments, result: planned };
     });
+    this.logger.log(
+      `[MODERATION] reported comment delete post=${postId.slice(0, 8)} comment=${commentId.slice(0, 12)} removed=${plan.removed.length} tombstoned=${plan.tombstoned.length}`
+    );
+    const media = commentMediaIds(rowsReleasedBy(plan));
+    if (media.length > 0) {
+      await applyMediaRetentionClass(this.http, this.logger, media, 'ephemeral');
+    }
+    const removedIds = idsOfRows(plan.removed);
+    const tombstoneIds = idsOfRows(plan.tombstoned.map((t) => t.after));
+    await forgetCommentNotices(this.reportRepo.manager, postId, removedIds, tombstoneIds);
+    return { postId, removedIds, tombstoneIds };
   }
 
   /**

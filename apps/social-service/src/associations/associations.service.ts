@@ -3027,9 +3027,11 @@ export class AssociationsService {
 
   /**
    * May `userId` moderate (delete) comment `commentId` under post `postId`? A platform admin always; a
-   * BDE `MODERATE` holder when the post is in its scope AND the comment and every reply that would go
-   * with it are published by a person or an association it moderates (`bdeModeratesCommentSql`) - never
-   * a comment in an institution's or another BDE's name (owner, 2026-11-03).
+   * BDE `MODERATE` holder when the post is in its scope AND the comment itself is published by a
+   * person or an association it moderates (`bdeModeratesCommentSql`) - never a comment in an
+   * institution's or another BDE's name (owner, 2026-11-03). Its replies are not asked: each is judged
+   * on its own when the delete meets it, and one the holder does not moderate stays under a
+   * moderation tombstone (`posts/comment-removal.ts`, lead 2026-11-04).
    */
   async mayModerateComment(
     userId: string | undefined,

@@ -51,7 +51,8 @@ describe('ModerationService - reports', () => {
     muteRepo = { findOne: jest.fn(), save: jest.fn(), create: jest.fn(), find: jest.fn() };
     service = new ModerationService(
       reportRepo as unknown as Repository<ContentReport>,
-      muteRepo as unknown as Repository<UserModeration>
+      muteRepo as unknown as Repository<UserModeration>,
+      {} as never
     );
     answerGate();
   });

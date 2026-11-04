@@ -29,6 +29,7 @@
 import { m } from '$lib/paraglide/messages';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { POST_ATTACHMENTS_MAX, POST_ATTACHMENTS_TOO_MANY } from '$lib/posts/attachmentCap';
+import { COMMENT_REMOVED_BY_MODERATION } from '$lib/posts/commentRemovedRefusal';
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { localizedMessage } from '$lib/utils/localizedError';
@@ -75,6 +76,10 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
   // A post written with too many attachments is refused by CODE (the composers stop it first).
   if (error instanceof ApiRefusalError && error.code === POST_ATTACHMENTS_TOO_MANY) {
     return m.post_attachments_too_many({ max: POST_ATTACHMENTS_MAX });
+  }
+  // A reply to (or a like of) a comment moderation removed while this copy still showed it live.
+  if (error instanceof ApiRefusalError && error.code === COMMENT_REMOVED_BY_MODERATION) {
+    return m.post_comment_removed_by_moderation_refusal();
   }
   if (isVideoPrepareError(error)) return videoPrepareFailureMessage(error) ?? fallback;
   return localizedMessage(error, fallback);

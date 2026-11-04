@@ -122,7 +122,7 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     mutes = ds.getRepository(UserModeration);
     tagService = new UserTagService(tags);
     reports = ds.getRepository(ContentReport);
-    moderation = new ModerationService(reports, mutes);
+    moderation = new ModerationService(reports, mutes, {} as never);
     history = ds.getRepository(AssociationRoleHistory);
     // The association reads only LABEL a role history row and check an id exists; the rows judged
     // here are the role history's, so those two answer from a stub.

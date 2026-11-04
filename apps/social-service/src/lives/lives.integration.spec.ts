@@ -1656,7 +1656,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
     });
     const reports = () =>
-      new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
+      new ModerationService(
+        ds.getRepository(ContentReport),
+        {} as Repository<UserModeration>,
+        {} as never
+      );
     const report = (reporterId: string, liveId: string) =>
       reports().createReport({
         reporterId,
@@ -2511,7 +2515,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
   describe('the strike ladder (WP-L8b, migration 099): warning, suspension, withdrawal by staff', () => {
     const MOD = '9'.repeat(64);
     const reports = () =>
-      new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
+      new ModerationService(
+        ds.getRepository(ContentReport),
+        {} as Repository<UserModeration>,
+        {} as never
+      );
     /** Starts a live of `who`, cuts it, and lets the purge take it - one abuse on record. */
     const abuse = async (who = ALICE, reason = 'spam') => {
       const live = await start(who);
@@ -2828,7 +2836,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     const keyBefore = process.env.LIVE_REPORT_SIGNING_KEY;
     let chat: LiveChatService;
     const reports = () =>
-      new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
+      new ModerationService(
+        ds.getRepository(ContentReport),
+        {} as Repository<UserModeration>,
+        {} as never
+      );
     let n = 0;
     const uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
     /** Seals `text` exactly as the client's v1 format does (`liveChatCrypto.ts`). */
@@ -2970,7 +2982,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       const repo = ds.getRepository(ContentReport);
       const blind = Object.create(repo) as Repository<ContentReport>;
       blind.findOne = async () => null;
-      const service = new ModerationService(blind, {} as Repository<UserModeration>);
+      const service = new ModerationService(blind, {} as Repository<UserModeration>, {} as never);
       const logged = jest.spyOn(Logger.prototype, 'log');
       try {
         const live = await start();

@@ -16,6 +16,8 @@
  *
  * The reasoning per decision is on docs/wiki/account-erasure.md.
  */
+import type { StoredComment as RemovableComment } from '../posts/comment-identity';
+import { pruneEmptyTombstones } from '../posts/comment-removal';
 
 /** The account id written in place of an erased one. Read as "a deleted account" by every client. */
 export const DELETED_ACCOUNT = '[deleted]';
@@ -955,7 +957,11 @@ export function scrubComments(
       }
       return next;
     });
-  return { comments: kept, changed };
+  // A moderation tombstone is kept only for the replies under it: one whose last reply was the
+  // account's goes too, as on any delete that empties it (`pruneEmptyTombstones`).
+  const { comments: pruned, pruned: gone } = pruneEmptyTombstones(kept as RemovableComment[]);
+  if (gone.length > 0) changed = true;
+  return { comments: pruned, changed };
 }
 
 /**

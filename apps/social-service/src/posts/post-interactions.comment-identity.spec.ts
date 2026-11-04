@@ -1,3 +1,4 @@
+import { lockedCommentsManager } from './locked-comments.it-fixture';
 import type { Repository } from 'typeorm';
 import { ForbiddenException } from '@nestjs/common';
 import { PostInteractionsService } from './post-interactions.service';
@@ -40,7 +41,7 @@ describe('PostInteractionsService - comment identity', () => {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn((p: unknown) => Promise.resolve(p)),
-      manager: { query },
+      manager: lockedCommentsManager(post as { comments?: unknown[] }, query),
     };
     const associations = {
       isContentModerator: jest.fn(() => Promise.resolve(false)),

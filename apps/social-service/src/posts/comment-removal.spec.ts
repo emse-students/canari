@@ -1,5 +1,14 @@
+import { ConflictException } from '@nestjs/common';
 import type { StoredComment } from './comment-identity';
-import { planCommentRemoval, pruneEmptyTombstones } from './comment-removal';
+import {
+  COMMENT_REMOVED_BY_MODERATION,
+  countedOutBy,
+  idsOfRows,
+  planCommentRemoval,
+  pruneEmptyTombstones,
+  refuseRemovedByModeration,
+  rowsReleasedBy,
+} from './comment-removal';
 
 /**
  * WHAT A COMMENT'S DELETE TAKES (lead, 2026-11-04): descendants recursively, one rule at every
@@ -39,10 +48,10 @@ describe('planCommentRemoval', () => {
     expect(ids(plan.comments)).toEqual(['a', 'inst-r']);
     expect(ids(plan.removed)).toEqual(['student-r']);
     const stored = plan.comments[0];
+    // No account: a block with the writer must not hide it (a probe of who wrote it).
     expect(stored).toEqual({
       id: 'a',
       parentId: null,
-      userId: 'u-a',
       createdAt: AT,
       text: '',
       likes: [],
@@ -84,6 +93,39 @@ describe('planCommentRemoval', () => {
     const list = [c('a', 'b'), c('b', 'a')];
     expect(planCommentRemoval(list, 'zz', () => true, AT).comments).toEqual(list);
     expect(planCommentRemoval(list, 'a', () => true, AT).comments).toEqual([]);
+  });
+
+  it('counts out the live rows it took or tombstoned, never a tombstone it pruned', () => {
+    const first = planCommentRemoval(
+      [c('a', null), c('inst-r', 'a', { associationId: 'inst' }), c('b', 'a')],
+      'a',
+      notInstitution,
+      AT
+    );
+    // a tombstoned, b removed: two comments leave the count.
+    expect(countedOutBy(first)).toBe(2);
+    expect(ids(rowsReleasedBy(first)).sort()).toEqual(['a', 'b']);
+    // The institution's reply goes later: it leaves the count, the pruned tombstone does not again.
+    const second = planCommentRemoval(first.comments, 'inst-r', () => true, AT);
+    expect(countedOutBy(second)).toBe(1);
+    expect(idsOfRows(second.removed).sort()).toEqual(['a', 'inst-r']);
+  });
+
+  it('refuses a reply or a like on a tombstone, typed 409 COMMENT_REMOVED_BY_MODERATION', () => {
+    const tomb = c('a', null, { removedByModeration: true });
+    for (const act of ['reply', 'like'] as const) {
+      let refusal: unknown;
+      try {
+        refuseRemovedByModeration(tomb, act);
+      } catch (e) {
+        refusal = e;
+      }
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: COMMENT_REMOVED_BY_MODERATION,
+      });
+    }
+    expect(() => refuseRemovedByModeration(c('b', null), 'reply')).not.toThrow();
   });
 
   it('pruneEmptyTombstones removes nested empty tombstones in one call', () => {

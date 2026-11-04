@@ -815,6 +815,7 @@
   "post_comment_anonymous_author_label": "Anonymous - post author",
   "post_comment_edited_label": "edited",
   "post_comment_removed_by_moderation": "Comment removed by moderation",
+  "post_comment_removed_by_moderation_refusal": "This comment was removed by moderation.",
   "post_comment_identity_label": "Comment as",
   "post_comment_anonymous_hint": "Your name will not appear on this comment. A moderator can still see who wrote it.",
   "post_comment_identity_unavailable": "Cannot comment under this identity. Pick another one.",

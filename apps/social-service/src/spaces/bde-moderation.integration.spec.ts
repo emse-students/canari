@@ -14,6 +14,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { ForbiddenException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
+import { of } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import { AssociationsService } from '../associations/associations.service';
@@ -207,6 +208,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         DEFAULT 'pending', "reviewedBy" varchar, "reviewedAt" timestamptz, "reportedUserId" varchar,
         "createdAt" timestamp NOT NULL DEFAULT now());
       CREATE TABLE live_chat_reported_lines ("reportId" uuid PRIMARY KEY, "liveId" uuid NOT NULL);
+      CREATE TABLE post_notifications (id serial PRIMARY KEY, "postId" varchar NOT NULL,
+        "commentId" varchar(255), text varchar NOT NULL);
     `);
     for (const [key, id] of Object.entries(A)) {
       const type = key === 'instSe' ? 'institution' : key === 'listSe' ? 'list' : 'association';
@@ -702,6 +705,26 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         `INSERT INTO posts (id, "authorId", "associationId", comments) VALUES ($1, 'seStudent', NULL, $2)`,
         [post, JSON.stringify(thread)]
       );
+      // The bell: one row about the club reply the delete takes, one about the root it tombstones,
+      // one about the institution's reply it keeps.
+      for (const [commentId, text] of [
+        ['tb-club', 'club words'],
+        ['tb-root', 'root words'],
+        ['tb-inst', 'inst words'],
+      ]) {
+        await client.query(
+          `INSERT INTO post_notifications ("postId", "commentId", text) VALUES ($1, $2, $3)`,
+          [post, commentId, text]
+        );
+      }
+      // The media service, as `applyMediaRetentionClass` calls it.
+      const released: string[] = [];
+      const http = {
+        post: jest.fn((_url: string, body: { mediaIds: string[] }) => {
+          released.push(...body.mediaIds);
+          return of({ data: { changed: body.mediaIds.length } });
+        }),
+      };
       const ds = new DataSource({
         type: 'postgres',
         url: URL,
@@ -712,7 +735,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       await ds.initialize();
       try {
         const route = new ModerationController(
-          new ModerationService(ds.getRepository(ContentReport), {} as never),
+          new ModerationService(ds.getRepository(ContentReport), {} as never, http as never),
           service()
         );
         const stored = async () =>
@@ -745,6 +768,24 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         expect(root).toMatchObject({ id: 'tb-root', text: '', removedByModeration: true });
         expect(root.media).toBeUndefined();
         expect(after[3]).toMatchObject({ id: 'tb-st', text: '', removedByModeration: true });
+        // A tombstone names nobody: a block with its writer could otherwise probe who it was.
+        expect(after.filter((c) => c.removedByModeration).map((c) => c.userId)).toEqual([
+          undefined,
+          undefined,
+        ]);
+        // The media of what the moderation took are released, as on the comment's own route.
+        expect(released).toEqual(['m-root']);
+        // The bell forgets the removed reply and blanks the tombstoned root's preview.
+        const bell = (
+          await client.query(
+            `SELECT "commentId", text FROM post_notifications WHERE "postId" = $1 ORDER BY "commentId"`,
+            [post]
+          )
+        ).rows;
+        expect(bell).toEqual([
+          { commentId: 'tb-inst', text: 'inst words' },
+          { commentId: 'tb-root', text: '' },
+        ]);
 
         // A tombstone left with no reply goes with the last thing it was kept for.
         await route.deleteReportedComment('tb-st-inst', 'admin', 'true');
