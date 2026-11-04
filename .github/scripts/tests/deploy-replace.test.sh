@@ -538,6 +538,26 @@ edge pinned yes -'
   )"
   verdict "a configuration dump of 300 KB is matched on its first lines, not refused by a SIGPIPE" \
     '[ "$big_dump" = "reload:plain" ]'
+  # The same dump with the marker near its END: nothing leaves early, so this one passes on any
+  # platform and pins that the match is found wherever it sits.
+  big_dump_end="$(
+    fake_docker() {
+      case "$1" in
+      ps) echo fe-1 ;;
+      inspect) echo running ;;
+      exec)
+        head -c 300000 /dev/zero | tr '\0' 'x' | fold -w 100
+        echo
+        printf '# configuration file /etc/nginx/targets/front.conf:\n# render %s\n' "$ROTATION_TOKEN"
+        ;;
+      *) return 1 ;;
+      esac
+    }
+    rotation_reload() { echo "reload:$3"; }
+    rotation_apply front plain 2>&1
+  )"
+  verdict "a configuration dump of 300 KB is matched on its last lines too" \
+    '[ "$big_dump_end" = "reload:plain" ]'
 
   # A proxy that reads no list is a TRANSITION only when it runs the previous release's image.
   legacy="$(

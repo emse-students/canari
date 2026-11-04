@@ -1395,7 +1395,7 @@ jobs:
           # The source address the kernel would use toward the outside: the interface that carries
           # the default route, by the routing table's own answer (no packet is sent), rather than
           # whichever address `hostname -I` happens to list first (a docker bridge, an IPv6).
-          ip="$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')"
+          ip="$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src" && !seen) { print $(i + 1); seen = 1 } }')"
           if [ -z "$ip" ]; then ip -4 route; echo "::error::no IPv4 source address on the default route"; exit 1; fi
           password="$(openssl rand -hex 16)"
           # Masked before anything can print it (coturn's own log included).

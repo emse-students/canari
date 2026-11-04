@@ -78,7 +78,7 @@ require_dev() {
 # cluster was started with.
 container_env() {
   docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" "$1" |
-    awk -v k="$2" -F= '$1 == k { sub(/^[^=]*=/, ""); print; exit }'
+    awk -v k="$2" -F= '$1 == k && !seen { sub(/^[^=]*=/, ""); print; seen = 1 }'
 }
 
 DEV_PG=$(container_for postgres)
