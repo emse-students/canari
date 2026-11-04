@@ -26,7 +26,7 @@ club of each / a list / a student, named and anonymous, and the platform admin; 
 the route). The mechanism, the decisions taken and the queue's measured cost are in
 [moderation-and-blocking](../moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible).
 
-**Owed:** the release, then this file and its queue line are deleted. A student's content inside an
+**Owed:** the stable (the dev reading passed on `1.6.4-alpha.2`, 2026-11-04, [device-verification](../device-verification.md#where-the-pass-stands)), then this file and its queue line are deleted. A student's content inside an
 institution's or another BDE's post: **the place decides**, owner 2026-11-04, what ships
 ([moderation-and-blocking](../moderation-and-blocking.md#decided-by-the-owner-2026-11-04)).
 An author's own delete takes the whole exchange, replies in a protected name included: owner,

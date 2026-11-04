@@ -50,7 +50,8 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
  * 1. a reel past its month is gone for everyone (`isExpiredReel`);
  * 2. the audience - `postVisibleToViewerSql`, a global admin included (opening by id is a
- *    moderation path); a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
+ *    moderation path - for an "Entre étudiants" post only with `allowHidden`, the moderation read);
+ *    a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
  *    moderation term, whose 403 would otherwise confirm the id to someone outside the audience;
  *    for `'COMMENT'`, also: the comments are not withheld from this reader (a named reader whose
  *    only door is the grant, switch off - `commentsWithheldPostIds`, owner 2026-11-04), else a 404:
@@ -72,7 +73,9 @@ export async function readPostOpenVerdict(
 ): Promise<PostOpenVerdict> {
   if (isExpiredReel(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
   const rows: { visible: boolean }[] = await manager.query(
-    `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: intent !== 'VOTE' })} AS visible FROM posts WHERE posts.id = $1`,
+    // `adminModerates` only with `allowHidden`: a platform admin opens an "Entre étudiants" post to
+    // MODERATE it (read it, its comments), never to react, comment or vote (lead, 2026-11-04).
+    `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, adminModerates: opts.allowHidden === true, readGrants: intent !== 'VOTE' })} AS visible FROM posts WHERE posts.id = $1`,
     [post.id, opts.viewerId ?? null]
   );
   if (rows[0]?.visible !== true) return refuse('not-found', 'outside its audience');

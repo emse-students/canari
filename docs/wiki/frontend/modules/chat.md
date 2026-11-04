@@ -4810,3 +4810,14 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
 The owner saw a yellow "1" on the floating arrow while scrolled up in a conversation with nothing new. The badge was `countUnreadForUser` over the WHOLE thread: any foreign row not covered by the read mark - above the viewport, in view, or held back by `serverMarkCeiling` or an unfocused window - raised it. Reactions, edits and pins are not rows and never counted. It is now `countUnreadBelow` (`readState.ts`): the unread rows after `lastVisibleMessageId`, measured by `ChatArea.measureScroll` next to `isNearBottom`; an unmeasured position counts nothing. `readState.test.ts`.
 
 The position (`utils/chat/visibleRow.ts`) is the last row above the scroller's bottom MINUS its padding (the floating composer's height), found by binary search over the display-ordered `messageRows`; it is re-measured when the thread or conversation changes, not only on scroll, a vanished anchor resolves to the nearest surviving row (logged once), and nothing is counted while pinned to the live end.
+
+### A group conversation and a community are two entry points with two names (owner, 2026-11-04)
+
+A user in the English app wanted a GROUP and created a COMMUNITY: the community dialog was titled by its name field ("Club or group name" / "Nom de l'association ou du groupe"), and English called a community a "club" in the community screens. Decided: the words never overlap.
+
+| Entry point | What it creates | fr / en |
+|---|---|---|
+| "Nouvelle discussion" > tab "Groupe" (`SidebarNewChatModal`, `onCreateGroup`) | an MLS group conversation | button "Créer la discussion de groupe" / "Create group conversation" |
+| The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
+
+**English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.

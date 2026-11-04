@@ -17,6 +17,8 @@ import {
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
+  studentsOnlyAdmitsUserSql,
+  studentsOnlyAdmitsViewerSql,
 } from '../spaces/reader-spaces';
 import {
   ProposalsService,
@@ -226,23 +228,50 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       );
       return;
     }
-    // `postId` CARRIES THE RECEIVING ASSOCIATION, as the agenda's notifications carry theirs: what
-    // the acceptor must open is that association's queue - the post itself may be outside their
-    // spaces, which is the reason it was proposed to them at all.
-    const count = await this.notifications.createNotifications({
-      recipientIds: acceptorIds,
-      type: 'repost_proposed',
-      postId: proposal.toAssociationId,
-      actorId: proposal.proposedBy,
-      actorName: from.name,
-      associationId: from.id,
-      associationLogoUrl: from.logoUrl,
-      associationLogoMediaId: from.logoMediaId,
-      text: previewOf(post.markdown ?? ''),
-      // The tap opens the receiving association's queue, not the feed.
-      pushData: { queueAssociationId: proposal.toAssociationId },
-    });
-    this.logger.log(`[REPOST] proposal ${proposal.id.slice(0, 8)} announced to ${count}`);
+    // "ENTRE ÉTUDIANTS": the proposal is announced to every acceptor, its TEXT only to those the
+    // gate admits. This row is not bound to the post (`postId` names the queue), so no read
+    // re-asks the predicate later: the text an officer without a cursus would get is withheld here.
+    const admitted = await this.acceptorsAdmittedToText(post.id, acceptorIds);
+    const withheld = acceptorIds.filter((id) => !admitted.has(id));
+    const preview = previewOf(post.markdown ?? '');
+    let count = 0;
+    for (const [recipientIds, text] of [
+      [[...admitted], preview],
+      [withheld, ''],
+    ] as [string[], string][]) {
+      if (recipientIds.length === 0) continue;
+      // `postId` CARRIES THE RECEIVING ASSOCIATION, as the agenda's notifications carry theirs:
+      // what the acceptor must open is that association's queue - the post itself may be outside
+      // their spaces, which is the reason it was proposed to them at all.
+      count += await this.notifications.createNotifications({
+        recipientIds,
+        type: 'repost_proposed',
+        postId: proposal.toAssociationId,
+        actorId: proposal.proposedBy,
+        actorName: from.name,
+        associationId: from.id,
+        associationLogoUrl: from.logoUrl,
+        associationLogoMediaId: from.logoMediaId,
+        text,
+        // The tap opens the receiving association's queue, not the feed.
+        pushData: { queueAssociationId: proposal.toAssociationId },
+      });
+    }
+    this.logger.log(
+      `[REPOST] proposal ${proposal.id.slice(0, 8)} announced to ${count} ` +
+        `(text withheld from ${withheld.length} by the students-only gate)`
+    );
+  }
+
+  /** Of `userIds`, those the "Entre étudiants" gate of post `postId` admits to its text. */
+  private async acceptorsAdmittedToText(postId: string, userIds: string[]): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const rows: { id: string }[] = await this.repo.manager.query(
+      `SELECT u.id FROM users u JOIN posts p ON p.id = $1
+        WHERE u.id = ANY($2::varchar[]) AND ${studentsOnlyAdmitsUserSql('p', 'u')}`,
+      [postId, userIds]
+    );
+    return new Set(rows.map((r) => r.id));
   }
 
   /** The post first, then the proposal: see `lockPostRow`. */
@@ -250,7 +279,15 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     return lockPostRow(manager, postId);
   }
 
-  async describe(postIds: string[]): Promise<Map<string, Record<string, unknown>>> {
+  /**
+   * The queue's description of each proposed post, as `viewerId` may read it: an "Entre étudiants"
+   * post's text is blanked for an officer its gate refuses (the proposal itself stays, so the
+   * association can still decide - by opening the post, which the predicate then answers).
+   */
+  async describe(
+    postIds: string[],
+    viewerId: string
+  ): Promise<Map<string, Record<string, unknown>>> {
     if (postIds.length === 0) return new Map();
     const rows: {
       id: string;
@@ -258,10 +295,12 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       createdAt: Date;
       associationName: string | null;
     }[] = await this.repo.manager.query(
-      `SELECT p.id, p.markdown, p."publishedAt" AS "createdAt", a.name AS "associationName"
+      `SELECT p.id,
+              CASE WHEN ${studentsOnlyAdmitsViewerSql('p', '$2')} THEN p.markdown END AS markdown,
+              p."publishedAt" AS "createdAt", a.name AS "associationName"
          FROM posts p LEFT JOIN associations a ON a.id = p."associationId"
         WHERE p.id = ANY($1::uuid[])`,
-      [postIds]
+      [postIds, viewerId]
     );
     return new Map(
       rows.map((r) => [

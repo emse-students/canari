@@ -26,6 +26,7 @@
   import { navigating } from '$app/state';
   import { Images, RefreshCcw } from '@lucide/svelte';
   import CameraScreen from './CameraScreen.svelte';
+  import { EMPTY_COMPOSER_REEL_STATE, type ComposerReelState } from '$lib/posts/composerReelState';
   import ReelShutter from './ReelShutter.svelte';
   import ReelReview from './ReelReview.svelte';
   import ReelPublishSheet from './ReelPublishSheet.svelte';
@@ -92,13 +93,12 @@
     oncapture?: (file: File) => void;
     /** The overlay's close (the X, and after a hand-back); absent on the tab. */
     onclose?: () => void;
-    /** The new-post composer's text and identity, the start of a reel filmed from it (`post`). */
-    composerCaption?: string;
-    composerIdentity?: string;
+    /** The new-post composer's state, the start of a reel filmed from it (`post`). */
+    composerStart?: ComposerReelState;
     /** A reel filmed from the composer was published (`post`), as `identity`. */
     onpublished?: (identity: string) => void;
-    /** "Garder comme post" from the composer: the step's caption and identity, as they stand. */
-    onkept?: (caption: string, identity: string) => void;
+    /** "Garder comme post" from the composer: the step's state, as it stands. */
+    onkept?: (kept: ComposerReelState) => void;
     /**
      * A `chat` destination that may FILM (the chat reel writer, `chatReelWriter.ts`): a hold records
      * a video, handed back marked as a reel message. Absent, the chat camera takes photos only.
@@ -114,8 +114,7 @@
     publishDeps,
     oncapture,
     onclose,
-    composerCaption = '',
-    composerIdentity = '',
+    composerStart = EMPTY_COMPOSER_REEL_STATE,
     onpublished,
     onkept,
   }: Props = $props();
@@ -965,12 +964,11 @@
         onclose={closePublish}
         composer={rules.fromComposer
           ? {
-              caption: composerCaption,
-              identity: composerIdentity,
-              onkeep: (caption, identity) => {
-                // The take first: the step's caption and identity follow only a take the
-                // composer actually received, never one lost to a missing `oncapture`.
-                if (handBack(clip.blob, clip.poster)) onkept?.(caption, identity);
+              start: composerStart,
+              onkeep: (kept) => {
+                // The take first: the step's state follows only a take the composer actually
+                // received, never one lost to a missing `oncapture`.
+                if (handBack(clip.blob, clip.poster)) onkept?.(kept);
               },
               onpublished: publishedFromComposer,
             }

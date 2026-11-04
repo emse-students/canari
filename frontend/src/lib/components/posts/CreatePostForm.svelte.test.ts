@@ -185,8 +185,7 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     flushSync();
     expect(cameraOverlayStub.last).toEqual({
       destination: 'post',
-      composerCaption: 'a caption written first',
-      composerIdentity: '',
+      composerStart: { caption: 'a caption written first', identity: '', studentsOnly: false },
     });
 
     document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-publish]')!.click();
@@ -221,7 +220,7 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
 
   it("the composer's identity is the camera's: an association chosen here is the reel's start", async () => {
     await openCamera({ ...emptyPostComposerDraft('text'), selectedAssociationId: 'asso-1' });
-    expect(cameraOverlayStub.last?.composerIdentity).toBe('asso-1');
+    expect(cameraOverlayStub.last?.composerStart?.identity).toBe('asso-1');
   });
 
   it('an ANONYMOUS reel lands in the personal feed, never in the associations one', async () => {
@@ -253,6 +252,7 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     cameraOverlayStub.keepWith = {
       caption: 'edited in the step',
       identity: ANONYMOUS_POST_IDENTITY,
+      studentsOnly: false,
     };
     try {
       document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();

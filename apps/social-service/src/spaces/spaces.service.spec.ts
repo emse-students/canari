@@ -171,7 +171,10 @@ describe('SpacesService', () => {
             )
       ),
     } as unknown as DataSource;
-    const redis = { deleteByPattern: jest.fn().mockResolvedValue(3) };
+    const redis = {
+      incr: jest.fn().mockResolvedValue(1),
+      deleteByPattern: jest.fn().mockResolvedValue(3),
+    };
     return {
       service: new SpacesService(spaces, associations, audiences, dataSource, redis as never),
       save,
@@ -528,14 +531,14 @@ describe('SpacesService', () => {
     // rule change - by the grid or by designating a BDE - is a change to every reader's pages.
     const rules = make({ association: { id: 'a' } });
     await rules.service.setAudiences('a', [{ campus: 'gardanne' }], ADMIN);
-    expect(rules.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
+    expect(rules.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v3:*');
 
     const bde = make({
       space: { id: 's', formation: 'ICM', campus: 'gardanne', bdeAssociationId: null },
       association: { id: 'a', type: 'association', parentAssociationId: null },
     });
     await bde.service.setBde('s', 'a', ACTOR);
-    expect(bde.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v2:*');
+    expect(bde.redis.deleteByPattern).toHaveBeenCalledWith('posts:list:v3:*');
   });
 
   it('does not drop the cache for a write it refused', async () => {

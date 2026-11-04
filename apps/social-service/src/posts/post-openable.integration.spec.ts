@@ -93,7 +93,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamp,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamp,
         mentions text NOT NULL DEFAULT '', comments jsonb NOT NULL DEFAULT '[]');

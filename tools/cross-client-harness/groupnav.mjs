@@ -273,7 +273,7 @@ export async function closeOverlays(cx) {
  *     inside the tab's own `{:else if activeTab === 'group'}` branch, so it cannot exist until after
  *     the click - the check waited ten seconds for something its next line was going to create, and
  *     died there every time. It is why READ-10 had never produced a verdict.
- *   - **`del1.mjs` clicked "Créer le groupe" without checking it was enabled.** The button is
+ *   - **`del1.mjs` clicked "Créer la discussion de groupe" without checking it was enabled.** The button is
  *     disabled until the name lands, and a click on a disabled control is discarded in SILENCE -
  *     the same race `send` documents for the composer.
  *   - **Only `newgroup.mjs` waited for the right post-condition.** Creating a group sometimes leaves
@@ -310,13 +310,13 @@ export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
       cx,
       `(function () {
          var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-           return /Créer le groupe/.test(x.innerText || '');
+           return /Créer la discussion de groupe/.test(x.innerText || '');
          })[0];
          return !!b && !b.disabled;
        })()`,
       8000
     );
-    await realClick(cx, 'text=Créer le groupe');
+    await realClick(cx, 'text=Créer la discussion de groupe');
 
     await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
     // OWNED FROM THE MOMENT IT EXISTS (R5): every group a runner mints is recorded here, once, so a

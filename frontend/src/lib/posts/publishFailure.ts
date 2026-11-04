@@ -29,6 +29,7 @@
 import { m } from '$lib/paraglide/messages';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { POST_ATTACHMENTS_MAX, POST_ATTACHMENTS_TOO_MANY } from '$lib/posts/attachmentCap';
+import { STUDENTS_ONLY_NOT_OFFERED } from '$lib/posts/studentsOnly';
 import { COMMENT_REMOVED_BY_MODERATION } from '$lib/posts/commentRemovedRefusal';
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -76,6 +77,10 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
   // A post written with too many attachments is refused by CODE (the composers stop it first).
   if (error instanceof ApiRefusalError && error.code === POST_ATTACHMENTS_TOO_MANY) {
     return m.post_attachments_too_many({ max: POST_ATTACHMENTS_MAX });
+  }
+  // "Entre étudiants" asked where it is not offered (the composers offer it on the same types).
+  if (error instanceof ApiRefusalError && error.code === STUDENTS_ONLY_NOT_OFFERED) {
+    return m.post_students_only_not_offered();
   }
   // A reply to (or a like of) a comment moderation removed while this copy still showed it live.
   if (error instanceof ApiRefusalError && error.code === COMMENT_REMOVED_BY_MODERATION) {

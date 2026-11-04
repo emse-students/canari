@@ -172,7 +172,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int);
-      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid);
+      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false);
       ALTER TABLE associations ADD COLUMN "isBDE" boolean NOT NULL DEFAULT false;
     `);
     // Only the columns an association delete and the erasure's association lock read: PARTIAL, so

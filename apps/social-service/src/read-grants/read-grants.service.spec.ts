@@ -20,7 +20,10 @@ function setup(answers: { user?: unknown[]; write?: unknown[]; left?: unknown[] 
     query: jest.fn(),
   } as unknown as DataSource;
   const dropCache = jest.fn(async () => 3);
-  const redis = { deleteByPattern: dropCache } as unknown as RedisService;
+  const redis = {
+    incr: jest.fn(async () => 1),
+    deleteByPattern: dropCache,
+  } as unknown as RedisService;
   return { service: new ReadGrantsService(dataSource, redis), queries, dropCache };
 }
 
