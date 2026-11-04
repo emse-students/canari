@@ -43,6 +43,7 @@ import type { ReelPurgeReason } from '../internal/reel-media';
 import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 import { publicationTime } from './publication-time';
 import { invalidatePostListCache, postListCacheKey } from './post-list-cache';
+import { assertStudentsOnlyOffered } from './students-only';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { readPostOpenVerdict } from './post-openable';
@@ -867,12 +868,14 @@ export class PostsService {
         name: out.assocName,
         slug: out.assocSlug,
         logoUrl: out.assocLogoUrl,
+        type: out.assocType,
       };
     }
     delete out.assocJoinId;
     delete out.assocName;
     delete out.assocSlug;
     delete out.assocLogoUrl;
+    delete out.assocType;
     return out;
   }
 
@@ -907,9 +910,9 @@ export class PostsService {
       return raw;
     }
     delete raw.authorId;
-    const rows: { id: string; name: string; slug: string; logoUrl: string | null }[] =
+    const rows: { id: string; name: string; slug: string; logoUrl: string | null; type: string }[] =
       await this.postRepo.manager.query(
-        `SELECT id, name, slug, "logoUrl" FROM associations WHERE id = $1`,
+        `SELECT id, name, slug, "logoUrl", type FROM associations WHERE id = $1`,
         [raw.associationId]
       );
     if (rows[0]) {
@@ -918,6 +921,7 @@ export class PostsService {
         name: rows[0].name,
         slug: rows[0].slug,
         logoUrl: rows[0].logoUrl,
+        type: rows[0].type,
       };
     }
     if (raw.linkedCalendarEventId) {
@@ -1099,6 +1103,12 @@ export class PostsService {
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
+    // "Entre étudiants": OFF unless asked, and refused (typed) where it is not offered.
+    data.studentsOnly = data.studentsOnly === true;
+    if (data.studentsOnly) {
+      assertStudentsOnlyOffered(true, await this.associationTypeOf(data.associationId ?? null));
+      this.logger.debug('[STUDENTS_ONLY] a post published for students only');
+    }
     if (data.linkedCalendarEventId) {
       data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
         data.associationId,
@@ -1346,7 +1356,7 @@ export class PostsService {
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts."scheduledAt",
-         posts.kind, posts."durationMs", posts."expiresAt",
+         posts.kind, posts."durationMs", posts."expiresAt", posts."studentsOnly",
          ${commentCount} AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -1358,7 +1368,8 @@ export class PostsService {
              ORDER BY ord DESC LIMIT 20
            ) sub
          ) AS comments,
-         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl"`;
+         assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug", assoc."logoUrl" AS "assocLogoUrl",
+         assoc.type AS "assocType"`;
   }
 
   /** Moderation-hidden posts are invisible to every reader but a platform admin. */
@@ -1795,8 +1806,9 @@ export class PostsService {
     const rows: any[] = await this.postRepo.manager.query(
       `SELECT posts.id, posts."authorId", posts.anonymous, posts.markdown, posts."createdAt",
               posts."associationId", posts."linkedCalendarEventId", posts."hiddenByModeration",
+              posts."studentsOnly",
               assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug",
-              assoc."logoUrl" AS "assocLogoUrl"
+              assoc."logoUrl" AS "assocLogoUrl", assoc.type AS "assocType"
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."linkedCalendarEventId" = $1
@@ -2000,12 +2012,14 @@ export class PostsService {
       attachedFormId?: string | null;
       linkedCalendarEventId?: string | null;
       scheduledAt?: string | null;
+      studentsOnly?: boolean;
     },
     isGlobalAdmin = false
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     await this.assertMayEdit(post, userId, isGlobalAdmin);
+    await this.applyStudentsOnly(post, data.studentsOnly);
 
     // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
     if (post.kind === 'reel') {
@@ -2065,6 +2079,40 @@ export class PostsService {
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
     return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
+  }
+
+  /**
+   * The type of association `associationId` (`association`, `list`, `institution`), or `null` for a
+   * personal post (no id) or an id no row has - which the switch reads as "not offered".
+   */
+  private async associationTypeOf(associationId: string | null): Promise<string | null> {
+    if (!associationId) return null;
+    const rows: { type: string }[] = await this.postRepo.manager.query(
+      `SELECT type FROM associations WHERE id = $1`,
+      [associationId]
+    );
+    return rows[0]?.type ?? null;
+  }
+
+  /**
+   * Changes the "Entre étudiants" switch of `post` when an edit names it (owner, 2026-11-04,
+   * decision 5: both ways, at any time). Turning it on is refused, typed, where it is not offered;
+   * turning it off never is. The caller saves the row and drops every cached feed page
+   * (`invalidateListCache`), so the change reaches every path on the next read: the predicate reads
+   * the row, and nothing else holds the audience.
+   *
+   * Notifications already delivered stay as they are: the bell re-asks the predicate at every read
+   * (`bellRowShownSql`), so closing hides the rows from the readers it withdraws and reopening shows
+   * them again, with nothing deleted; a push already on a phone cannot be recalled, and opening it
+   * answers the 404 of a post not seen. Reopening tells nobody new (the post was announced once).
+   */
+  private async applyStudentsOnly(post: Post, next: boolean | undefined): Promise<void> {
+    if (next === undefined || next === post.studentsOnly) return;
+    assertStudentsOnlyOffered(next, await this.associationTypeOf(post.associationId ?? null));
+    this.logger.log(
+      `[STUDENTS_ONLY] post ${post.id.slice(0, 8)}: switch turned ${next ? 'ON - withdrawn from readers outside students and members' : 'OFF - given back to its audience'}`
+    );
+    post.studentsOnly = next;
   }
 
   /**

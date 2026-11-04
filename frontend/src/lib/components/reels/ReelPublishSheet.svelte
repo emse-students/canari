@@ -15,6 +15,8 @@
   import { ChevronLeft, CircleAlert, Clock } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
+  import StudentsOnlySwitch from '$lib/components/posts/StudentsOnlySwitch.svelte';
+  import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -85,6 +87,14 @@
   let caption = $state(untrack(() => composer?.caption ?? ''));
   let identity = $state(untrack(() => composer?.identity ?? ''));
   let associations = $state<Association[]>([]);
+  /** "Entre étudiants" (owner, 2026-11-04): OFF, offered while an association or a list publishes. */
+  let studentsOnly = $state(false);
+  const studentsOnlyAssociation = $derived.by(() => {
+    const chosen = associations.find((a) => a.id === identity) ?? null;
+    return chosen && studentsOnlyOffered(chosen.type) ? chosen : null;
+  });
+  /** Sent only where offered: a switch left on before the identity changed is not a choice. */
+  const sendStudentsOnly = $derived(studentsOnly && studentsOnlyAssociation !== null);
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
   let errorMessage = $state('');
@@ -179,13 +189,20 @@
         if (next === 'mediaUpload') preparation.finish();
       };
       if (clip.blob.type.startsWith('image/')) {
-        await publishCameraPhoto({ clip, caption, identity, onStage });
+        await publishCameraPhoto({
+          clip,
+          caption,
+          identity,
+          studentsOnly: sendStudentsOnly,
+          onStage,
+        });
       } else {
         await publishReel(
           {
             clip,
             caption,
             identity,
+            studentsOnly: sendStudentsOnly,
             maxDurationMs: limits.maxDurationMs,
             video: { onProgress: options.onProgress, signal: options.signal },
             onStage,
@@ -270,6 +287,14 @@
       </p>
     {/if}
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
+    {#if studentsOnlyAssociation}
+      <div class="mt-3">
+        <StudentsOnlySwitch
+          bind:checked={studentsOnly}
+          associationName={studentsOnlyAssociation.name}
+        />
+      </div>
+    {/if}
 
     <div class="mt-4 flex gap-3">
       <!-- The box is 9:16 from the first paint. The take is a local blob, so its first frame is a

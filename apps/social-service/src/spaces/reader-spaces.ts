@@ -424,6 +424,33 @@ export interface FollowerOpts {
 }
 
 /**
+ * User row `user` is a STUDENT in the sense of the "Entre étudiants" switch (owner, 2026-11-04,
+ * decision 3): an account with a cursus - a campus and a formation from the identity provider - so
+ * at least one SPACE (`isReaderSpaceSql`). Staff (a campus and an empty cursus) have none, and a
+ * review account has none (`review-cohort.ts`).
+ */
+export function isStudentSql(user: string): string {
+  return `EXISTS (SELECT 1 FROM spaces so_space WHERE ${isReaderSpaceSql('so_space', user)})`;
+}
+
+/**
+ * THE "ENTRE ÉTUDIANTS" GATE (owner, 2026-11-04; migration 133): post row `post` is not marked
+ * `studentsOnly`, or user row `user` is a student ({@link isStudentSql}), or a member of the
+ * association that PUBLISHED it (its own members, never a republisher's). A conjunct of
+ * {@link postVisibleToUserSql} over every door but the author's own, so it holds whatever the path -
+ * a republication, a member repost, a pin, a read grant, a follow: the rule is on WHO READS, never on
+ * how the post travels (decision 2). A named reader without a cursus therefore sees nothing of such
+ * a post, which `commentsWithheldFromViewerSql` then never has to withhold.
+ *
+ * Read from the row at every query: turning the switch on withdraws the post from outside readers
+ * at once, turning it off gives it back (decision 5), with no row written anywhere else.
+ */
+export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
+  return `(NOT COALESCE(${post}."studentsOnly", false) OR ${isStudentSql(user)}
+    OR (${post}."associationId" IS NOT NULL AND ${isMemberSql(`${post}."associationId"`, user)}))`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
@@ -450,6 +477,12 @@ export interface FollowerOpts {
  * - ANY non-anonymous post, also: the accepted followers of a MEMBER who reposted it (WP-F6,
  *   `memberRepostReachesUserSql`), left out with `followers: false` like the author's followers.
  *   Monotone in reposts too, so a repost's newly-reached set is "after and not before".
+ *
+ * EVERY DOOR BUT THE AUTHOR'S AND THE MODERATING ADMIN'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
+ * ({@link studentsOnlyAdmitsUserSql}, owner 2026-11-04). It reads no republication and no repost, so
+ * the predicate stays monotone in both, and the newly-reached rules restate it on their "after" side.
+ * `adminSeesAll` is the moderation door (a report, a moderation link): a platform admin judging a
+ * reported post must be able to open it, whatever their own profile.
  */
 export function postVisibleToUserSql(
   post: string,
@@ -477,18 +510,21 @@ export function postVisibleToUserSql(
       : `
       OR ${republicationReachesUserSql(post, user)}`;
   return `(${adminClause}${post}."authorId" = ${user}.id
-    OR (${post}."associationId" IS NULL AND (
+    OR (${studentsOnlyAdmitsUserSql(post, user)} AND (
+    (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
-      OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })}${repostClause})))`;
+      OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })}${repostClause})))))`;
 }
 
 /**
  * Who would see post `$1` for the FIRST time if association `$2` republished it: the readers the
  * association reaches who cannot see the post NOW, minus its author. Asked inside the transaction
  * that writes the republication, BEFORE the row exists - with `postVisibleToUserSql` monotone, that
- * is exactly "visible after and not before", computed on state and never on a clock.
+ * is exactly "visible after and not before", computed on state and never on a clock. The "after"
+ * side restates the "Entre étudiants" gate (`studentsOnlyAdmitsUserSql`): a reader the carrier
+ * reaches but the gate refuses does not see the post after either, so is never told about it.
  */
 export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users nr_user
   JOIN posts nr_post ON nr_post.id = $1
@@ -496,6 +532,7 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
     AND EXISTS (SELECT 1 FROM associations nr_carrier
       WHERE nr_carrier.id = $2::uuid AND NOT COALESCE(nr_carrier.archived, false))
     AND ${associationVisibleToUserSql('$2::uuid', 'nr_user')}
+    AND ${studentsOnlyAdmitsUserSql('nr_post', 'nr_user')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
@@ -538,7 +575,8 @@ export function newlyReachedByPersonalRepublicationSql(announced: boolean): stri
  * set are read in ONE statement, on one snapshot: the write checked it before taking the post row's
  * lock, and an officer who removes the association's last audience rule meanwhile takes no lock the
  * write waits on - without the term, the repost would push `member_repost` for a post its row no
- * longer carries to anyone.
+ * longer carries to anyone. The "Entre étudiants" gate is restated on the "after" side for the same
+ * reason as in `NEWLY_REACHED_BY_REPUBLICATION_SQL`: a follower it refuses is never reached.
  *
  * The CALLER decides whether to tell them: an ENTITY post not yet announced will be announced to
  * everyone who sees it by then (`announceRecipientsSql(false)`), these readers included, so they
@@ -560,6 +598,7 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
               (nr_rblock."blockerId" = nr_user.id AND nr_rblock."blockedId" = nr_post."authorId")
            OR (nr_rblock."blockerId" = nr_post."authorId" AND nr_rblock."blockedId" = nr_user.id))))
     AND ${memberRepostablePostSql('nr_post')}
+    AND ${studentsOnlyAdmitsUserSql('nr_post', 'nr_user')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**

@@ -269,7 +269,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
         "createdBy" varchar(255));
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamptz, markdown text,
         "feedNotifiedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT now(),

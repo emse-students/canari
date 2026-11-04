@@ -48,6 +48,7 @@
   } from '$lib/posts/postAuthorName';
   import { republishedByText } from '$lib/posts/republication';
   import RevealedAuthorLine from '$lib/components/posts/RevealedAuthorLine.svelte';
+  import StudentsOnlyChip from '$lib/components/posts/StudentsOnlyChip.svelte';
   import { Repeat2 } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
@@ -386,6 +387,9 @@
           <span class="shrink-0 opacity-70" title={exactDate(post.createdAt)}
             >{timeAgo(post.createdAt)}</span
           >
+          {#if post.studentsOnly}
+            <StudentsOnlyChip onMedia />
+          {/if}
           {#if republished}
             <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>
             <Repeat2 size={12} strokeWidth={2.5} class="shrink-0 opacity-70" aria-hidden="true" />

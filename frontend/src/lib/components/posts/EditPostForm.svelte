@@ -32,6 +32,8 @@
   import { linkableEventPickerOptions } from '$lib/utils/time';
   import PollSection from './PollSection.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
+  import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
+  import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
   import PickedMediaPreview from './PickedMediaPreview.svelte';
   import MediaCaptionChip from './MediaCaptionChip.svelte';
@@ -154,6 +156,16 @@
   const linkableEventOptions = $derived(
     linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
   );
+  // --- "Entre étudiants" (owner, 2026-11-04, decision 5: changed after publication, both ways) ---
+  let studentsOnly = $state(untrack(() => post.studentsOnly === true));
+  /**
+   * Offered on an association's or a list's post; and on any post that already carries it, so it
+   * can always be given back to its audience, whatever its entity became since.
+   */
+  const studentsOnlyEditable = $derived(
+    post.studentsOnly === true || studentsOnlyOffered(post.association?.type)
+  );
+
   // --- UI state ---
   let saving = $state(false);
   let errorMessage = $state('');
@@ -302,6 +314,8 @@
         scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
         attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
         linkedCalendarEventId: selectedLinkedCalendarEventId || null,
+        // Named only where the switch is drawn: absent leaves the stored value as it is.
+        ...(studentsOnlyEditable ? { studentsOnly } : {}),
       };
 
       if (includePoll) {
@@ -360,6 +374,15 @@
   </div>
 
   <div class="p-4 sm:p-5">
+    {#if studentsOnlyEditable}
+      <div class="mb-5">
+        <StudentsOnlySwitch
+          bind:checked={studentsOnly}
+          associationName={post.association?.name ?? ''}
+          busy={saving}
+        />
+      </div>
+    {/if}
     <!-- Association selectors (linked event) for association posts. -->
     {#if post.associationId}
       <div class="mb-5 grid gap-4 sm:grid-cols-2">

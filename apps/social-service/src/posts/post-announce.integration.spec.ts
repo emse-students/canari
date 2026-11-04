@@ -100,7 +100,7 @@ maybe('the announcement claim, against PostgreSQL', () => {
     // The columns the claim and the scheduler read, typed as the entity declares them.
     await client.query(`
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         "feedNotifiedAt" timestamptz, "publishedAt" timestamptz NOT NULL DEFAULT now(),
         markdown text NOT NULL DEFAULT '', mentions text NOT NULL DEFAULT '');

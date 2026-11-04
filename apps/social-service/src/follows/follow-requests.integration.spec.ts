@@ -154,7 +154,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         "createdAt" timestamp NOT NULL DEFAULT clock_timestamp());
       -- What the block severing (migration 121's member reposts) and the bell's member-repost gate
       -- (the post predicate) read since WP-F6: the visibility schema, through its migrations below.
-      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid,
+      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false,
         anonymous boolean NOT NULL DEFAULT false, "hiddenByModeration" boolean NOT NULL DEFAULT false,
         "publishedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
