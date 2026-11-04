@@ -166,13 +166,22 @@
             void goto(resolve(internalPath(place.href)));
           }
         });
+        // Destroyed while the plugin answered: onDestroy found no listener to drop, so drop it here.
+        if (destroyed) {
+          void listener.unregister();
+          return;
+        }
         // The status bar tap, bridged by the patched plugin: the SAME action as the re-tap. A failure
         // here costs only that gesture, so it is logged and the bar stays native.
         statusBarListener = await onStatusBarTap(() => scrollPageToTop('status-bar')).catch((e) => {
           logFailure('status bar tap')(e);
           return null;
         });
-        if (destroyed) return;
+        if (destroyed) {
+          void statusBarListener?.unregister();
+          void listener.unregister();
+          return;
+        }
         nativeTabBar.status = 'native';
         await publishInsets();
       } catch (e) {

@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { drainHistoryOverlayStack, historyOverlayStackDepth } from '$lib/utils/historyOverlayStack';
 
 /**
  * The element the app's pages scroll in: `+layout.svelte` draws every route inside ONE
@@ -9,7 +10,7 @@ import { Log } from '$lib/utils/Log';
 export const PAGE_SCROLLER_SELECTOR = '.page-scroll-wrap';
 
 /** What a request to scroll to the top ended in - logged, and what the tests assert. */
-export type ScrollToTopOutcome = 'scrolled' | 'already-at-top' | 'no-scroller';
+export type ScrollToTopOutcome = 'scrolled' | 'already-at-top' | 'no-scroller' | 'overlay-open';
 
 /** Who asked, for the log line only: ONE action, several triggers. */
 export type ScrollToTopTrigger = 'tab-retap' | 'status-bar';
@@ -17,10 +18,15 @@ export type ScrollToTopTrigger = 'tab-retap' | 'status-bar';
 /**
  * THE ONE SCROLL-TO-TOP ACTION (owner, 2026-11-04): a re-tap of the selected tab (web bar, native iOS
  * bar, sidebar) and a tap on the iOS status bar both end here. Smooth, unless the reader asked for
- * reduced motion. Already at the top it does nothing more - Instagram's own behaviour; the feed's
- * pull-to-refresh stays the only refresh gesture.
+ * reduced motion. It NEVER refreshes: it reports `already-at-top` and the caller decides
+ * (`handlePlaceTap` refreshes on a re-tap at the top; a status bar tap does nothing more). A status
+ * bar tap while a history overlay is open is skipped: the page behind it would move unseen.
  */
 export function scrollPageToTop(trigger: ScrollToTopTrigger): ScrollToTopOutcome {
+  if (trigger === 'status-bar' && historyOverlayStackDepth() > 0) {
+    Log.d('scrollToTop', `${trigger}: an overlay is open, the page behind it stays put`);
+    return 'overlay-open';
+  }
   const scroller = document.querySelector<HTMLElement>(PAGE_SCROLLER_SELECTOR);
   if (!scroller) {
     Log.d('scrollToTop', `${trigger}: no page scroller mounted`);
@@ -62,18 +68,45 @@ export function registerRetapRefresh(refresh: () => unknown): () => void {
 
 /**
  * Handles a tap on a place: a re-tap returns `true` (the caller then must not navigate); anything
- * else returns `false` and the caller navigates as before. The first re-tap scrolls to the top; a
- * re-tap while ALREADY at the top refreshes the page when it registered a refresh (Instagram).
+ * else returns `false` and the caller navigates as before. A re-tap first closes any open history
+ * overlay (the same-URL navigation it replaces drained them) and stops there; otherwise the first
+ * re-tap scrolls to the top, and a re-tap while ALREADY at the top refreshes the page when it
+ * registered a refresh (Instagram).
  */
 export function handlePlaceTap(placeHref: string, pathname: string): boolean {
   if (!isPlaceRetap(placeHref, pathname)) return false;
   Log.d('scrollToTop', `re-tap of ${placeHref}`);
+  if (historyOverlayStackDepth() > 0) {
+    drainHistoryOverlayStack();
+    return true;
+  }
   const outcome = scrollPageToTop('tab-retap');
   if (outcome === 'already-at-top' && pageRefresh) {
+    if (refreshing) {
+      Log.d('scrollToTop', `re-tap at the top of ${placeHref}: a refresh is already running`);
+      return true;
+    }
     Log.d('scrollToTop', `re-tap at the top of ${placeHref}: refreshing`);
-    void Promise.resolve(pageRefresh()).catch((e) =>
-      Log.d('scrollToTop', `refresh failed: ${String(e)}`)
-    );
+    refreshing = true;
+    void Promise.resolve()
+      .then(() => pageRefresh?.())
+      .catch((e) => console.warn(`[scrollToTop] refresh after a re-tap failed: ${String(e)}`))
+      .finally(() => {
+        refreshing = false;
+      });
   }
   return true;
 }
+
+/**
+ * The click handler of a place link (`BottomNav`, `AppSidebar`): a plain primary click on the open
+ * place is a re-tap and its navigation is cancelled; ctrl/meta/shift/alt or a non-primary button
+ * ("open in a new tab") is left to the browser.
+ */
+export function handlePlaceClick(e: MouseEvent, placeHref: string, pathname: string): void {
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  if (handlePlaceTap(placeHref, pathname)) e.preventDefault();
+}
+
+/** True while a re-tap's refresh runs, so repeated re-taps do not start parallel ones. */
+let refreshing = false;

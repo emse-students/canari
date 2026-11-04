@@ -36,9 +36,10 @@ final class PassthroughView: UIView {
 /// UIKit sends that tap to the ONE visible scroll view with `scrollsToTop` set. The WKWebView's own
 /// scroll view is that view by default, but Canari's pages scroll in an inner `overflow-y-auto` box
 /// (the document never moves), so the gesture did nothing. This 1 pt, near-transparent scroll view
-/// becomes the only candidate (the plugin turns the web view's off), refuses the scroll
+/// (a full-width strip along the top edge, see `viewDidLoad`) becomes the only candidate (the plugin turns the web view's off), refuses the scroll
 /// (`scrollViewShouldScrollToTop` returns false) and tells the page, which runs the same
-/// scroll-to-top as a re-tap of the Feed tab.
+/// scroll-to-top as a re-tap of the Feed tab. The catcher's initial 1 pt frame is replaced by the
+/// constraints.
 final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
     var onTap: (() -> Void)?
 
@@ -133,8 +134,17 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         tabBar.delegate = self
-        // Top-left corner, under no hit-test (PassthroughView claims only the bar and the account button).
+        // A full-width 1 pt strip pinned to the top: UIKit hands the status bar tap to the scroll
+        // view under the tap point, so a corner would only answer a tap at the corner. It
+        // intercepts no touch (PassthroughView claims only the bar and the account button).
+        statusBarTapCatcher.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusBarTapCatcher)
+        NSLayoutConstraint.activate([
+            statusBarTapCatcher.topAnchor.constraint(equalTo: view.topAnchor),
+            statusBarTapCatcher.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            statusBarTapCatcher.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            statusBarTapCatcher.heightAnchor.constraint(equalToConstant: 1),
+        ])
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tabBar)
         trailingFull = tabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor)

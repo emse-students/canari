@@ -6,7 +6,7 @@
   import { page } from '$app/state';
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
-  import { handlePlaceTap } from '$lib/navigation/scrollToTop';
+  import { handlePlaceClick } from '$lib/navigation/scrollToTop';
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
@@ -67,9 +67,7 @@
         href={place.href}
         use:preloadRouteOnView={place.href}
         use:guideAnchor={`nav.${place.id}`}
-        onclick={(e) => {
-          if (handlePlaceTap(place.href, pathname)) e.preventDefault();
-        }}
+        onclick={(e) => handlePlaceClick(e, place.href, pathname)}
         class="group relative flex min-w-0 flex-1 items-center justify-center transition-all duration-200 active:scale-95
  {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
       >
