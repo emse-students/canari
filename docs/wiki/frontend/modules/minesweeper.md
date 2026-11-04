@@ -85,7 +85,10 @@ pressed), so one rule follows both themes; a revealed one is `--cn-surface` in l
 dark. Numbers are a deep shade in light and a bright one in dark (the old `-600/-700` ones were nearly
 unreadable on black), flags amber / gold, the mine `red-600`. The four candidates, light and dark, were
 compared as static mock-ups before the pick; the rejected ones (raised slate, gold-tinted, glow) are not
-kept. **NOT verified in the app:** the mock-up used the real token values, but no screenshot of the
+kept. **The same look runs through the whole section** (user, 2026-11-04): no borders anywhere. A
+sheet row, card, the sparkline panel and the "show more" button are `.ms-tile` (the surface pulled 7%
+toward `--text-main`), the pills floating over the board are `.ms-chip` (9%, 92% opaque), gold stays
+for the primary action and the selected state. **NOT verified in the app:** the mock-up used the real token values, but no screenshot of the
 running modal was taken.
 
 **The lag.** `sync()` used to clone all 576 cells after every action, so Svelte re-proxied them and

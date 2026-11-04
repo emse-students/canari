@@ -1082,9 +1082,9 @@
           transition:fade={{ duration: animationMs(200, settings.animations) }}
         >
           <div
-            class="bg-cn-surface pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
-              ? 'border-cn-yellow/50 shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
-              : 'border-red-500/40 shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
+            class="bg-cn-surface pointer-events-auto flex flex-col items-center gap-3 rounded-2xl px-6 py-6 text-center shadow-2xl {isWin
+              ? 'shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
+              : 'shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
             transition:scaleTransition={{
               duration: animationMs(280, settings.animations),
               start: 0.9,
@@ -1105,7 +1105,7 @@
             </p>
             {#if isWin}
               <p
-                class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
+                class="bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-lg px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
               >
                 <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
                 {m.minesweeper_time({
@@ -1119,7 +1119,7 @@
                   </p>
                 {:else if winRank != null}
                   <p
-                    class="border-cn-yellow/30 bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-bold"
+                    class="bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold"
                   >
                     <Trophy size={14} class="text-cn-yellow" strokeWidth={2.5} />
                     {#if winRanksGained > 0}
@@ -1156,12 +1156,12 @@
           type="button"
           onclick={onClose}
           aria-label={m.minesweeper_close()}
-          class="ui-icon-button bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto rounded-full border shadow-sm backdrop-blur-sm"
+          class="ui-icon-button ms-chip text-text-main pointer-events-auto rounded-full shadow-sm backdrop-blur-sm"
         >
           <X size={18} />
         </button>
         <div
-          class="bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full border pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
+          class="ms-chip text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
         >
           <span class="flex items-center gap-1.5 leading-none">
             <Bomb size={16} class="text-cn-dark" />
@@ -1193,7 +1193,7 @@
           onclick={() => (showSettings = true)}
           aria-label={m.minesweeper_settings()}
           title={m.minesweeper_settings()}
-          class="ui-icon-button bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto rounded-full border shadow-sm backdrop-blur-sm"
+          class="ui-icon-button ms-chip text-text-main pointer-events-auto rounded-full shadow-sm backdrop-blur-sm"
         >
           <Settings size={18} />
         </button>
@@ -1212,7 +1212,7 @@
     {#if submitMessage}
       <p
         role="status"
-        class="bg-cn-surface/95 border-cn-border pointer-events-none absolute inset-x-3 top-16 z-20 mx-auto w-fit max-w-full rounded-full border px-3 py-1 text-center text-xs font-semibold shadow-sm {submitError
+        class="ms-chip pointer-events-none absolute inset-x-3 top-16 z-20 mx-auto w-fit max-w-full rounded-full px-3 py-1 text-center text-xs font-semibold shadow-sm {submitError
           ? 'text-red-err'
           : 'text-green-ok'}"
       >
@@ -1227,9 +1227,9 @@
         onclick={toggleFlagPrimary}
         aria-pressed={flagPrimary}
         title={m.minesweeper_mode_hint()}
-        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
-          ? 'bg-cn-yellow text-cn-ink border-transparent'
-          : 'bg-cn-surface/90 border-cn-border text-text-main'}"
+        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
+          ? 'bg-cn-yellow text-cn-ink'
+          : 'ms-chip text-text-main'}"
       >
         {#if flagPrimary}
           <Flag size={18} strokeWidth={2.5} />
@@ -1245,9 +1245,9 @@
         disabled={board.minesPlaced}
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
-        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full border px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
-          ? 'bg-cn-yellow text-cn-ink border-transparent'
-          : 'bg-cn-surface/90 border-cn-border text-text-main'}"
+        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
+          ? 'bg-cn-yellow text-cn-ink'
+          : 'ms-chip text-text-main'}"
       >
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
         {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
@@ -1260,7 +1260,7 @@
         class="bg-cn-surface absolute inset-0 z-30 flex flex-col"
         transition:fade={{ duration: 150 }}
       >
-        <div class="border-cn-border flex shrink-0 items-center gap-2 border-b p-2">
+        <div class="flex shrink-0 items-center gap-2 p-2">
           <button
             type="button"
             onclick={() => (showLeaderboard = false)}
@@ -1306,7 +1306,7 @@
               <ol class="space-y-1.5">
                 {#each leaderboard as entry (entry.userId)}
                   <li
-                    class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
+                    class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
                   >
                     <span class="flex min-w-0 items-center gap-2.5">
                       <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">
@@ -1359,7 +1359,7 @@
                   type="button"
                   onclick={() => void loadMoreLeaderboard()}
                   disabled={leaderboardMoreLoading}
-                  class="border-cn-border text-text-main hover:bg-cn-bg mt-3 shrink-0 self-center rounded-full border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50"
+                  class="ms-tile text-text-main hover:bg-cn-bg mt-3 shrink-0 self-center rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50"
                 >
                   {m.minesweeper_load_more()}
                 </button>
@@ -1379,9 +1379,7 @@
               </h3>
               <ul class="space-y-1.5">
                 {#each bans as ban (ban.userId)}
-                  <li
-                    class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
-                  >
+                  <li class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2">
                     <span class="min-w-0">
                       <span class="text-text-main block truncate text-sm font-semibold">
                         {ban.displayName}
@@ -1414,7 +1412,7 @@
         class="bg-cn-surface absolute inset-0 z-30 flex flex-col"
         transition:fade={{ duration: animationMs(150, settings.animations) }}
       >
-        <div class="border-cn-border flex shrink-0 items-center gap-2 border-b p-2">
+        <div class="flex shrink-0 items-center gap-2 p-2">
           <button
             type="button"
             onclick={() => (showSettings = false)}
@@ -1431,7 +1429,7 @@
             role="switch"
             aria-checked={settings.doubleTapZoom}
             onclick={() => updateSettings({ doubleTapZoom: !settings.doubleTapZoom })}
-            class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left"
+            class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-3 text-left"
           >
             <span class="min-w-0">
               <span class="text-text-main block text-sm font-semibold">
@@ -1444,7 +1442,7 @@
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.doubleTapZoom
                 ? 'bg-cn-yellow text-cn-ink'
-                : 'bg-cn-surface text-text-muted border-cn-border border'}"
+                : 'bg-cn-surface text-text-muted'}"
             >
               {settings.doubleTapZoom ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
             </span>
@@ -1455,7 +1453,7 @@
             role="switch"
             aria-checked={settings.haptics}
             onclick={() => updateSettings({ haptics: !settings.haptics })}
-            class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left"
+            class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-3 text-left"
           >
             <span class="text-text-main text-sm font-semibold">
               {m.minesweeper_setting_haptics()}
@@ -1463,13 +1461,13 @@
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.haptics
                 ? 'bg-cn-yellow text-cn-ink'
-                : 'bg-cn-surface text-text-muted border-cn-border border'}"
+                : 'bg-cn-surface text-text-muted'}"
             >
               {settings.haptics ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
             </span>
           </button>
 
-          <div class="border-cn-border bg-cn-bg rounded-xl border px-3 py-3">
+          <div class="ms-tile rounded-lg px-3 py-3">
             <label class="flex items-center justify-between gap-3" for="ms-long-press">
               <span class="text-text-main text-sm font-semibold">
                 {m.minesweeper_setting_long_press()}
@@ -1491,7 +1489,7 @@
             />
           </div>
 
-          <div class="border-cn-border bg-cn-bg rounded-xl border px-3 py-3">
+          <div class="ms-tile rounded-lg px-3 py-3">
             <p class="text-text-main mb-2 text-sm font-semibold">
               {m.minesweeper_setting_animations()}
             </p>
@@ -1551,7 +1549,7 @@
     ]}
     <dl class="grid grid-cols-2 gap-2">
       {#each cards as card (card.label)}
-        <div class="border-cn-border bg-cn-bg rounded-xl border px-3 py-2.5">
+        <div class="ms-tile rounded-lg px-3 py-2.5">
           <dt class="text-text-muted text-xs">{card.label}</dt>
           <dd class="text-cn-dark font-mono text-lg font-bold tabular-nums">{card.value}</dd>
         </div>
@@ -1567,7 +1565,7 @@
       <div
         role="img"
         aria-label={m.minesweeper_stats_chart()}
-        class="border-cn-border bg-cn-bg flex h-20 items-end gap-1 rounded-xl border px-3 py-2"
+        class="ms-tile flex h-20 items-end gap-1 rounded-lg px-3 py-2"
       >
         {#each sparkBars as bar (bar.scoreId)}
           <span
@@ -1579,9 +1577,7 @@
       </div>
       <ul class="mt-2 space-y-1.5">
         {#each stats.recent as win (win.scoreId)}
-          <li
-            class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
-          >
+          <li class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2">
             <span
               class="text-text-muted truncate text-xs"
               title={Number.isNaN(new Date(win.verifiedAt).getTime())
@@ -1602,6 +1598,21 @@
 {/snippet}
 
 <style>
+  /* FLAT TONAL, like the cells (user's pick, 2026-11-04): no borders anywhere in the section. A tile is
+     the surface pulled 7% toward the text colour, so one rule follows both themes. */
+  .ms-tile {
+    background: color-mix(in srgb, var(--text-main) 7%, var(--cn-surface));
+  }
+
+  /* The same tone for what floats over the board, a little translucent so the board shows through. */
+  .ms-chip {
+    background: color-mix(
+      in srgb,
+      color-mix(in srgb, var(--text-main) 9%, var(--cn-surface)) 92%,
+      transparent
+    );
+  }
+
   /* One-shot glow pulse on the win title; kept CSS-only since it's cheaper than a JS-driven effect. */
   @keyframes ms-win-pulse {
     0%,
