@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { fade, scale as scaleTransition } from 'svelte/transition';
   import { backOut } from 'svelte/easing';
   import Modal from '$lib/components/shared/Modal.svelte';
@@ -16,6 +16,7 @@
     startMinesweeperChallenge,
     submitMinesweeperChallenge,
     fetchMinesweeperLeaderboard,
+    fetchMinesweeperStats,
     fetchMinesweeperBans,
     banMinesweeperUser,
     removeMinesweeperScore,
@@ -24,7 +25,22 @@
     MinesweeperBannedError,
     type LeaderboardEntry,
     type MinesweeperBan,
+    type MinesweeperStats,
   } from '$lib/minesweeper/api';
+  import {
+    ANIMATION_SPEEDS,
+    LONG_PRESS_RANGE,
+    animationFactor,
+    animationMs,
+    clampLongPressMs,
+    loadMinesweeperSettings,
+    saveMinesweeperSettings,
+    type AnimationSpeed,
+    type MinesweeperSettings,
+  } from '$lib/minesweeper/settings';
+  import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
+  import MinesweeperCell from './MinesweeperCell.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     HAPTIC_FLAG,
     HAPTIC_LONG_PRESS,
@@ -52,6 +68,7 @@
     Flag,
     Pickaxe,
     RotateCcw,
+    Settings,
     Timer,
     Trash2,
     Trophy,
@@ -59,6 +76,7 @@
     X,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { exactDate, formatRelative } from '$lib/utils/time';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { globalAdminState } from '$lib/stores/userState.svelte';
@@ -74,33 +92,46 @@
 
   /** The leaderboard is a sheet over the board, opened from the floating button; the game keeps running under it. */
   let showLeaderboard = $state(false);
+  /** The two tabs of that sheet: the paged ranking, and the caller's own ranked record. */
+  let sheetTab = $state<'ranking' | 'stats'>('ranking');
+  /** The settings sheet, opened from the gear beside the leaderboard button. */
+  let showSettings = $state(false);
 
-  /** How long a touch must be held before it flags a cell instead of digging it. */
-  const LONG_PRESS_MS = 350;
+  /** Player settings (double-tap zoom, long-press delay, vibration, animation speed), per device. */
+  let settings = $state<MinesweeperSettings>(loadMinesweeperSettings());
+
+  function updateSettings(patch: Partial<MinesweeperSettings>) {
+    settings = { ...settings, ...patch };
+    saveMinesweeperSettings(settings);
+  }
+
+  /** Vibrates unless the player turned vibration off. */
+  function buzz(pattern: number | number[]) {
+    if (settings.haptics) haptic(pattern);
+  }
+
+  /** Entries per page of the ranking. */
+  const LEADERBOARD_PAGE = 10;
   /** Pointer movement (px) past which a pending tap/long-press is treated as a pan gesture instead. */
   const PAN_THRESHOLD_PX = 10;
   /** How far (px) a board larger than the screen may be dragged past its edge. */
   const PAN_MARGIN_PX = 48;
   /** Two taps on the same cell within this window zoom instead of acting twice. */
   const DOUBLE_TAP_MS = 280;
-  /** Duration of the animated zoom a double-tap or a reset triggers. */
-  const VIEW_TRANSITION_MS = 220;
+  /** Base duration of the animated zoom a double-tap or a reset triggers; scaled by the animation setting. */
+  const VIEW_TRANSITION_BASE_MS = 220;
+  const viewTransitionMs = $derived(animationMs(VIEW_TRANSITION_BASE_MS, settings.animations));
   /** Room kept free around the board for the floating controls (top bar, mode button). */
   const FIT_INSETS: Insets = { top: 64, right: 8, bottom: 88, left: 8 };
 
-  /** Tailwind text-color classes for revealed adjacent-mine counts 1-8. */
-  const NUMBER_COLORS: Record<number, string> = {
-    1: 'text-blue-600',
-    2: 'text-green-600',
-    3: 'text-red-600',
-    4: 'text-purple-700',
-    5: 'text-orange-700',
-    6: 'text-cyan-700',
-    7: 'text-text-main',
-    8: 'text-text-muted',
-  };
-
-  let board = $state<MinesweeperBoard>(createBoard(DEFAULT_CONFIG));
+  /**
+   * The engine's board. The engine mutates it in place, so it is `$state.raw` (never proxied, never
+   * deep-tracked) and `commit()` publishes a change by replacing the object - the cells array inside
+   * keeps its identity. What the screen draws per cell is `cellViews`, not these cells.
+   */
+  let board = $state.raw<MinesweeperBoard>(createBoard(DEFAULT_CONFIG));
+  /** One view object per cell, replaced only when that cell changed (see `cellViews.ts`). */
+  let cellViews = $state.raw(EMPTY_CELL_VIEWS);
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let longPressed = false;
   /** Where the long-press progress ring is drawn (viewport coordinates), null when none is pending. */
@@ -135,8 +166,8 @@
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
   }
 
-  /** Recorded player actions for the current game; replayed server-side for ranked anti-cheat. */
-  let moves = $state<MinesweeperMove[]>([]);
+  /** Recorded player actions for the current game; replayed server-side for ranked anti-cheat. Plain, not reactive: the template never reads it. */
+  let moves: MinesweeperMove[] = [];
   /** Set once `startMinesweeperChallenge` succeeds; null means casual (unranked) play. */
   let challengeId = $state<string | null>(null);
   let rankedMode = $state(false);
@@ -151,8 +182,15 @@
   /** Index of the cell whose first dig is being prepared (challenge fetch + generation), shown pressed meanwhile. */
   let pendingCell = $state<number | null>(null);
 
+  /** The pages of the ranking loaded so far, in order; "show more" appends the next one. */
   let leaderboard = $state<LeaderboardEntry[]>([]);
+  /** How many ranked players there are in all, so the last page can end the button. */
+  let leaderboardTotal = $state(0);
   let leaderboardLoading = $state(false);
+  let leaderboardMoreLoading = $state(false);
+  let stats = $state<MinesweeperStats | null>(null);
+  let statsLoading = $state(false);
+  let statsFailed = $state(false);
   let submitMessage = $state<string | null>(null);
   let submitError = $state(false);
   let personalBestMs = $state<number | null>(null);
@@ -224,18 +262,84 @@
     }, 100);
   }
 
+  /** Loads the first page of the ranking, replacing what was shown. */
   async function loadLeaderboard() {
     leaderboardLoading = true;
     try {
-      leaderboard = await fetchMinesweeperLeaderboard(10);
+      const page = await fetchMinesweeperLeaderboard(LEADERBOARD_PAGE, 0);
+      leaderboard = page.entries;
+      leaderboardTotal = page.total;
     } catch (err) {
       console.debug('[minesweeper] leaderboard load failed', err);
       leaderboard = [];
+      leaderboardTotal = 0;
     } finally {
       leaderboardLoading = false;
     }
     if (isAdmin) await loadBans();
   }
+
+  /** Appends the next page of the ranking, from where the loaded ones end. */
+  async function loadMoreLeaderboard() {
+    if (leaderboardMoreLoading) return;
+    leaderboardMoreLoading = true;
+    try {
+      const page = await fetchMinesweeperLeaderboard(LEADERBOARD_PAGE, leaderboard.length);
+      leaderboard = [...leaderboard, ...page.entries];
+      leaderboardTotal = page.total;
+    } catch (err) {
+      console.warn('[minesweeper] next page of the leaderboard failed', err);
+    } finally {
+      leaderboardMoreLoading = false;
+    }
+  }
+
+  /** Loads the caller's own ranked record for the stats tab. */
+  async function loadStats() {
+    statsLoading = true;
+    statsFailed = false;
+    try {
+      stats = await fetchMinesweeperStats();
+    } catch (err) {
+      console.warn('[minesweeper] stats load failed', err);
+      stats = null;
+      statsFailed = true;
+    } finally {
+      statsLoading = false;
+    }
+  }
+
+  /** The label of an animation speed, in the player's language. */
+  function animationLabel(speed: AnimationSpeed): string {
+    return speed === 'normal'
+      ? m.minesweeper_anim_normal()
+      : speed === 'fast'
+        ? m.minesweeper_anim_fast()
+        : m.minesweeper_anim_off();
+  }
+
+  function selectSheetTab(tab: 'ranking' | 'stats') {
+    sheetTab = tab;
+    if (tab === 'stats') void loadStats();
+  }
+
+  /** "il y a 3 j"; nothing for a date the server did not send, never "NaN". */
+  function relativeDate(iso: string): string {
+    return Number.isNaN(new Date(iso).getTime()) ? '' : formatRelative(iso);
+  }
+
+  /** The bars of the stats sparkline: oldest win first, each as a share of the slowest shown. */
+  const sparkBars = $derived.by(() => {
+    const wins = [...(stats?.recent ?? [])].reverse();
+    const slowest = Math.max(1, ...wins.map((w) => w.durationMs));
+    const fastest = Math.min(...wins.map((w) => w.durationMs));
+    return wins.map((w) => ({
+      scoreId: w.scoreId,
+      percent: Math.max(8, Math.round((w.durationMs / slowest) * 100)),
+      best: w.durationMs === fastest,
+      label: formatDurationMs(w.durationMs),
+    }));
+  });
 
   // ---- Moderation (global admins; the server refuses anyone else) ----
   /** The buttons are drawn for a global admin only - the 403 behind them is the real gate. */
@@ -295,6 +399,7 @@
   /** Opens the scores over the board; refreshes them on entry (the game timer keeps running). */
   function openLeaderboard() {
     showLeaderboard = true;
+    sheetTab = 'ranking';
     void loadLeaderboard();
   }
 
@@ -322,13 +427,19 @@
 
   /** Runs a view change as a short animation; the next gesture cancels it. */
   function animateView(change: () => void) {
+    if (viewTransitionMs === 0) {
+      // Animations off: the view just lands.
+      cancelViewTransition();
+      change();
+      return;
+    }
     viewTransition = true;
     change();
     if (viewTransitionTimer) clearTimeout(viewTransitionTimer);
     viewTransitionTimer = setTimeout(() => {
       viewTransition = false;
       viewTransitionTimer = null;
-    }, VIEW_TRANSITION_MS + 20);
+    }, viewTransitionMs + 20);
   }
 
   function cancelViewTransition() {
@@ -376,7 +487,7 @@
     pendingCell = null;
     lastTap = null;
     elapsedMs = 0;
-    board = createBoard(DEFAULT_CONFIG, null);
+    installBoard(createBoard(DEFAULT_CONFIG, null));
   }
 
   /** Waits for the DOM to settle after a board change, then fits/centers the viewport. */
@@ -405,7 +516,7 @@
    */
   /** An unseeded, unranked board: no challenge, nothing to submit. */
   function startCasualBoard() {
-    board = createBoard(DEFAULT_CONFIG, null);
+    installBoard(createBoard(DEFAULT_CONFIG, null));
     challengeId = null;
     rankedMode = false;
     challengeRoundTripMs = undefined;
@@ -429,7 +540,7 @@
           const t0 = performance.now();
           const challenge = await startMinesweeperChallenge();
           challengeRoundTripMs = Math.round(performance.now() - t0);
-          board = createBoard(DEFAULT_CONFIG, challenge.seed);
+          installBoard(createBoard(DEFAULT_CONFIG, challenge.seed));
           challengeId = challenge.challengeId;
           rankedMode = true;
           console.debug('[minesweeper] ranked challenge started', {
@@ -507,7 +618,7 @@
   function handlePostMove() {
     if (board.status === 'playing') return;
     stopTimer();
-    haptic(board.status === 'won' ? HAPTIC_WIN : HAPTIC_LOSS);
+    buzz(board.status === 'won' ? HAPTIC_WIN : HAPTIC_LOSS);
     if (board.status === 'won' && rankedMode && challengeId) {
       void submitRankedResult();
     }
@@ -516,6 +627,7 @@
   $effect(() => {
     if (!open) return;
     showLeaderboard = false;
+    showSettings = false;
     startGame();
     void afterBoardChange();
     void loadLeaderboard();
@@ -544,12 +656,24 @@
     return () => observer.disconnect();
   });
 
+  /** Puts a freshly created board on screen; a board of hidden cells replaces hidden views without allocating. */
+  function installBoard(next: MinesweeperBoard) {
+    board = next;
+    // Untracked: this runs inside the effect that starts a game, which must not depend on what it writes.
+    cellViews = syncCellViews(
+      next.cells,
+      untrack(() => cellViews)
+    ).next;
+  }
+
   /**
-   * Forces reactivity after the game helpers mutate `board` in place: the cell
-   * array is shallow-copied so Svelte's `$state` proxy detects the change.
+   * Publishes what the engine just did to `board` in place: the board object is replaced (its
+   * scalars - status, flags - are what the HUD reads) and only the cells whose look changed get a
+   * new view object, so a flood re-renders the cells it opened and not the other hundreds.
    */
-  function sync() {
-    board = { ...board, cells: board.cells.map((cell) => ({ ...cell })) };
+  function commit() {
+    board = { ...board };
+    cellViews = syncCellViews(board.cells, cellViews).next;
   }
 
   function clearLongPressTimer() {
@@ -568,7 +692,7 @@
     if (cell.state === 'flagged') return;
     moves.push({ type: 'reveal', x, y });
     revealCell(board, x, y);
-    sync();
+    commit();
     handlePostMove();
   }
 
@@ -578,7 +702,7 @@
     if (cell.state === 'revealed') return;
     moves.push({ type: 'flag', x, y });
     toggleFlag(board, x, y);
-    sync();
+    commit();
     handlePostMove();
   }
 
@@ -594,7 +718,7 @@
    */
   function primaryAction(x: number, y: number) {
     if (shortPressFlags(y * board.width + x)) {
-      haptic(HAPTIC_FLAG);
+      buzz(HAPTIC_FLAG);
       flag(x, y);
     } else {
       void digWithSeedIfNeeded(x, y);
@@ -630,7 +754,7 @@
       longPressed = false;
       return;
     }
-    if (lastPointerType === 'touch' && !shortPressFlags(i)) {
+    if (settings.doubleTapZoom && lastPointerType === 'touch' && !shortPressFlags(i)) {
       const now = performance.now();
       if (lastTap && lastTap.cell === i && now - lastTap.at < DOUBLE_TAP_MS) {
         lastTap = null;
@@ -672,9 +796,9 @@
       pressedCell = null;
       if (cell === null) return;
       longPressed = true;
-      haptic(HAPTIC_LONG_PRESS);
+      buzz(HAPTIC_LONG_PRESS);
       secondaryAction(cell % board.width, Math.floor(cell / board.width));
-    }, LONG_PRESS_MS);
+    }, settings.longPressMs);
   }
 
   // --- Viewport pan / zoom --------------------------------------------------
@@ -889,7 +1013,10 @@
   maxWidth="max-w-none sm:max-w-[min(96vw,90rem)]"
   panelClass="sm:h-[min(96dvh,100%)]! sm:overflow-hidden"
 >
-  <div class="relative min-h-0 flex-1 overflow-hidden">
+  <div
+    class="relative min-h-0 flex-1 overflow-hidden"
+    style="--ms-anim: {animationFactor(settings.animations)};"
+  >
     <!-- The board takes the whole screen; every control floats over it. -->
     <div
       bind:this={viewportEl}
@@ -906,7 +1033,7 @@
         bind:this={layerEl}
         class="absolute top-0 left-0 w-fit will-change-transform"
         style="transform: translate3d({panX}px, {panY}px, 0) scale({scale}); transform-origin: 0 0; transition: {viewTransition
-          ? `transform ${VIEW_TRANSITION_MS}ms ease-out`
+          ? `transform ${viewTransitionMs}ms ease-out`
           : 'none'};"
       >
         <!-- One set of handlers for all cells (delegated), instead of five per cell. -->
@@ -918,31 +1045,8 @@
           oncontextmenu={handleGridContextMenu}
           onpointerdown={handleGridPointerDown}
         >
-          {#each board.cells as cell, i (i)}
-            <button
-              type="button"
-              data-cell={i}
-              class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm {pendingCell ===
-              i
-                ? 'bg-cn-bg border-cn-border animate-pulse'
-                : cell.state !== 'revealed'
-                  ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 active:bg-cn-yellow/60 border-cn-border'
-                  : cell.mine
-                    ? 'border-transparent bg-red-500/80'
-                    : 'bg-cn-bg border-transparent'} {cell.state === 'revealed' &&
-              !cell.mine &&
-              cell.adjacent > 0
-                ? NUMBER_COLORS[cell.adjacent]
-                : ''}"
-            >
-              {#if cell.state === 'flagged'}
-                <Flag size={14} class="text-cn-dark" />
-              {:else if cell.state === 'revealed' && cell.mine}
-                <Bomb size={14} class="text-white" />
-              {:else if cell.state === 'revealed' && cell.adjacent > 0}
-                {cell.adjacent}
-              {/if}
-            </button>
+          {#each cellViews.views as cell, i (i)}
+            <MinesweeperCell {cell} index={i} pending={pendingCell === i} />
           {/each}
         </div>
       </div>
@@ -952,7 +1056,7 @@
         <svg
           class="ms-press-ring pointer-events-none absolute z-10"
           style="left: {pressRing.x - 22}px; top: {pressRing.y -
-            76}px; --ms-ring-ms: {LONG_PRESS_MS}ms;"
+            76}px; --ms-ring-ms: {settings.longPressMs}ms;"
           width="44"
           height="44"
           viewBox="0 0 44 44"
@@ -976,13 +1080,17 @@
         <!-- Game-over overlay: scoped to the viewport so the floating controls above it stay reachable. -->
         <div
           class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4"
-          transition:fade={{ duration: 200 }}
+          transition:fade={{ duration: animationMs(200, settings.animations) }}
         >
           <div
-            class="bg-cn-surface pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
-              ? 'border-cn-yellow/50 shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
-              : 'border-red-500/40 shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
-            transition:scaleTransition={{ duration: 280, start: 0.9, easing: backOut }}
+            class="bg-cn-surface pointer-events-auto flex flex-col items-center gap-3 rounded-2xl px-6 py-6 text-center shadow-2xl {isWin
+              ? 'shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
+              : 'shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
+            transition:scaleTransition={{
+              duration: animationMs(280, settings.animations),
+              start: 0.9,
+              easing: backOut,
+            }}
           >
             {#if isWin}
               <Trophy size={28} class="text-cn-yellow" />
@@ -998,7 +1106,7 @@
             </p>
             {#if isWin}
               <p
-                class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
+                class="bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-lg px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
               >
                 <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
                 {m.minesweeper_time({
@@ -1012,7 +1120,7 @@
                   </p>
                 {:else if winRank != null}
                   <p
-                    class="border-cn-yellow/30 bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-bold"
+                    class="bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold"
                   >
                     <Trophy size={14} class="text-cn-yellow" strokeWidth={2.5} />
                     {#if winRanksGained > 0}
@@ -1049,12 +1157,12 @@
           type="button"
           onclick={onClose}
           aria-label={m.minesweeper_close()}
-          class="ui-icon-button bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto rounded-full border shadow-sm backdrop-blur-sm"
+          class="ui-icon-button ms-chip text-text-main pointer-events-auto rounded-full shadow-sm backdrop-blur-sm"
         >
           <X size={18} />
         </button>
         <div
-          class="bg-cn-surface/90 border-cn-border text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full border pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
+          class="ms-chip text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
         >
           <span class="flex items-center gap-1.5 leading-none">
             <Bomb size={16} class="text-cn-dark" />
@@ -1080,21 +1188,32 @@
           </button>
         </div>
       </div>
-      <button
-        type="button"
-        onclick={openLeaderboard}
-        aria-label={m.minesweeper_leaderboard()}
-        title={m.minesweeper_leaderboard()}
-        class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto rounded-full shadow-sm transition-colors"
-      >
-        <Trophy size={20} strokeWidth={2.5} />
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          onclick={() => (showSettings = true)}
+          aria-label={m.minesweeper_settings()}
+          title={m.minesweeper_settings()}
+          class="ui-icon-button ms-chip text-text-main pointer-events-auto rounded-full shadow-sm backdrop-blur-sm"
+        >
+          <Settings size={18} />
+        </button>
+        <button
+          type="button"
+          onclick={openLeaderboard}
+          aria-label={m.minesweeper_leaderboard()}
+          title={m.minesweeper_leaderboard()}
+          class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto rounded-full shadow-sm transition-colors"
+        >
+          <Trophy size={20} strokeWidth={2.5} />
+        </button>
+      </div>
     </div>
 
     {#if submitMessage}
       <p
         role="status"
-        class="bg-cn-surface/95 border-cn-border pointer-events-none absolute inset-x-3 top-16 z-20 mx-auto w-fit max-w-full rounded-full border px-3 py-1 text-center text-xs font-semibold shadow-sm {submitError
+        class="ms-chip pointer-events-none absolute inset-x-3 top-16 z-20 mx-auto w-fit max-w-full rounded-full px-3 py-1 text-center text-xs font-semibold shadow-sm {submitError
           ? 'text-red-err'
           : 'text-green-ok'}"
       >
@@ -1109,9 +1228,9 @@
         onclick={toggleFlagPrimary}
         aria-pressed={flagPrimary}
         title={m.minesweeper_mode_hint()}
-        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
-          ? 'bg-cn-yellow text-cn-ink border-transparent'
-          : 'bg-cn-surface/90 border-cn-border text-text-main'}"
+        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
+          ? 'bg-cn-yellow text-cn-ink'
+          : 'ms-chip text-text-main'}"
       >
         {#if flagPrimary}
           <Flag size={18} strokeWidth={2.5} />
@@ -1127,9 +1246,9 @@
         disabled={board.minesPlaced}
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
-        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full border px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
-          ? 'bg-cn-yellow text-cn-ink border-transparent'
-          : 'bg-cn-surface/90 border-cn-border text-text-main'}"
+        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
+          ? 'bg-cn-yellow text-cn-ink'
+          : 'ms-chip text-text-main'}"
       >
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
         {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
@@ -1142,7 +1261,7 @@
         class="bg-cn-surface absolute inset-0 z-30 flex flex-col"
         transition:fade={{ duration: 150 }}
       >
-        <div class="border-cn-border flex shrink-0 items-center gap-2 border-b p-2">
+        <div class="flex shrink-0 items-center gap-2 p-2">
           <button
             type="button"
             onclick={() => (showLeaderboard = false)}
@@ -1154,61 +1273,97 @@
           <h2 class="text-cn-dark text-base font-semibold">{m.minesweeper_leaderboard()}</h2>
         </div>
         <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 sm:p-4">
-          {#if personalBestMs !== null}
-            <p class="text-text-muted mb-2 shrink-0 text-sm">
-              {m.minesweeper_personal_best({ time: formatDurationMs(personalBestMs) })}
-            </p>
-          {/if}
+          <SegmentedControl
+            class="mb-3 shrink-0"
+            tone="yellow"
+            label={m.minesweeper_leaderboard()}
+            items={[
+              { key: 'ranking', label: m.minesweeper_tab_ranking() },
+              { key: 'stats', label: m.minesweeper_tab_stats() },
+            ]}
+            value={sheetTab}
+            onSelect={selectSheetTab}
+          />
 
-          {#if leaderboardLoading}
-            <p class="text-text-muted text-sm">…</p>
-          {:else if leaderboard.length === 0}
-            <p class="text-text-muted text-sm">{m.minesweeper_empty_leaderboard()}</p>
+          {#if sheetTab === 'stats'}
+            {@render statsTab()}
           {:else}
-            <ol class="space-y-1.5">
-              {#each leaderboard as entry (entry.userId)}
-                <li
-                  class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
+            {#if personalBestMs !== null}
+              <p class="text-text-muted mb-2 shrink-0 text-sm">
+                {m.minesweeper_personal_best({ time: formatDurationMs(personalBestMs) })}
+              </p>
+            {/if}
+
+            {#if leaderboardLoading}
+              <p class="text-text-muted text-sm">…</p>
+            {:else if leaderboard.length === 0}
+              <p class="text-text-muted text-sm">{m.minesweeper_empty_leaderboard()}</p>
+            {:else}
+              <ol class="space-y-1.5">
+                {#each leaderboard as entry (entry.userId)}
+                  <li
+                    class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2.5"
+                  >
+                    <span class="flex min-w-0 items-center gap-2.5">
+                      <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">
+                        #{entry.rank}
+                      </span>
+                      <span class="min-w-0">
+                        <span class="text-text-main block truncate text-sm font-semibold">
+                          {entry.displayName}
+                        </span>
+                        {#if relativeDate(entry.verifiedAt)}
+                          <span
+                            class="text-text-muted block truncate text-xs"
+                            title={exactDate(entry.verifiedAt)}
+                          >
+                            {relativeDate(entry.verifiedAt)}
+                          </span>
+                        {/if}
+                      </span>
+                    </span>
+                    <span class="flex shrink-0 items-center gap-1">
+                      <span class="text-cn-dark font-mono text-sm font-semibold">
+                        {formatDurationMs(entry.durationMs)}
+                      </span>
+                      {#if isAdmin}
+                        <button
+                          type="button"
+                          class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
+                          aria-label={m.minesweeper_admin_remove_score()}
+                          title={m.minesweeper_admin_remove_score()}
+                          onclick={() => void removeScore(entry)}
+                        >
+                          <Trash2 size={14} strokeWidth={2.25} />
+                        </button>
+                        <button
+                          type="button"
+                          class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
+                          aria-label={m.minesweeper_admin_ban()}
+                          title={m.minesweeper_admin_ban()}
+                          onclick={() => void banPlayer(entry)}
+                        >
+                          <Ban size={14} strokeWidth={2.25} />
+                        </button>
+                      {/if}
+                    </span>
+                  </li>
+                {/each}
+              </ol>
+              {#if leaderboard.length < leaderboardTotal}
+                <button
+                  type="button"
+                  onclick={() => void loadMoreLeaderboard()}
+                  disabled={leaderboardMoreLoading}
+                  class="ms-tile text-text-main hover:bg-cn-bg mt-3 shrink-0 self-center rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50"
                 >
-                  <span class="flex items-center gap-2.5 truncate">
-                    <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">
-                      #{entry.rank}
-                    </span>
-                    <span class="text-text-main truncate text-sm font-semibold">
-                      {entry.displayName}
-                    </span>
-                  </span>
-                  <span class="flex shrink-0 items-center gap-1">
-                    <span class="text-cn-dark font-mono text-sm font-semibold">
-                      {formatDurationMs(entry.durationMs)}
-                    </span>
-                    {#if isAdmin}
-                      <button
-                        type="button"
-                        class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
-                        aria-label={m.minesweeper_admin_remove_score()}
-                        title={m.minesweeper_admin_remove_score()}
-                        onclick={() => void removeScore(entry)}
-                      >
-                        <Trash2 size={14} strokeWidth={2.25} />
-                      </button>
-                      <button
-                        type="button"
-                        class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
-                        aria-label={m.minesweeper_admin_ban()}
-                        title={m.minesweeper_admin_ban()}
-                        onclick={() => void banPlayer(entry)}
-                      >
-                        <Ban size={14} strokeWidth={2.25} />
-                      </button>
-                    {/if}
-                  </span>
-                </li>
-              {/each}
-            </ol>
+                  {m.minesweeper_load_more()}
+                </button>
+              {/if}
+            {/if}
           {/if}
 
-          {#if isAdmin}
+          {#if isAdmin && sheetTab === 'ranking'}
             {#if moderationFailed}
               <p class="text-red-err mt-2 text-xs font-semibold" role="alert">
                 {m.minesweeper_admin_failed()}
@@ -1220,9 +1375,7 @@
               </h3>
               <ul class="space-y-1.5">
                 {#each bans as ban (ban.userId)}
-                  <li
-                    class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
-                  >
+                  <li class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2">
                     <span class="min-w-0">
                       <span class="text-text-main block truncate text-sm font-semibold">
                         {ban.displayName}
@@ -1248,10 +1401,214 @@
         </div>
       </div>
     {/if}
+
+    {#if showSettings}
+      <!-- Settings sheet: how input is read and how the screen moves; never what a move is. -->
+      <div
+        class="bg-cn-surface absolute inset-0 z-30 flex flex-col"
+        transition:fade={{ duration: animationMs(150, settings.animations) }}
+      >
+        <div class="flex shrink-0 items-center gap-2 p-2">
+          <button
+            type="button"
+            onclick={() => (showSettings = false)}
+            aria-label={m.minesweeper_leaderboard_back()}
+            class="ui-icon-button text-text-main hover:bg-cn-bg rounded-full transition-colors"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <h2 class="text-cn-dark text-base font-semibold">{m.minesweeper_settings()}</h2>
+        </div>
+        <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 sm:p-4">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.doubleTapZoom}
+            onclick={() => updateSettings({ doubleTapZoom: !settings.doubleTapZoom })}
+            class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-3 text-left"
+          >
+            <span class="min-w-0">
+              <span class="text-text-main block text-sm font-semibold">
+                {m.minesweeper_setting_double_tap()}
+              </span>
+              <span class="text-text-muted block text-xs">
+                {m.minesweeper_setting_double_tap_hint()}
+              </span>
+            </span>
+            <span
+              class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.doubleTapZoom
+                ? 'bg-cn-yellow text-cn-ink'
+                : 'bg-cn-surface text-text-muted'}"
+            >
+              {settings.doubleTapZoom ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.haptics}
+            onclick={() => updateSettings({ haptics: !settings.haptics })}
+            class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-3 text-left"
+          >
+            <span class="text-text-main text-sm font-semibold">
+              {m.minesweeper_setting_haptics()}
+            </span>
+            <span
+              class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.haptics
+                ? 'bg-cn-yellow text-cn-ink'
+                : 'bg-cn-surface text-text-muted'}"
+            >
+              {settings.haptics ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
+            </span>
+          </button>
+
+          <div class="ms-tile rounded-lg px-3 py-3">
+            <label class="flex items-center justify-between gap-3" for="ms-long-press">
+              <span class="text-text-main text-sm font-semibold">
+                {m.minesweeper_setting_long_press()}
+              </span>
+              <span class="text-cn-dark font-mono text-sm font-semibold">
+                {m.minesweeper_setting_long_press_value({ ms: String(settings.longPressMs) })}
+              </span>
+            </label>
+            <input
+              id="ms-long-press"
+              type="range"
+              min={LONG_PRESS_RANGE.min}
+              max={LONG_PRESS_RANGE.max}
+              step={LONG_PRESS_RANGE.step}
+              value={settings.longPressMs}
+              oninput={(e) =>
+                updateSettings({ longPressMs: clampLongPressMs(e.currentTarget.valueAsNumber) })}
+              class="accent-cn-yellow mt-2 w-full"
+            />
+          </div>
+
+          <div class="ms-tile rounded-lg px-3 py-3">
+            <p class="text-text-main mb-2 text-sm font-semibold">
+              {m.minesweeper_setting_animations()}
+            </p>
+            <div role="radiogroup" class="bg-cn-surface flex gap-1 rounded-full p-1">
+              {#each ANIMATION_SPEEDS as speed (speed)}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.animations === speed}
+                  onclick={() => updateSettings({ animations: speed })}
+                  class="flex-1 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {settings.animations ===
+                  speed
+                    ? 'bg-cn-yellow text-cn-ink'
+                    : 'text-text-muted hover:text-text-main'}"
+                >
+                  {animationLabel(speed)}
+                </button>
+              {/each}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 </Modal>
 
+{#snippet statsTab()}
+  {#if statsLoading && !stats}
+    <p class="text-text-muted text-sm">…</p>
+  {:else if statsFailed}
+    <p class="text-red-err text-sm font-semibold" role="alert">{m.minesweeper_stats_failed()}</p>
+  {:else if stats}
+    {@const cards = [
+      { label: m.minesweeper_stats_played(), value: String(stats.played) },
+      { label: m.minesweeper_stats_won(), value: String(stats.won) },
+      {
+        label: m.minesweeper_stats_win_rate(),
+        value: stats.winRate === null ? '-' : `${Math.round(stats.winRate * 100)} %`,
+      },
+      {
+        label: m.minesweeper_stats_rank(),
+        value: stats.rank === null ? '-' : m.minesweeper_rank({ rank: String(stats.rank) }),
+      },
+      {
+        label: m.minesweeper_stats_best(),
+        value: stats.bestMs === null ? '-' : formatDurationMs(stats.bestMs),
+      },
+      {
+        label: m.minesweeper_stats_average(),
+        value: stats.averageMs === null ? '-' : formatDurationMs(stats.averageMs),
+      },
+      {
+        label: m.minesweeper_stats_median(),
+        value: stats.medianMs === null ? '-' : formatDurationMs(stats.medianMs),
+      },
+      { label: m.minesweeper_stats_lost(), value: String(stats.lost) },
+    ]}
+    <dl class="grid grid-cols-2 gap-2">
+      {#each cards as card (card.label)}
+        <div class="ms-tile rounded-lg px-3 py-2.5">
+          <dt class="text-text-muted text-xs">{card.label}</dt>
+          <dd class="text-cn-dark font-mono text-lg font-bold tabular-nums">{card.value}</dd>
+        </div>
+      {/each}
+    </dl>
+
+    {#if stats.recent.length === 0}
+      <p class="text-text-muted mt-4 text-sm">{m.minesweeper_stats_empty()}</p>
+    {:else}
+      <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold tracking-wider uppercase">
+        {m.minesweeper_stats_recent()}
+      </h3>
+      <div
+        role="img"
+        aria-label={m.minesweeper_stats_chart()}
+        class="ms-tile flex h-20 items-end gap-1 rounded-lg px-3 py-2"
+      >
+        {#each sparkBars as bar (bar.scoreId)}
+          <span
+            title={bar.label}
+            class="min-w-0 flex-1 rounded-sm {bar.best ? 'bg-cn-yellow' : 'bg-cn-yellow/40'}"
+            style="height: {bar.percent}%;"
+          ></span>
+        {/each}
+      </div>
+      <ul class="mt-2 space-y-1.5">
+        {#each stats.recent as win (win.scoreId)}
+          <li class="ms-tile flex items-center justify-between gap-3 rounded-lg px-3 py-2">
+            <span
+              class="text-text-muted truncate text-xs"
+              title={Number.isNaN(new Date(win.verifiedAt).getTime())
+                ? ''
+                : exactDate(win.verifiedAt)}
+            >
+              {relativeDate(win.verifiedAt)}
+            </span>
+            <span class="text-cn-dark font-mono text-sm font-semibold">
+              {formatDurationMs(win.durationMs)}
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <p class="text-text-muted mt-4 text-xs">{m.minesweeper_stats_note()}</p>
+  {/if}
+{/snippet}
+
 <style>
+  /* FLAT TONAL, like the cells (user's pick, 2026-11-04): no borders anywhere in the section. A tile is
+     the surface pulled 7% toward the text colour, so one rule follows both themes. */
+  .ms-tile {
+    background: color-mix(in srgb, var(--text-main) 7%, var(--cn-surface));
+  }
+
+  /* The same tone for what floats over the board, a little translucent so the board shows through. */
+  .ms-chip {
+    background: color-mix(
+      in srgb,
+      color-mix(in srgb, var(--text-main) 9%, var(--cn-surface)) 92%,
+      transparent
+    );
+  }
+
   /* One-shot glow pulse on the win title; kept CSS-only since it's cheaper than a JS-driven effect. */
   @keyframes ms-win-pulse {
     0%,
@@ -1264,7 +1621,8 @@
   }
 
   .ms-win-pulse {
-    animation: ms-win-pulse 900ms ease-out 150ms 1;
+    animation: ms-win-pulse calc(900ms * var(--ms-anim, 1)) ease-out calc(150ms * var(--ms-anim, 1))
+      1;
   }
 
   /* The long-press ring stays invisible for the first third, so a plain tap never flashes it, then fills over the rest of the hold. */
