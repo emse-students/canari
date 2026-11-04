@@ -132,10 +132,11 @@ export interface LivePlayerDeps {
 
 /**
  * What the player asks of a chat riding its poll (`LiveChatSession` implements it). `onKey` hands it
- * the live key the open fetched; `query` and `receive` frame each manifest request.
+ * the live key the open fetched, with whether that open said the chat is withheld from this reader
+ * (owner, 2026-11-04); `query` and `receive` frame each manifest request.
  */
 export interface LivePlayerChatHook {
-  onKey(keyHex: string): void;
+  onKey(keyHex: string, opened: { chatWithheld?: boolean }): void;
   query(): LiveChatQuery;
   receive(block: LiveChatBlock | undefined): void;
 }
@@ -546,7 +547,7 @@ export class LivePlayer {
         }
         this.seated = true;
         this.keyHex = live.key;
-        this.opts.chat?.onKey(live.key);
+        this.opts.chat?.onKey(live.key, { chatWithheld: live.chatWithheld === true });
         this.startedAtMs = Date.parse(live.startedAt);
         this.retryAttempt = 0;
       }

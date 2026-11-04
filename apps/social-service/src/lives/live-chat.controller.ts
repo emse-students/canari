@@ -32,7 +32,11 @@ export class LiveChatController {
     private readonly associations: AssociationsService
   ) {}
 
-  /** Posts a message: `{ clientId: <uuid>, sealed: <base64 of iv + ciphertext + tag> }`. */
+  /**
+   * Posts a message: `{ clientId: <uuid>, sealed: <base64 of iv + ciphertext + tag> }`. Refused
+   * like the key, then 403 `LIVE_CHAT_WITHHELD` to a named reader the chat is withheld from
+   * (`LivesService.mayChat`, owner 2026-11-04).
+   */
   @Post(':id/messages')
   async post(
     @Param('id', ParseUUIDPipe) id: string,
@@ -40,11 +44,14 @@ export class LiveChatController {
     @Body() body: { clientId?: unknown; sealed?: unknown }
   ) {
     const caller = callerOf(userId);
-    await this.lives.mayWatch(caller, id);
+    await this.lives.mayChat(caller, id);
     return this.chat.post(caller, id, body ?? {});
   }
 
-  /** Records a reaction burst: `{ burstId: <uuid>, counts: { like?: n, ... } }`. */
+  /**
+   * Records a reaction burst: `{ burstId: <uuid>, counts: { like?: n, ... } }`. Open to whoever may
+   * watch, a named reader the chat is withheld from included - they react to a live as to a post.
+   */
   @Post(':id/reactions')
   async react(
     @Param('id', ParseUUIDPipe) id: string,

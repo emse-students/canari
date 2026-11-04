@@ -157,6 +157,8 @@ describe('the chat numbers are published, not carried by a client', () => {
 describe('LiveChatController', () => {
   const LIVE = '22222222-2222-4222-8222-222222222222';
   const mayWatch = jest.fn();
+  /** The chat's own gate for a MESSAGE (owner, 2026-11-04): the watch rule plus the withheld reader. */
+  const mayChat = jest.fn();
   const post = jest.fn().mockResolvedValue({ id: 'm' });
   const react = jest.fn().mockResolvedValue({ seq: 1 });
   const hide = jest.fn().mockResolvedValue({ hidden: true });
@@ -170,7 +172,7 @@ describe('LiveChatController', () => {
       opts?.isGlobalAdmin === true || (userId.startsWith('m') && liveId === LIVE)
   );
   const controller = new LiveChatController(
-    { mayWatch } as unknown as LivesService,
+    { mayWatch, mayChat } as unknown as LivesService,
     { post, react, hide } as unknown as LiveChatService,
     { mayModerateLive } as unknown as AssociationsService
   );
@@ -178,6 +180,7 @@ describe('LiveChatController', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mayWatch.mockResolvedValue(undefined);
+    mayChat.mockResolvedValue(undefined);
   });
 
   it('sits behind the same two guards as every live route, the switch first', () => {
@@ -187,11 +190,14 @@ describe('LiveChatController', () => {
     ]);
   });
 
-  it('asks the watch rule BEFORE a message or a burst, with the caller in lower case', async () => {
+  it('asks the chat gate BEFORE a message and the watch rule before a burst, the caller in lower case', async () => {
     await controller.post(LIVE, 'A'.repeat(64), { clientId: UUID, sealed: 'x' });
-    expect(mayWatch).toHaveBeenCalledWith('a'.repeat(64), LIVE);
+    expect(mayChat).toHaveBeenCalledWith('a'.repeat(64), LIVE);
+    expect(mayWatch).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledWith('a'.repeat(64), LIVE, { clientId: UUID, sealed: 'x' });
     await controller.react(LIVE, 'A'.repeat(64), { burstId: UUID, counts: { like: 1 } });
+    // A burst is open to a reader the chat is withheld from: the watch rule alone.
+    expect(mayWatch).toHaveBeenCalledWith('a'.repeat(64), LIVE);
     expect(react).toHaveBeenCalledWith('a'.repeat(64), LIVE, {
       burstId: UUID,
       counts: { like: 1 },
@@ -200,6 +206,7 @@ describe('LiveChatController', () => {
 
   it('writes nothing for a viewer the watch rule refuses', async () => {
     mayWatch.mockRejectedValue(new Error('refused'));
+    mayChat.mockRejectedValue(new Error('refused'));
     await expect(controller.post(LIVE, 'a'.repeat(64), {})).rejects.toThrow('refused');
     await expect(controller.react(LIVE, 'a'.repeat(64), {})).rejects.toThrow('refused');
     expect(post).not.toHaveBeenCalled();

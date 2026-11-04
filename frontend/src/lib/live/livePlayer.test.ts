@@ -1143,7 +1143,7 @@ describe('the live chat riding the poll (WP-L6, C3)', () => {
     live.push(3);
     chatPlayer(chat).start();
     await flush();
-    expect(chat.onKey).toHaveBeenCalledWith('ab'.repeat(32));
+    expect(chat.onKey).toHaveBeenCalledWith('ab'.repeat(32), { chatWithheld: false });
     expect(vi.mocked(deps.fetchManifest).mock.calls).toEqual([
       [LIVE, undefined, { messagesAfter: 0, reactionsAfter: 0 }],
     ]);

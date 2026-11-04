@@ -59,6 +59,13 @@ export interface LiveChatBlock {
   messagesCursor: number;
   reactions: LiveReactionWindow[];
   reactionsCursor: number;
+  /**
+   * Present, and `true`, only when the chat is withheld from this viewer (a named reader watching
+   * through a read grant alone with "voit les commentaires" off, owner 2026-11-04): `messages` is
+   * then always empty and `messagesCursor` the live's newest seq, so an older client that ignores
+   * the flag advances quietly and draws nothing. The reactions are served as to anybody.
+   */
+  withheld?: true;
 }
 
 /** Where the viewer's previous poll stopped; absent on its first poll (C13). */
@@ -431,8 +438,27 @@ export class LiveChatService {
    * without one. Each cursor is the highest seq READ, filtered rows included, so a filtered row is
    * never read twice and - the numbers committing in their own order (C4) - none is ever skipped.
    */
-  async read(viewerId: string, liveId: string, cursors: LiveChatCursors): Promise<LiveChatBlock> {
+  async read(
+    viewerId: string,
+    liveId: string,
+    cursors: LiveChatCursors,
+    opts: { withheld?: boolean } = {}
+  ): Promise<LiveChatBlock> {
     const blocked = new Set(await blockedUserIdsFor(this.db.manager, viewerId));
+    if (opts.withheld) {
+      // THE CHAT IS WITHHELD FROM THIS VIEWER (owner, 2026-11-04; decided by the caller in the watch
+      // rule's statement): not one message row is read. The cursor is the live's newest seq, as a
+      // late joiner's is, and the floating reactions go on as for anybody.
+      const [{ top }]: { top: number }[] = await this.db.query(
+        `SELECT COALESCE(max(seq), 0)::int AS top FROM live_chat_messages WHERE "liveId" = $1`,
+        [liveId]
+      );
+      // NOT LOGGED HERE: this runs on every poll (once a second per viewer), and the server keeps no
+      // state to log the transition only - so a line here would be per-second noise. The decision
+      // is logged where it changes something: the 403 of a send (`LivesService.mayChat`).
+      const reactions = await this.readReactions(viewerId, liveId, cursors, blocked);
+      return { messages: [], messagesCursor: top, ...reactions, withheld: true };
+    }
     const first = cursors.messagesAfter === undefined;
     // A late joiner's cursor is the live's highest seq, read BEFORE its rows: the rows' snapshot is
     // then at least as new (numbers commit in order, C4), so nothing between is skipped; a row read
@@ -475,13 +501,29 @@ export class LiveChatService {
       : rows.length > 0
         ? rows[rows.length - 1].seq
         : (cursors.messagesAfter ?? 0);
+    return {
+      messages,
+      messagesCursor,
+      ...(await this.readReactions(viewerId, liveId, cursors, blocked)),
+    };
+  }
 
+  /**
+   * The reactions half of a poll's block: the sums after the cursor, or only the cursor without one
+   * (C7, C13). Shared by a viewer the chat is served to and one it is withheld from.
+   */
+  private async readReactions(
+    viewerId: string,
+    liveId: string,
+    cursors: LiveChatCursors,
+    blocked: ReadonlySet<string>
+  ): Promise<Pick<LiveChatBlock, 'reactions' | 'reactionsCursor'>> {
     if (cursors.reactionsAfter === undefined) {
       const [{ top }]: { top: number }[] = await this.db.query(
         `SELECT COALESCE(max(seq), 0)::int AS top FROM live_reaction_bursts WHERE "liveId" = $1`,
         [liveId]
       );
-      return { messages, messagesCursor, reactions: [], reactionsCursor: top };
+      return { reactions: [], reactionsCursor: top };
     }
     const bursts: {
       seq: number;
@@ -494,8 +536,6 @@ export class LiveChatService {
       [liveId, cursors.reactionsAfter, LIVE_REACTION_PAGE]
     );
     return {
-      messages,
-      messagesCursor,
       reactions: sumReactionBursts(bursts, viewerId, blocked),
       reactionsCursor: bursts.length > 0 ? bursts[bursts.length - 1].seq : cursors.reactionsAfter,
     };

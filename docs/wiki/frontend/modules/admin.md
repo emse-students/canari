@@ -135,8 +135,9 @@ The decisions, taken by the user on 2026-10-16:
 **"Voit les commentaires", one switch per person (owner, 2026-11-04: "un truc clair et propre, le
 plus user-friendly possible").** At the foot of the same sheet, under the campuses: the shared
 `Toggle`, labelled "Voit les commentaires", with ONE line under it saying what the reader will and
-will not see in its current state (OFF: reads the posts and reacts, without the comments or who
-reacted or voted; ON: reads and writes the comments, sees who reacted or voted). OFF is the default,
+will not see in its current state (OFF: reads the posts, watches the lives and reacts, without the
+comments, the chat of lives or who reacted or voted; ON: reads and writes the comments and the chat
+of lives, sees who reacted or voted - the lives' chat joined the same switch on 2026-11-04). OFF is the default,
 for every named reader already there too. It saves at once and offers "Annuler" like a box
 (`PUT /read-grants/comments`, the inverse write as undo, journalled `cmt_show`/`cmt_hide` and drawn
 in the journal in words); while it saves it is `busy` (the `Toggle`'s new prop: `aria-busy` +

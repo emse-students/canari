@@ -408,6 +408,32 @@ describe('LiveViewer', () => {
     expect(document.querySelector('[data-live-reactions]')).not.toBeNull();
   });
 
+  it('the chat withheld from a named reader (the comments rule): no chat area, no toggle, no line saying so - the reactions stay', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const plainLive = deps.fetchLive!;
+    deps.fetchLive = vi.fn(async (...args: Parameters<typeof plainLive>) => ({
+      ...(await plainLive(...args)),
+      chatWithheld: true,
+    }));
+    const plain = deps.fetchManifest!;
+    deps.fetchManifest = vi.fn(async (...args: Parameters<typeof plain>) => ({
+      ...(await plain(...args)),
+      chat: {
+        messages: [],
+        messagesCursor: 7,
+        reactions: [],
+        reactionsCursor: 0,
+        withheld: true as const,
+      },
+    }));
+    await render();
+    expect(stateOf()).toBe('playing');
+    expect(document.querySelector('[data-live-chat]')).toBeNull();
+    expect(document.querySelector('[data-live-chat-toggle]')).toBeNull();
+    expect(document.querySelector('[data-live-reactions]')).not.toBeNull();
+    expect(document.querySelector('[data-live-reaction="canari"]')).not.toBeNull();
+  });
+
   /** Every manifest carries one line from another member. */
   function withOneLine() {
     const plain = deps.fetchManifest!;
