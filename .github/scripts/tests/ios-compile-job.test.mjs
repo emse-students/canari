@@ -101,11 +101,17 @@ for (const p of [
   'frontend/src-tauri/plugins/some-plugin/ios/Package.swift',
   'frontend/src-tauri/src/bridge/thing.mm',
   '.github/scripts/ios-app-compile.sh',
+  'frontend/src-tauri/Cargo.toml',
+  'frontend/src-tauri/build.rs',
+  'frontend/src-tauri/tauri.conf.json',
+  'frontend/src-tauri/tauri.ios.conf.json',
 ]) {
   check(hit(p), `triggers on ${p}`, `does NOT trigger on ${p}`);
 }
 for (const p of [
   'frontend/src-tauri/src/lib.rs',
+  'frontend/src-tauri/Cargo.lock',
+  'frontend/src-tauri/tauri.local.conf.json',
   'frontend/src-tauri/gen/android/app/build.gradle.kts',
   'frontend/src/lib/mobile/ios.ts',
   'apps/core-service/src/main.ts',

@@ -356,12 +356,15 @@ jobs:
           # not (like `android_app`) the Rust crate: `gen/apple` (the app, the notification and share
           # extensions, the pbxproj), a Swift package under `plugins/*/ios` or `patches/*/ios`, any
           # Swift / Objective-C source or header under `src-tauri` (a bridge may live beside the
-          # Rust), the scripts it runs, `ios.yml` (the release build it mirrors) and the toolchain
-          # pin. A Rust-only change is compiled for the host by `test-rust` and for iOS by the
-          # release.
+          # Rust), the manifest, build script and Tauri config that decide what is linked and
+          # bundled (owner, 2026-11-04; NOT `Cargo.lock`, which Dependabot bumps would turn into a
+          # macOS run each), the scripts it runs, `ios.yml` (the release build it mirrors) and the
+          # toolchain pin. A change to the crate's Rust sources alone is compiled for the host by
+          # `test-rust` and for iOS by the release.
           if has '^frontend/src-tauri/gen/apple/' || \
              has '^frontend/src-tauri/(plugins|patches)/[^/]+/ios/' || \
              has '^frontend/src-tauri/.*\.(swift|m|mm|h)$' || \
+             has '^frontend/src-tauri/(Cargo\.toml|build\.rs|tauri(\.ios)?\.conf\.json)$' || \
              has '^rust-toolchain\.toml$' || \
              has '^\.github/workflows/ios\.yml$' || \
              has '^\.github/scripts/ios-(app-compile|libapp|extensions)\.sh$'; then
@@ -1413,6 +1416,11 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+          key: ios-app
 
       - name: Install frontend dependencies
         working-directory: frontend

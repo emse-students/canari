@@ -1769,9 +1769,12 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
   overwritten) and placeholder `VITE_*` origins stand in; no archive, no export, no upload.
 - **Path filter, so macOS minutes are paid only for Apple code.** `changes` emits `ios_app` when a
   changed file is under `gen/apple/`, under `plugins|patches/<name>/ios/`, any `.swift .m .mm .h`
-  under `frontend/src-tauri`, `ios.yml`, the three iOS scripts or `rust-toolchain.toml` - or when
-  `ci.yml` itself changed (`run_all`). Otherwise the job is `skipped`, which `CI passed` accepts.
-  A Rust-only change does not trigger it (`test-rust` covers the host, the release the iOS target).
+  under `frontend/src-tauri`, `src-tauri/Cargo.toml`, `build.rs`, `tauri.conf.json` (and a
+  `tauri.ios.conf.json` should one appear; owner, 2026-11-04), `ios.yml`, the three iOS scripts or
+  `rust-toolchain.toml` - or when `ci.yml` itself changed (`run_all`). Otherwise the job is
+  `skipped`, which `CI passed` accepts. **`Cargo.lock` and the crate's `src/*.rs` deliberately do
+  not trigger it** (a lock-only Dependabot bump would cost a macOS run each; `test-rust` covers the
+  host, the release the iOS target) - that is the known gap.
 - **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
